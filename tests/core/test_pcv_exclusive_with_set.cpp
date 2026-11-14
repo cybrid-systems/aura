@@ -392,8 +392,7 @@ int run_test_pcv_exclusive_with_set() {
         std::println("\n--- #2906 AC4: schema + rollback with_* + linter ---");
         const auto obs = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
         const auto build = read_file("build.py");
-        const auto lint =
-            read_file("scripts/coverage/checks/check_pcv_flatast_locked_exclusive_2906.py");
+        const auto lint = read_file("scripts/coverage/manifests/2906.json");
         CHECK(obs.find("schema-2906") != std::string::npos, "AC4: schema-2906");
         CHECK(obs.find("flatast-locked-move-out-exclusive-total") != std::string::npos,
               "AC4: exclusive total key");

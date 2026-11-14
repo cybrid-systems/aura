@@ -1,0 +1,68 @@
+{
+  "issue": 3226,
+  "title": "Issue #3226: production soundness sample must run real partial≡full compare.",
+  "ok": "OK: Issue #3226 folded from check_prod_soundness_real_compare_3226.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/service_dirty.cpp",
+      "contains": [
+        "Issue #3226",
+        "lower_full_same_lambda",
+        "lower_function_at",
+        "ir_function_equivalent",
+        "ir_module_equivalent",
+        "inject_soundness_under_dirty_for_test",
+        "incremental_soundness_mismatch_prod_total",
+        "mark_all_blocks_dirty",
+        "RelowerFallbackReason::MapInconsistent",
+        "incremental_soundness_prod_ok_total",
+        "if (sample_eff_bp > 0"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/service_dirty.cpp",
+      "absent": [
+        "trivially pass",
+        "g_3226_"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_incremental_soundness_oracle.cpp",
+      "contains": [
+        "ac11_prod_inject_mismatch_forces_full",
+        "ac10_prod_sample_real_compare",
+        "ac12_sample_bp_zero_no_full_lower"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "scripts/coverage/checks/check_incremental_soundness_prod_coverage.py",
+      "contains": [
+        "lower_full_same_lambda"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_obs_eval.cpp",
+      "absent": [
+        "query:incremental-soundness-prod-compare"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "forbid": [
+        "tests/issues/test_issue_3226.cpp",
+        "tests/compiler/test_issue_3226.cpp"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "forbid_glob": [
+        "docs/design/3226-*"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,98 @@
+{
+  "issue": 2850,
+  "title": "Issue #2850: bounded pure-anon sync remount quota on reemit success.",
+  "ok": "OK: Issue #2850 folded from check_pure_anon_sync_remount_budget_2850.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/aura_jit_runtime.cpp",
+      "contains": [
+        "aura_sync_remount_pure_anon_live_closures",
+        "aura_sync_remount_pure_anon_budget_default",
+        "AURA_SYNC_REMOUNT_PURE_ANON_BUDGET",
+        "remount_or_force_deopt_unlocked_no_call_time_counter",
+        "budget == 0",
+        "production_defaults_active()",
+        "Soft / sandbox",
+        "aura_sync_remount_named_live_closures",
+        "aura_sync_remount_anon_captured_live_closures",
+        "aura_closure_has_env_or_linear_captures_unlocked",
+        "if (sid != 0)",
+        "has_env_or_linear_captures_unlocked",
+        "nslots == 0",
+        "Issue #2550",
+        "Issue #2850"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/aura_jit_bridge.cpp",
+      "contains": [
+        "aura_sync_remount_pure_anon_live_closures",
+        "aura_bump_live_closure_sync_remount_pure_anon_totals",
+        "pure_budget > 0",
+        "Issue #2602",
+        "Issue #2691",
+        "Issue #2850"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/observability_metrics.h",
+      "contains": [
+        "live_closure_sync_remount_pure_anon_ok_total",
+        "live_closure_sync_remount_pure_anon_skip_budget_total",
+        "Issue #2850"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_obs_eval.cpp",
+      "contains": [
+        "schema-2850",
+        "issue-2850",
+        "live-closure-sync-remount-pure-anon-ok-total",
+        "live-closure-sync-remount-pure-anon-skip-budget-total",
+        "live-closure-sync-remount-pure-anon-wired",
+        "schema-2691"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_obs_jit.cpp",
+      "contains": [
+        "schema-2850"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "tests/compiler/test_anonymous_residual_stable_id_policy.cpp",
+      "contains": [
+        "2850 AC"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "path": "src/compiler/runtime_shared.h",
+      "contains": [
+        "aura_sync_remount_pure_anon_live_closures",
+        "aura_sync_remount_pure_anon_budget_default"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "path": "src/compiler/aura_jit_bridge_stub.cpp",
+      "contains": [
+        "aura_sync_remount_pure_anon_live_closures",
+        "aura_sync_remount_pure_anon_budget_default"
+      ]
+    },
+    {
+      "ac": "AC9",
+      "forbid": [
+        "docs/design/2850-pure-anon-sync-remount.md",
+        "docs/2850-pure-anon-sync-remount.md"
+      ]
+    }
+  ]
+}

@@ -1027,8 +1027,7 @@ static void ac2932_5_source_and_linter() {
     const auto q = read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
     const auto t = read_file("tests/serve/test_mailbox_hold_starvation_hard.cpp");
     const auto build = read_file("build.py");
-    const auto lint =
-        read_file("scripts/coverage/checks/check_hold_budget_forced_fail_closed_2932.py");
+    const auto lint = read_file("scripts/coverage/manifests/2932.json");
     CHECK(mhb.find("Issue #2932") != std::string::npos, "AC5: mhb cites #2932");
     CHECK(emb.find("Issue #2932") != std::string::npos, "AC5: emb cites #2932");
     CHECK(efm.find("Issue #2932") != std::string::npos, "AC5: efm cites #2932");
@@ -1246,7 +1245,7 @@ static void ac2999_5_source_and_linter() {
     const auto q = read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
     const auto t = read_file("tests/serve/test_mailbox_hold_starvation_hard.cpp");
     const auto build = read_file("build.py");
-    const auto lint = read_file("scripts/coverage/checks/check_hold_budget_dtor_consume_2999.py");
+    const auto lint = read_file("scripts/coverage/manifests/2999.json");
     CHECK(mhb.find("Issue #2999") != std::string::npos, "AC5: mhb cites #2999");
     CHECK(emb.find("Issue #2999") != std::string::npos, "AC5: emb cites #2999");
     CHECK(source_has_key(q, "mutation-hold-budget-forced-fail-closed-dtor-consume-total"),
@@ -1434,7 +1433,7 @@ static void ac3035_5_source_and_linter() {
     const auto t = read_file("tests/serve/test_mailbox_hold_starvation_hard.cpp");
     const auto chaos = read_file("tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp");
     const auto build = read_file("build.py");
-    const auto lint = read_file("scripts/coverage/checks/check_hold_budget_forced_unlock_3035.py");
+    const auto lint = read_file("scripts/coverage/manifests/3035.json");
     CHECK(mhb.find("Issue #3035") != std::string::npos, "AC5: mhb cites #3035");
     CHECK(mhb.find("kMutationHoldBudgetForcedUnlockIssue = 3035") != std::string::npos,
           "AC5: mhb issue stamp");
@@ -1713,7 +1712,7 @@ static void ac3071_5_source_and_linter() {
     const auto t = read_file("tests/serve/test_mailbox_hold_starvation_hard.cpp");
     const auto chaos = read_file("tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp");
     const auto build = read_file("build.py");
-    const auto lint = read_file("scripts/coverage/checks/check_hold_budget_inbody_window_3071.py");
+    const auto lint = read_file("scripts/coverage/manifests/3071.json");
     CHECK(mhb.find("Issue #3071") != std::string::npos, "AC5: mhb cites #3071");
     CHECK(fc.find("Issue #3071") != std::string::npos, "AC5: fiber.cpp cites #3071");
     CHECK(source_has_key(q, "hold-budget-inbody-window-exceeded-total"), "AC5: query key");
@@ -2023,7 +2022,7 @@ static void ac2754_6_source_and_linter() {
     const auto q = read_query_srcs();
     const auto t = read_file("tests/serve/test_mailbox_hold_starvation_hard.cpp");
     const auto build = read_file("build.py");
-    const auto lint = read_file("scripts/coverage/checks/check_region_cone_disjoint_admit_2754.py");
+    const auto lint = read_file("scripts/coverage/manifests/2754.json");
     CHECK(mhb.find("Issue #2754") != std::string::npos, "AC6: mhb cites #2754");
     CHECK(emb.find("Issue #2754") != std::string::npos || emb.find("#2754") != std::string::npos,
           "AC6: emb cites #2754");
@@ -2275,7 +2274,7 @@ static void ac2760_6_source_and_linter() {
     const auto q = read_query_srcs();
     const auto t = read_file("tests/serve/test_mailbox_hold_starvation_hard.cpp");
     const auto build = read_file("build.py");
-    const auto lint = read_file("scripts/coverage/checks/check_region_impact_mask_admit_2760.py");
+    const auto lint = read_file("scripts/coverage/manifests/2760.json");
     CHECK(mhb.find("#2760") != std::string::npos, "AC6: mhb cites #2760");
     CHECK(emb.find("#2760") != std::string::npos, "AC6: emb cites #2760");
     CHECK(agent.find("#2760") != std::string::npos, "AC6: agent cites #2760");
@@ -2526,7 +2525,7 @@ static void ac2847_6_source_and_linter() {
     const auto q = read_query_srcs();
     const auto t = read_file("tests/serve/test_mailbox_hold_starvation_hard.cpp");
     const auto build = read_file("build.py");
-    const auto lint = read_file("scripts/coverage/checks/check_region_type_commit_gate_2847.py");
+    const auto lint = read_file("scripts/coverage/manifests/2847.json");
     CHECK(ta.find("region_type_commit_ok") != std::string::npos, "AC6: pure helper present");
     CHECK(ta.find("kRegionTypeCrossTalkIssue = 2847") != std::string::npos, "AC6: issue stamp");
     CHECK(ta.find("g_region_type_cross_talk_observe_total") != std::string::npos,

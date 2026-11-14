@@ -45,7 +45,7 @@ def main() -> int:
     q = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
     t = _read("tests/core/test_pcv_exclusive_with_set.cpp")
     build = _read("build.py")
-    lint3233 = _read("scripts/coverage/checks/check_pcv_stale_span_exclusive_3233.py")
+    lint3233 = _read("scripts/coverage/manifests/3233.json")
 
     must("kPcvSharedCowTlsIssue = 3429", "AC1 stamp", hh)
     must("flatast_locked_move_out_exclusive_total", "AC1 exclusive metric", ast)

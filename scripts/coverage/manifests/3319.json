@@ -1,0 +1,84 @@
+{
+  "issue": 3319,
+  "title": "Issue #3319: Sampled deny path still emits SE under production_defaults_active.",
+  "ok": "OK: Issue #3319 folded from check_sampled_deny_se_emit_3319.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "kSampledDenySeEmitIssue = 3319",
+        "emit_invariant_deny_se",
+        "Issue #3319",
+        "production_defaults_active()",
+        "capture_macro_hygiene_audit",
+        "name, \"hygiene\"",
+        "aot-hotupdate"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_typecheck.cpp",
+      "contains": [
+        "emit_invariant_deny_se"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_security_audit_unify.cpp",
+      "contains": [
+        "#3319 AC1",
+        "apply_dev_audit_defaults",
+        "#3319 AC2",
+        "AuditStrategy::Full",
+        "#3319 AC3",
+        "e.mutation_id == te.mutation_id",
+        "query:security-audit",
+        "#3319 AC5",
+        "#3319 AC6"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "record_boundary_deny_after_restore",
+        "dual_clear_coercion_state_on_abort"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "paths": [
+        "src/compiler/evaluator_primitives_security.cpp",
+        "src/compiler/evaluator_primitives_query_type_stats.cpp"
+      ],
+      "absent": [
+        "schema-3319"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "paths": [
+        "src/compiler/typed_mutation_audit.h",
+        "src/compiler/evaluator_typecheck.cpp",
+        "src/compiler/evaluator_mutation_boundary.cpp"
+      ],
+      "absent": [
+        "g_3319_"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "forbid": [
+        "tests/compiler/test_issue_3319.cpp",
+        "tests/issues/test_issue_3319.cpp"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "forbid_glob": [
+        "docs/design/3319-*"
+      ]
+    }
+  ]
+}

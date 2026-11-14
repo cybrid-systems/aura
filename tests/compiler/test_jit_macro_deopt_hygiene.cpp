@@ -672,8 +672,7 @@ static void ac2764_6_source_and_linter() {
     const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
     const auto t = read_file("tests/compiler/test_jit_macro_deopt_hygiene.cpp");
     const auto build = read_file("build.py");
-    const auto lint =
-        read_file("scripts/coverage/checks/check_ir_jit_macro_marker_enforcement_2764.py");
+    const auto lint = read_file("scripts/coverage/manifests/2764.json");
     CHECK(low.find("#2764") != std::string::npos, "AC6: lowering cites #2764");
     CHECK(pass.find("#2764") != std::string::npos, "AC6: InlinePass cites #2764");
     CHECK(rt.find("#2764") != std::string::npos, "AC6: runtime cites #2764");

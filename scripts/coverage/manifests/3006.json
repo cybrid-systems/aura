@@ -1,0 +1,98 @@
+{
+  "issue": 3006,
+  "title": "Issue #3006: !linear_fast_path_ok forces dirty-root revalidate.",
+  "ok": "OK: Issue #3006 folded from check_linear_fast_path_dirty_revalidate_3006.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "kLinearFastPathDirtyRevalidateIssue",
+        "g_linear_fast_path_dirty_revalidate_total",
+        "g_linear_fast_path_elide_blocked_production_total",
+        "SoftObserve"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "enforce_linear_boundary_consistency",
+        "g_linear_fast_path_dirty_revalidate_total",
+        "linear_fast_path_maybe_force_dirty_revalidate",
+        "late re-eval after Phase 1"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_escape_move_elision_gate.cpp",
+      "contains": [
+        "ac3006_1_production_dirty_root",
+        "ac3006_2_no_elide_under_false",
+        "ac3006_3_late_reeval_and_render_fast",
+        "ac3006_4_soft_observe",
+        "ac3006_5_schema_lineage",
+        "ac3006_6_linter_no_design"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/ir_executor_impl.cpp",
+      "contains": [
+        "never elides under a false predicate"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/lowering_linear_types_impl.cpp",
+      "contains": [
+        "aura_linear_fast_path_depth_or_densify_block"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "src/compiler/typed_mutation_audit_hooks.cpp",
+      "contains": [
+        "aura_linear_fast_path_depth_or_densify_block"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "path": "src/compiler/ownership_escape_lowering_gate.h",
+      "contains": [
+        "aura_linear_fast_path_depth_or_densify_block"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "path": "src/compiler/evaluator_primitives_obs_jit.cpp",
+      "contains": [
+        "schema-3006",
+        "linear-fast-path-dirty-revalidate-total",
+        "linear-fast-path-late-reeval-total",
+        "linear-fast-path-elide-blocked-production-total",
+        "schema-2964",
+        "schema-2899"
+      ]
+    },
+    {
+      "ac": "AC9",
+      "path": "build.py",
+      "contains": [
+        "cmd_linear_fast_path_dirty_revalidate_3006_coverage"
+      ]
+    },
+    {
+      "ac": "AC10",
+      "forbid_glob": [
+        "docs/design/*3006*"
+      ]
+    },
+    {
+      "ac": "AC11",
+      "forbid": [
+        "tests/compiler/test_issue_3006.cpp"
+      ]
+    }
+  ]
+}

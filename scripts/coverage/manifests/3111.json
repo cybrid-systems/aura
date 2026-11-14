@@ -1,0 +1,63 @@
+{
+  "issue": 3111,
+  "title": "Issue #3111: Fiber steal × held_ref / handoff_completed consistency",
+  "ok": "OK: Issue #3111 folded from check_mailbox_held_ref_steal_3111.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/serve/multi_fiber_mailbox.h",
+      "contains": [
+        "held_ref_post_steal_check_total",
+        "held_ref_stale_after_steal_total",
+        "revalidate_held_ref_after_steal()",
+        "bump_held_ref_stale_after_steal()",
+        "if (msg.held_ref_token.has_value() && !msg.handoff_completed)",
+        "handoff_reject_total"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_fiber_mutation.cpp",
+      "contains": [
+        "aura::serve::mf_mailbox::revalidate_held_ref_after_steal",
+        "aura_evaluator_on_steal_complete",
+        "typed_audit::production_defaults_active()",
+        "if (aura::compiler::typed_audit::production_defaults_active() && fiber_ptr)",
+        "steal_complete_total",
+        "if (aura::compiler::typed_audit::production_defaults_active() && fiber_ptr) {"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/serve/test_steal_complete_restamp_txn.cpp",
+      "contains": [
+        "3111 AC1",
+        "3111 AC3",
+        "3111 AC4",
+        "3111 AC2",
+        "3111 AC5",
+        "3111 AC6"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "build.py",
+      "contains": [
+        "Issue #3111"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "forbid": [
+        "tests/serve/test_issue_3111.cpp",
+        "tests/compiler/test_issue_3111.cpp"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "forbid_glob": [
+        "docs/design/3111-*"
+      ]
+    }
+  ]
+}

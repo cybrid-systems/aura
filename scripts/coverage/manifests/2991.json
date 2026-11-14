@@ -1,0 +1,75 @@
+{
+  "issue": 2991,
+  "title": "Issue #2991: coercion provenance completeness under high-frequency mutate.",
+  "ok": "OK: Issue #2991 folded from check_coercion_provenance_hf_mutate_2991.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/coercion_map.ixx",
+      "contains": [
+        "#2991",
+        "resolve_deferred_coercion_provenance",
+        "deferred_coercion_session_mid",
+        "g_coercion_blame_chain_complete_total",
+        "engine_active_pred",
+        "log_back_mid"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "explicit_source_mutation_id",
+        "last_predicate_cond_id_",
+        "leftover from an earlier/later mutate",
+        "cs_.active_mutation_id()"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/type_checker.ixx",
+      "contains": [
+        "explicit_source_mutation_id"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_coercion_stamp_at_add.cpp",
+      "contains": [
+        "ac2991_2_occurrence_predicate",
+        "ac2991_3_multi_mutate_loop",
+        "ac2991_4_metrics_schema",
+        "ac2991_1_session_beats_log_back",
+        "ac2991_5_source_linter"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/observability_metrics.h",
+      "contains": [
+        "coercion_blame_chain_complete_total"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "schema-2991",
+        "coercion-blame-chain-complete-total",
+        "coercion-blame-missing-total"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "forbid": [
+        "tests/compiler/test_issue_2991.cpp"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "forbid_glob": [
+        "docs/design/2991-*"
+      ]
+    }
+  ]
+}

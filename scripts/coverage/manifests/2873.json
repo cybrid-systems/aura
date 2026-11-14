@@ -1,0 +1,42 @@
+{
+  "issue": 2873,
+  "title": "Issue #2873: multi-frame named-let past early depth caps + prim shadow.",
+  "ok": "OK: Issue #2873 folded from check_multiframe_named_let_2873.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_eval_flat.cpp",
+      "contains": [
+        "#2873",
+        "only take the prim fast-path when the name is",
+        "is_primitive(*bound)",
+        "let take",
+        "true TCO for TW closure calls",
+        "current_id = cl.body_id"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/suite/multiframe_named_let_2873.aura",
+      "contains": [
+        "2873",
+        "deep-map",
+        "cache-put",
+        "OK-2873",
+        "let take"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "forbid": [
+        "tests/compiler/test_issue_2873.cpp"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "forbid_glob": [
+        "docs/design/2873-*"
+      ]
+    }
+  ]
+}

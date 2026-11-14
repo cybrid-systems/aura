@@ -1,0 +1,85 @@
+{
+  "issue": 2765,
+  "title": "Issue #2765: Guard success-path reflect auto_validate / hygiene_validate.",
+  "ok": "OK: Issue #2765 folded from check_guard_reflect_validate_2765.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "#2765",
+        "post_mutation_reflect_validate",
+        "bump_guard_reflect_validate",
+        "bump_guard_reflect_validate_fail",
+        "bump_guard_reflect_validate_strict_rollback",
+        "is_strict",
+        "guard-reflect-validate-force-rollback",
+        "bump_guard_reflect_validate_skipped"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_eval_flat.cpp",
+      "contains": [
+        "post_mutation_reflect_validate",
+        "MutationReflectHealth",
+        "MacroIntroduced"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/observability_metrics.h",
+      "contains": [
+        "guard_reflect_validate_total",
+        "guard_reflect_validate_skipped_total"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator.ixx",
+      "contains": [
+        "guard_reflect_validate_enabled_",
+        "get_guard_reflect_validate_enabled",
+        "set_guard_reflect_validate_enabled"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_obs_eval.cpp",
+      "contains": [
+        "schema-2765",
+        "issue-2765",
+        "guard-reflect-validate-total",
+        "guard-reflect-validate-fail-total",
+        "guard-reflect-validate-strict-rollback-total",
+        "guard-reflect-validate-skipped-total",
+        "guard-reflect-last-ok",
+        "596"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "tests/serve/test_guard_panic_reflect_fiber_resume_task6.cpp",
+      "contains": [
+        "ac2765_1_guard_success_wires_validate",
+        "ac2765_2_happy_path_bumps_total",
+        "ac2765_3_flag_off_skips",
+        "ac2765_4_macro_provenance_integration",
+        "ac2765_5_observability",
+        "ac2765_6_source_and_linter"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "forbid": [
+        "tests/serve/test_issue_2765.cpp"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "forbid_glob": [
+        "docs/design/2765-*"
+      ]
+    }
+  ]
+}

@@ -2164,8 +2164,7 @@ static void ac2928_6_source_and_linter() {
     const auto sh = read_file("src/compiler/runtime_shared.h");
     const auto t = read_file("tests/compiler/test_anonymous_residual_stable_id_policy.cpp");
     const auto build = read_file("build.py");
-    const auto lint =
-        read_file("scripts/coverage/checks/check_residual_remount_round_robin_2928.py");
+    const auto lint = read_file("scripts/coverage/manifests/2928.json");
     CHECK(rt.find("aura_residual_live_closure_remount_tick") != std::string::npos,
           "AC6: residual tick in runtime");
     CHECK(rt.find("g_residual_remount_cursor") != std::string::npos, "AC6: cursor atomic");
@@ -2479,8 +2478,7 @@ static void ac2977_6_source_and_linter() {
     const auto obs = read_file("src/compiler/observability_metrics.h");
     const auto t = read_file("tests/compiler/test_anonymous_residual_stable_id_policy.cpp");
     const auto build = read_file("build.py");
-    const auto lint =
-        read_file("scripts/coverage/checks/check_residual_remount_prefer_force_jit_2977.py");
+    const auto lint = read_file("scripts/coverage/manifests/2977.json");
     CHECK(rt.find("Issue #2977") != std::string::npos, "AC6: runtime cites #2977");
     // Issue #3607: the sid%64 helper is deleted; the prefer filter is the
     // #3229 define side set (reason masks are not sid bitmaps).
@@ -2653,8 +2651,7 @@ static void ac2978_6_source_and_linter() {
     const auto t = read_file("tests/compiler/test_anonymous_residual_stable_id_policy.cpp");
     const auto ft = read_file("tests/compiler/test_force_jit_repromote.cpp");
     const auto build = read_file("build.py");
-    const auto lint =
-        read_file("scripts/coverage/checks/check_reemit_success_sync_covered_remount_2978.py");
+    const auto lint = read_file("scripts/coverage/manifests/2978.json");
     CHECK(rt.find("Issue #2978") != std::string::npos, "AC6: runtime cites #2978");
     CHECK(rt.find("aura_sync_remount_covered_named_live_closures") != std::string::npos,
           "AC6: sync covered helper");
@@ -2829,7 +2826,7 @@ static void ac2980_6_source_and_linter() {
     CHECK(hh.find("Issue #2980") != std::string::npos, "AC6: header cites #2980");
     const auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
     CHECK(q.find("schema-2980") != std::string::npos, "AC6: obs_eval schema-2980");
-    const auto lint = read_file("scripts/coverage/checks/check_epoch_residual_merged_heal_2980.py");
+    const auto lint = read_file("scripts/coverage/manifests/2980.json");
     CHECK(!lint.empty() && lint.find("2980") != std::string::npos, "AC6: linter present");
     const auto build = read_file("build.py");
     CHECK(build.find("check_epoch_residual_merged_heal_2980") != std::string::npos,
@@ -3709,8 +3706,7 @@ int run_test_anonymous_residual_stable_id_policy() {
         const auto obs = read_file("src/compiler/observability_metrics.h");
         const auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
         const auto build = read_file("build.py");
-        const auto lint =
-            read_file("scripts/coverage/checks/check_pure_anon_sync_remount_budget_2850.py");
+        const auto lint = read_file("scripts/coverage/manifests/2850.json");
 
         // AC1: pure-anon walk + budget + remount
         CHECK(rt.find("aura_sync_remount_pure_anon_live_closures") != std::string::npos,

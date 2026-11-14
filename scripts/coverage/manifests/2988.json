@@ -1,0 +1,92 @@
+{
+  "issue": 2988,
+  "title": "Issue #2988: mutate success drives DefUse / IR / JIT incremental invalidate.",
+  "ok": "OK: Issue #2988 folded from check_mutate_invalidate_incremental_2988.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_primitives_mutate.cpp",
+      "contains": [
+        "Issue #2988",
+        "bump_binding_gen",
+        "jit_hotswap_invalidate_total",
+        "push_post_mutate_incremental_cascade",
+        "AURA_MUTATE_INVALIDATE_COARSE",
+        "mutate_invalidate_precise_enabled",
+        "precise_2988",
+        "atomic_batch_active()",
+        "suppress_extra_2988",
+        "#2038",
+        "enqueue_cascade_bfs_invalidate"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_post_mutate_push_cascade.cpp",
+      "contains": [
+        "ac2988_1_rebind_eval_fresh",
+        "ac2988_4_atomic_batch_suppress",
+        "ac2988_2_query_stats",
+        "ac2988_5_multi_round",
+        "ac2988_6_source_and_linter"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "query:mutate-invalidate-stats",
+        "schema-2988",
+        "dirty-nodes",
+        "defuse-bumps",
+        "jit-invalidate-count",
+        "binding-gen-bumps"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_obs_eval.cpp",
+      "contains": [
+        "schema-2988",
+        "schema-2038"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/observability_metrics.h",
+      "contains": [
+        "mutate_invalidate_dirty_nodes_total",
+        "mutate_invalidate_defuse_bumps_total",
+        "mutate_invalidate_jit_total",
+        "mutate_invalidate_binding_gen_bumps_total"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "push_post_mutate_incremental_cascade"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "path": "src/compiler/evaluator.ixx",
+      "contains": [
+        "#2988"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "forbid_glob": [
+        "docs/design/2988-*"
+      ]
+    },
+    {
+      "ac": "AC9",
+      "forbid": [
+        "tests/compiler/test_issue_2988.cpp",
+        "tests/test_edsl_mutate_invalidate_incremental.cpp"
+      ]
+    }
+  ]
+}

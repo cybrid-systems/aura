@@ -389,7 +389,7 @@ static void ac2966_4_source_cite() {
     const auto ixx = read_file("src/compiler/evaluator.ixx");
     const auto q = read_file("src/compiler/evaluator_primitives_query_obs_mid.cpp");
     const auto t = read_file("tests/compiler/test_current_source_roundtrip.cpp");
-    const auto lint = read_file("scripts/coverage/checks/check_ast_snapshot_fail_reason_2966.py");
+    const auto lint = read_file("scripts/coverage/manifests/2966.json");
     const auto build = read_file("build.py");
     CHECK(ast.find("2966") != std::string::npos, "2966 AC4: ast cites #2966");
     CHECK(ast.find("qr:snapshot-fail-reason") != std::string::npos, "2966 AC4: fail-reason prim");
@@ -722,7 +722,7 @@ static void ac_wiring() {
     CHECK(build.find("current-source-roundtrip-2921") != std::string::npos ||
               build.find("current_source_roundtrip_2921") != std::string::npos,
           "AC15: build.py coverage cmd");
-    const auto check = read_file("scripts/coverage/checks/check_current_source_roundtrip_2921.py");
+    const auto check = read_file("scripts/coverage/manifests/2921.json");
     CHECK(!check.empty() && check.find("2921") != std::string::npos, "AC15: coverage script");
 }
 

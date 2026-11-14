@@ -1,0 +1,79 @@
+{
+  "issue": 2909,
+  "title": "Issue #2909: force dependency closure / full-solve recover on cone truncate + outside drop.",
+  "ok": "OK: Issue #2909 folded from check_cone_truncate_force_closure_2909.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "#2909",
+        "g_cone_truncate_force_closure_total",
+        "g_cone_truncate_force_closure_attempt_total",
+        "g_cone_truncate_force_closure_reject_total",
+        "outside_drop",
+        "cone_outside_goal_drop",
+        "Soft + truncate + outside drop",
+        "publish_cone_outside_goal_drop",
+        "kConeTruncateForceClosureIssue",
+        "decision table"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_partial_cone_commit_gate.cpp",
+      "contains": [
+        "ac2909_1_production_force_recover_or_reject",
+        "ac2909_2_soft_observe_only",
+        "ac2909_3_quiet_zero_cost",
+        "ac2909_5_source_cite",
+        "ac2909_6_linter_and_no_design"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "publish_cone_outside_goal_drop"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "schema-2909",
+        "cone-truncate-force-closure-total",
+        "schema-2703",
+        "schema-2750",
+        "schema-2621"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/type_checker.ixx",
+      "contains": [
+        "#2909",
+        "try_goal_priority_reverify_before_full"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "build.py",
+      "contains": [
+        "cmd_cone_truncate_force_closure_2909"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "forbid_glob": [
+        "docs/design/2909-*"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "forbid": [
+        "tests/compiler/test_issue_2909.cpp"
+      ]
+    }
+  ]
+}

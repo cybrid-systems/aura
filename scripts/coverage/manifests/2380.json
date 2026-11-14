@@ -1,0 +1,65 @@
+{
+  "issue": 2380,
+  "title": "Issue #2380: nightly production-concurrency gate (canary + full chaos).",
+  "ok": "OK: Issue #2380 folded from check_production_concurrency_gate_2380.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp",
+      "contains": [
+        "AURA_PRODUCTION_CONCURRENCY_GATE",
+        "AURA_LOCK_ORDER_CANARY",
+        "AURA_CHAOS_FULL",
+        "production_concurrency_gate",
+        "Issue #2380",
+        "ac2380_inject_densify_fail",
+        "ac2380_inject_lock_order_violation",
+        "bump_densify_consistency_fail_total",
+        "force_audit_mode_for_test",
+        "g_lock_order_violation_total",
+        "ac2_inject_residual_panic",
+        "ac3_inject_snapshot_mismatch",
+        "densify_consistency_fail",
+        "Soft steal forbidden",
+        "is_steal_snapshot_soft_mode",
+        "lock-order violation delta",
+        "snapshot mismatch delta",
+        "residual defer clean",
+        "no hang",
+        "if (!chaos_full() && !prod_gate",
+        "if (!chaos_full() && !prod_gate && !soak)",
+        "90",
+        "SKIPPED",
+        "ac2380_production_concurrency_docs"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "build.py",
+      "contains": [
+        "cmd_production_concurrency",
+        "production-concurrency",
+        "AURA_PRODUCTION_CONCURRENCY_GATE",
+        "AURA_LOCK_ORDER_CANARY",
+        "cmd_production_concurrency_coverage"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": ".github/workflows/nightly.yml",
+      "contains": [
+        "AURA_PRODUCTION_CONCURRENCY_GATE",
+        "AURA_LOCK_ORDER_CANARY",
+        "AURA_CHAOS_FULL",
+        "production-concurrency"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_chaos_mutate_steal_gc_mailbox"
+      ]
+    }
+  ]
+}

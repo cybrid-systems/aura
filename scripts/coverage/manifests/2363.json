@@ -1,0 +1,95 @@
+{
+  "issue": 2363,
+  "title": "Issue #2363: complete GeneralObjectPin adoption coverage.",
+  "ok": "OK: Issue #2363 folded from check_general_object_pin_adopt_2363.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/lifetime_pin.hh",
+      "contains": [
+        "wire_general_object_create_pair",
+        "note_general_object_pin_mutate_wire",
+        "kGeneralObjectPinAdoptIssue = 2363",
+        "kGeneralObjectPinAdoptSiteCount = 7",
+        "Soft/Force do not relocate",
+        "verify_pins_under_moving_compact"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/core/test_general_object_pin_adopt.cpp",
+      "contains": [
+        "ac1_wire_pair",
+        "ac5_inventory_query",
+        "ac4_soft_zero",
+        "ac2_pin_moving_validate",
+        "ac3_unpinned_fail"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_primitives_mutate.cpp",
+      "contains": [
+        "pat_pool_pin",
+        "pat_flat_pin",
+        "wire_general_object_create_pair"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_mutate.cpp",
+      "absent": [
+        "pat_pin.pin(static_cast<void*>(pat_pool)"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_eval_flat.cpp",
+      "contains": [
+        "site 2/7",
+        "site 3/7"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "src/compiler/evaluator_primitives_query_workspace.cpp",
+      "contains": [
+        "site 4/7",
+        "site 5/7"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "path": "src/compiler/evaluator_primitives_eval.cpp",
+      "contains": [
+        "site 6/7",
+        "site 7/7"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "path": "src/compiler/evaluator_primitives_obs_eval.cpp",
+      "contains": [
+        "schema-2363",
+        "issue-2363",
+        "general-object-pin-adopt-complete-wired",
+        "general-object-pin-adopt-site-count",
+        "kGeneralObjectPinAdoptSiteCount"
+      ]
+    },
+    {
+      "ac": "AC9",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_general_object_pin_adopt"
+      ]
+    },
+    {
+      "ac": "AC10",
+      "path": "build.py",
+      "contains": [
+        "cmd_general_object_pin_adopt_coverage"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,92 @@
+{
+  "issue": 2903,
+  "title": "Issue #2903: deferred-under-boundary wait histogram + Agent-visible metrics.",
+  "ok": "OK: Issue #2903 folded from check_mailbox_under_boundary_wait_2903.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/serve/multi_fiber_mailbox.h",
+      "contains": [
+        "Issue #2903",
+        "note_mailbox_under_boundary_wait_sample",
+        "mailbox_under_boundary_wait_us_total",
+        "mailbox_under_boundary_wait_samples",
+        "mailbox_under_boundary_wait_us_max",
+        "mailbox_under_boundary_wait_us_p50",
+        "mailbox_under_boundary_wait_us_p99",
+        "mailbox_under_boundary_wait_hist",
+        "kUnderBoundaryWaitHistBuckets",
+        "mailbox_under_boundary_wait_drop_total",
+        "note_mailbox_under_boundary_wait_sample(wait_us",
+        "/*dropped=*/true",
+        "if (depth == 0)",
+        "happy path — zero extra work beyond this load",
+        "never from the happy Ok path",
+        "note_mailbox_deferred_under_boundary",
+        "mailbox_deferred_flush_latency_us_total",
+        "drain_deferred_under_budget"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_primitives_messaging.cpp",
+      "contains": [
+        "schema-2903",
+        "mailbox-under-boundary-wait-us-p50",
+        "mailbox-under-boundary-wait-us-p99",
+        "mailbox-under-boundary-wait-us-max",
+        "mailbox-under-boundary-wait-wired",
+        "mailbox-under-boundary-wait-hist-lt-100us",
+        "mailbox-under-boundary-wait-hist-ge-100ms",
+        "schema-2849",
+        "schema-2511",
+        "schema-2378"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/mutation_concurrency_health.hh",
+      "contains": [
+        "mailbox_under_boundary_wait_us_max"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "component-mailbox-under-boundary-wait-us-max"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/serve/test_mailbox_recv_mutation_boundary.cpp",
+      "contains": [
+        "ac2903_1_wait_recorded_after_exit_deliver",
+        "ac2903_2_no_defer_zero_extra",
+        "ac2903_3_schema_query_additive",
+        "ac2903_4_chaos_lite_long_vs_short_hold",
+        "ac2903_5_source_cite_no_docs_design",
+        "Issue #2903"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "build.py",
+      "contains": [
+        "cmd_mailbox_under_boundary_wait_2903"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "forbid_glob": [
+        "docs/design/2903-*"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "forbid": [
+        "tests/serve/test_issue_2903.cpp"
+      ]
+    }
+  ]
+}

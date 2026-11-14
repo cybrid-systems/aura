@@ -1,0 +1,94 @@
+{
+  "issue": 3317,
+  "title": "Issue #3317: ADT exhaust complete recheck before TypeLinearCommitProof",
+  "ok": "OK: Issue #3317 folded from check_adt_exhaust_outermost_recheck_3317.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/type_checker.ixx",
+      "contains": [
+        "kAdtExhaustOutermostRecheckIssue = 3317",
+        "recheck_all_live_adt_exhaust_before_proof"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "recheck_all_live_adt_exhaust_before_proof",
+        "adt_exhaust_soft_observe_total",
+        "force_adt_exhaust_undermark_into_cone",
+        "seed_adt_matches_for_dirty_types",
+        "check_match_exhaustiveness",
+        "adt_exhaust_production_reject_total"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "recheck_all_live_adt_exhaust_before_proof",
+        "Issue #3317",
+        "force_reason=*/16",
+        "clear_type_export_authority"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_adt_match_goal_table.cpp",
+      "contains": [
+        "ac3317_1_production_no_green_nonexhaustive",
+        "ac3317_2_soft_observe",
+        "ac3317_3_reuse_apis",
+        "ac3317_4_source_linter"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/dirty_propagation.ixx",
+      "contains": [
+        "force_adt_exhaust_sites_into_cone"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "src/compiler/evaluator_typecheck.cpp",
+      "contains": [
+        "Issue #3317"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "paths": [
+        "src/compiler/evaluator_primitives_query.cpp",
+        "src/compiler/evaluator_primitives_query_type_stats.cpp"
+      ],
+      "absent": [
+        "schema-3317"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "paths": [
+        "src/compiler/type_checker_impl.cpp",
+        "src/compiler/evaluator_mutation_boundary.cpp"
+      ],
+      "absent": [
+        "g_3317_"
+      ]
+    },
+    {
+      "ac": "AC9",
+      "forbid": [
+        "tests/compiler/test_issue_3317.cpp",
+        "tests/issues/test_issue_3317.cpp"
+      ]
+    },
+    {
+      "ac": "AC10",
+      "forbid_glob": [
+        "docs/design/3317-*"
+      ]
+    }
+  ]
+}

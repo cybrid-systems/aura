@@ -1817,8 +1817,7 @@ static void ac2957_5_source_and_linter() {
     const auto lcp = read_file("src/core/lifetime_consistency_proof.hh");
     const auto t = read_file("tests/serve/test_steal_complete_restamp_txn.cpp");
     const auto build = read_file("build.py");
-    const auto lint =
-        read_file("scripts/coverage/checks/check_steal_lifetime_proof_residual_2957.py");
+    const auto lint = read_file("scripts/coverage/manifests/2957.json");
     CHECK(hdr.find("kStealSafetyLifetimeProofResidualIssue = 2957") != std::string::npos ||
               hdr.find("Issue #2957") != std::string::npos,
           "AC5: hdr cites #2957");
@@ -2144,8 +2143,7 @@ static void ac3001_5_source_and_linter() {
     const auto chaos = read_file("tests/serve/test_chaos_steal_mutation_gc.cpp");
     const auto t = read_file("tests/serve/test_steal_complete_restamp_txn.cpp");
     const auto build = read_file("build.py");
-    const auto lint =
-        read_file("scripts/coverage/checks/check_chaos_steal_lifetime_envframe_3001.py");
+    const auto lint = read_file("scripts/coverage/manifests/3001.json");
     CHECK(cpp.find("Issue #3001") != std::string::npos, "AC5: steal_safety.cpp cites #3001");
     CHECK(hdr.find("Issue #3001") != std::string::npos, "AC5: steal_safety.h cites #3001");
     CHECK(cpp.find("StealInvariant::LifetimeProofOk") != std::string::npos,
@@ -2416,8 +2414,7 @@ int run_test_steal_complete_restamp_txn() {
         const auto build3111 = read_file("build.py");
         CHECK(build3111.find("check_mailbox_held_ref_steal_3111") != std::string::npos,
               "3111 AC5: build.py wires 3111 linter");
-        const auto lint3111 =
-            read_file("scripts/coverage/checks/check_mailbox_held_ref_steal_3111.py");
+        const auto lint3111 = read_file("scripts/coverage/manifests/3111.json");
         CHECK(!lint3111.empty() && lint3111.find("Issue #3111") != std::string::npos,
               "3111 AC5: 3111 linter exists");
         // AC6: no test_issue_3111.cpp, no docs/design/3111-*
@@ -2482,8 +2479,7 @@ int run_test_steal_complete_restamp_txn() {
         const auto build3369 = read_file("build.py");
         CHECK(build3369.find("check_mailbox_held_ref_steal_3369") != std::string::npos,
               "3369 AC6: build.py wires 3369 linter");
-        const auto lint3369 =
-            read_file("scripts/coverage/checks/check_mailbox_held_ref_steal_3369.py");
+        const auto lint3369 = read_file("scripts/coverage/manifests/3369.json");
         CHECK(!lint3369.empty() && lint3369.find("Issue #3369") != std::string::npos,
               "3369 AC6: 3369 linter exists");
         CHECK(read_file("docs/design/3369-mailbox-held-ref-walk.md").empty(),

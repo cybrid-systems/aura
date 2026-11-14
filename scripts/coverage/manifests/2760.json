@@ -1,0 +1,95 @@
+{
+  "issue": 2760,
+  "title": "Issue #2760: ImpactScope / dirty-bit mask-AND production enablement.",
+  "ok": "OK: Issue #2760 folded from check_region_impact_mask_admit_2760.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/mutation_hold_budget.h",
+      "contains": [
+        "Issue #2760",
+        "effective_region_cone_mask",
+        "impact_block_to_region_mask_bit",
+        "region_key_as_impact_mask",
+        "g_mutation_region_impact_mask_admit_total",
+        "kMutationRegionImpactMaskIssue = 2760",
+        "(mask_a & mask_b) == 0",
+        "return a != 0 && b != 0 && a != b;",
+        "if (tls_cone_mask != 0)"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "effective_region_cone_mask",
+        "g_mutation_region_impact_mask_admit_total.fetch_add(1,",
+        "AdmissionRejected: region-overlap",
+        "metric-only",
+        "g_last_admitted_cone_mask_soft",
+        "region_or_mask",
+        "region_shard_",
+        "atomic_batch_active",
+        "workspace_region_fallback_global_total"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_primitives_agent.cpp",
+      "contains": [
+        "note_parallel_task_cone_mask",
+        "cone-masks",
+        "cone_masks"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/serve/parallel_orch.h",
+      "contains": [
+        "cone_mask"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "Issue #2760",
+        "mutation-region-impact-mask-admit-total",
+        "mutation-region-impact-mask-wired",
+        "\"schema-2760\"",
+        "\"issue-2760\"",
+        "mutation-region-concurrent-admit-total",
+        "mutation-region-concurrent-cone-admit-total",
+        "mutation-region-mask-disjoint-admit-total",
+        "\"schema-2724\"",
+        "\"schema-2754\"",
+        "\"schema-2757\""
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "tests/serve/test_mailbox_hold_starvation_hard.cpp",
+      "contains": [
+        "ac2760_1_impact_mask_concurrent_admit",
+        "ac2760_2_soft_and_quiet",
+        "ac2760_4_densify_isolation",
+        "ac2760_5_additive_observability",
+        "ac2760_6_source_and_linter",
+        "ac2757_1_zero_key_mask_disjoint_admit",
+        "ac2754_1_cone_disjoint_concurrent_admit"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "forbid": [
+        "tests/serve/test_issue_2760.cpp"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "forbid_glob": [
+        "docs/design/2760-*"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,85 @@
+{
+  "issue": 2361,
+  "title": "Issue #2361: densify envframe_ok real per-call check coverage.",
+  "ok": "OK: Issue #2361 folded from check_densify_envframe_ok_2361.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "envframe_ok = true",
+        "Issue #2361",
+        "force_densify_remap_pairing",
+        "note_last_densify_envframe_ok",
+        "bump_densify_consistency_fail_total",
+        "had_moving_densify"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_densify_envframe_ok.cpp",
+      "contains": [
+        "ac1_soft_envframe_ok",
+        "force_reason",
+        "envframe",
+        "ac2_ownership_fail_envframe",
+        "ac4_query_schema",
+        "ac5_source_cite"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_env.cpp",
+      "contains": [
+        "scan_live_env_frame_refs_after_densify"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/core/envframe_lifetime.ixx",
+      "contains": [
+        "densify_ownership_scan_fail_total",
+        "inject_densify_ownership_scan_fail_for_test"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_obs_jit.cpp",
+      "contains": [
+        "schema-2361",
+        "issue-2361",
+        "densify-envframe-axis-wired",
+        "densify-ownership-scan-fail-total",
+        "last_densify_envframe_ok"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "src/compiler/evaluator_primitives_obs_jit.cpp",
+      "absent": [
+        "densify_envframe_ok = true"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "path": "src/core/densify_consistency_report.h",
+      "contains": [
+        "last_densify_envframe_ok"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_densify_envframe_ok"
+      ]
+    },
+    {
+      "ac": "AC9",
+      "path": "build.py",
+      "contains": [
+        "cmd_densify_envframe_ok_coverage"
+      ]
+    }
+  ]
+}

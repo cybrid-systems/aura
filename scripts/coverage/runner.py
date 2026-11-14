@@ -23,6 +23,7 @@ Policy: new issues add a manifest; reserve check_*.py for custom logic only.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import subprocess
 import sys
@@ -31,6 +32,17 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 MANIFEST_DIR = Path(__file__).resolve().parent / "manifests"
+
+# Brace-matched bodies. A manifest `symbol` searches that block, not a
+# fixed character window (those rot when the body grows).
+_scan_spec = importlib.util.spec_from_file_location(
+    "coverage_source_scan",
+    Path(__file__).resolve().parent / "checks" / "_source_scan.py",
+)
+_scan = importlib.util.module_from_spec(_scan_spec)
+assert _scan_spec.loader is not None
+_scan_spec.loader.exec_module(_scan)
+source_block_after = _scan.source_block_after
 
 # Diffing these paths forces a full manifest run under --changed.
 ALWAYS_ALL_PREFIXES = (
@@ -68,17 +80,46 @@ def _read_expanded(rel: str) -> str:
 
 
 def _haystack(check: dict) -> tuple[str, str]:
-    """Return (label, text) for a check row."""
+    """Return (label, text) for a check row.
+
+    `symbol` limits the search to the brace-matched block that starts at
+    the first occurrence. There is no character budget.
+    """
     if "path" in check:
         rel = check["path"]
         expanded = _expand_query_peels(rel)
         label = rel if len(expanded) == 1 else f"{rel}(+{len(expanded) - 1} peels)"
-        return label, _read_expanded(rel)
-    if "paths" in check:
+        text = _read_expanded(rel)
+    elif "paths" in check:
         paths = check["paths"]
         label = "+".join(paths)
-        return label, "".join(_read_expanded(p) for p in paths)
-    return "", ""
+        text = "".join(_read_expanded(p) for p in paths)
+    else:
+        return "", ""
+    symbol = check.get("symbol")
+    if not symbol:
+        return label, text
+    idx = text.find(symbol)
+    if idx < 0:
+        return f"{label} symbol {symbol!r}", ""
+    body = source_block_after(text, idx)
+    return f"{label}::{symbol}", body
+
+
+def _as_needles(value: object) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list):
+        return [n for n in value if isinstance(n, str)]
+    return []
+
+
+def _absent_needles(check: dict) -> list[str]:
+    """Substrings that must not appear. Distinct from `forbid` (a path)."""
+    out: list[str] = []
+    for key in ("absent", "must_not_contain", "forbid_contains", "forbidden_substring"):
+        out.extend(_as_needles(check.get(key)))
+    return out
 
 
 def run_manifest(data: dict) -> list[str]:
@@ -88,15 +129,27 @@ def run_manifest(data: dict) -> list[str]:
         ac = check.get("ac", f"row{i}")
         prefix = f"#{issue} {ac}"
 
-        if "forbid" in check:
+        if "forbid" in check and "path" not in check and "paths" not in check:
             for rel in check["forbid"]:
                 if (ROOT / rel).is_file():
-                    fails.append(f"{prefix}: unexpected design/doc file {rel!r}")
+                    fails.append(f"{prefix}: unexpected file {rel!r}")
+            continue
+
+        if "forbid_glob" in check and "path" not in check and "paths" not in check:
+            for pattern in _as_needles(check.get("forbid_glob")):
+                hits = sorted(p for p in ROOT.glob(pattern) if p.is_file())
+                if hits:
+                    shown = ", ".join(str(p.relative_to(ROOT)) for p in hits[:4])
+                    fails.append(f"{prefix}: forbid_glob {pattern!r} matched {shown}")
             continue
 
         label, text = _haystack(check)
-        if ("path" in check or "paths" in check) and not text and ("contains" in check or "contains_any" in check):
+        wants_text = bool(check.get("contains") or check.get("contains_any") or _absent_needles(check))
+        if ("path" in check or "paths" in check) and not text and (check.get("contains") or check.get("contains_any")):
             fails.append(f"{prefix}: empty or missing source {label!r}")
+            continue
+        if wants_text and check.get("symbol") and not text:
+            fails.append(f"{prefix}: no brace-matched body for {label}")
             continue
 
         # clang-format may split adjacent string literals across lines
@@ -111,6 +164,10 @@ def run_manifest(data: dict) -> list[str]:
         any_needles = check.get("contains_any", [])
         if any_needles and not any(n in text or n in normalized for n in any_needles):
             fails.append(f"{prefix}: none of {any_needles!r} in {label}")
+
+        for needle in _absent_needles(check):
+            if needle in text:
+                fails.append(f"{prefix}: forbidden substring {needle!r} in {label}")
 
     return fails
 

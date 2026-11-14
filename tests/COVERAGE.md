@@ -17,7 +17,10 @@ decision tree. Gate enforces it (`check_coverage_policy.py`).
 3. Static “this source still contains X” (identifier, stamp, forbid-file)?
    → scripts/coverage/manifests/<N>.json
      { "issue": N, "checks": [ { "path": "...", "contains": ["..."] } ] }
-     Optional: contains_any, forbid.
+     Optional: contains_any, absent, forbid, forbid_glob, symbol.
+     `symbol` searches the brace-matched body (`source_block_after`),
+     not a fixed character window. `absent` is a substring that must
+     not appear. `forbid` is a path that must not exist.
      STOP. Do NOT add check_*.py. Do NOT wire a new cmd_* in build.py.
 
 4. Static check that needs control flow (window around a function,
@@ -56,6 +59,7 @@ better than a JSON row, and they break on renames.
 | `scripts/coverage/runner.py` | runs manifests |
 | `scripts/coverage/run_checks.py` | gate: remaining check_*.py + manifests |
 | `scripts/coverage/fold_simple_checks.py` | fold leftover substring scripts (`--wrappers-only` / `--apply`) |
+| `scripts/coverage/retarget_pins.py` | rewrite a manifest path when a test file moves (`--from` / `--to`) |
 | `scripts/coverage/simple_check_grandfather.txt` | existing substring `check_*.py` still allowed; **do not add names** |
 | `scripts/coverage/manifest_skip.txt` | stale manifests skipped by `runner.py --all` |
 
@@ -75,11 +79,17 @@ python3 scripts/coverage/run_checks.py --changed
     {
       "ac": "AC1",
       "path": "src/compiler/evaluator_eval_flat.cpp",
-      "contains": ["bind_sym_intern_pool(p)", "Issue #3457"]
+      "contains": ["bind_sym_intern_pool(p)", "Issue #3457"],
+      "symbol": "bind_sym_intern_pool"
     },
     {
       "ac": "AC2",
       "forbid": ["tests/compiler/test_issue_3457.cpp"]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_eval_flat.cpp",
+      "absent": ["a substring that must not return"]
     }
   ]
 }

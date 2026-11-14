@@ -1,0 +1,87 @@
+{
+  "issue": 3084,
+  "title": "Issue #3084: Soft residual non-identity CastOp must force deopt.",
+  "ok": "OK: Issue #3084 folded from check_hot_residual_soft_must_deopt_3084.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/castop_density_policy.hh",
+      "contains": [
+        "kCastOpHotResidualSoftMustDeoptIssue = 3084",
+        "g_hot_residual_soft_must_deopt_total",
+        "g_hot_residual_soft_must_deopt_pending",
+        "Issue #3084",
+        "aura_jit_batch_deopt_for",
+        "on_stale_deopt",
+        "on_force_jit_for_reason",
+        "g_hot_residual_density_keep_total",
+        "g_hot_residual_relower_total",
+        "leftover == 0"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/optimization_passes.ixx",
+      "contains": [
+        "Issue #3084",
+        "note_hot_residual_nonidentity_castops",
+        "Soft / identity path: zero extra"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_castop_density_hard.cpp",
+      "contains": [
+        "ac3084_1_soft_residual_must_deopt",
+        "ac3084_2_production_relower_unchanged",
+        "ac3046_residual_nonidentity",
+        "ac3084_3_quiet_zero",
+        "ac3084_4_blame_default_unchanged",
+        "ac3084_5_schema_and_linter"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/coercion_provenance_policy.hh",
+      "contains": [
+        "require_blame_complete_on_commit = false (#2221 observe-only)",
+        "require_blame_complete_on_commit = true under Restricted/Strict"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/castop_density_policy.hh",
+      "absent": [
+        "require_blame_complete_on_commit"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "schema-3084",
+        "hot-residual-soft-must-deopt-wired",
+        "schema-3046"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "path": "tests/compiler/test_dead_coercion_dirty_cone.cpp",
+      "contains": [
+        "sweep_production_hot_residual_castops"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "forbid": [
+        "tests/compiler/test_issue_3084.cpp"
+      ]
+    },
+    {
+      "ac": "AC9",
+      "forbid_glob": [
+        "docs/design/3084-*"
+      ]
+    }
+  ]
+}

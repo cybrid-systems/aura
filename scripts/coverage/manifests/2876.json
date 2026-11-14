@@ -1,0 +1,66 @@
+{
+  "issue": 2876,
+  "title": "Issue #2876: std/ant mutation-type ranking as swarm kind:ant.",
+  "ok": "OK: Issue #2876 folded from check_swarm_ant_bridge_2876.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "lib/std/ant.aura",
+      "contains": [
+        "pheromone:evaporate!",
+        "pheromone:types",
+        "colony:search",
+        "#2876",
+        "mutation-type"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "lib/std/swarm.aura",
+      "contains": [
+        "swarm-step-ant!",
+        "pheromone:rank",
+        "pheromone:update",
+        "pheromone:evaporate!",
+        "*swarm-ant-ops*",
+        "ops",
+        "evaporate",
+        "#2876"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/suite/swarm_ant_bridge_2876.aura",
+      "contains": [
+        "OK-2876",
+        "colony:search"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "docs/stdlib/ant.md",
+      "contains": [
+        "#2876"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "docs/stdlib/swarm.md",
+      "contains": [
+        "mutation-type"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "forbid": [
+        "tests/compiler/test_issue_2876.cpp"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "forbid_glob": [
+        "docs/design/2876-*"
+      ]
+    }
+  ]
+}

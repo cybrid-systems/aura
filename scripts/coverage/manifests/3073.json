@@ -1,0 +1,67 @@
+{
+  "issue": 3073,
+  "title": "Issue #3073: production soak readiness gate.",
+  "ok": "OK: Issue #3073 folded from check_chaos_production_readiness_3073.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp",
+      "contains": [
+        "Issue #3073",
+        "prod_ready_gate",
+        "steal_safety_residual_envframe_lag_total_v_read",
+        "steal_safety_residual_lifetime_proof_reject_total_v_read",
+        "max_hold_after_cancel_us",
+        "#3073: residual_envframe_lag delta == 0",
+        "#3073: residual_lifetime_proof_reject delta == 0",
+        "#3073: max hold-after-cancel exceeds bound",
+        "#2755: residual_boundary_unsafe delta == 0",
+        "production_defaults_active()",
+        "print only",
+        "residual_zero_gate",
+        "ac3073_1_production_soak_binds_residual_and_hold",
+        "ac3073_2_soft_unit_no_abort",
+        "ac3073_3_reuse_counters_additive",
+        "ac3073_4_source_linter_gate"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/serve/steal_safety.h",
+      "contains": [
+        "g_steal_safety_residual_envframe_lag_total",
+        "g_steal_safety_residual_lifetime_proof_reject_total",
+        "g_steal_safety_residual_boundary_unsafe_total"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/mutation_hold_budget.h",
+      "contains": [
+        "kChaosProductionReadinessIssue = 3073"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "schema-3073",
+        "issue-3073",
+        "production-readiness-soak-gate-wired",
+        "schema-3071"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "forbid": [
+        "tests/serve/test_issue_3073.cpp"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "forbid_glob": [
+        "docs/design/3073-*"
+      ]
+    }
+  ]
+}

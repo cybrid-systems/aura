@@ -1,0 +1,71 @@
+{
+  "issue": 3064,
+  "title": "Issue #3064: InlinePass refuses MacroIntroduced *body* instructions.",
+  "ok": "OK: Issue #3064 folded from check_inline_macro_body_marker_3064.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/pass_impls.ixx",
+      "contains": [
+        "Issue #3064",
+        "body_has_macro_introduced",
+        "body_has_macro_introduced(*callee)",
+        "body_has_macro_introduced(callee)",
+        "body_has_macro_introduced(func)"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_jit_macro_introduced_preserve.cpp",
+      "contains": [
+        "3064 AC1",
+        "3064 AC2",
+        "3064 AC3: User fn + MacroIntroduced body refused",
+        "3064 AC4"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/lowering.ixx",
+      "contains": [
+        "Issue #3064",
+        "source_marker",
+        "propagate_marker_from_ast"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "schema-3064",
+        "inline-body-macro-hygiene-wired"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "cmd_inline_macro_body_marker_3064"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "forbid": [
+        "tests/compiler/test_issue_3064.cpp"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "forbid_glob": [
+        "docs/design/3064-*"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "absent": [
+        "query:inline-body-macro"
+      ]
+    }
+  ]
+}

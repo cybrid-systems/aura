@@ -1,0 +1,80 @@
+{
+  "issue": 3231,
+  "title": "Issue #3231: production QueryResult must force schema-2 full provenance.",
+  "ok": "OK: Issue #3231 folded from check_query_result_layout_only_reject_3231.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/workspace_epoch.hh",
+      "contains": [
+        "kQueryResultLayoutOnlyRejectIssue = 3231",
+        "kQueryResultLayoutOnlyErrorKind",
+        "kQueryResultMatchSchema2",
+        "InvalidTenant",
+        "InvalidFiber",
+        "InvalidCowLayer",
+        "InvalidMutation",
+        "push_match_full",
+        "production_defaults_active()",
+        "kQueryResultFullProvenanceIssue = 3103"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_primitives_query_workspace.cpp",
+      "contains": [
+        "query-result-layout-only",
+        "production_defaults_active()",
+        "note_query_result_full_provenance_tenant_mismatch",
+        "note_query_result_full_provenance_stale"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_query_result_full_provenance.cpp",
+      "contains": [
+        "test_ac3231_production_as_query_result",
+        "test_ac3231_schema2_marker_and_source"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_query_epoch_contract.cpp",
+      "contains": [
+        "3231: Soft-default bare list",
+        "3231"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "paths": [
+        "src/compiler/evaluator_primitives_query.cpp",
+        "src/compiler/evaluator_primitives_query_type_stats.cpp",
+        "src/compiler/evaluator_primitives_query_workspace.cpp"
+      ],
+      "absent": [
+        "schema-3231"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "src/core/workspace_epoch.hh",
+      "absent": [
+        "g_3231_"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "forbid": [
+        "tests/issues/test_issue_3231.cpp",
+        "tests/compiler/test_issue_3231.cpp"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "forbid_glob": [
+        "docs/design/3231-*"
+      ]
+    }
+  ]
+}

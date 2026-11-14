@@ -1,0 +1,95 @@
+{
+  "issue": 2764,
+  "title": "Issue #2764: residual IR/JIT/AOT source_marker + respect_macro_hygiene_ enforcement.",
+  "ok": "OK: Issue #2764 folded from check_ir_jit_macro_marker_enforcement_2764.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/lowering.ixx",
+      "contains": [
+        "#2764",
+        "propagate_marker_from_ast",
+        "parent_of",
+        "kMaxAncestorWalk",
+        "SyntaxMarker::User",
+        "MacroIntroduced"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/pass_impls.ixx",
+      "contains": [
+        "#2764",
+        "respect_macro_hygiene_",
+        "macro_hygiene_skipped_",
+        "source_marker == 1",
+        "marker == 1"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/service.ixx",
+      "contains": [
+        "restore_macro_introduced_from_ir_after_deopt",
+        "aura_multi_eval_macro_marker_preserved_inc",
+        "#2764"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/aura_jit_runtime.cpp",
+      "contains": [
+        "g_macro_deopt_restore_fn",
+        "aura_jit_macro_introduced_deopt_inc",
+        "aura_multi_eval_macro_marker_preserved_inc",
+        "aura_multi_eval_macro_marker_preserved_total",
+        "aura_hygiene_ir_ancestor_propagation"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "schema-2764",
+        "issue-2764",
+        "marker-ancestor-propagation-total",
+        "multi-eval-macro-marker-preserved-total",
+        "propagate-marker-from-ast-wired",
+        "inline-macro-hygiene-hard-filter-wired",
+        "schema-2100",
+        "2022"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "src/compiler/observability_metrics.h",
+      "contains": [
+        "#2764"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "path": "tests/compiler/test_jit_macro_deopt_hygiene.cpp",
+      "contains": [
+        "ac2764_1_propagate_and_inline_hard_filter",
+        "ac2764_2_deopt_restore_fidelity",
+        "ac2764_3_multi_eval_no_marker_loss",
+        "ac2764_4_non_macro_quiet",
+        "ac2764_5_observability",
+        "ac2764_6_source_and_linter"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "forbid": [
+        "tests/compiler/test_issue_2764.cpp"
+      ]
+    },
+    {
+      "ac": "AC9",
+      "forbid_glob": [
+        "docs/design/2764-*"
+      ]
+    }
+  ]
+}

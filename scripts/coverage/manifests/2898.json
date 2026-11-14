@@ -1,0 +1,72 @@
+{
+  "issue": 2898,
+  "title": "Issue #2898: explicit required TypeId invariant set on composite_txn_commit.",
+  "ok": "OK: Issue #2898 folded from check_composite_required_type_2898.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "2898",
+        "composite_required_type_fail_total",
+        "composite_required_type_observe_total",
+        "set_composite_required_solved",
+        "required_type_ok",
+        "composite_required_type_checked_total",
+        "required_type"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_typecheck.cpp",
+      "contains": [
+        "composite_required_type_fail_total",
+        "stage_composite_required_unbound_var_for_test",
+        "empty",
+        "observe",
+        "Soft",
+        "composite_txn_commit"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "schema-2898",
+        "composite-required-type-fail-total",
+        "composite-required-type-wired",
+        "schema-2610"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_composite_txn_commit.cpp",
+      "contains": [
+        "ac2898_1_production_required_miss_rejects",
+        "ac2898_2_empty_required_zero_cost",
+        "ac2898_3_soft_observe_only",
+        "ac2898_4_additive_query",
+        "ac2898_5_source_cite"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/observability_metrics.h",
+      "contains": [
+        "composite_required_type_fail_total"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "forbid_glob": [
+        "docs/design/2898-*"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "forbid": [
+        "tests/compiler/test_issue_2898.cpp"
+      ]
+    }
+  ]
+}

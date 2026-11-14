@@ -62,7 +62,7 @@
     },
     {
       "ac": "AC5",
-      "path": "scripts/coverage/checks/check_production_concurrency_gate_2380.py",
+      "path": "build.py",
       "contains": [
         "AURA_PRODUCTION_CONCURRENCY_GATE"
       ]

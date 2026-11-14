@@ -1,0 +1,76 @@
+{
+  "issue": 2962,
+  "title": "Issue #2962: production hard-reject when cone-truncate + outside drop recover fails.",
+  "ok": "OK: Issue #2962 folded from check_cone_outside_goal_drop_recover_reject_2962.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "#2962",
+        "kConeOutsideGoalDropRecoverRejectIssue",
+        "g_cone_outside_goal_drop_recover_ok_total",
+        "g_cone_outside_goal_drop_reject_total",
+        "solve_status != 0",
+        "cone_outside_goal_drop",
+        "Soft vs production decision table"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_partial_cone_commit_gate.cpp",
+      "contains": [
+        "ac2962_1_recover_non_solved_hard_reject",
+        "ac2962_3_soft_quiet",
+        "quiet no force-closure attempt",
+        "ac2962_4_schema_and_source",
+        "ac2962_5_linter_no_design"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "schema-2962",
+        "cone-outside-goal-drop-recover-ok-total",
+        "cone-outside-goal-drop-reject-total",
+        "schema-2909",
+        "schema-2703",
+        "schema-2750"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/type_checker.ixx",
+      "contains": [
+        "#2962"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "publish_cone_outside_goal_drop"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "build.py",
+      "contains": [
+        "cmd_cone_outside_goal_drop_recover_reject_2962"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "forbid_glob": [
+        "docs/design/*2962*"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "forbid": [
+        "tests/compiler/test_issue_2962.cpp"
+      ]
+    }
+  ]
+}

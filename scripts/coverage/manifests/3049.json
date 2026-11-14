@@ -1,0 +1,76 @@
+{
+  "issue": 3049,
+  "title": "Issue #3049: per-tenant ResourceQuota under multi-tenant production.",
+  "ok": "OK: Issue #3049 folded from check_quota_per_tenant_3049.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/resource_quota.hh",
+      "contains": [
+        "kQuotaPerTenantIssue",
+        "TenantId tenant",
+        "check_and_consume_tenant",
+        "set_tenant_limit",
+        "quota_per_tenant_enabled",
+        "AURA_QUOTA_PER_TENANT",
+        "AURA_MULTI_TENANT",
+        "quota-exceeded:tenant=",
+        "quota_reject_by_tenant_total",
+        "rejects_total",
+        "AURA_SANDBOX"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/serve/scheduler.cpp",
+      "contains": [
+        "check_and_consume_fiber(spawn_tenant)",
+        "quota_tenant_id"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/orch/agent_spawn.h",
+      "contains": [
+        "check_orchestration_fibers",
+        "orch_tenant"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/serve/parallel_orch.h",
+      "contains": [
+        "current_quota_tenant"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_obs_jit.cpp",
+      "contains": [
+        "schema-3049",
+        "quota-reject-by-tenant-total",
+        "quota-per-tenant-wired"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "tests/core/test_tenant_isolation_enforcement.cpp",
+      "contains": [
+        "3049",
+        "quota-exceeded:tenant=1:dim=fibers"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "forbid": [
+        "tests/core/test_issue_3049.cpp"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "forbid_glob": [
+        "docs/design/3049-*"
+      ]
+    }
+  ]
+}

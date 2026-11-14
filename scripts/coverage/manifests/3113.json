@@ -65,6 +65,44 @@
         "3113 AC6",
         "typed-trail-miss=1"
       ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_primitives_security.cpp",
+      "contains": [
+        "schema={}",
+        "typed_kind",
+        "typed_outcome",
+        "kTypedMutationAuditTrailSize",
+        "WAL-off stay zero extra I/O"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_security.cpp",
+      "absent": [
+        "AURA_TYPED_TRAIL_SIZE"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "Issue #3113"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "forbid": [
+        "tests/compiler/test_issue_3113.cpp",
+        "tests/serve/test_issue_3113.cpp"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "forbid_glob": [
+        "docs/design/3113-*"
+      ]
     }
   ]
 }

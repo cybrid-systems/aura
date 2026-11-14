@@ -1,0 +1,68 @@
+{
+  "issue": 2778,
+  "title": "Issue #2778: g_scope_bp_map lifecycle (erase / reset / LRU at cap).",
+  "ok": "OK: Issue #2778 folded from check_scope_bp_map_lifecycle_2778.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/orch/agent_spawn.h",
+      "contains": [
+        "kMailboxBpScopeMapLifecycleIssue",
+        "2778",
+        "erase_scope_bp_gauge",
+        "reset_scope_bp_map_for_test",
+        "scope_bp_map_size_for_test",
+        "std::shared_ptr<ScopeBpGauge>",
+        "std::make_shared<ScopeBpGauge>",
+        "last_event_us",
+        "coldest",
+        "spawn_bp_scope_overflow_total"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/orch/agent_spawn.h",
+      "absent": [
+        "unique_ptr<ScopeBpGauge>"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/orch/agent_scope.h",
+      "contains": [
+        "reset_scope_bp_map_for_test",
+        "2778"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/orch/test_mailbox_bp_admit.cpp",
+      "contains": [
+        "ac2778_reset_clears_map",
+        "ac2778_erase_one",
+        "ac2778_lru_at_cap"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_agent.cpp",
+      "contains": [
+        "schema-2778",
+        "scope-bp-map-lifecycle-wired",
+        "scope-bp-map-size"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "forbid_glob": [
+        "docs/design/2778-*"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "forbid": [
+        "tests/orch/test_issue_2778.cpp"
+      ]
+    }
+  ]
+}

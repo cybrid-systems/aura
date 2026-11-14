@@ -1,0 +1,82 @@
+{
+  "issue": 2951,
+  "title": "Issue #2951: multi-eval hard invalidate owner-scoped option.",
+  "ok": "OK: Issue #2951 folded from check_cross_eval_hard_owner_scoped_2951.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/aura_jit_bridge.cpp",
+      "contains": [
+        "Issue #2951",
+        "aura_aot_note_cross_eval_hard_owner_scoped",
+        "cross_eval_hard_owner_scoped_armed",
+        "g_cross_eval_hard_owner_scoped_total",
+        "AURA_CROSS_EVAL_HARD_OWNER_SCOPED",
+        "aura_aot_note_cross_eval_epoch_force_bump()",
+        "g_cross_eval_hard_global_bump_total",
+        "if (multi && !force && cross_eval_epoch_throttle_armed())",
+        "notify_epoch_bump"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/service_dirty.cpp",
+      "contains": [
+        "aura_aot_note_cross_eval_hard_owner_scoped",
+        "aura_aot_note_cross_eval_epoch_force_bump"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_named_closure_stable_id_at_create.cpp",
+      "contains": [
+        "2951 AC1",
+        "2951 AC2",
+        "2951 AC3",
+        "2951 AC4",
+        "ac2951"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_obs_eval.cpp",
+      "contains": [
+        "schema-2951",
+        "issue-2951",
+        "cross-eval-hard-owner-scoped-total",
+        "cross-eval-hard-global-bump-total",
+        "cross-eval-hard-owner-scoped-armed",
+        "schema-2841",
+        "schema-2744",
+        "schema-2713"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/aura_jit_bridge.h",
+      "contains": [
+        "aura_aot_note_cross_eval_hard_owner_scoped",
+        "cross_eval_hard_owner_scoped_total_v_read"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "src/compiler/aura_jit_bridge_stub.cpp",
+      "contains": [
+        "aura_aot_note_cross_eval_hard_owner_scoped"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "forbid": [
+        "tests/compiler/test_issue_2951.cpp"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "forbid_glob": [
+        "docs/design/2951-*"
+      ]
+    }
+  ]
+}

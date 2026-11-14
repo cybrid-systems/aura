@@ -1280,7 +1280,7 @@ int run_test_security_audit_unify() {
         const auto hyg = read_file("src/compiler/typed_mutation_audit.h");
         CHECK(hyg.find("emit_invariant_deny_se(join_mid, tenant_id, fiber_id") != std::string::npos,
               "3319 AC7: hygiene deny emits SE");
-        const auto lint = read_file("scripts/coverage/checks/check_sampled_deny_se_emit_3319.py");
+        const auto lint = read_file("scripts/coverage/manifests/3319.json");
         CHECK(!lint.empty() && lint.find("Issue #3319") != std::string::npos,
               "3319 AC7: linter present");
         const auto build = read_file("build.py");

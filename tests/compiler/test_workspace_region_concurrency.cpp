@@ -605,8 +605,7 @@ static void ac3039_5_linter_and_suite() {
     const auto build = read_file("build.py");
     const auto lint =
         read_file("scripts/coverage/checks/check_scoped_parallel_overlap_hard_reject_3039.py");
-    const auto lint2990 =
-        read_file("scripts/coverage/checks/check_workspace_concurrent_policy_2990.py");
+    const auto lint2990 = read_file("scripts/coverage/manifests/2990.json");
     CHECK(t.find("ac3039_1_production_overlap_hard_reject") != std::string::npos, "3039 AC5: AC1");
     CHECK(t.find("ac2990_3_overlap_fallback") != std::string::npos, "3039 AC5: #2990 Soft kept");
     CHECK(!lint.empty() && lint.find("3039") != std::string::npos, "3039 AC6: successor linter");
@@ -879,8 +878,7 @@ static void ac2990_5_throughput_and_linter() {
     std::println("\n--- #2990 AC5: source-cite + linter + no invented test ---");
     const auto t = read_file("tests/compiler/test_workspace_region_concurrency.cpp");
     const auto build = read_file("build.py");
-    const auto lint =
-        read_file("scripts/coverage/checks/check_workspace_concurrent_policy_2990.py");
+    const auto lint = read_file("scripts/coverage/manifests/2990.json");
     CHECK(t.find("ac2990_1_single_writer_default") != std::string::npos, "AC5: AC1 test");
     CHECK(t.find("ac2990_3_overlap_fallback") != std::string::npos, "AC5: AC3 test");
     CHECK(build.find("check_workspace_concurrent_policy_2990") != std::string::npos,

@@ -88,6 +88,57 @@
         "ac3_healthy_no_force",
         "ac6_production_dual_require"
       ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/coercion_provenance_policy.hh",
+      "contains": [
+        "#2648",
+        "kCoercionEvidenceLossIssue",
+        "kCoercionEvidenceLossBpDefault",
+        "g_coercion_evidence_loss_force_armed_total"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/coercion_map.ixx",
+      "contains": [
+        "evaluate_coercion_evidence_loss_slo",
+        "coercion_dual_require_active",
+        "reject_apply_on_provenance_miss"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "coercion_evidence_loss"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "issue-2648",
+        "type-linear-commit-health"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "tests/compiler/test_coercion_evidence_loss_slo.cpp",
+      "contains": [
+        "AC1",
+        "AC2",
+        "AC6",
+        "coercion_evidence_loss_bp"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_coercion_evidence_loss_slo.cpp"
+      ]
     }
   ],
   "source_script": "scripts/coverage/checks/check_coercion_evidence_loss_slo_2648.py"

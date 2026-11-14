@@ -52,7 +52,7 @@ def main() -> int:
     q = read_query_prims() + qfile
     sla = _read("tests/core/test_restamp_sla_observability.cpp")
     iso = _read("tests/core/test_tenant_isolation_enforcement.cpp")
-    lint2934 = _read("scripts/coverage/checks/check_restamp_budget_2934.py")
+    lint2934 = _read("scripts/coverage/manifests/2934.json")
     build = _read("build.py")
 
     must("kRestampBudgetQueryEpochStaleIssue = 3041", "AC1", epoch)

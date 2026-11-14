@@ -1,0 +1,88 @@
+{
+  "issue": 2931,
+  "title": "Issue #2931: promote steal×mutate×GC×mailbox chaos soak to nightly hard gate.",
+  "ok": "OK: Issue #2931 folded from check_chaos_steal_gc_nightly_2931.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": ".github/workflows/nightly.yml",
+      "contains": [
+        "AURA_CHAOS_STEAL_GC",
+        "AURA_CHAOS_DURATION_S",
+        "AURA_CHAOS_WORKERS",
+        "\"600\"",
+        "\"8\"",
+        "test_chaos_steal_mutation_gc",
+        "chaos-steal-gc-nightly"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "build.py",
+      "contains": [
+        "cmd_chaos_steal_gc_nightly_2931",
+        "chaos-steal-gc-nightly-2931",
+        "cmd_chaos_steal_gc_nightly_2931_coverage",
+        "\"chaos-steal-gc-nightly-2931\": cmd_chaos_steal_gc_nightly_2931,",
+        "\"chaos-steal-gc-nightly-2931-coverage\": cmd_chaos_steal_gc_nightly_2931_coverage,"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/serve/test_chaos_steal_mutation_gc.cpp",
+      "contains": [
+        "residual_defer_after_exit",
+        "residual_defer_after_exit_total",
+        "matching_clears",
+        "resume_fence_fail_total",
+        "steal_safety_ticket_mismatch",
+        "residual_defer_steal_hard_fail",
+        "defer_reasons_snapshot",
+        "#2931: residual_defer_after_exit explained by matching clears",
+        "#2931: steal_safety_ticket_mismatch delta == 0",
+        "#2931: resume_fence hard/ticket surplus == 0",
+        "#2931: residual_defer_steal_hard_fail delta == 0",
+        "soft_steal_override",
+        "AURA_STEAL_SNAPSHOT_SOFT",
+        "reset_steal_snapshot_soft_for_test",
+        "production-like defaults",
+        "AURA_CHAOS_STEAL_GC",
+        "chaos_enabled",
+        "schema-2310",
+        "schema-2311",
+        "schema-2312",
+        "schema-2313",
+        "schema-2314",
+        "schema-2846",
+        "residual-defer-after-exit-total",
+        "residual-defer-after-exit-wired",
+        "ac2931_1_nightly_duration_workers",
+        "ac2931_2_residual_resume_fail_closed",
+        "ac2931_3_exclude_from_all_env_gate",
+        "ac2931_4_schema_2846_snapshot",
+        "ac2931_5_source_and_linter"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "EXCLUDE_FROM_ALL",
+        "test_chaos_steal_mutation_gc",
+        "set_target_properties(test_chaos_steal_mutation_gc PROPERTIES EXCLUDE_FROM_ALL TRUE)"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "forbid_glob": [
+        "docs/design/2931-*"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "forbid": [
+        "tests/serve/test_issue_2931.cpp"
+      ]
+    }
+  ]
+}

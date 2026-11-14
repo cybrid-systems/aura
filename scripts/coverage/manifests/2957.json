@@ -1,0 +1,82 @@
+{
+  "issue": 2957,
+  "title": "Issue #2957: residual hard-AND arm (f) consults last LifetimeConsistencyProof.",
+  "ok": "OK: Issue #2957 folded from check_steal_lifetime_proof_residual_2957.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/serve/steal_safety.h",
+      "contains": [
+        "LifetimeProofOk",
+        "g_steal_safety_residual_lifetime_proof_reject_total",
+        "kStealSafetyLifetimeProofResidualIssue",
+        "g_steal_safety_residual_rearm_race_total"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/serve/steal_safety.cpp",
+      "contains": [
+        "StealInvariant::LifetimeProofOk",
+        "last_lifetime_consistency_proof_present",
+        "last_lifetime_consistency_would_allow",
+        "is_steal_snapshot_hard_mode",
+        "last_densify_call_seq",
+        "Soft",
+        "StealInvariant::BoundarySafe",
+        "StealInvariant::EnvFrameOk",
+        "Issue #2957"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/core/lifetime_consistency_proof.hh",
+      "contains": [
+        "last_lifetime_consistency_would_allow",
+        "last_lifetime_consistency_proof_present",
+        "stamped_total"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/serve/test_steal_complete_restamp_txn.cpp",
+      "contains": [
+        "ac2957_1_production_negative_proof_rejects",
+        "ac2957_2_soft_and_quiet_no_reject",
+        "ac2957_3_prior_arms_preserved",
+        "ac2957_4_query_additive",
+        "ac2957_5_source_and_linter"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_obs_jit.cpp",
+      "contains": [
+        "schema-2957",
+        "steal-safety-residual-lifetime-proof-reject-total",
+        "steal-invariant-lifetime-proof-fail-total",
+        "schema-2888",
+        "schema-2929"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "src/compiler/evaluator_primitives_query_type_stats.cpp",
+      "contains": [
+        "query:lifetime-consistency-proof"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "forbid": [
+        "tests/serve/test_issue_2957.cpp"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "forbid_glob": [
+        "docs/design/2957-*"
+      ]
+    }
+  ]
+}

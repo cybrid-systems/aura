@@ -175,8 +175,7 @@ static void ac5_source_and_gate() {
     CHECK(build.find("check_capability_string_matrix_unify_2387") != std::string::npos ||
               build.find("cmd_capability_string_matrix_unify_coverage") != std::string::npos,
           "AC5: build.py gate entry");
-    const auto gate =
-        read_file("scripts/coverage/checks/check_capability_string_matrix_unify_2387.py");
+    const auto gate = read_file("scripts/coverage/manifests/2387.json");
     CHECK(!gate.empty() && gate.find("Issue #2387") != std::string::npos,
           "AC5: coverage linter present");
 }

@@ -1,0 +1,74 @@
+{
+  "issue": 2946,
+  "title": "Issue #2946: production default AgentScope concurrent hard deny.",
+  "ok": "OK: Issue #2946 folded from check_agent_scope_concurrent_hard_deny_2946.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/orch/agent_scope.h",
+      "contains": [
+        "Issue #2946",
+        "HardDeny",
+        "resolve_agent_scope_concurrent_policy",
+        "production_defaults_active",
+        "denied_hard",
+        "concurrent hard deny",
+        "AURA_AGENT_SCOPE_CONCURRENT_ABORT",
+        "SoftMetric",
+        "AURA_SANDBOX",
+        "enter_depth_",
+        "cancel_all_unlocked_",
+        "2781"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/orch/agent_spawn.h",
+      "contains": [
+        "agent_scope_concurrent_hard_deny_total",
+        "kAgentScopeConcurrentHardDenyIssue",
+        "agent_scope_concurrent_misuse_total"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/orch/test_agent_scope.cpp",
+      "contains": [
+        "2946 AC1",
+        "2946 AC2",
+        "2946 AC3",
+        "ac2946"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_agent.cpp",
+      "contains": [
+        "schema-2946",
+        "agent-scope-concurrent-hard-deny-total",
+        "agent-scope-concurrent-hard-deny-wired",
+        "schema-2399"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/orch/agent_scope.h",
+      "absent": [
+        "std::mutex",
+        "class AgentRegistry"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "forbid": [
+        "tests/orch/test_issue_2946.cpp"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "forbid_glob": [
+        "docs/design/2946-*"
+      ]
+    }
+  ]
+}

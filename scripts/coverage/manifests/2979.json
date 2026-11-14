@@ -1,0 +1,77 @@
+{
+  "issue": 2979,
+  "title": "Issue #2979: outermost Phase-5 consume of layered-evidence force-Full pending.",
+  "ok": "OK: Issue #2979 folded from check_layered_evidence_phase5_consume_2979.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "Issue #2979",
+        "consume_layered_evidence_diverge_force_full",
+        "note_layered_evidence_diverge_force_full_sample",
+        "ensure_mutation_invariants",
+        "partial_recovery_2979",
+        "!nested_boundary",
+        "layered_diverge_delta > 0",
+        "one exchange",
+        "consume_layered_evidence_diverge_hard_reject",
+        "layered-evidence-diverge",
+        "not hard-reject of the current commit"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/coercion_map.ixx",
+      "contains": [
+        "g_layered_evidence_diverge_force_full_sample_total",
+        "Soft + diverge",
+        "AURA_LAYERED_COERCION_DIVERGE_HARD",
+        "Issue #2979"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_dead_coercion_layered.cpp",
+      "contains": [
+        "ac2979_1_phase5_consume_sample",
+        "ac2979_2_soft_observe_only",
+        "ac2979_3_quiet_zero_cost",
+        "ac2979_4_hard_force_reason",
+        "ac2979_5_additive_schema",
+        "run_2979_phase5_consume_force_full_sample"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_query_type_stats.cpp",
+      "contains": [
+        "\"schema-2979\"",
+        "\"issue-2979\"",
+        "\"layered-evidence-diverge-force-full-sample-total\"",
+        "\"layered-evidence-diverge-phase5-consume-wired\"",
+        "\"schema-2912\"",
+        "\"schema-2674\""
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_query_reflect.cpp",
+      "contains": [
+        "\"schema-2979\""
+      ]
+    },
+    {
+      "ac": "AC6",
+      "forbid": [
+        "tests/compiler/test_issue_2979.cpp"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "forbid_glob": [
+        "docs/design/*2979*"
+      ]
+    }
+  ]
+}

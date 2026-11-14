@@ -58,20 +58,37 @@
       ]
     },
     {
-      "ac": "Linter-3141",
-      "path": "scripts/coverage/checks/check_wildcard_grant_effect_fence.py",
-      "contains": [
-        "Issue #3141",
-        "AC1 fence helper",
-        "AC4 counter",
-        "AC5 build.py wires linter"
-      ]
-    },
-    {
       "ac": "Build-3141",
       "path": "build.py",
       "contains": [
         "check_wildcard_grant_effect_fence.py"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_capability_high_risk_promote.cpp",
+      "contains": [
+        "3140"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "scripts/coverage/manifests/3141.json",
+      "contains": [
+        "3141",
+        "check_wildcard_grant_effect_fence.py"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "forbid_glob": [
+        "docs/design/3141-*"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "forbid": [
+        "tests/issues/test_issue_3141.cpp"
       ]
     }
   ]

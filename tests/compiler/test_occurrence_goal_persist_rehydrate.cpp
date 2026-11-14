@@ -1995,8 +1995,7 @@ static void ac2981_6_source_and_linter() {
     CHECK(tma.find("Issue #2981") != std::string::npos, "AC6: tma cites #2981");
     const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
     CHECK(mb.find("Issue #2981") != std::string::npos, "AC6: mb cites #2981");
-    const auto lint =
-        read_file("scripts/coverage/checks/check_type_linear_proof_empty_after_fence_2981.py");
+    const auto lint = read_file("scripts/coverage/manifests/2981.json");
     CHECK(!lint.empty() && lint.find("2981") != std::string::npos, "AC6: linter present");
     const auto build = read_file("build.py");
     CHECK(build.find("check_type_linear_proof_empty_after_fence_2981") != std::string::npos,
@@ -2133,7 +2132,7 @@ static void ac3032_6_source_and_linter() {
     const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
     const auto efm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
     const auto t = read_file("tests/compiler/test_occurrence_goal_persist_rehydrate.cpp");
-    const auto lint = read_file("scripts/coverage/checks/check_rehydrate_miss_invalidate_3032.py");
+    const auto lint = read_file("scripts/coverage/manifests/3032.json");
     const auto build = read_file("build.py");
     CHECK(tma.find("invalidate_fast_path_on_rehydrate_miss") != std::string::npos,
           "3032 AC6: helper");
@@ -3455,7 +3454,7 @@ static void ac3225_occurrence_persist_seqlock() {
 
     {
         const auto t = read_file("tests/compiler/test_occurrence_goal_persist_rehydrate.cpp");
-        const auto lint = read_file("scripts/coverage/checks/check_occurrence_persist_seq_3225.py");
+        const auto lint = read_file("scripts/coverage/manifests/3225.json");
         const auto build = read_file("build.py");
         CHECK(t.find("ac3225_occurrence_persist_seqlock") != std::string::npos, "3225 AC4: suite");
         CHECK(!lint.empty() && lint.find("3225") != std::string::npos, "3225 AC4: linter");

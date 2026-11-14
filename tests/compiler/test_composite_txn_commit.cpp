@@ -318,7 +318,7 @@ static void ac2898_5_source_cite() {
                    read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
     const auto om = read_file("src/compiler/observability_metrics.h");
     const auto t = read_file("tests/compiler/test_composite_txn_commit.cpp");
-    const auto lint = read_file("scripts/coverage/checks/check_composite_required_type_2898.py");
+    const auto lint = read_file("scripts/coverage/manifests/2898.json");
     const auto build = read_file("build.py");
     CHECK(aud.find("2898") != std::string::npos, "2898 AC5: audit cites #2898");
     CHECK(aud.find("composite_required_type_fail_total") != std::string::npos,
@@ -487,8 +487,7 @@ static void ac2983_6_source_and_linter() {
     const auto aud = read_file("src/compiler/typed_mutation_audit.h");
     const auto tc = read_file("src/compiler/evaluator_typecheck.cpp");
     const auto t = read_file("tests/compiler/test_composite_txn_commit.cpp");
-    const auto lint =
-        read_file("scripts/coverage/checks/check_composite_required_type_default_2983.py");
+    const auto lint = read_file("scripts/coverage/manifests/2983.json");
     const auto build = read_file("build.py");
     CHECK(aud.find("Issue #2983") != std::string::npos, "2983 AC6: audit cites #2983");
     CHECK(aud.find("kCompositeRequiredTypeAutoFillCap") != std::string::npos, "2983 AC6: cap");

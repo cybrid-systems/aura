@@ -341,8 +341,7 @@ static void ac2985_6_source_and_linter() {
     const auto hh = read_file("src/compiler/mutation_concurrency_health.hh");
     const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
     const auto t = read_file("tests/compiler/test_mutation_concurrency_health.cpp");
-    const auto lint =
-        read_file("scripts/coverage/checks/check_mutation_concurrency_health_admit_2985.py");
+    const auto lint = read_file("scripts/coverage/manifests/2985.json");
     const auto build = read_file("build.py");
     CHECK(hh.find("Issue #2985") != std::string::npos, "2985 AC6: header cites");
     CHECK(hh.find("set_mutation_concurrency_health_soft_for_test") != std::string::npos,

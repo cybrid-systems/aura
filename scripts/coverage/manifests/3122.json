@@ -34,6 +34,62 @@
       "contains": [
         "Issue #3122"
       ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/mutation_guard_helpers.hh",
+      "contains": [
+        "kTopologyRestoreStructuredIssue = 3122",
+        "kTopologyRestoreErrorKind = \"topology-restore\"",
+        "not topology-restore",
+        "Soft/Off: keep caller on_fail"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "topology_restore_abort_result",
+        "make_merr",
+        "abort_after_insert_child_for_test"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_mutation_rollback_coverage.cpp",
+      "contains": [
+        "3122 AC1: error=topology-restore",
+        "3122 AC2",
+        "3122 AC3: Soft still #f",
+        "3122 AC4: helper cites",
+        "test_topology_restore_structured_3122"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_mutate.cpp",
+      "contains": [
+        "Issue #3122"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_compile.cpp",
+      "contains": [
+        "Issue #3122"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "forbid": [
+        "tests/compiler/test_issue_3122.cpp"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "forbid_glob": [
+        "docs/design/3122-*"
+      ]
     }
   ]
 }

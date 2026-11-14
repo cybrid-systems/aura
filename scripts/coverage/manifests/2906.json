@@ -1,0 +1,75 @@
+{
+  "issue": 2906,
+  "title": "Issue #2906: FlatAST locked mutate forces exclusive PCV via move-out.",
+  "ok": "OK: Issue #2906 folded from check_pcv_flatast_locked_exclusive_2906.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/persistent_child_vector.hh",
+      "contains": [
+        "#2906",
+        "flatast_locked_move_out_exclusive_total",
+        "flatast_locked_move_out_cow_total",
+        "kPcvFlatastLockedExclusiveIssue",
+        "use_count()>1"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/core/ast.ixx",
+      "contains": [
+        "#2906",
+        "std::move(children_[id])",
+        "list.cow_set",
+        "list.cow_insert",
+        "list.cow_erase",
+        "flatast_locked_move_out_exclusive_total",
+        "flatast_locked_move_out_cow_total",
+        "with_set"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_primitives_mutate.cpp",
+      "contains": [
+        "#2906"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/core/test_pcv_exclusive_with_set.cpp",
+      "contains": [
+        "#2906 AC2",
+        "SafePCVSpan"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_obs_eval.cpp",
+      "contains": [
+        "schema-2906",
+        "flatast-locked-move-out-exclusive-total",
+        "flatast-locked-exclusive-ratio-bp"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "build.py",
+      "contains": [
+        "cmd_pcv_flatast_locked_exclusive_2906"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "forbid_glob": [
+        "docs/design/2906-*"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "forbid": [
+        "tests/core/test_issue_2906.cpp"
+      ]
+    }
+  ]
+}

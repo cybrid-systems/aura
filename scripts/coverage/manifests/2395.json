@@ -1,0 +1,64 @@
+{
+  "issue": 2395,
+  "title": "Issue #2395: StableNodeRef wire multi-byte fields are little-endian.",
+  "ok": "OK: Issue #2395 folded from check_stable_ref_wire_endian_2395.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/ast_stability.cpp",
+      "contains": [
+        "Issue #2395",
+        "write_u16_le",
+        "write_u32_le",
+        "write_u64_le",
+        "read_u16_le",
+        "read_u32_le",
+        "read_u64_le",
+        "write_u32_le(out + 4, ref.id)",
+        "read_u32_le(buf.data() + 4)"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/core/ast.ixx",
+      "contains": [
+        "little-endian",
+        "2395"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/core/ast_stability.cpp",
+      "absent": [
+        "std::memcpy(out + 4, &ref.id",
+        "std::memcpy(out + 8, &ref.gen",
+        "std::memcpy(&r.id, buf.data() + 4"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/core/test_stable_ref_wire_endian.cpp",
+      "contains": [
+        "ac1_roundtrip",
+        "ac2_golden_le_bytes",
+        "ac3_hand_built_v1_le",
+        "ac4_forced_swap_corrupts",
+        "ac5_source_and_gate"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_stable_ref_wire_endian"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "build.py",
+      "contains": [
+        "cmd_stable_ref_wire_endian_coverage"
+      ]
+    }
+  ]
+}

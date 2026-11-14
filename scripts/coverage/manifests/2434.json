@@ -1,0 +1,70 @@
+{
+  "issue": 2434,
+  "title": "Issue #2434: hard HotPassDodCompliant for all production pipeline stages.",
+  "ok": "OK: Issue #2434 folded from check_hot_pass_hard_dod_2434.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "paths": [
+        "src/compiler/pass_pipeline_core.ixx",
+        "src/compiler/pass_impls.ixx",
+        "src/compiler/pass_manager.ixx"
+      ],
+      "contains": [
+        "Pipeline stage must be HotPassDodCompliant",
+        "check_production_pipeline_packs_2434",
+        "HotPassDodCompliant<DCEPass>",
+        "HotPassDodCompliant<InlinePass>",
+        "HotPassDodCompliant<TCOPass>",
+        "HotPassDodCompliant<MonomorphizePass>",
+        "HotPassDodCompliant<LinearOwnershipPass>",
+        "pass_pipeline_concept_rejection_total",
+        "LegacyPass<T>",
+        "pass_pipeline_pure_wrap_total",
+        "kPureWrap = true",
+        "check_pipeline_dod_compliance",
+        "Issue #2434",
+        "pass_pipeline_hard_dod_wired"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_hot_pass_hard_dod.cpp",
+      "contains": [
+        "2434 AC1",
+        "2434 AC2",
+        "2434 AC3",
+        "2434 AC4",
+        "2434 AC5"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/core/concept_constraints.ixx",
+      "contains": [
+        "Issue #2434"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_obs_eval.cpp",
+      "contains": [
+        "schema-2434"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "cmd_hot_pass_hard_dod_coverage"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_hot_pass_hard_dod"
+      ]
+    }
+  ]
+}

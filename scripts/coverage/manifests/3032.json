@@ -1,0 +1,93 @@
+{
+  "issue": 3032,
+  "title": "Issue #3032: densify/steal rehydrate-miss invalidates linear_fast_path + deopt.",
+  "ok": "OK: Issue #3032 folded from check_rehydrate_miss_invalidate_3032.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "invalidate_fast_path_on_rehydrate_miss",
+        "g_rehydrate_miss_invalidate_gen",
+        "g_rehydrate_miss_invalidate_observe_total",
+        "note_rehydrate_success_bind",
+        "kRehydrateMissInvalidateIssue"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/type_checker.ixx",
+      "contains": [
+        "invalidate_fast_path_on_rehydrate_miss",
+        "note_rehydrate_success_bind"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "invalidate_fast_path_on_rehydrate_miss"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_fiber_mutation.cpp",
+      "contains": [
+        "invalidate_fast_path_on_rehydrate_miss",
+        "aura_jit_walk_active_closures",
+        "aura_aot_record_deopt_on_steal",
+        "note_rehydrate_success_bind"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_occurrence_goal_persist_rehydrate.cpp",
+      "contains": [
+        "ac3032_1_prod_miss_invalidates_fast_path",
+        "ac3032_2_soft_observe_only",
+        "ac3032_3_quiet_zero_cost",
+        "ac3032_4_success_bind",
+        "ac3032_5_schema",
+        "ac3032_6_source_and_linter"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "tests/compiler/test_type_linear_commit_health.cpp",
+      "contains": [
+        "ac3032_health_schema"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "schema-3032",
+        "rehydrate-miss-invalidate-total",
+        "rehydrate-miss-invalidate-observe-total",
+        "rehydrate-miss-force-deopt-total",
+        "rehydrate-miss-success-bind-total",
+        "rehydrate-miss-invalidate-wired"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "path": "tests/compiler/test_escape_move_elision_gate.cpp",
+      "contains": [
+        "ac3032_hermetic_invalidate"
+      ]
+    },
+    {
+      "ac": "AC9",
+      "forbid": [
+        "tests/compiler/test_issue_3032.cpp"
+      ]
+    },
+    {
+      "ac": "AC10",
+      "forbid_glob": [
+        "docs/design/3032-*"
+      ]
+    }
+  ]
+}

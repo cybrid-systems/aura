@@ -1,0 +1,52 @@
+{
+  "issue": 3372,
+  "title": "Issue #3372: [arena/lifetime] Phase-5 densify fail window publishes",
+  "ok": "OK: Issue #3372 folded from check_densify_fail_window_vacuous_axes_3372.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "} else if (had_moving_densify) {",
+        "closure_remount_ok = false;",
+        "envframe_ok = false;",
+        "note_last_densify_dual_epoch_ok(false);",
+        "note_last_densify_remap_pairing_forced(false);",
+        "// Issue #3372:",
+        "if (had_moving_densify && pin_contract_held) {",
+        "force_densify_remap_pairing()",
+        "pairing.closure_remount_ok",
+        "// Soft / empty densify: vacuous axes",
+        "note_last_densify_envframe_ok(",
+        "note_last_densify_dual_epoch_ok("
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/core/test_moving_densify_fail_closed.cpp",
+      "contains": [
+        "3372 AC"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "forbid": [
+        "tests/core/test_issue_3372.cpp",
+        "tests/compiler/test_issue_3372.cpp"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "forbid_glob": [
+        "docs/design/3372-*"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "Issue #3372"
+      ]
+    }
+  ]
+}

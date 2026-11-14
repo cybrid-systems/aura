@@ -1,0 +1,75 @@
+{
+  "issue": 3225,
+  "title": "Issue #3225: occurrence persist seqlock vs concurrent rehydrate.",
+  "ok": "OK: Issue #3225 folded from check_occurrence_persist_seq_3225.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "kOccurrencePersistSeqIssue",
+        "g_occurrence_persist_seq",
+        "occurrence_persist_seq_begin_write",
+        "if (occurrence_persist_seq_hard())"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "occurrence_persist_seq_end_write",
+        "Issue #3225",
+        "g0 & 1ull",
+        "g0 != g1",
+        "invalidate_fast_path_on_rehydrate_miss",
+        "note_occurrence_empty_after_fence",
+        "occurrence_persist_rehydrate_miss_total"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "Issue #3225"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_occurrence_goal_persist_rehydrate.cpp",
+      "contains": [
+        "last_proof_goal_fingerprint_v_read",
+        "ac3225_occurrence_persist_seqlock"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "paths": [
+        "src/compiler/typed_mutation_audit.h",
+        "src/compiler/type_checker_impl.cpp"
+      ],
+      "absent": [
+        "g_3225_"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "absent": [
+        "query:occurrence-persist-seq"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "forbid": [
+        "tests/issues/test_issue_3225.cpp",
+        "tests/compiler/test_issue_3225.cpp"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "forbid_glob": [
+        "docs/design/3225-*"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,57 @@
+{
+  "issue": 2452,
+  "title": "Issue #2452: incoming_parent_index_dirty_ atomic (stale-free parent edges).",
+  "ok": "OK: Issue #2452 folded from check_incoming_parent_dirty_atomic_2452.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/ast.ixx",
+      "contains": [
+        "Issue #2452",
+        "mutable std::atomic<bool> incoming_parent_index_dirty_{true}",
+        "incoming_parent_index_dirty_.store(true, std::memory_order_release)",
+        "incoming_parent_index_dirty_.load(std::memory_order_acquire)"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/core/ast.ixx",
+      "absent": [
+        "mutable bool incoming_parent_index_dirty_ = true"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/core/test_ast_concurrency.cpp",
+      "contains": [
+        "Issue #2452",
+        "mark_incoming_parent_index_dirty",
+        "#2452: readers observed dirty true",
+        "collect_incoming_parent_edges",
+        "#2452: collect sees parent edge after mark"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/core/test_incoming_parent_dirty_atomic.cpp",
+      "contains": [
+        "2416 AC2"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "cmd_incoming_parent_dirty_atomic_2452_coverage"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_ast_concurrency",
+        "test_incoming_parent_dirty_atomic"
+      ]
+    }
+  ]
+}

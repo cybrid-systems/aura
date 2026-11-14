@@ -1,0 +1,91 @@
+{
+  "issue": 2907,
+  "title": "Issue #2907: Sunset SoAtoAoSBridgePass — force hot DirtyAware onto run_dirty.",
+  "ok": "OK: Issue #2907 folded from check_soa_sunset_bridge_2907.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/pass_impls.ixx",
+      "contains": [
+        "#2907",
+        "kTestOnlyAosBridge",
+        "kAosBridgeSunsetIssue",
+        "check_production_soa_dirty_pack_2907",
+        "run_production_soa_dirty_hot_pack",
+        "SoaDirtyAwarePass<ConstantFoldingWrap>",
+        "SoaDirtyAwarePass<TypePropagationPass>",
+        "SoaDirtyAwarePass<DeadCoercionEliminationPass>",
+        "DirtySoAEntryPass<ComputeKindWrap>"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/pass_pipeline_core.ixx",
+      "contains": [
+        "production_pack_zero_aos_bridge_wired",
+        "pass_pipeline_concept_rejection_total",
+        "production_soa_dirty_hot_pack_invocations_total"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/pass_impls.ixx",
+      "absent": [
+        "check_pipeline_dod_compliance<SoAtoAoSBridgePass"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/core/concept_constraints.ixx",
+      "contains": [
+        "#2907"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_obs_jit.cpp",
+      "contains": [
+        "production-pack-zero-aos-bridge-wired",
+        "pass-pipeline-concept-rejection-total",
+        "schema-2907",
+        "production-soa-dirty-hot-pack-wired",
+        "soa-to-aos-bridge-sunset-wired"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "src/compiler/service.ixx",
+      "contains": [
+        "run_production_soa_dirty_hot_pack"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "path": "tests/compiler/test_soa_dirty_aware_pipeline.cpp",
+      "contains": [
+        "#2907 AC4",
+        "run_production_soa_dirty_hot_pack",
+        "#2907"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "path": "build.py",
+      "contains": [
+        "cmd_soa_sunset_bridge_2907"
+      ]
+    },
+    {
+      "ac": "AC9",
+      "forbid_glob": [
+        "docs/design/2907-*"
+      ]
+    },
+    {
+      "ac": "AC10",
+      "forbid": [
+        "tests/compiler/test_issue_2907.cpp"
+      ]
+    }
+  ]
+}

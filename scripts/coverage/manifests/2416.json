@@ -1,0 +1,53 @@
+{
+  "issue": 2416,
+  "title": "Issue #2416: incoming_parent_index_dirty_ is std::atomic<bool>.",
+  "ok": "OK: Issue #2416 folded from check_incoming_parent_dirty_atomic_2416.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/ast.ixx",
+      "contains": [
+        "Issue #2416",
+        "mutable std::atomic<bool> incoming_parent_index_dirty_{true}",
+        "incoming_parent_index_dirty_.store(true, std::memory_order_release)",
+        "incoming_parent_index_dirty_.store(false, std::memory_order_release)",
+        "incoming_parent_index_dirty_.load(std::memory_order_acquire)",
+        "incoming_parent_index_dirty_.load(std::memory_order_relaxed)"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/core/ast.ixx",
+      "absent": [
+        "mutable bool incoming_parent_index_dirty_ = true",
+        "incoming_parent_index_dirty_ = true",
+        "incoming_parent_index_dirty_ = false",
+        "incoming_parent_index_dirty_ = other.incoming_parent_index_dirty_;"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/core/test_incoming_parent_dirty_atomic.cpp",
+      "contains": [
+        "2416 AC1",
+        "2416 AC2",
+        "2416 AC3",
+        "2416 AC4"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "build.py",
+      "contains": [
+        "cmd_incoming_parent_dirty_atomic_coverage"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_incoming_parent_dirty_atomic"
+      ]
+    }
+  ]
+}

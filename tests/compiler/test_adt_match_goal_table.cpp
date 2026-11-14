@@ -402,7 +402,7 @@ static void ac3045_4_schema() {
 static void ac3045_5_source_cites() {
     std::println("\n--- #3045 AC5: source cites + no invent ---");
     const auto t = read_file("tests/compiler/test_adt_match_goal_table.cpp");
-    const auto lint = read_file("scripts/coverage/checks/check_adt_exhaust_undermark_cone_3045.py");
+    const auto lint = read_file("scripts/coverage/manifests/3045.json");
     const auto build = read_file("build.py");
     CHECK(t.find("ac3045_1_undermark_force_cone") != std::string::npos, "3045 AC5: AC1");
     CHECK(lint.find("#3045") != std::string::npos, "3045 AC5: linter present");
@@ -531,7 +531,7 @@ static void ac3083_5_schema_and_linter() {
     CHECK(href(cs, "schema-3045") == 3045, "3083 AC5: schema-3045 preserved");
     CHECK(href(cs, "schema-3005") == 3005, "3083 AC5: schema-3005 preserved");
     const auto t = read_file("tests/compiler/test_adt_match_goal_table.cpp");
-    const auto lint = read_file("scripts/coverage/checks/check_adt_exhaust_complete_seed_3083.py");
+    const auto lint = read_file("scripts/coverage/manifests/3083.json");
     const auto build = read_file("build.py");
     CHECK(t.find("ac3083_1_complete_seed_incomplete_list") != std::string::npos, "3083 AC5: AC1");
     CHECK(t.find("ac3083_2_production_reject_retained") != std::string::npos, "3083 AC5: AC2");
@@ -677,8 +677,7 @@ static void ac3317_4_source_linter() {
     std::println("\n--- #3317 AC4: source-cite + linter + no invent ---");
     const auto ixx = read_file("src/compiler/type_checker.ixx");
     const auto build = read_file("build.py");
-    const auto lint =
-        read_file("scripts/coverage/checks/check_adt_exhaust_outermost_recheck_3317.py");
+    const auto lint = read_file("scripts/coverage/manifests/3317.json");
     CHECK(ixx.find("kAdtExhaustOutermostRecheckIssue = 3317") != std::string::npos,
           "ac3317_4_source_linter: stamp");
     CHECK(ixx.find("recheck_all_live_adt_exhaust_before_proof") != std::string::npos,
@@ -757,7 +756,7 @@ static void ac3358_4_source_linter() {
 static void ac3005_6_linter_no_design() {
     std::println("\n--- #3005 AC6: linter + no invent / no design ---");
     const auto t = read_file("tests/compiler/test_adt_match_goal_table.cpp");
-    const auto lint = read_file("scripts/coverage/checks/check_adt_exhaust_dirty_cone_3005.py");
+    const auto lint = read_file("scripts/coverage/manifests/3005.json");
     const auto build = read_file("build.py");
     CHECK(t.find("ac3005_1_cone_seed") != std::string::npos, "3005 AC6: AC1");
     CHECK(t.find("ac3005_2_production_no_dynamic") != std::string::npos, "3005 AC6: AC2");

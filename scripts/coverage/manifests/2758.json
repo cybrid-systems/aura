@@ -1,0 +1,89 @@
+{
+  "issue": 2758,
+  "title": "Issue #2758: fill TypeLinearCommitProof live_goal_count + linear_root_count",
+  "ok": "OK: Issue #2758 folded from check_type_linear_commit_proof_counts_2758.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "Issue #2758",
+        "linear_or_dirty_roots_count_for_rebind",
+        "p.linear_root_count =",
+        "p.live_goal_count =",
+        "g_proof_live_goal_count_gauge",
+        "g_last_proof_live_goal_count",
+        "g_last_proof_linear_root_count",
+        "g_type_linear_commit_proof_counts_filled_total"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "absent": [
+        "#2708 future wire"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "occurrence_goals_size()",
+        "occurrence_goals_for_test()",
+        "build_type_linear_commit_proof_from_live"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/ownership_rebind.h",
+      "contains": [
+        "linear_or_dirty_roots_count_for_rebind"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/ownership_rebind.cpp",
+      "contains": [
+        "collect_linear_or_dirty_roots_for_rebind().size()"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "last_proof_live_goal_count_v_read",
+        "last_proof_linear_root_count_v_read",
+        "schema-2697",
+        "schema-2717",
+        "type-linear-commit-proof-stamped-total",
+        "type-linear-commit-proof-counts-filled-total",
+        "schema-2758",
+        "issue-2758"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "path": "tests/compiler/test_type_linear_commit_health.cpp",
+      "contains": [
+        "ac2758_1_counts_from_real_walks",
+        "ac2758_2_quiet_path_zeros",
+        "ac2758_3_last_counts_queryable",
+        "ac2758_4_additive_no_regression",
+        "ac2758_5_source_and_linter",
+        "ac2717_1_boundary_success_and_reject_stamp"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "forbid": [
+        "tests/compiler/test_issue_2758.cpp"
+      ]
+    },
+    {
+      "ac": "AC9",
+      "forbid_glob": [
+        "docs/design/2758-*"
+      ]
+    }
+  ]
+}

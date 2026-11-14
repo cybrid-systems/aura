@@ -1,0 +1,78 @@
+{
+  "issue": 2994,
+  "title": "Issue #2994: Agent-controlled locality residual budget.",
+  "ok": "OK: Issue #2994 folded from check_solve_delta_locality_budget_2994.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/type_checker.ixx",
+      "contains": [
+        "escalate_locality_slo_if_production",
+        "max_locality_residual",
+        "prefer_pending_roots_next",
+        "max_locality_residual == 0 && prefer_pending_roots_next",
+        "kSolverBudgetLocalityIssue"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "escalate_locality_slo_if_production",
+        "handoff_locality_residual_to_pending",
+        "pending_full_solve_roots_",
+        "delta_locality_budget_escalate_total",
+        "solve_delta_locality_slo_observe_total",
+        "last_locality_pruned_ == 0"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_solve_delta_unresolved_export.cpp",
+      "contains": [
+        "ac2994_1_default_budget_escalate",
+        "ac2994_2_budget_allow_pending_handoff",
+        "force_locality_pruned_for_test",
+        "ac2994_3_budget_over_escalate",
+        "ac2994_4_soft_no_budget_counters",
+        "ac2994_5_quiet_zero_cost",
+        "ac2994_6_is_default_and_schema",
+        "ac2994_7_source_cite"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "schema-2994",
+        "delta-locality-budget-allow-total"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "delta_locality_budget_allow_total"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "src/compiler/observability_metrics.h",
+      "contains": [
+        "delta_locality_budget_allow_total"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "forbid": [
+        "tests/compiler/test_issue_2994.cpp"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "forbid_glob": [
+        "docs/design/2994-*"
+      ]
+    }
+  ]
+}

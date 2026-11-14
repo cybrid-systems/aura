@@ -1,0 +1,78 @@
+{
+  "issue": 3369,
+  "title": "Issue #3369: [orch/mailbox] #3111 residual — wire the production",
+  "ok": "OK: Issue #3369 folded from check_mailbox_held_ref_steal_3369.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/serve/multi_fiber_mailbox.h",
+      "contains": [
+        "for_each_pending_held_ref_for_fiber",
+        "std::scoped_lock lock(mu_);",
+        "held_ref_post_steal_check_total",
+        "held_ref_stale_after_steal_total",
+        "revalidate_held_ref_after_steal()",
+        "bump_held_ref_stale_after_steal()",
+        "if (msg.held_ref_token.has_value() && !msg.handoff_completed)",
+        "handoff_reject_total",
+        "f->set_mailbox(this)",
+        "f->set_mailbox(nullptr)"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_fiber_mutation.cpp",
+      "contains": [
+        "for_each_pending_held_ref_for_fiber",
+        "bump_held_ref_stale_after_steal()",
+        "aura_evaluator_on_steal_complete",
+        "if (aura::compiler::typed_audit::production_defaults_active() && fiber_ptr) {",
+        "typed_audit::production_defaults_active()",
+        "m.handoff_completed = false",
+        "fiber->mailbox()"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/serve/test_steal_complete_restamp_txn.cpp",
+      "contains": [
+        "3369 AC1",
+        "3369 AC2",
+        "3369 AC3",
+        "3369 AC4",
+        "3369 AC5",
+        "3369 AC6"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/serve/fiber.h",
+      "contains": [
+        "class MultiFiberMailbox;",
+        "mf_mailbox::MultiFiberMailbox* mailbox_",
+        "mf_mailbox::MultiFiberMailbox* mailbox() const noexcept",
+        "void set_mailbox(mf_mailbox::MultiFiberMailbox* m) noexcept"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "Issue #3369"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "forbid": [
+        "tests/serve/test_issue_3369.cpp",
+        "tests/compiler/test_issue_3369.cpp"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "forbid_glob": [
+        "docs/design/3369-*"
+      ]
+    }
+  ]
+}

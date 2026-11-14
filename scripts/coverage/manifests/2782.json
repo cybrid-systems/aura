@@ -1,0 +1,77 @@
+{
+  "issue": 2782,
+  "title": "Issue #2782: AgentScope borrowed Scheduler lifetime (no UAF).",
+  "ok": "OK: Issue #2782 folded from check_agent_scope_scheduler_lifetime_2782.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/serve/scheduler.h",
+      "contains": [
+        "register_agent_scope_observer",
+        "unregister_agent_scope_observer",
+        "ScopeLifetimeFn"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/serve/scheduler.cpp",
+      "contains": [
+        "register_agent_scope_observer",
+        "2782"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/orch/agent_scope.h",
+      "contains": [
+        "kAgentScopeSchedulerLifetimeIssue",
+        "scheduler_alive",
+        "on_scheduler_destroyed_",
+        "serve::Scheduler* sched_"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/orch/agent_scope.h",
+      "absent": [
+        "serve::Scheduler& sched_"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/orch/agent_spawn.h",
+      "contains": [
+        "agent_scope_scheduler_invalidated_total",
+        "agent_scope_scheduler_dangling_total"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "src/compiler/evaluator_primitives_agent.cpp",
+      "contains": [
+        "schema-2782",
+        "agent-scope-scheduler-lifetime-wired"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "path": "tests/orch/test_agent_scope.cpp",
+      "contains": [
+        "ac2782_scheduler_destroyed_before_scope",
+        "ac2782_source_and_query"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "forbid": [
+        "tests/orch/test_issue_2782.cpp"
+      ]
+    },
+    {
+      "ac": "AC9",
+      "forbid_glob": [
+        "docs/design/2782-*"
+      ]
+    }
+  ]
+}

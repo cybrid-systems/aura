@@ -1,0 +1,33 @@
+{
+  "issue": 2373,
+  "title": "Issue #2373 / #2626: try_render_deopt_throttle CAS retained after TUI removal",
+  "ok": "OK: Issue #2373 folded from check_render_deopt_throttle_race_2373.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/arena_auto_policy_stats.h",
+      "contains": [
+        "try_render_deopt_throttle",
+        "compare_exchange_weak",
+        "Issue #2373",
+        "last_render_deopt_ns",
+        "render_jit_deopt_applied_total",
+        "render_jit_deopt_throttled_total"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/core/arena_auto_policy_stats.h",
+      "absent": [
+        "last_render_deopt_ns.store(now_ns"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "build.py",
+      "contains": [
+        "cmd_render_deopt_throttle_race_coverage"
+      ]
+    }
+  ]
+}

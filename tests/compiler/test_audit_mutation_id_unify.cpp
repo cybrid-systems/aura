@@ -483,8 +483,7 @@ static void ac3066_3_soft_zero_extra() {
 static void ac3066_4_linter_no_design() {
     std::println("\n--- #3066 AC4: linter + no invent / no design ---");
     const auto t = read_file("tests/compiler/test_audit_mutation_id_unify.cpp");
-    const auto lint =
-        read_file("scripts/coverage/checks/check_composite_audit_mid_se_join_3066.py");
+    const auto lint = read_file("scripts/coverage/manifests/3066.json");
     const auto build = read_file("build.py");
     const auto tma = read_file("src/compiler/typed_mutation_audit.h");
     CHECK(t.find("ac3066_1_production_batch_share_mid") != std::string::npos, "3066 AC4: AC1");

@@ -1,0 +1,82 @@
+{
+  "issue": 2920,
+  "title": "Issue #2920: workspace source SSOT after mutate.",
+  "ok": "OK: Issue #2920 folded from check_workspace_source_ssot_2920.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator.ixx",
+      "contains": [
+        "authoritative_workspace_source",
+        "invalidate_workspace_source_text",
+        "note_workspace_source_text",
+        "2920",
+        "workspace_source_text_valid_"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "invalidate_workspace_source_text",
+        "mutation_log_size",
+        "2920"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_primitives_eval.cpp",
+      "contains": [
+        "authoritative_workspace_source",
+        "note_workspace_source_text"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_persist.cpp",
+      "contains": [
+        "authoritative_workspace_source"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_ast.cpp",
+      "contains": [
+        "note_workspace_source_text"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "docs/stdlib/workspace-source-ssot.md",
+      "contains": [
+        "2920",
+        "FlatAST",
+        "2918"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "path": "docs/contributing.md",
+      "contains_any": [
+        "workspace-source-ssot",
+        "2920"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "path": "tests/suite/workspace_source_ssot_2920.aura",
+      "contains": [
+        "2920",
+        "current-source :workspace"
+      ]
+    },
+    {
+      "ac": "AC9",
+      "path": "build.py",
+      "contains_any": [
+        "workspace-source-ssot-2920",
+        "workspace_source_ssot_2920"
+      ]
+    }
+  ]
+}

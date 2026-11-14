@@ -1,0 +1,93 @@
+{
+  "issue": 2993,
+  "title": "Issue #2993: type-check metrics tier (minimal default).",
+  "ok": "OK: Issue #2993 folded from check_typecheck_metrics_tier_2993.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/type_checker.ixx",
+      "contains": [
+        "TypecheckMetricsTier",
+        "AURA_TYPECHECK_METRICS",
+        "metrics_full()",
+        "TypecheckMetricsTier::Full",
+        "Performance notes"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "metrics_full()",
+        "consistent_unify_total",
+        "dynamic_degrade_with_blame_total"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_solve_delta_epoch_filter.cpp",
+      "contains": [
+        "ac2993_1_minimal_skips_unify_total",
+        "ac2993_2_full_restores",
+        "ac2993_3_degrade_kept",
+        "ac2993_4_schema",
+        "ac2993_5_stress_minimal_zero"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_ir.cpp",
+      "contains": [
+        "#2993 Full restores unify_total"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_compile.cpp",
+      "contains": [
+        "type:set-typecheck-metrics-tier"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "src/compiler/service.ixx",
+      "contains": [
+        "set_typecheck_metrics_tier"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "schema-2993",
+        "typecheck-metrics-tier"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "path": "src/compiler/observability_metrics.h",
+      "contains": [
+        "typecheck_metrics_tier"
+      ]
+    },
+    {
+      "ac": "AC9",
+      "path": "tests/compiler/test_typechecker_incremental_batch.cpp",
+      "contains": [
+        "ac2993_metrics_tier"
+      ]
+    },
+    {
+      "ac": "AC10",
+      "forbid": [
+        "tests/compiler/test_issue_2993.cpp"
+      ]
+    },
+    {
+      "ac": "AC11",
+      "forbid_glob": [
+        "docs/design/2993-*"
+      ]
+    }
+  ]
+}

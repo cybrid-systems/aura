@@ -1,0 +1,68 @@
+{
+  "issue": 2983,
+  "title": "Issue #2983: production default required TypeId set on composite_txn_commit.",
+  "ok": "OK: Issue #2983 folded from check_composite_required_type_default_2983.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "Issue #2983",
+        "composite_required_type_auto_fill_total",
+        "kCompositeRequiredTypeAutoFillCap",
+        "kCompositeRequiredTypeAutoFillCap = 16",
+        "auto_fill_capped_total"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_typecheck.cpp",
+      "contains": [
+        "Issue #2983",
+        "set_composite_required_solved",
+        "stage_composite_touched_unbound_for_test",
+        "stage_composite_touched_n_for_test",
+        "composite_txn_commit"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_composite_txn_commit.cpp",
+      "contains": [
+        "ac2983_1_prod_empty_span_autofill_rejects",
+        "zero cost",
+        "apply_dev_audit_defaults",
+        "ac2983_2_soft_empty_zero_cost",
+        "ac2983_3_explicit_span_unchanged",
+        "stage_composite_required_unbound_var_for_test",
+        "2898",
+        "ac2983_4_cap_sixteen",
+        "ac2983_5_additive_query",
+        "ac2983_6_source_and_linter"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "schema-2983",
+        "schema-2898",
+        "schema-2610",
+        "composite-required-type-auto-fill-total",
+        "commit-readiness-force-reason-required-type"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "forbid_glob": [
+        "docs/design/2983-*"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "forbid": [
+        "tests/compiler/test_issue_2983.cpp"
+      ]
+    }
+  ]
+}

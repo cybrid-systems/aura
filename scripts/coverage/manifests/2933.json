@@ -1,0 +1,75 @@
+{
+  "issue": 2933,
+  "title": "Issue #2933: first-class QueryResult object binding + SafePCVSpan pin.",
+  "ok": "OK: Issue #2933 folded from check_query_result_binding_2933.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/workspace_epoch.hh",
+      "contains": [
+        "struct QueryResult",
+        "QueryResultMatch",
+        "is_fresh",
+        "is_fresh_live",
+        "QueryEpoch",
+        "pinned",
+        "Issue #2933",
+        "g_query_result_created_total",
+        "g_query_result_fresh_hits_total",
+        "g_query_result_stale_total"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_primitives_query_workspace.cpp",
+      "contains": [
+        ":as-query-result",
+        ":query-result",
+        "make_query_result_hash",
+        "end_query_epoch_maybe_result",
+        "query:find",
+        "query:pattern",
+        "query:children-stable",
+        "query:by-marker",
+        "as_query_result",
+        "query:result-fresh?",
+        "query:result-matches",
+        "query-epoch-stale",
+        "query-result-created-total",
+        "query-result-fresh-hits-total",
+        "query-result-stale-total",
+        "schema-2933",
+        "schema-2192",
+        "Default (no keyword) remains the bare list"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "forbid_glob": [
+        "docs/design/2933-*"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/query_matcher.ixx",
+      "contains": [
+        "Issue #2933",
+        "QueryResult"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_query_epoch_contract.cpp",
+      "contains": [
+        "Issue #2933",
+        "QueryResult object binding"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "forbid": [
+        "tests/compiler/test_issue_2933.cpp"
+      ]
+    }
+  ]
+}

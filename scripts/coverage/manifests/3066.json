@@ -1,0 +1,81 @@
+{
+  "issue": 3066,
+  "title": "Issue #3066: composite / lockless batch typed-audit mid == SE trail mid.",
+  "ok": "OK: Issue #3066 folded from check_composite_audit_mid_se_join_3066.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "Issue #3066",
+        "pin_composite_batch_join_mid",
+        "join_audit_and_se_mid",
+        "promote_sampled_force_join_mid",
+        "AuditOutcome::Error",
+        "Soft/Sampled quiet"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_security.cpp",
+      "contains": [
+        "last_type_linear_commit_proof_stamp_v_read"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator.ixx",
+      "contains": [
+        "pin_composite_batch_join_mid"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "pin_composite_batch_join_mid"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_audit_mutation_id_unify.cpp",
+      "contains": [
+        "ac3066_1_production_batch_share_mid",
+        "ac3066_2_sampled_force_joinable",
+        "ac3066_3_soft_zero_extra",
+        "ac3066_4_linter_no_design"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "paths": [
+        "src/compiler/evaluator_primitives_query.cpp",
+        "src/compiler/evaluator_primitives_obs_jit.cpp"
+      ],
+      "contains": [
+        "schema-3066",
+        "last-composite-batch-join-mid",
+        "composite-audit-se-join-wired"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "path": "build.py",
+      "contains": [
+        "cmd_composite_audit_mid_se_join_3066"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "forbid": [
+        "tests/compiler/test_issue_3066.cpp"
+      ]
+    },
+    {
+      "ac": "AC9",
+      "forbid_glob": [
+        "docs/design/*3066*"
+      ]
+    }
+  ]
+}

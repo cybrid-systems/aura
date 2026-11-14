@@ -1,0 +1,91 @@
+{
+  "issue": 2981,
+  "title": "Issue #2981: steal/densify rehydrate miss binds TypeLinearCommitProof same-txn.",
+  "ok": "OK: Issue #2981 folded from check_type_linear_proof_empty_after_fence_2981.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "Issue #2981",
+        "occurrence_empty_after_fence_blocks_proof",
+        "g_type_linear_proof_reject_empty_after_fence_total",
+        "Soft: observe only",
+        "live_goal_count != 0"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/type_checker.ixx",
+      "contains": [
+        "Issue #2981",
+        "would_allow_commit=*/false"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "empty_fence_2981",
+        "note_type_freshness_after_steal_or_densify",
+        "Issue #2981"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_fiber_mutation.cpp",
+      "contains": [
+        "empty_fence_2981"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_occurrence_goal_persist_rehydrate.cpp",
+      "contains": [
+        "ac2981_1_prod_miss_rejects_proof",
+        "ac2981_2_soft_observe_only",
+        "ac2981_3_quiet_zero_extra",
+        "ac2981_4_same_txn_order",
+        "ac2981_5_additive_schema",
+        "ac2981_6_source_and_linter"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "src/compiler/evaluator_primitives_query_type_stats.cpp",
+      "contains": [
+        "schema-2981",
+        "schema-2704",
+        "schema-2910"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "path": "src/compiler/evaluator_primitives_query_reflect.cpp",
+      "contains": [
+        "schema-2981",
+        "schema-2613",
+        "schema-2842"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "path": "tests/compiler/test_type_linear_commit_health.cpp",
+      "contains": [
+        "ac2981_2_health_schema"
+      ]
+    },
+    {
+      "ac": "AC9",
+      "forbid": [
+        "tests/compiler/test_issue_2981.cpp"
+      ]
+    },
+    {
+      "ac": "AC10",
+      "forbid_glob": [
+        "docs/design/*2981*"
+      ]
+    }
+  ]
+}

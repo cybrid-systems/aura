@@ -1,0 +1,78 @@
+{
+  "issue": 2963,
+  "title": "Issue #2963: production prefer instance-repair before full-solve on TIMEOUT.",
+  "ok": "OK: Issue #2963 folded from check_instance_repair_before_full_2963.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/type_checker.ixx",
+      "contains": [
+        "#2963",
+        "prefer_instance_repair_before_full = true",
+        "try_instance_repair_before_full",
+        "kSolverBudgetInstanceRepairIssue"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "try_instance_repair_before_full",
+        "delta_instance_repair_total",
+        "delta_instance_repair_resolved_total",
+        "#2963 AC2",
+        "zero cost"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_solve_delta_unresolved_export.cpp",
+      "contains": [
+        "ac2963_1_production_repair_resolves",
+        "ac2963_2_soft_quiet_zero_cost",
+        "ac2963_3_quiet_no_timeout_zero",
+        "ac2963_5_source_cite",
+        "ac2963_6_large_cs_small_dirty_repair_hit"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "schema-2963",
+        "delta-instance-repair-total",
+        "delta-instance-repair-resolved-total",
+        "delta-timeout-full-after-repair-total",
+        "schema-2900",
+        "schema-2277"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "delta_instance_repair_total"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "build.py",
+      "contains": [
+        "cmd_instance_repair_before_full_2963_coverage",
+        "instance-repair-before-full-2963"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "forbid_glob": [
+        "docs/design/2963-*"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "forbid": [
+        "tests/compiler/test_issue_2963.cpp"
+      ]
+    }
+  ]
+}

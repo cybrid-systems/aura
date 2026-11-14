@@ -1,0 +1,72 @@
+{
+  "issue": 3235,
+  "title": "Issue #3235: vector-set! / hash-set! / set-car! acquire MutationBoundaryGuard.",
+  "ok": "OK: Issue #3235 folded from check_container_mutate_guard_3235.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator.ixx",
+      "contains": [
+        "maybe_auto_guard_heap_mutate",
+        "heap_mutate",
+        "requires MutationBoundaryGuard",
+        "!heap_mutate",
+        "Issue #3235"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "maybe_auto_guard_heap_mutate"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/prim_registrar_scaffold.hh",
+      "contains": [
+        "kContainerMutateGuardIssue = 3235"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_hash_table_grow.cpp",
+      "contains": [
+        "3235 AC1: vector-ref 42",
+        "3235 AC2: hash-ref 4",
+        "3235 AC2: car 99",
+        "3235 AC3: production vector-set!",
+        "3235 AC3: try_acquire bumped",
+        "3235 AC4: no invent"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_vector.cpp",
+      "contains": [
+        "alloc_storage_lock_",
+        "Issue #3235"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "src/compiler/evaluator_primitives_pair.cpp",
+      "contains": [
+        "alloc_storage_lock_"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "forbid": [
+        "tests/compiler/test_issue_3235.cpp",
+        "tests/issues/test_issue_3235.cpp"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "forbid_glob": [
+        "docs/design/3235-*"
+      ]
+    }
+  ]
+}

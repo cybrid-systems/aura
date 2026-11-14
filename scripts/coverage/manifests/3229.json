@@ -1,0 +1,100 @@
+{
+  "issue": 3229,
+  "title": "Issue #3229: hashed-name 6-bit coverage needs a define-id side set.",
+  "ok": "OK: Issue #3229 folded from check_relower_success_define_collision_3229.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/hot_update_registry.hh",
+      "contains": [
+        "kRelowerSuccessDefineCollisionIssue",
+        "note_relower_success_define",
+        "residual_force_for_define",
+        "aura_production_defaults_active_probe() == 0",
+        "last_reemit_success_region_mask_"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/service.ixx",
+      "contains": [
+        "note_relower_success_define",
+        "note_relower_success_coverage(1ULL << (fnv1a_64(name) & 63))"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/service_dirty.cpp",
+      "contains": [
+        "note_relower_success_define"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_hot_update_relower_success_coverage.cpp",
+      "contains": [
+        "ac3229_1_collision_peer_stays_residual",
+        "ac3229_2_soft_quiet",
+        "ac3229_3_no_regression_3136"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_force_jit_repromote.cpp",
+      "contains": [
+        "3229"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "tests/compiler/test_reload_recovery_query.cpp",
+      "contains": [
+        "3229"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "path": "src/compiler/aura_jit_runtime.cpp",
+      "contains": [
+        "Issue #3229"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "path": "src/compiler/hot_update_registry.cpp",
+      "contains": [
+        "relower_success_define_active_"
+      ]
+    },
+    {
+      "ac": "AC9",
+      "paths": [
+        "src/compiler/evaluator_primitives_query.cpp",
+        "src/compiler/evaluator_primitives_query_type_stats.cpp"
+      ],
+      "absent": [
+        "schema-3229"
+      ]
+    },
+    {
+      "ac": "AC10",
+      "path": "src/compiler/hot_update_registry.hh",
+      "absent": [
+        "g_3229_"
+      ]
+    },
+    {
+      "ac": "AC11",
+      "forbid": [
+        "tests/issues/test_issue_3229.cpp",
+        "tests/compiler/test_issue_3229.cpp"
+      ]
+    },
+    {
+      "ac": "AC12",
+      "forbid_glob": [
+        "docs/design/3229-*"
+      ]
+    }
+  ]
+}

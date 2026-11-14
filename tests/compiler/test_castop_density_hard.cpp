@@ -302,8 +302,7 @@ static void ac3084_5_schema_and_linter() {
     CHECK(href_layered(cs, "hot-residual-soft-must-deopt-total") >= 0, "3084 AC5: total");
     CHECK(href_layered(cs, "schema-3046") == 3046, "3084 AC5: schema-3046 preserved");
     const auto t = read_file("tests/compiler/test_castop_density_hard.cpp");
-    const auto lint =
-        read_file("scripts/coverage/checks/check_hot_residual_soft_must_deopt_3084.py");
+    const auto lint = read_file("scripts/coverage/manifests/3084.json");
     const auto build = read_file("build.py");
     CHECK(t.find("ac3084_1_soft_residual_must_deopt") != std::string::npos, "3084 AC5: AC1");
     CHECK(t.find("ac3084_2_production_relower_unchanged") != std::string::npos, "3084 AC5: AC2");

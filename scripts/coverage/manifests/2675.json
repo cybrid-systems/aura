@@ -1,0 +1,64 @@
+{
+  "issue": 2675,
+  "title": "Issue #2675: linear-enforce-effective single pure API across AST audit /",
+  "ok": "OK: Issue #2675 folded from check_linear_enforce_effective_2675.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/provenance_tracker.hh",
+      "contains": [
+        "enum class LinearEnforceEffective",
+        "Soft = 0",
+        "Strict = 1",
+        "effective_linear_enforce(",
+        "bool production_defaults",
+        "bool fiber_boundary_hold",
+        "bool env_force_strict",
+        "linear_enforce_boundary_strict_active",
+        "if (env_force_strict)",
+        "return LinearEnforceEffective::Strict"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "CrossBatchEscape",
+        "#2108"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/ir_executor_impl.cpp",
+      "contains": [
+        "linear_enforce_require_complete_effective("
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_obs_eval.cpp",
+      "contains": [
+        "\"linear-enforce-effective\"",
+        "\"schema-2675\"",
+        "\"issue-2675\"",
+        "\"linear-enforce-effective-pure-api-wired\""
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_linear_cross_closure.cpp",
+      "contains": [
+        "ac2675_audit_ir_agree",
+        "ac2675_production_defaults_strict"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "src/compiler/linear_occurrence_mutate_stats.h",
+      "contains": [
+        "Issue #2675",
+        "effective_linear_enforce("
+      ]
+    }
+  ]
+}

@@ -1,0 +1,60 @@
+{
+  "issue": 2902,
+  "title": "Issue #2902: elevate production chaos gate to hard release blocker.",
+  "ok": "OK: Issue #2902 folded from check_chaos_release_blocker_2902.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp",
+      "contains": [
+        "AURA_CHAOS_RELEASE_BLOCKER",
+        "apply_production_audit_defaults",
+        "residual_rearm_race",
+        "residual_defer_steal_hard_fail",
+        "resume_fence",
+        "d_resume_fence_hard",
+        "fibers >= 32",
+        "composition-aware ceiling",
+        "AURA_CHAOS_PR_GATE_INJECT_HARD_FAIL",
+        "bump_steal_snapshot_hard_fail",
+        "Soft steal forbidden",
+        "AURA_CHAOS_SUSTAINED",
+        "chaos_sustained",
+        "AURA_CHAOS_SEED",
+        "run_chaos_pass",
+        "hard_fail_invariants",
+        "ac2554_pr_gate_short",
+        "ac2856_1_production_chaos_gate_runnable",
+        "ac2755_1_residual_zero_under_hard_gate",
+        "ac2902_1_clean_run_zero_hard_fail",
+        "ac2902_2_inject_fails_production",
+        "ac2902_3_sustained_mode",
+        "ac2902_4_structural_source_cite",
+        "ac2902_5_release_blocker_docs_and_linter",
+        "steal_snapshot_hard_fail",
+        "resume_fence hard"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "build.py",
+      "contains": [
+        "cmd_chaos_release_blocker_2902",
+        "AURA_CHAOS_RELEASE_BLOCKER",
+        "chaos-release-blocker-2902"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "forbid_glob": [
+        "docs/design/2902-*"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "forbid": [
+        "tests/serve/test_issue_2902.cpp"
+      ]
+    }
+  ]
+}

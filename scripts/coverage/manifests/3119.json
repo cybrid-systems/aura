@@ -35,6 +35,69 @@
       "contains": [
         "#3119"
       ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/lock_order_audit.h",
+      "contains": [
+        "std::abort()",
+        "lock_order_canary_enabled()",
+        "sandbox_off",
+        "want_soft"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_lock_order_audit_hard.cpp",
+      "contains": [
+        "3119 AC2",
+        "3119 AC4"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_lock_order_production_soft.cpp",
+      "contains": [
+        "ac1_production_soft_inversion"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "paths": [
+        "src/compiler/evaluator_primitives_query.cpp",
+        "src/compiler/evaluator_primitives_query_type_stats.cpp"
+      ],
+      "absent": [
+        "schema-3119"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "forbid": [
+        "tests/compiler/test_issue_3119.cpp"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "forbid_glob": [
+        "docs/design/3119-*"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "path": "src/compiler/evaluator_ctor.cpp",
+      "contains": [
+        "Issue #3861",
+        "typed_audit::apply_production_audit_defaults()",
+        "typed_audit::production_defaults_active()"
+      ]
+    },
+    {
+      "ac": "AC9",
+      "path": "tests/compiler/test_lock_order_audit.cpp",
+      "contains": [
+        "Issue #3861"
+      ]
     }
   ]
 }

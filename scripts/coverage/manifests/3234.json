@@ -1,0 +1,60 @@
+{
+  "issue": 3234,
+  "title": "Issue #3234: compute_sccs Tarjan uses local recursive struct, not type erasure.",
+  "ok": "OK: Issue #3234 folded from check_pass_scc_no_std_function_3234.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/pass_impls.ixx",
+      "absent": [
+        "std::function",
+        "#include <functional>"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/pass_impls.ixx",
+      "contains": [
+        "struct StrongConnect",
+        "kPassSccNoStdFunctionIssue = 3234",
+        "(*this)(w)",
+        "compute_sccs",
+        "scc_id_of_fid_",
+        "lowlink",
+        "on_stack",
+        "numbered in reverse topological order",
+        "Issue #3234"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_hot_pass_hard_dod.cpp",
+      "contains": [
+        "3234 AC1: no std::function",
+        "3234 AC2: InlinePass / SCC-dependent run still green",
+        "3234 AC3: reverse-topo",
+        "3234 AC4: no invent"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "scripts/coverage/checks/check_pure_wrap_no_std_function_3042.py",
+      "contains": [
+        "3234 closed the Tarjan leftover"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "forbid": [
+        "tests/compiler/test_issue_3234.cpp",
+        "tests/issues/test_issue_3234.cpp"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "forbid_glob": [
+        "docs/design/3234-*"
+      ]
+    }
+  ]
+}

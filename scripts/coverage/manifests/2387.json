@@ -1,0 +1,60 @@
+{
+  "issue": 2387,
+  "title": "Issue #2387: unify sensitive string caps with Effect matrix.",
+  "ok": "OK: Issue #2387 folded from check_capability_string_matrix_unify_2387.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/capability_model.hh",
+      "contains": [
+        "Issue #2387",
+        "TenantAdmin",
+        "Syscall",
+        "name == \"tenant-admin\"",
+        "name == \"syscall\"",
+        "compile-stats"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/security_capabilities.h",
+      "contains": [
+        "kEffectTenantAdmin",
+        "kEffectSyscall"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_capability_string_matrix_unify.cpp",
+      "contains": [
+        "ac1_registry_only_mutate",
+        "ac2_revoke_clears_both",
+        "ac3_tenant_admin_matrix",
+        "ac4_string_only_remain_and_metrics",
+        "ac5_source_and_gate"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_security.cpp",
+      "contains": [
+        "revoke_effect_capability",
+        "2387"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_capability_string_matrix_unify"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "build.py",
+      "contains": [
+        "cmd_capability_string_matrix_unify_coverage"
+      ]
+    }
+  ]
+}

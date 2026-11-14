@@ -1,0 +1,50 @@
+{
+  "issue": 2427,
+  "title": "Issue #2427: CapabilityRegistry::sandbox_mode (and default_tenant) atomic.",
+  "ok": "OK: Issue #2427 folded from check_sandbox_mode_atomic_2427.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/capability_model.hh",
+      "contains": [
+        "Issue #2427",
+        "struct AtomicEffectSandboxMode",
+        "std::atomic<std::uint8_t> v",
+        "AtomicEffectSandboxMode sandbox_mode{}",
+        "is_always_lock_free",
+        "std::memory_order_release",
+        "std::memory_order_acquire",
+        "operator=(EffectSandboxMode m)",
+        "sandbox_mode = EffectSandboxMode::Off",
+        "entry.sandbox_mode = sandbox_mode.load",
+        "struct AtomicTenantId",
+        "AtomicTenantId default_tenant{}"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/core/test_sandbox_mode_atomic.cpp",
+      "contains": [
+        "2427 AC1",
+        "2427 AC2",
+        "concurrent sandbox_mode",
+        "2427 AC3",
+        "2427 AC4"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "build.py",
+      "contains": [
+        "cmd_sandbox_mode_atomic_coverage"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_sandbox_mode_atomic"
+      ]
+    }
+  ]
+}

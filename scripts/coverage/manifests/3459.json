@@ -59,18 +59,29 @@
       ]
     },
     {
-      "ac": "Linter-3459",
-      "path": "scripts/coverage/checks/check_grant_mse_mid_refuse_3459.py",
-      "contains": [
-        "Issue #3459",
-        "AC1 refuse reporter"
-      ]
-    },
-    {
       "ac": "Build-3459",
       "path": "build.py",
       "contains": [
         "check_grant_mse_mid_refuse_3459.py"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/core/capability_model.hh",
+      "contains": [
+        "\"grant-mid-refused\""
+      ]
+    },
+    {
+      "ac": "AC6",
+      "forbid_glob": [
+        "docs/design/3459-*"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "forbid": [
+        "tests/issues/test_issue_3459.cpp"
       ]
     }
   ]

@@ -35,6 +35,73 @@
         "3120 AC2",
         "Soft remirror no-op"
       ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/dirty_propagation.ixx",
+      "contains": [
+        "Soft / empty persist",
+        "if (!residual_castop_persist_active())",
+        "force_dead_coercion_elim_into_cone",
+        "force_residual_castop_blocks_into_cone"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/optimization_passes.ixx",
+      "contains": [
+        "note_residual_castop_sites"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "mirror_type_affected_to_cascade"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_dead_coercion_dirty_cone.cpp",
+      "contains": [
+        "ac3120_1_type_txn_remirrors_skipped_castop",
+        "ac3120_2_soft_zero_cost",
+        "ac3120_3_no_new_query_keys",
+        "ac3120_4_linter_no_invent"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "schema-3065"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "absent": [
+        "schema-3120"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "path": "src/compiler/type_checker.ixx",
+      "contains": [
+        "remirror_persisted_residual_castops"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "forbid": [
+        "tests/compiler/test_issue_3120.cpp"
+      ]
+    },
+    {
+      "ac": "AC9",
+      "forbid_glob": [
+        "docs/design/3120-*"
+      ]
     }
   ]
 }

@@ -112,8 +112,7 @@ int run_test_atomic_batch_rebind_hygiene_lockless() {
     // \u2500\u2500 AC4: #3301 lint extended with AC7 row for the walk \u2500\u2500
     {
         std::println("\n--- AC4: #3301 lint AC7 row ---");
-        const auto lint =
-            read_file("scripts/coverage/checks/check_atomic_batch_macro_audit_3301.py");
+        const auto lint = read_file("scripts/coverage/manifests/3301.json");
         CHECK(!lint.empty(), "AC4: #3301 linter readable");
         CHECK(contains(lint, "AC7"), "AC4: #3301 linter declares AC7");
         CHECK(contains(lint, "walk_subtree(new_value"),

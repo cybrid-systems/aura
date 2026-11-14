@@ -1,0 +1,50 @@
+{
+  "issue": 2772,
+  "title": "Issue #2772: denseness multi-process AURA_BIN export / self-path DX.",
+  "ok": "OK: Issue #2772 folded from check_denseness_multiprocess_env_2772.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/runtime_paths.h",
+      "contains": [
+        "#2772",
+        "resolve_self_executable",
+        "ensure_aura_bin_environ",
+        "/proc/self/exe"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/main.cpp",
+      "contains": [
+        "ensure_aura_bin_environ",
+        "#2772",
+        "export AURA_BIN",
+        "Multi-process",
+        "aura-executable-path",
+        "print_denseness_usage"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_primitives_io.cpp",
+      "contains": [
+        "add(\"aura-executable-path\"",
+        "#2772",
+        "resolve_self_executable"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "forbid_glob": [
+        "docs/design/2772-*"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "forbid": [
+        "tests/compiler/test_issue_2772.cpp"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,128 @@
+{
+  "issue": 2978,
+  "title": "Issue #2978: reemit-success sync covered-named remount.",
+  "ok": "OK: Issue #2978 folded from check_reemit_success_sync_covered_remount_2978.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/aura_jit_runtime.cpp",
+      "contains": [
+        "Issue #2978",
+        "aura_sync_remount_covered_named_live_closures",
+        "mask == 0 || cap == 0",
+        "production_defaults_active",
+        "sid == 0",
+        "#2950",
+        "aura_sync_remount_named_live_closures",
+        "aura_sync_remount_anon_captured_live_closures",
+        "leftover",
+        "aura_residual_live_closure_remount_tick"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/hot_update_registry.cpp",
+      "contains": [
+        "last_reemit_success_region_mask",
+        "aura_sync_remount_covered_named_live_closures",
+        "aura_production_defaults_active_probe",
+        "Issue #2978"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/observability_metrics.h",
+      "contains": [
+        "reemit_success_sync_covered_remount_ok_total",
+        "reemit_success_sync_covered_remount_cap_hit_total"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_anonymous_residual_stable_id_policy.cpp",
+      "contains": [
+        "ac2978_1_sync_covered_named",
+        "ac2978_2_soft_mask_idle",
+        "ac2978_3_anon_filters",
+        "ac2978_4_cap_overflow_residual",
+        "ac2978_5_query_keys",
+        "ac2978_6_source_and_linter"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_obs_eval.cpp",
+      "contains": [
+        "schema-2978",
+        "reemit-success-sync-covered-remount-ok-total",
+        "reemit-success-sync-covered-remount-fail-total",
+        "reemit-success-sync-covered-remount-cap-hit-total",
+        "reemit-success-sync-covered-remount-wired",
+        "schema-2928",
+        "schema-2977"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "src/compiler/evaluator_primitives_obs_jit.cpp",
+      "contains": [
+        "schema-2978"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "path": "src/compiler/evaluator_primitives_mutate.cpp",
+      "contains": [
+        "schema-2895",
+        "schema-2949"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "path": "src/compiler/hot_update_registry.hh",
+      "contains": [
+        "Issue #2978"
+      ]
+    },
+    {
+      "ac": "AC9",
+      "path": "src/compiler/aura_jit_bridge.cpp",
+      "contains": [
+        "aura_bump_reemit_success_sync_covered_remount_totals"
+      ]
+    },
+    {
+      "ac": "AC10",
+      "path": "src/compiler/runtime_shared.h",
+      "contains": [
+        "aura_sync_remount_covered_named_live_closures"
+      ]
+    },
+    {
+      "ac": "AC11",
+      "path": "src/compiler/aura_jit_bridge_stub.cpp",
+      "contains": [
+        "aura_sync_remount_covered_named_live_closures"
+      ]
+    },
+    {
+      "ac": "AC12",
+      "path": "tests/compiler/test_force_jit_repromote.cpp",
+      "contains": [
+        "2978"
+      ]
+    },
+    {
+      "ac": "AC13",
+      "forbid": [
+        "tests/compiler/test_issue_2978.cpp"
+      ]
+    },
+    {
+      "ac": "AC14",
+      "forbid_glob": [
+        "docs/design/*2978*"
+      ]
+    }
+  ]
+}

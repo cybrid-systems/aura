@@ -1,0 +1,96 @@
+{
+  "issue": 2975,
+  "title": "Issue #2975: outermost MutationBoundary exit residual + pin_contract hard gate.",
+  "ok": "OK: Issue #2975 folded from check_outermost_exit_residual_pin_2975.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/gc_hooks.h",
+      "contains": [
+        "kOutermostExitResidualPinGateIssue = 2975",
+        "gate_outermost_exit_residual_and_pin",
+        "outermost_exit_should_fail_closed",
+        "never force-clear or fail",
+        "single relaxed",
+        "happy_path",
+        "residual_defer_leftover",
+        "#2546",
+        "g_residual_after_exit_hard_fail_total",
+        "g_pin_contract_fail_on_exit_total"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "mark_outermost_mutation_failed",
+        "gate_outermost_exit_residual_and_pin",
+        "production_force",
+        "fail_closed",
+        "#2932"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_residual_gc_defer_assert.cpp",
+      "contains": [
+        "ac2975_3_production_pin_fail_closed",
+        "production_force=*/false",
+        "ac2975_2_soft_observe_no_fail",
+        "Soft does not force-clear residual",
+        "ac2975_1_happy_path_zero_cost",
+        "ac2975_4_steal_shares_leftover_predicate",
+        "ac2975_5_additive_metrics",
+        "ac2975_6_tests_linter_chaos"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_fiber_mutation.cpp",
+      "contains": [
+        "residual_defer_leftover",
+        "#2975"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/observability_metrics.h",
+      "contains": [
+        "residual_after_exit_hard_fail_total",
+        "pin_contract_fail_on_exit_total"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "src/compiler/evaluator_primitives_obs_eval.cpp",
+      "contains": [
+        "residual-after-exit-hard-fail-total",
+        "pin-contract-fail-on-exit-total",
+        "schema-2975",
+        "schema-2846",
+        "residual-defer-after-exit-total"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "path": "tests/serve/test_chaos_steal_mutation_gc.cpp",
+      "contains": [
+        "2975",
+        "pin_contract_fail_on_exit",
+        "residual_defer_leftover"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "forbid": [
+        "tests/compiler/test_issue_2975.cpp"
+      ]
+    },
+    {
+      "ac": "AC9",
+      "forbid_glob": [
+        "docs/design/*2975*"
+      ]
+    }
+  ]
+}

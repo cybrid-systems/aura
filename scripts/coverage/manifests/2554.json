@@ -1,0 +1,49 @@
+{
+  "issue": 2554,
+  "title": "Issue #2554: promote chaos hard-fail counters into ./build.py gate.",
+  "ok": "OK: Issue #2554 folded from check_chaos_pr_hard_fail_gate_2554.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp",
+      "contains": [
+        "AURA_CHAOS_PR_GATE_INJECT_HARD_FAIL",
+        "bump_steal_snapshot_hard_fail",
+        "AURA_CHAOS_PR_GATE",
+        "chaos_pr_gate",
+        "hard_fail_invariants",
+        "ac2554_pr_gate_short",
+        "AURA_CHAOS_PR_GATE_ONLY",
+        "AURA_CHAOS_SOAK",
+        "AURA_CHAOS_FULL",
+        "if (!chaos_soak())",
+        "if (!chaos_full())",
+        "steal snapshot hard-fail delta == 0",
+        "residual still-running gauge == 0",
+        "deployment gate",
+        "Issue #2554"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "build.py",
+      "contains": [
+        "AURA_CHAOS_PR_GATE_INJECT_HARD_FAIL",
+        "cmd_chaos_pr_hard_fail_gate",
+        "cmd_chaos_pr_hard_fail_coverage",
+        "AURA_CHAOS_PR_GATE",
+        "cmd_chaos_pr_hard_fail_gate()",
+        "CMakeCache",
+        "static coverage only"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": ".github/workflows/ci.yml",
+      "contains": [
+        "chaos-pr-hard-fail",
+        "Chaos PR hard-fail gate"
+      ]
+    }
+  ]
+}

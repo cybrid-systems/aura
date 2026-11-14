@@ -34,6 +34,68 @@
         "3118 AC1",
         "3118 AC2"
       ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "abort_restore_dual_topology",
+        "peek_hold_budget_cancel",
+        "soft_observe_total",
+        "forced_unlock_total"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/mutation_hold_budget.h",
+      "contains": [
+        "kMutationHoldBudgetCancelForceReleaseIssue = 3118"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/serve/test_mailbox_hold_starvation_hard.cpp",
+      "contains": [
+        "3118 AC3"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "build.py",
+      "contains": [
+        "check_hold_budget_forced_unlock_3035",
+        "check_hold_budget_inbody_window_3071"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "path": "tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp",
+      "contains": [
+        "ac3118_residual_force_release_cite"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "paths": [
+        "src/compiler/evaluator_primitives_query.cpp",
+        "src/compiler/evaluator_primitives_query_type_stats.cpp"
+      ],
+      "absent": [
+        "schema-3118"
+      ]
+    },
+    {
+      "ac": "AC9",
+      "forbid": [
+        "tests/compiler/test_issue_3118.cpp",
+        "tests/serve/test_issue_3118.cpp"
+      ]
+    },
+    {
+      "ac": "AC10",
+      "forbid_glob": [
+        "docs/design/3118-*"
+      ]
     }
   ]
 }

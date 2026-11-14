@@ -1,0 +1,96 @@
+{
+  "issue": 2754,
+  "title": "Issue #2754: region concurrent cone / ImpactScope mask-AND disjointness",
+  "ok": "OK: Issue #2754 folded from check_region_cone_disjoint_admit_2754.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/mutation_hold_budget.h",
+      "contains": [
+        "Issue #2754",
+        "g_mutation_region_concurrent_cone_admit_total",
+        "kMutationRegionConeDisjointIssue = 2754",
+        "regions_cone_disjoint",
+        "(mask_a & mask_b) == 0",
+        "return a != 0 && b != 0 && a != b;",
+        "mask_a != 0 && mask_b != 0"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "regions_disjoint(region_key, g_last_admitted_region_key, cone_mask",
+        "regions_cone_disjoint",
+        "g_mutation_region_concurrent_cone_admit_total.fetch_add(1,",
+        "parallel_task_cone_mask()",
+        "AdmissionRejected: region-overlap",
+        "g_mutation_region_overlap_reject_total.fetch_add(1,",
+        "g_last_admitted_cone_mask_soft",
+        "metric-only",
+        "region_shard_",
+        "workspace_region_shard",
+        "atomic_batch_active",
+        "workspace_region_fallback_global_total"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_fiber_mutation.cpp",
+      "contains": [
+        "note_parallel_task_cone_mask",
+        "g_parallel_task_cone_mask"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator.ixx",
+      "contains": [
+        "note_parallel_task_cone_mask",
+        "parallel_task_cone_mask()"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "Issue #2754",
+        "mutation-region-concurrent-cone-admit-total",
+        "mutation-region-cone-disjoint-wired",
+        "\"schema-2754\"",
+        "\"issue-2754\"",
+        "mutation-region-concurrent-admit-total",
+        "mutation-region-overlap-reject-total",
+        "\"schema-2724\"",
+        "\"schema-2701\"",
+        "\"schema-2720\"",
+        "\"schema-2726\""
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "tests/serve/test_mailbox_hold_starvation_hard.cpp",
+      "contains": [
+        "ac2754_1_cone_disjoint_concurrent_admit",
+        "ac2754_2_true_overlap_still_rejects",
+        "ac2754_3_soft_path_metric_only",
+        "ac2754_4_densify_under_concurrent_holds",
+        "ac2754_5_additive_observability",
+        "ac2754_6_source_and_linter",
+        "ac2724_1_disjoint_concurrent_admit"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "forbid": [
+        "tests/serve/test_issue_2754.cpp"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "forbid_glob": [
+        "docs/design/2754-*"
+      ]
+    }
+  ]
+}

@@ -3126,10 +3126,8 @@ static void ac3805_5_source_cite_and_linter() {
           "3805 AC5: name-table cite");
     const auto scopeh = read_file("src/orch/agent_scope.h");
     CHECK(scopeh.find("slot_is_abandoned_live") != std::string::npos, "3805 AC5: scope cite");
-    CHECK(
-        read_file("scripts/coverage/checks/check_abandoned_live_name_reuse_3805.py").find("3805") !=
-            std::string::npos,
-        "3805 AC5: linter present");
+    CHECK(read_file("scripts/coverage/manifests/3805.json").find("3805") != std::string::npos,
+          "3805 AC5: linter present");
     CHECK(read_file("tests/orch/test_issue_3805.cpp").empty() &&
               read_file("tests/issues/test_issue_3805.cpp").empty(),
           "3805 AC5: no test_issue_3805.cpp per #81967");

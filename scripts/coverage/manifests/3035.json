@@ -1,0 +1,71 @@
+{
+  "issue": 3035,
+  "title": "Issue #3035: force unlock + dual-topology restore on hold-budget cancel",
+  "ok": "OK: Issue #3035 folded from check_hold_budget_forced_unlock_3035.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "Issue #3035",
+        "cancel_forced_fail",
+        "forced_unlock_total",
+        "abort_restore_dual_topology",
+        "(cancel_forced_fail || macro_hygiene_forced_fail) ? false : success_flag_load(flag_)",
+        "peek_hold_budget_cancel",
+        "soft_observe_total",
+        "mutation_hold_budget_reject_enabled()",
+        "is_outermost_"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/mutation_hold_budget.h",
+      "contains": [
+        "kMutationHoldBudgetForcedUnlockIssue = 3035"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "mutation-hold-budget-forced-unlock-total",
+        "mutation-hold-budget-forced-unlock-wired",
+        "schema-3035",
+        "issue-3035",
+        "schema-2999",
+        "schema-2932",
+        "schema-2726"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/serve/test_mailbox_hold_starvation_hard.cpp",
+      "contains": [
+        "ac3035_1_forced_unlock_dual_restore",
+        "ac3035_2_soft_metric_only",
+        "ac3035_3_happy_path_zero_force",
+        "ac3035_4_query_keys"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp",
+      "contains": [
+        "ac3035_residual_force_unlock_cite"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "forbid": [
+        "tests/serve/test_issue_3035.cpp"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "forbid_glob": [
+        "docs/design/3035-*"
+      ]
+    }
+  ]
+}

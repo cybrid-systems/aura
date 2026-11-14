@@ -1,0 +1,76 @@
+{
+  "issue": 2874,
+  "title": "Issue #2874: pluggable swarm intelligence stdlib family.",
+  "ok": "OK: Issue #2874 folded from check_swarm_2874.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "lib/std/swarm.aura",
+      "contains": [
+        "#2874",
+        "swarm:init",
+        "swarm:step!",
+        "swarm:best",
+        "swarm:report",
+        "swarm:export",
+        "\"pso\"",
+        "\"ant\"",
+        "\"grid\"",
+        "pheromone:update",
+        "fiber:spawn",
+        "fiber:join",
+        "(> (swarm-score f) (swarm-score pf))",
+        "(> (swarm-score fn) (swarm-score f0))",
+        "(> (swarm-score fn) (swarm-score fi))",
+        "no join-in-worker"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "lib/std/pso.aura",
+      "contains": [
+        "pso:init"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "lib/std/INDEX.aura",
+      "contains": [
+        "\"swarm\"",
+        "\"pso\""
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "lib/std/adaptive.aura",
+      "contains": [
+        "std/swarm",
+        "std/pso"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/suite/swarm_2874.aura",
+      "contains": [
+        "OK-2874",
+        "sphere",
+        "AC6b multi-objective across kinds",
+        "(list \"pso\" \"abc\" \"fss\" \"boids\")",
+        "front-non-dominated?",
+        "scalarized best vector"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "forbid": [
+        "tests/compiler/test_issue_2874.cpp"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "forbid_glob": [
+        "docs/design/2874-*"
+      ]
+    }
+  ]
+}

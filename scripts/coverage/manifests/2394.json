@@ -1,0 +1,59 @@
+{
+  "issue": 2394,
+  "title": "Issue #2394: last_validated_generation concurrent-safe (atomic).",
+  "ok": "OK: Issue #2394 folded from check_last_validated_generation_atomic_2394.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/ast.ixx",
+      "contains": [
+        "Issue #2394",
+        "CopyableAtomicU16",
+        "std::atomic<std::uint16_t>",
+        "last_validated_generation",
+        "CopyableAtomicU16 last_validated_generation"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/core/ast_stability.cpp",
+      "contains": [
+        "Issue #2394",
+        "memory_order_relaxed",
+        "last_validated_generation.store",
+        "load(std::memory_order_relaxed)"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/core/test_last_validated_generation_atomic.cpp",
+      "contains": [
+        "ac1_ac2_concurrent_validate",
+        "ac3_copy_and_assign",
+        "ac4_ac5_source_and_gate"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/core/ast_stability.cpp",
+      "absent": [
+        "memcpy(out + 18, &ref.last_validated_generation",
+        "memcpy(&r.last_validated_generation"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_last_validated_generation_atomic"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "build.py",
+      "contains": [
+        "cmd_last_validated_generation_atomic_coverage"
+      ]
+    }
+  ]
+}

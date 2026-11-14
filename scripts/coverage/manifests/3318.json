@@ -1,0 +1,95 @@
+{
+  "issue": 3318,
+  "title": "Issue #3318: coercion blame provenance restamp on mutation-epoch advance.",
+  "ok": "OK: Issue #3318 folded from check_coercion_blame_epoch_restamp_3318.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/coercion_map.ixx",
+      "contains": [
+        "kCoercionBlameEpochRestampIssue = 3318",
+        "current_mutation_epoch_mid",
+        "restamp_coercion_entry_epoch_blame",
+        "coercion_entry_epoch_stale",
+        "coercion_entry_dual_complete",
+        "g_coercion_blame_epoch_restamp_total",
+        "identity coercion",
+        "g_dead_coercion_ast_elided_total"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "restamp_coercion_epoch_blame"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/type_checker.ixx",
+      "contains": [
+        "restamp_epoch_blame"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_coercion_stamp_at_add.cpp",
+      "contains": [
+        "ac3318_1_epoch_advance_restamp",
+        "ac3318_2_soft_observe_production_incomplete",
+        "ac3318_3_elision_unchanged",
+        "ac3318_4_no_new_schema"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/coercion_provenance_policy.hh",
+      "contains": [
+        "Issue #3318"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "paths": [
+        "src/compiler/evaluator_primitives_query.cpp",
+        "src/compiler/evaluator_primitives_query_type_stats.cpp"
+      ],
+      "contains": [
+        "coercion-blame-epoch-restamp-total"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "paths": [
+        "src/compiler/evaluator_primitives_query.cpp",
+        "src/compiler/evaluator_primitives_query_type_stats.cpp"
+      ],
+      "absent": [
+        "schema-3318"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "paths": [
+        "src/compiler/coercion_map.ixx",
+        "src/compiler/evaluator_mutation_boundary.cpp"
+      ],
+      "absent": [
+        "g_3318_"
+      ]
+    },
+    {
+      "ac": "AC9",
+      "forbid": [
+        "tests/compiler/test_issue_3318.cpp",
+        "tests/issues/test_issue_3318.cpp"
+      ]
+    },
+    {
+      "ac": "AC10",
+      "forbid_glob": [
+        "docs/design/3318-*"
+      ]
+    }
+  ]
+}

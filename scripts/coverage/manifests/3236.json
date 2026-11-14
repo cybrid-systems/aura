@@ -1,0 +1,84 @@
+{
+  "issue": 3236,
+  "title": "Issue #3236: ADT match+arms cone + Production exhaustiveness before proof.",
+  "ok": "OK: Issue #3236 folded from check_adt_exhaust_commit_recheck_3236.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/type_checker.ixx",
+      "contains": [
+        "kAdtExhaustCommitRecheckIssue = 3236"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "Issue #3236",
+        "flat.children(nid)",
+        "force_adt_exhaust_undermark_into_cone",
+        "seed_adt_matches_for_dirty_types"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_typecheck.cpp",
+      "contains": [
+        "Issue #3236",
+        "check_match_exhaustiveness",
+        "force_reason=*/1",
+        "adt_exhaust_soft_observe_total"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_adt_match_goal_table.cpp",
+      "contains": [
+        "ac3236_1_match_and_arms_into_cone",
+        "ac3236_2_soft_quiet",
+        "ac3236_3_lineage",
+        "ac3236_4_source_linter"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/dirty_propagation.ixx",
+      "contains": [
+        "force_residual_castop_undermark_into_cone"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "paths": [
+        "src/compiler/evaluator_primitives_query.cpp",
+        "src/compiler/evaluator_primitives_query_type_stats.cpp"
+      ],
+      "absent": [
+        "schema-3236"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "paths": [
+        "src/compiler/type_checker_impl.cpp",
+        "src/compiler/evaluator_typecheck.cpp"
+      ],
+      "absent": [
+        "g_3236_"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "forbid": [
+        "tests/compiler/test_issue_3236.cpp",
+        "tests/issues/test_issue_3236.cpp"
+      ]
+    },
+    {
+      "ac": "AC9",
+      "forbid_glob": [
+        "docs/design/3236-*"
+      ]
+    }
+  ]
+}

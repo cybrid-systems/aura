@@ -1,0 +1,86 @@
+{
+  "issue": 2999,
+  "title": "Issue #2999: outermost Guard dtor consume of hold-budget cancel.",
+  "ok": "OK: Issue #2999 folded from check_hold_budget_dtor_consume_2999.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "Issue #2999",
+        "consume_hold_budget_cancel",
+        "forced_fail_closed_dtor_consume_total",
+        "forced_fail_closed_total",
+        "peek_hold_budget_cancel",
+        "soft_observe_total",
+        "mutation_hold_budget_reject_enabled()",
+        "is_outermost_",
+        "preemptive unlock",
+        "enter dtor"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/mutation_hold_budget.h",
+      "contains": [
+        "kMutationHoldBudgetForcedFailClosedDtorIssue = 2999",
+        "in-body window",
+        "Nested"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_fiber_mutation.cpp",
+      "contains": [
+        "aura_evaluator_try_hold_budget_fail_closed_at_safepoint",
+        "Issue #2999"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/serve/fiber.cpp",
+      "contains": [
+        "Issue #2999"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "mutation-hold-budget-forced-fail-closed-dtor-consume-total",
+        "schema-2999",
+        "issue-2999",
+        "schema-2932",
+        "mutation-hold-budget-forced-fail-closed-total"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "tests/serve/test_mailbox_hold_starvation_hard.cpp",
+      "contains": [
+        "ac2999_1_dtor_consume_fail_closed",
+        "ac2999_2_soft_observe_only",
+        "ac2999_3_nested_outermost_only"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "path": "tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp",
+      "contains": [
+        "ac2999_residual_dtor_consume_cite"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "forbid": [
+        "tests/serve/test_issue_2999.cpp"
+      ]
+    },
+    {
+      "ac": "AC9",
+      "forbid_glob": [
+        "docs/design/2999-*"
+      ]
+    }
+  ]
+}

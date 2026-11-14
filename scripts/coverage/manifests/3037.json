@@ -1,0 +1,138 @@
+{
+  "issue": 3037,
+  "title": "Issue #3037: restamp over-budget must reject StableNodeRef export.",
+  "ok": "OK: Issue #3037 folded from check_restamp_over_budget_export_3037.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/flatast_restamp.hh",
+      "contains": [
+        "Issue #3037",
+        "kRestampOverBudgetExportIssue = 3037"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/core/ast.ixx",
+      "contains": [
+        "restamp_generation_torn",
+        "node_eagerly_restamped"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/core/ast_impl.cpp",
+      "contains": [
+        "restamp_generation_torn_.store(1",
+        "restamp_eager_",
+        "restamp_all_node_generations"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_security.cpp",
+      "contains": [
+        "node_eagerly_restamped",
+        "record_query_stable_ref_restamp_torn_reject",
+        "should_hard_reject_soft_sibling",
+        "record_query_stable_ref_restamp_torn_soft_observe",
+        "!ws->restamp_last_budget_exceeded()"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_query_workspace.cpp",
+      "contains": [
+        "allow_query_stable_ref_export",
+        "generation torn"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "tests/compiler/test_hygiene_mutate_closed_loop.cpp",
+      "contains": [
+        "ac3037_1_production_torn_after_lazy_align",
+        "ac3037_2_soft_observe_only",
+        "ac3037_3_under_budget_zero_regression",
+        "ac3037_4_schema",
+        "ac3037_5_linter_and_suites"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "path": "src/compiler/evaluator.ixx",
+      "contains": [
+        "reject_stable_ref_export"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "path": "src/core/provenance_tracker.hh",
+      "contains": [
+        "restamp_torn_soft_observe",
+        "query_stable_ref_restamp_torn_reject_total",
+        "kQueryStableRefRestampTornIssue = 3037"
+      ]
+    },
+    {
+      "ac": "AC9",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "schema-3037",
+        "query-stable-ref-restamp-torn-reject-total",
+        "query-stable-ref-stamped-total",
+        "schema-3000",
+        "query:stable-ref-stats"
+      ]
+    },
+    {
+      "ac": "AC10",
+      "path": "src/compiler/evaluator_primitives_stdlib_review.cpp",
+      "contains": [
+        "schema-3037"
+      ]
+    },
+    {
+      "ac": "AC11",
+      "path": "src/compiler/evaluator_primitives_query_obs_mid.cpp",
+      "contains": [
+        "schema-3037"
+      ]
+    },
+    {
+      "ac": "AC12",
+      "path": "tests/core/test_tenant_isolation_enforcement.cpp",
+      "contains": [
+        "#3037",
+        "#2960"
+      ]
+    },
+    {
+      "ac": "AC13",
+      "path": "tests/core/test_stable_ref_tenant_capture.cpp",
+      "contains": [
+        "#3037"
+      ]
+    },
+    {
+      "ac": "AC14",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "Issue #3037"
+      ]
+    },
+    {
+      "ac": "AC15",
+      "forbid": [
+        "tests/compiler/test_issue_3037.cpp",
+        "tests/core/test_issue_3037.cpp"
+      ]
+    },
+    {
+      "ac": "AC16",
+      "forbid_glob": [
+        "docs/design/3037-*"
+      ]
+    }
+  ]
+}

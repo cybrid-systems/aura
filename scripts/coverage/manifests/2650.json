@@ -6,27 +6,43 @@
     {
       "ac": "AC1",
       "path": "src/serve/fiber.h",
-      "contains": ["eval_c_stack_depth_", "env_lookup_depth_", "aura_eval_c_stack_depth_slot"]
+      "contains": [
+        "eval_c_stack_depth_",
+        "env_lookup_depth_",
+        "aura_eval_c_stack_depth_slot"
+      ]
     },
     {
       "ac": "AC2",
       "path": "src/compiler/evaluator_eval_flat.cpp",
-      "contains": ["#2650", "aura_eval_c_stack_depth_slot", "fiber="]
+      "contains": [
+        "#2650",
+        "aura_eval_c_stack_depth_slot",
+        "fiber="
+      ]
     },
     {
       "ac": "AC3",
       "path": "src/compiler/evaluator_env.cpp",
-      "contains": ["aura_env_lookup_depth_slot"]
+      "contains": [
+        "aura_env_lookup_depth_slot"
+      ]
     },
     {
       "ac": "AC4",
       "path": "src/compiler/evaluator_module_loader.cpp",
-      "contains": ["#2653", "is_plausible_module_path", "refuse empty path"]
+      "contains": [
+        "#2653",
+        "is_plausible_module_path",
+        "refuse empty path"
+      ]
     },
     {
       "ac": "AC5",
       "path": "CMakeLists.txt",
-      "contains": ["test_fiber_eval_depth_isolation"]
+      "contains": [
+        "test_fiber_eval_depth_isolation"
+      ]
     },
     {
       "ac": "AC5",
@@ -39,7 +55,42 @@
     {
       "ac": "AC5",
       "path": "tests/compiler/test_fiber_eval_depth_isolation.cpp",
-      "contains": ["ac1_fiber_depth_isolated", "ac4_module_path_refuse"]
+      "contains": [
+        "ac1_fiber_depth_isolated",
+        "ac4_module_path_refuse"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/serve/fiber.h",
+      "contains_any": [
+        "#2650",
+        "#2649"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/serve/fiber.cpp",
+      "contains": [
+        "aura_eval_c_stack_depth_slot",
+        "aura_env_lookup_depth_slot"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "src/compiler/evaluator_env.cpp",
+      "contains_any": [
+        "#2650",
+        "#2649"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "path": "tests/compiler/test_fiber_eval_depth_isolation.cpp",
+      "contains": [
+        "AC1",
+        "AC4"
+      ]
     }
   ],
   "source_script": "scripts/coverage/checks/check_fiber_eval_depth_isolation_2650.py"

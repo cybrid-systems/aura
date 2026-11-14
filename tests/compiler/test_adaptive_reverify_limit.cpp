@@ -479,7 +479,7 @@ static void ac2939_5_metrics_lineage() {
 static void ac2939_6_linter_and_no_design() {
     std::println("\n--- #2939 AC6: linter + no docs/design/ ---");
     const auto t = read_file("tests/compiler/test_adaptive_reverify_limit.cpp");
-    const auto lint = read_file("scripts/coverage/checks/check_solve_delta_dep_closure_2939.py");
+    const auto lint = read_file("scripts/coverage/manifests/2939.json");
     const auto build = read_file("build.py");
     CHECK(t.find("ac2939_1_small_dirty_closure_no_cap") != std::string::npos, "AC6: AC1 test");
     CHECK(t.find("ac2939_2_cap_hit_pending") != std::string::npos, "AC6: AC2 test");

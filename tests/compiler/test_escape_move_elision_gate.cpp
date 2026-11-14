@@ -645,7 +645,7 @@ static void ac2899_5_source_cite() {
     const auto ir = read_file("src/compiler/ir_executor_impl.cpp");
     const auto q = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
     const auto t = read_file("tests/compiler/test_escape_move_elision_gate.cpp");
-    const auto lint = read_file("scripts/coverage/checks/check_linear_ir_fastpath_2899.py");
+    const auto lint = read_file("scripts/coverage/manifests/2899.json");
     const auto build = read_file("build.py");
     CHECK(aud.find("2899") != std::string::npos, "2899 AC5: audit cites #2899");
     CHECK(aud.find("linear_ir_fastpath_try_skip") != std::string::npos, "2899 AC5: try_skip");
@@ -829,7 +829,7 @@ static void ac2964_6_source_cite() {
     const auto low = read_file("src/compiler/lowering_linear_types_impl.cpp");
     const auto q = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
     const auto t = read_file("tests/compiler/test_escape_move_elision_gate.cpp");
-    const auto lint = read_file("scripts/coverage/checks/check_linear_fast_path_unified_2964.py");
+    const auto lint = read_file("scripts/coverage/manifests/2964.json");
     const auto build = read_file("build.py");
     CHECK(aud.find("linear_fast_path_ok") != std::string::npos, "2964 AC6: linear_fast_path_ok");
     CHECK(aud.find("2964") != std::string::npos, "2964 AC6: audit cites #2964");
@@ -977,8 +977,7 @@ static void ac3006_5_schema_lineage() {
 static void ac3006_6_linter_no_design() {
     std::println("\n--- #3006 AC6: linter + no invent / no design ---");
     const auto t = read_file("tests/compiler/test_escape_move_elision_gate.cpp");
-    const auto lint =
-        read_file("scripts/coverage/checks/check_linear_fast_path_dirty_revalidate_3006.py");
+    const auto lint = read_file("scripts/coverage/manifests/3006.json");
     const auto build = read_file("build.py");
     CHECK(t.find("ac3006_1_production_dirty_root") != std::string::npos, "3006 AC6: AC1");
     CHECK(t.find("ac3006_2_no_elide_under_false") != std::string::npos, "3006 AC6: AC2");

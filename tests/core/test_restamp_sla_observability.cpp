@@ -274,7 +274,7 @@ static void ac2934_5_source_and_linter() {
     const auto astx = read_file("src/core/ast.ixx");
     const auto restamp = read_file("src/core/flatast_restamp.hh");
     const auto build = read_file("build.py");
-    const auto lint = read_file("scripts/coverage/checks/check_restamp_budget_2934.py");
+    const auto lint = read_file("scripts/coverage/manifests/2934.json");
     CHECK(emb.find("Issue #2934") != std::string::npos, "AC5: emb cites #2934");
     CHECK(eix.find("Issue #2934") != std::string::npos, "AC5: evaluator.ixx cites #2934");
     CHECK(astx.find("Issue #2934") != std::string::npos, "AC5: ast.ixx cites #2934");

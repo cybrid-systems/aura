@@ -1,0 +1,119 @@
+{
+  "issue": 3045,
+  "title": "Issue #3045: ADT exhaustiveness under-mark cone-force.",
+  "ok": "OK: Issue #3045 folded from check_adt_exhaust_undermark_cone_3045.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "#3045",
+        "force_adt_exhaust_undermark_into_cone",
+        "force_adt_exhaust_undermark_from_match_nodes",
+        "collect_adt_ancestors_from_dirty",
+        "adt_exhaust_undermark_force_total",
+        "adt_exhaust_soft_observe_total",
+        "production_defaults_active()",
+        "no ADT ancestor"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/type_checker.ixx",
+      "contains": [
+        "kAdtExhaustUndermarkConeIssue",
+        "force_adt_exhaust_undermark_into_cone"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/dirty_propagation.ixx",
+      "contains": [
+        "force_adt_exhaust_sites_into_cone",
+        "match_sites.empty()"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_adt_match_goal_table.cpp",
+      "contains": [
+        "ac3045_1_undermark_force_cone",
+        "ac3045_2_soft_observe",
+        "ac3045_3_quiet",
+        "ac3045_4_schema",
+        "ac3045_5_source_cites"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "schema-3045",
+        "adt-exhaust-undermark-force-total"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "src/compiler/observability_metrics.h",
+      "contains": [
+        "adt_exhaust_undermark_force_total"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "path": "src/compiler/compiler_metrics_fields.inc",
+      "contains": [
+        "adt_exhaust_undermark_force_total"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "path": "tests/compiler/test_mutate_type_gate.cpp",
+      "contains": [
+        "#3045"
+      ]
+    },
+    {
+      "ac": "AC9",
+      "path": "tests/compiler/test_type_dirty_cone_dep_graph.cpp",
+      "contains": [
+        "force_adt_exhaust_sites_into_cone"
+      ]
+    },
+    {
+      "ac": "AC10",
+      "path": "src/compiler/evaluator_typecheck.cpp",
+      "contains": [
+        "force_adt_exhaust_undermark_into_cone",
+        "mutate_type_gate"
+      ]
+    },
+    {
+      "ac": "AC11",
+      "path": "src/compiler/mutate_type_gate.hh",
+      "contains": [
+        "#3045",
+        "under-mark cone-force"
+      ]
+    },
+    {
+      "ac": "AC12",
+      "path": "build.py",
+      "contains": [
+        "cmd_adt_exhaust_undermark_cone_3045_coverage"
+      ]
+    },
+    {
+      "ac": "AC13",
+      "forbid": [
+        "tests/compiler/test_issue_3045.cpp"
+      ]
+    },
+    {
+      "ac": "AC14",
+      "forbid_glob": [
+        "docs/design/*3045*"
+      ]
+    }
+  ]
+}

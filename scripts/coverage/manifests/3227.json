@@ -1,0 +1,93 @@
+{
+  "issue": 3227,
+  "title": "Issue #3227: post-compact / remount re-bind TypeLinearCommitProof.",
+  "ok": "OK: Issue #3227 folded from check_linear_post_migration_proof_rebind_3227.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "kLinearPostMigrationProofRebindIssue",
+        "rebind_linear_proof_after_root_migration",
+        "g_rehydrate_miss_invalidate_gen",
+        "if (last == 0)",
+        "if (!hard)",
+        "invalidate_fast_path_before_steal_densify_restamp",
+        "note_arena_compact_linear_root_consistency"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_gc.cpp",
+      "contains": [
+        "rebind_linear_proof_after_root_migration",
+        "revalidate_linear_type_provenance_after_migration"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/service.ixx",
+      "contains": [
+        "rebind_linear_proof_after_root_migration"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/aura_jit_runtime.cpp",
+      "contains": [
+        "rebind_linear_proof_after_root_migration"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_type_linear_commit_health.cpp",
+      "contains": [
+        "linear_move_drop_elision_ok",
+        "ac3227_1_prod_rebind_blocks_elision",
+        "ac3227_2_soft_and_quiet"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "tests/compiler/test_post_steal_linear_revalidate.cpp",
+      "contains": [
+        "revalidate_linear_type_provenance_after_migration"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "path": "tests/compiler/test_linear_gc_window.cpp",
+      "contains": [
+        "rebind_linear_proof_after_root_migration"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "path": "tests/compiler/test_compiler_hot_update_facade.cpp",
+      "contains": [
+        "rebind_linear_proof_after_root_migration"
+      ]
+    },
+    {
+      "ac": "AC9",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "absent": [
+        "g_3227_",
+        "query:linear-post-migration"
+      ]
+    },
+    {
+      "ac": "AC10",
+      "forbid": [
+        "tests/issues/test_issue_3227.cpp",
+        "tests/compiler/test_issue_3227.cpp"
+      ]
+    },
+    {
+      "ac": "AC11",
+      "forbid_glob": [
+        "docs/design/3227-*"
+      ]
+    }
+  ]
+}

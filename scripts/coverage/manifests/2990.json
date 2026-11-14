@@ -1,0 +1,90 @@
+{
+  "issue": 2990,
+  "title": "Issue #2990: ConcurrentMutationPolicy (SingleWriter vs ScopedParallel).",
+  "ok": "OK: Issue #2990 folded from check_workspace_concurrent_policy_2990.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/workspace_concurrent_policy.hh",
+      "contains": [
+        "ConcurrentMutationPolicy",
+        "SingleWriter",
+        "ScopedParallel",
+        "resolve_concurrent_mutation_policy_default",
+        "kWorkspaceConcurrentPolicyIssue = 2990"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator.ixx",
+      "contains": [
+        "scoped_parallel_enabled",
+        "set_concurrent_mutation_policy"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "scoped_parallel_enabled",
+        "#2990",
+        "bump_scoped_parallel_redirect",
+        "bump_scoped_parallel_conflict_fallback",
+        "scoped_parallel_overlap_fallback",
+        "Issue #3039",
+        "maybe_reject_mutation_concurrency_health"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_workspace.cpp",
+      "contains": [
+        "mw:set-concurrent-mutation-policy"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_workspace_region_concurrency.cpp",
+      "contains": [
+        "ac2990_2_scoped_parallel_disjoint",
+        "ac2990_3_overlap_fallback",
+        "ac2990_4_stats_and_health",
+        "ac2990_1_single_writer_default",
+        "ac2990_5_throughput_and_linter"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "paths": [
+        "src/compiler/evaluator_primitives_query.cpp",
+        "src/compiler/evaluator_primitives_obs_eval.cpp"
+      ],
+      "contains": [
+        "query:workspace-concurrency-stats",
+        "schema-2990",
+        "health-admit-wired",
+        "agent-scope-policy-wired"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "path": "src/compiler/observability_metrics.h",
+      "contains": [
+        "scoped_parallel_opt_in_total"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "forbid": [
+        "tests/compiler/test_issue_2990.cpp",
+        "tests/test_edsl_workspace_concurrent_policy.cpp"
+      ]
+    },
+    {
+      "ac": "AC9",
+      "forbid_glob": [
+        "docs/design/2990-*"
+      ]
+    }
+  ]
+}

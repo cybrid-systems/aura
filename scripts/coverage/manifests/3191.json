@@ -1,0 +1,49 @@
+{
+  "issue": 3191,
+  "title": "Issue #3191: post-#3131 default-deny residual on lockless tweak-literal.",
+  "ok": "OK: Issue #3191 folded from check_macro_hygiene_default_deny_3191.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_eval_flat.cpp",
+      "contains": [
+        "Issue #3191",
+        "is_macro_introduced(node)",
+        "get_allow_macro_mutate()",
+        "cannot tweak-literal MacroIntroduced",
+        "record_hygiene_violation_attempt()",
+        "is_macro_introduced"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_primitives_mutate.cpp",
+      "absent": [
+        "add_mutate(\"mutate:sv-add-coverpoint\"",
+        "add_mutate(\"mutate:sv-weaken-property\""
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_primitives_mutate.cpp",
+      "contains": [
+        "reject_structural_macro_hygiene",
+        "Issue #3115",
+        "Issue #3027",
+        "Issue #3131"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_hygiene_mutate_closed_loop.cpp",
+      "contains": [
+        "ac3191_1_default_reject",
+        "ac3191_2_sv_default_reject",
+        "ac3191_3_global_allow_unlocks",
+        "ac3191_4_soft_non_macro_zero_cost",
+        "ac3191_5_existing_surfaces_preserved",
+        "ac3191_6_source_and_linter"
+      ]
+    }
+  ]
+}
