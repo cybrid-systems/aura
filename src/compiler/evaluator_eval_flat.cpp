@@ -8574,9 +8574,10 @@ Evaluator::FlatStep Evaluator::eval_flat_on_literalint_literalfloat_literalstrin
             // Bit-pattern validation keeps mutate/tweak-literal
             // edits on the re-make path instead of serving a
             // stale box.
-            if (const auto* e = float_intern_by_node_.get(static_cast<std::uint32_t>(current_id),
-                                                          v.float_value))
-                return FlatStep::ret(*e);
+            types::EvalValue interned{};
+            if (float_intern_by_node_.lookup(static_cast<std::uint32_t>(current_id), v.float_value,
+                                             interned))
+                return FlatStep::ret(interned);
             auto val = make_float(v.float_value);
             float_intern_by_node_.set(static_cast<std::uint32_t>(current_id), v.float_value, val);
             return FlatStep::ret(val);

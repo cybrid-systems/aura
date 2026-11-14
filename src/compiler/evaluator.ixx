@@ -9197,17 +9197,27 @@ private:
     // (global, monotonic) — no pool-locality clear is needed; the cache
     // clears when the FlatAST identity changes (node ids are flat-scoped).
     struct FloatLiteralIntern {
+        // Same shape as SymIdIntern: sibling fibers evaluate the same float
+        // literal (swarm parallel step). Two unlocked resize() calls shrink
+        // the vector under the other writer and operator[] aborts.
+        // lookup() copies the box out so a concurrent set()/clear() cannot
+        // free the returned slot.
+        mutable std::shared_mutex mutex;
         std::vector<types::EvalValue> vals;
         std::vector<double> bits;
         std::vector<std::uint8_t> hit;
-        [[nodiscard]] const types::EvalValue* get(std::uint32_t id, double raw) const noexcept {
+        [[nodiscard]] bool lookup(std::uint32_t id, double raw,
+                                  types::EvalValue& out) const noexcept {
+            std::shared_lock<std::shared_mutex> guard(mutex);
             if (id >= hit.size() || !hit[id])
-                return nullptr;
+                return false;
             if (bits[id] != raw) // bit-exact: mutation, -0.0 vs 0.0, NaN bits
-                return nullptr;
-            return &vals[id];
+                return false;
+            out = vals[id];
+            return true;
         }
         void set(std::uint32_t id, double raw, types::EvalValue v) {
+            std::unique_lock<std::shared_mutex> guard(mutex);
             if (id >= vals.size()) {
                 vals.resize(id + 1);
                 bits.resize(id + 1);
@@ -9218,6 +9228,7 @@ private:
             hit[id] = 1;
         }
         void clear() noexcept {
+            std::unique_lock<std::shared_mutex> guard(mutex);
             vals.clear();
             bits.clear();
             hit.clear();
@@ -9225,8 +9236,8 @@ private:
     };
     FloatLiteralIntern float_intern_by_node_;
     // Issue #4717: which pool/flat this BODY is bound to is per-body state
-    // (fiber Context). The intern tables stay shared read-mostly; their own
-    // concurrency is #4719.
+    // (fiber Context). The intern tables stay shared. Float-literal entries
+    // guard themselves (above); symbol entries do too (#4717).
     [[nodiscard]] const ast::StringPool*& sym_intern_pool_ctx() noexcept {
         return reinterpret_cast<const ast::StringPool*&>(eval_ctx().sym_intern_pool);
     }
