@@ -12,9 +12,13 @@
         (display msg)
         (newline))))
 
+; A handler that never answers. Park it on a channel instead of
+; spinning: a busy loop holds the evaluator's body turn, so the asks
+; below starve on the CLI thread backend and the test measures the
+; scheduler, not orch:ask's timeout.
+(define *stuck-gate* (channel:create))
 (define (stuck msg)
-  (let loop ((i 0))
-    (if #t (loop (+ i 1)) 'never)))
+  (channel:recv *stuck-gate*))
 
 (orch:spawn "slow" stuck)
 (define t0 (monotonic-ms))
@@ -38,6 +42,12 @@
 (assert! (= (orch:ask "fast" "ping") 42) "missing timeout still receives")
 (define fast-dt (- (monotonic-ms) t1))
 (assert! (< fast-dt 2000) "a live agent does not wait out the default")
+
+; Release the parked handler and stop its agent so teardown joins the
+; fiber instead of detaching it.
+(channel:close *stuck-gate*)
+(orch:stop "slow")
+(orch:stop "fast")
 
 (if (= *fails* 0)
     (begin (display "OK-5154 orch ask timeout\n"))
