@@ -382,8 +382,17 @@
          (hash "ok" #f "error" "injection-blocked" "content" ""))
         ((equal? raw "bad-arg")
          (hash "ok" #f "error" "bad-arg" "content" ""))
+        ; #5287: aura-llm-call still returns the "no-http-post" sentinel
+        ; (#3919). When http-post was never installed, that sentinel is the
+        ; sandbox with no network grant — name the grant. A bound http-post
+        ; that still failed keeps the sentinel.
         ((equal? raw "no-http-post")
-         (hash "ok" #f "error" "no-http-post" "content" ""))
+         (hash "ok" #f
+               "error"
+               (if (try (procedure? http-post) (catch (e) #f))
+                 "no-http-post"
+                 "sandbox has not granted network: pass --grant net or --grant network, or set AURA_SANDBOX=off in a controlled environment")
+               "content" ""))
         ((and (string? raw) (string-prefix? raw "http-post:"))
          (hash "ok" #f "error" raw "content" ""))
         ((and (string? raw) (string-prefix? raw "http-get:"))

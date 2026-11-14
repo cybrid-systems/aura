@@ -207,6 +207,16 @@ CASES = (
         "sand_std.StdSandboxPreset.test_sandbox_off_allows_the_same_require",
     ),
     (
+        5287,
+        "test_missing_network_names_the_grant",
+        "sand_std.LlmChatNetworkGrant.test_missing_network_names_the_grant",
+    ),
+    (
+        5287,
+        "test_grant_or_sandbox_off_does_not_ask_for_network",
+        "sand_std.LlmChatNetworkGrant.test_grant_or_sandbox_off_does_not_ask_for_network",
+    ),
+    (
         5086,
         "test_preset_dev_trial_mutates_child_not_live",
         "sand_dev_child.DevChildCow.test_preset_dev_trial_mutates_child_not_live",
