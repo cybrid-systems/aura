@@ -1,5 +1,12 @@
-;; expect: body ok
 ; file header comment (plain semicolon)
-(; comment about this form
-  display "body ok")
-(newline)
+; Issue #5199: a closed "(;" is still a list. The opener's line is a
+; comment and the body runs. Row, column, the "(;" hint, and the file
+; face versus --load stay in tests/python/test_issue_5199_unclosed_list.py.
+(require "std/test" all:)
+(test-file "paren_semi_comment_5199.aura")
+
+(test-case "closed paren-semi is a list" (hash "issue" 5199)
+  (; comment about this form
+   check #t))
+
+(test-finish)

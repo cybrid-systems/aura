@@ -1,50 +1,38 @@
-; #5062: (require "std/stats" all:) must bind the names the module defines.
-; The export list used to say get/list/contains?/… while the definitions
-; were stats:get/stats:contains?/…, so contains? and filter stayed unbound.
-
+; Issue #5062: (require "std/stats" all:) binds the names the module
+; defines. The export list used to say get/list/contains?/… while the
+; definitions were stats:get/stats:contains?/…, so contains? and filter
+; stayed unbound.
+(require "std/test" all:)
 (require "std/stats" all:)
-
-(define fails 0)
-(define (expect cond name)
-  (if cond
-    #t
-    (begin
-      (set! fails (+ fails 1))
-      (display "FAIL-5062 ")
-      (display name)
-      (newline))))
+(test-file "issue_5062_stats_export.aura")
 
 (define (starts-with? s p)
   (and (>= (string-length s) (string-length p))
        (string=? (substring s 0 (string-length p)) p)))
 
-(expect (procedure? stats:contains?) "stats:contains? is bound")
-(expect (procedure? stats:filter) "stats:filter is bound")
-(expect (procedure? stats:get) "stats:get is bound")
-(expect (procedure? stats:list) "stats:list is bound")
-(expect (procedure? stats:count) "stats:count is bound")
-(expect (procedure? stats:prefix) "stats:prefix is bound")
+(test-case "stats exports are bound" (hash "issue" 5062)
+  (check (procedure? stats:contains?))
+  (check (procedure? stats:filter))
+  (check (procedure? stats:get))
+  (check (procedure? stats:list))
+  (check (procedure? stats:count))
+  (check (procedure? stats:prefix)))
 
-(expect (stats:contains? "query:envframe-dualpath-stats")
-        "registry contains query:envframe-dualpath-stats")
-(expect (not (stats:contains? "no-such-stat-5062"))
-        "unknown name is #f, not an unbound variable")
+(test-case "registry queries" (hash "issue" 5062)
+  (check (stats:contains? "query:envframe-dualpath-stats"))
+  (check (not (stats:contains? "no-such-stat-5062")))
+  (define queried (stats:filter (lambda (n) (starts-with? n "query:"))))
+  (check (pair? queried))
+  (check (stats:contains? (car queried)))
+  (define prefixed (stats:prefix "compile:"))
+  (check (pair? prefixed))
+  (check= (stats:count) (length (stats:list)))
+  (check (> (stats:count) 0)))
 
-(define queried (stats:filter (lambda (n) (starts-with? n "query:"))))
-(expect (pair? queried) "stats:filter returns the query: names")
-(expect (stats:contains? (car queried)) "every filter hit is in the registry")
+(test-case "bare get is not the stats export" (hash "issue" 5062)
+  (define legacy-get
+    (try (get "query:envframe-dualpath-stats")
+         (catch (e) e)))
+  (check (string? legacy-get)))
 
-(define prefixed (stats:prefix "compile:"))
-(expect (pair? prefixed) "stats:prefix returns compile: names")
-(expect (= (stats:count) (length (stats:list)))
-        "stats:count matches the module registry")
-(expect (> (stats:count) 0) "registry is non-empty")
-
-(define legacy-get
-  (try (get "query:envframe-dualpath-stats")
-       (catch (e) e)))
-(expect (string? legacy-get) "bare get is not the exported binding")
-
-(if (= fails 0)
-  (begin (display "OK-5062") (newline))
-  (exit 1))
+(test-finish)

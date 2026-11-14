@@ -1,32 +1,19 @@
-;; Issue #5197 — export before a single-level require stays bound, and
-;; a name that was never exported does not leak out of the module.
-
+; Issue #5197: export before a single-level require stays bound, and
+; a name that was never exported does not leak out of the module.
+(require "std/test" all:)
 (require "./export_set_nested/single/mod" all:)
 (require "./export_set_nested/filter/mod" all:)
-
-(define fails 0)
-(define (expect cond name)
-  (if cond
-      #t
-      (begin
-        (set! fails (+ fails 1))
-        (display "FAIL-5197 ")
-        (display name)
-        (newline))))
+(test-file "export_set_require_order.aura")
 
 (define (value thunk)
   (try (thunk) (catch (e) 'unbound-5197)))
 
-(define got-a1 (value (lambda () a1)))
-(define got-a2 (value (lambda () a2)))
-(define got-pub (value (lambda () pub)))
-(define got-secret (value (lambda () secret)))
+(test-case "export around a require stays bound" (hash "issue" 5197)
+  (check= 1 (value (lambda () a1)))
+  (check= 2 (value (lambda () a2))))
 
-(expect (equal? got-a1 1) "a1 exported before require is 1")
-(expect (equal? got-a2 2) "a2 exported after require is 2")
-(expect (equal? got-pub 1) "pub is exported")
-(expect (eq? got-secret 'unbound-5197) "secret is not exported")
+(test-case "unexported name stays inside the module" (hash "issue" 5197)
+  (check= 1 (value (lambda () pub)))
+  (check= 'unbound-5197 (value (lambda () secret))))
 
-(if (= fails 0)
-    (begin (display "OK-5197-order") (newline))
-    (exit 1))
+(test-finish)

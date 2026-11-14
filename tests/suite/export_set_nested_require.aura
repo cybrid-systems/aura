@@ -1,34 +1,15 @@
-;; Issue #5197 — a nested require must not drop exports the parent
-;; recorded before it. inner requires std/list and exports z. mid
-;; exports m1, requires inner, then exports m2. Both stay bound.
-
+; Issue #5197: a nested require must not drop exports the parent
+; recorded before it. inner requires std/list and exports z. mid
+; exports m1, requires inner, then exports m2. Both stay bound.
+(require "std/test" all:)
 (require "./export_set_nested/before/mid" all:)
-
-(define fails 0)
-(define (expect cond name)
-  (if cond
-      #t
-      (begin
-        (set! fails (+ fails 1))
-        (display "FAIL-5197 ")
-        (display name)
-        (newline))))
+(test-file "export_set_nested_require.aura")
 
 (define (value thunk)
   (try (thunk) (catch (e) 'unbound-5197)))
 
-(define got-m1 (value (lambda () m1)))
-(define got-m2 (value (lambda () m2)))
+(test-case "nested require keeps earlier exports" (hash "issue" 5197)
+  (check= 1 (value (lambda () m1)))
+  (check= 2 (value (lambda () m2))))
 
-(expect (equal? got-m1 1) "m1 is 1")
-(expect (equal? got-m2 2) "m2 is 2")
-
-(if (and (equal? got-m1 1) (equal? got-m2 2))
-    (begin
-      (display (list got-m1 got-m2))
-      (newline))
-    #f)
-
-(if (= fails 0)
-    (begin (display "OK-5197-nested") (newline))
-    (exit 1))
+(test-finish)

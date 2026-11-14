@@ -1,31 +1,42 @@
+; Module face: use, module-get, import, and require.
+; Each export graph that needs its own (require ... all:) stays in its
+; file: export_set_nested_require.aura, export_set_after_require.aura,
+; export_set_require_order.aura, bench_exports.aura, and
+; issue_5062_stats_export.aura. Overwrite warnings are stderr, so they
+; stay in tests/python/test_issue_5198_export_contracts.py.
 (require "std/test" all:)
-; Module system tests
-; Tests: use, module-get, module-keys, import prefix, export, require
+(test-file "module.aura")
 
-(test-suite "module:use"
+(test-case "use" (hash)
   (check (module? (use "std/list")))
   (check (module? (use "std/math"))))
 
-(test-suite "module:keys"
-  (check (pair? (module-keys (use "std/list"))))
-  (check (> (length (module-keys (use "std/list"))) 0)))
+(test-case "keys" (hash)
+  (define keys (module-keys (use "std/list")))
+  (check (pair? keys))
+  (check (> (length keys) 0)))
 
-(test-suite "module:get"
+(test-case "get" (hash)
   (check (procedure? (module-get (use "std/list") "sort")))
-  (check= () (module-get (use "std/list") "nonexistent")))
+  (check= '() (module-get (use "std/list") "nonexistent")))
 
-(test-suite "module:import"
+(test-case "import" (hash)
   (import "std/list")
-  (check= (1 3 4) (sort (list 3 1 4))))
+  (check (eq? sort (module-get (use "std/list") "sort"))))
 
-(test-suite "module:prefix"
+(test-case "import prefix" (hash)
   (import "std/list" "lst:")
-  (check= (1 3 4) (lst:sort (list 3 1 4))))
+  (check (eq? lst:sort (module-get (use "std/list") "sort"))))
 
-(test-suite "module:require"
+; Both require spellings bind the module's exports as bare names.
+(test-case "require symbol form" (hash)
   (require std/math)
-  (check= 4 (math:sqrt 16)))
+  (check (procedure? square))
+  (check (procedure? sqrt)))
 
-(test-suite "module:require-compat"
+(test-case "require all" (hash)
   (require std/math all:)
-  (check (>= (sqrt 16) 4.0)))
+  (check (procedure? factorial))
+  (check (procedure? sqrt)))
+
+(test-finish)
