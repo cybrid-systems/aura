@@ -1,0 +1,128 @@
+; tests/suite/hot_strategy_rules.aura — Issue #5288
+; Each hot rule keeps its own last-good body, snapshot, and rollback.
+; One registered name still heals by restoring that name's snapshot
+; (#2582 AC2 / #5148). Several names rebind only the chosen rule.
+; Top-level asserts: the suite runner --load does not enter test-suite bodies.
+
+(require "std/hot-strategy" all:)
+
+(define *fails* 0)
+(define (assert! pred msg)
+  (if pred
+    (begin (display "  pass: ") (display msg) (newline))
+    (begin
+      (set! *fails* (+ *fails* 1))
+      (display "  FAIL: ") (display msg) (newline))))
+
+; ── one name: snapshot restore, before any second rule exists ──
+; The registered string is not the live body. A rebind of that string
+; would yield 11. Restoring the pre-swap snapshot yields (weight x) = 20.
+(display "AC1 single-rule snapshot heal\n")
+(set-code "(define (score x) (weight x))\n(define (weight x) (* x 2))")
+(eval-current)
+(assert! (= (score 10) 20) "score starts as weight")
+(define reg-one
+  (hot-strategy:register! "score" "(define (score x) (+ x 1))"))
+(assert! (eq? (car reg-one) #t) "register score")
+(define sw-one
+  (hot-strategy:swap! "score" "(define (score x) (- x 1))" "probe"))
+(assert! (eq? (car sw-one) #t) "swap score to (- x 1)")
+(assert! (= (score 10) 9) "score is x-1 after swap")
+(assert! (= (hot-strategy:version) 2) "one register and one swap is version 2")
+(assert! (eq? (hot-strategy:heal!) #t) "no-arg heal of the only rule")
+(assert! (= (score 10) 20) "snapshot heal restored (weight x)")
+(assert! (= (weight 10) 20) "weight survived the heal")
+(assert! (string=? (hot-strategy:last-good-body)
+                   "(define (score x) (- x 1))")
+         "heal does not rewrite the stored last-good body")
+
+; ── two names: register, swap, heal one, then heal the active name ──
+(display "AC2 per-name last-good\n")
+(define meanrev-id "(define (meanrev x) x)")
+(define trend-id "(define (trend x) x)")
+(define meanrev-next "(define (meanrev x) (+ x 1))")
+(define trend-next "(define (trend x) (+ x 2))")
+(set-code (string-append meanrev-id "\n" trend-id "\n"))
+(eval-current)
+(define reg-m (hot-strategy:register! "meanrev" meanrev-id))
+(define reg-t (hot-strategy:register! "trend" trend-id))
+(assert! (eq? (car reg-m) #t) "register meanrev")
+(assert! (eq? (car reg-t) #t) "register trend")
+(assert! (string=? (hot-strategy:active-name) "trend")
+         "active name is the latest register")
+(assert! (string=? (hot-strategy:last-good-body) trend-id)
+         "no-arg last-good-body is the active rule")
+(assert! (string=? (hot-strategy:last-good-body "meanrev") meanrev-id)
+         "meanrev last-good survived the later register")
+(assert! (string=? (hot-strategy:last-good-body "trend") trend-id)
+         "trend last-good is its own body")
+(define snap-m (hot-strategy:last-good-snap "meanrev"))
+(define snap-t (hot-strategy:last-good-snap "trend"))
+(assert! (not (= snap-m snap-t)) "each register keeps its own snapshot")
+(assert! (= (hot-strategy:last-good-snap) snap-t)
+         "no-arg last-good-snap is the active rule")
+(assert! (string=? (hot-strategy:last-good-body "absent") "")
+         "an unknown name reads as an empty body")
+(assert! (= (hot-strategy:last-good-snap "absent") -1)
+         "an unknown name reads as snap -1")
+
+(define sw-m (hot-strategy:swap! "meanrev" meanrev-next "try-meanrev"))
+(assert! (eq? (car sw-m) #t) "swap meanrev")
+(assert! (= (meanrev 0) 1) "meanrev(0) is 1 after its swap")
+(assert! (= (trend 0) 0) "trend(0) stays 0")
+(define snap-m-pre (hot-strategy:last-good-snap "meanrev"))
+(assert! (not (= snap-m-pre snap-m))
+         "a successful swap stores that name's pre snapshot")
+(define sw-t (hot-strategy:swap! "trend" trend-next "try-trend"))
+(assert! (eq? (car sw-t) #t) "swap trend")
+(assert! (= (meanrev 0) 1) "meanrev(0) stays 1 after the trend swap")
+(assert! (= (trend 0) 2) "trend(0) is 2")
+(assert! (string=? (hot-strategy:active-name) "trend")
+         "active name follows the latest swap")
+(assert! (string=? (hot-strategy:last-good-body "meanrev") meanrev-next)
+         "meanrev last-good body is its own swap")
+(assert! (string=? (hot-strategy:last-good-body) trend-next)
+         "no-arg last-good-body is trend's swap")
+(assert! (= (hot-strategy:last-good-snap "meanrev") snap-m-pre)
+         "trend's swap does not replace meanrev's snapshot")
+(assert! (not (= (hot-strategy:last-good-snap) snap-m-pre))
+         "trend's snapshot is not meanrev's")
+(assert! (= (hot-strategy:version) 6)
+         "one pair plus two registers and two swaps is version 6")
+
+(assert! (eq? (hot-strategy:heal! "meanrev") #t) "heal meanrev by name")
+(assert! (= (meanrev 0) 0) "meanrev rolled back to its own last-good")
+(assert! (= (trend 0) 2) "healing meanrev left trend at +2")
+(assert! (string=? (hot-strategy:active-name) "trend")
+         "heal does not change the active name")
+(assert! (string=? (hot-strategy:last-good-body "trend") trend-next)
+         "heal does not clear the other rule's stored body")
+(assert! (string=? (hot-strategy:last-good-body "meanrev") meanrev-next)
+         "heal does not clear the healed rule's stored body")
+
+(assert! (eq? (hot-strategy:heal!) #t) "no-arg heal rolls back the active name")
+(assert! (= (trend 0) 0) "trend rolled back")
+(assert! (= (meanrev 0) 0) "meanrev stayed rolled back")
+(assert! (not (hot-strategy:heal! "absent")) "healing an unknown name is #f")
+(assert! (not (hot-strategy:heal! "")) "healing an empty name is #f")
+
+; Lambda body still swaps once other names are already registered (#2582 AC1).
+(display "AC3 lambda swap beside other rules\n")
+(set-code "(define (strat x) (* x 2))")
+(eval-current)
+(assert! (= (strat 5) 10) "strat starts at *2")
+(define reg-l (hot-strategy:register! "strat" "(lambda (x) (* x 2))"))
+(define sw-l (hot-strategy:swap! "strat" "(lambda (x) (* x 3))" "agg"))
+(assert! (eq? (car reg-l) #t) "register strat lambda")
+(assert! (eq? (car sw-l) #t) "swap strat to *3")
+(assert! (= (strat 5) 15) "strat is *3 after the lambda swap")
+(assert! (= (hot-strategy:version) 8)
+         "the lambda pair brings the process version to 8")
+
+(if (= *fails* 0)
+  (begin (display "OK-5288\n"))
+  (begin
+    (display "FAIL-5288 fails=")
+    (display *fails*)
+    (newline)
+    (error "5288 suite failed")))

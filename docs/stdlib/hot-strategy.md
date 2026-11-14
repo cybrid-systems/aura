@@ -33,9 +33,9 @@
 ## Semantics
 
 - **Version** — process-local counter (`hot-strategy:version`); not durable across process restarts.
-- **Last-good body** — code string last successfully swapped/registered.
-- **Last-good snap** — `ast:snapshot` id; `heal!` prefers `ast:restore`, else rebinds last-good body.
-- **Freeze / coexistence** — none beyond workspace snapshot restore; concurrent fibers should use `mutate:atomic-batch-safe` if swapping multiple names.
+- **Last-good** — one body and one snapshot per name. The body is the code string last successfully swapped or registered for that name. No-arg `last-good-body`, `last-good-snap`, and `active-name` report the latest successful `register!` or `swap!`. Pass a name to read that rule.
+- **heal!** — `(hot-strategy:heal!)` rolls back the active name. `(hot-strategy:heal! name)` rolls back that name. One registered name restores its snapshot. Several names rebind only the chosen name, so the others stay.
+- **Freeze / coexistence** — concurrent fibers should use `mutate:atomic-batch-safe` if swapping multiple names.
 
 ## Rebind observability contract (Issue #2684 / denseness H7)
 
