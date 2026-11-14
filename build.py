@@ -26944,6 +26944,10 @@ def _repro_configure_and_build(build_dir: Path, *, label: str = "repro") -> int:
         "Ninja",
         "-Wno-author",  # was -Wno-dev (CMake 4.x deprecated it)
         "-DCMAKE_BUILD_TYPE=Release",
+        # Issue #5203: the repro preset emits CMake's native SPDX 3.0.1 for
+        # the aura-targets export. This path configures without presets, so
+        # carry the same knob or the release install has no SBOM document.
+        "-DCMAKE_INSTALL_SBOM_FORMATS=spdx",
         f"-DCMAKE_C_COMPILER={c_compiler}",
         f"-DCMAKE_CXX_COMPILER={cxx_compiler}",
         f"-DCMAKE_C_FLAGS={cflags}",
