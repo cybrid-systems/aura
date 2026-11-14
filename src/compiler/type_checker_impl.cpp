@@ -248,6 +248,53 @@ static TypeId annotation_type_of(TypeRegistry& reg, const FlatAST& flat, const S
     return reg.lookup_type(std::string(type_name));
 }
 
+// #5279 pre-binds every lambda define to a naked type variable, so a
+// recursive call never sees a parameter annotation and
+// `(define (g (: x Int)) (g "s"))` typechecks. When a parameter
+// annotation resolves, pre-bind that function type and leave the
+// return as a fresh variable. No resolved annotation yields an
+// invalid TypeId: the caller keeps the naked variable so unannotated
+// recursion stays on the #5279 path (car/cdr join stays a variable).
+static TypeId annotated_lambda_forward_type(ConstraintSystem& solver, TypeEnv& env,
+                                            TypeRegistry& registry, const FlatAST& flat,
+                                            const StringPool& pool, const NodeView& lambda_node) {
+    if (lambda_node.tag != NodeTag::Lambda || lambda_node.params.empty())
+        return {};
+    std::vector<TypeId> param_types;
+    param_types.reserve(lambda_node.params.size());
+    bool any_annotated = false;
+    for (std::size_t index = 0; index < lambda_node.params.size(); ++index) {
+        TypeId param_type{};
+        if (index < lambda_node.param_annotations.size() &&
+            lambda_node.param_annotations[index] != NULL_NODE) {
+            const auto annot = flat.get(lambda_node.param_annotations[index]);
+            if (annot.tag == NodeTag::TypeAnnotation) {
+                const auto type_name = pool.resolve(annot.sym_id);
+                if (!type_name.empty() && !is_type_hole(type_name)) {
+                    param_type = registry.lookup_type(std::string(type_name));
+                    if (!param_type.valid()) {
+                        const auto from_env = env.lookup(std::string(type_name));
+                        if (from_env.valid())
+                            param_type = from_env;
+                    }
+                }
+            }
+        }
+        if (param_type.valid())
+            any_annotated = true;
+        param_types.push_back(param_type);
+    }
+    if (!any_annotated)
+        return {};
+    for (std::size_t index = 0; index < param_types.size(); ++index) {
+        if (param_types[index].valid())
+            continue;
+        param_types[index] = solver.fresh_var_named(pool.resolve(lambda_node.params[index]));
+    }
+    const bool dotted = lambda_node.int_value != 0;
+    return registry.register_func(std::move(param_types), solver.fresh_var(), dotted);
+}
+
 static std::string closest_match(std::string_view name, const std::vector<std::string>& candidates,
                                  std::size_t max_dist = 3) {
     std::string best;
@@ -5788,7 +5835,12 @@ TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId 
                 TypeId rec_fwd{};
                 const bool rec_fn = !def_name.empty() && flat.get(v.child(0)).tag == Tag::Lambda;
                 if (rec_fn) {
-                    rec_fwd = cs_.fresh_var();
+                    // Annotated parameters ride on the forward type so the
+                    // recursive call is checked. Unannotated stays a var.
+                    rec_fwd = annotated_lambda_forward_type(cs_, env_, reg_, flat, pool,
+                                                            flat.get(v.child(0)));
+                    if (!rec_fwd.valid())
+                        rec_fwd = cs_.fresh_var();
                     env_.bind(std::string(def_name), rec_fwd);
                 }
                 auto val_type = synthesize_flat(flat, pool, v.child(0), flat.get(v.child(0)));
@@ -9145,7 +9197,12 @@ void InferenceEngine::check_flat(FlatAST& flat, StringPool& pool, NodeId id, Typ
             TypeId rec_fwd{};
             const bool rec_fn = !def_name.empty() && flat.get(val_id).tag == NodeTag::Lambda;
             if (rec_fn) {
-                rec_fwd = cs_.fresh_var();
+                // Annotated parameters ride on the forward type so the
+                // recursive call is checked. Unannotated stays a var.
+                rec_fwd =
+                    annotated_lambda_forward_type(cs_, env_, reg_, flat, pool, flat.get(val_id));
+                if (!rec_fwd.valid())
+                    rec_fwd = cs_.fresh_var();
                 env_.bind(std::string(def_name), rec_fwd);
             }
             TypeId val_expected = annotation_type_of(reg_, flat, pool, val_id);
