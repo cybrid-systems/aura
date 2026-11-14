@@ -1,21 +1,10 @@
-;; expect: OK-5185
-; Issue #5185: std/string string-join must stay linear in the part count
-; and keep stdlib type errors. The native primitive skips non-strings;
-; these cases fail if that primitive is exposed, or if a part is dropped
-; or doubled. Scale checks assert length and every part, not timing.
-
+; Issue #5185: std/string string-join stays linear in the part count
+; and keeps the stdlib type errors. Scale checks assert length and every
+; part, not timing. Trim, case, find, and contains live here too, so
+; stdlib.aura is not a second authority for the same calls.
+(require "std/test" all:)
 (require "std/string" all:)
-
-(define *fails* 0)
-(define *passes* 0)
-(define (check pred msg)
-  (if pred
-      (begin
-        (set! *passes* (+ *passes* 1))
-        (display "  pass: ") (display msg) (newline))
-      (begin
-        (set! *fails* (+ *fails* 1))
-        (display "  FAIL: ") (display msg) (newline))))
+(test-file "string_join.aura")
 
 (define (caught thunk) (try (thunk) (catch (e) e)))
 (define (errmsg thunk) (format "~a" (caught thunk)))
@@ -23,51 +12,6 @@
   (string-append "type mismatch — expected String, got " kind
                  " (in string-append, argument " (number->string arg) ")"))
 
-; ── semantics: empty, single, separators ───────────────────────────────────
-(check (equal? (string-join '() ",") "")
-       "empty quoted list")
-(check (equal? (string-join (list) ",") "")
-       "empty (list)")
-(check (equal? (string-join '("only") ",") "only")
-       "single string")
-; A one-element list never reaches string-append, so a non-string is
-; returned as itself (same as before #5185).
-(check (equal? (string-join (list 42) ",") 42)
-       "single non-string is returned")
-(check (equal? (string-join '("a" "b") " ") "a b")
-       "two elements")
-(check (equal? (string-join (list "a" "b" "c") ", ") "a, b, c")
-       "three elements")
-(check (equal? (string-join '("a" "b" "c") "") "abc")
-       "empty separator")
-(check (equal? (string-join '("a" "b" "c") "::") "a::b::c")
-       "multi-char separator")
-(check (equal? (string-join '("p" "q" "r") "-")
-               (string-append "p" "-" "q" "-" "r"))
-       "same order as one string-append")
-
-; ── non-strings are type errors, not silently skipped ──────────────────────
-; Native string-join would drop the int and return "a,b" / "a" / "b" / "a,b".
-(check (equal? (errmsg (lambda () (string-join (list "a" 1 "b") ",")))
-               (sa-type-msg "Int" 3))
-       "non-string in the middle is a type error")
-(check (equal? (errmsg (lambda () (string-join (list "a" 1) ",")))
-               (sa-type-msg "Int" 3))
-       "non-string second element is a type error")
-(check (equal? (errmsg (lambda () (string-join (list 1 "b") ",")))
-               (sa-type-msg "Int" 1))
-       "non-string first element is a type error")
-(check (equal? (errmsg (lambda () (string-join (list "a" "b" 1) ",")))
-               (sa-type-msg "Int" 5))
-       "non-string last element is a type error")
-(check (equal? (errmsg (lambda () (string-join (list "a" 'b) ",")))
-               (sa-type-msg "Symbol" 3))
-       "symbol element is a type error")
-(check (equal? (errmsg (lambda () (string-join '("a" "b") 1)))
-               (sa-type-msg "Int" 2))
-       "non-string separator is a type error")
-
-; ── scale: 1 / 1k / 8k / 32k identical parts, every byte checked ───────────
 (define (copies n)
   (let ((i 0)
         (acc (list)))
@@ -86,14 +30,10 @@
       (lambda ()
         (let ((start (* i stride)))
           (if (not (string=? (substring s start (+ start plen)) part))
-              (begin
-                (display "  part mismatch at ") (display i) (newline)
-                (set! ok #f)))
+              (set! ok #f))
           (if (and ok (< i (- n 1)))
               (if (not (string=? (substring s (+ start plen) (+ start stride)) sep))
-                  (begin
-                    (display "  sep mismatch at ") (display i) (newline)
-                    (set! ok #f)))))
+                  (set! ok #f))))
         (set! i (+ i 1))))
     ok))
 
@@ -101,33 +41,110 @@
   (let* ((part "abcdefghij")
          (sep ",")
          (joined (string-join (copies n) sep))
-         (want (+ (* n 10) (* (- n 1) 1)))
-         (label (number->string n)))
-    (if (not (string? joined))
-        (begin
-          (display "  joined=") (display joined) (newline)
-          (check #f (string-append "string? n=" label))
-          (check #f (string-append "length n=" label))
-          (check #f (string-append "content n=" label)))
-        (begin
-          (check #t (string-append "string? n=" label))
-          (if (not (= (string-length joined) want))
-              (begin
-                (display "  got-len ") (display (string-length joined))
-                (display " want-len ") (display want) (newline)))
-          (check (= (string-length joined) want)
-                 (string-append "length n=" label))
-          (check (parts-match? joined n part sep)
-                 (string-append "content n=" label))))))
+         (want (+ (* n 10) (* (- n 1) 1))))
+    (check (string? joined))
+    (check= want (string-length joined))
+    (check (parts-match? joined n part sep))))
 
-(join-scale 1)
-(join-scale 1000)
-(join-scale 8000)
-(join-scale 32000)
+(test-case "empty quoted list" (hash "issue" 5185)
+  (check= "" (string-join '() ",")))
 
-(if (and (= *fails* 0) (= *passes* 27))
-    (display "OK-5185\n")
-    (begin
-      (display "FAIL-5185 fails=") (display *fails*)
-      (display " passes=") (display *passes*) (newline)
-      (exit 1)))
+(test-case "empty list" (hash "issue" 5185)
+  (check= "" (string-join (list) ",")))
+
+(test-case "single string" (hash "issue" 5185)
+  (check= "only" (string-join '("only") ",")))
+
+; A one-element list never reaches string-append, so a non-string is
+; returned as itself.
+(test-case "single non-string is returned" (hash "issue" 5185)
+  (check= 42 (string-join (list 42) ",")))
+
+(test-case "two elements" (hash "issue" 5185)
+  (check= "a b" (string-join '("a" "b") " ")))
+
+(test-case "three elements" (hash "issue" 5185)
+  (check= "a, b, c" (string-join (list "a" "b" "c") ", ")))
+
+(test-case "empty separator" (hash "issue" 5185)
+  (check= "abc" (string-join '("a" "b" "c") "")))
+
+(test-case "multi-char separator" (hash "issue" 5185)
+  (check= "a::b::c" (string-join '("a" "b" "c") "::")))
+
+(test-case "same order as one string-append" (hash "issue" 5185)
+  (check= (string-append "p" "-" "q" "-" "r")
+          (string-join '("p" "q" "r") "-")))
+
+(test-case "non-string in the middle is a type error" (hash "issue" 5185)
+  (check= (sa-type-msg "Int" 3)
+          (errmsg (lambda () (string-join (list "a" 1 "b") ",")))))
+
+(test-case "non-string second element is a type error" (hash "issue" 5185)
+  (check= (sa-type-msg "Int" 3)
+          (errmsg (lambda () (string-join (list "a" 1) ",")))))
+
+(test-case "non-string first element is a type error" (hash "issue" 5185)
+  (check= (sa-type-msg "Int" 1)
+          (errmsg (lambda () (string-join (list 1 "b") ",")))))
+
+(test-case "non-string last element is a type error" (hash "issue" 5185)
+  (check= (sa-type-msg "Int" 5)
+          (errmsg (lambda () (string-join (list "a" "b" 1) ",")))))
+
+(test-case "symbol element is a type error" (hash "issue" 5185)
+  (check= (sa-type-msg "Symbol" 3)
+          (errmsg (lambda () (string-join (list "a" 'b) ",")))))
+
+(test-case "non-string separator is a type error" (hash "issue" 5185)
+  (check= (sa-type-msg "Int" 2)
+          (errmsg (lambda () (string-join '("a" "b") 1)))))
+
+(test-case "join scale 1" (hash "issue" 5185)
+  (join-scale 1))
+
+(test-case "join scale 1000" (hash "issue" 5185)
+  (join-scale 1000))
+
+(test-case "join scale 8000" (hash "issue" 5185)
+  (join-scale 8000))
+
+(test-case "join scale 32000" (hash "issue" 5185)
+  (join-scale 32000))
+
+; Issue #5089: trim every ASCII whitespace byte, not only space.
+(test-case "trim spaces" (hash "issue" 5089)
+  (check= "hello" (string-trim "  hello  ")))
+
+(test-case "trim every ascii whitespace" (hash "issue" 5089)
+  (check= "hello" (string-trim "\n\thello\r\n")))
+
+(test-case "trim trailing newline" (hash "issue" 5089)
+  (check= "4" (string-trim "4\n")))
+
+(test-case "trim only whitespace" (hash "issue" 5089)
+  (check= "" (string-trim " \t\r\n")))
+
+(test-case "trim keeps an interior space" (hash "issue" 5089)
+  (check= "a b" (string-trim "\ta b\n")))
+
+(test-case "upcase" (hash)
+  (check= "HELLO" (string-upcase "hello")))
+
+(test-case "downcase" (hash)
+  (check= "hello" (string-downcase "HELLO")))
+
+(test-case "contains" (hash)
+  (check (string-contains? "hello" "ell")))
+
+; Issue #3920: string-find (haystack, needle) returns an index or -1.
+(test-case "find interior" (hash "issue" 3920)
+  (check= 2 (string-find "ab(lambda" "(lambda")))
+
+(test-case "find at start" (hash "issue" 3920)
+  (check= 0 (string-find "(lambda (x) x)" "(lambda")))
+
+(test-case "find miss" (hash "issue" 3920)
+  (check= -1 (string-find "abc" "(lambda")))
+
+(test-finish)

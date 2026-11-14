@@ -1,32 +1,28 @@
-; #5133: pin what std/list actually promises, against the SRFI-1 label the
-; INDEX carried. The folds take the accumulator first (R7RS fold-left shape),
-; not SRFI-1's element-first order, so the assertions below are written the way
-; the module behaves and the module states the difference.
+; #5133: std/list. Folds take the accumulator first. take/drop are
+; list-first. The same predicates run on the host and inside a guest fiber.
+; std/iter is not required here: it would shadow the primitive foldl.
+; The iter/list order witness is the process test.
+(require "std/test" all:)
 (require "std/list" all:)
+(test-file "list_srfi_5133.aura")
 
 (define xs (list 1 2 3))
-(define (check)
+
+(define (list-ok?)
   (and
-   ; foldl is (proc acc elem): building with cons yields the reversed list
-   (equal? (foldl cons (quote ()) xs) (quote ((((() . 1) . 2) . 3))))
-   ; foldr is (proc elem acc): the documented shape restores the order
+   ; (proc acc elem): three conses, one per element.
+   (equal? (foldl cons (quote ()) xs) (quote (((() . 1) . 2) . 3)))
    (equal? (foldr cons (quote ()) xs) xs)
    (equal? (foldl + 0 xs) 6)
    (equal? (foldr + 0 xs) 6)
-   ; SRFI-1 predicates over one and many lists
    (eq? (any odd? (list 2 4 5)) #t)
    (eq? (every even? (list 2 4 5)) #f)
    (eq? (every even? (list 2 4)) #t)
-   ; take/drop take the list first (#4177)
    (equal? (take xs 2) (list 1 2))
    (equal? (drop xs 2) (list 3))
    (equal? (take xs 0) (quote ()))
-   ; #5192: take is the native primitive now (the stdlib define is gone), so
-   ; these run the primitive's own SRFI-1 arms: k == length is the list, and
-   ; k > length is an error rather than a silent truncation.
    (equal? (take xs 3) xs)
    (try (take xs 9) (catch e #t))
-   ; membership and friends
    (equal? (member 2 xs) (list 2 3))
    (eq? (member 9 xs) #f)
    (equal? (zip (list 1 2) (list 3 4)) (list (list 1 3) (list 2 4)))
@@ -34,10 +30,99 @@
    (equal? (last xs) 3)
    (equal? (reverse xs) (list 3 2 1))))
 
-(define host (if (check) 1 0))
-(define guest (fiber:join (fiber:spawn (lambda () (if (check) 1 0)))))
+(test-case "srfi list host" (hash "issue" 5133)
+  (check (list-ok?)))
 
-(if (and (= host 1) (= guest 1))
-    (begin (display "OK-5133-list") (newline))
-    (begin (display "FAIL-5133-list host=") (display host)
-           (display " guest=") (display guest) (newline) (exit 1)))
+(test-case "srfi list guest" (hash "issue" 5133)
+  (check= 1 (fiber:join (fiber:spawn (lambda () (if (list-ok?) 1 0))))))
+
+; Issue #5192: k greater than the length is an error, not a short list.
+(test-case "take longer than the list is an error" (hash "issue" 5192)
+  (check (eq? (try (begin (take xs 9) #f) (catch e #t)) #t)))
+
+; Issue #5198: iota keeps one contract after iter then list.
+(test-case "iota iter-then-list" (hash "issue" 5198)
+  (check= (list 1 2 3 4 5) (iota 5 1)))
+
+(test-case "iota one arg" (hash "issue" 5198)
+  (check= (list 0 1 2 3 4) (iota 5)))
+
+(test-case "iota step" (hash "issue" 5198)
+  (check= (list 1 3 5) (iota 3 1 2)))
+
+(test-case "sum and product" (hash)
+  (check= 10 (sum (list 1 2 3 4)))
+  (check= 24 (product (list 2 3 4)))
+  (check= 15 (foldl + 0 (range 1 6))))
+
+(test-case "take-while and drop-while" (hash)
+  (check= (list 1 2 3) (take-while (lambda (x) (< x 4)) (list 1 2 3 4 5)))
+  (check= (list 4 5) (drop-while (lambda (x) (< x 4)) (list 1 2 3 4 5))))
+
+(test-case "longer zip" (hash)
+  (check= (list (list 1 4) (list 2 5) (list 3 6))
+          (zip (list 1 2 3) (list 4 5 6))))
+
+(test-case "cons star" (hash)
+  (check= (list 1 2 3 4 5) (cons* 1 2 3 (list 4 5)))
+  (check= (cons 1 2) (cons* 1 2)))
+
+(test-case "append-map and filter-map" (hash)
+  (check= (list 1 1 2 2) (append-map (lambda (x) (list x x)) (list 1 2)))
+  (check= (list 2 4) (filter-map (lambda (x) (if (even? x) x #f)) (list 1 2 3 4))))
+
+(test-case "any and every values" (hash)
+  (check= 3 (any (lambda (x) (if (> x 2) x #f)) (list 1 3 4)))
+  (check= 5 (any (lambda (a b) (if (> a 2) (+ a b) #f)) (list 0 0 5) (list 0 0 0)))
+  (check (not (any (lambda (a b) #f) (list 1 2 3) (list 10))))
+  (check (every (lambda (a b) #t) (list 1 2) (list 9)))
+  (check= 9 (every (lambda (x) (if (< x 5) 9 #f)) (list 1 2)))
+  (check (not (every (lambda (x) (> x 1)) (list 2 1))))
+  (check (all (lambda (x) (> x 1)) (list 2 3))))
+
+(test-case "assoc" (hash)
+  (check= (cons 'b 2) (assoc 'b (list (cons 'a 1) (cons 'b 2)))))
+
+; Issue #5032: the list primitives stay registered.
+(test-case "list primitives" (hash "issue" 5032)
+  (check= 3 (length xs))
+  (check= (list 2 3 4) (map (lambda (x) (+ x 1)) xs))
+  (check= (list 2) (filter (lambda (x) (> x 1)) (list 1 2)))
+  (check= (list 1 2 3 4) (append xs (list 4))))
+
+(test-case "intersperse" (hash)
+  (check= (list) (intersperse 0 (list)))
+  (check= (list 1) (intersperse 0 (list 1)))
+  (check= (list 1 0 2) (intersperse 0 (list 1 2)))
+  (check= (list 1 0 2 0 3) (intersperse 0 (list 1 2 3)))
+  (check= (list 1 "," 2 "," 3) (intersperse "," (list 1 2 3)))
+  (check= (list 1 0 2 0 3) (intersperse-iterative 0 (list 1 2 3))))
+
+(test-case "flatten" (hash)
+  (check= (list) (flatten (list)))
+  (check= (list 1 2 3 4) (flatten (list 1 (list 2 3) 4)))
+  (check= (list 1 2 3 4 5) (flatten (list 1 (list 2 (list 3 4)) 5)))
+  (check= (list 1 2 3) (flatten (list (list 1) (list 2) (list 3)))))
+
+(test-case "foldr difference" (hash)
+  (check= 2 (foldr - 0 (list 1 2 3))))
+
+(test-case "large intersperse" (hash)
+  (let* ((n 400)
+         (ys (intersperse 0 (range 0 n))))
+    (check= (- (* n 2) 1) (length ys))
+    (check= 0 (car ys))
+    (check= 0 (car (cdr ys)))
+    (check= 1 (car (cdr (cdr ys))))))
+
+(test-case "large flatten" (hash)
+  (let* ((nested (foldl (lambda (acc i) (list acc i)) (list) (range 0 300)))
+         (flat (flatten nested)))
+    (check (> (length flat) 200))
+    (check (number? (last flat)))))
+
+(test-case "large folds" (hash)
+  (check= 79800 (foldr + 0 (range 0 400)))
+  (check= 79800 (foldl + 0 (range 0 400))))
+
+(test-finish)

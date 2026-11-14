@@ -80,7 +80,7 @@ def main() -> int:
             fails.append(f"{label}: forbidden residual {n!r}")
 
     src = _read("lib/std/string.aura")
-    suite = _read("tests/suite/stdlib.aura")
+    suite = _read("tests/suite/string_split_fast_5283.aura")
     e2e = _read("tests/e2e/commercial_readiness/commercial_readiness_stdlib_string.aura")
     build = _read("build.py")
 

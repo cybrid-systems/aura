@@ -1,5 +1,5 @@
-; Issue #5003 — SRFI-shaped stdlib: list / vector / hash-table / set /
-; sort / bitwise / record.
+; Issue #5003 — SRFI-shaped stdlib: hash-table / set / bitwise / record.
+; List, vector, sort, and frequencies contracts live in their theme homes.
 ;
 ; Each check fails the run: the file calls (error ...), and --load turns
 ; an escaped top-level error value into exit status 1 (the aura file
@@ -7,7 +7,6 @@
 ; not used here, so a red check cannot look green.
 
 (require "std/list" all:)
-(require "std/vector" all:)
 (require "std/hash" all:)
 (require "std/set" all:)
 (require "std/sort" all:)
@@ -28,56 +27,6 @@
 
 (define (t-true name v) (t= name #t (if v #t #f)))
 (define (t-false name v) (t= name #f (if v #t #f)))
-
-; ── SRFI-1 list ───────────────────────────────────────────────────
-(t= "cons*" (list 1 2 3 4 5) (cons* 1 2 3 (list 4 5)))
-(t= "cons* dotted tail" (cons 1 2) (cons* 1 2))
-(t= "append-map" (list 1 1 2 2) (append-map (lambda (x) (list x x)) (list 1 2)))
-(t= "filter-map" (list 2 4) (filter-map (lambda (x) (if (even? x) x #f)) (list 1 2 3 4)))
-(t= "any returns true value" 3 (any (lambda (x) (if (> x 2) x #f)) (list 1 3 4)))
-(t= "any over two lists" 5
-   (any (lambda (a b) (if (> a 2) (+ a b) #f)) (list 0 0 5) (list 0 0 0)))
-(t-false "any stops at the shortest list"
-         (any (lambda (a b) #f) (list 1 2 3) (list 10)))
-(t-true "every stops at the shortest list"
-        (every (lambda (a b) #t) (list 1 2) (list 9)))
-(t= "every returns last value" 9 (every (lambda (x) (if (< x 5) 9 #f)) (list 1 2)))
-(t-false "every sees a false" (every (lambda (x) (> x 1)) (list 2 1)))
-(t-true "all boolean form" (all (lambda (x) (> x 1)) (list 2 3)))
-(t= "take exact" (list 1 2) (take (list 1 2 3) 2))
-(t-true "take too short is an error"
-        (try (take (list 1) 2) (catch e #t)))
-(t= "iota" (list 0 1 2) (iota 3))
-(t= "assoc" (cons 'b 2) (assoc 'b (list (cons 'a 1) (cons 'b 2))))
-
-; ── SRFI-133 vector ───────────────────────────────────────────────
-(t= "vector-append" (vector 1 2 3) (vector-append (vector 1) (vector 2 3)))
-(t= "vector-concatenate" (vector 1 2 3)
-   (vector-concatenate (list (vector 1) (vector 2 3))))
-(t-true "vector-empty?" (vector-empty? (vector)))
-(t= "vector-map shortest" (vector 11 22) (vector-map + (vector 1 2) (vector 10 20)))
-(t= "vector-for-each count"
-   (let ((n (vector 0)))
-     (vector-for-each (lambda (x) (vector-set! n 0 (+ (vector-ref n 0) 1)))
-                      (vector 1 2 3))
-     (vector-ref n 0))
-   3)
-(t= "vector-fold" 6 (vector-fold (lambda (acc x) (+ acc x)) 0 (vector 1 2 3)))
-(t= "vector-fold-right" (list 1 2 3)
-   (vector-fold-right (lambda (acc x) (cons x acc)) (list) (vector 1 2 3)))
-(t= "vector-count" 2 (vector-count even? (vector 1 2 3 4)))
-(t= "vector-index" 2 (vector-index even? (vector 1 3 4)))
-(t-false "vector-index miss" (vector-index even? (vector 1 3 5)))
-(t= "vector-any" #t (if (vector-any odd? (vector 2 4 5)) #t #f))
-(t= "vector-every" #t (if (vector-every odd? (vector 1 3 5)) #t #f))
-(t= "vector-copy! returns target"
-   (let ((to (vector 0 0 0)))
-     (vector-copy! to 0 (vector 7 8))
-     to)
-   (vector 7 8 0))
-(t= "vector-reverse-copy" (vector 3 2 1) (vector-reverse-copy (vector 1 2 3)))
-(t= "vector-binary-search" 1
-   (vector-binary-search (vector 10 20 30) 20 (lambda (a b) (- a b))))
 
 ; ── SRFI-125 hash table + SRFI-128 comparator ─────────────────────
 (define h (make-hash-table))
@@ -109,9 +58,6 @@
 (t= "hash-table-walk count"
    (let ((n 0)) (hash-table-walk h (lambda (k v) (set! n (+ n 1)))) n)
    (hash-table-size h))
-(t= "frequencies" (list 2 1)
-   (let ((f (frequencies (list 'a 'a 'b))))
-     (list (hash-ref f 'a) (hash-ref f 'b))))
 (t-false "hash-get missing key" (hash-get (hash) 'nope))
 (t= "hash-get present" 3 (hash-get (hash-set (hash) 'k 3) 'k))
 (t-true "comparator?" (comparator? default-comparator))
@@ -151,19 +97,6 @@
 (t= "set-filter" 1 (set-size (set-filter odd? (set 2 4 5))))
 (t= "list->set/set->list roundtrip" (list 1 2 3)
    (list-sort < (let ((r (list->set (list 1 2 3)))) (set->list r))))
-
-; ── SRFI-132 sort ─────────────────────────────────────────────────
-(t= "list-sort SRFI order" (list 1 2 3) (list-sort < (list 3 1 2)))
-(t= "list-sort data order" (list 1 2 3) (list-sort (list 3 1 2) <))
-(t= "list-stable-sort" (list 1 1 2) (list-stable-sort < (list 1 2 1)))
-(t= "vector-sort" (vector 1 2 3) (vector-sort < (vector 3 1 2)))
-(t= "vector-sort! mutates"
-   (let ((v (vector 3 1 2))) (vector-sort! < v) v)
-   (vector 1 2 3))
-(t= "sort list default" (list 1 2 3) (sort (list 3 1 2)))
-(t= "sort vector default" (vector 1 2 3) (sort (vector 3 1 2)))
-(t-true "sorted?" (sorted? (list 1 2 3) <))
-(t-false "sorted? false" (sorted? (list 2 1) <))
 
 ; ── SRFI-151 bitwise ──────────────────────────────────────────────
 (t= "bitwise-not" -6 (bitwise-not 5))

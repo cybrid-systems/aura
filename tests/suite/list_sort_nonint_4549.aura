@@ -1,73 +1,71 @@
-;; expect: OK-4549 list-sort/sort keep Floats, sort strings, take a comparator, raise otherwise
-; Issue #4549: native list-sort copied the list into int64_t, so Floats came
-; back truncated and any string made it return () — and std/list `sort`
-; passed that () through (it is a list). Each probe also runs hot so the
-; IR/JIT tiers see the same results.
+; Issue #4549: std/list sort and list-sort keep Floats, sort strings, take
+; a comparator, and raise otherwise. This file requires only std/list.
+; std/sort's generic sort is a different binding and lives in sort_srfi_5133.
+(require "std/test" all:)
 (require "std/list" all:)
-(define *fails* 0)
-(define *passes* 0)
-(define (check name got want)
-  (if (equal? got want)
-      (set! *passes* (+ *passes* 1))
-      (begin (set! *fails* (+ *fails* 1))
-             (display "  FAIL: ") (display name) (display " got ") (display got)
-             (display " want ") (display want) (newline))))
+(test-file "list_sort_nonint_4549.aura")
+
 (define (raises? th) (try (begin (th) #f) (catch (e) #t)))
 
-; Ints are unchanged.
-(check "ints" (list-sort (list 3 1 2)) (list 1 2 3))
-(check "ints dup/neg" (list-sort (list 5 -1 5 0 -7)) (list -7 -1 0 5 5))
-(check "empty" (list-sort (list)) (list))
-; Floats keep their value and type.
-(check "floats" (list-sort (list 2.5 1.7 3.9)) (list 1.7 2.5 3.9))
-(check "float type" (float? (car (list-sort (list 2.5 1.7)))) #t)
-; Mixed Int/Float sort numerically; each element keeps its own type.
-(define mixed (list-sort (list 3 1.5 2 0.25 -1)))
-(check "mixed" mixed (list -1 0.25 1.5 2 3))
-(check "mixed int kept" (integer? (car mixed)) #t)
-(check "mixed float kept" (float? (cadr mixed)) #t)
-; Strings sort lexicographically.
-(check "strings" (list-sort (list "b" "a" "c")) (list "a" "b" "c"))
-(check "strings prefix" (list-sort (list "ab" "a" "b" "" "aa")) (list "" "a" "aa" "ab" "b"))
-; std/list sort, the issue's repro.
-(check "sort strings" (sort (list "b" "a" "c")) (list "a" "b" "c"))
-(check "sort floats" (sort (list 2.5 1.7 3.9)) (list 1.7 2.5 3.9))
-(check "sort ints" (sort (list 9 8 7)) (list 7 8 9))
-(check "sort empty" (sort (list)) (list))
-; Comparators, either argument order, and through std/list sort.
-(check "cmp >" (list-sort (list 3 1 2) >) (list 3 2 1))
-(check "cmp first" (list-sort string<? (list "b" "a" "c")) (list "a" "b" "c"))
-(check "cmp lambda" (list-sort (list "bb" "a" "ccc") (lambda (x y) (> (string-length x) (string-length y))))
-       (list "ccc" "bb" "a"))
-(check "sort cmp" (sort (list 1 3 2) >) (list 3 2 1))
-; Stable: equal keys keep input order.
-(check "stable"
-       (list-sort (list (list 2 "a") (list 1 "b") (list 2 "c") (list 1 "d"))
-                  (lambda (x y) (< (car x) (car y))))
-       (list (list 1 "b") (list 1 "d") (list 2 "a") (list 2 "c")))
-(check "cmp pairs by symbol"
-       (map car (sort (list (cons "k2" 2) (cons "k1" 1)) (lambda (x y) (string<? (car x) (car y)))))
-       (list "k1" "k2"))
-; Unsupported lists raise instead of answering ().
-(check "mixed kinds raise" (raises? (lambda () (list-sort (list 1 "x")))) #t)
-(check "bools raise" (raises? (lambda () (list-sort (list #t #f)))) #t)
-(check "sort mixed raise" (raises? (lambda () (sort (list "a" 1)))) #t)
-(check "bad comparator raise" (raises? (lambda () (list-sort (list 1 2) 5))) #t)
-; Longer inputs (merge runs, hot loop).
-(define big (let loop ((i 0) (acc (list))) (if (= i 500) acc (loop (+ i 1) (cons (* 1.5 (modulo (* i 7919) 500)) acc)))))
-(define sorted-big (list-sort big))
-(check "big length" (length sorted-big) 500)
-(check "big order" (let loop ((xs sorted-big)) (cond ((null? (cdr xs)) #t) ((> (car xs) (cadr xs)) #f) (else (loop (cdr xs))))) #t)
-(check "big cmp = native" (list-sort big <) sorted-big)
-(define (hot-sort) (list-sort (list "pear" "apple" "fig")))
-(let loop ((i 0) (ok #t))
-  (if (< i 2000)
-      (loop (+ i 1) (and ok (equal? (hot-sort) (list "apple" "fig" "pear"))))
-      (check "hot strings" ok #t)))
+(define big
+  (let loop ((i 0) (acc (list)))
+    (if (= i 500)
+        acc
+        (loop (+ i 1) (cons (* 1.5 (modulo (* i 7919) 500)) acc)))))
 
-(if (and (= *fails* 0) (= *passes* 28))
-    (display "OK-4549 list-sort/sort keep Floats, sort strings, take a comparator, raise otherwise\n")
-    (begin
-      (display "FAIL-4549 fails=") (display *fails*)
-      (display " passes=") (display *passes*) (newline)
-      (exit 1)))
+(test-case "ints and floats" (hash "issue" 4549)
+  (check= (list 1 2 3) (list-sort (list 3 1 2)))
+  (check= (list -7 -1 0 5 5) (list-sort (list 5 -1 5 0 -7)))
+  (check= (list) (list-sort (list)))
+  (check= (list 1.7 2.5 3.9) (list-sort (list 2.5 1.7 3.9)))
+  (check (float? (car (list-sort (list 2.5 1.7)))))
+  (define mixed (list-sort (list 3 1.5 2 0.25 -1)))
+  (check= (list -1 0.25 1.5 2 3) mixed)
+  (check (integer? (car mixed)))
+  (check (float? (cadr mixed))))
+
+(test-case "strings" (hash "issue" 4549)
+  (check= (list "a" "b" "c") (list-sort (list "b" "a" "c")))
+  (check= (list "" "a" "aa" "ab" "b") (list-sort (list "ab" "a" "b" "" "aa")))
+  (check= (list "a" "b" "c") (sort (list "b" "a" "c")))
+  (check= (list 1.7 2.5 3.9) (sort (list 2.5 1.7 3.9)))
+  (check= (list 7 8 9) (sort (list 9 8 7)))
+  (check= (list) (sort (list))))
+
+(test-case "comparators" (hash "issue" 4549)
+  (check= (list 3 2 1) (list-sort (list 3 1 2) >))
+  (check= (list "a" "b" "c") (list-sort string<? (list "b" "a" "c")))
+  (check= (list "ccc" "bb" "a")
+          (list-sort (list "bb" "a" "ccc")
+                     (lambda (x y) (> (string-length x) (string-length y)))))
+  (check= (list 3 2 1) (sort (list 1 3 2) >))
+  (check= (list (list 1 "b") (list 1 "d") (list 2 "a") (list 2 "c"))
+          (list-sort (list (list 2 "a") (list 1 "b") (list 2 "c") (list 1 "d"))
+                     (lambda (x y) (< (car x) (car y)))))
+  (check= (list "k1" "k2")
+          (map car (sort (list (cons "k2" 2) (cons "k1" 1))
+                         (lambda (x y) (string<? (car x) (car y)))))))
+
+(test-case "unsupported values raise" (hash "issue" 4549)
+  (check (raises? (lambda () (list-sort (list 1 "x")))))
+  (check (raises? (lambda () (list-sort (list #t #f)))))
+  (check (raises? (lambda () (sort (list "a" 1)))))
+  (check (raises? (lambda () (list-sort (list 1 2) 5)))))
+
+(test-case "five hundred floats" (hash "issue" 4549)
+  (define sorted-big (list-sort big))
+  (check= 500 (length sorted-big))
+  (check (let loop ((ys sorted-big))
+           (cond ((null? (cdr ys)) #t)
+                 ((> (car ys) (cadr ys)) #f)
+                 (else (loop (cdr ys))))))
+  (check= sorted-big (list-sort big <)))
+
+(test-case "hot string sort" (hash "issue" 4549)
+  (define (hot-sort) (list-sort (list "pear" "apple" "fig")))
+  (let loop ((i 0) (ok #t))
+    (if (< i 2000)
+        (loop (+ i 1) (and ok (equal? (hot-sort) (list "apple" "fig" "pear"))))
+        (check ok))))
+
+(test-finish)

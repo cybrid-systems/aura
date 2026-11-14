@@ -55,7 +55,7 @@ class TestHome(unittest.TestCase):
         self.assertIn("surface: std/list", text)
         self.assertIn("std/iter", text)
         self.assertIn("(check= (list 0 1 2) (iota 3))", text)
-        self.assertIn("older harness", text)
+        self.assertIn("already uses test-case", text)
 
     def test_iter_and_algorithm_reexports(self) -> None:
         code, text = render_home("std/iter")

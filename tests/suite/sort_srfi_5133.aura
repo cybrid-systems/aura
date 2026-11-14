@@ -1,29 +1,86 @@
-; #5133: pin the SRFI-132 sort surface (proc first, as the module declares).
+; #5133: SRFI-132 sort. list-sort accepts both argument orders. The same
+; predicates run on the host and inside a guest fiber. std/list's string
+; and float sort stays in list_sort_nonint_4549.aura: std/sort's generic
+; sort rejects strings, and a require of std/sort is hoisted over the file.
+(require "std/test" all:)
+(require "std/list" all:)
+(require "std/algorithm" all:)
 (require "std/sort" all:)
+(test-file "sort_srfi_5133.aura")
 
-(define (check)
+(define (sort-ok?)
   (and
-   ; list-sort accepts both shapes the module documents
    (equal? (list-sort (list 3 1 2) <) (list 1 2 3))
    (equal? (list-sort < (list 3 1 2)) (list 1 2 3))
-   ; stability: equal keys keep their input order
    (equal? (list-sort (lambda (x y) (< (car x) (car y)))
                       (list (list 1 'a) (list 1 'b) (list 0 'c)))
            (list (list 0 'c) (list 1 'a) (list 1 'b)))
-   ; vector sorts are the list round-trip; proc first (SRFI-132 / R7RS)
    (equal? (vector-sort < (vector 3 1 2)) (vector 1 2 3))
    (let ((v (vector 3 1 2))) (vector-sort! < v) (equal? v (vector 1 2 3)))
-   ; generic sort dispatches on the sequence type
    (equal? (sort (list 3 1 2)) (list 1 2 3))
    (equal? (sort (vector 3 1 2) <) (vector 1 2 3))
-   ; sorted? answers on both answers
    (eq? (sorted? (list 1 2 3) <) #t)
    (eq? (sorted? (list 3 1) <) #f)))
 
-(define host (if (check) 1 0))
-(define guest (fiber:join (fiber:spawn (lambda () (if (check) 1 0)))))
+(define (count-up n) (range 0 n))
 
-(if (and (= host 1) (= guest 1))
-    (begin (display "OK-5133-sort") (newline))
-    (begin (display "FAIL-5133-sort host=") (display host)
-           (display " guest=") (display guest) (newline) (exit 1)))
+(define (sorted-ascending? xs)
+  (let loop ((ys xs))
+    (cond ((or (null? ys) (null? (cdr ys))) #t)
+          ((> (car ys) (cadr ys)) #f)
+          (else (loop (cdr ys))))))
+
+(test-case "srfi sort host" (hash "issue" 5133)
+  (check (sort-ok?)))
+
+(test-case "srfi sort guest" (hash "issue" 5133)
+  (check= 1 (fiber:join (fiber:spawn (lambda () (if (sort-ok?) 1 0))))))
+
+; Issue #5198: sorted? keeps the optional comparator, including one argument.
+(test-case "sorted? one" (hash "issue" 5198)
+  (check= #t (sorted? (list 1 2 3))))
+
+(test-case "sorted? comparator" (hash "issue" 5198)
+  (check= #t (sorted? (list 1 2 3) <)))
+
+(test-case "sorted? descending" (hash "issue" 5198)
+  (check= #t (sorted? (list 3 1) >)))
+
+(test-case "sorted? false" (hash "issue" 5198)
+  (check= #f (sorted? (list 3 1) <)))
+
+(test-case "sorted? vector" (hash "issue" 5198)
+  (check= #t (sorted? (vector 1 2 4))))
+
+(test-case "list-stable-sort" (hash)
+  (check= (list 1 1 2) (list-stable-sort < (list 1 2 1))))
+
+(test-case "stable native sort" (hash)
+  (check= (count-up 1000) (sort-stable (count-up 1000)))
+  (check (sorted-ascending? (sort-stable (count-up 1000))))
+  (check= (list-sort (count-up 8000)) (sort-stable (count-up 8000)))
+  (check= (list-sort (count-up 1000)) (sort-by (count-up 1000) (lambda (x) x)))
+  (check= (list "a" "b" "c") (sort-stable (list "b" "a" "c")))
+  (check= (list) (sort-stable (list)))
+  (check= (list (cons 4 "z")) (sort-by (list (cons 4 "z")) car)))
+
+(test-case "stable pairs" (hash)
+  (check= (list (cons 1 "a") (cons 1 "d") (cons 2 "b") (cons 3 "c"))
+          (sort-by (list (cons 3 "c") (cons 1 "a") (cons 2 "b") (cons 1 "d"))
+                   (lambda (p) (car p))))
+  (check= (list (cons 1 "c") (cons 2 "a") (cons 2 "b") (cons 2 "d"))
+          (sort-by (list (cons 2 "a") (cons 2 "b") (cons 1 "c") (cons 2 "d"))
+                   (lambda (p) (car p)))))
+
+(define buckets (count-up 20000))
+
+(test-case "sort twenty thousand buckets" (hash)
+  (define by-bucket (sort-by buckets (lambda (x) (modulo x 1000))))
+  (define native-bucket
+    (list-sort buckets (lambda (a b) (< (modulo a 1000) (modulo b 1000)))))
+  (check= 20000 (length by-bucket))
+  (check= native-bucket by-bucket)
+  (check= 0 (modulo (car by-bucket) 1000))
+  (check= 999 (modulo (list-ref by-bucket 19999) 1000)))
+
+(test-finish)

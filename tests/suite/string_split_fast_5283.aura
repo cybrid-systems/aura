@@ -1,73 +1,11 @@
-;; expect: OK-5283
-; Issue #5283: splitting a few thousand lines must stay in the
-; regex-split band (single-digit ms, and clearly under 100ms).
-; The pieces stay the literal ones: a trailing separator still
-; yields an empty segment, and "." is not "any character".
-
+; string-split content: multi-character separators, literal metacharacters,
+; the iterative length checks, and the long-line pieces. The wall-clock
+; comparison with regex-split lives in tests/bench/string_split_regex_band.aura.
+(require "std/test" all:)
 (require "std/string" all:)
-
-(define *fails* 0)
-(define *passes* 0)
-(define (check pred msg)
-  (if pred
-      (begin
-        (set! *passes* (+ *passes* 1))
-        (display "  pass: ") (display msg) (newline))
-      (begin
-        (set! *fails* (+ *fails* 1))
-        (display "  FAIL: ") (display msg) (newline))))
+(test-file "string_split_fast_5283.aura")
 
 (define (caught thunk) (try (thunk) (catch (e) e)))
-
-(check (equal? (string-split "a,b,c" ",") (list "a" "b" "c"))
-       "comma")
-(check (equal? (string-split "a,b,,c" ",") (list "a" "b" "" "c"))
-       "empty field")
-(check (equal? (string-split "" "::") (list ""))
-       "empty input")
-(check (equal? (string-split "k=v;x=y" "=;") (list "k=v;x=y"))
-       "no occurrence")
-(check (equal? (string-split "::a::" "::") (list "" "a" ""))
-       "edges")
-(check (equal? (string-split "a:b:" "::") (list "a:b:"))
-       "partial tail")
-(check (equal? (string-split "abcab" "abc") (list "" "ab"))
-       "overlap prefix")
-(check (equal? (string-split "x-->y-->z" "-->") (list "x" "y" "z"))
-       "three char")
-(check (equal? (string-split "x y" 32) (list "x" "y"))
-       "char code")
-(check (equal? (string-split "a\nb\n" "\n") (list "a" "b" ""))
-       "trailing newline")
-(check (equal? (string-split "\n" "\n") (list "" ""))
-       "only newline")
-(check (equal? (string-split "\n\n\n" "\n") (list "" "" "" ""))
-       "three newlines")
-(check (equal? (string-split "aaa" "a") (list "" "" "" ""))
-       "every char")
-(check (equal? (string-split "a.b.c" ".") (list "a" "b" "c"))
-       "literal dot")
-(check (equal? (string-split "a.b." ".") (list "a" "b" ""))
-       "dot at end")
-(check (equal? (string-split "a*b*" "*") (list "a" "b" ""))
-       "literal star")
-(check (equal? (string-split "a|b|" "|") (list "a" "b" ""))
-       "literal pipe")
-(check (equal? (string-split "a$b$" "$") (list "a" "b" ""))
-       "literal dollar")
-(check (equal? (string-split "a\\b\\" "\\") (list "a" "b" ""))
-       "literal backslash")
-(check (equal? (string-split "a\\nb" "\\n") (list "a" "b"))
-       "backslash n is not a newline")
-(check (equal? (string-split "aébéc" "é") (list "a" "b" "c"))
-       "utf-8 separator")
-(check (equal? (string-split "aé" 233) (list "a" ""))
-       "utf-8 char code")
-(check (equal? (length (string-split (string-repeat "a\n" 200) "\n")) 201)
-       "200 newlines → 201")
-(check (string-contains? (format "~a" (caught (lambda () (string-split "a" ""))))
-                         "empty separator")
-       "empty separator is an error")
 
 ; Doubling copy. string-repeat still appends onto a growing result.
 (define (repeat s n)
@@ -82,39 +20,54 @@
         (set! k (quotient k 2))))
     out))
 
-(define text4 (repeat "a\n" 4000))
-(define (time-ms thunk)
-  (let ((t0 (monotonic-ms)))
-    (thunk)
-    (- (monotonic-ms) t0)))
+; Issue #4795: a multi-char separator splits on the whole substring.
+(test-case "multi-char separators" (hash "issue" 4795)
+  (check= (list "a" "b" "c") (string-split "a::b::c" "::"))
+  (check= (list "k=v;x=y") (string-split "k=v;x=y" "=;"))
+  (check= (list "" "a" "") (string-split "::a::" "::"))
+  (check= (list "a:b:") (string-split "a:b:" "::"))
+  (check= (list "" "ab") (string-split "abcab" "abc"))
+  (check= (list "x" "y" "z") (string-split "x-->y-->z" "-->"))
+  (check= (list "a" "b" "" "c") (string-split "a,b,,c" ","))
+  (check= (list "x" "y") (string-split "x y" 32))
+  (check= (list "") (string-split "" "::")))
 
-; Same order of magnitude as regex-split on this machine. The
-; character walk was tens of times slower on the same input.
-(define (min-ms thunk n)
-  (let ((best 999999)
-        (i 0))
-    (while (lambda () (< i n))
-      (lambda ()
-        (let ((dt (time-ms thunk)))
-          (if (< dt best) (set! best dt)))
-        (set! i (+ i 1))))
-    best))
+(test-case "trailing and literal separators" (hash "issue" 5283)
+  (check= (list "a" "b" "c") (string-split "a,b,c" ","))
+  (check= (list "a" "b" "") (string-split "a\nb\n" "\n"))
+  (check= (list "" "") (string-split "\n" "\n"))
+  (check= (list "" "" "" "") (string-split "\n\n\n" "\n"))
+  (check= (list "" "" "" "") (string-split "aaa" "a"))
+  (check= (list "a" "b" "c") (string-split "a.b.c" "."))
+  (check= (list "a" "b" "") (string-split "a.b." "."))
+  (check= (list "a" "b" "") (string-split "a*b*" "*"))
+  (check= (list "a" "b" "") (string-split "a|b|" "|"))
+  (check= (list "a" "b" "") (string-split "a$b$" "$"))
+  (check= (list "a" "b" "") (string-split "a\\b\\" "\\"))
+  (check= (list "a" "b") (string-split "a\\nb" "\\n"))
+  (check= (list "a" "b" "c") (string-split "aébéc" "é"))
+  (check= (list "a" "") (string-split "aé" 233)))
 
-(define warm (string-split text4 "\n"))
-(define ss-ms (min-ms (lambda () (string-split text4 "\n")) 3))
-(define re-ms (min-ms (lambda () (regex-split "\n" text4)) 3))
-(check (= (length warm) 4001) "4000 lines → 4001")
-(check (and (string=? (car warm) "a") (string=? (car (reverse warm)) ""))
-       "4000 lines head and trailing empty")
-(if (not (<= ss-ms (* (max re-ms 1) 4)))
-    (begin
-      (display "  split-ms ") (display ss-ms)
-      (display " regex-ms ") (display re-ms) (newline)))
-(check (<= ss-ms (* (max re-ms 1) 4)) "within 4x of regex-split")
+(test-case "empty separator is an error" (hash "issue" 5283)
+  (check (string-contains? (format "~a" (caught (lambda () (string-split "a" ""))))
+                           "empty separator")))
 
-(if (and (= *fails* 0) (= *passes* 27))
-    (display "OK-5283\n")
-    (begin
-      (display "FAIL-5283 fails=") (display *fails*)
-      (display " passes=") (display *passes*) (newline)
-      (exit 1)))
+(test-case "two hundred newlines" (hash "issue" 5283)
+  (check= 201 (length (string-split (string-repeat "a\n" 200) "\n"))))
+
+; Issue #2770: O(1)-stack iterative split. 5000 one-shot pieces, 2000
+; lines, and string-split-words stay content checks, not timers.
+(test-case "split long text" (hash "issue" 2770)
+  (check= 1 (length (string-split (string-repeat "a" 5000) "|")))
+  (check= 2001 (length (string-split (string-repeat "a\n" 2000) "\n")))
+  (check= (list "hi" "there" "world") (string-split-words "hi  there\tworld"))
+  (check= 500 (length (string-split-words (string-repeat "w " 500)))))
+
+(test-case "four thousand lines" (hash "issue" 5283)
+  (define text4 (repeat "a\n" 4000))
+  (define warm (string-split text4 "\n"))
+  (check= 4001 (length warm))
+  (check (string=? (car warm) "a"))
+  (check (string=? (car (reverse warm)) "")))
+
+(test-finish)

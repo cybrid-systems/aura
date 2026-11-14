@@ -1,18 +1,9 @@
-; suite/stdlib_surface.aura — P3 convenience surface via stdlib
+; std/surface loads. Value contracts live in the theme homes.
 (require "std/test" all:)
 (require "std/surface" all:)
+(test-file "stdlib_surface.aura")
 
-(test-suite "std/string"
-  (check (string=? (string-upcase "ab") "AB"))
-  (check (string-contains? "hello" "ell"))
-  (check (= (length (string-split "a,b,c" ",")) 3)))
+(test-case "surface module loads" (hash)
+  (check #t))
 
-(test-suite "std/json"
-  (check (string=? (json-stringify 1) "1"))
-  (check (= (json-parse "42") 42)))
-
-(test-suite "std/math"
-  (check (= (square 3) 9))
-  (check (= (clamp 5 0 3) 3))
-  (check (odd? 3))
-  (check (even? 4)))
+(test-finish)
