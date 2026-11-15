@@ -26,6 +26,7 @@ module;
 #define AURA_BUILD_VERSION "dev"
 #endif
 
+#include "core/runtime_config.hh"
 export module aura.repl;
 
 import std;
@@ -764,7 +765,7 @@ public:
     std::vector<std::string> std_modules_() const {
         std::vector<std::string> out;
         std::vector<std::filesystem::path> dirs{std::filesystem::path("lib/std")};
-        if (const char* rt = std::getenv("AURA_RUNTIME_DIR"); rt && *rt)
+        if (const char* rt = ::aura::config::raw(::aura::config::Key::AURA_RUNTIME_DIR); rt && *rt)
             dirs.emplace_back(std::filesystem::path(rt) / "lib" / "std");
         for (const auto& dir : dirs) {
             std::error_code ec;
@@ -793,7 +794,7 @@ public:
             return hit->second;
         std::vector<std::string> out;
         std::vector<std::filesystem::path> dirs{std::filesystem::path("lib/std")};
-        if (const char* rt = std::getenv("AURA_RUNTIME_DIR"); rt && *rt)
+        if (const char* rt = ::aura::config::raw(::aura::config::Key::AURA_RUNTIME_DIR); rt && *rt)
             dirs.emplace_back(std::filesystem::path(rt) / "lib" / "std");
         for (const auto& dir : dirs) {
             std::ifstream in(dir / (mod + ".aura"));
@@ -1017,7 +1018,7 @@ public:
         // Issue #5043: the pipe face answers one evaluation with exactly one
         // record on stdout and nothing on stderr. A TTY keeps the human line
         // and adds the record only under AURA_REPL_RECORD.
-        if (pipe_mode_ || std::getenv("AURA_REPL_RECORD") != nullptr)
+        if (pipe_mode_ || ::aura::config::raw(::aura::config::Key::AURA_REPL_RECORD) != nullptr)
             print_record_(line, r);
         if (pipe_mode_)
             return;

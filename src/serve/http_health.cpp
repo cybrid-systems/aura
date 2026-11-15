@@ -1,5 +1,6 @@
 // http_health.cpp — Issue #677 minimal HTTP health/metrics server.
 
+#include "core/runtime_config.hh"
 #include "http_health.h"
 #include "compiler/runtime_paths.h"
 
@@ -155,7 +156,7 @@ bool runtime_c_resolved() {
 }
 
 int port_from_env() {
-    if (const char* raw = std::getenv("AURA_HTTP_PORT")) {
+    if (const char* raw = ::aura::config::raw(::aura::config::Key::AURA_HTTP_PORT)) {
         char* end = nullptr;
         const long v = std::strtol(raw, &end, 10);
         if (end != raw && *end == '\0' && v > 0 && v < 65536)

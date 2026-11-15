@@ -1,4 +1,5 @@
 // offload/offload_pool.cpp — bounded, ownership-safe offload pool (#4881/#4882)
+#include "core/runtime_config.hh"
 #include "offload_pool.h"
 
 #include <cstdlib>
@@ -56,8 +57,8 @@ std::size_t OffloadPool::default_threads() {
     return hw;
 }
 
-std::size_t OffloadPool::read_env_size(const char* name, std::size_t fallback) {
-    const char* raw = std::getenv(name);
+std::size_t OffloadPool::read_env_size(::aura::config::Key name, std::size_t fallback) {
+    const char* raw = ::aura::config::raw(name);
     if (!raw || *raw == '\0')
         return fallback;
     char* end = nullptr;
@@ -75,8 +76,8 @@ OffloadPool::OffloadPool(Config cfg)
     , quota_(cfg_.quota) {
     if (cfg_.threads == 0)
         cfg_.threads = default_threads();
-    cfg_.threads = read_env_size("AURA_OFFLOAD_THREADS", cfg_.threads);
-    cfg_.queue_cap = read_env_size("AURA_OFFLOAD_QUEUE_CAP", cfg_.queue_cap);
+    cfg_.threads = read_env_size(::aura::config::Key::AURA_OFFLOAD_THREADS, cfg_.threads);
+    cfg_.queue_cap = read_env_size(::aura::config::Key::AURA_OFFLOAD_QUEUE_CAP, cfg_.queue_cap);
     if (cfg_.queue_cap == 0)
         cfg_.queue_cap = 1;
     if (cfg_.class_queue_cap == 0)
