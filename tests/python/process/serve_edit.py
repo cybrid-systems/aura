@@ -27,7 +27,7 @@ LOOP = SET_CODE + "\n(eval-current)\n"
 DENIED = "effect-denied: mutate not granted tenant=0 op=set-code"
 INTERNAL = "internal error"
 FORBIDDEN = "tree-walker fallback forbidden"
-KIND10 = '"kind":10'
+KIND10 = '"kind":"InternalError"'
 WALKER = "this session forbids the tree walker"
 DEV_CAPS = "aura: preset=dev sandbox=restricted caps=mutate,read,write (tenant=0, ws=0)"
 
@@ -60,7 +60,7 @@ class TestIssue5168ServeEditLoop(unittest.TestCase):
         self.assertNotIn(INTERNAL, blob)
         self.assertNotIn(FORBIDDEN, blob)
         self.assertNotIn(KIND10, proc.stdout)
-        self.assertIn('"kind":16', proc.stdout)
+        self.assertIn('"kind":"EffectDenied"', proc.stdout)
         self.assertIn(DENIED, proc.stdout)
         self.assertIn('{"status":"ok","value":"()"}', proc.stdout)
 
@@ -96,10 +96,10 @@ class TestIssue5168ServeEditLoop(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, blob)
         self.assertNotIn(INTERNAL, blob)
         self.assertNotIn(KIND10, proc.stdout)
-        self.assertNotIn('"kind":16', proc.stdout)
+        self.assertNotIn('"kind":"EffectDenied"', proc.stdout)
         self.assertIn(WALKER, proc.stdout)
         self.assertIn("AURA_PIPELINE_STRICT", proc.stdout)
-        self.assertEqual(proc.stdout.count('"kind":17'), 2, proc.stdout)
+        self.assertEqual(proc.stdout.count('"kind":"UserError"'), 2, proc.stdout)
 
     def test_help_names_the_edit_loop(self) -> None:
         proc = serve(["help", "--all"], "")

@@ -229,6 +229,15 @@ static bool emit_diag_json(const aura::diag::Diagnostic& d, std::string_view sou
     out += ",\"message\":\"" + aura::json::escape(d.message) + "\"";
     if (!d.suggestion.empty())
         out += ",\"hint\":\"" + aura::json::escape(d.suggestion) + "\"";
+    if (!d.context_stack.empty()) {
+        out += ",\"notes\":[";
+        for (std::size_t i = 0; i < d.context_stack.size(); ++i) {
+            if (i != 0)
+                out += ',';
+            out += "\"" + aura::json::escape(d.context_stack[i]) + "\"";
+        }
+        out += ']';
+    }
     if (!snippet.empty())
         out += ",\"snippet\":\"" + aura::json::escape(snippet) + "\"";
     out += "}";
@@ -2055,6 +2064,41 @@ private:
     FILE* tmp_ = nullptr;
 };
 
+// #5240: the shared machine-readable diagnostic fields, on top of whatever
+// shell a face adds. `code` is the stable kind ident (never an enum
+// ordinal); span lines and columns are 1-based, columns in UTF-8 bytes.
+static std::string diag_json_fields(const aura::diag::Diagnostic& d) {
+    std::string out = ",\"code\":\"" + json_escape(aura::diag::kind_ident(d.kind)) + "\"";
+    out += ",\"message\":\"" + json_escape(d.message) + "\"";
+    if (d.location.line > 0) {
+        out += ",\"span\":{\"start\":{\"line\":" + std::to_string(d.location.line) +
+               ",\"column\":" + std::to_string(d.location.column) +
+               "},\"end\":{\"line\":" + std::to_string(d.location.line) +
+               ",\"column\":" + std::to_string(d.location.column) + "}}";
+    }
+    if (!d.suggestion.empty())
+        out += ",\"hint\":\"" + json_escape(d.suggestion) + "\"";
+    if (!d.context_stack.empty()) {
+        out += ",\"notes\":[";
+        for (std::size_t i = 0; i < d.context_stack.size(); ++i) {
+            if (i != 0)
+                out += ',';
+            out += "\"" + json_escape(d.context_stack[i]) + "\"";
+        }
+        out += ']';
+    }
+    return out;
+}
+
+// #5240: one serve error reply. `kind` is the stable ident, not the enum
+// ordinal it used to be, and the meaningless `node_id` (~0u) is gone; the
+// human text stays in `msg`.
+static void serve_emit_diag(const aura::diag::Diagnostic& d) {
+    std::println("{{\"status\":\"error\",\"kind\":\"{}\",\"msg\":\"{}\"{}}}",
+                 json_escape(aura::diag::kind_ident(d.kind)), json_escape(d.format()),
+                 diag_json_fields(d));
+}
+
 static bool serve_reply_error_value(aura::compiler::CompilerService& cs,
                                     const aura::compiler::types::EvalValue& v) {
     if (!aura::compiler::types::is_error(v) || aura::compiler::types::is_string(v))
@@ -2066,19 +2110,7 @@ static bool serve_reply_error_value(aura::compiler::CompilerService& cs,
         d.location = *loc;
     d.kind = d.display_kind();
     serve_user_level_walker_policy(d);
-    // #5240: the protocol shell stays, but code/span/message use the same
-    // stable schema as --error-format=json.
-    std::string extra;
-    extra += ",\"code\":\"" + json_escape(aura::diag::kind_ident(d.kind)) + "\"";
-    extra += ",\"message\":\"" + json_escape(d.message) + "\"";
-    if (d.location.line > 0) {
-        extra += ",\"span\":{\"start\":{\"line\":" + std::to_string(d.location.line) +
-                 ",\"column\":" + std::to_string(d.location.column) +
-                 "},\"end\":{\"line\":" + std::to_string(d.location.line) +
-                 ",\"column\":" + std::to_string(d.location.column) + "}}";
-    }
-    std::println("{{\"status\":\"error\",\"kind\":{},\"msg\":\"{}\",\"node_id\":{}{}}}",
-                 static_cast<int>(d.kind), json_escape(d.format()), d.node_id, extra);
+    serve_emit_diag(d);
     return true;
 }
 
@@ -2097,8 +2129,7 @@ static void serve_json_code(aura::compiler::CompilerService& cs, ServeCmd& cmd,
             auto name = cmd.count("name") ? cmd["name"] : "<macro>";
             std::println("{{\"status\":\"defined\",\"name\":\"{}\"}}", json_escape(name));
         } else {
-            auto& d = result.error();
-            std::println("{{\"status\":\"error\",\"msg\":\"{}\"}}", json_escape(d.format()));
+            serve_emit_diag(result.error());
         }
     } else if (type == "define") {
         auto result = cs.define_function(code);
@@ -2106,8 +2137,7 @@ static void serve_json_code(aura::compiler::CompilerService& cs, ServeCmd& cmd,
             auto name = cmd.count("name") ? cmd["name"] : "<lambda>";
             std::println("{{\"status\":\"defined\",\"name\":\"{}\"}}", json_escape(name));
         } else {
-            auto& d = result.error();
-            std::println("{{\"status\":\"error\",\"msg\":\"{}\"}}", json_escape(d.format()));
+            serve_emit_diag(result.error());
         }
     } else if (type == "exec") {
         // Issue #4702: split the chunk into its top-level
@@ -2159,7 +2189,7 @@ static void serve_json_code(aura::compiler::CompilerService& cs, ServeCmd& cmd,
             } else if (!*result) {
                 auto& d = (*result).error();
                 serve_user_level_walker_policy(d);
-                std::println("{{\"status\":\"error\",\"msg\":\"{}\"}}", json_escape(d.format()));
+                serve_emit_diag(d);
             } else {
                 try {
                     auto& v = **result;
@@ -2191,8 +2221,7 @@ static void serve_json_code(aura::compiler::CompilerService& cs, ServeCmd& cmd,
         if (result) {
             std::println("{{\"status\":\"redefined\",\"name\":\"{}\"}}", json_escape(name));
         } else {
-            auto& d = result.error();
-            std::println("{{\"status\":\"error\",\"msg\":\"{}\"}}", json_escape(d.format()));
+            serve_emit_diag(result.error());
         }
     } else if (type == "unparse") {
         auto alloc = cs.arena().allocator();
@@ -2252,7 +2281,7 @@ static void serve_json_code(aura::compiler::CompilerService& cs, ServeCmd& cmd,
             } else {
                 auto& d = result.error();
                 serve_user_level_walker_policy(d);
-                std::println("{{\"status\":\"error\",\"msg\":\"{}\"}}", json_escape(d.format()));
+                serve_emit_diag(d);
             }
         }
     } else if (type == "mutate") {
@@ -2506,8 +2535,7 @@ static int run_sync_serve(const OneshotLaunch& launch) {
             } else {
                 auto& d = r.error();
                 serve_user_level_walker_policy(d);
-                std::println("{{\"status\":\"error\",\"kind\":{},\"msg\":\"{}\",\"node_id\":{}}}",
-                             static_cast<int>(d.kind), json_escape(d.format()), d.node_id);
+                serve_emit_diag(d);
                 // Auto-fix path removed: it depended on the per-eval
                 // `flat` / `pool` (now produced by cs.eval internally).
                 // Without them, lower_to_ir / AutoFixEngine have no
