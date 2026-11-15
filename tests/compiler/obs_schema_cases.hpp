@@ -39,9 +39,9 @@
 namespace aura::test::obs {
 
 struct StandardCase {
-    int schema;             // href(cs, c.query, "schema") == c.schema
-    const char* query;      // aura::test::aura_call_expr(c.query)
-    const char* bump_slug;  // passed to bump_standard(ev, c.bump_slug)
+    int schema;            // href(cs, c.query, "schema") == c.schema
+    const char* query;     // aura::test::aura_call_expr(c.query)
+    const char* bump_slug; // passed to bump_standard(ev, c.bump_slug)
 };
 
 struct FieldListCase {
@@ -52,10 +52,10 @@ struct FieldListCase {
 };
 
 // Field arrays for kFieldListCases. inline constexpr per production_sweep_cases.hpp style.
-inline constexpr const char* kFields_arena_auto_compact[] = {
-    "auto-trigger", "live-move-yield", "guard-defrag", "schema"};
-inline constexpr const char* kFields_arena_concurrent[] = {
-    "active", "compact-total", "defrag-total", "schema"};
+inline constexpr const char* kFields_arena_auto_compact[] = {"auto-trigger", "live-move-yield",
+                                                             "guard-defrag", "schema"};
+inline constexpr const char* kFields_arena_concurrent[] = {"active", "compact-total",
+                                                           "defrag-total", "schema"};
 // Custom-layout dashboards (no standard active/total/hits/savings).
 // Probed against runtime hash-keys (CI 2026-07): only schema-bearing
 // field lists — not the StandardTotalHits bump path.
@@ -65,12 +65,12 @@ inline constexpr const char* kFields_shape_jit_closedloop[] = {
 inline constexpr const char* kFields_edsl_core_stability[] = {
     "nested-atomic-rollbacks", "children-safe-views", "mutate-invalidate-precision",
     "cow-stable-ref-remaps", "schema"};
-inline constexpr const char* kFields_linear_boundary[] = {
-    "active", "boundaries-wired-count", "violation-audit-total", "schema"};
+inline constexpr const char* kFields_linear_boundary[] = {"active", "boundaries-wired-count",
+                                                          "violation-audit-total", "schema"};
 inline constexpr const char* kFields_seva_longrunning_slo[] = {
     "longrunning-harness-active", "convergence-rate", "dirty-consistency-hits", "schema"};
-inline constexpr const char* kFields_longrunning_infra[] = {
-    "infra-events-total", "heal-triggers", "deployment-slo-hits", "schema"};
+inline constexpr const char* kFields_longrunning_infra[] = {"infra-events-total", "heal-triggers",
+                                                            "deployment-slo-hits", "schema"};
 inline constexpr const char* kFields_macro_hygiene[] = {
     "hygiene-health-score", "hygiene-violations", "schema", "schema-2101"};
 
@@ -87,7 +87,16 @@ inline constexpr std::array<StandardCase, 2> kStandardCases{{
 
 // Field list cases — schema + query + fields[] + n_fields
 // Schema values are runtime-truth (probed R15).
-inline constexpr std::array<FieldListCase, 8> kFieldListCases{{
+// Issue #5244: the stats-hash emitters below moved from a hand-written
+// insert_kv lambda to primitives_detail::StatsKvTable. The field list pins
+// what the shared emitter must keep emitting for each surface (a dropped or
+// renamed key during an emitter refactor fails here, not in a dashboard).
+inline constexpr const char* kFields_per_fiber_mutation_depth[] = {"lifetime-max", "current-max",
+                                                                   "live-depth", "schema"};
+inline constexpr const char* kFields_pattern_index_stats[] = {
+    "hits", "misses", "rebuilds", "dirty-marks", "delta-hits", "arity-accuracy", "schema"};
+
+inline constexpr std::array<FieldListCase, 10> kFieldListCases{{
     // Issue #642 — arena-auto-compaction-stats field-list (drift detection)
     {642, "query:arena-auto-compaction-stats", kFields_arena_auto_compact,
      sizeof(kFields_arena_auto_compact) / sizeof(kFields_arena_auto_compact[0])},
@@ -112,6 +121,12 @@ inline constexpr std::array<FieldListCase, 8> kFieldListCases{{
     // Issue #1613 — macro-hygiene (custom keys + schema-2101)
     {1613, "query:macro-hygiene-stats", kFields_macro_hygiene,
      sizeof(kFields_macro_hygiene) / sizeof(kFields_macro_hygiene[0])},
+    // Issue #5244 — per-fiber mutation depth (obs_jit, schema 1635)
+    {1635, "query:per-fiber-mutation-depth-stats", kFields_per_fiber_mutation_depth,
+     sizeof(kFields_per_fiber_mutation_depth) / sizeof(kFields_per_fiber_mutation_depth[0])},
+    // Issue #5244 — pattern index stats hash (query_obs_mid, schema 621)
+    {621, "query:pattern-index-stats-hash", kFields_pattern_index_stats,
+     sizeof(kFields_pattern_index_stats) / sizeof(kFields_pattern_index_stats[0])},
 }};
 
 inline constexpr std::size_t kStandardCasesCount = kStandardCases.size();

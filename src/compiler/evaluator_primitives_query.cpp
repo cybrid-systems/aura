@@ -1105,33 +1105,10 @@ void register_query_module_export_parts(PrimRegistrar add, std::pmr::vector<Pair
                 std::scoped_lock<std::mutex> lock(module_export_cache::g_mtx);
                 size = module_export_cache::g_by_path.size();
             }
-            auto* ht = FlatHashTable::create(query_hash_capacity_for(16));
-            if (!ht)
+            primitives_detail::StatsKvTable insert_kv(
+                ev, string_heap, FlatHashTable::create(query_hash_capacity_for(16)));
+            if (!insert_kv.ok())
                 return make_void();
-            bool overflowed = false;
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            auto insert_kv = [&](const char* k_str, std::int64_t v) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (const char* p = k_str; *p; ++p)
-                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                const auto fp = ::aura::compiler::hash::fingerprint(h);
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
-                        meta[idx] = fp;
-                        auto kidx = string_heap.mint(k_str);
-                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
-                        ht->size++;
-                        return;
-                    }
-                }
-
-                overflowed = true;
-            };
             insert_kv("schema", 1680);
             insert_kv("issue", 1680);
             insert_kv("hits", load(module_export_cache::g_hit));
@@ -1143,7 +1120,7 @@ void register_query_module_export_parts(PrimRegistrar add, std::pmr::vector<Pair
             const auto m = load(module_export_cache::g_miss);
             const auto denom = h + m;
             insert_kv("hit-rate-bp", ::aura::compiler::basis_points(h, denom));
-            return query_hash_finish(ht, string_heap, overflowed, ev);
+            return insert_kv.finish();
         });
 
     ObservabilityPrims::register_stats_impl(
@@ -1432,33 +1409,10 @@ void register_query_hygiene_parts(PrimRegistrar add, std::pmr::vector<Pair>& pai
         "query:macro-schema-cache-dirty-stamp-stats",
         [&string_heap, &ev](std::span<const EvalValue> a) -> EvalValue {
             (void)a;
-            auto* ht = FlatHashTable::create(query_hash_capacity_for(16));
-            if (!ht)
+            primitives_detail::StatsKvTable insert_kv(
+                ev, string_heap, FlatHashTable::create(query_hash_capacity_for(16)));
+            if (!insert_kv.ok())
                 return make_void();
-            bool overflowed = false;
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            auto insert_kv = [&](const char* k_str, std::int64_t v) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (const char* p = k_str; *p; ++p)
-                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                const auto fp = ::aura::compiler::hash::fingerprint(h);
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
-                        meta[idx] = fp;
-                        auto kidx = string_heap.mint(k_str);
-                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
-                        ht->size++;
-                        return;
-                    }
-                }
-
-                overflowed = true;
-            };
             // #2098: existing clone_macro_body per-node stamp counter.
             // Aliases (schema-cache-dirty-stamped / total) preserved so
             // existing read paths keep working.
@@ -1485,7 +1439,7 @@ void register_query_hygiene_parts(PrimRegistrar add, std::pmr::vector<Pair>& pai
             insert_kv("active", 1);
             insert_kv("rest-param-qq-wired", 1);
             insert_kv("schema-cache-rest-stamp-wired", 1);
-            return query_hash_finish(ht, string_heap, overflowed, ev);
+            return insert_kv.finish();
         });
 
     // Issue #458: query:hygiene-stats. Returns an integer
@@ -1688,33 +1642,10 @@ void register_query_dirty_parts(PrimRegistrar add, std::pmr::vector<Pair>& pairs
             if (!ev)
                 return make_void();
             const auto entry = ev->get_latest_mutation_impact_entry();
-            auto* ht = FlatHashTable::create(query_hash_capacity_for(17));
-            if (!ht)
+            primitives_detail::StatsKvTable insert_kv(
+                ev, string_heap, FlatHashTable::create(query_hash_capacity_for(17)));
+            if (!insert_kv.ok())
                 return make_void();
-            bool overflowed = false;
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            auto insert_kv = [&](const char* k_str, std::int64_t v) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (const char* p = k_str; *p; ++p)
-                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                const auto fp = ::aura::compiler::hash::fingerprint(h);
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
-                        meta[idx] = fp;
-                        auto kidx = string_heap.mint(k_str);
-                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
-                        ht->size++;
-                        return;
-                    }
-                }
-
-                overflowed = true;
-            };
             insert_kv("epoch-after", static_cast<std::int64_t>(entry.epoch_after));
             insert_kv("epoch-delta", static_cast<std::int64_t>(entry.epoch_delta));
             insert_kv("nodes-changed", static_cast<std::int64_t>(entry.nodes_changed));
@@ -1727,7 +1658,7 @@ void register_query_dirty_parts(PrimRegistrar add, std::pmr::vector<Pair>& pairs
             insert_kv("schema-fail",
                       static_cast<std::int64_t>(ev->get_schema_validation_fail_count()));
             insert_kv("schema-valid", ev->get_last_schema_validation_ok() ? 1 : 0);
-            return query_hash_finish(ht, string_heap, overflowed, ev);
+            return insert_kv.finish();
         });
 
     // Issue #504: query:mutation-boundary-log. Consolidated Guard impact
@@ -1745,33 +1676,10 @@ void register_query_dirty_parts(PrimRegistrar add, std::pmr::vector<Pair>& pairs
             if (!ev)
                 return make_void();
             const auto entry = ev->get_latest_mutation_impact_entry();
-            auto* ht = FlatHashTable::create(query_hash_capacity_for(23));
-            if (!ht)
+            primitives_detail::StatsKvTable insert_kv(
+                ev, string_heap, FlatHashTable::create(query_hash_capacity_for(23)));
+            if (!insert_kv.ok())
                 return make_void();
-            bool overflowed = false;
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            auto insert_kv = [&](const char* k_str, std::int64_t v) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (const char* p = k_str; *p; ++p)
-                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                const auto fp = ::aura::compiler::hash::fingerprint(h);
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
-                        meta[idx] = fp;
-                        auto kidx = string_heap.mint(k_str);
-                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
-                        ht->size++;
-                        return;
-                    }
-                }
-
-                overflowed = true;
-            };
             const std::uint64_t snapshots = ev->get_impact_snapshot_count();
             const std::uint64_t impacts = ev->get_mutation_impact_count();
             const std::uint64_t dirty = ev->get_dirty_nodes_in_snapshot();
@@ -1802,7 +1710,7 @@ void register_query_dirty_parts(PrimRegistrar add, std::pmr::vector<Pair>& pairs
             insert_kv("schema-valid", ev->get_last_schema_validation_ok() ? 1 : 0);
             insert_kv("boundary-log-total", static_cast<std::int64_t>(total));
             insert_kv("boundary-log-recommendation", recommendation);
-            return query_hash_finish(ht, string_heap, overflowed, ev);
+            return insert_kv.finish();
         });
 }
 
@@ -1823,33 +1731,10 @@ void register_query_stability_parts(PrimRegistrar add, std::pmr::vector<Pair>& p
             std::uint64_t invalidations = 0;
             if (auto* ws = ev->workspace_flat())
                 invalidations = ws->stable_ref_invalidations();
-            auto* ht = FlatHashTable::create(query_hash_capacity_for(12));
-            if (!ht)
+            primitives_detail::StatsKvTable insert_kv(
+                ev, string_heap, FlatHashTable::create(query_hash_capacity_for(12)));
+            if (!insert_kv.ok())
                 return make_void();
-            bool overflowed = false;
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            auto insert_kv = [&](const char* k_str, std::int64_t v) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (const char* p = k_str; *p; ++p)
-                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                const auto fp = ::aura::compiler::hash::fingerprint(h);
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
-                        meta[idx] = fp;
-                        auto kidx = string_heap.mint(k_str);
-                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
-                        ht->size++;
-                        return;
-                    }
-                }
-
-                overflowed = true;
-            };
             insert_kv("raw-nodeid-usage",
                       static_cast<std::int64_t>(ev->get_raw_nodeid_usage_in_primitives_count()));
             insert_kv(
@@ -1860,7 +1745,7 @@ void register_query_stability_parts(PrimRegistrar add, std::pmr::vector<Pair>& p
             insert_kv("stale-ref-warned",
                       static_cast<std::int64_t>(ev->get_stale_ref_warned_count()));
             insert_kv("stable-ref-invalidations", static_cast<std::int64_t>(invalidations));
-            return query_hash_finish(ht, string_heap, overflowed, ev);
+            return insert_kv.finish();
         });
 
     // Issue #456: query:epoch-stats. Returns the current
@@ -2215,33 +2100,10 @@ void register_query_pin_provenance_parts(PrimRegistrar add, std::pmr::vector<Pai
     ObservabilityPrims::register_stats_impl(
         "query:stable-ref-boundary-stats-hash", [&ev, &string_heap](const auto&) -> EvalValue {
             // Capacity 32: #738 keys + #2189 pin-lifecycle fields.
-            auto* ht = FlatHashTable::create(query_hash_capacity_for(23));
-            if (!ht)
+            primitives_detail::StatsKvTable insert_kv(
+                ev, string_heap, FlatHashTable::create(query_hash_capacity_for(23)));
+            if (!insert_kv.ok())
                 return make_void();
-            bool overflowed = false;
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            auto insert_kv = [&](const char* k_str, std::int64_t v) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (const char* p = k_str; *p; ++p)
-                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                const auto fp = ::aura::compiler::hash::fingerprint(h);
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
-                        meta[idx] = fp;
-                        auto kidx = string_heap.mint(k_str);
-                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
-                        ht->size++;
-                        return;
-                    }
-                }
-
-                overflowed = true;
-            };
             const std::uint64_t cross_cow = ev.get_cross_cow_invalidations();
             const std::uint64_t pins_total = ev.cow_boundary_pins_total();
             const std::uint64_t pins_active = ev.cow_boundary_pinned_ref_count();
@@ -2280,7 +2142,7 @@ void register_query_pin_provenance_parts(PrimRegistrar add, std::pmr::vector<Pai
             insert_kv("schema-2189", 2189);
             insert_kv("issue-2189", 2189);
             insert_kv("agent-pin-lifecycle-wired", 1);
-            return query_hash_finish(ht, string_heap, overflowed, ev);
+            return insert_kv.finish();
         });
 
     // Issue #620: query:stable-ref-provenance — Agent-discoverable
@@ -2598,39 +2460,16 @@ void register_query_lifecycle_stats_parts(PrimRegistrar add, std::pmr::vector<Pa
                     ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
                           ->stable_ref_invalidations.load(std::memory_order_relaxed)
                     : 0;
-            auto* ht = FlatHashTable::create(query_hash_capacity_for(13));
-            if (!ht)
+            primitives_detail::StatsKvTable insert_kv(
+                ev, string_heap, FlatHashTable::create(query_hash_capacity_for(13)));
+            if (!insert_kv.ok())
                 return make_void();
-            bool overflowed = false;
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            auto insert_kv = [&](const char* k_str, std::int64_t v) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (const char* p = k_str; *p; ++p)
-                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                const auto fp = ::aura::compiler::hash::fingerprint(h);
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
-                        meta[idx] = fp;
-                        auto kidx = string_heap.mint(k_str);
-                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
-                        ht->size++;
-                        return;
-                    }
-                }
-
-                overflowed = true;
-            };
             insert_kv("cross-fiber-violations", static_cast<std::int64_t>(cross_fiber));
             insert_kv("provenance-mismatches-on-sv", static_cast<std::int64_t>(mismatches));
             insert_kv("safe-resolves", static_cast<std::int64_t>(safe_resolves));
             insert_kv("total-stable-ref-invalidations", static_cast<std::int64_t>(mismatches));
             insert_kv("schema", 631);
-            return query_hash_finish(ht, string_heap, overflowed, ev);
+            return insert_kv.finish();
         });
 
     // Issue #438: query:fiber-migration-stats. Returns
@@ -2848,33 +2687,10 @@ void register_query_scheduler_parts(PrimRegistrar add, std::pmr::vector<Pair>& p
             if (!ev)
                 return make_void();
             auto& string_heap = ev->string_heap_mut();
-            auto* ht = FlatHashTable::create(query_hash_capacity_for(20));
-            if (!ht)
+            primitives_detail::StatsKvTable insert_kv(
+                ev, string_heap, FlatHashTable::create(query_hash_capacity_for(20)));
+            if (!insert_kv.ok())
                 return make_void();
-            bool overflowed = false;
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            auto insert_kv = [&](const char* k_str, std::int64_t v) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (const char* p = k_str; *p; ++p)
-                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                const auto fp = ::aura::compiler::hash::fingerprint(h);
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
-                        meta[idx] = fp;
-                        auto kidx = string_heap.mint(k_str);
-                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
-                        ht->size++;
-                        return;
-                    }
-                }
-
-                overflowed = true;
-            };
             const std::uint64_t gc_pauses = aura_fiber_static_gc_pause_attributed_to_mutation();
             const std::uint64_t depth = aura_evaluator_mutation_boundary_depth();
             const std::uint64_t cur_fiber = aura_fiber_current_id();
@@ -2913,7 +2729,7 @@ void register_query_scheduler_parts(PrimRegistrar add, std::pmr::vector<Pair>& p
             insert_kv("mutation-coord-schema", 591);
             insert_kv("scheduler-mutation-coord-total", static_cast<std::int64_t>(total));
             insert_kv("scheduler-mutation-coord-recommendation", recommendation);
-            return query_hash_finish(ht, string_heap, overflowed, ev);
+            return insert_kv.finish();
         });
 }
 
