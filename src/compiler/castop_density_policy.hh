@@ -19,6 +19,7 @@
 #ifndef AURA_COMPILER_CASTOP_DENSITY_POLICY_HH
 #define AURA_COMPILER_CASTOP_DENSITY_POLICY_HH
 
+#include "core/runtime_config.hh"
 #include "aura_jit_bridge.h"   // AotReloadFail
 #include "castop_typed_meta.h" // Issue #3140 Phase C: castop_typed_meta_phase_c_lags / _wired
 #include "hot_update_registry.hh"
@@ -65,7 +66,7 @@ inline void reset_density_gate_reject_pending_for_test() noexcept {
 [[nodiscard]] inline bool hard_env_enabled(int hard_override = -1) noexcept {
     if (hard_override >= 0)
         return hard_override != 0;
-    const char* e = std::getenv("AURA_CASTOP_DENSITY_HARD");
+    const char* e = ::aura::config::raw(::aura::config::Key::AURA_CASTOP_DENSITY_HARD);
     return e != nullptr && (e[0] == '1' || e[0] == 't' || e[0] == 'T');
 }
 
@@ -84,7 +85,7 @@ inline void reset_density_gate_reject_pending_for_test() noexcept {
 
 // Streak threshold for second-order MutateTypeGate pressure (default 2).
 [[nodiscard]] inline std::uint64_t streak_gate_threshold() noexcept {
-    const char* e = std::getenv("AURA_CASTOP_DENSITY_STREAK_GATE");
+    const char* e = ::aura::config::raw(::aura::config::Key::AURA_CASTOP_DENSITY_STREAK_GATE);
     if (!e || !*e)
         return 2;
     char* end = nullptr;

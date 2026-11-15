@@ -27,6 +27,7 @@
 #define AURA_CORE_WORKSPACE_EPOCH_HH
 
 #if !defined(AURA_HAVE_STD_MODULE)
+#include "core/runtime_config.hh"
 #include <atomic>
 #endif
 #if !defined(AURA_HAVE_STD_MODULE)
@@ -326,7 +327,7 @@ inline void maybe_init_query_epoch_strict_from_env() noexcept {
     static std::atomic<bool> done{false};
     if (done.exchange(true, std::memory_order_acq_rel))
         return;
-    if (const char* e = std::getenv("AURA_QUERY_EPOCH_STRICT")) {
+    if (const char* e = ::aura::config::raw(::aura::config::Key::AURA_QUERY_EPOCH_STRICT)) {
         if (e[0] == '1' || e[0] == 't' || e[0] == 'T' || e[0] == 'y' || e[0] == 'Y')
             set_query_epoch_strict(true);
     }

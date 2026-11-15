@@ -5,6 +5,7 @@
 #ifndef AURA_CORE_MUTATION_AUDIT_WAL_HH
 #define AURA_CORE_MUTATION_AUDIT_WAL_HH
 
+#include "core/runtime_config.hh"
 #include "core/ownership.hh"    // #4936 unique_file
 #include "core/parse_number.hh" // #4936 exception-free parse
 #include <algorithm>
@@ -955,10 +956,10 @@ struct MutationAuditWal : ::aura::core::NoCopy {
 resolve_mutation_audit_wal_dir(bool* used_default = nullptr) noexcept {
     if (used_default)
         *used_default = false;
-    const char* wal = std::getenv("AURA_MUTATION_AUDIT_WAL");
+    const char* wal = ::aura::config::raw(::aura::config::Key::AURA_MUTATION_AUDIT_WAL);
     if (wal && *wal)
         return std::string(wal);
-    const char* persist = std::getenv("AURA_PERSIST_DIR");
+    const char* persist = ::aura::config::raw(::aura::config::Key::AURA_PERSIST_DIR);
     if (persist && *persist)
         return std::string(persist);
     const char* tmp = std::getenv("TMPDIR");

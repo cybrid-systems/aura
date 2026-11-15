@@ -28,6 +28,7 @@
 #ifndef AURA_CORE_SANDBOX_HH
 #define AURA_CORE_SANDBOX_HH
 
+#include "core/runtime_config.hh"
 #include <atomic>
 #include <cstdint>
 #include <cstdio>
@@ -137,7 +138,8 @@ inline void set_mode(SandboxMode m) noexcept {
         // 6) Authority-set counter (one bump per authoritative write).
         g_sandbox_mode_authority_set_total().fetch_add(1, std::memory_order_relaxed);
         // 7) Optional post-condition triple equality (AURA_SANDBOX_ASSERT=1).
-        if (const char* e = std::getenv("AURA_SANDBOX_ASSERT"); e != nullptr && e[0] == '1') {
+        if (const char* e = ::aura::config::raw(::aura::config::Key::AURA_SANDBOX_ASSERT);
+            e != nullptr && e[0] == '1') {
             const auto a = g_sandbox_mode_atomic().load(std::memory_order_acquire);
             const auto b = static_cast<std::uint8_t>(g_capability_registry().sandbox_mode.load());
             const auto c = (g_sandbox_state().mode == SandboxMode::Strict)

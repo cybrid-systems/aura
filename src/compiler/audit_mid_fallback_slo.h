@@ -23,6 +23,7 @@
 #ifndef AURA_COMPILER_AUDIT_MID_FALLBACK_SLO_H
 #define AURA_COMPILER_AUDIT_MID_FALLBACK_SLO_H
 
+#include "core/runtime_config.hh"
 #include <atomic>
 #include <cstdint>
 #include <cstdlib>
@@ -37,7 +38,7 @@ inline constexpr int kAuditMidFallbackSloIssue = 2594;
 // AURA_LINEAR_CROSS_CLOSURE_HARD (#2563) pattern.
 [[nodiscard]] inline std::uint64_t audit_mid_fallback_slo_bp() noexcept {
     static const std::uint64_t cached = []() noexcept -> std::uint64_t {
-        const char* e = std::getenv("AURA_MID_FALLBACK_SLO_BP");
+        const char* e = ::aura::config::raw(::aura::config::Key::AURA_MID_FALLBACK_SLO_BP);
         if (e == nullptr || e[0] == '\0')
             return 500; // default 5%
         std::uint64_t v = 0;

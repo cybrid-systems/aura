@@ -17,6 +17,7 @@
 #ifndef AURA_COMPILER_JIT_ASSUMPTIONS_HH
 #define AURA_COMPILER_JIT_ASSUMPTIONS_HH
 
+#include "core/runtime_config.hh"
 #include <array>
 #include <atomic>
 #include <cstdint>
@@ -112,7 +113,7 @@ inline std::atomic<int>& global_epoch_override() noexcept {
     if (o >= 0)
         return o != 0;
     static const bool env = [] {
-        const char* e = std::getenv("AURA_JIT_GLOBAL_EPOCH_INVALIDATE");
+        const char* e = ::aura::config::raw(::aura::config::Key::AURA_JIT_GLOBAL_EPOCH_INVALIDATE);
         return e && *e && std::strcmp(e, "0") != 0;
     }();
     return env;
@@ -238,7 +239,7 @@ public:
     }
     static std::uint32_t threshold() noexcept {
         static const std::uint32_t t = [] {
-            const char* e = std::getenv("AURA_JIT_DEOPT_STORM_N");
+            const char* e = ::aura::config::raw(::aura::config::Key::AURA_JIT_DEOPT_STORM_N);
             const long v = e && *e ? std::strtol(e, nullptr, 10) : 3;
             return v > 0 ? static_cast<std::uint32_t>(v) : 3u;
         }();

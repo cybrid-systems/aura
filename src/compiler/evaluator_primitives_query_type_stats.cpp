@@ -47,6 +47,7 @@ module;
 #include <fstream>
 #include <mutex>
 
+#include "core/runtime_config.hh"
 module aura.compiler.evaluator;
 
 import std;
@@ -408,7 +409,7 @@ bool QueryTypeIncrementalFidelityStats::create_table() {
     // occurrence-goals-live / stale-vs-epoch / memo / hit-miss /
     // schema-issue) once 5*N crossed the table.
     static const std::size_t goal_query_cap = []() noexcept -> std::size_t {
-        const char* e = std::getenv("AURA_OCCURRENCE_GOAL_QUERY_CAP");
+        const char* e = ::aura::config::raw(::aura::config::Key::AURA_OCCURRENCE_GOAL_QUERY_CAP);
         if (e && *e) {
             char* end = nullptr;
             const auto n = std::strtoull(e, &end, 10);
@@ -1050,7 +1051,8 @@ void QueryTypeIncrementalFidelityStats::emit_occurrence_persist() {
 void QueryTypeIncrementalFidelityStats::emit_occurrence_goals_live() {
     {
         static const std::size_t cap = []() noexcept -> std::size_t {
-            const char* e = std::getenv("AURA_OCCURRENCE_GOAL_QUERY_CAP");
+            const char* e =
+                ::aura::config::raw(::aura::config::Key::AURA_OCCURRENCE_GOAL_QUERY_CAP);
             if (e && *e) {
                 char* end = nullptr;
                 const auto n = std::strtoull(e, &end, 10);

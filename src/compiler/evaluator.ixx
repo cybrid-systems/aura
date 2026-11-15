@@ -82,6 +82,7 @@ module;
 #include "compiler/handoff_token_stash_fwd.h"
 #include "core/ownership.hh" // #4936 opaque_ptr
 
+#include "core/runtime_config.hh"
 export module aura.compiler.evaluator;
 import aura.compiler.macro_expansion;
 import std;
@@ -1068,7 +1069,7 @@ export namespace linear_rt {
     }
     inline bool state_ever_written() noexcept {
         static const bool always = [] {
-            const char* e = std::getenv("AURA_LINEAR_AUDIT_ALWAYS");
+            const char* e = ::aura::config::raw(::aura::config::Key::AURA_LINEAR_AUDIT_ALWAYS);
             return e && e[0] == '1';
         }();
         return always || g_state_ever_written_4683.load(std::memory_order_acquire);
@@ -3846,7 +3847,8 @@ public:
             // env var as is_bridge_stale so a single env override
             // covers both domains).
             static const bool legacy_trust = []() noexcept {
-                if (const char* e = std::getenv("AURA_BRIDGE_EPOCH_LEGACY_TRUST"))
+                if (const char* e =
+                        ::aura::config::raw(::aura::config::Key::AURA_BRIDGE_EPOCH_LEGACY_TRUST))
                     return e[0] != '0' && e[0] != '\0';
                 return false;
             }();
@@ -10020,7 +10022,8 @@ public:
     }
     [[nodiscard]] ConcurrentMutationPolicy concurrent_mutation_policy() const noexcept {
         if (concurrent_mutation_policy_explicit_.load(std::memory_order_acquire) == 0) {
-            const char* e = std::getenv("AURA_WORKSPACE_CONCURRENT_MUTATION_POLICY");
+            const char* e =
+                ::aura::config::raw(::aura::config::Key::AURA_WORKSPACE_CONCURRENT_MUTATION_POLICY);
             if (e != nullptr && e[0] != '\0') {
                 const std::string_view v{e};
                 if (v == "scoped-parallel" || v == "ScopedParallel" || v == "1")

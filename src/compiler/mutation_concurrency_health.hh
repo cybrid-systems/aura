@@ -37,6 +37,7 @@
 #ifndef AURA_COMPILER_MUTATION_CONCURRENCY_HEALTH_HH
 #define AURA_COMPILER_MUTATION_CONCURRENCY_HEALTH_HH
 
+#include "core/runtime_config.hh"
 #include "typed_mutation_audit.h" // production_defaults_active (#2985 admit)
 
 #include <algorithm>
@@ -84,7 +85,8 @@ struct MutationConcurrencyHealthResult {
 
 // Default budget 8000 bp (80%). Override: AURA_MUTATION_CONCURRENCY_HEALTH_BUDGET_BP.
 [[nodiscard]] inline std::uint64_t mutation_concurrency_health_budget_bp() noexcept {
-    const char* e = std::getenv("AURA_MUTATION_CONCURRENCY_HEALTH_BUDGET_BP");
+    const char* e =
+        ::aura::config::raw(::aura::config::Key::AURA_MUTATION_CONCURRENCY_HEALTH_BUDGET_BP);
     if (e == nullptr || e[0] == '\0')
         return 8000;
     std::uint64_t v = 0;
@@ -111,7 +113,8 @@ struct MutationConcurrencyHealthResult {
 // Issue #2903: default under-boundary wait SLO (µs). Override via
 // AURA_MAILBOX_UNDER_BOUNDARY_WAIT_SLO_US (0 disables latency soft signal).
 [[nodiscard]] inline std::uint64_t mailbox_under_boundary_wait_slo_us() noexcept {
-    const char* e = std::getenv("AURA_MAILBOX_UNDER_BOUNDARY_WAIT_SLO_US");
+    const char* e =
+        ::aura::config::raw(::aura::config::Key::AURA_MAILBOX_UNDER_BOUNDARY_WAIT_SLO_US);
     if (e == nullptr || e[0] == '\0')
         return 100'000; // 100 ms default — long-hold starvation visible
     std::uint64_t v = 0;
@@ -223,7 +226,7 @@ inline void reset_mutation_concurrency_health_soft_for_test() noexcept {
     // process AURA_SANDBOX=off — the issues runner always sets the latter.
     if (typed_audit::production_defaults_active())
         return false;
-    const char* sandbox = std::getenv("AURA_SANDBOX");
+    const char* sandbox = ::aura::config::raw(::aura::config::Key::AURA_SANDBOX);
     if (sandbox && sandbox[0] != '\0' && std::string_view(sandbox) == "off")
         return true;
     return true; // Soft default when production flag is off

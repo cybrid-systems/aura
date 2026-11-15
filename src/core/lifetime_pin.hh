@@ -17,6 +17,7 @@
 #ifndef AURA_CORE_LIFETIME_PIN_HH
 #define AURA_CORE_LIFETIME_PIN_HH
 
+#include "core/runtime_config.hh"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -379,7 +380,7 @@ inline void clear_general_object_pin_required_breach() noexcept {
 // "true" / "yes" / "on" → enable fail-closed mode. "off" / "0" / "false"
 // / "no" → disable. Unset → -1 (no preference; Soft path).
 inline void apply_general_object_pin_required_env() noexcept {
-    const char* e = std::getenv("AURA_GENERAL_OBJECT_PIN");
+    const char* e = ::aura::config::raw(::aura::config::Key::AURA_GENERAL_OBJECT_PIN);
     if (!e || !*e)
         return;
     std::string_view v(e);

@@ -12,6 +12,7 @@
 // libaura_tl_arena.so (runtime SSOT shared object; name kept for DT_NEEDED
 // stability) so aura_test_objects NEEDED-links the provider first.
 
+#include "core/runtime_config.hh"
 #include "runtime_shared.h"
 
 #include <cstddef>
@@ -290,7 +291,7 @@ std::atomic<int> g_gate_drain_nowait{-1};
 bool gate_drain_nowait() noexcept {
     int v = g_gate_drain_nowait.load(std::memory_order_relaxed);
     if (v < 0) {
-        const char* e = std::getenv("AURA_GC_GATE_DRAIN_NOWAIT");
+        const char* e = ::aura::config::raw(::aura::config::Key::AURA_GC_GATE_DRAIN_NOWAIT);
         v = (e != nullptr && *e != 0 && *e != '0') ? 1 : 0;
         g_gate_drain_nowait.store(v, std::memory_order_relaxed);
     }

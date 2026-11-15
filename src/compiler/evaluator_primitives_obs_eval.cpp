@@ -45,6 +45,7 @@ module;
 #include "core/security_event_wal.hh"  // #2225: security-posture primitive
 #include "core/zero_copy_output.hh"
 
+#include "core/runtime_config.hh"
 module aura.compiler.evaluator;
 
 import std;
@@ -6177,15 +6178,17 @@ template <typename Kv> void MutationHoldStats::emit_long_hold_residual_fields(Kv
             // per insert_kv call). 0=soft, 1=clear, 2=hard. Lets
             // dashboards distinguish A vs B vs legacy at a glance.
             {"residual-defer-policy", make_int([]() -> std::int64_t {
-                 const char* sandbox_e = std::getenv("AURA_SANDBOX");
+                 const char* sandbox_e = ::aura::config::raw(::aura::config::Key::AURA_SANDBOX);
                  const bool dev_off =
                      sandbox_e && *sandbox_e && std::string_view(sandbox_e) == "off";
                  if (dev_off)
                      return 0; // Soft
-                 const char* policy_e = std::getenv("AURA_RESIDUAL_DEFER_POLICY");
+                 const char* policy_e =
+                     ::aura::config::raw(::aura::config::Key::AURA_RESIDUAL_DEFER_POLICY);
                  const bool policy_hard_env =
                      policy_e && *policy_e && std::string_view(policy_e) == "hard";
-                 const char* legacy_e = std::getenv("AURA_HARD_RESIDUAL_DEFER");
+                 const char* legacy_e =
+                     ::aura::config::raw(::aura::config::Key::AURA_HARD_RESIDUAL_DEFER);
                  const bool legacy_hard = legacy_e && *legacy_e && legacy_e[0] != '0';
                  if (policy_hard_env || legacy_hard)
                      return 2; // Hard

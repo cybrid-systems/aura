@@ -12,6 +12,7 @@ module;
 #include "compiler/arith_prim_names.hh"    // Issue #4936: constexpr + - * / and comparisons
 
 #include "hash_meta.h" // FNV constants (#901)
+#include "core/runtime_config.hh"
 module aura.compiler.type_checker;
 import std;
 // Issue #5269: headers included below (in the module purview) must not
@@ -74,7 +75,7 @@ namespace {
 // import_delta_marks_from now drops solved EQUAL/CONSISTENT rows.
 [[nodiscard]] std::size_t partial_cone_soft_cap() noexcept {
     static const std::size_t v = []() noexcept -> std::size_t {
-        const char* e = std::getenv("AURA_PARTIAL_CONE_SOFT");
+        const char* e = ::aura::config::raw(::aura::config::Key::AURA_PARTIAL_CONE_SOFT);
         if (e && *e) {
             char* end = nullptr;
             const auto n = std::strtoull(e, &end, 10);
@@ -87,7 +88,7 @@ namespace {
 }
 [[nodiscard]] std::size_t partial_cone_hard_cap() noexcept {
     static const std::size_t v = []() noexcept -> std::size_t {
-        const char* e = std::getenv("AURA_PARTIAL_CONE_HARD");
+        const char* e = ::aura::config::raw(::aura::config::Key::AURA_PARTIAL_CONE_HARD);
         if (e && *e) {
             char* end = nullptr;
             const auto n = std::strtoull(e, &end, 10);
@@ -100,7 +101,7 @@ namespace {
 }
 [[nodiscard]] std::size_t type_dep_fanout_cap() noexcept {
     static const std::size_t v = []() noexcept -> std::size_t {
-        const char* e = std::getenv("AURA_TYPE_DEP_FANOUT_CAP");
+        const char* e = ::aura::config::raw(::aura::config::Key::AURA_TYPE_DEP_FANOUT_CAP);
         if (e && *e) {
             char* end = nullptr;
             const auto n = std::strtoull(e, &end, 10);
@@ -565,7 +566,7 @@ void ConstraintSystem::note_occurrence_goal(TypeId var, TypeId refined, std::uin
 // Issue #2564: default cap matches #2560 soft cone (256). Env override.
 std::size_t ConstraintSystem::adt_goal_table_cap() noexcept {
     static const std::size_t v = []() noexcept -> std::size_t {
-        const char* e = std::getenv("AURA_ADT_GOAL_TABLE_CAP");
+        const char* e = ::aura::config::raw(::aura::config::Key::AURA_ADT_GOAL_TABLE_CAP);
         if (e && *e) {
             char* end = nullptr;
             const auto n = std::strtoull(e, &end, 10);
@@ -809,7 +810,7 @@ ConstraintSystem::drop_occurrence_goals_for_var_type(aura::core::TypeId var_type
 // AURA_OCCURRENCE_PERSIST=0 forces off even under production (test override).
 // Cap: AURA_OCCURRENCE_PERSIST_CAP (default 256, soft-cone discipline).
 bool ConstraintSystem::occurrence_persist_enabled() noexcept {
-    const char* e = std::getenv("AURA_OCCURRENCE_PERSIST");
+    const char* e = ::aura::config::raw(::aura::config::Key::AURA_OCCURRENCE_PERSIST);
     if (e && *e) {
         if (e[0] == '0' || e[0] == 'f' || e[0] == 'F' || e[0] == 'n' || e[0] == 'N')
             return false;
@@ -825,7 +826,7 @@ bool ConstraintSystem::occurrence_persist_enabled() noexcept {
 
 std::size_t ConstraintSystem::occurrence_persist_cap() noexcept {
     static const std::size_t v = []() noexcept -> std::size_t {
-        const char* e = std::getenv("AURA_OCCURRENCE_PERSIST_CAP");
+        const char* e = ::aura::config::raw(::aura::config::Key::AURA_OCCURRENCE_PERSIST_CAP);
         if (e && *e) {
             char* end = nullptr;
             const auto n = std::strtoull(e, &end, 10);

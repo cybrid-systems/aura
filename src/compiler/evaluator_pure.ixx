@@ -49,6 +49,7 @@ module;
 #include "value_tags.h"
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
+#include "core/runtime_config.hh"
 export module aura.compiler.evaluator_pure;
 
 import std;
@@ -368,7 +369,7 @@ namespace aura::compiler::pure {
 // at the cost of an int comparison. Matches legacy.
 inline void note_int_zero_truth_test() noexcept {
     static const bool enabled = [] {
-        const char* e = std::getenv("AURA_TRUTHY_WARN");
+        const char* e = ::aura::config::raw(::aura::config::Key::AURA_TRUTHY_WARN);
         return e != nullptr && e[0] == '1';
     }();
     static std::atomic<bool> warned{false};

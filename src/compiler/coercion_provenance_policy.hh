@@ -30,6 +30,7 @@
 #ifndef AURA_COMPILER_COERCION_PROVENANCE_POLICY_HH
 #define AURA_COMPILER_COERCION_PROVENANCE_POLICY_HH
 
+#include "core/runtime_config.hh"
 #include <atomic>
 #include <cstdint>
 #include <cstdlib>
@@ -162,7 +163,7 @@ inline void note_provenance_miss_for_boundary() noexcept {
 // ── Issue #2558: completeness SLO ──────────────────────────────────────
 [[nodiscard]] inline std::uint64_t coercion_prov_slo_bp() noexcept {
     if (g_coercion_prov_slo_bp_resolved.load(std::memory_order_relaxed) == 0) {
-        const char* e = std::getenv("AURA_COERCION_PROV_SLO_BP");
+        const char* e = ::aura::config::raw(::aura::config::Key::AURA_COERCION_PROV_SLO_BP);
         if (e && *e) {
             char* end = nullptr;
             const auto v = std::strtoull(e, &end, 10);
@@ -243,7 +244,7 @@ inline void reset_coercion_provenance_miss_policy_for_test() noexcept {
 // AURA_COERCION_EVIDENCE_LOSS_BP overrides when set (numeric ≤ 10000).
 [[nodiscard]] inline std::uint64_t coercion_evidence_loss_threshold_bp() noexcept {
     if (g_coercion_evidence_loss_bp_resolved.load(std::memory_order_relaxed) == 0) {
-        const char* e = std::getenv("AURA_COERCION_EVIDENCE_LOSS_BP");
+        const char* e = ::aura::config::raw(::aura::config::Key::AURA_COERCION_EVIDENCE_LOSS_BP);
         if (e && *e) {
             char* end = nullptr;
             const auto v = std::strtoull(e, &end, 10);
@@ -289,7 +290,7 @@ inline void evaluate_coercion_evidence_loss_slo(std::uint64_t loss_bp) noexcept 
 // arms one-shot Full sample escalate on recover fail. Unset / 0 / off →
 // recover-only observe. production_defaults also escalate (caller-side OR).
 [[nodiscard]] inline bool blame_soft_escalate_enabled() noexcept {
-    const char* e = std::getenv("AURA_BLAME_SOFT_ESCALATE");
+    const char* e = ::aura::config::raw(::aura::config::Key::AURA_BLAME_SOFT_ESCALATE);
     if (!e || !*e)
         return false; // Soft default: observe (recover only)
     if (e[0] == '0' || e[0] == 'f' || e[0] == 'F' || e[0] == 'n' || e[0] == 'N')
@@ -324,7 +325,7 @@ inline void set_coercion_dual_require(bool on) noexcept {
 // call sites OR production_defaults + Full strategy.
 // Returns: -1 unset, 0 forced off, 1 forced on.
 [[nodiscard]] inline int coercion_dual_require_env() noexcept {
-    const char* e = std::getenv("AURA_COERCION_DUAL_REQUIRE");
+    const char* e = ::aura::config::raw(::aura::config::Key::AURA_COERCION_DUAL_REQUIRE);
     if (!e || !*e)
         return -1;
     if (e[0] == '0' || e[0] == 'f' || e[0] == 'F' || e[0] == 'n' || e[0] == 'N')
@@ -369,7 +370,7 @@ inline void apply_production_coercion_provenance_defaults(bool dev_sandbox_off) 
 // AURA_COERCION_PROVENANCE_REJECT=reject|1|true|on → reject
 // AURA_COERCION_PROVENANCE_REJECT=soft|0|false|off → soft apply
 inline bool apply_coercion_provenance_reject_env_override() noexcept {
-    const char* e = std::getenv("AURA_COERCION_PROVENANCE_REJECT");
+    const char* e = ::aura::config::raw(::aura::config::Key::AURA_COERCION_PROVENANCE_REJECT);
     if (!e || !*e)
         return false;
     // Minimal parse without string_view include for header lightness.
@@ -390,7 +391,7 @@ inline bool apply_coercion_provenance_reject_env_override() noexcept {
 // AURA_BLAME_COMMIT_REQUIRE=off|0|false|soft|observe → observe-only
 // Returns true if env applied a value.
 inline bool apply_blame_commit_require_env_override() noexcept {
-    const char* e = std::getenv("AURA_BLAME_COMMIT_REQUIRE");
+    const char* e = ::aura::config::raw(::aura::config::Key::AURA_BLAME_COMMIT_REQUIRE);
     if (!e || !*e)
         return false;
     if (e[0] == 'o' && e[1] == 'n') {

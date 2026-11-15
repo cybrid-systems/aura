@@ -47,6 +47,7 @@ module;
 // branch to bump castop_meta_narrow_evidence_writes per AC3).
 #include "compiler/castop_typed_meta.h"
 
+#include "core/runtime_config.hh"
 export module aura.compiler.coercion_map;
 
 import aura.core.ast;
@@ -251,7 +252,8 @@ export inline std::atomic<std::uint64_t> g_layered_evidence_diverge_force_full_s
 // production — matches existing pattern in this module).
 export [[nodiscard]] inline bool layered_diverge_hard_enabled() noexcept {
     static const bool enabled = []() noexcept -> bool {
-        const char* e = std::getenv("AURA_LAYERED_COERCION_DIVERGE_HARD");
+        const char* e =
+            ::aura::config::raw(::aura::config::Key::AURA_LAYERED_COERCION_DIVERGE_HARD);
         if (e && *e) {
             char* end = nullptr;
             const auto n = std::strtoull(e, &end, 10);
@@ -849,7 +851,8 @@ fill_coercion_provenance_chain(aura::ast::FlatAST& flat, CoercionEntry& e,
 // Issue #2620 / #2317 canary: AURA_COERCION_SAMPLED_INCOMPLETE_INSERT=1 restores
 // legacy Sampled incomplete-insert (default off — unify Soft/prod proof surface).
 [[nodiscard]] inline bool coercion_sampled_incomplete_insert_canary() noexcept {
-    const char* e = std::getenv("AURA_COERCION_SAMPLED_INCOMPLETE_INSERT");
+    const char* e =
+        ::aura::config::raw(::aura::config::Key::AURA_COERCION_SAMPLED_INCOMPLETE_INSERT);
     return e != nullptr && e[0] == '1';
 }
 

@@ -110,6 +110,7 @@
 #ifndef AURA_COMPILER_LOCK_ORDER_AUDIT_H
 #define AURA_COMPILER_LOCK_ORDER_AUDIT_H
 
+#include "core/runtime_config.hh"
 #include <atomic>
 #include <cstdint>
 #include <cstdio>
@@ -171,7 +172,7 @@ inline std::atomic<int> g_lock_order_production_soft_default{0};
 // predicate as apply_production_lock_order_default's AUDIT=soft|1|on
 // branch. The Evaluator ctor must not promote this request to hard.
 [[nodiscard]] inline bool explicit_soft_audit_requested() noexcept {
-    const char* a = std::getenv("AURA_LOCK_ORDER_AUDIT");
+    const char* a = ::aura::config::raw(::aura::config::Key::AURA_LOCK_ORDER_AUDIT);
     if (a == nullptr || a[0] == '\0')
         return false;
     const bool force_off =
@@ -188,7 +189,7 @@ inline std::atomic<int> g_lock_order_production_soft_default{0};
     if (g_lock_order_production_soft_default.load(std::memory_order_acquire) != 0)
         return true;
     static const int cached = []() -> int {
-        const char* e = std::getenv("AURA_PRODUCTION_DEFAULTS");
+        const char* e = ::aura::config::raw(::aura::config::Key::AURA_PRODUCTION_DEFAULTS);
         if (!e || e[0] == '\0')
             return 0;
         return (e[0] == '1') ? 1 : 0;
@@ -241,14 +242,14 @@ inline std::atomic<int> g_lock_order_mode{0};
     if (m != 0)
         return m;
     // Hard canary wins over soft audit.
-    const char* c = std::getenv("AURA_LOCK_ORDER_CANARY");
+    const char* c = ::aura::config::raw(::aura::config::Key::AURA_LOCK_ORDER_CANARY);
     if (c != nullptr && c[0] == '1') {
         g_lock_order_mode.store(3, std::memory_order_release);
         g_lock_order_canary_enabled.store(1, std::memory_order_release);
         return 3;
     }
     // Issue #2354 / #2557: AURA_LOCK_ORDER_AUDIT soft / force-off.
-    const char* a = std::getenv("AURA_LOCK_ORDER_AUDIT");
+    const char* a = ::aura::config::raw(::aura::config::Key::AURA_LOCK_ORDER_AUDIT);
     if (a != nullptr && a[0] != '\0') {
         // soft enable
         if (a[0] == '1' || a[0] == 's' || a[0] == 'S' || a[0] == 't' || a[0] == 'T' ||
@@ -323,7 +324,7 @@ inline void force_audit_mode_for_test(int mode) noexcept {
 // Env precedence: CANARY=1 → hard; AUDIT=0/off → off; AUDIT=1|soft → soft.
 inline void apply_production_lock_order_default(bool sandbox_off) noexcept {
     // 1) Hard canary always wins.
-    const char* c = std::getenv("AURA_LOCK_ORDER_CANARY");
+    const char* c = ::aura::config::raw(::aura::config::Key::AURA_LOCK_ORDER_CANARY);
     if (c != nullptr && c[0] == '1') {
         g_lock_order_mode.store(3, std::memory_order_release);
         g_lock_order_canary_enabled.store(1, std::memory_order_release);
@@ -331,7 +332,7 @@ inline void apply_production_lock_order_default(bool sandbox_off) noexcept {
         return;
     }
     // 2) Explicit AUDIT env.
-    const char* a = std::getenv("AURA_LOCK_ORDER_AUDIT");
+    const char* a = ::aura::config::raw(::aura::config::Key::AURA_LOCK_ORDER_AUDIT);
     if (a != nullptr && a[0] != '\0') {
         const bool force_off =
             (a[0] == '0') || (a[0] == 'f' || a[0] == 'F') || (a[0] == 'n' || a[0] == 'N') ||

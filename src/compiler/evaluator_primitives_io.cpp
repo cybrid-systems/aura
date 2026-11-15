@@ -62,6 +62,7 @@ module;
 #include "core/ownership.hh" // Issue #4936: NoCopy
 #include "tw_plain_park.h"   // Issue #5274: certified park across a blocking recv/accept
 
+#include "core/runtime_config.hh"
 module aura.compiler.evaluator;
 
 import std;
@@ -216,7 +217,7 @@ namespace {
     constexpr long kHttpConnectTimeoutSec = 10;
 
     long http_default_timeout_sec() {
-        if (const char* env = std::getenv("AURA_HTTP_TIMEOUT")) {
+        if (const char* env = ::aura::config::raw(::aura::config::Key::AURA_HTTP_TIMEOUT)) {
             char* end = nullptr;
             errno = 0;
             const long v = std::strtol(env, &end, 10);

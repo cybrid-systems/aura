@@ -1,4 +1,5 @@
 // aura_jit.cpp — LLVM ORC JIT backend for Aura IR
+#include "core/runtime_config.hh"
 #include "compiler/ffi_addr.hh" // #4936 named JIT/FFI addresses
 #include <bit>
 #include "aura_jit.h"
@@ -309,7 +310,7 @@ enum Op : uint32_t {
 // static float slots, no fixnum fast path / compare fusion).
 static bool jit_l1_enabled() {
     static const bool on = [] {
-        const char* v = std::getenv("AURA_JIT_L1");
+        const char* v = ::aura::config::raw(::aura::config::Key::AURA_JIT_L1);
         return !(v && v[0] == '0');
     }();
     return on;
@@ -319,7 +320,7 @@ static bool jit_l1_enabled() {
 // directory (#898). AURA_JIT_L2=0 restores the call-per-access lowering.
 static bool jit_l2_enabled() {
     static const bool on = [] {
-        const char* v = std::getenv("AURA_JIT_L2");
+        const char* v = ::aura::config::raw(::aura::config::Key::AURA_JIT_L2);
         return !(v && v[0] == '0');
     }();
     return on;
@@ -331,7 +332,7 @@ static bool jit_l2_enabled() {
 // AURA_JIT_PROLOGUE_WORD=0 restores the unconditional epoch-check prologue.
 static bool jit_prologue_word_enabled() {
     static const bool on = [] {
-        const char* v = std::getenv("AURA_JIT_PROLOGUE_WORD");
+        const char* v = ::aura::config::raw(::aura::config::Key::AURA_JIT_PROLOGUE_WORD);
         return !(v && v[0] == '0');
     }();
     return on;
@@ -342,7 +343,7 @@ static bool jit_prologue_word_enabled() {
 // per access. AURA_JIT_DEFUSE_WORD=0 restores the per-access call lowering.
 static bool jit_defuse_word_enabled() {
     static const bool on = [] {
-        const char* v = std::getenv("AURA_JIT_DEFUSE_WORD");
+        const char* v = ::aura::config::raw(::aura::config::Key::AURA_JIT_DEFUSE_WORD);
         return !(v && v[0] == '0');
     }();
     return on;
@@ -353,7 +354,7 @@ static bool jit_defuse_word_enabled() {
 // fallbacks (and the prologue sentinel path) everywhere.
 static bool jit_frame_deopt_enabled() {
     static const bool on = [] {
-        const char* v = std::getenv("AURA_JIT_FRAME_DEOPT");
+        const char* v = ::aura::config::raw(::aura::config::Key::AURA_JIT_FRAME_DEOPT);
         return !(v && v[0] == '0');
     }();
     return on;
@@ -369,7 +370,7 @@ static bool jit_frame_deopt_enabled() {
 // 0/absent = real guards.
 static int jit_force_guard_deopt() {
     static const int level = [] {
-        const char* v = std::getenv("AURA_JIT_FORCE_GUARD_DEOPT");
+        const char* v = ::aura::config::raw(::aura::config::Key::AURA_JIT_FORCE_GUARD_DEOPT);
         if (!v || !v[0] || v[0] == '0')
             return 0;
         return v[0] == '2' ? 2 : 1;
@@ -502,7 +503,7 @@ static std::vector<std::uint8_t> promotable_cells(const FlatFunction& fn) {
 // AURA_JIT_SR=0 keeps every MakePair as a runtime allocation.
 static bool jit_sr_enabled() {
     static const bool on = [] {
-        const char* v = std::getenv("AURA_JIT_SR");
+        const char* v = ::aura::config::raw(::aura::config::Key::AURA_JIT_SR);
         return !(v && v[0] == '0');
     }();
     return on;

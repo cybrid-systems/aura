@@ -15,6 +15,7 @@ module;
 #include "core/ownership.hh"    // #4936 unique_c_ptr
 #include "compiler/chunk_io.hh" // #4936 std::array file chunks
 
+#include "core/runtime_config.hh"
 module aura.compiler.evaluator;
 
 import std;
@@ -118,7 +119,7 @@ std::string Evaluator::resolve_module_path(const std::string& path) const {
     }
 
     // Search AURA_PATH (skip empty entries from "::" or leading/trailing ':')
-    auto* env = ::getenv("AURA_PATH");
+    auto* env = ::aura::config::raw(::aura::config::Key::AURA_PATH);
     if (env) {
         std::string aura_path(env);
         std::size_t start = 0, end = std::string::npos;
@@ -219,7 +220,7 @@ std::vector<std::string> Evaluator::module_search_candidates(const std::string& 
     }
     if (const ::aura::core::unique_c_ptr<char> cwd{::getcwd(nullptr, 0)})
         add(std::string(cwd.get()) + "/" + rel);
-    if (const char* env = ::getenv("AURA_PATH")) {
+    if (const char* env = ::aura::config::raw(::aura::config::Key::AURA_PATH)) {
         std::string_view ap(env);
         while (!ap.empty()) {
             const auto c = ap.find(':');

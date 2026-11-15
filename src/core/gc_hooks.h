@@ -21,6 +21,7 @@
 #ifndef AURA_CORE_GC_HOOKS_H
 #define AURA_CORE_GC_HOOKS_H
 
+#include "core/runtime_config.hh"
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
@@ -250,7 +251,7 @@ enum class GcDeferOverflowPolicy : std::uint8_t {
         return override;
     }
     static const std::size_t cached = []() noexcept -> std::size_t {
-        const char* env = std::getenv("AURA_GC_DEFER_MAX_ARMED");
+        const char* env = ::aura::config::raw(::aura::config::Key::AURA_GC_DEFER_MAX_ARMED);
         if (!env || !*env)
             return std::size_t{64};
         char* end = nullptr;
@@ -281,7 +282,7 @@ enum class GcDeferOverflowPolicy : std::uint8_t {
         return GcDeferOverflowPolicy::ProcessWide;
     }
     static const GcDeferOverflowPolicy cached = []() noexcept -> GcDeferOverflowPolicy {
-        const char* env = std::getenv("AURA_GC_DEFER_OVERFLOW_POLICY");
+        const char* env = ::aura::config::raw(::aura::config::Key::AURA_GC_DEFER_OVERFLOW_POLICY);
         if (!env || !*env) {
             // Issue #2338: production default is HardFail (not ProcessWide
             // silent fallback). Dev / AURA_SANDBOX=off keeps ProcessWide.
@@ -549,7 +550,7 @@ inline void reset_residual_defer_steal_checkpoint_for_test() noexcept {
 // "0" / "false" / "no" → disable (Soft observe). Unset → -1 (no
 // preference; Soft path).
 inline void apply_panic_contract_env() noexcept {
-    const char* e = std::getenv("AURA_PANIC_CONTRACT");
+    const char* e = ::aura::config::raw(::aura::config::Key::AURA_PANIC_CONTRACT);
     if (!e || !*e)
         return;
     std::string_view v(e);
@@ -1280,7 +1281,7 @@ struct PanicDeferDensifyAuditResult {
 };
 
 [[nodiscard]] inline bool panic_contract_hard_enabled() noexcept {
-    const char* env = std::getenv("AURA_PANIC_CONTRACT");
+    const char* env = ::aura::config::raw(::aura::config::Key::AURA_PANIC_CONTRACT);
     return env != nullptr && *env != '\0' && std::string_view(env) == "hard";
 }
 
@@ -1290,7 +1291,7 @@ struct PanicDeferDensifyAuditResult {
 // abort). Aligns with the #2338 GcDefer overflow operator-override
 // pattern. Production lock + soft_override=false → hard fail.
 [[nodiscard]] inline bool panic_contract_soft_override() noexcept {
-    const char* env = std::getenv("AURA_PANIC_CONTRACT");
+    const char* env = ::aura::config::raw(::aura::config::Key::AURA_PANIC_CONTRACT);
     if (env == nullptr || *env == '\0')
         return false;
     std::string_view v(env);

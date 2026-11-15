@@ -20,6 +20,7 @@
 #ifndef AURA_COMPILER_TENANT_HOST_PATH_HH
 #define AURA_COMPILER_TENANT_HOST_PATH_HH
 
+#include "core/runtime_config.hh"
 #include <cerrno>
 #include <cstdint>
 #include <cstdlib>
@@ -39,7 +40,6 @@ inline constexpr int kTenantHostPathIsolationIssue = 3802;
 inline constexpr int kHostPathCorrelateTenantIssue = 3994;
 // Auditable SE reason (IsolationDeny) — keep ≤63 chars for SecurityEvent.
 inline constexpr const char* kTenantPathEscapeReason = "tenant-path-escape";
-inline constexpr const char* kEnvTenantFsRoot = "AURA_TENANT_FS_ROOT";
 // Issue #4233: exec-face jail for shell / command-output (require_effect
 // siblings) shares the #3802 policy predicate and deny reason.
 inline constexpr int kTenantExecJailIssue = 4233;
@@ -67,9 +67,11 @@ struct TenantHostPathResult {
 }
 
 [[nodiscard]] inline std::string tenant_host_roots_base() {
-    if (const char* e = std::getenv(kEnvTenantFsRoot); e && e[0] != '\0')
+    if (const char* e = ::aura::config::raw(::aura::config::Key::AURA_TENANT_FS_ROOT);
+        e && e[0] != '\0')
         return std::string(e);
-    if (const char* e = std::getenv("AURA_PERSIST_DIR"); e && e[0] != '\0')
+    if (const char* e = ::aura::config::raw(::aura::config::Key::AURA_PERSIST_DIR);
+        e && e[0] != '\0')
         return std::string(e) + "/tenants";
     const char* tmp = std::getenv("TMPDIR");
     return std::string(tmp && tmp[0] != '\0' ? tmp : "/tmp") + "/aura-tenants";

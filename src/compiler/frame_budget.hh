@@ -18,6 +18,7 @@
 #ifndef AURA_COMPILER_FRAME_BUDGET_HH
 #define AURA_COMPILER_FRAME_BUDGET_HH
 
+#include "core/runtime_config.hh"
 #include "render_prim_template.hh" // aura_is_render_evolution_name
 #include "basis_points.h"          // Issue #905: basis-point helpers
 
@@ -132,7 +133,7 @@ inline void ensure_budget_from_env() noexcept {
     std::uint64_t expected = 0;
     if (!m.env_budget_applied.compare_exchange_strong(expected, 1, std::memory_order_relaxed))
         return;
-    if (const char* e = std::getenv("AURA_FRAME_BUDGET_US")) {
+    if (const char* e = ::aura::config::raw(::aura::config::Key::AURA_FRAME_BUDGET_US)) {
         char* end = nullptr;
         const auto v = std::strtoull(e, &end, 10);
         if (end != e && v > 0)

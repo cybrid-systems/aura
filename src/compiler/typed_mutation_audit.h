@@ -18,6 +18,7 @@
 #ifndef AURA_COMPILER_TYPED_MUTATION_AUDIT_H
 #define AURA_COMPILER_TYPED_MUTATION_AUDIT_H
 
+#include "core/runtime_config.hh"
 #include "core/provenance_tracker.hh"
 #include "core/atomic_fence_port.h"
 #include "core/resource_quota.hh"     // process_resource_quota_manager (#2493 mid resolve)
@@ -897,7 +898,7 @@ inline constexpr int kSoftObserveNotHardGuaranteeIssue = 3076;
 // Lazy-init; no exceptions (digit/flag parse matches other AURA_* gates).
 [[nodiscard]] inline bool composite_empty_cs_hard_env() noexcept {
     static const bool cached = []() noexcept -> bool {
-        const char* e = std::getenv("AURA_COMPOSITE_EMPTY_CS_HARD");
+        const char* e = ::aura::config::raw(::aura::config::Key::AURA_COMPOSITE_EMPTY_CS_HARD);
         if (e == nullptr || e[0] == '\0')
             return false;
         // Accept "1" / "true" / "yes" (case-insensitive first char).
@@ -926,7 +927,7 @@ inline constexpr int kSoftObserveNotHardGuaranteeIssue = 3076;
 // always false → zero overhead (one relaxed load + one compare per boundary).
 [[nodiscard]] inline bool composite_log_forces_partial_env_opt_in() noexcept {
     static const bool cached = []() noexcept -> bool {
-        const char* e = std::getenv("AURA_COMPOSITE_LOG_FORCES_PARTIAL");
+        const char* e = ::aura::config::raw(::aura::config::Key::AURA_COMPOSITE_LOG_FORCES_PARTIAL);
         if (e == nullptr || e[0] == '\0')
             return false;
         return e[0] == '1';
@@ -989,7 +990,8 @@ inline void reset_composite_required_reject_over_infer_for_test() noexcept {
     if (o == 0 || o == 1)
         return o == 1;
     static const bool cached = []() {
-        const char* e = std::getenv("AURA_COMPOSITE_REQUIRED_REJECT_OVER_INFER");
+        const char* e =
+            ::aura::config::raw(::aura::config::Key::AURA_COMPOSITE_REQUIRED_REJECT_OVER_INFER);
         if (e == nullptr || e[0] == '\0')
             return false;
         return e[0] == '1';
@@ -1078,7 +1080,7 @@ inline constexpr int kSoftTruncatedSilentDepIssue = 2694;
 // reject policy on truncated reverify or incomplete blame even under Soft.
 [[nodiscard]] inline bool truncate_commit_hard_env() noexcept {
     static const bool cached = []() noexcept -> bool {
-        const char* e = std::getenv("AURA_TRUNCATE_COMMIT_HARD");
+        const char* e = ::aura::config::raw(::aura::config::Key::AURA_TRUNCATE_COMMIT_HARD);
         if (e == nullptr || e[0] == '\0')
             return false;
         if (e[0] == '1' && e[1] == '\0')
@@ -1102,7 +1104,7 @@ inline constexpr int kSoftTruncatedSilentDepIssue = 2694;
 // AURA_PARTIAL_CONE_COMMIT_HARD=1 forces hard cone-truncate commit gate even
 // under Soft. Unset → follow truncate_commit_hard_enabled() (prod/Full).
 [[nodiscard]] inline bool partial_cone_commit_hard_env() noexcept {
-    const char* e = std::getenv("AURA_PARTIAL_CONE_COMMIT_HARD");
+    const char* e = ::aura::config::raw(::aura::config::Key::AURA_PARTIAL_CONE_COMMIT_HARD);
     return e != nullptr && e[0] == '1';
 }
 [[nodiscard]] inline bool partial_cone_commit_hard_enabled() noexcept {
@@ -1235,10 +1237,10 @@ inline void apply_production_audit_defaults() noexcept {
         using namespace ::aura::core::sandbox;
         using namespace ::aura::core::capability;
         using namespace ::aura::core::audit_wal;
-        const char* sandbox_e = std::getenv("AURA_SANDBOX");
+        const char* sandbox_e = ::aura::config::raw(::aura::config::Key::AURA_SANDBOX);
         const bool dev_off = sandbox_e && *sandbox_e && std::string_view(sandbox_e) == "off";
         if (!dev_off) {
-            const char* mt = std::getenv("AURA_MULTI_TENANT");
+            const char* mt = ::aura::config::raw(::aura::config::Key::AURA_MULTI_TENANT);
             bool multi_tenant = false;
             if (mt && *mt) {
                 std::string_view mv(mt);
@@ -1251,9 +1253,10 @@ inline void apply_production_audit_defaults() noexcept {
                 g_sandbox_state().mode == SandboxMode::Restricted ||
                 g_capability_registry().sandbox_mode == EffectSandboxMode::Restricted;
             const bool force_wal = multi_tenant || strict || restricted;
-            const char* explicit_wal = std::getenv("AURA_MUTATION_AUDIT_WAL");
+            const char* explicit_wal =
+                ::aura::config::raw(::aura::config::Key::AURA_MUTATION_AUDIT_WAL);
             if (!explicit_wal || !*explicit_wal)
-                explicit_wal = std::getenv("AURA_PERSIST_DIR");
+                explicit_wal = ::aura::config::raw(::aura::config::Key::AURA_PERSIST_DIR);
             const bool has_explicit = explicit_wal && *explicit_wal;
             if (has_explicit || force_wal) {
                 bool used_default = false;
@@ -5561,7 +5564,7 @@ inline void capture_audit_event_forced(std::uint64_t mutation_id, std::string_vi
         g_typed_mutation_audit_counters.audit_enforcement_gap_total.fetch_add(
             1, std::memory_order_relaxed);
         static std::atomic<int> s_gap_warned{0};
-        const char* warn = std::getenv("AURA_AUDIT_GAP_WARN");
+        const char* warn = ::aura::config::raw(::aura::config::Key::AURA_AUDIT_GAP_WARN);
         if (warn && warn[0] == '1' && warn[1] == '\0' &&
             s_gap_warned.exchange(1, std::memory_order_relaxed) == 0) {
             std::fprintf(stderr,
@@ -5820,7 +5823,7 @@ struct InvariantAuditResult {
 // Soft default: observe-only. AURA_LINEAR_CROSS_CLOSURE_HARD=1|on forces;
 // 0|off forces soft observe. Unset → production_defaults || Full.
 [[nodiscard]] inline bool linear_cross_closure_hard_enabled() noexcept {
-    const char* e = std::getenv("AURA_LINEAR_CROSS_CLOSURE_HARD");
+    const char* e = ::aura::config::raw(::aura::config::Key::AURA_LINEAR_CROSS_CLOSURE_HARD);
     if (e && *e) {
         if (e[0] == '0' || e[0] == 'f' || e[0] == 'F' || e[0] == 'n' || e[0] == 'N')
             return false;
@@ -5842,7 +5845,7 @@ struct InvariantAuditResult {
 // (depth alone never forces; trunc under hard is fail-closed — #2623).
 [[nodiscard]] inline int linear_cross_closure_depth_cap() noexcept {
     constexpr int kMax = 3;
-    const char* e = std::getenv("AURA_LINEAR_CROSS_CLOSURE_DEPTH");
+    const char* e = ::aura::config::raw(::aura::config::Key::AURA_LINEAR_CROSS_CLOSURE_DEPTH);
     if (!e || !*e) {
         // Issue #2623: production default depth 2; Soft/dev remains 1.
         if (production_defaults_active())

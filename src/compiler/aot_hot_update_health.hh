@@ -43,6 +43,7 @@
 #ifndef AURA_COMPILER_AOT_HOT_UPDATE_HEALTH_HH
 #define AURA_COMPILER_AOT_HOT_UPDATE_HEALTH_HH
 
+#include "core/runtime_config.hh"
 #include "compiler/hot_update_registry.hh" // aura_reload_recovery_snapshot + get
 
 #include <algorithm>
@@ -110,7 +111,7 @@ struct AotHotUpdateHealthResult {
 
 // Default budget 8000 bp (80%). Override: AURA_AOT_HOT_UPDATE_HEALTH_BUDGET_BP.
 [[nodiscard]] inline std::uint64_t aot_hot_update_health_budget_bp() noexcept {
-    const char* e = std::getenv("AURA_AOT_HOT_UPDATE_HEALTH_BUDGET_BP");
+    const char* e = ::aura::config::raw(::aura::config::Key::AURA_AOT_HOT_UPDATE_HEALTH_BUDGET_BP);
     if (e == nullptr || e[0] == '\0')
         return 8000;
     std::uint64_t v = 0;

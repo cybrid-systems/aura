@@ -5,6 +5,7 @@ module;
 
 #include "core/workspace_epoch.hh" // current_mutation_epoch
 
+#include "core/runtime_config.hh"
 module aura.compiler.service;
 
 import std;
@@ -210,7 +211,7 @@ namespace aura::compiler {
 
     // Issue #5235: diagnostic output is the user's; the pass-pipeline
     // trace stays behind an explicit debug switch.
-    if (const char* trace = std::getenv("AURA_IR_PIPELINE_TRACE");
+    if (const char* trace = ::aura::config::raw(::aura::config::Key::AURA_IR_PIPELINE_TRACE);
         trace != nullptr && *trace != '\0' && std::string_view(trace) != "0") {
         std::println(std::cerr, "PM: running {}->{}->{}->{}->{}->{}", ts.name(), tprop.name(),
                      ck.name(), ar.name(), cf.name(), dce.name());

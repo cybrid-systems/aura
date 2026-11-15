@@ -30,6 +30,7 @@ module;
 #include <unordered_set>
 #include <vector>
 
+#include "core/runtime_config.hh"
 export module aura.compiler.root_remap_pass;
 
 import std;
@@ -100,7 +101,7 @@ namespace root_remap_detail {
     inline CompilerMetrics* g_metrics_for_test = nullptr;
 
     [[nodiscard]] inline bool hard_contract_enabled() noexcept {
-        const char* e = std::getenv("AURA_ROOT_REMAP_CONTRACT");
+        const char* e = ::aura::config::raw(::aura::config::Key::AURA_ROOT_REMAP_CONTRACT);
         return e != nullptr && (std::strcmp(e, "hard") == 0 || std::strcmp(e, "1") == 0 ||
                                 std::strcmp(e, "true") == 0);
     }

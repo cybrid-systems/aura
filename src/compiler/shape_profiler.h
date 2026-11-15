@@ -8,6 +8,7 @@
 #ifndef AURA_COMPILER_SHAPE_PROFILER_H
 #define AURA_COMPILER_SHAPE_PROFILER_H
 
+#include "core/runtime_config.hh"
 #include <array>
 #include <atomic>
 #include <cstdint>
@@ -144,7 +145,7 @@ inline std::atomic<std::uint64_t>& g_deopt_storm_isolations_total_atomic() noexc
 // harness sets this in main()). Production builds always apply
 // kHighMutationPreset knobs (window/threshold) unless env=0.
 inline int shape_high_mutation_default_enabled() noexcept {
-    if (const char* e = std::getenv("AURA_SHAPE_HIGH_MUTATION")) {
+    if (const char* e = ::aura::config::raw(::aura::config::Key::AURA_SHAPE_HIGH_MUTATION)) {
         if (e[0] == '0')
             return 0;
         if (e[0] == '1')

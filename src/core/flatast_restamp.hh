@@ -11,6 +11,7 @@
 #ifndef AURA_CORE_FLATAST_RESTAMP_HH
 #define AURA_CORE_FLATAST_RESTAMP_HH
 
+#include "core/runtime_config.hh"
 #include <atomic>
 #include <cstdint>
 #include <cstdlib>
@@ -37,7 +38,7 @@ inline constexpr int kRestampIncrementalDefaultIssue = 2402;
 // Resolve process-wide restamp policy from AURA_RESTAMP_POLICY.
 // Default Auto = production-friendly density-gated incremental (#2122/#2402).
 [[nodiscard]] inline RestampPolicy resolve_restamp_policy() noexcept {
-    const char* e = std::getenv("AURA_RESTAMP_POLICY");
+    const char* e = ::aura::config::raw(::aura::config::Key::AURA_RESTAMP_POLICY);
     if (!e || !*e)
         return RestampPolicy::Auto;
     // Case-insensitive-ish: accept common spellings.
@@ -59,7 +60,7 @@ inline constexpr int kRestampIncrementalDefaultIssue = 2402;
     static std::atomic<std::uint32_t> cached{500};
     static std::atomic<bool> initialized{false};
     if (!initialized.load(std::memory_order_acquire)) {
-        const char* e = std::getenv("AURA_REStamp_SLO_US");
+        const char* e = ::aura::config::raw(::aura::config::Key::AURA_REStamp_SLO_US);
         if (e && *e) {
             char* end = nullptr;
             const unsigned long v = std::strtoul(e, &end, 10);
@@ -188,7 +189,7 @@ inline void reset_unified_restamp_3019_for_test() noexcept {
     static std::atomic<std::uint32_t> cached{0};
     static std::atomic<bool> initialized{false};
     if (!initialized.load(std::memory_order_acquire)) {
-        const char* e = std::getenv("AURA_RESTAMP_BUDGET_NODES");
+        const char* e = ::aura::config::raw(::aura::config::Key::AURA_RESTAMP_BUDGET_NODES);
         if (e && *e) {
             char* end = nullptr;
             const unsigned long v = std::strtoul(e, &end, 10);
@@ -220,7 +221,7 @@ inline void set_restamp_budget_nodes_for_process(std::uint32_t n) noexcept {
     static std::atomic<std::uint32_t> cached{kRestampHotConeFracPercentDefault};
     static std::atomic<bool> initialized{false};
     if (!initialized.load(std::memory_order_acquire)) {
-        const char* e = std::getenv("AURA_RESTAMP_HOT_CONE_FRAC");
+        const char* e = ::aura::config::raw(::aura::config::Key::AURA_RESTAMP_HOT_CONE_FRAC);
         if (e && *e) {
             char* end = nullptr;
             const unsigned long v = std::strtoul(e, &end, 10);

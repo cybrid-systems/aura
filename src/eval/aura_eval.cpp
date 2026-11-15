@@ -15,6 +15,7 @@
 // construction, so only one live session per process is supported. See
 // aura_eval.h.
 
+#include "core/runtime_config.hh"
 #include "eval/aura_eval.h"
 
 #include "compiler/json_escape.hh" // #5234: shared RFC 8259 escaper
@@ -57,7 +58,7 @@ std::once_flag g_sandbox_once;
 // Syscall and MacroSelfEvo stay host-only and are never granted here.
 [[nodiscard]] std::uint16_t extra_effect_grants() {
     namespace sec = aura::compiler::security;
-    const char* env = std::getenv("AURA_EVAL_GRANT");
+    const char* env = ::aura::config::raw(::aura::config::Key::AURA_EVAL_GRANT);
     if (env == nullptr || *env == '\0')
         return 0;
     std::uint16_t bits = 0;
@@ -251,7 +252,7 @@ aura_eval_session* aura_eval_session_create(const char* label) {
     // The CLI's oneshot/load faces take the permissive walker face unless the
     // operator pins AURA_PIPELINE_STRICT; an embedder's ordinary forms must
     // not be vetoed by the production pack default.
-    const char* strict = std::getenv("AURA_PIPELINE_STRICT");
+    const char* strict = ::aura::config::raw(::aura::config::Key::AURA_PIPELINE_STRICT);
     if (!(strict && *strict != '\0')) {
         aura::compiler::set_tree_walker_fallback_policy(
             aura::compiler::TreeWalkerFallbackPolicy::Allow);
@@ -279,7 +280,8 @@ aura_eval_session* aura_eval_session_create(const char* label) {
         s->service.evaluator().set_effect_sandbox_mode(1);
     const auto soft = s->service.evaluator().enter_soft_session(extra_effect_grants());
     s->soft_session = soft.active;
-    if (const char* dbg = std::getenv("AURA_EVAL_DEBUG"); dbg && *dbg != '\0') {
+    if (const char* dbg = ::aura::config::raw(::aura::config::Key::AURA_EVAL_DEBUG);
+        dbg && *dbg != '\0') {
         std::fprintf(stderr,
                      "aura_eval: sandbox=%u single_tenant=%d soft=%d refused=%d effects=0x%x\n",
                      static_cast<unsigned>(s->service.evaluator().effect_sandbox_mode()),

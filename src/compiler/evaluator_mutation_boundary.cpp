@@ -118,6 +118,7 @@ import aura.compiler.dirty_propagation;
 #include <vector>
 #include "ir_cache_boundary_restamp.hh" // Issue #4377: post-exit defuse on stores
 
+#include "core/runtime_config.hh"
 module aura.compiler.evaluator;
 
 // Issue #2678: module import block MUST be contiguous after
@@ -1683,7 +1684,7 @@ Evaluator::HeapMutateGuardHandle Evaluator::maybe_auto_guard_heap_mutate(bool& o
 // Issue #4678: opt-out for the nested-boundary re-lower deferral.
 static bool nested_cascade_relower_forced_4678() noexcept {
     static const bool forced = [] {
-        const char* e = std::getenv("AURA_NESTED_CASCADE_RELOWER");
+        const char* e = ::aura::config::raw(::aura::config::Key::AURA_NESTED_CASCADE_RELOWER);
         return e && e[0] == '1';
     }();
     return forced;
@@ -5283,7 +5284,8 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                 // long_mutation_strict_mode (process-wide production knob).
                 // mutation_hold_budget_us() is file-scope (#2313) — see above.
                 static const bool env_hold_strict = []() noexcept {
-                    const char* e = std::getenv("AURA_MUTATION_HOLD_STRICT");
+                    const char* e =
+                        ::aura::config::raw(::aura::config::Key::AURA_MUTATION_HOLD_STRICT);
                     return e != nullptr && e[0] != '\0' && e[0] != '0' && e[0] != 'f' &&
                            e[0] != 'F' && e[0] != 'n' && e[0] != 'N';
                 }();
@@ -6466,7 +6468,7 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                 // Legacy AURA_HARD_RESIDUAL_DEFER=1 still maps to hard
                 // for backward compat (kept so pre-#2269 deploys keep
                 // their hard-fail behavior).
-                const char* sandbox_e = std::getenv("AURA_SANDBOX");
+                const char* sandbox_e = ::aura::config::raw(::aura::config::Key::AURA_SANDBOX);
                 const bool dev_off =
                     sandbox_e && *sandbox_e && std::string_view(sandbox_e) == "off";
                 const bool test_soft = aura::serve::is_residual_defer_soft_for_test();
@@ -6501,10 +6503,12 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                     // (explicit AURA_RESIDUAL_DEFER_POLICY=hard or
                     // legacy AURA_HARD_RESIDUAL_DEFER=1). Soft env is
                     // IGNORED.
-                    const char* policy_e = std::getenv("AURA_RESIDUAL_DEFER_POLICY");
+                    const char* policy_e =
+                        ::aura::config::raw(::aura::config::Key::AURA_RESIDUAL_DEFER_POLICY);
                     const bool policy_hard_env =
                         policy_e && *policy_e && std::string_view(policy_e) == "hard";
-                    const char* legacy_e = std::getenv("AURA_HARD_RESIDUAL_DEFER");
+                    const char* legacy_e =
+                        ::aura::config::raw(::aura::config::Key::AURA_HARD_RESIDUAL_DEFER);
                     const bool legacy_hard = legacy_e && *legacy_e && legacy_e[0] != '0';
                     if (policy_hard_env || legacy_hard) {
                         policy = ResidualPolicy::Hard;
@@ -6515,10 +6519,12 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                     // — both bypass prod_lock): legacy env-based path
                     // honors hard / soft / clear env vars (no production
                     // lock enforcement).
-                    const char* policy_e = std::getenv("AURA_RESIDUAL_DEFER_POLICY");
+                    const char* policy_e =
+                        ::aura::config::raw(::aura::config::Key::AURA_RESIDUAL_DEFER_POLICY);
                     const bool policy_hard_env =
                         policy_e && *policy_e && std::string_view(policy_e) == "hard";
-                    const char* legacy_e = std::getenv("AURA_HARD_RESIDUAL_DEFER");
+                    const char* legacy_e =
+                        ::aura::config::raw(::aura::config::Key::AURA_HARD_RESIDUAL_DEFER);
                     const bool legacy_hard = legacy_e && *legacy_e && legacy_e[0] != '0';
                     if (policy_hard_env || legacy_hard) {
                         policy = ResidualPolicy::Hard;
@@ -6585,7 +6591,7 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             // Other failures: production Clear force-clears; Soft observes.
             const bool partial_recovery = had_panic_checkpoint_ && !panic_handled;
             if (!partial_recovery) {
-                const char* sandbox_e = std::getenv("AURA_SANDBOX");
+                const char* sandbox_e = ::aura::config::raw(::aura::config::Key::AURA_SANDBOX);
                 const bool dev_off =
                     sandbox_e && *sandbox_e && std::string_view(sandbox_e) == "off";
                 const bool test_soft = aura::serve::is_residual_defer_soft_for_test();
@@ -6991,7 +6997,8 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                 if (auto* mm = static_cast<CompilerMetrics*>(ev_->compiler_metrics_))
                     mm->moving_compact_pin_contract_fail_total.fetch_add(1,
                                                                          std::memory_order_relaxed);
-                const char* contract_env = std::getenv("AURA_MOVING_PIN_CONTRACT");
+                const char* contract_env =
+                    ::aura::config::raw(::aura::config::Key::AURA_MOVING_PIN_CONTRACT);
                 const bool hard_fail =
                     (contract_env != nullptr && std::string(contract_env) == "hard");
                 if (hard_fail) {
@@ -7065,7 +7072,8 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             // evaluate residual + linear first (type fence is step after).
             const auto axis = ev_->evaluate_linear_type_provenance_hard_and(
                 residual_zero, /*type_fence_applied=*/true);
-            const char* densify_contract_env = std::getenv("AURA_DENSIFY_CONTRACT");
+            const char* densify_contract_env =
+                ::aura::config::raw(::aura::config::Key::AURA_DENSIFY_CONTRACT);
             const bool hard_densify = typed_audit::production_defaults_active() ||
                                       (densify_contract_env != nullptr &&
                                        std::string_view(densify_contract_env) == "hard");
@@ -7278,7 +7286,7 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         {
             const bool partial_recovery = !success && had_panic_checkpoint_ && !panic_handled;
             if (!partial_recovery) {
-                const char* sandbox_e = std::getenv("AURA_SANDBOX");
+                const char* sandbox_e = ::aura::config::raw(::aura::config::Key::AURA_SANDBOX);
                 const bool dev_off =
                     sandbox_e && *sandbox_e && std::string_view(sandbox_e) == "off";
                 const bool test_soft = aura::serve::is_residual_defer_soft_for_test();
@@ -7393,7 +7401,8 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             // panic_residual) from the legacy #2341 axes (pin / linear /
             // type / root_remap / closure / envframe).
             aura::core::densify_consistency::bump_densify_unified_gate_fail_total();
-            const char* contract_env = std::getenv("AURA_DENSIFY_CONTRACT");
+            const char* contract_env =
+                ::aura::config::raw(::aura::config::Key::AURA_DENSIFY_CONTRACT);
             const bool hard_fail = (contract_env != nullptr && std::string(contract_env) == "hard");
             if (hard_fail) {
                 std::fprintf(stderr,
@@ -7447,7 +7456,7 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             const bool rebind_fail_2854 =
                 rebind_report_2854.had_rebind && !rebind_report_2854.rebind_ok;
             const bool prod_lock_2854 = typed_audit::production_defaults_active();
-            const char* sandbox_2854 = std::getenv("AURA_SANDBOX");
+            const char* sandbox_2854 = ::aura::config::raw(::aura::config::Key::AURA_SANDBOX);
             const bool dev_off_2854 =
                 sandbox_2854 && *sandbox_2854 && std::string_view(sandbox_2854) == "off";
             const bool prod_lock_eff_2854 = prod_lock_2854 && !dev_off_2854;

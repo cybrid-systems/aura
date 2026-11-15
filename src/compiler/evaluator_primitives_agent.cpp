@@ -58,6 +58,7 @@ module;
 #define AURA_ENABLE_STRATEGY 1
 #endif
 
+#include "core/runtime_config.hh"
 module aura.compiler.evaluator;
 
 import std;
@@ -3379,7 +3380,7 @@ void RegSplitParts::parallel_intend_tasks(Evaluator& ev, ParallelIntendState& st
             aura::orch::g_orch_module_stats.parallel_intend_force_lock_on_violation.load(
                 std::memory_order_relaxed);
         const bool prod = aura::compiler::typed_audit::production_defaults_active();
-        const char* sb = std::getenv("AURA_SANDBOX");
+        const char* sb = ::aura::config::raw(::aura::config::Key::AURA_SANDBOX);
         const bool dev_off = sb && *sb && std::string_view(sb) == "off";
         const auto d =
             aura::orch::resolve_parallel_intend_force_lock_on_violation(host_flag, prod, dev_off);

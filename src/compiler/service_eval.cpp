@@ -8,6 +8,7 @@ module;
 #include "core/ownership.hh"           // NoCopy
 #include "core/workspace_epoch.hh"     // current_mutation_epoch
 
+#include "core/runtime_config.hh"
 module aura.compiler.service;
 
 import std;
@@ -948,7 +949,7 @@ namespace aura::compiler {
         // The old skip hid a workspace-depth wrap at 256 frames
         // (uint8_t g_depth) that deadlocked (g 1000 0). AURA_FORCE_IR
         // still selects the interpreter.
-        if (!skip_jit && !std::getenv("AURA_FORCE_IR")) {
+        if (!skip_jit && !::aura::config::raw(::aura::config::Key::AURA_FORCE_IR)) {
             auto jit_result = try_jit_execute(ir_mod, &last_escape_maps_);
             if (jit_result) {
                 record_eval_result_shape(session_id_, last_ir_mod_, nullptr, *jit_result);

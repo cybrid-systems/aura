@@ -17,6 +17,7 @@
 #ifndef AURA_COMPILER_WORKSPACE_CONCURRENT_POLICY_HH
 #define AURA_COMPILER_WORKSPACE_CONCURRENT_POLICY_HH
 
+#include "core/runtime_config.hh"
 #include <cstdint>
 #include <cstdlib>
 #include <string_view>
@@ -34,7 +35,8 @@ inline constexpr int kWorkspaceScopedParallelOverlapHardIssue = 3039;
 // Production default SingleWriter. Soft/dev may still opt in via env.
 [[nodiscard]] inline ConcurrentMutationPolicy
 resolve_concurrent_mutation_policy_default() noexcept {
-    const char* e = std::getenv("AURA_WORKSPACE_CONCURRENT_MUTATION_POLICY");
+    const char* e =
+        ::aura::config::raw(::aura::config::Key::AURA_WORKSPACE_CONCURRENT_MUTATION_POLICY);
     if (e == nullptr || e[0] == '\0')
         return ConcurrentMutationPolicy::SingleWriter;
     const std::string_view v{e};

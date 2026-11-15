@@ -7,6 +7,7 @@
 #ifndef AURA_COMPILER_PIPELINE_POLICY_HH
 #define AURA_COMPILER_PIPELINE_POLICY_HH
 
+#include "core/runtime_config.hh"
 #include <atomic>
 #include <cstdint>
 #include <cstdlib>
@@ -75,7 +76,7 @@ inline void reset_tree_walker_fallback_policy_for_test() noexcept {
 //   no env, non-pack: Forbidden when production (dev_off=false), else
 //     Allow (unit Soft ergonomics, #2213 AC2)
 inline void apply_pipeline_strict_defaults(bool dev_sandbox_off) noexcept {
-    const char* e = std::getenv("AURA_PIPELINE_STRICT");
+    const char* e = ::aura::config::raw(::aura::config::Key::AURA_PIPELINE_STRICT);
     if (e && *e) {
         std::string_view v(e);
         if (v == "0" || v == "off" || v == "allow" || v == "false" || v == "no") {

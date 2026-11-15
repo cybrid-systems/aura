@@ -8,6 +8,7 @@ module;
 #include "core/cpp26_contract_stats.h"
 #include <contracts>
 
+#include "core/runtime_config.hh"
 module aura.core.ast;
 import std;
 import aura.core.type;
@@ -1335,7 +1336,7 @@ void FlatAST::bump_generation_on_rollback() {
 // Issue #2904: legacy full parent-chain BFS only when explicitly requested.
 // Default production path uses columnar fixed-point cascade (AC1).
 [[nodiscard]] static bool dirty_legacy_tree_walk_enabled() noexcept {
-    const char* e = std::getenv("AURA_DIRTY_LEGACY_TREE_WALK");
+    const char* e = ::aura::config::raw(::aura::config::Key::AURA_DIRTY_LEGACY_TREE_WALK);
     return e && e[0] == '1';
 }
 

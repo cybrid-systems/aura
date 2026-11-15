@@ -231,7 +231,7 @@ static Log load(const std::filesystem::path& p) {
 }
 
 static std::filesystem::path default_log_path() {
-    if (const char* p = std::getenv("AURA_EVO_LOG"); p && *p)
+    if (const char* p = ::aura::config::raw(::aura::config::Key::AURA_EVO_LOG); p && *p)
         return p;
     std::error_code ec;
     const auto cwd = std::filesystem::current_path(ec);

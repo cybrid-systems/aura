@@ -7,6 +7,7 @@
 #ifndef AURA_COMPILER_MUTATION_HOLD_BUDGET_H
 #define AURA_COMPILER_MUTATION_HOLD_BUDGET_H
 
+#include "core/runtime_config.hh"
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -22,7 +23,7 @@ namespace aura::compiler {
 // C-style digit parse (no exceptions). Cached once per process.
 [[nodiscard]] inline std::uint64_t mutation_hold_budget_us() noexcept {
     static const std::uint64_t cached = []() noexcept -> std::uint64_t {
-        const char* e = std::getenv("AURA_MUTATION_HOLD_BUDGET_US");
+        const char* e = ::aura::config::raw(::aura::config::Key::AURA_MUTATION_HOLD_BUDGET_US);
         if (e == nullptr || e[0] == '\0')
             return 100000ULL;
         std::uint64_t v = 0;
@@ -49,7 +50,7 @@ namespace aura::compiler {
 // can set AURA_MUTATION_HOLD_SLO_US without process restart (same pattern as
 // #2346 Soft/Hard).
 [[nodiscard]] inline std::uint64_t mutation_hold_slo_us() noexcept {
-    const char* e = std::getenv("AURA_MUTATION_HOLD_SLO_US");
+    const char* e = ::aura::config::raw(::aura::config::Key::AURA_MUTATION_HOLD_SLO_US);
     if (e == nullptr || e[0] == '\0')
         return 100000ULL; // production default 100ms
     // Explicit 0 disables the circuit (AC4).
@@ -75,14 +76,14 @@ namespace aura::compiler {
     if (aura::serve::is_hold_slo_soft_for_test())
         return true;
     // AC2: AURA_SANDBOX=off always Soft (matches #2546/#2667/#2756/#2852 lineage).
-    const char* sandbox = std::getenv("AURA_SANDBOX");
+    const char* sandbox = ::aura::config::raw(::aura::config::Key::AURA_SANDBOX);
     if (sandbox && sandbox[0] != '\0' && std::string_view(sandbox) == "off")
         return true;
     // AC1/AC3: production lock — AURA_MUTATION_HOLD_SLO_SOFT=1 is IGNORED.
     if (aura::compiler::typed_audit::production_defaults_active())
         return false;
     // Legacy: AURA_MUTATION_HOLD_SLO_SOFT=1 → Soft (only honored outside production lock).
-    const char* soft = std::getenv("AURA_MUTATION_HOLD_SLO_SOFT");
+    const char* soft = ::aura::config::raw(::aura::config::Key::AURA_MUTATION_HOLD_SLO_SOFT);
     return soft && soft[0] == '1';
 }
 
@@ -329,7 +330,7 @@ inline void clear_mutation_hold_budget_reject_for_test() noexcept {
 // Soft / hard env override (default 0 = metric-only under Soft).
 [[nodiscard]] inline int mutation_hold_budget_hard_env() noexcept {
     static const bool cached = []() noexcept -> bool {
-        const char* e = std::getenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+        const char* e = ::aura::config::raw(::aura::config::Key::AURA_MUTATION_HOLD_BUDGET_HARD);
         if (e == nullptr || e[0] == '\0')
             return false;
         return e[0] == '1';
@@ -699,7 +700,7 @@ inline std::atomic<std::uint64_t> g_hold_budget_cancel_armed_fiber{0};
 inline std::atomic<std::uint32_t> g_hold_budget_cancel_escalated{0};
 
 [[nodiscard]] inline std::uint64_t mutation_hold_inbody_window_bound_us() noexcept {
-    const char* e = std::getenv("AURA_HOLD_BUDGET_INBODY_BOUND_US");
+    const char* e = ::aura::config::raw(::aura::config::Key::AURA_HOLD_BUDGET_INBODY_BOUND_US);
     if (e != nullptr && e[0] != '\0') {
         if (e[0] == '0' && e[1] == '\0')
             return 0;

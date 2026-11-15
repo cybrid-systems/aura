@@ -14,6 +14,7 @@ module;
 #include "typed_mutation_audit.h"           // Issue #4598: production restore stays on mark-all
 #include "compiler/evo_log_4910.hh"         // Issue #4910: ast:restore → evolution log
 
+#include "core/runtime_config.hh"
 module aura.compiler.evaluator;
 
 import std;
@@ -500,7 +501,7 @@ void RegSplitParts::ast_restore_capture(Evaluator& ev, AstRestoreState& state,
     // Kill switch / A-B bench: AURA_RESTORE_EPOCH_SOURCE_DIFF=1
     // restores the pre-#4792 rule (cross-epoch -> source diff).
     static const bool epoch_source_diff_4792 = [] {
-        const char* e = std::getenv("AURA_RESTORE_EPOCH_SOURCE_DIFF");
+        const char* e = ::aura::config::raw(::aura::config::Key::AURA_RESTORE_EPOCH_SOURCE_DIFF);
         return e && e[0] == '1';
     }();
     if (cross_epoch_4792 && epoch_source_diff_4792)
@@ -720,7 +721,8 @@ void RegSplitParts::ast_restore_publish(Evaluator& ev, AstRestoreState& state,
             // Kill switch: AURA_RESTORE_DEP_GRAPH_FULL=1.
             // Read per restore (not cached) so an in-process
             // A/B (the regression test) can flip it.
-            const char* dep_full_env = std::getenv("AURA_RESTORE_DEP_GRAPH_FULL");
+            const char* dep_full_env =
+                ::aura::config::raw(::aura::config::Key::AURA_RESTORE_DEP_GRAPH_FULL);
             const bool dep_graph_full_env = dep_full_env && dep_full_env[0] == '1';
             if (have_stamps && added.empty() && dep_graph_synced_pre && !dep_graph_full_env &&
                 ev.restore_dep_graph_names_fn_) {

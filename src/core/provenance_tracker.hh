@@ -18,6 +18,7 @@
 #define AURA_CORE_PROVENANCE_TRACKER_HH
 
 #if !defined(AURA_HAVE_STD_MODULE)
+#include "core/runtime_config.hh"
 #include <atomic>
 #endif
 #if !defined(AURA_HAVE_STD_MODULE)
@@ -294,7 +295,9 @@ inline void set_stable_ref_export_hard_reject(bool on) noexcept {
     g_stable_ref_export_hard_reject_pref().store(on, std::memory_order_release);
 }
 [[nodiscard]] inline bool stable_ref_export_hard_reject() noexcept {
-    if (const char* e = std::getenv("AURA_STABLE_REF_EXPORT_HARD_REJECT"); e && *e) {
+    if (const char* e =
+            ::aura::config::raw(::aura::config::Key::AURA_STABLE_REF_EXPORT_HARD_REJECT);
+        e && *e) {
         const std::string_view v(e);
         if (v == "0" || v == "false" || v == "off" || v == "no")
             return false;
@@ -368,7 +371,8 @@ inline void set_hard_capture_tenant(bool on) noexcept {
 //   0|false|off|no → hard-close off (canary / Soft override)
 // Unset → armed preference from production defaults.
 [[nodiscard]] inline bool hard_capture_tenant_active() noexcept {
-    if (const char* e = std::getenv("AURA_HARD_CAPTURE_TENANT"); e && *e) {
+    if (const char* e = ::aura::config::raw(::aura::config::Key::AURA_HARD_CAPTURE_TENANT);
+        e && *e) {
         const std::string_view v(e);
         if (v == "0" || v == "false" || v == "off" || v == "no")
             return false;
@@ -430,7 +434,7 @@ inline std::atomic<std::uint32_t>& g_undeclared_mt_armed_flag() noexcept {
     return g_undeclared_mt_armed_flag().load(std::memory_order_acquire) != 0;
 }
 [[nodiscard]] inline bool mt_autodetect_disabled() noexcept {
-    if (const char* e = std::getenv("AURA_MT_AUTODETECT"); e && *e) {
+    if (const char* e = ::aura::config::raw(::aura::config::Key::AURA_MT_AUTODETECT); e && *e) {
         const std::string_view v(e);
         return v == "0" || v == "false" || v == "off" || v == "no";
     }

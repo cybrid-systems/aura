@@ -7,6 +7,7 @@
 #ifndef AURA_COMPILER_SECURITY_DEFAULTS_HH
 #define AURA_COMPILER_SECURITY_DEFAULTS_HH
 
+#include "core/runtime_config.hh"
 #include "typed_mutation_audit.h"
 #include "coercion_provenance_policy.hh"   // Issue #2185 reject-on-miss production default
 #include "compiler/hot_update_registry.hh" // Issue #2205 reemit boundary production default
@@ -74,7 +75,7 @@ inline void reset_commercial_tenant_profile_for_test(bool v = false) noexcept {
 
 // Issue #2076: free-function sandbox env apply for main() before Evaluator.
 inline void apply_aura_sandbox_env() noexcept {
-    const char* e = std::getenv("AURA_SANDBOX");
+    const char* e = ::aura::config::raw(::aura::config::Key::AURA_SANDBOX);
     auto mode = static_cast<std::uint8_t>(1); // default Restricted
     if (e && *e) {
         std::string_view v(e);
@@ -176,7 +177,7 @@ inline void apply_production_security_defaults() noexcept {
     // 1) Sandbox: Restricted by default (#2076).
     apply_aura_sandbox_env();
 
-    const char* sandbox_e = std::getenv("AURA_SANDBOX");
+    const char* sandbox_e = ::aura::config::raw(::aura::config::Key::AURA_SANDBOX);
     const bool dev_off = sandbox_e && *sandbox_e && std::string_view(sandbox_e) == "off";
 
     // 2) Multi-tenant profile when AURA_MULTI_TENANT is set (unless
@@ -187,7 +188,7 @@ inline void apply_production_security_defaults() noexcept {
     //    the sole writer when operators choose strict/off/restricted via env.
     bool multi_tenant = false;
     if (!dev_off) {
-        const char* mt = std::getenv("AURA_MULTI_TENANT");
+        const char* mt = ::aura::config::raw(::aura::config::Key::AURA_MULTI_TENANT);
         if (mt && *mt) {
             std::string_view mv(mt);
             if (mv == "1" || mv == "true" || mv == "yes" || mv == "on") {
@@ -208,7 +209,7 @@ inline void apply_production_security_defaults() noexcept {
         apply_dev_audit_defaults();
         ::aura::core::wal_slo::set_wal_fail_closed_defaulted_by_force_wal(false);
     } else {
-        const char* aud = std::getenv("AURA_TYPED_AUDIT");
+        const char* aud = ::aura::config::raw(::aura::config::Key::AURA_TYPED_AUDIT);
         if (aud && *aud) {
             std::string_view av(aud);
             if (av == "off") {
@@ -263,9 +264,10 @@ inline void apply_production_security_defaults() noexcept {
             g_sandbox_state().mode == SandboxMode::Restricted ||
             g_capability_registry().sandbox_mode == EffectSandboxMode::Restricted;
         const bool force_wal = multi_tenant || strict || restricted;
-        const char* explicit_wal = std::getenv("AURA_MUTATION_AUDIT_WAL");
+        const char* explicit_wal =
+            ::aura::config::raw(::aura::config::Key::AURA_MUTATION_AUDIT_WAL);
         if (!explicit_wal || !*explicit_wal)
-            explicit_wal = std::getenv("AURA_PERSIST_DIR");
+            explicit_wal = ::aura::config::raw(::aura::config::Key::AURA_PERSIST_DIR);
         const bool has_explicit = explicit_wal && *explicit_wal;
 
         if (has_explicit || force_wal) {
@@ -336,7 +338,7 @@ inline void apply_production_security_defaults() noexcept {
                     // One-shot note only under AURA_VERBOSE=1 so simple REPL
                     // `(+ 1 2)` is not spammed by production security defaults.
                     static const bool verbose = [] {
-                        const char* e = std::getenv("AURA_VERBOSE");
+                        const char* e = ::aura::config::raw(::aura::config::Key::AURA_VERBOSE);
                         return e != nullptr && e[0] != '\0' && e[0] != '0';
                     }();
                     if (verbose) {
@@ -374,7 +376,7 @@ inline void apply_production_security_defaults() noexcept {
     //     explicit setter in tests). Process default remains Defer.
     {
         using P = ::aura::compiler::HotUpdateRegistry::ReemitBoundaryPolicy;
-        const char* soft = std::getenv("AURA_REEMIT_SOFT_ENTER");
+        const char* soft = ::aura::config::raw(::aura::config::Key::AURA_REEMIT_SOFT_ENTER);
         const bool want_soft = soft && *soft &&
                                (std::string_view(soft) == "1" || std::string_view(soft) == "true" ||
                                 std::string_view(soft) == "yes" || std::string_view(soft) == "on");
@@ -418,14 +420,14 @@ inline void apply_production_security_defaults() noexcept {
         commercial_tenant_profile_flag().store(false, std::memory_order_release);
         g_capability_registry().set_hard_fiber_isolation(false);
     } else {
-        const char* ct = std::getenv("AURA_COMMERCIAL_TENANT");
+        const char* ct = ::aura::config::raw(::aura::config::Key::AURA_COMMERCIAL_TENANT);
         bool commercial_active = false;
         if (ct && *ct) {
             std::string_view cv(ct);
             commercial_active = (cv == "1" || cv == "true" || cv == "yes" || cv == "on");
         }
         // Explicit off from AURA_HARD_FIBER_ISOLATION wins (AC2/AC3).
-        const char* hfi = std::getenv("AURA_HARD_FIBER_ISOLATION");
+        const char* hfi = ::aura::config::raw(::aura::config::Key::AURA_HARD_FIBER_ISOLATION);
         bool hfi_explicit_off = false;
         if (hfi && *hfi) {
             std::string_view hv(hfi);
@@ -466,7 +468,7 @@ inline void apply_production_security_defaults() noexcept {
         g_capability_registry().set_grant_epoch_retain_window(0);
         g_capability_registry().set_grant_min_valid_epoch(0);
     } else {
-        const char* ger = std::getenv("AURA_GRANT_EPOCH_RETAIN");
+        const char* ger = ::aura::config::raw(::aura::config::Key::AURA_GRANT_EPOCH_RETAIN);
         if (ger && *ger) {
             char* end = nullptr;
             const auto v = std::strtoull(ger, &end, 10);
@@ -503,7 +505,7 @@ inline void apply_production_security_defaults() noexcept {
         if (dev_off) {
             set_hard_capture_tenant(false);
         } else {
-            const char* hct = std::getenv("AURA_HARD_CAPTURE_TENANT");
+            const char* hct = ::aura::config::raw(::aura::config::Key::AURA_HARD_CAPTURE_TENANT);
             if (hct && *hct) {
                 std::string_view hv(hct);
                 const bool on = (hv == "1" || hv == "true" || hv == "yes" || hv == "on");
@@ -541,7 +543,7 @@ inline void apply_production_security_defaults() noexcept {
     {
         using aura::core::provenance::LinearEnforceMode;
         using aura::core::provenance::set_linear_enforce_mode;
-        const char* le = std::getenv("AURA_LINEAR_ENFORCE");
+        const char* le = ::aura::config::raw(::aura::config::Key::AURA_LINEAR_ENFORCE);
         if (le && *le) {
             std::string_view lv(le);
             const bool want_strict =
@@ -634,7 +636,7 @@ inline void apply_production_security_defaults() noexcept {
     //     AURA_SANDBOX=off leaves mode alone (unit Soft path / zero walk
     //     unless tests set mode explicitly).
     if (!dev_off) {
-        const char* ei = std::getenv("AURA_EPOCH_INVARIANT");
+        const char* ei = ::aura::config::raw(::aura::config::Key::AURA_EPOCH_INVARIANT);
         if (!ei || !*ei) {
             // Unset under production Restricted → soft (mode 1). #2541 AC1.
             aura_set_epoch_invariant_mode(1);
@@ -670,7 +672,7 @@ inline void apply_production_security_defaults() noexcept {
     //     moving_blocked_precondition + soft_gated when pref > 0.
     {
         using aura::ast::g_moving_untracked_hard_abort_pref;
-        const char* mvt = std::getenv("AURA_MOVING_UNTRACKED");
+        const char* mvt = ::aura::config::raw(::aura::config::Key::AURA_MOVING_UNTRACKED);
         int env_pref = -1;
         if (mvt && *mvt) {
             std::string_view mv(mvt);
