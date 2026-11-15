@@ -3622,6 +3622,137 @@ int main() {
                 }
             }
 
+            // Issue #5303: comparing the returned parameter must not bind it
+            // to Any. The production join stays the #5300 remembered
+            // variable, including when the other operand is a float. Int
+            // joined with String still names the gate. A shadowed `=` is
+            // not the primitive and does not bind the parameter to Any.
+            {
+                ProdScope prod;
+                TypeRegistry treg;
+                auto r = infer_src("(lambda (x prev) (if (= prev 1) 1 prev))", treg);
+                const auto* ft = treg.func_of(r.ty);
+                if (!r.saw_any_te && ft && treg.is_var(ft->ret)) {
+                    ++ts_passed;
+                    std::println("TS OK: ac5303_1_eq_param_stays_variable");
+                } else {
+                    ++ts_failed;
+                    std::println(std::cerr,
+                                 "TS FAIL: ac5303_1_eq_param_stays_variable te={} var={}",
+                                 r.saw_any_te, ft && treg.is_var(ft->ret));
+                }
+            }
+            {
+                ProdScope prod;
+                TypeRegistry treg;
+                auto r = infer_src("(lambda (x prev) (if (> prev 0) 1 prev))", treg);
+                const auto* ft = treg.func_of(r.ty);
+                if (!r.saw_any_te && ft && treg.is_var(ft->ret)) {
+                    ++ts_passed;
+                    std::println("TS OK: ac5303_2_gt_param_stays_variable");
+                } else {
+                    ++ts_failed;
+                    std::println(std::cerr,
+                                 "TS FAIL: ac5303_2_gt_param_stays_variable te={} var={}",
+                                 r.saw_any_te, ft && treg.is_var(ft->ret));
+                }
+            }
+            {
+                ProdScope prod;
+                TypeRegistry treg;
+                auto r = infer_src(
+                    "(lambda (x prev) (cond ((= prev 1) 1) ((> x 1) -1) (else prev)))", treg);
+                const auto* ft = treg.func_of(r.ty);
+                if (!r.saw_any_te && ft && treg.is_var(ft->ret)) {
+                    ++ts_passed;
+                    std::println("TS OK: ac5303_3_cond_param_stays_variable");
+                } else {
+                    ++ts_failed;
+                    std::println(std::cerr,
+                                 "TS FAIL: ac5303_3_cond_param_stays_variable te={} var={}",
+                                 r.saw_any_te, ft && treg.is_var(ft->ret));
+                }
+            }
+            {
+                ProdScope prod;
+                TypeRegistry treg;
+                auto r = infer_src("(lambda (prev) (if (= 1 prev 1.5) 1 prev))", treg);
+                const auto* ft = treg.func_of(r.ty);
+                if (!r.saw_any_te && ft && treg.is_var(ft->ret)) {
+                    ++ts_passed;
+                    std::println("TS OK: ac5303_4_chain_float_stays_variable");
+                } else {
+                    ++ts_failed;
+                    std::println(std::cerr,
+                                 "TS FAIL: ac5303_4_chain_float_stays_variable te={} var={}",
+                                 r.saw_any_te, ft && treg.is_var(ft->ret));
+                }
+            }
+            {
+                ProdScope prod;
+                TypeRegistry treg;
+                auto r = infer_src("(lambda (x prev) (if (= prev x) 1 prev))", treg);
+                const auto* ft = treg.func_of(r.ty);
+                if (!r.saw_any_te && ft && treg.is_var(ft->ret)) {
+                    ++ts_passed;
+                    std::println("TS OK: ac5303_5_unconstrained_cmp_stays_variable");
+                } else {
+                    ++ts_failed;
+                    std::println(std::cerr,
+                                 "TS FAIL: ac5303_5_unconstrained_cmp_stays_variable te={} var={}",
+                                 r.saw_any_te, ft && treg.is_var(ft->ret));
+                }
+            }
+            {
+                ProdScope prod;
+                TypeRegistry treg;
+                auto r = infer_src("(lambda (x prev) (if (= prev 1) 1 \"a\"))", treg);
+                const auto* ft = treg.func_of(r.ty);
+                if (r.saw_gate_te && ft && ft->ret == treg.void_type()) {
+                    ++ts_passed;
+                    std::println("TS OK: ac5303_6_int_string_still_gated");
+                } else {
+                    ++ts_failed;
+                    std::println(std::cerr,
+                                 "TS FAIL: ac5303_6_int_string_still_gated te={} void={}",
+                                 r.saw_gate_te, ft && ft->ret == treg.void_type());
+                }
+            }
+            {
+                ProdScope prod;
+                TypeRegistry treg;
+                auto r = infer_src("(lambda (x prev =) (if (= prev 1) 1 prev))", treg);
+                const auto* ft = treg.func_of(r.ty);
+                if (!r.saw_any_te && ft && treg.is_var(ft->ret)) {
+                    ++ts_passed;
+                    std::println("TS OK: ac5303_7_shadowed_eq_stays_variable");
+                } else {
+                    ++ts_failed;
+                    std::println(std::cerr,
+                                 "TS FAIL: ac5303_7_shadowed_eq_stays_variable te={} var={}",
+                                 r.saw_any_te, ft && treg.is_var(ft->ret));
+                }
+            }
+            {
+                ProdScope prod;
+                TypeRegistry treg;
+                auto r = infer_src("(lambda (t i prev)"
+                                   " (let ((rule-switch (lambda (t i p a b c d e)"
+                                   " (if (= p 1) 1 0))))"
+                                   " (let ((signal (rule-switch t i prev 7 3.84 2 10 1)))"
+                                   " (if (and (= signal 1) (> t 0)) 1 prev))))",
+                                   treg);
+                const auto* ft = treg.func_of(r.ty);
+                if (!r.saw_any_te && ft && (ft->ret == treg.int_type() || treg.is_var(ft->ret))) {
+                    ++ts_passed;
+                    std::println("TS OK: ac5303_8_helper_compare_joins");
+                } else {
+                    ++ts_failed;
+                    std::println(std::cerr, "TS FAIL: ac5303_8_helper_compare_joins te={} ft={}",
+                                 r.saw_any_te, ft != nullptr);
+                }
+            }
+
             // AC5: consistent_unify's hard-face Dynamic~Int refusal is
             // unchanged (the join now mirrors it; it is not modified).
             {
