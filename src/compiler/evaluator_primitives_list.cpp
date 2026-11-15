@@ -724,17 +724,17 @@ void RegSplitParts::register_list_higher_order(PrimRegistrar add, Evaluator& ev,
             auto& key = a[0];
             auto v = a[1];
             if (!is_end_of_list(v) && !is_pair(v)) {
-                return make_primitive_error(string_heap, error_values, "assv: not a list", counter);
+                return ev.make_typed_error("assv: not a list", aura::diag::ErrorKind::TypeError);
             }
             while (!is_end_of_list(v)) {
                 if (!is_pair(v)) {
-                    return make_primitive_error(string_heap, error_values, "assv: improper list",
-                                                counter);
+                    return ev.make_typed_error("assv: improper list",
+                                               aura::diag::ErrorKind::TypeError);
                 }
                 auto idx = as_pair_idx(v);
                 if (idx >= pairs.size()) {
-                    return make_primitive_error(string_heap, error_values, "assv: corrupted pair",
-                                                counter);
+                    return ev.make_typed_error("assv: corrupted pair",
+                                               aura::diag::ErrorKind::InternalError);
                 }
                 // Issue #4505: the spine slot and the entry pair both read
                 // foreign mints; gate both before any car/cdr read.
@@ -746,13 +746,13 @@ void RegSplitParts::register_list_higher_order(PrimRegistrar add, Evaluator& ev,
                 }
                 auto entry = pairs[idx].car;
                 if (!is_pair(entry)) {
-                    return make_primitive_error(string_heap, error_values, "assv: not a pair",
-                                                counter);
+                    return ev.make_typed_error("assv: not a pair",
+                                               aura::diag::ErrorKind::TypeError);
                 }
                 auto eidx = as_pair_idx(entry);
                 if (eidx >= pairs.size()) {
-                    return make_primitive_error(string_heap, error_values, "assv: corrupted pair",
-                                                counter);
+                    return ev.make_typed_error("assv: corrupted pair",
+                                               aura::diag::ErrorKind::InternalError);
                 }
                 if (!ev.inrange_slot_tenant_allows(eidx, /*vector_heap=*/false,
                                                    /*required_effects=*/0, "assv")) {

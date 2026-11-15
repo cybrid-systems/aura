@@ -143,6 +143,46 @@ class DiagJson(unittest.TestCase):
             r = run(["--error-format=json", "-e", src])
             self.assertEqual(last_json(r.stderr)["code"], "DivisionByZero", src)
 
+    def test_pair_and_arithmetic_kinds_are_typed_at_creation(self) -> None:
+        # #5241 batch 3: pair-shape and arithmetic operand mistakes carry
+        # TypeError from creation. A program's own error whose text names
+        # one of those categories stays UserError — the label is the kind
+        # the producer set, never the message text.
+        for src in ("(car 5)", "(cdr 5)", "(assv 1 5)", "(modulo 1 (list 1))", '(abs "x")'):
+            with self.subTest(src=src):
+                r = run(["--error-format=json", "-e", src])
+                self.assertNotEqual(r.returncode, 0, src)
+                self.assertEqual(last_json(r.stderr)["code"], "TypeError", src)
+        # A program's own error keeps UserError even when its text is the
+        # old classifier's phrase: the label is the creation kind, never a
+        # prefix match on message text.
+        for src in (
+            '(error "car: not a pair")',
+            '(error "division by zero")',
+            '(error "effect-denied: io-read")',
+            '(error "naked mutate: set-car!")',
+        ):
+            with self.subTest(src=src):
+                r = run(["--error-format=json", "-e", src])
+                self.assertEqual(last_json(r.stderr)["code"], "UserError", src)
+
+    def test_car_not_a_pair_same_label_direct_and_via_define(self) -> None:
+        # #5241 acceptance: (car 5) reads the same whether the error is
+        # the form's value or bound by a define and displayed later.
+        direct = run(["--error-format=json", "-e", "(car 5)"])
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "w.aura"
+            p.write_text("(define r (car 5))\n(display r)\n")
+            wrapped = run(["--error-format=json", str(p)], cwd=d)
+            wrapped_text = run([str(p)], cwd=d)
+        a, b = last_json(direct.stderr), last_json(wrapped.stderr)
+        self.assertEqual(a["code"], "TypeError")
+        self.assertEqual(a["code"], b["code"])
+        self.assertEqual(a["message"], b["message"])
+        # The human prefix comes from the same kind on both paths.
+        self.assertIn("type error: car: not a pair", run(["-e", "(car 5)"]).stderr)
+        self.assertIn("type error: car: not a pair", wrapped_text.stderr)
+
     def test_exit_code_table(self) -> None:
         with tempfile.TemporaryDirectory() as d:
             p = Path(d) / "u.aura"
