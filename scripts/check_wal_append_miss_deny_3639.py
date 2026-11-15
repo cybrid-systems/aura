@@ -98,7 +98,7 @@ def main() -> int:
 
     # ── AC4: FAIL_OPEN opt-out intact ───────────────────────────────────
     must("AURA_WAL_APPEND_FAIL_OPEN", "AC4 opt-out env", slo)
-    must('wal_env_flag_truthy("AURA_WAL_APPEND_FAIL_OPEN")', "AC4 OPEN check", slo)
+    must("wal_env_flag_truthy(::aura::config::Key::AURA_WAL_APPEND_FAIL_OPEN)", "AC4 OPEN check", slo)
 
     # ── AC5: #3211 next-outermost gate intact ───────────────────────────
     must("hard-denies the *next* outermost mutate", "AC5 header contract", slo)

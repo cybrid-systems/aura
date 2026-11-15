@@ -66,11 +66,11 @@ def main() -> int:
 
     # ── AC3 explicit opt-out ────────────────────────────────────────────
     must("AURA_WAL_APPEND_FAIL_OPEN", "AC3 opt-out env", slo)
-    must('wal_env_flag_truthy("AURA_WAL_APPEND_FAIL_OPEN")', "AC3 OPEN check", slo)
+    must("wal_env_flag_truthy(::aura::config::Key::AURA_WAL_APPEND_FAIL_OPEN)", "AC3 OPEN check", slo)
     must("3302 AC3", "AC3 test marker", test)
 
     # ── AC4 explicit opt-in ─────────────────────────────────────────────
-    must('wal_env_flag_truthy("AURA_WAL_APPEND_FAIL_CLOSED")', "AC4 CLOSED check", slo)
+    must("wal_env_flag_truthy(::aura::config::Key::AURA_WAL_APPEND_FAIL_CLOSED)", "AC4 CLOSED check", slo)
     must("3302 AC4", "AC4 test marker", test)
 
     # ── AC5 overflow full deny (reuse #3109 path; #3493 not Strict-only) ─
