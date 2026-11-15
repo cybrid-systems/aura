@@ -83,6 +83,17 @@ class Diag5234(unittest.TestCase):
         self.assertNotIn("unbound variable", replies[0]["msg"])
         self.assertIn("hash-ref: key", p.stderr)
 
+    def test_repl_records_uncaught_error_value_as_error(self) -> None:
+        env = dict(os.environ)
+        env["AURA_SANDBOX"] = "off"
+        p = subprocess.run(
+            [str(AURA_BIN), "repl"], input="(car 1)\n", capture_output=True, text=True, env=env, timeout=120
+        )
+        records = [ln for ln in p.stdout.splitlines() if ln.startswith("(hash")]
+        self.assertTrue(records, p.stdout + p.stderr)
+        self.assertIn('"status" "error"', records[-1], records[-1])
+        self.assertIn("car: not a pair", records[-1])
+
     def test_async_unbound_is_user_level(self) -> None:
         p, replies = serve_async(["(display zz)"])
         self.assertTrue(replies, p.stderr)
