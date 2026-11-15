@@ -439,35 +439,37 @@ struct Server {
         std::unordered_map<std::string, std::vector<Diag>> by_file;
         for (auto& f : files)
             by_file[f];
-        std::string output;
+        // #5240: consume the structured diagnostics directly. The old path
+        // formatted them into text and recovered line/column with a regex.
+        std::vector<aura::diag::Diagnostic> structured;
         try {
             aura::compiler::CompilerService cs;
-            output = cs.typecheck_full(combined).output;
+            auto tc = cs.typecheck_full(combined);
+            structured = std::move(tc.diagnostics);
         } catch (const std::exception& e) {
-            output = std::format("1:1: typecheck failed: {}\n", e.what());
+            aura::diag::Diagnostic d{aura::diag::ErrorKind::InternalError,
+                                     std::string("typecheck failed: ") + e.what()};
+            structured.push_back(std::move(d));
         }
-        std::istringstream in(output);
-        std::string l;
-        Diag* last = nullptr;
-        static const std::regex diag_re(R"(^(?:parse error: )?(\d+):(\d+): (.*)$)");
-        while (std::getline(in, l)) {
-            std::smatch m;
-            if (std::regex_match(l, m, diag_re)) {
-                const int gl = std::stoi(m[1].str());
-                auto seg = std::ranges::upper_bound(segs, gl, {}, [](auto& p) { return p.first; });
-                if (seg == segs.begin()) {
-                    last = nullptr;
-                    continue;
-                }
-                --seg;
-                auto& v = by_file[seg->second];
-                v.push_back({gl - seg->first, std::max(0, std::stoi(m[2].str()) - 1), m[3].str()});
-                last = &v.back();
-            } else if (last && l.starts_with("  ")) {
-                last->msg += "\n" + l.substr(2); // e.g. "did you mean …"
-            } else {
-                last = nullptr;
-            }
+        for (const auto& d : structured) {
+            if (d.location.line == 0)
+                continue;
+            const int gl = static_cast<int>(d.location.line);
+            auto seg = std::ranges::upper_bound(segs, gl, {}, [](auto& p) { return p.first; });
+            if (seg == segs.begin())
+                continue;
+            --seg;
+            auto& v = by_file[seg->second];
+            // Keep the first diagnostic per file (CLI default: first error stops).
+            if (!v.empty())
+                continue;
+            // keep_diag() keys on the same "kind: message" text the old
+            // formatted output carried.
+            std::string msg = std::string(aura::diag::kind_name(d.kind)) + ": " + d.message;
+            if (!d.suggestion.empty())
+                msg += "\n" + d.suggestion;
+            v.push_back({gl - seg->first, std::max(0, static_cast<int>(d.location.column) - 1),
+                         std::move(msg)});
         }
         // The static checker is stricter than the runtime: type errors on
         // dynamically typed code and "unbound" for runtime primitives / std
