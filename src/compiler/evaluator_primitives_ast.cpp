@@ -1389,11 +1389,9 @@ void RegSplitParts::register_ast_restore_primitive(PrimRegistrar add_in, Evaluat
                 const std::string_view ast_restore_op = "mw:restore";
                 if (!ev.require_effect(aura::compiler::security::kEffectMutate, ast_restore_op, 0,
                                        ev.capability_tenant_id())) {
-                    return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                                aura::compiler::security::format_deny_reason(
-                                                    aura::compiler::security::kEffectMutate,
-                                                    ev.capability_tenant_id(), "mw:restore"),
-                                                ev.primitive_error_counter_ptr());
+                    return ev.make_refusal_error(aura::compiler::security::format_deny_reason(
+                        aura::compiler::security::kEffectMutate, ev.capability_tenant_id(),
+                        "mw:restore"));
                 }
             }
 

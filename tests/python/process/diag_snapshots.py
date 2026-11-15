@@ -30,14 +30,16 @@ MEMQ = "did you mean 'member'? (Aura's member compares with equal?; memq/memv ar
 SNAPSHOTS: dict[str, tuple[str, int, str | None, str | None, str | None]] = {
     "1-set-code-denied": (
         "(define (g) (+ 1 2))\n(set-code 'g '(lambda () 5))\n(display \"after\")\n",
-        1,
+        # #5241: the refusal is structurally EffectDenied, so the #5240 exit
+        # table puts it in the static bucket (4), not runtime (1).
+        4,
         "error: p.aura:2:2: effect-denied: mutate not granted tenant=0 op=set-code",
         HINT,
         "after",
     ),
     "1-set-car-denied": (
         '(define p (cons 1 2))\n(set-car! p 9)\n(display "after")\n',
-        1,
+        4,
         "error: p.aura:2:2: effect-denied: mutate not granted tenant=0 op=set-car!",
         HINT,
         "after",

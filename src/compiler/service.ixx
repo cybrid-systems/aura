@@ -146,10 +146,13 @@ extern "C" void aura_jit_suppress_runtime_reset_this_thread(int enable) noexcept
 [[nodiscard]] static aura::diag::Diagnostic
 hygiene_expand_deny_diag_4078(const aura::ast::FlatAST* flat = nullptr) {
     // Issue #4876: the sentinel code is not a user-facing explanation.
-    std::string reason = aura::compiler::security::macro_limit_user_reason(
-        aura_macro_hygiene_last_limit_reason_string(), "hygiene-pass-limit");
-    const auto kind = reason.starts_with("effect-denied:") ? aura::diag::ErrorKind::TypeError
-                                                           : aura::diag::ErrorKind::InternalError;
+    const char* why = aura_macro_hygiene_last_limit_reason_string();
+    std::string reason =
+        aura::compiler::security::macro_limit_user_reason(why, "hygiene-pass-limit");
+    // Issue #5241: keyed on the sentinel reason code, not the rendered text.
+    const auto kind = (why != nullptr && std::string_view(why) == "capability-deny")
+                          ? aura::diag::ErrorKind::EffectDenied
+                          : aura::diag::ErrorKind::InternalError;
     // #5235: the refusal is a source-level diagnostic — point it at the macro
     // definition that triggered the expand gate instead of a bare message.
     aura::diag::SourceLocation loc{};
