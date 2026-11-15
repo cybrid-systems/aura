@@ -218,6 +218,10 @@
     (display "  pass: missing paren is a parse-error") (fail4742 "missing paren"))
 (newline)
 
+(if (equal? (tag4742 (mutate :check "f" "(define (f x) \"abc)")) "parse-error")
+    (display "  pass: unterminated string is a parse-error") (fail4742 "unterminated string"))
+(newline)
+
 (if (equal? (tag4742 (mutate :check "f" "(define (f x) (if x")) "parse-error")
     (display "  pass: special-form truncation is a parse-error") (fail4742 "if truncation"))
 (newline)
