@@ -4727,16 +4727,26 @@ check_chaos_soak_deploy_gate
 check_chaos_soak_deploy_gate.py
 check_ci_toolchain_image
 check_ci_toolchain_image.py
+check_coercion_map_abort_rewind
+check_coercion_map_abort_rewind.py
 check_coverage_policy
 check_coverage_policy.py
 check_cross_function_impact_scope_coverage
 check_cross_function_impact_scope_coverage.py
+check_depth_slot_fiber_id_key
+check_depth_slot_fiber_id_key.py
 check_dual_dep_graph_parity_coverage
 check_dual_dep_graph_parity_coverage.py
 check_env_gen_fence_coverage
 check_env_gen_fence_coverage.py
+check_evaluator_ctor_production_upgrade
+check_evaluator_ctor_production_upgrade.py
+check_eventfd_wake_force_safepoint
+check_eventfd_wake_force_safepoint.py
 check_export_held_handoff_coverage
 check_export_held_handoff_coverage.py
+check_filter_prim_infer_standard
+check_filter_prim_infer_standard.py
 check_hold_aware_steal_scoring_coverage
 check_hold_aware_steal_scoring_coverage.py
 check_incremental_soundness_prod_coverage
@@ -4773,12 +4783,18 @@ check_primitive_surface
 check_primitive_surface.py
 check_pure_parallel_isolation_wording
 check_pure_parallel_isolation_wording.py
+check_query_result_full_provenance
+check_query_result_full_provenance.py
 check_register_render_hot_prim_coverage
 check_register_render_hot_prim_coverage.py
 check_residual_sid0_cap_coverage
 check_residual_sid0_cap_coverage.py
+check_restamp_budget_hard_gate
+check_restamp_budget_hard_gate.py
 check_root_remap_pass_coverage
 check_root_remap_pass_coverage.py
+check_sandbox_mode_authority
+check_sandbox_mode_authority.py
 check_scope_bp_gauge_coverage
 check_scope_bp_gauge_coverage.py
 check_session_bound_dtor_cascade
@@ -5137,15 +5153,26 @@ check_sole_require_effect_2706
 check_sole_require_effect_2706.py
 check_mid_join_fail_closed_2707
 check_mid_join_fail_closed_2707.py
+check_ownership_rebind_walk_2708
+check_ownership_rebind_walk_2708.py
 check_general_object_pin_auto_wire_2709
+check_general_object_pin_auto_wire_2709.py
 check_panic_checkpoint_steal_hard_2710
+check_panic_checkpoint_steal_hard_2710.py
 check_envframe_lifetime_proof_2711
+check_envframe_lifetime_proof_2711.py
 check_epoch_invariant_soft_fuse_heal_2712
+check_epoch_invariant_soft_fuse_heal_2712.py
 check_cross_eval_epoch_bump_2713
+check_cross_eval_epoch_bump_2713.py
 check_captured_anon_sync_remount_prod_default_2714
+check_captured_anon_sync_remount_prod_default_2714.py
 check_deferred_reemit_steal_sticky_2715
+check_deferred_reemit_steal_sticky_2715.py
 check_occurrence_hard_face_commit_2716
+check_occurrence_hard_face_commit_2716.py
 check_type_linear_commit_proof_stamp_2717
+check_type_linear_commit_proof_stamp_2717.py
 check_chaos_soak_hard_gate_2722
 check_chaos_soak_hard_gate_2722.py
 check_cross_fiber_hold_budget_cancel_2726
@@ -5364,6 +5391,8 @@ check_linear_ir_fastpath_2899
 check_solver_budget_2900
 check_steal_residual_rearm_race_2901
 check_steal_residual_rearm_race_2901.py
+check_hot_update_registry_2902
+check_hot_update_registry_2902.py
 check_mailbox_under_boundary_wait_2903
 check_dirty_columnar_2904
 check_moving_sticky_densify_off_2905
@@ -5387,7 +5416,9 @@ check_ast_snapshot_workspace_2918
 check_ast_snapshot_workspace_2918.py
 check_current_source_unparse_2919
 check_current_source_unparse_2919.py
+current-source-roundtrip-2921
 current_source_roundtrip_2921
+ast-unparse-2922
 ast_unparse_2922
 check_ast_unparse_2922
 check_ast_unparse_2922.py
@@ -5395,18 +5426,25 @@ check_isolation_decide_2923
 check_isolation_decide_2923.py
 check_wait_reclaimed_2924
 check_wait_reclaimed_2924.py
+wait-reclaimed-2924
 wait_reclaimed_2924
 check_producer_bp_budget_2925
 check_producer_bp_budget_2925.py
+producer-bp-budget-2925
 producer_bp_budget_2925
 check_scope_resolve_2926
 check_scope_resolve_2926.py
+scope-resolve-2926
 scope_resolve_2926
 check_force_jit_reason_bit_map_2927
 check_force_jit_reason_bit_map_2927.py
+force-jit-reason-bit-map-2927
 check_residual_remount_round_robin_2928
+residual-remount-2928
 check_steal_invariant_table_2929
 check_steal_invariant_table_2929.py
+steal-invariant-table-2929
+bridge-epoch-zero-stale-2930
 check_bridge_epoch_zero_stale_2930
 check_bridge_epoch_zero_stale_2930.py
 check_hold_budget_forced_fail_closed_2932
@@ -5472,6 +5510,7 @@ check_general_object_pin_create_densify_2971
 check_general_object_pin_create_densify_2971.py
 check_mailbox_credit_inflight_2972
 check_mailbox_credit_inflight_2972.py
+mailbox-credit-2972
 mailbox_credit_2972
 check_moving_pre_densify_completeness_2973
 check_moving_pre_densify_completeness_2973.py
@@ -5481,7 +5520,9 @@ check_outermost_exit_residual_pin_2975
 check_agent_scope_concurrency_2976
 check_agent_scope_concurrency_2976.py
 check_residual_remount_prefer_force_jit_2977
+residual-remount-prefer-2977
 check_reemit_success_sync_covered_remount_2978
+reemit-success-sync-covered-2978
 check_layered_evidence_phase5_consume_2979
 check_epoch_residual_merged_heal_2980
 check_type_linear_proof_empty_after_fence_2981
@@ -5633,6 +5674,10 @@ check_adt_exhaust_complete_seed_3083
 check_hot_residual_soft_must_deopt_3084
 check_rehydrate_miss_lowering_elision_3085
 check_rehydrate_miss_lowering_elision_3085.py
+check_grant_mid_refused_3090
+check_grant_mid_refused_3090.py
+check_type_linear_proof_mid_3091
+check_type_linear_proof_mid_3091.py
 check_intermediate_cover_3093
 check_intermediate_cover_3093.py
 check_concurrent_clone_name_map_3094
@@ -5648,6 +5693,8 @@ check_wal_append_fail_closed_3109.py
 check_join_drain_reclaim_3110
 check_join_drain_reclaim_3110.py
 check_mailbox_held_ref_steal_3111
+check_dual_track_facade_3112
+check_dual_track_facade_3112.py
 check_evolution_audit_decision_3114
 check_evolution_audit_decision_3114.py
 check_scalar_macro_hygiene_3115
@@ -5685,6 +5732,8 @@ check_steal_safety_production_residual_zero_3134
 check_steal_safety_production_residual_zero_3134.py
 check_cascade_decision_residual_atomic_3135
 check_cascade_decision_residual_atomic_3135.py
+check_relower_success_coverage_3136
+check_relower_success_coverage_3136.py
 check_castop_typed_meta_phase_c_3140
 check_castop_typed_meta_phase_c_3140.py
 check_cross_tenant_grant_principal_3145
@@ -5705,6 +5754,21 @@ check_abort_ir_cache_fence_first_3159
 check_abort_ir_cache_fence_first_3159.py
 check_hold_budget_inbody_escalate_3160
 check_hold_budget_inbody_escalate_3160.py
+check_impact_rearm_coverage_3161
+check_impact_rearm_coverage_3161.py
+check_steal_safety_sticky_fail_3162
+check_steal_safety_sticky_fail_3162.py
+check_storm_hysteresis_refresh_3163
+check_storm_hysteresis_refresh_3163.py
+check_hold_after_cancel_hard_soak_3164
+check_hold_after_cancel_hard_soak_3164.py
+check_dual_dep_graph_parity_strict_fail_closed_3165
+check_dual_dep_graph_parity_strict_fail_closed_3165.py
+check_nested_guard_exit_dirty_pending_3166
+check_nested_guard_exit_dirty_pending_3166.py
+check_pcv_span_stale_coverage_3167
+check_pcv_span_stale_coverage_3167.py
+cascade-rearm-new-edge-only-3168
 check_cascade_rearm_new_edge_only_3168
 check_cascade_rearm_new_edge_only_3168.py
 cmd_cascade_rearm_new_edge_only_3168
@@ -5952,6 +6016,20 @@ check_parallel_mutate_region_keys_3299.py
 check_atomic_batch_macro_audit_3301
 check_wal_fail_closed_force_wal_3302
 check_wal_fail_closed_force_wal_3302.py
+check_steal_abort_reason_coverage_3303
+check_steal_abort_reason_coverage_3303.py
+check_capability_deny_reason_uniformity_3304
+check_capability_deny_reason_uniformity_3304.py
+check_ir_typed_entry_proof_authority_3305
+check_ir_typed_entry_proof_authority_3305.py
+check_intermediate_create_value_only_soak_3306
+check_intermediate_create_value_only_soak_3306.py
+check_pending_full_solve_residual_hardlatch_3307
+check_pending_full_solve_residual_hardlatch_3307.py
+check_post_moving_canary_steal_lcp_3308
+check_post_moving_canary_steal_lcp_3308.py
+check_unified_restamp_single_entry_3309
+check_unified_restamp_single_entry_3309.py
 check_impact_ub_production_3310
 check_impact_ub_production_3310.py
 check_query_result_soft_prod_transition_3311
@@ -6052,6 +6130,14 @@ check_arena_auto_arm_known_roots_3370.py
 check_evolution_audit_decision_forensic_source_3371
 check_evolution_audit_decision_forensic_source_3371.py
 check_densify_fail_window_vacuous_axes_3372
+check_mutation_boundary_ssot_3384
+check_mutation_boundary_ssot_3384.py
+check_steal_safety_lifetime_proof_latch_3385
+check_steal_safety_lifetime_proof_latch_3385.py
+check_query_stable_hard_reject_torn_latch_3386
+check_query_stable_hard_reject_torn_latch_3386.py
+check_soak_pr_short_3387
+check_soak_pr_short_3387.py
 check_fiber_spawn_cli_dtor_drain_3394
 check_fiber_spawn_cli_dtor_drain_3394.py
 check_query_default_stamped_3395
@@ -6066,13 +6152,36 @@ check_structural_mutate_resolve_helper_3399
 check_structural_mutate_resolve_helper_3399.py
 check_stable_ref_probe_3400
 check_stable_ref_probe_3400.py
+check_eval_flat_hot_path_3401
+check_eval_flat_hot_path_3401.py
 check_dense_children_columns_3402
+check_dense_children_columns_3402.py
+dense-children-columns-3402
 check_inline_pass_soa_3403
+check_inline_pass_soa_3403.py
+inline-pass-soa-3403
+arena-auto-arm-soft-fallback-3404
 check_arena_auto_arm_soft_fallback_3404
+check_arena_auto_arm_soft_fallback_3404.py
 check_pure_wrap_dirty_entry_3405
+check_pure_wrap_dirty_entry_3405.py
+pure-wrap-dirty-entry-3405
+check_recover_fail_clear_persist_3406
+check_recover_fail_clear_persist_3406.py
+check_synthesize_set_walks_rhs_3407
+check_synthesize_set_walks_rhs_3407.py
+check_set_assignment_hygiene_3408
+check_set_assignment_hygiene_3408.py
+check_grant_ssot_ta_fence_3409
+check_grant_ssot_ta_fence_3409.py
 check_dual_fresh_mutate_soft_migrate_3410
+check_dual_fresh_mutate_soft_migrate_3410.py
+check_wildcard_ta_string_gate_3411
+check_wildcard_ta_string_gate_3411.py
 check_deopt_pending_closure_call_3412
+check_deopt_pending_closure_call_3412.py
 check_partial_reemit_success_coverage_3413
+check_partial_reemit_success_coverage_3413.py
 check_no_tls_live_policy_default_solved_3414
 check_no_tls_live_policy_default_solved_3414.py
 check_bare_nodeid_foreign_stamp_3415
@@ -6151,6 +6260,7 @@ check_set_child_locked_dense_inplace_3453
 check_set_child_locked_dense_inplace_3453.py
 check_production_pure_wrap_soa_3454
 check_production_pure_wrap_soa_3454.py
+production-pure-wrap-soa-3454
 check_shape_compact_dirty_fnkey_3455
 check_shape_compact_dirty_fnkey_3455.py
 check_destroy_dtor_index_3456
@@ -6219,31 +6329,104 @@ check_index_sync_structural_write_3589
 check_index_sync_structural_write_3589.py
 check_linear_elision_fast_path_3591
 check_linear_elision_fast_path_3591.py
+check_join_reclaim_retry_3595
+check_join_reclaim_retry_3595.py
 check_moving_untracked_split_3600
+check_moving_untracked_split_3600.py
+check_lockless_hygiene_se_3601
+check_lockless_hygiene_se_3601.py
+check_ffi_apply_densify_refuse_3602
+check_ffi_apply_densify_refuse_3602.py
+check_wal_window_miss_catalog_3603
+check_wal_window_miss_catalog_3603.py
+check_panic_aba_gc_defer_drain_3604
+check_panic_aba_gc_defer_drain_3604.py
 check_facade_owner_scope_clock_skip_3605
+check_facade_owner_scope_clock_skip_3605.py
+check_nested_qq_depth_3606
+check_nested_qq_depth_3606.py
 check_remount_reason_domain_3607
+check_remount_reason_domain_3607.py
 check_expand_checkpoint_local_rollback_3608
+check_expand_checkpoint_local_rollback_3608.py
+check_reexpand_tenant_principal_3609
+check_reexpand_tenant_principal_3609.py
+check_real_quiet_live_tc_3610
+check_real_quiet_live_tc_3610.py
 check_cascade_rearm_reconsult_3611
+check_cascade_rearm_reconsult_3611.py
 check_remount_densify_pairing_strip_3612
+check_remount_densify_pairing_strip_3612.py
 check_mailbox_holder_send_lock_order_3613
+check_mailbox_holder_send_lock_order_3613.py
+check_outermost_persist_order_3614
+check_outermost_persist_order_3614.py
+check_dual_graph_parity_cone_3615
+check_dual_graph_parity_cone_3615.py
 check_jit_anon_linear_prologue_3616
 check_jit_anon_linear_prologue_3616.py
 check_steal_eval_keyed_residual_3617
 check_steal_eval_keyed_residual_3617.py
 check_residual_persist_attribution_3618
 check_residual_persist_attribution_3618.py
+check_chaos_guard_hold_smoke_3620
+check_chaos_guard_hold_smoke_3620.py
+check_steal_identity_proof_3621
+check_steal_identity_proof_3621.py
+check_type_dynamic_production_3622
+check_type_dynamic_production_3622.py
+check_occurrence_recover_regate_3623
+check_occurrence_recover_regate_3623.py
 check_type_export_face_3624
+check_type_export_face_3624.py
 check_render_fast_audit_3625
+check_render_fast_audit_3625.py
 check_closure_calls_hotpath_3626
+check_closure_calls_hotpath_3626.py
+check_pack_pipeline_strict_3627
+check_pack_pipeline_strict_3627.py
+check_undeclared_mt_autodetect_3630
+check_undeclared_mt_autodetect_3630.py
+check_reclaimed_batch_join_3631
+check_reclaimed_batch_join_3631.py
 check_scope_bp_sender_attribution_3632
 check_scope_bp_sender_attribution_3632.py
 check_moving_cover_reconciliation_3633
+check_moving_cover_reconciliation_3633.py
 check_closure_dispatch_entry_3635
+check_closure_dispatch_entry_3635.py
+check_region_storm_attribution_3636
+check_region_storm_attribution_3636.py
+check_macro_boundary_backstop_3637
+check_macro_boundary_backstop_3637.py
+check_query_index_telemetry_3638
+check_query_index_telemetry_3638.py
+check_wal_append_miss_deny_3639
+check_wal_append_miss_deny_3639.py
+check_unpack_spine_gate_3640
+check_unpack_spine_gate_3640.py
+check_occupancy_collision_failclosed_3641
+check_occupancy_collision_failclosed_3641.py
 check_recv_stale_nullopt_3642
+check_recv_stale_nullopt_3642.py
 check_scope_join_tree_3643
+check_scope_join_tree_3643.py
+check_reclaimed_slot_second_recycle_3644
+check_reclaimed_slot_second_recycle_3644.py
+check_metrics_not_found_3645
+check_metrics_not_found_3645.py
+check_closure_densify_slots_3647
+check_closure_densify_slots_3647.py
+check_apply_window_gate_3648
+check_apply_window_gate_3648.py
 check_storm_exit_coverage_verify_3649
+check_storm_exit_coverage_verify_3649.py
 check_rollback_mse_3650
+check_rollback_mse_3650.py
 check_expand_all_deny_codes_3651
+check_expand_all_deny_codes_3651.py
+check_lockless_allow_mse_3652
+check_lockless_allow_mse_3652.py
 check_outermost_persist_audit_order_3653
 check_outermost_persist_audit_order_3653.py
 check_jit_linear_post_mutate_unset_3654
@@ -6272,8 +6455,44 @@ check_insert_remove_child_locked_dense_splice_3665
 check_insert_remove_child_locked_dense_splice_3665.py
 check_hot_contract_production_pack_3666
 check_hot_contract_production_pack_3666.py
+check_quota_tenant_keying_3668
+check_quota_tenant_keying_3668.py
+check_isolation_audit_caller_3669
+check_isolation_audit_caller_3669.py
+check_resume_mid_join_3670
+check_resume_mid_join_3670.py
+check_scope_join_tree_visibility_3671
+check_scope_join_tree_visibility_3671.py
+check_bp_scope_tenant_3672
+check_bp_scope_tenant_3672.py
+check_recv_under_boundary_3673
+check_recv_under_boundary_3673.py
+check_wal_fold_autoscan_3674
+check_wal_fold_autoscan_3674.py
+check_envframe_scan_order_3679
+check_envframe_scan_order_3679.py
+check_compact_owner_scope_3680
+check_compact_owner_scope_3680.py
+check_apply_pre_reemit_refuse_3681
+check_apply_pre_reemit_refuse_3681.py
+check_last_success_coverage_evidence_3682
+check_last_success_coverage_evidence_3682.py
+check_hygiene_deny_kind_uniformity_3683
+check_hygiene_deny_kind_uniformity_3683.py
+check_inner_expand_refuse_3684
+check_inner_expand_refuse_3684.py
+check_clone_session_policy_3685
+check_clone_session_policy_3685.py
+check_quote_intern_lock_3703
+check_quote_intern_lock_3703.py
+check_mse_session_bound_3721
+check_mse_session_bound_3721.py
+check_rollback_effect_gate_3722
+check_rollback_effect_gate_3722.py
 check_compiler_metrics_fields_3737
 check_compiler_metrics_fields_3737.py
+check_ast_ref_stamp_3772
+check_ast_ref_stamp_3772.py
 check_occurrence_mid_join_ssot_3778
 check_occurrence_mid_join_ssot_3778.py
 check_steal_complete_total_ssot_3779
@@ -6300,6 +6519,10 @@ check_remount_last_zero_agent_face_3789
 check_remount_last_zero_agent_face_3789.py
 check_rollback_mutation_boundary_guard_3790
 check_rollback_mutation_boundary_guard_3790.py
+check_mailbox_lock_audit_pairs_3791
+check_mailbox_lock_audit_pairs_3791.py
+check_mutation_history_tenant_filter_3792
+check_mutation_history_tenant_filter_3792.py
 check_replace_pattern_kw_unify_3793
 check_replace_pattern_kw_unify_3793.py
 check_partial_drift_grant_refuse_3794
@@ -6412,75 +6635,340 @@ check_abort_aot_invalidate_3852
 check_abort_aot_invalidate_3852.py
 check_ir_soa_column_slab_shard_3853
 check_ir_soa_column_slab_shard_3853.py
+check_mse_revoke_fiber_3854
+check_mse_revoke_fiber_3854.py
+check_wal_miss_se_compensate_3855
+check_wal_miss_se_compensate_3855.py
+check_wal_miss_ring_flip_3856
+check_wal_miss_ring_flip_3856.py
 check_temp_canary_moving_gate_3857
+check_temp_canary_moving_gate_3857.py
 check_restore_checkpoint_mse_3858
+check_restore_checkpoint_mse_3858.py
+check_flatast_seqlock_get_3868
+check_flatast_seqlock_get_3868.py
+check_storm_force_full_counter_3869
+check_storm_force_full_counter_3869.py
 check_pass_purity_effect_3870
+check_pass_purity_effect_3870.py
+check_letrec_check_synth_3871
+check_letrec_check_synth_3871.py
+check_mutate_session_hard_gate_3872
+check_mutate_session_hard_gate_3872.py
+check_health_advisory_face_3873
+check_health_advisory_face_3873.py
+check_audit_event_tenant_3874
+check_audit_event_tenant_3874.py
+check_revoke_epoch_hard_only_3875
+check_revoke_epoch_hard_only_3875.py
+check_soft_revoke_epoch_honest_3902
+check_soft_revoke_epoch_honest_3902.py
+check_correlate_tenant_passthrough_3903
+check_correlate_tenant_passthrough_3903.py
+check_mse_ta_posture_3904
+check_mse_ta_posture_3904.py
+check_orch_residuals_3941
+check_orch_residuals_3941.py
+check_jit_densify_remap_3972
+check_jit_densify_remap_3972.py
+check_native_moving_canary_env_note_3973
+check_native_moving_canary_env_note_3973.py
 check_agent_recv_typed_preference_4001
 check_agent_recv_typed_preference_4001.py
 check_aot_metrics_deopt_ssot_4013
 check_aot_metrics_deopt_ssot_4013.py
+check_steal_densify_inflight_boundary_safe_4033
+check_steal_densify_inflight_boundary_safe_4033.py
+check_mutation_choke_4036
+check_mutation_choke_4036.py
+check_agent_fingerprint_gate_4037
+check_agent_fingerprint_gate_4037.py
 check_session_revoke_host_cohort_4038
+check_session_revoke_host_cohort_4038.py
+check_nodeid_collision_4039
+check_nodeid_collision_4039.py
+check_agent_reply_payload_4049
+check_agent_reply_payload_4049.py
 check_supervise_join_4050
+check_supervise_join_4050.py
+check_occupancy_torn_read_4051
+check_occupancy_torn_read_4051.py
+check_isolation_deny_epoch_4052
+check_isolation_deny_epoch_4052.py
+check_soft_ready_http_post_denseness_4053
+check_soft_ready_http_post_denseness_4053.py
+check_soft_ready_http_post_two_batch_4054
+check_soft_ready_http_post_two_batch_4054.py
+check_soft_ready_http_post_three_batch_4055
+check_soft_ready_http_post_three_batch_4055.py
+check_soft_ready_http_post_after_probe_4056
+check_soft_ready_http_post_after_probe_4056.py
+check_pair_slot_tenant_4057
+check_pair_slot_tenant_4057.py
+check_capability_stack_authorization_4058
+check_capability_stack_authorization_4058.py
+check_load_tenant_mutate_4059
+check_load_tenant_mutate_4059.py
 check_authority_gap_lifecycle_4087
+check_authority_gap_lifecycle_4087.py
+check_query_bare_nodeid_4088
+check_query_bare_nodeid_4088.py
 check_fiber_type_belt_4089
+check_fiber_type_belt_4089.py
+check_shape_hotpath_4090
+check_shape_hotpath_4090.py
+check_shape_dirty_cone_4091
+check_shape_dirty_cone_4091.py
+check_jit_heap_tenant_4093
+check_jit_heap_tenant_4093.py
+check_closure_capture_tenant_4094
+check_closure_capture_tenant_4094.py
 check_query_bare_nodeid_4106
+check_query_bare_nodeid_4106.py
+check_type_ground_gate_4107
+check_type_ground_gate_4107.py
+check_shape_sync_index_4108
+check_shape_sync_index_4108.py
+check_materialize_defuse_4109
+check_materialize_defuse_4109.py
+check_hash_tenant_stamp_4110
+check_hash_tenant_stamp_4110.py
+check_pair_read_tenant_4111
+check_pair_read_tenant_4111.py
+check_agent_export_occupancy_4112
+check_agent_export_occupancy_4112.py
+check_resolve_stamped_occupancy_4113
+check_resolve_stamped_occupancy_4113.py
 check_join_fail_failfast_4114
+check_join_fail_failfast_4114.py
 check_scope_join_sweep_4115
+check_scope_join_sweep_4115.py
+check_se_wal_join_4118
+check_se_wal_join_4118.py
+check_replay_mid_last_stamped_4120
+check_replay_mid_last_stamped_4120.py
 check_typed_mutation_audit_trail_headroom_4121
 check_typed_mutation_audit_trail_headroom_4121.py
+check_temp_canary_bind_4124
+check_temp_canary_bind_4124.py
+check_apply_densify_inflight_4125
+check_apply_densify_inflight_4125.py
+check_jit_reemit_install_4126
+check_jit_reemit_install_4126.py
 check_lockless_macro_allow_latch_4127
+check_lockless_macro_allow_latch_4127.py
+check_workspace_lock_stamp_4128
+check_workspace_lock_stamp_4128.py
+check_character_literal_4129
+check_character_literal_4129.py
 check_empty_list_unparse_4130
+check_empty_list_unparse_4130.py
+check_oneshot_sigterm_4131
+check_oneshot_sigterm_4131.py
 check_export_name_unparse_4132
+check_export_name_unparse_4132.py
+check_mse_caller_only_ta_4133
+check_mse_caller_only_ta_4133.py
+check_jit_owner_failclosed_4134
+check_jit_owner_failclosed_4134.py
+check_grant_node_provenance_4135
+check_grant_node_provenance_4135.py
 check_caller_sweep_4136
+check_caller_sweep_4136.py
 check_agent_recv_steal_handoff_4137
 check_agent_recv_steal_handoff_4137.py
 check_agent_join_scope_compact_4138
+check_agent_join_scope_compact_4138.py
 check_join_token_observe_4139
+check_join_token_observe_4139.py
+check_densify_health_headroom_4140
+check_densify_health_headroom_4140.py
+check_capability_effect_headroom_4141
+check_capability_effect_headroom_4141.py
+check_wal_miss_refuse_next_4142
+check_wal_miss_refuse_next_4142.py
+check_moving_sticky_recovery_4143
+check_moving_sticky_recovery_4143.py
+check_envframe_pool_slot_remap_4144
 check_envframe_pool_slot_remap_4144.py
+check_soft_autowire_unreachable_4145
 check_soft_autowire_unreachable_4145.py
+check_facade_cone_jit_drop_4146
+check_facade_cone_jit_drop_4146.py
+check_residual_force_rearm_4147
+check_residual_force_rearm_4147.py
+check_jit_drop_must_deopt_4148
 check_jit_drop_must_deopt_4148.py
 check_hygiene_limit_stamp_4149
+check_hygiene_limit_stamp_4149.py
 check_hygiene_last_limit_fiber_4150
+check_hygiene_last_limit_fiber_4150.py
+check_macro_child_walk_gate_4151
+check_macro_child_walk_gate_4151.py
+check_deferred_green_steal_fence_4152
+check_deferred_green_steal_fence_4152.py
+check_txn_dirty_green_4153
+check_txn_dirty_green_4153.py
 check_residual_castop_remirror_4154
+check_residual_castop_remirror_4154.py
 check_residual_castop_densify_clear_4155
+check_residual_castop_densify_clear_4155.py
+check_adaptive_thr_4156
+check_adaptive_thr_4156.py
 check_shape_flip_persist_fresh_4157
+check_shape_flip_persist_fresh_4157.py
 check_edge_free_hold_4158
+check_edge_free_hold_4158.py
+check_chaos_ready_residual_gate_4159
+check_chaos_ready_residual_gate_4159.py
 check_mailbox_holder_bound_4160
+check_mailbox_holder_bound_4160.py
+check_rejecthard_bit_coverage_4161
+check_rejecthard_bit_coverage_4161.py
+check_query_free_slot_4162
+check_query_free_slot_4162.py
+check_query_index_free_slot_4163
+check_query_index_free_slot_4163.py
+check_ref_layout_gen_paint_4164
+check_ref_layout_gen_paint_4164.py
 check_agent_fiber_isolation_4165
+check_agent_fiber_isolation_4165.py
 check_shape_merge_lock_scope_4166
+check_shape_merge_lock_scope_4166.py
+check_hot_contract_pack_face_4167
+check_hot_contract_pack_face_4167.py
 check_ir_dirty_soft_pretend_amortized_4168
+check_ir_dirty_soft_pretend_amortized_4168.py
+check_apply_closure_tls_seq_4169
+check_apply_closure_tls_seq_4169.py
+check_recover_solve_status_4170
+check_recover_solve_status_4170.py
+check_blame_ok_vacuous_4171
+check_blame_ok_vacuous_4171.py
 check_residual_undermark_jit_4172
+check_residual_undermark_jit_4172.py
+check_sampled_leftover_audit_4173
+check_sampled_leftover_audit_4173.py
+check_recover_truncation_4174
 check_recover_truncation_4174.py
 check_r7rs_string_compare_4175
+check_r7rs_string_compare_4175.py
+check_serve_async_join_wake_4176
+check_serve_async_join_wake_4176.py
 check_list_take_drop_4177
+check_list_take_drop_4177.py
+check_oneshot_stdlib_4178
+check_oneshot_stdlib_4178.py
+check_oneshot_stdlib_4220
+check_oneshot_stdlib_4220.py
+check_oneshot_stdlib_4224
+check_oneshot_stdlib_4224.py
+check_oneshot_filter_4228
+check_oneshot_filter_4228.py
+check_serve_async_capture_honesty_4229
+check_serve_async_capture_honesty_4229.py
+check_fiber_join_done_face_4230
+check_fiber_join_done_face_4230.py
+check_fiber_body_exception_4231
+check_fiber_body_exception_4231.py
 check_soft_list_prims_4232
+check_soft_list_prims_4232.py
 check_tenant_exec_jail_4233
+check_tenant_exec_jail_4233.py
+check_exec_high_risk_force_4234
+check_exec_high_risk_force_4234.py
 check_agent_mint_per_agent_4235
+check_agent_mint_per_agent_4235.py
 check_join_fail_circuitbreaker_4236
+check_join_fail_circuitbreaker_4236.py
 check_restart_fuel_4237
+check_restart_fuel_4237.py
 check_scope_region_admit_4238
+check_scope_region_admit_4238.py
+check_require_effect_join_refuse_4239
+check_require_effect_join_refuse_4239.py
+check_wal_prune_fold_4240
 check_wal_prune_fold_4240.py
+check_mid_refuse_ordering_4241
+check_mid_refuse_ordering_4241.py
+check_remap_tombstone_quarantine_4242
+check_remap_tombstone_quarantine_4242.py
 check_relocate_identity_4243
+check_relocate_identity_4243.py
+check_interior_int_remap_4244
+check_interior_int_remap_4244.py
+check_occurrence_drain_order_4250
+check_occurrence_drain_order_4250.py
 check_dep_closure_miss_4251
+check_dep_closure_miss_4251.py
 check_occurrence_owner_tc_steal_4252
+check_occurrence_owner_tc_steal_4252.py
 check_primfn_no_std_function_4261
 check_primfn_no_std_function_4261.py
 check_escape_soa_no_flat_4262
 check_escape_soa_no_flat_4262.py
 check_ir_soa_column_slab_upstream_4263
 check_ir_soa_column_slab_upstream_4263.py
+check_serve_setcode_parity_4264
+check_serve_setcode_parity_4264.py
 check_pick_best_call_cache_4265
+check_pick_best_call_cache_4265.py
 check_safe_refactor_typecheck_4266
+check_safe_refactor_typecheck_4266.py
+check_synthesize_optimize_score_4267
+check_synthesize_optimize_score_4267.py
+check_setcode_pick_parity_4272_4273
+check_setcode_pick_parity_4272_4273.py
+check_name_table_region_admit_4280
+check_name_table_region_admit_4280.py
 check_tenant_jail_4380
+check_tenant_jail_4380.py
 check_git_tenant_jail_4381
+check_git_tenant_jail_4381.py
 check_http_tenant_scheme_4382
+check_http_tenant_scheme_4382.py
+check_reclaim_trigger_large_heap_4474
+check_reclaim_trigger_large_heap_4474.py
 check_prim_shadow_eval_current_4477
 check_prim_shadow_eval_current_4477.py
 check_value_encoding_single_source_4502
 check_value_encoding_single_source_4502.py
+check_tenant_string_sink_4559
+check_tenant_string_sink_4559.py
+check_top_letrec_no_selfcopy_frame_4595
+check_top_letrec_no_selfcopy_frame_4595.py
+check_boundary_exit_counters_4598
+check_boundary_exit_counters_4598.py
+check_snapshot_share_stamps_4598
+check_snapshot_share_stamps_4598.py
+check_call_resolve_cache_4599
+check_call_resolve_cache_4599.py
+check_jit_assumption_gate_4600
+check_jit_assumption_gate_4600.py
+check_jit_frame_deopt_4600
+check_jit_frame_deopt_4600.py
+check_jit_osr_4600
+check_jit_osr_4600.py
+check_jit_reuse_lowering_4600
+check_jit_reuse_lowering_4600.py
+check_jit_pair_mutation_4602
+check_jit_pair_mutation_4602.py
 check_jit_prim_callee_refuse_4606
+check_jit_prim_callee_refuse_4606.py
+check_jit_unbound_callee_4607
 check_jit_unbound_callee_4607.py
+check_string_heap_reclaim_4608
+check_string_heap_reclaim_4608.py
+check_prim_call_arg_rooting_4611
+check_prim_call_arg_rooting_4611.py
+check_hash_probe_4612
 check_hash_probe_4612.py
+check_pair_vector_hash_reclaim_4613
+check_pair_vector_hash_reclaim_4613.py
+check_vector_hash_cow_4614
+check_vector_hash_cow_4614.py
+check_block_prefix_offsets_4615
+check_block_prefix_offsets_4615.py
 check_query_and_replace_guard_fail_4652
 check_query_and_replace_guard_fail_4652.py
 check_partial_refusal_commit_4653
@@ -6502,8 +6990,11 @@ check_if_dynamic_arm_ground_gate_4684.py
 check_se_wal_second_enable_4686
 check_se_wal_second_enable_4686.py
 check_pin_stable_refs_provenance_4696
+check_pin_stable_refs_provenance_4696.py
 check_ir_const_symbol_intern_4727
 check_ir_const_symbol_intern_4727.py
+check_frame_gc_4790
+check_frame_gc_4790.py
 check_primitive_tiers_5008
 check_primitive_tiers_5008.py
 check_orch_doc_hint_5118
@@ -6647,6 +7138,7 @@ check_stdlib_list_prim_shadow_5192.py
 # Issue #2705
 # Issue #2706
 # Issue #2707
+# Issue #2708
 # Issue #2709
 # Issue #2710
 # Issue #2711
@@ -6772,6 +7264,7 @@ check_stdlib_list_prim_shadow_5192.py
 # Issue #2899
 # Issue #2900
 # Issue #2901
+# Issue #2902
 # Issue #2903
 # Issue #2904
 # Issue #2905
@@ -6933,6 +7426,8 @@ check_stdlib_list_prim_shadow_5192.py
 # Issue #3083
 # Issue #3084
 # Issue #3085
+# Issue #3090
+# Issue #3091
 # Issue #3093
 # Issue #3094
 # Issue #3106
@@ -6941,6 +7436,7 @@ check_stdlib_list_prim_shadow_5192.py
 # Issue #3109
 # Issue #3110
 # Issue #3111
+# Issue #3112
 # Issue #3114
 # Issue #3115
 # Issue #3116
@@ -6961,6 +7457,7 @@ check_stdlib_list_prim_shadow_5192.py
 # Issue #3133
 # Issue #3134
 # Issue #3135
+# Issue #3136
 # Issue #3140
 # Issue #3145
 # Issue #3146
@@ -6971,6 +7468,13 @@ check_stdlib_list_prim_shadow_5192.py
 # Issue #3158
 # Issue #3159
 # Issue #3160
+# Issue #3161
+# Issue #3162
+# Issue #3163
+# Issue #3164
+# Issue #3165
+# Issue #3166
+# Issue #3167
 # Issue #3168
 # Issue #3169
 # Issue #3170
@@ -7100,6 +7604,13 @@ check_stdlib_list_prim_shadow_5192.py
 # Issue #3299
 # Issue #3301
 # Issue #3302
+# Issue #3303
+# Issue #3304
+# Issue #3305
+# Issue #3306
+# Issue #3307
+# Issue #3308
+# Issue #3309
 # Issue #3310
 # Issue #3311
 # Issue #3312
@@ -7153,6 +7664,10 @@ check_stdlib_list_prim_shadow_5192.py
 # Issue #3370
 # Issue #3371
 # Issue #3372
+# Issue #3384
+# Issue #3385
+# Issue #3386
+# Issue #3387
 # Issue #3394
 # Issue #3395
 # Issue #3396
@@ -7160,11 +7675,17 @@ check_stdlib_list_prim_shadow_5192.py
 # Issue #3398
 # Issue #3399
 # Issue #3400
+# Issue #3401
 # Issue #3402
 # Issue #3403
 # Issue #3404
 # Issue #3405
+# Issue #3406
+# Issue #3407
+# Issue #3408
+# Issue #3409
 # Issue #3410
+# Issue #3411
 # Issue #3412
 # Issue #3413
 # Issue #3414
@@ -7240,27 +7761,55 @@ check_stdlib_list_prim_shadow_5192.py
 # Issue #3491
 # Issue #3589
 # Issue #3591
+# Issue #3595
 # Issue #3600
+# Issue #3601
+# Issue #3602
+# Issue #3603
+# Issue #3604
 # Issue #3605
+# Issue #3606
 # Issue #3607
 # Issue #3608
+# Issue #3609
+# Issue #3610
 # Issue #3611
 # Issue #3612
 # Issue #3613
+# Issue #3614
+# Issue #3615
 # Issue #3616
 # Issue #3617
 # Issue #3618
+# Issue #3620
+# Issue #3621
+# Issue #3622
+# Issue #3623
 # Issue #3624
 # Issue #3625
 # Issue #3626
+# Issue #3627
+# Issue #3630
+# Issue #3631
 # Issue #3632
 # Issue #3633
 # Issue #3635
+# Issue #3636
+# Issue #3637
+# Issue #3638
+# Issue #3639
+# Issue #3640
+# Issue #3641
 # Issue #3642
 # Issue #3643
+# Issue #3644
+# Issue #3645
+# Issue #3647
+# Issue #3648
 # Issue #3649
 # Issue #3650
 # Issue #3651
+# Issue #3652
 # Issue #3653
 # Issue #3654
 # Issue #3655
@@ -7275,7 +7824,25 @@ check_stdlib_list_prim_shadow_5192.py
 # Issue #3664
 # Issue #3665
 # Issue #3666
+# Issue #3668
+# Issue #3669
+# Issue #3670
+# Issue #3671
+# Issue #3672
+# Issue #3673
+# Issue #3674
+# Issue #3679
+# Issue #3680
+# Issue #3681
+# Issue #3682
+# Issue #3683
+# Issue #3684
+# Issue #3685
+# Issue #3703
+# Issue #3721
+# Issue #3722
 # Issue #3737
+# Issue #3772
 # Issue #3778
 # Issue #3779
 # Issue #3780
@@ -7289,6 +7856,8 @@ check_stdlib_list_prim_shadow_5192.py
 # Issue #3788
 # Issue #3789
 # Issue #3790
+# Issue #3791
+# Issue #3792
 # Issue #3793
 # Issue #3794
 # Issue #3795
@@ -7344,66 +7913,169 @@ check_stdlib_list_prim_shadow_5192.py
 # Issue #3851
 # Issue #3852
 # Issue #3853
+# Issue #3854
+# Issue #3855
+# Issue #3856
 # Issue #3857
 # Issue #3858
+# Issue #3868
+# Issue #3869
 # Issue #3870
+# Issue #3871
+# Issue #3872
+# Issue #3873
+# Issue #3874
+# Issue #3875
+# Issue #3902
+# Issue #3903
+# Issue #3904
+# Issue #3941
+# Issue #3972
+# Issue #3973
 # Issue #4001
 # Issue #4013
+# Issue #4033
+# Issue #4036
+# Issue #4037
 # Issue #4038
+# Issue #4039
+# Issue #4049
 # Issue #4050
+# Issue #4051
+# Issue #4052
+# Issue #4053
+# Issue #4054
+# Issue #4055
+# Issue #4056
+# Issue #4057
+# Issue #4058
+# Issue #4059
 # Issue #4087
+# Issue #4088
 # Issue #4089
+# Issue #4090
+# Issue #4091
+# Issue #4093
+# Issue #4094
 # Issue #4106
+# Issue #4107
+# Issue #4108
+# Issue #4109
+# Issue #4110
+# Issue #4111
+# Issue #4112
+# Issue #4113
 # Issue #4114
 # Issue #4115
+# Issue #4118
+# Issue #4120
 # Issue #4121
+# Issue #4124
+# Issue #4125
+# Issue #4126
 # Issue #4127
+# Issue #4128
+# Issue #4129
 # Issue #4130
+# Issue #4131
 # Issue #4132
+# Issue #4133
+# Issue #4134
+# Issue #4135
 # Issue #4136
 # Issue #4137
 # Issue #4138
 # Issue #4139
+# Issue #4140
+# Issue #4141
+# Issue #4142
+# Issue #4143
 # Issue #4144
 # Issue #4145
+# Issue #4146
+# Issue #4147
 # Issue #4148
 # Issue #4149
 # Issue #4150
+# Issue #4151
+# Issue #4152
+# Issue #4153
 # Issue #4154
 # Issue #4155
+# Issue #4156
 # Issue #4157
 # Issue #4158
+# Issue #4159
 # Issue #4160
+# Issue #4161
+# Issue #4162
+# Issue #4163
+# Issue #4164
 # Issue #4165
 # Issue #4166
+# Issue #4167
 # Issue #4168
+# Issue #4169
+# Issue #4170
+# Issue #4171
 # Issue #4172
+# Issue #4173
 # Issue #4174
 # Issue #4175
+# Issue #4176
 # Issue #4177
+# Issue #4178
+# Issue #4220
+# Issue #4224
+# Issue #4228
+# Issue #4229
+# Issue #4230
+# Issue #4231
 # Issue #4232
 # Issue #4233
+# Issue #4234
 # Issue #4235
 # Issue #4236
 # Issue #4237
 # Issue #4238
+# Issue #4239
 # Issue #4240
+# Issue #4241
+# Issue #4242
 # Issue #4243
+# Issue #4244
+# Issue #4250
 # Issue #4251
 # Issue #4252
 # Issue #4261
 # Issue #4262
 # Issue #4263
+# Issue #4264
 # Issue #4265
 # Issue #4266
+# Issue #4267
+# Issue #4273
+# Issue #4280
 # Issue #4380
 # Issue #4381
 # Issue #4382
+# Issue #4474
 # Issue #4477
 # Issue #4502
+# Issue #4559
+# Issue #4595
+# Issue #4598
+# Issue #4599
+# Issue #4600
+# Issue #4602
 # Issue #4606
 # Issue #4607
+# Issue #4608
+# Issue #4611
 # Issue #4612
+# Issue #4613
+# Issue #4614
+# Issue #4615
 # Issue #4652
 # Issue #4653
 # Issue #4657
@@ -7416,6 +8088,7 @@ check_stdlib_list_prim_shadow_5192.py
 # Issue #4686
 # Issue #4696
 # Issue #4727
+# Issue #4790
 # Issue #5008
 # Issue #5118
 # Issue #5132
