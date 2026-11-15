@@ -316,7 +316,7 @@ static void ac5_issue_3627_nonpack_binding() {
           "3627 AC1: pack arm → Forbidden");
     CHECK(pack_arm.find("TreeWalkerFallbackPolicy::Allow") == std::string::npos,
           "3627 AC1: pack arm never stores Allow");
-    const auto env = pol.find("std::getenv(\"AURA_PIPELINE_STRICT\")");
+    const auto env = pol.find("::aura::config::Key::AURA_PIPELINE_STRICT");
     CHECK(env != std::string::npos && env < guard, "3627 AC3: env parse precedes pack guard");
     auto sec = read_file("src/compiler/security_defaults.hh");
     CHECK(sec.find("apply_pipeline_strict_defaults(/*dev_sandbox_off=*/dev_off)") !=

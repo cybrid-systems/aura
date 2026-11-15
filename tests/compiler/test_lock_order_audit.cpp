@@ -101,9 +101,9 @@ static void ac2316_canary_mechanism() {
               audit.find("#3119 production default") != std::string::npos ||
               audit.find("production Restricted/Strict default") != std::string::npos,
           "AC2: production default documented (Hard #3119)");
-    // Lazy-init pattern from getenv
-    CHECK(audit.find("std::getenv(\"AURA_LOCK_ORDER_CANARY\")") != std::string::npos,
-          "AC2: lazy-init from env via std::getenv");
+    // Lazy-init pattern from the shared typed snapshot (#5245)
+    CHECK(audit.find("::aura::config::Key::AURA_LOCK_ORDER_CANARY") != std::string::npos,
+          "AC2: lazy-init from the runtime-config snapshot");
 }
 
 // ── AC3: Wire critical acquire sites (source-cite) ──
