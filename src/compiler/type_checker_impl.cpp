@@ -5740,7 +5740,10 @@ bool call_ground_type_error(const FlatAST& flat, NodeId id) noexcept {
 }
 
 TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId id, NodeView v) {
-    cur_loc_ = {v.line, v.col, 0};
+    // #5235: a type diagnostic must name the flat's own file. id 0 always
+    // resolved to the entry program, so a set-code workspace (or a module)
+    // reported its warnings at the outer probe file's line.
+    cur_loc_ = {v.line, v.col, aura::diag::source_file_for_flat(&flat)};
 
     if (auto cached = synthesize_flat_try_cache(flat, id)) // Issue #903
         return *cached;
@@ -9044,7 +9047,7 @@ void InferenceEngine::check_flat(FlatAST& flat, StringPool& pool, NodeId id, Typ
             ->synthesize_check_switch_count_total.fetch_add(1, std::memory_order_relaxed);
     }
     auto v = flat.get(id);
-    cur_loc_ = {v.line, v.col, 0};
+    cur_loc_ = {v.line, v.col, aura::diag::source_file_for_flat(&flat)};
 
     if (v.tag == NodeTag::Call)
         check_flat_call(flat, pool, v, expected);
