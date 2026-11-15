@@ -20,7 +20,7 @@ import pexpect
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "tests" / "python"))
 
-from _aura_harness import AURA_BIN, repl_value  # noqa: E402
+from _aura_harness import AURA_BIN  # noqa: E402
 
 GRANT = "aura: repl preset=dev soft auto-grant: mutate,read"
 SET_CODE = '(set-code "(define params (quote (0 0)))")'
@@ -49,12 +49,16 @@ class ErrorValueCause(unittest.TestCase):
     # Before: stdout was a single "<error>" line; the cause was dropped.
     def test_primitive_error_value_prints_its_cause(self) -> None:
         r = run_repl([], "(car 5)\n(quit)\n")
-        self.assertEqual(repl_value(r.stdout.strip()), "car: not a pair")
+        # #5234: an uncaught error value is a status=error record whose
+        # message carries the cause (it used to be status=ok + value).
+        self.assertIn('"status" "error"', r.stdout)
+        self.assertIn('"message" "car: not a pair"', r.stdout)
         self.assertNotIn("<error>", r.stdout)
 
     def test_denied_set_code_prints_the_deny_reason(self) -> None:
         r = run_repl(["--preset", "prod"], SET_CODE + "\n(quit)\n")
-        self.assertEqual(repl_value(r.stdout.strip()), "effect-denied: mutate not granted tenant=0 op=set-code")
+        self.assertIn('"status" "error"', r.stdout)
+        self.assertIn("effect-denied: mutate not granted tenant=0 op=set-code", r.stdout)
 
 
 class BareTtySession(unittest.TestCase):
