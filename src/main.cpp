@@ -2028,10 +2028,24 @@ static bool serve_reply_error_value(aura::compiler::CompilerService& cs,
         return false;
     aura::diag::Diagnostic d{cs.evaluator().error_value_kind(v),
                              cs.evaluator().soft_error_message(v)};
+    // #5240: carry the producer location the evaluator recorded.
+    if (auto loc = cs.evaluator().error_location(v))
+        d.location = *loc;
     d.kind = d.display_kind();
     serve_user_level_walker_policy(d);
-    std::println("{{\"status\":\"error\",\"kind\":{},\"msg\":\"{}\",\"node_id\":{}}}",
-                 static_cast<int>(d.kind), json_escape(d.format()), d.node_id);
+    // #5240: the protocol shell stays, but code/span/message use the same
+    // stable schema as --error-format=json.
+    std::string extra;
+    extra += ",\"code\":\"" + json_escape(aura::diag::kind_ident(d.kind)) + "\"";
+    extra += ",\"message\":\"" + json_escape(d.message) + "\"";
+    if (d.location.line > 0) {
+        extra += ",\"span\":{\"start\":{\"line\":" + std::to_string(d.location.line) +
+                 ",\"column\":" + std::to_string(d.location.column) +
+                 "},\"end\":{\"line\":" + std::to_string(d.location.line) +
+                 ",\"column\":" + std::to_string(d.location.column) + "}}";
+    }
+    std::println("{{\"status\":\"error\",\"kind\":{},\"msg\":\"{}\",\"node_id\":{}{}}}",
+                 static_cast<int>(d.kind), json_escape(d.format()), d.node_id, extra);
     return true;
 }
 
