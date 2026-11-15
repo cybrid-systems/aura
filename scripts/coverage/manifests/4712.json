@@ -5,7 +5,7 @@
   "checks": [
     {
       "ac": "AC1",
-      "path": "src/compiler/service.ixx",
+      "path": "src/compiler/service_dispatch_define.cpp",
       "contains": [
         "Issue #4712",
         "const std::string* owner_name = nullptr",
