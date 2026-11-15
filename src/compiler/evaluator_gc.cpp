@@ -20,6 +20,7 @@ module;
 #include "fiber_result_roots.hh"         // Issue #4710: fiber:join result roots
 #include "fiber_overlay_roots.hh"        // Issue #4849: pending COW overlay roots
 #include "metrics_intern_roots.hh"       // #5065: interned engine:metrics key strings
+#include "codec_inflight_roots.hh"       // #5294: channel codec values under construction
 #include "typed_mutation_audit.h"        // Issue #2984: compact vs proof linear_root_count
 
 module aura.compiler.evaluator;
@@ -1859,6 +1860,10 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
         for (const auto& e : snap.entries)
             roots.push_back(e.value);
     }
+    // Issue #5294: read the hash mint serial BEFORE the codec roots are
+    // collected. A table minted after this point has no root yet (the codec
+    // is still building it), so the release must not judge it.
+    std::uint64_t hash_mint_limit = 0;
     // Issue #4710: fiber:join result roots (finished-but-unjoined
     // fibers), the mirror of the tree-walker reclaim's hook. The
     // messaging partition installs the provider once its primitives are
@@ -1884,6 +1889,19 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
         if (metrics_intern_roots::collect(metrics_keys) > 0) {
             roots.reserve(roots.size() + metrics_keys.size());
             for (const auto raw : metrics_keys)
+                roots.push_back(EvalValue(raw));
+        }
+        // Issue #5294: a channel codec decode builds a hash/list/vector in
+        // a C++ frame; its values are unreachable until the top-level
+        // decode returns. Without this the mark frees the table the
+        // receiver is still filling and the caller reads an empty hash.
+        // The serial limit is read BEFORE these roots: a table minted after
+        // it is skipped by the release (the codec had not published yet).
+        hash_mint_limit = hash_mint_serial_next_.load(std::memory_order_acquire);
+        std::vector<std::int64_t> codec_values;
+        if (codec_inflight_roots::collect(codec_values) > 0) {
+            roots.reserve(roots.size() + codec_values.size());
+            for (const auto raw : codec_values)
                 roots.push_back(EvalValue(raw));
         }
     }
@@ -2087,7 +2105,8 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
     // list, so the next (hash) mint reuses the slot instead of leaking
     // the block (a 32-slot table is ~560 bytes). A table this
     // evaluator did not mint is left alone.
-    const auto live_hash_units = release_unreachable_hash_tables(seen_hash, hash_at_mark);
+    const auto live_hash_units =
+        release_unreachable_hash_tables(seen_hash, hash_at_mark, hash_mint_limit);
 
 
     {
@@ -2369,6 +2388,9 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
     }
     for (const auto& h : held)
         work.push_back(h);
+    // Issue #5294: see the file-mode reclaim — the serial limit is read
+    // before the codec roots below.
+    std::uint64_t hash_mint_limit = 0;
     // Issue #4710: a finished-but-unjoined fiber's result lives ONLY in
     // the messaging partition's fiber:join registry (s_fiber_results),
     // which this walk cannot name. Without it the mark proved the
@@ -2396,6 +2418,15 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
         if (metrics_intern_roots::collect(metrics_keys) > 0) {
             work.reserve(work.size() + metrics_keys.size());
             for (const auto raw : metrics_keys)
+                work.push_back(EvalValue(raw));
+        }
+        // Issue #5294: the codec's in-flight values (see the file-mode
+        // reclaim above) — the tree-walker mark needs the same roots.
+        hash_mint_limit = hash_mint_serial_next_.load(std::memory_order_acquire);
+        std::vector<std::int64_t> codec_values;
+        if (codec_inflight_roots::collect(codec_values) > 0) {
+            work.reserve(work.size() + codec_values.size());
+            for (const auto raw : codec_values)
                 work.push_back(EvalValue(raw));
         }
     }
@@ -2619,7 +2650,8 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
     // list, so the next (hash) mint reuses the slot instead of leaking
     // the block (a 32-slot table is ~560 bytes). A table this
     // evaluator did not mint is left alone.
-    const auto live_hash_units = release_unreachable_hash_tables(seen_hash, hash_at_mark);
+    const auto live_hash_units =
+        release_unreachable_hash_tables(seen_hash, hash_at_mark, hash_mint_limit);
 
     {
         std::scoped_lock lock(alloc_storage_lock_);

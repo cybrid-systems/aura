@@ -29,6 +29,7 @@ module;
 #include "compiler/type_feedback.h"           // Issue #4568: tree-walker lattices
 #include "compiler/env_frame_arena.hh"        // Issue #5057: catchable arena exhaustion
 #include "compiler/ir_inflight_roots.hh"      // Issue #4617: IR in-flight roots for the TW sweep
+#include "codec_inflight_roots.hh"            // Issue #5294: defer marks during a codec decode
 #include "core/ownership.hh"                  // #4936 immortal<T>
 
 
@@ -1732,6 +1733,13 @@ void Evaluator::maybe_reclaim_tw_unreachable() {
     // floor keeps the #4459 small-heap cadence unchanged.
     if (tw_closure_allocs_.load(std::memory_order_relaxed) < tw_closure_allocs_trigger_ &&
         file_heap_allocs_since_reclaim_.load(std::memory_order_relaxed) < file_heap_allocs_trigger_)
+        return;
+    // Issue #5294: a channel payload decode builds its value in a C++ frame.
+    // Its own mints charge this window, so without the deferral the mark
+    // below can free the table/list the receiver is still filling. The
+    // triggers stay loaded, so the next allocation outside the decode runs
+    // the mark.
+    if (codec_inflight_roots::active())
         return;
     (void)reclaim_tw_unreachable_now();
 }

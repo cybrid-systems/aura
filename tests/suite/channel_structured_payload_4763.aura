@@ -69,6 +69,32 @@
 (channel:send c 5)
 (assert! (= (channel:recv c) 5) "G: immediate payload unchanged")
 
+;; H (Issue #5294): repeated fiber -> main sends. The file-heap reclaim can
+;; run between the receiver's decode and its first read, so these payloads
+;; must arrive intact on every round, not just on the first.
+(define c3 (channel:create 1))
+(define hash_bad 0)
+(let loop ((k 0))
+  (if (< k 200)
+      (let ((ff (fiber:spawn (lambda () (channel:send c3 (hash "tag" "a"))))))
+        (let ((hh (channel:recv c3)))
+          (if (equal? (hash-ref hh "tag" #f) "a") 0 (set! hash_bad (+ hash_bad 1))))
+        (fiber:join ff)
+        (loop (+ k 1)))))
+(assert! (= hash_bad 0) "H: 200 fiber hash sends arrive intact")
+
+(define list_bad 0)
+(let loop ((k 0))
+  (if (< k 200)
+      (let ((ff (fiber:spawn (lambda () (channel:send c3 (list 1 (hash "tag" "a")))))))
+        (let ((got (channel:recv c3)))
+          (if (and (pair? got) (equal? (hash-ref (cadr got) "tag" #f) "a"))
+              0
+              (set! list_bad (+ list_bad 1))))
+        (fiber:join ff)
+        (loop (+ k 1)))))
+(assert! (= list_bad 0) "H: 200 fiber list-of-hash sends arrive intact")
+
 (if (= *fails* 0)
     (begin (display "OK-4763 structured channel payloads") (newline))
     (begin (display "FAIL-4763 count=") (display *fails*) (newline) (exit 1)))

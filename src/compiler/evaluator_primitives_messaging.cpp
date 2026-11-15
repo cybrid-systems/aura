@@ -15,9 +15,10 @@ module;
 #include "serve/parallel_orch.h"
 #include "observability_metrics.h"
 #include "hash_meta.h"
-#include "channel_id.hh"         // Issue #4854: tagged channel ids for GC reclaim
-#include "fiber_result_roots.hh" // Issue #4710: fiber:join result roots
-#include "tw_plain_park.h"       // Issue #5274: certified park across a blocking wait
+#include "channel_id.hh"           // Issue #4854: tagged channel ids for GC reclaim
+#include "fiber_result_roots.hh"   // Issue #4710: fiber:join result roots
+#include "codec_inflight_roots.hh" // Issue #5294: decode roots while a payload is built
+#include "tw_plain_park.h"         // Issue #5274: certified park across a blocking wait
 
 #include <pthread.h>
 #include <unistd.h>
@@ -1166,6 +1167,14 @@ MessagingChannelCodec RegSplitParts::messaging_channel_codec(Evaluator& ev) {
         return enc(enc, root, 0);
     };
     codec.channel_decode_4763 = [&ev](const std::string& in) -> EvalValue {
+        // Issue #5294: every value this decode creates is rooted until the
+        // TOP-LEVEL decode returns. The mints below charge the reclaim
+        // window, so a mark can fire mid-build; without the roots it frees
+        // the table/list the receiver is still filling (the caller then
+        // reads an empty hash or a broken list). The frame spans the whole
+        // decode, not one recursive node: a child value stays rooted while
+        // its parent attaches it.
+        codec_inflight_roots::ScopedFrame frame;
         auto l2v = ev.primitives_.lookup("list->vector");
         auto mkhash = ev.primitives_.lookup("hash"); // (hash) = an empty table
         auto hset = ev.primitives_.lookup("hash-set!");
@@ -1194,8 +1203,11 @@ MessagingChannelCodec RegSplitParts::messaging_channel_codec(Evaluator& ev) {
                     const auto n = static_cast<std::size_t>(get_u64());
                     std::string text = in.substr(std::min(pos, in.size()), n);
                     pos += n;
-                    return make_string(
+                    codec_inflight_roots::CreationGuard guard;
+                    const EvalValue text_value = make_string(
                         static_cast<std::uint64_t>(ev.string_heap_.mint(std::move(text))));
+                    codec_inflight_roots::push(frame.frame_id, text_value.val);
+                    return text_value;
                 }
                 case 'L': {
                     const auto n = static_cast<std::size_t>(get_u64());
@@ -1204,8 +1216,11 @@ MessagingChannelCodec RegSplitParts::messaging_channel_codec(Evaluator& ev) {
                     for (std::size_t i = 0; i < n && pos < in.size(); ++i)
                         elems.push_back(self(self));
                     EvalValue acc = self(self); // tail
-                    for (auto it = elems.rbegin(); it != elems.rend(); ++it)
+                    for (auto it = elems.rbegin(); it != elems.rend(); ++it) {
+                        codec_inflight_roots::CreationGuard guard;
                         acc = cons(*it, acc);
+                        codec_inflight_roots::push(frame.frame_id, acc.val);
+                    }
                     return acc;
                 }
                 case 'V': {
@@ -1214,13 +1229,24 @@ MessagingChannelCodec RegSplitParts::messaging_channel_codec(Evaluator& ev) {
                     for (std::size_t i = 0; i < n && pos < in.size(); ++i)
                         elems.push_back(self(self));
                     EvalValue acc = make_void(); // '() is void-terminated (see _agent:list)
-                    for (auto it = elems.rbegin(); it != elems.rend(); ++it)
+                    for (auto it = elems.rbegin(); it != elems.rend(); ++it) {
+                        codec_inflight_roots::CreationGuard guard;
                         acc = cons(*it, acc);
-                    return l2v ? (*l2v)({acc}) : acc;
+                        codec_inflight_roots::push(frame.frame_id, acc.val);
+                    }
+                    if (!l2v)
+                        return acc;
+                    codec_inflight_roots::CreationGuard guard;
+                    const EvalValue vec = (*l2v)({acc});
+                    codec_inflight_roots::push(frame.frame_id, vec.val);
+                    return vec;
                 }
                 case 'H': {
                     const auto n = static_cast<std::size_t>(get_u64());
+                    codec_inflight_roots::CreationGuard guard;
                     EvalValue h = mkhash ? (*mkhash)({}) : make_void();
+                    codec_inflight_roots::push(frame.frame_id, h.val);
+                    codec_inflight_roots::push_hash_slot(frame.frame_id, as_hash_idx(h));
                     for (std::size_t i = 0; i < n && pos < in.size(); ++i) {
                         EvalValue k = self(self);
                         EvalValue v = self(self);
@@ -1233,13 +1259,28 @@ MessagingChannelCodec RegSplitParts::messaging_channel_codec(Evaluator& ev) {
                     return make_void();
             }
         };
-        return dec(dec);
+        {
+            // Issue #5294: publish the whole frame while it is still alive,
+            // so every value the decode built (inner hashes included) stays
+            // rooted past the return; the frame covers the decode itself.
+            const EvalValue result = dec(dec);
+            codec_inflight_roots::publish_frame(frame.frame_id);
+            return result;
+        }
     };
     const auto channel_decode_4763 = codec.channel_decode_4763;
     codec.channel_recv_value_4763 = [&ev, channel_decode_4763](ChannelMessage&& msg) -> EvalValue {
-        if (msg.kind == kChannelDatumKind4763)
-            return channel_decode_4763(msg.text);
-        return channel_message_to_value(ev.string_heap_, std::move(msg));
+        if (msg.kind == kChannelDatumKind4763) {
+            // Issue #5294: root the value past the decode frame - the caller
+            // stores it one frame up, and a sweep from a fiber body exit can
+            // land exactly in that gap.
+            const EvalValue recv_value = channel_decode_4763(msg.text);
+            codec_inflight_roots::publish_result(recv_value.val);
+            return recv_value;
+        }
+        const EvalValue recv_value = channel_message_to_value(ev.string_heap_, std::move(msg));
+        codec_inflight_roots::publish_result(recv_value.val);
+        return recv_value;
     };
     return codec;
 }
@@ -2032,7 +2073,14 @@ void RegSplitParts::register_messaging_fiber_spawn_primitive(PrimRegistrar add, 
             // other body is inside the walker, reclaim now — a batch's frames
             // otherwise stay allocated until a later full-heap pass, and each
             // pass recounted the whole dead set.
-            if (result_published && aura_fiber_bodies_running_other() == 0)
+            // Issue #5294: a channel decode on the receiver's body may hold
+            // a value only in a C++ frame right now (it registers itself in
+            // codec_inflight_roots, but a mint can land between the mint and
+            // that registration). Do not start a mark from a body exit while
+            // a decode is in flight anywhere in the process - the next
+            // allocation outside the decode runs it.
+            if (result_published && aura_fiber_bodies_running_other() == 0 &&
+                !codec_inflight_roots::active())
                 (void)ev.reclaim_tw_unreachable_now();
         };
         // Issue #4842: a fiber:spawn body started from inside an orch agent

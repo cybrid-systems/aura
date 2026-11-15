@@ -7,6 +7,7 @@
 module;
 #include "compiler/locked_string_heap.hh" // Issue #4543
 #include "compiler/fiber_alloc_arena.hh"  // Issue #4714: per-fiber string nursery
+#include "codec_inflight_roots.hh"        // Issue #5294: protect a received payload's tables
 // Issue #4714: the string payload index-space codec (AURA_STR_*). Same SSOT
 // as lib/runtime.c and the AOT preamble; C, so it is safe in the fragment.
 #include "../../lib/aura_value_abi.h"
@@ -9542,6 +9543,12 @@ private:
     std::vector<std::size_t> hash_reuse_freelist_;
     std::vector<std::uint8_t> hash_on_freelist_;
     std::vector<std::uint8_t> hash_owned_;
+    // Issue #5294: mint serial per slot. A mark records the counter before it
+    // collects roots; the release skips a slot minted after that point, so a
+    // table created between the root collect and the slot snapshot is never
+    // freed out from under the codec that has not published its root yet.
+    std::vector<std::uint64_t> hash_mint_serial_;
+    std::atomic<std::uint64_t> hash_mint_serial_next_{0};
     // Issue #5190: a cell bound into a workspace root. Storing through it
     // publishes every hash reachable from the new value.
     std::vector<std::uint8_t> cell_workspace_root_;
@@ -10555,6 +10562,13 @@ public:
         // Issue #4428: the owner stamp is rewritten on every publish, so a
         // reused slot never carries the previous owner's tenant.
         g_hash_tenants[hidx] = capability_tenant_id_;
+        // Issue #5294: stamp the mint serial used by the mark/release
+        // handshake (see release_unreachable_hash_tables).
+        const std::uint64_t mint_serial =
+            hash_mint_serial_next_.fetch_add(1, std::memory_order_acq_rel) + 1;
+        if (hash_mint_serial_.size() <= hidx)
+            hash_mint_serial_.resize(hidx + 1, 0);
+        hash_mint_serial_[hidx] = mint_serial;
         // Issue #5190: (hash) / make-hash mint a local table. hash-set! on
         // it does not need Mutate until the value is stored in a workspace.
         aura_hash_mark_local(static_cast<std::uint64_t>(hidx));
@@ -10591,7 +10605,8 @@ public:
     // whose table is not the one the mark saw was re-minted since and
     // is left alone. Returns the number of live hash tables.
     std::size_t release_unreachable_hash_tables(const std::vector<std::uint8_t>& seen_hash,
-                                                const std::vector<FlatHashTable*>& at_mark) {
+                                                const std::vector<FlatHashTable*>& at_mark,
+                                                std::uint64_t mint_serial_limit) {
         std::scoped_lock hlock(hash_tables_mtx_);
         std::scoped_lock lock(alloc_storage_lock_);
         // The live hash tables count toward the reclaim trigger in WINDOW
@@ -10616,6 +10631,15 @@ public:
                 continue; // already released
             if (g_hash_tables[i] != at_mark[i])
                 continue; // re-minted since the mark - not the table the mark saw
+            // Issue #5294: minted after this mark collected its roots, so
+            // the walk could not see the owning value yet (a codec building
+            // it in a C++ frame). The next mark judges it.
+            if (i < hash_mint_serial_.size() && hash_mint_serial_[i] > mint_serial_limit)
+                continue;
+            // Issue #5294: a payload the receiver just got still names this
+            // table until the next channel call (codec_inflight_roots.hh).
+            if (codec_inflight_roots::is_hash_slot_protected(i))
+                continue;
             // The owner stamp must still be this evaluator's: a slot
             // another principal stamped is not this evaluator's table to
             // release (the mark only saw THIS evaluator's roots).

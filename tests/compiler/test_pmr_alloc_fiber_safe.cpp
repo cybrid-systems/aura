@@ -893,7 +893,7 @@ static void ac4613_pair_vector_hash_reclaim() {
     CHECK(prims.find("ev.mint_hash_table(ht)") != std::string::npos,
           "4613 AC5: (hash) publishes the table through the evaluator heap");
     const auto gc = read_file("src/compiler/evaluator_gc.cpp");
-    CHECK(gc.find("release_unreachable_hash_tables(seen_hash, hash_at_mark)") != std::string::npos,
+    CHECK(gc.find("release_unreachable_hash_tables(seen_hash, hash_at_mark") != std::string::npos,
           "4613 AC5: the reclaim releases the unreachable hash tables");
 }
 
