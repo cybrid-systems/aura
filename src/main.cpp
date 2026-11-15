@@ -1,3 +1,4 @@
+#include "core/runtime_config.hh"
 #include <cstdlib>
 #include "../lib/aura_value_abi.h" // #4502: single encoding source
 #define AURA_ABI_STR2(x) #x
@@ -1074,11 +1075,12 @@ static int aura_test_4913(const std::filesystem::path& root, const std::vector<s
     // Issue #4907: in the prebuilt bundle /proc/self/exe is the bundled
     // loader (rt/ld.so); its bin/aura launcher exports itself as AURA_SELF.
     std::string self;
-    if (const char* s = std::getenv("AURA_SELF"); s && *s && ::access(s, X_OK) == 0)
+    if (const char* s = ::aura::config::raw(::aura::config::Key::AURA_SELF);
+        s && *s && ::access(s, X_OK) == 0)
         self = s;
     else if (auto p = fs::read_symlink("/proc/self/exe", ec); !ec)
         self = p.string();
-    else if (const char* b = std::getenv("AURA_BIN"))
+    else if (const char* b = ::aura::config::raw(::aura::config::Key::AURA_BIN))
         self = b;
     const auto tmp =
         fs::temp_directory_path(ec) / std::format("aura-test-{}", static_cast<long>(::getpid()));
@@ -1198,6 +1200,14 @@ inline constexpr SubHelp4935 kSubHelp4935[] = {
      "  report            score curve, Pareto scatter, HV curve, QD heat map,\n"
      "                    lineage tree, candidate folds, surrogate pre-screen\n"},
     {"lsp", "language server on stdio (see docs/editor.md)", "usage: aura lsp\n"},
+    {"config", "list AURA_* runtime knobs and their current values",
+     "usage: aura config [--set] [--json]\n"
+     "\n"
+     "Print the typed runtime-config table (name, type, default, doc) and the\n"
+     "value in effect for this process. The table is the same one the runtime\n"
+     "parses once at startup (Issue #5245).\n"
+     "  --set   only knobs set in the environment\n"
+     "  --json  one JSON object per line\n"},
     {"soft", "run a file with Restricted Mutate on its workspace",
      "usage: aura soft [--allow ffi,write] [--load] file.aura\n"
      "\n"
@@ -1254,6 +1264,79 @@ static std::size_t edit_distance_4935(std::string_view a, std::string_view b) {
     return row[b.size()];
 }
 
+// Issue #5245: `aura config` — the typed AURA_* table and the values this
+// process resolved, printed from the table the runtime itself parses.
+static const char* config_kind_name_5245(::aura::config::Kind k) {
+    using ::aura::config::Kind;
+    switch (k) {
+        case Kind::Flag:
+            return "flag";
+        case Kind::Integer:
+            return "integer";
+        case Kind::Real:
+            return "real";
+        case Kind::Text:
+            return "text";
+        case Kind::Path:
+            return "path";
+        case Kind::Size:
+            return "size";
+        case Kind::Duration:
+            return "duration";
+    }
+    return "text";
+}
+
+static std::string config_escape_5245(std::string_view s) {
+    std::string out;
+    out.reserve(s.size() + 2);
+    for (const char c : s) {
+        if (c == '"' || c == '\\')
+            out.push_back('\\');
+        out.push_back(c);
+    }
+    return out;
+}
+
+static int cmd_config_5245(int argc, char* argv[]) {
+    bool json = false;
+    bool only_set = false;
+    for (int i = 2; i < argc; ++i) {
+        const std::string_view a(argv[i]);
+        if (a == "--json")
+            json = true;
+        else if (a == "--set")
+            only_set = true;
+        else if (a == "--help" || a == "-h") {
+            std::print("{}", find_sub_4935("config")->usage);
+            return 0;
+        } else {
+            std::println(std::cerr, "error: unknown option '{}'", a);
+            std::print(std::cerr, "{}", find_sub_4935("config")->usage);
+            return 2;
+        }
+    }
+    ::aura::config::initialize();
+    if (!json)
+        std::println("{:<46} {:<9} {:<8} {}", "NAME", "TYPE", "SET", "VALUE");
+    for (const auto& e : ::aura::config::entries()) {
+        const char* v = ::aura::config::raw(e.key);
+        const bool set = v != nullptr;
+        if (only_set && !set)
+            continue;
+        if (json) {
+            std::println(
+                R"({{"name":"{}","type":"{}","default":"{}","set":{},"value":"{}","doc":"{}"}})",
+                e.name, config_kind_name_5245(e.kind), config_escape_5245(e.default_value),
+                set ? "true" : "false", config_escape_5245(v ? v : ""), config_escape_5245(e.doc));
+            continue;
+        }
+        std::println("{:<46} {:<9} {:<8} {}", e.name, config_kind_name_5245(e.kind),
+                     set ? "yes" : "no", set ? v : std::string_view("(default)"));
+    }
+    return 0;
+}
+
 // Issue #4913: project front door. Returns an exit code for the commands it
 // finishes itself (new, test); otherwise rewrites argv for the normal path
 // (run → `aura [opts] <entry>`, soft/caps + --load → the file face, which the
@@ -1276,6 +1359,9 @@ static std::optional<int> front_door_4913(int& argc, char**& argv) {
         argv = g_front_argv_4913.data();
     };
     const std::string_view sub(argv[1]);
+    // Issue #5245: read-only environment/config dump.
+    if (sub == "config")
+        return cmd_config_5245(argc, argv);
     // Issue #4934: `aura --version` / `-V` → "aura <version> (<git sha>)".
     // AURA_BUILD_VERSION is `nightly`, `X.Y.Z` (release tag) or `dev`.
     if (sub == "--version" || sub == "-V") {
@@ -1425,16 +1511,19 @@ static std::optional<int> front_door_4913(int& argc, char**& argv) {
         }
         // Module paths are project-root relative: (require "lib/x").
         std::string ap = root->string();
-        if (const char* old = std::getenv("AURA_PATH"); old && *old)
+        if (const char* old = ::aura::config::raw(::aura::config::Key::AURA_PATH); old && *old)
             ap += std::string(":") + old;
         ::setenv("AURA_PATH", ap.c_str(), 1);
+        ::aura::config::reload(); // Issue #5245: same single-parse snapshot
         const auto toml = *root / "aura.toml";
         if (sub == "test")
             return aura_test_4913(*root, opts, abs_pos, update);
         // Issue #4910: a project run keeps its worldline in .aura/evo/log.jsonl
         // (aura evo log / report read it). AURA_EVO_LOG= (empty) turns it off.
-        if (!std::getenv("AURA_EVO_LOG"))
+        if (!::aura::config::raw(::aura::config::Key::AURA_EVO_LOG)) {
             ::setenv("AURA_EVO_LOG", (*root / ".aura" / "evo" / "log.jsonl").c_str(), 1);
+            ::aura::config::reload(); // Issue #5245: same single-parse snapshot
+        }
         std::string entry = abs_pos.empty() ? read_toml_key_4913(toml, "entry") : abs_pos[0];
         if (entry.empty())
             entry = "main.aura";
@@ -1488,8 +1577,8 @@ static std::optional<int> front_door_4913(int& argc, char**& argv) {
     // exactly as an explicit `--preset dev --load f` already is. Under
     // AURA_SANDBOX=off a preset grants nothing, so keep the snapshot face.
     if (i == 1 && argc > 2 && std::string_view(argv[1]) == "--load") {
-        const char* sb = std::getenv("AURA_SANDBOX");
-        const char* ev = std::getenv("AURA_PRESET");
+        const char* sb = ::aura::config::raw(::aura::config::Key::AURA_SANDBOX);
+        const char* ev = ::aura::config::raw(::aura::config::Key::AURA_PRESET);
         const bool off = sb && std::string_view(sb) == "off";
         if (!off && ((ev && *ev) || !read_toml_preset_4912(argv[2]).empty())) {
             for (int j = 2; j < argc; ++j)
@@ -2384,7 +2473,7 @@ static int apply_oneshot_soft_session(aura::compiler::CompilerService& cs,
             word = "strict";
         else if (cs.evaluator().effect_sandbox_mode() == 0)
             word = "off (dev escape hatch)";
-        else if (const char* sb = std::getenv("AURA_SANDBOX")) {
+        else if (const char* sb = ::aura::config::raw(::aura::config::Key::AURA_SANDBOX)) {
             const std::string_view sv(sb);
             if (sv == "off" || sv == "OFF" || sv == "Off")
                 word = "off (dev escape hatch)";
@@ -2459,7 +2548,8 @@ static int run_sync_serve(const OneshotLaunch& launch) {
     // Issue #5168: same walker face as a file run (#4864) unless
     // AURA_PIPELINE_STRICT pins one. The production default forbade
     // set-code and eval-current before the capability check.
-    if (const char* strict = std::getenv("AURA_PIPELINE_STRICT"); !(strict && *strict))
+    if (const char* strict = ::aura::config::raw(::aura::config::Key::AURA_PIPELINE_STRICT);
+        !(strict && *strict))
         aura::compiler::set_tree_walker_fallback_policy(
             aura::compiler::TreeWalkerFallbackPolicy::Allow);
     if (st.soft_shared_graph) {
@@ -3345,7 +3435,7 @@ static void print_denseness_usage(const char*, std::ostream& out = std::cerr) {
 static int eval_oneshot_force_soa(aura::compiler::CompilerService& cs, const std::string& all_input,
                                   bool stop_first_4909) {
     {
-        const char* strict_env2 = std::getenv("AURA_PIPELINE_STRICT");
+        const char* strict_env2 = ::aura::config::raw(::aura::config::Key::AURA_PIPELINE_STRICT);
         const std::string_view strict_v2 =
             strict_env2 ? std::string_view(strict_env2) : std::string_view{};
         if (strict_v2 == "force-soa" || strict_v2 == "force_soa" || strict_v2 == "soa") {
@@ -3547,7 +3637,7 @@ static int fold_oneshot_capabilities(
     if (g_repl_4911 && entry_path_4912.empty())
         entry_path_4912 = g_repl_file_4911;
     if (preset_4912.empty()) {
-        if (const char* ev = std::getenv("AURA_PRESET"); ev && *ev)
+        if (const char* ev = ::aura::config::raw(::aura::config::Key::AURA_PRESET); ev && *ev)
             preset_4912 = ev;
         else
             preset_4912 = read_toml_preset_4912(entry_path_4912);
@@ -3621,7 +3711,7 @@ static OneshotLaunch parse_oneshot_launch(int argc, char** argv) {
     // restores the run-every-form contract (#4460/#4467). -e / stdin keep it.
     bool from_file_4909 = false;
     bool keep_going_4909 = [] {
-        const char* v = std::getenv("AURA_KEEP_GOING");
+        const char* v = ::aura::config::raw(::aura::config::Key::AURA_KEEP_GOING);
         if (!v)
             return false;
         const std::string_view s(v);
@@ -4433,14 +4523,15 @@ static int run_oneshot_or_file(int argc, char** argv) {
     // `aura --load file.aura` ran. Take the same permissive walker face
     // --load takes, exactly as --serve-async-bench does (#4844). Operators
     // can still pin a face explicitly via AURA_PIPELINE_STRICT.
-    if (const char* strict = std::getenv("AURA_PIPELINE_STRICT"); !(strict && *strict))
+    if (const char* strict = ::aura::config::raw(::aura::config::Key::AURA_PIPELINE_STRICT);
+        !(strict && *strict))
         aura::compiler::set_tree_walker_fallback_policy(
             aura::compiler::TreeWalkerFallbackPolicy::Allow);
     // Issue #4575: AURA_SANDBOX=off stays the dev hatch and says so once.
     // --serve / --ir / --jit returned above. `aura soft` prints its own
     // refuse line instead of this one.
     if (!soft_launch) {
-        if (const char* sb = std::getenv("AURA_SANDBOX")) {
+        if (const char* sb = ::aura::config::raw(::aura::config::Key::AURA_SANDBOX)) {
             const std::string_view sv(sb);
             if ((sv == "off" || sv == "OFF" || sv == "Off") &&
                 // Issue #4575 follow-up (asan-verify): the hatch note is for
@@ -4451,7 +4542,8 @@ static int run_oneshot_or_file(int argc, char** argv) {
                 // AURA_FORCE_HATCH=1 opts a piped harness back in (the plain-off
                 // "warning once" AC pins the once-semantics; default under
                 // pipes stays silent for the text-compare contracts).
-                (::isatty(::fileno(stderr)) || std::getenv("AURA_FORCE_HATCH") != nullptr))
+                (::isatty(::fileno(stderr)) ||
+                 ::aura::config::raw(::aura::config::Key::AURA_FORCE_HATCH) != nullptr))
                 std::println(std::cerr, "aura: sandbox=off (dev escape hatch)");
         }
     }
@@ -5511,7 +5603,8 @@ static int run_cli_load(char** argv) {
     // AURA_PIPELINE_STRICT=0. Take that permissive walker face here,
     // exactly as --serve-async-bench does (#4844). Operators can still
     // pin a face explicitly via AURA_PIPELINE_STRICT.
-    if (const char* strict = std::getenv("AURA_PIPELINE_STRICT"); !(strict && *strict))
+    if (const char* strict = ::aura::config::raw(::aura::config::Key::AURA_PIPELINE_STRICT);
+        !(strict && *strict))
         aura::compiler::set_tree_walker_fallback_policy(
             aura::compiler::TreeWalkerFallbackPolicy::Allow);
     // Soft oneshot std prelude (#4178–#4219) — same auto-load as -e/file,
@@ -5537,7 +5630,7 @@ static int run_cli_load(char** argv) {
     // 0, so every harness that spawns Aura read a failed run as success.
     // #4465's file-mode gate is armed for the same root eval.
     cs.set_require_failure_is_diagnostic(true);
-    const char* strict_env = std::getenv("AURA_PIPELINE_STRICT");
+    const char* strict_env = ::aura::config::raw(::aura::config::Key::AURA_PIPELINE_STRICT);
     const std::string_view strict_v =
         strict_env ? std::string_view(strict_env) : std::string_view{};
     if (strict_v == "force-soa" || strict_v == "force_soa" || strict_v == "soa") {
@@ -5751,7 +5844,7 @@ static int run_cli_env_json(int argc, char** argv) {
 
 static int run_cli_evo_explain(int argc, char** argv) {
     static const bool enabled = []() {
-        const char* e = std::getenv("AURA_OBS");
+        const char* e = ::aura::config::raw(::aura::config::Key::AURA_OBS);
         return e && (e[0] == '1' || e[0] == 't' || e[0] == 'T');
     }();
     if (!enabled) {
@@ -6038,6 +6131,8 @@ static int normalize_tool_mode_5170(int& argc, char** argv) {
 }
 
 static int aura_main(int argc, char* argv[]) {
+    // Issue #5245: parse every AURA_* knob once before any module reads it.
+    ::aura::config::initialize();
     // Issue #137: register an atexit handler that frees the
     // runtime's hash tables. The `hash` primitive in the
     // evaluator creates these via FlatHashTable::create; they

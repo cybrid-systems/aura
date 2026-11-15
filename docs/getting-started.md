@@ -81,3 +81,16 @@ then returns `no-workspace` rather than a usage error.
 `--quiet` drops it. `macro-self-evo`, `tenant-admin` and `syscall` are never
 granted from the command line; they remain host-side grants (#4575).
 `AURA_SANDBOX=off` still turns every check off, for local debugging only.
+
+## Runtime knobs
+
+Every `AURA_*` runtime knob is declared once in `src/core/runtime_config_table.inc`
+(name, type, default, doc) and parsed into one typed snapshot at startup; modules
+read that snapshot instead of calling `getenv` at their own sites. `aura config`
+prints the same table with the value in effect for the process:
+
+    aura config            # name, type, set?, value (and doc via --json)
+    aura config --set      # only knobs present in the environment
+    aura config --json     # one JSON object per knob, including its doc
+
+Unset still means the built-in default: the table never makes a knob mandatory.
