@@ -28,7 +28,12 @@ Exit 0 = all rows satisfied.
 from __future__ import annotations
 
 import sys
+import sys as _sys
 from pathlib import Path
+from pathlib import Path as _Path
+
+_sys.path.insert(0, str(_Path(__file__).resolve().parents[1]))
+from service_source import service_source  # #5242: interface + implementation units
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -47,7 +52,7 @@ def main() -> int:
         if n not in hay:
             fails.append(f"{label}: missing {n!r}")
 
-    ixx = _read("src/compiler/service.ixx") + _read("src/compiler/service_relower.cpp")
+    ixx = service_source()
     test = _read("tests/compiler/test_cascade_decision_residual_atomic.cpp")
 
     # ── AC1: cascade_decision_mtx_ + record_dependency reject lock ──
@@ -85,7 +90,7 @@ def main() -> int:
             )
 
     # relower_dirty_defines_from_workspace: critical section + re-check.
-    rel_pos = ixx.find("std::size_t CompilerService::relower_dirty_defines_from_workspace()")
+    rel_pos = ixx.find("std::size_t relower_dirty_defines_from_workspace()")
     if rel_pos == -1:
         fails.append("AC1: relower_dirty_defines_from_workspace not found")
     else:

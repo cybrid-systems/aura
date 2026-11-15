@@ -43,7 +43,12 @@ Exit 0 = all rows satisfied.
 """
 
 import sys
+import sys as _sys
 from pathlib import Path
+from pathlib import Path as _Path
+
+_sys.path.insert(0, str(_Path(__file__).resolve().parents[1]))
+from service_source import service_source  # #5242: interface + implementation units
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -68,7 +73,7 @@ def read(rel: str) -> str:
 
 def main() -> int:
     print("=== #3283 deferred-hybrid re-arm lag linter ===")
-    svc = read("src/compiler/service.ixx") + read("src/compiler/service_relower.cpp")
+    svc = service_source()
     test = read("tests/compiler/test_cascade_decision_residual_atomic.cpp")
     build = read("build.py")
 
@@ -96,7 +101,7 @@ def main() -> int:
     )
 
     # G4: gen0 snapshot after the size snapshot in relower
-    rel = svc[svc.find("std::size_t CompilerService::relower_dirty_defines_from_workspace()") :]
+    rel = svc[svc.find("std::size_t relower_dirty_defines_from_workspace()") :]
     rel = rel[:60000]
     must("gen0 = deferred_hybrid_gen_.load" in rel, "G4: gen0 snapshot under lock")
 

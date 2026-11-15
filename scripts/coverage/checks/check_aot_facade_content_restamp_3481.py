@@ -25,6 +25,11 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+import sys as _sys
+from pathlib import Path as _Path
+
+_sys.path.insert(0, str(_Path(__file__).resolve().parents[1]))
+from service_source import service_source  # #5242: interface + implementation units
 from source_window import brace_body, check  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -46,7 +51,7 @@ def main() -> int:
         if n in hay:
             fails.append(f"{label}: forbidden {n!r}")
 
-    ixx = _read("src/compiler/service.ixx") + _read("src/compiler/service_relower.cpp")
+    ixx = service_source()
     dirty = _read("src/compiler/service_dirty.cpp")
     hur = _read("src/compiler/hot_update_registry.cpp")
     mangle = _read("src/compiler/aot_mangle.h")
@@ -95,7 +100,7 @@ def main() -> int:
 
     rb_win = check(
         "AC2 relower",
-        brace_body(ixx, "bool CompilerService::relower_define_blocks("),
+        brace_body(ixx, "bool relower_define_blocks("),
         fails,
         "relower_define_blocks body",
     )

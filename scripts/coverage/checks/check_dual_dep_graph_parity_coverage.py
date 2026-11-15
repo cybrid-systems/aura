@@ -23,7 +23,12 @@ from __future__ import annotations
 import argparse
 import re
 import sys
+import sys as _sys
 from pathlib import Path
+from pathlib import Path as _Path
+
+_sys.path.insert(0, str(_Path(__file__).resolve().parents[1]))
+from service_source import service_source  # #5242: interface + implementation units
 
 REPO = Path(__file__).resolve().parents[3]
 
@@ -45,7 +50,7 @@ def check() -> list:
 
     pure = _read("src/compiler/dirty_propagation.ixx")
     met = _read("src/compiler/observability_metrics.h")
-    svc = _read("src/compiler/service.ixx")
+    svc = service_source()
     q = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
     test = _read("tests/compiler/test_dep_graph_hybrid_cascade.cpp")
 

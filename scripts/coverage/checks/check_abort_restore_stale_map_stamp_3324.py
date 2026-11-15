@@ -22,7 +22,12 @@ Exit 0 = all rows satisfied.
 from __future__ import annotations
 
 import sys
+import sys as _sys
 from pathlib import Path
+from pathlib import Path as _Path
+
+_sys.path.insert(0, str(_Path(__file__).resolve().parents[1]))
+from service_source import service_source  # #5242: interface + implementation units
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -39,7 +44,7 @@ def main() -> int:
         if n not in hay:
             fails.append(f"{label}: missing {n!r}")
 
-    svc = _read("src/compiler/service.ixx") + _read("src/compiler/service_relower.cpp")
+    svc = service_source()
     pure = _read("src/compiler/ir_cache_pure.ixx")
     t = _read("tests/compiler/test_abort_ir_cache_fence_first.cpp")
     build = _read("build.py")
@@ -54,7 +59,7 @@ def main() -> int:
     must("do not partial-patch a pre-abort map", "AC2 skip patch", pure)
     must("ac3324_2_map_not_green_with_preabort_ids", "AC2 test", t)
 
-    rb = svc.find("bool CompilerService::relower_define_blocks(")
+    rb = svc.find("bool relower_define_blocks(")
     rb_win = svc[rb : rb + 40000] if rb >= 0 else ""
     must("abort_stale_map", "AC3 relower gate", rb_win)
     must("Issue #3324", "AC3 relower cite", rb_win)

@@ -17,7 +17,13 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import sys as _sys
+from pathlib import Path as _Path
+
 from query_prims_sources import read_query_prims  # Issue #2914
+
+_sys.path.insert(0, str(_Path(__file__).resolve().parents[1]))
+from service_source import service_source  # #5242: interface + implementation units
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -42,7 +48,7 @@ def main() -> int:
     met = _read("src/compiler/observability_metrics.h")
     fields = _read("src/compiler/compiler_metrics_fields.inc")
     q = read_query_prims()
-    svc = _read("src/compiler/service.ixx")
+    svc = service_source()
     etc = _read("src/compiler/evaluator_typecheck.cpp")
     ev = _read("src/compiler/evaluator_primitives_eval.cpp")
     test = _read("tests/compiler/test_type_dirty_txn_order.cpp")

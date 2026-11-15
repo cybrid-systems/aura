@@ -30,6 +30,9 @@ import re
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage"))
+from service_source import service_source  # #5242: interface + implementation units
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 DEFAULT_TARGETS: tuple[str, ...] = (
@@ -137,6 +140,8 @@ INFRA_REQUIRED: tuple[tuple[str, str, str], ...] = (
 
 
 def _read_text(path: Path) -> str:
+    if path.name == "service.ixx":
+        return service_source()
     return path.read_text(encoding="utf-8")
 
 
