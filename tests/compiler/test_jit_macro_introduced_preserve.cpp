@@ -107,7 +107,10 @@ static void ac1_source() {
     // query:ir-hygiene-stats keys live in the split query TUs (#2022
     // preserved-total is in evaluator_primitives_query_lifecycle.cpp).
     auto q = aura::test::aura_query_prims_source();
-    auto svc = aura::test::aura_read_repo_file("src/compiler/service.ixx");
+    // The register path that passes the MacroIntroduced marker moved with
+    // exec_jit. service.ixx no longer contains the Issue #2022 cite.
+    auto svc = aura::test::aura_read_repo_file("src/compiler/service.ixx") +
+               aura::test::aura_read_repo_file("src/compiler/service_exec_jit.cpp");
     CHECK(!rt.empty(), "aura_jit_runtime.cpp readable");
     CHECK(rt.find("Issue #2022") != std::string::npos, "runtime cites #2022");
     CHECK(rt.find("aura_jit_stamp_fn_macro_marker") != std::string::npos, "side-table stamp API");
