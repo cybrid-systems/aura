@@ -5,7 +5,7 @@
   "checks": [
     {
       "ac": "AC1",
-      "path": "src/compiler/service.ixx",
+      "path": "src/compiler/service_module_io.cpp",
       "contains": [
         "#2572",
         "ir_cache_strings_[name] = ir_mod.string_pool",
@@ -61,7 +61,7 @@
     },
     {
       "ac": "AC5",
-      "path": "src/compiler/service.ixx",
+      "path": "src/compiler/service_module_io.cpp",
       "contains": [
         "bind_in_env=*/false",
         "#2572"
