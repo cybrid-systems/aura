@@ -186,8 +186,12 @@ Token Lexer::read_string() {
             pos_++;
         }
     }
-    if (pos_ < source_.size())
-        pos_++; // skip closing "
+    if (pos_ >= source_.size()) {
+        // #5239: EOF inside a string is an unterminated string, not an
+        // unclosed list that happens to start at this position.
+        return Token{TokenKind::Error, "unterminated string literal", line_, col_};
+    }
+    pos_++; // skip closing "
     Token r{TokenKind::String, string_buf_, line_, col_};
     col_ += static_cast<std::uint32_t>(pos_ - start);
     return r;

@@ -936,12 +936,17 @@ public:
 
     template <class R> void print_record_(const std::string& code, const R& r) {
         std::string wrote = "(";
-        for (const auto& n : repl_defined_names(code)) {
-            if (wrote.size() > 1)
-                wrote += ' ';
-            wrote += '"';
-            wrote += repl_record_escape(n);
-            wrote += '"';
+        // #5239: a parse/eval failure wrote nothing. The old record listed
+        // the names the splitter guessed from the broken text ("wrote" ("k")
+        // for an unclosed (define (k x)).
+        if (r) {
+            for (const auto& n : repl_defined_names(code)) {
+                if (wrote.size() > 1)
+                    wrote += ' ';
+                wrote += '"';
+                wrote += repl_record_escape(n);
+                wrote += '"';
+            }
         }
         wrote += ')';
         std::string rec;
