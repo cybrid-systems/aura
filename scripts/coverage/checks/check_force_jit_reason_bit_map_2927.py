@@ -41,6 +41,8 @@ def main() -> int:
     bridge_h = _read("src/compiler/aura_jit_bridge.h")
     reg = _read("src/compiler/hot_update_registry.cpp")
     reg_h = _read("src/compiler/hot_update_registry.hh")
+    # Issue #5237: the C-ABI snapshot fields live in the shared header.
+    snap = _read("src/compiler/aura_snapshot_abi.hh")
     mut = _read("src/compiler/evaluator_primitives_mutate.cpp")
     test = _read("tests/compiler/test_reload_recovery_query.cpp")
     build = _read("build.py")
@@ -89,9 +91,9 @@ def main() -> int:
     must("force-jit-reason-bit-map-wired", "AC4", mut)
     must("last-mapped-bit", "AC4", mut)
     must("schema-2927", "AC4", mut)
-    must("last_force_jit_mapped_bit", "AC4", reg_h)
-    must("force_jit_reason_bit_map_wired", "AC4", reg_h)
-    must("schema_2927", "AC4 snapshot", reg_h)
+    must("last_force_jit_mapped_bit", "AC4", snap)
+    must("force_jit_reason_bit_map_wired", "AC4", snap)
+    must("schema_2927", "AC4 snapshot", snap)
 
     # AC5 — tests + wire + no invent/design
     must("ac2927_1_env_only_bit", "AC5", test)

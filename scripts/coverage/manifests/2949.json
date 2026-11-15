@@ -24,7 +24,13 @@
       "path": "src/compiler/hot_update_registry.hh",
       "contains": [
         "resolve_force_jit_repromote_only_covered",
-        "force_jit_repromote_only_covered_override_",
+        "force_jit_repromote_only_covered_override_"
+      ]
+    },
+    {
+      "ac": "AC2 snapshot",
+      "path": "src/compiler/aura_snapshot_abi.hh",
+      "contains": [
         "schema_2949"
       ]
     },
