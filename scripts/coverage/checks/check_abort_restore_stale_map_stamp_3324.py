@@ -39,7 +39,7 @@ def main() -> int:
         if n not in hay:
             fails.append(f"{label}: missing {n!r}")
 
-    svc = _read("src/compiler/service.ixx")
+    svc = _read("src/compiler/service.ixx") + _read("src/compiler/service_relower.cpp")
     pure = _read("src/compiler/ir_cache_pure.ixx")
     t = _read("tests/compiler/test_abort_ir_cache_fence_first.cpp")
     build = _read("build.py")
@@ -54,8 +54,8 @@ def main() -> int:
     must("do not partial-patch a pre-abort map", "AC2 skip patch", pure)
     must("ac3324_2_map_not_green_with_preabort_ids", "AC2 test", t)
 
-    rb = svc.find("bool relower_define_blocks(")
-    rb_win = svc[rb : rb + 1800] if rb >= 0 else ""
+    rb = svc.find("bool CompilerService::relower_define_blocks(")
+    rb_win = svc[rb : rb + 40000] if rb >= 0 else ""
     must("abort_stale_map", "AC3 relower gate", rb_win)
     must("Issue #3324", "AC3 relower cite", rb_win)
     must("ac3324_3_relower_skips_partial", "AC3 test", t)
