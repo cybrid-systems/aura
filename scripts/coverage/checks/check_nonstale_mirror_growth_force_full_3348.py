@@ -47,12 +47,12 @@ def main() -> int:
         if n not in hay:
             fails.append(f"{label}: missing {n!r}")
 
-    svc = _read("src/compiler/service.ixx")
+    svc = _read("src/compiler/service.ixx") + _read("src/compiler/service_relower.cpp")
     t = _read("tests/compiler/test_cascade_decision_residual_atomic.cpp")
     build = _read("build.py")
     q = _read("src/compiler/evaluator_primitives_obs_eval.cpp") + _read("src/compiler/evaluator_primitives_query.cpp")
 
-    rel_pos = svc.find("std::size_t relower_dirty_defines_from_workspace()")
+    rel_pos = svc.find("std::size_t CompilerService::relower_dirty_defines_from_workspace()")
     # Window expanded after #3484 zero-mask fail-closed grew the peel
     # body (last-look node/block compares sat past 28000). #3611
     # attribution reconsult + peer peel-set block pushed them past

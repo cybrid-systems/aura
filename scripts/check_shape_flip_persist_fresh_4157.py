@@ -80,7 +80,7 @@ def _between(text: str, start: str, end: str) -> str:
 
 def main() -> int:
     dirty = DIRTY.read_text()
-    svc = SVC.read_text()
+    svc = SVC.read_text() + SVC.parent.joinpath("service_relower.cpp").read_text()
     tst = TST.read_text()
     build = BUILD.read_text()
     allow = ALLOW.read_text()

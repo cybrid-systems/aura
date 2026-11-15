@@ -15,7 +15,7 @@
     },
     {
       "ac": "AC2-service-call",
-      "path": "src/compiler/service.ixx",
+      "path": "src/compiler/service_relower.cpp",
       "contains": [
         "Issue #3310",
         "production_defaults_active",

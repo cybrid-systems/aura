@@ -32,7 +32,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 DEFAULT_TARGETS: tuple[str, ...] = (
-    "src/compiler/service.ixx",
+    "src/compiler/service_relower.cpp",
     "tests/compiler/test_partial_relower_cascade.cpp",
 )
 
@@ -40,37 +40,37 @@ DEFAULT_TARGETS: tuple[str, ...] = (
 INFRA_REQUIRED: tuple[tuple[str, str, str], ...] = (
     # Producer hook (src/compiler/service.ixx relower_dirty_defines_from_workspace)
     (
-        "src/compiler/service.ixx",
+        "src/compiler/service_relower.cpp",
         r"const\s+auto\s+initial_node_mirror_edges\s*=\s*"
         r"metrics_\.dep_graph_node_mirror_edges_total\.load",
         "initial_node_mirror_edges snapshot under lock",
     ),
     (
-        "src/compiler/service.ixx",
+        "src/compiler/service_relower.cpp",
         r"bool\s+rearm_observed_mid_loop\s*=\s*false",
         "rearm_observed_mid_loop flag scoped to loop",
     ),
     (
-        "src/compiler/service.ixx",
+        "src/compiler/service_relower.cpp",
         r"const\s+bool\s+graph_grew_mid_loop\s*=\s*"
         r"metrics_\.dep_graph_node_mirror_edges_total\.load\(\s*std::memory_order_relaxed\s*\)"
         r"\s*>\s*initial_node_mirror_edges",
         "graph_grew_mid_loop dual-signal re-check",
     ),
     (
-        "src/compiler/service.ixx",
+        "src/compiler/service_relower.cpp",
         r"if\s*\(\s*rearm_observed_mid_loop\s*&&\s*want_partial\s*\)",
         "rearm_observed_mid_loop cascade to remaining defines",
     ),
     # AC2: existing metric reused, no new middle-of-metrics keys
     (
-        "src/compiler/service.ixx",
+        "src/compiler/service_relower.cpp",
         r"metrics_\.partial_forced_full_by_impact_total\.fetch_add\(\s*1,\s*std::memory_order_relaxed\)",
         "partial_forced_full_by_impact_total reused (no new metric key)",
     ),
     # AC3: Soft / Off zero-cost — need_lock gate preserved from #3135
     (
-        "src/compiler/service.ixx",
+        "src/compiler/service_relower.cpp",
         r"const\s+bool\s+need_lock\s*=\s*initial_armed\s*\|\|"
         r"\s*aura::compiler::typed_audit::production_defaults_active\(\)",
         "need_lock gate (Soft skip preserved)",

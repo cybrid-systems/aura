@@ -40,12 +40,12 @@ def main() -> int:
         if n not in hay:
             fails.append(f"{label}: missing {n!r}")
 
-    svc = _read("src/compiler/service.ixx")
+    svc = _read("src/compiler/service.ixx") + _read("src/compiler/service_relower.cpp")
     t = _read("tests/compiler/test_cascade_decision_residual_atomic.cpp")
     build = _read("build.py")
     obs = _read("src/compiler/observability_metrics.h")
 
-    rel_pos = svc.find("std::size_t relower_dirty_defines_from_workspace()")
+    rel_pos = svc.find("std::size_t CompilerService::relower_dirty_defines_from_workspace()")
     # Window expanded from 16000 after #3381 grew the function body
     # (added caller-union block before the attribution loop — pushed
     # the #3257 last-look / fail-closed / attribution patterns past

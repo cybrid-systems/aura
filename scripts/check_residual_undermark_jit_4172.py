@@ -71,7 +71,7 @@ def _body(text: str, start_marker: str, end_marker: str) -> str:
 def main() -> int:
     pol = POL.read_text()
     opt = OPT.read_text()
-    svc = SVC.read_text()
+    svc = SVC.read_text() + SVC.parent.joinpath("service_relower.cpp").read_text()
     tst = TST.read_text()
     build = BUILD.read_text()
     allow = ALLOW.read_text()

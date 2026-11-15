@@ -50,7 +50,7 @@ def main() -> int:
         if n in hay:
             fails.append(f"{label}: forbidden {n!r}")
 
-    svc = _read("src/compiler/service.ixx")
+    svc = _read("src/compiler/service.ixx") + _read("src/compiler/service_relower.cpp")
     test = _read("tests/compiler/test_dead_coercion_dirty_cone.cpp")
     build = _read("build.py")
 

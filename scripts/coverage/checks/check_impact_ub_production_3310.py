@@ -127,7 +127,7 @@ def check_service_ixx_call_site() -> list[str]:
     derived from production_defaults_active() || AuditStrategy::Full,
     and bump the existing counter on the fail-closed path."""
     errors: list[str] = []
-    text = _read(SERVICE_IXX)
+    text = _read(SERVICE_IXX) + _read(SERVICE_IXX.parent / "service_relower.cpp")
     if PROD_HELPER not in text:
         errors.append(f"[service] missing call to `{PROD_HELPER}`")
         return errors

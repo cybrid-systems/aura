@@ -47,7 +47,7 @@ def main() -> int:
             fails.append(f"{label}: forbidden {n!r}")
 
     dirty = _read("src/compiler/service_dirty.cpp")
-    svc = _read("src/compiler/service.ixx")
+    svc = _read("src/compiler/service.ixx") + _read("src/compiler/service_relower.cpp")
     pure = _read("src/compiler/ir_cache_pure.ixx")
     prop = _read("src/compiler/dirty_propagation.ixx")
     cas = _read("tests/compiler/test_partial_relower_cascade.cpp")

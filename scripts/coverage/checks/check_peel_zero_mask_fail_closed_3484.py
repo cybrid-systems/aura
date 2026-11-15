@@ -46,12 +46,12 @@ def main() -> int:
         if n in hay:
             fails.append(f"{label}: forbidden {n!r}")
 
-    ixx = _read("src/compiler/service.ixx")
+    ixx = _read("src/compiler/service.ixx") + _read("src/compiler/service_relower.cpp")
     pure = _read("src/compiler/ir_cache_pure.ixx")
     test = _read("tests/compiler/test_cascade_relower_silent_skip.cpp")
     build = _read("build.py")
 
-    rel_pos = ixx.find("std::size_t relower_dirty_defines_from_workspace()")
+    rel_pos = ixx.find("std::size_t CompilerService::relower_dirty_defines_from_workspace()")
     peel = ixx[rel_pos : rel_pos + 20000] if rel_pos >= 0 else ""
     must("Issue #3484", "AC1 peel cite", peel)
     must("zero_mask_forced_full", "AC1 flag", peel)

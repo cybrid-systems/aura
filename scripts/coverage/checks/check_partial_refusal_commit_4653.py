@@ -82,7 +82,7 @@ def main() -> int:
     fails: list[str] = []
     rows: list[dict] = []
 
-    svc = _read(SERVICE)
+    svc = _read(SERVICE) + _read(SERVICE.parent / "service_relower.cpp")
     hot = _read(HOT_UPDATE)
     obs = _read(OBS_EVAL)
 
@@ -90,7 +90,7 @@ def main() -> int:
         print("FAIL: src/compiler/service.ixx not readable", file=sys.stderr)
         return 2
 
-    peel = _body_after(svc, "std::size_t relower_dirty_defines_from_workspace()", 60000)
+    peel = _body_after(svc, "std::size_t CompilerService::relower_dirty_defines_from_workspace()", 60000)
     if not peel:
         fails.append("AC1: relower_dirty_defines_from_workspace not found in service.ixx")
         peel = ""
