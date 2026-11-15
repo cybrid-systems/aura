@@ -129,9 +129,9 @@ int run_test_jit_unbound_callee_4607() {
         auto low_ixx = read_file("src/compiler/lowering.ixx");
         CHECK(low_ixx.find("unbound_globals") != std::string::npos,
               "AC3: lowering module exposes the sink");
-        auto svc = read_file("src/compiler/service.ixx");
+        auto svc = read_file("src/compiler/service_exec_jit.cpp");
         CHECK(svc.find("Issue #4607") != std::string::npos, "AC3: driver TU cites #4607");
-        auto jit = svc.find("[[nodiscard]] EvalResult exec_jit(");
+        auto jit = svc.find("[[nodiscard]] EvalResult CompilerService::exec_jit(");
         CHECK(jit != std::string::npos, "AC3: exec_jit entry present");
         if (jit != std::string::npos) {
             auto body = aura::test::aura_source_block_after(svc, jit);

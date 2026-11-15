@@ -3341,7 +3341,7 @@ static void ac4390_legacy_eval_macro_denies_without_mse() {
         }
         CHECK(src.find("SyntaxMarker::MacroIntroduced") != std::string::npos,
               "4390: hygienic clone still stamps MacroIntroduced");
-        const auto svc = read_file("src/compiler/service.ixx");
+        const auto svc = read_file("src/compiler/service_eval_ir.cpp");
         CHECK(svc.find("Issue #4390") != std::string::npos, "4390: eval_ir cites the fallback");
         CHECK(read_file("tests/compiler/test_issue_4390.cpp").empty(),
               "4390: no test_issue_4390.cpp");

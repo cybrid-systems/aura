@@ -2106,8 +2106,11 @@ static void ac5292_fiber_dead_heap_window() {
     CHECK(joined && is_int(*joined), "5292 AC2: list fiber joins");
     const auto pairs = ev.pairs_size();
     const auto trig = ev.file_heap_allocs_trigger_for_test();
-    CHECK(pairs >= 16000,
-          "5292 AC2: fiber left a pair high-water (got " + std::to_string(pairs) + ")");
+    // The fiber's pairs are reclaimed before pairs_size() is read. The
+    // window still has to remember that dead high-water (~16000/32 + 128).
+    CHECK(trig >= 16000 / 32, "5292 AC2: exit mark keeps the dead pair high-water (got " +
+                                  std::to_string(trig) + ", live pairs " + std::to_string(pairs) +
+                                  ")");
     CHECK(trig >= pairs / 32,
           "5292 AC2: exit mark scales the window with the dead high-water (got " +
               std::to_string(trig) + ", pairs " + std::to_string(pairs) + ")");

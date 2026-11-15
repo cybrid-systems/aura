@@ -118,7 +118,8 @@ int run_test_cascade_relower_silent_skip() {
         std::println("\n--- AC1: cascade skip metric + production wiring docs ---");
         auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
         auto ixx = read_file("src/compiler/evaluator.ixx");
-        auto svc = read_file("src/compiler/service.ixx");
+        auto svc =
+            read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
         auto met = read_file("src/compiler/observability_metrics.h");
         auto obs = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
         CHECK(!mut.empty(), "AC1: sources readable");
@@ -217,10 +218,12 @@ int run_test_cascade_relower_silent_skip() {
     // ── #3484 source: production zero-mask fail-closed; Soft ++ok stays ──
     {
         std::println("\n--- #3484 AC1/AC2/AC3: peel zero-mask + instr-peel source ---");
-        auto svc = read_file("src/compiler/service.ixx");
+        auto svc =
+            read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
         auto pure = read_file("src/compiler/ir_cache_pure.ixx");
         CHECK(!svc.empty(), "3484 AC1: service.ixx readable");
-        const auto peel = svc.find("std::size_t relower_dirty_defines_from_workspace()");
+        const auto peel =
+            svc.find("std::size_t CompilerService::relower_dirty_defines_from_workspace()");
         CHECK(peel != std::string::npos, "3484 AC1: peel found");
         const auto peel_win = aura::test::aura_source_block_after(svc, peel);
         CHECK(peel_win.find("Issue #3484") != std::string::npos, "3484 AC1: peel cites #3484");
@@ -229,7 +232,7 @@ int run_test_cascade_relower_silent_skip() {
         CHECK(peel_win.find("partial_forced_full_by_impact_total") != std::string::npos,
               "3484 AC1: reuses partial_forced_full_by_impact_total");
         CHECK(peel_win.find("++ok") != std::string::npos, "3484 AC3: Soft ++ok skip retained");
-        const auto rb = svc.find("bool relower_define_blocks(");
+        const auto rb = svc.find("bool CompilerService::relower_define_blocks(");
         CHECK(rb != std::string::npos, "3484 AC2: relower_define_blocks");
         const auto rb_win = aura::test::aura_source_block_after(svc, rb);
         CHECK(rb_win.find("Issue #3484") != std::string::npos, "3484 AC2: instr peel cites #3484");
@@ -813,7 +816,8 @@ int run_test_cascade_relower_silent_skip() {
 
         // Source cite: new gate, plus unknown-callee and abort-stale still force full.
         {
-            const auto svc = read_file("src/compiler/service.ixx");
+            const auto svc = read_file("src/compiler/service.ixx") +
+                             read_file("src/compiler/service_relower.cpp");
             const auto at = svc.find("Issue #4103:");
             CHECK(at != std::string::npos, "4103 cite present");
             const auto win = svc.substr(at, 1400);
@@ -943,7 +947,8 @@ int run_test_cascade_relower_silent_skip() {
                 CHECK(bundle_has_slot_load_4681(*g_after),
                       "4681: stored g keeps the live slot load (no embed)");
         }
-        const auto svc = read_file("src/compiler/service.ixx");
+        const auto svc =
+            read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
         const auto at = svc.find("Issue #4436");
         CHECK(at != std::string::npos, "4436 cite present");
         if (at != std::string::npos) {
@@ -1137,7 +1142,8 @@ int run_test_cascade_relower_silent_skip() {
     // Issue #4513 AC7: source cites + no new counters + no stray issue
     // test file.
     {
-        const auto svc4513 = read_file("src/compiler/service.ixx");
+        const auto svc4513 =
+            read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
         CHECK(read_file("tests/compiler/test_issue_4513.cpp").empty(),
               "4513 AC7: no tests/issues/test_issue_4513.cpp");
         CHECK(svc4513.find("g_4513_") == std::string::npos, "4513 AC7: no new file-scope counter");
@@ -1440,7 +1446,8 @@ int run_test_cascade_relower_silent_skip() {
     // test file. Query keys and the C-bridge / defuse / table epoch are
     // untouched (the fix adds no epoch bumps and renames no keys).
     {
-        const auto svc4528 = read_file("src/compiler/service.ixx");
+        const auto svc4528 =
+            read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
         CHECK(read_file("tests/compiler/test_issue_4528.cpp").empty(),
               "4528 AC6: no tests/issues/test_issue_4528.cpp");
         CHECK(svc4528.find("4528_total") == std::string::npos, "4528 AC6: no new metrics counter");

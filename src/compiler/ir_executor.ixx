@@ -479,10 +479,9 @@ private:
     // marker handles frame-local scoping on return).
     std::vector<ExHandler> ex_stack_;
 
-    // Issue #4896: a Restricted dispatch deny ("effect-denied: ...") that a
-    // primitive returned as an error value, as a diagnostic to raise. Empty
-    // for any other value, under Soft/Off, or while an IR try handler is
-    // open (the handler keeps receiving the value, as before).
+    // Issue #4896: kept as the call-site hook. Statement-position refusals
+    // leave the entry as error values (#4899); this no longer rewrites them
+    // into diagnostics, so an expression-position refusal stays a value.
     [[nodiscard]] std::optional<aura::diag::Diagnostic>
     effect_deny_diagnostic_4896_(const EvalValue& v) const;
 

@@ -239,7 +239,8 @@ static void ac5_regression_pure() {
     CHECK(estimate_relower_blocks(5, 8) == 5, "est 5");
     CHECK(estimate_relower_blocks(8, 8) == static_cast<std::size_t>(-1), "est full");
     auto pure = read_file("src/compiler/ir_cache_pure.ixx");
-    auto svc = read_file("src/compiler/service.ixx");
+    auto svc =
+        read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
     auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
     CHECK(pure.find("Issue #2112") != std::string::npos || pure.find("#2112") != std::string::npos,
           "pure cites #2112");

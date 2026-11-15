@@ -167,7 +167,7 @@ static void run_1639() {
     // AC4: 5 wire-up sites in relower_define_blocks
     {
         std::println("\n--- AC4: 4 wire-up sites in relower_define_blocks ---");
-        std::string svc = read_file("src/compiler/service.ixx");
+        std::string svc = read_file("src/compiler/service_relower.cpp");
         bool full_bump = contains(svc, "evaluator_.bump_full_relower_count()");
         bool partial_bump = contains(svc, "evaluator_.bump_relower_block_hit_rate(1, 1)");
         bool full_hit_rate = contains(svc, "evaluator_.bump_relower_block_hit_rate(0, 1)");

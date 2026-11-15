@@ -153,7 +153,8 @@ static void ac4_metrics_query() {
 
 static void ac6_lock_order() {
     std::println("\n--- AC6: lock order mutate → dep_graph ---");
-    auto svc = read_file("src/compiler/service.ixx");
+    auto svc =
+        read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
     auto dirty = read_file("src/compiler/service_dirty.cpp");
     CHECK(svc.find("Level::DepGraph") != std::string::npos, "DepGraph level");
     CHECK(dirty.find("Level::DepGraph") != std::string::npos ||
@@ -170,7 +171,8 @@ static void ac6_lock_order() {
 
 static void ac_source_wiring() {
     std::println("\n--- Source wiring ---");
-    auto svc = read_file("src/compiler/service.ixx");
+    auto svc =
+        read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
     CHECK(svc.find("Issue #2110") != std::string::npos || svc.find("#2110") != std::string::npos,
           "service cites #2110");
     CHECK(svc.find("hybrid_node_cascade_") != std::string::npos, "hybrid helper decl");
@@ -257,7 +259,8 @@ static void ac2187_metrics_schema() {
 
 static void ac2187_lock_order_and_source() {
     std::println("\n--- #2187 AC5: lock order + source wiring ---");
-    auto svc = read_file("src/compiler/service.ixx");
+    auto svc =
+        read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
     auto dirty = read_file("src/compiler/service_dirty.cpp");
     CHECK(svc.find("record_block_dependency") != std::string::npos, "record_block_dependency");
     CHECK(svc.find("mirror_block_dep_edge_unlocked_") != std::string::npos,
@@ -285,7 +288,8 @@ void ac2247_dual_dep_graph_parity_gate() {
     std::println("\n--- AC #2247: dual dep_graph parity gate ---");
     auto pure = read_file("src/compiler/dirty_propagation.ixx");
     auto met = read_file("src/compiler/observability_metrics.h");
-    auto svc = read_file("src/compiler/service.ixx");
+    auto svc =
+        read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
     auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
     // Pure parity primitives
     CHECK(pure.find("graphs_consistent") != std::string::npos, "graphs_consistent helper");
@@ -418,7 +422,8 @@ static void ac3067_4_soak_and_linter() {
     (void)cs.public_relower_dirty_defines_from_workspace();
     CHECK(cs.public_graphs_consistent(), "3067 AC4: consistent after soak drain");
 
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc =
+        read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
     const auto dirty = read_file("src/compiler/service_dirty.cpp");
     const auto t = read_file("tests/compiler/test_dep_graph_hybrid_cascade.cpp");
     const auto lint = read_file("scripts/coverage/manifests/3067.json");
@@ -449,7 +454,8 @@ static void ac3067_4_soak_and_linter() {
 // Soft/Off: rebuild only, zero extra force (existing #2247 AC2).
 static void ac3165_strict_fail_closed_all_callers() {
     std::println("\n--- AC #3165: dual parity Strict fail-closed (all callers) ---");
-    auto svc = read_file("src/compiler/service.ixx");
+    auto svc =
+        read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
 
     // Producer hook #1: record_dependency Strict branch walks all
     // callers in dep_graph_ (set-deduped) under the same exclusive
@@ -574,7 +580,8 @@ static void ac3187_production_fail_closed_default() {
     // AC2: record_dependency Strict gate uses the new helper (production
     // fail-closed by default).
     {
-        const auto svc = read_file("src/compiler/service.ixx");
+        const auto svc =
+            read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
         auto rd_pos = svc.find("void record_dependency(const std::string& caller");
         if (rd_pos == std::string::npos)
             rd_pos = svc.find("void record_dependency(");
@@ -597,7 +604,8 @@ static void ac3187_production_fail_closed_default() {
 
     // AC3: drain_deferred_hybrid_cascade_ Strict gate uses the new helper.
     {
-        const auto svc = read_file("src/compiler/service.ixx");
+        const auto svc =
+            read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
         auto drain_pos = svc.find("void drain_deferred_hybrid_cascade_()");
         CHECK(drain_pos != std::string::npos, "ac3187 AC3: drain_deferred_hybrid_cascade_ present");
         auto drain_end = svc.find("\n    }\n", drain_pos);
@@ -623,7 +631,8 @@ static void ac3187_production_fail_closed_default() {
         const auto ixx = read_file("src/compiler/dirty_propagation.ixx");
         CHECK(ixx.find("inline bool dual_dep_graph_strict_enabled()") != std::string::npos,
               "ac3187 AC4: dual_dep_graph_strict_enabled() helper still defined (backward compat)");
-        const auto svc = read_file("src/compiler/service.ixx");
+        const auto svc =
+            read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
         // dual_dep_graph_strict_enabled may still be referenced elsewhere
         // (e.g., test setters, hooks) — not required for the Strict gate
         // itself anymore (replaced by strict_or_production).
@@ -638,7 +647,8 @@ static void ac3187_production_fail_closed_default() {
         // Count occurrences of dual_dep_graph_parity_fail_total across the
         // codebase to confirm no new key was inserted.
         const auto ixx = read_file("src/compiler/dirty_propagation.ixx");
-        const auto svc = read_file("src/compiler/service.ixx");
+        const auto svc =
+            read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
         auto count_sub = [](const std::string& s, std::string_view n) {
             std::size_t c = 0;
             for (std::size_t p = 0; (p = s.find(n, p)) != std::string::npos; p += n.size())
@@ -757,7 +767,8 @@ static void ac3255_1_soft_fork_forces_full() {
 
 static void ac3255_2_production_unchanged() {
     std::println("\n--- #3255 AC2: Production/Strict force-dirty all callers unchanged ---");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc =
+        read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
     auto rd_pos = svc.find("void record_dependency(const std::string& caller");
     if (rd_pos == std::string::npos)
         rd_pos = svc.find("void record_dependency(");
@@ -812,7 +823,8 @@ static void ac3255_3_clean_soft_zero_extra() {
           "ac3255 AC3: no parity_fail bump on already-consistent graphs");
     (void)forced0; // impact_ub may still force full; parity path must not.
 
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc =
+        read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
     auto help_pos = svc.find("fail_closed_soft_dual_graph_parity_before_partial_");
     CHECK(help_pos != std::string::npos, "ac3255 AC3: Soft parity helper present");
     auto help_win = svc.substr(help_pos > 2000 ? help_pos - 2000 : 0, 4500);
@@ -824,7 +836,7 @@ static void ac3255_3_clean_soft_zero_extra() {
           "ac3255 AC3: consistent path is shared-lock walk");
     CHECK(help_win.find("rebuild_node_dep_graph_from_string") != std::string::npos,
           "ac3255 AC3: rebuild only on fail");
-    auto rel_pos = svc.find("std::size_t relower_dirty_defines_from_workspace()");
+    auto rel_pos = svc.find("std::size_t CompilerService::relower_dirty_defines_from_workspace()");
     CHECK(rel_pos != std::string::npos, "ac3255 AC3: relower_dirty_defines_from_workspace present");
     auto rel_win = svc.substr(rel_pos, 8000);
     CHECK(rel_win.find("fail_closed_soft_dual_graph_parity_before_partial_") != std::string::npos,
@@ -884,7 +896,8 @@ static void ac3255_4_metrics_soak_and_linter() {
           "ac3255 AC4: forced-full distinguisher non-decreasing");
 
     const auto obs = read_file("src/compiler/observability_metrics.h");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc =
+        read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
     const auto t = read_file("tests/compiler/test_dep_graph_hybrid_cascade.cpp");
     const auto lint =
         read_file("scripts/coverage/checks/check_dual_dep_graph_soft_parity_partial_3255.py");
@@ -1043,8 +1056,9 @@ static void ac3486_2_cross_fiber() {
 
 static void ac3486_3_soft_zero_extra() {
     std::println("\n--- #3486 AC3: Soft already-consistent — inject unused ---");
-    const auto svc = read_file("src/compiler/service.ixx");
-    auto rel_pos = svc.find("std::size_t relower_dirty_defines_from_workspace()");
+    const auto svc =
+        read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
+    auto rel_pos = svc.find("std::size_t CompilerService::relower_dirty_defines_from_workspace()");
     CHECK(rel_pos != std::string::npos, "3486 AC3: peel found");
     auto rel_win = aura::test::aura_source_block_after(svc, rel_pos);
     CHECK(rel_win.find("Issue #3486") != std::string::npos, "3486 AC3: peel cites #3486");
@@ -1109,7 +1123,8 @@ static void ac3615_1_cone_wide_non_front_fork() {
 
 static void ac3615_2_soft_erased_hole_take_full() {
     std::println("\n--- #3615 AC2: Soft-erased hole detection (source-cite + cone helper) ---");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc =
+        read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
     const auto cone_pos = svc.find("fail_closed_soft_dual_graph_parity_before_partial_cone_");
     CHECK(cone_pos != std::string::npos, "3615 AC2: cone helper present");
     if (cone_pos != std::string::npos) {
@@ -1135,7 +1150,8 @@ static void ac3615_2_soft_erased_hole_take_full() {
 
 static void ac3615_3_soft_zero_extra_path() {
     std::println("\n--- #3615 AC3: Soft/Off zero extra (production/Full gate only) ---");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc =
+        read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
     const auto cone_pos = svc.find("fail_closed_soft_dual_graph_parity_before_partial_cone_");
     CHECK(cone_pos != std::string::npos, "3615 AC3: cone helper present");
     if (cone_pos != std::string::npos) {
@@ -1154,7 +1170,8 @@ static void ac3615_3_soft_zero_extra_path() {
     }
     // The #3486 front-only block must be replaced: the relower function
     // must use the cone helper (not the old front-only lookup).
-    const auto rel_pos = svc.find("std::size_t relower_dirty_defines_from_workspace()");
+    const auto rel_pos =
+        svc.find("std::size_t CompilerService::relower_dirty_defines_from_workspace()");
     CHECK(rel_pos != std::string::npos, "3615 AC3: peel function present");
     if (rel_pos != std::string::npos) {
         const auto rel_win = aura::test::aura_source_block_after(svc, rel_pos);
@@ -1263,7 +1280,8 @@ static void ac3761_2_ghost_node_only_still_remirrors() {
     CHECK(cs.public_graphs_consistent(), "3761 AC2: remirror from string");
     CHECK(!cs.public_node_dep_has_mirror_edge("ghost3761", "f"),
           "3761 AC2: node-only ghost dropped by string SSOT remirror");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc =
+        read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
     CHECK(svc.find("fail_closed_soft_dual_graph_parity_before_partial_cone_") != std::string::npos,
           "3761 AC2: cone helper");
     const auto cite = svc.find("Issue #3761: decode node dependents");
@@ -1300,7 +1318,8 @@ static void ac3761_3_soft_no_extra_consult() {
     (void)cs.public_relower_dirty_defines_from_workspace();
     CHECK(m.dual_dep_graph_parity_fail_total.load() == fail0,
           "3761 AC3: Soft does not take the production hole remirror");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc =
+        read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
     CHECK(svc.find("schema-3761") == std::string::npos, "3761 AC3: no new query key");
     CHECK(read_file("tests/compiler/test_issue_3761.cpp").empty(), "3761 AC3: no invent");
     CHECK(read_file("docs/design/3761-node-only-caller-dirty.md").empty(),
@@ -1359,7 +1378,8 @@ static void ac3891_1_node_only_with_nonempty_called_by() {
 
 static void ac3891_2_graphs_consistent_still_one_way() {
     std::println("\n--- #3891 AC2: graphs_consistent stays one-way; peel observer cites ---");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc =
+        read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
     CHECK(svc.find("Issue #3891") != std::string::npos, "3891 AC2: #3891 cite");
     const auto lam = svc.find("auto cone_has_node_only_hole");
     CHECK(lam != std::string::npos, "3891 AC2: peel observer lambda");
@@ -1578,7 +1598,8 @@ static void ac3762_2_graphs_consistent_after_unload() {
     cs.unload_module("mod-3762");
     CHECK(cs.public_graphs_consistent(), "3762 AC2: graphs_consistent");
     CHECK(!cs.public_node_dep_has_mirror_edge("g", "f"), "3762 AC2: node G←F dropped by remirror");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc =
+        read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
     const auto cite = svc.find("Issue #3762: production incremental serve");
     CHECK(cite != std::string::npos, "3762 AC2: cite");
     CHECK(svc.find("void unload_module(const std::string& name)") != std::string::npos,
@@ -1614,7 +1635,8 @@ static void ac3762_3_soft_v2_torn_down() {
     CHECK(cs.lookup_define_v2("f", hash_f) == 2, "3762 AC3: Soft V2 f erased");
     const auto* ge = cs.get_define_v2("g");
     CHECK(ge && (ge->dirty || ge->dirty_block_count() > 0), "3762 AC3: Soft still dirties caller");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc =
+        read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
     CHECK(svc.find("schema-3762") == std::string::npos, "3762 AC3: no new query key");
     CHECK(read_file("tests/compiler/test_issue_3762.cpp").empty(), "3762 AC3: no invent");
     CHECK(read_file("docs/design/3762-unload-v2-teardown.md").empty(), "3762 AC3: no docs/design");
@@ -1623,7 +1645,8 @@ static void ac3762_3_soft_v2_torn_down() {
 
 static void ac3486_5_linter_no_invent() {
     std::println("\n--- #3486 AC5: no new query key; linter; no invent ---");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc =
+        read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
     const auto t = read_file("tests/compiler/test_dep_graph_hybrid_cascade.cpp");
     const auto build = read_file("build.py");
     CHECK(svc.find("inject_string_only_edge_for_test") != std::string::npos,
@@ -1812,7 +1835,8 @@ static void ac3580_4_source_cite_no_invent() {
     std::println("\n--- #3580 AC4: source-cite #3034/#3310/graphs_consistent ---");
     const auto pure = read_file("src/compiler/dirty_propagation.ixx");
     const auto irp = read_file("src/compiler/ir_cache_pure.ixx");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc =
+        read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
     const auto t = read_file("tests/compiler/test_dep_graph_hybrid_cascade.cpp");
     CHECK(pure.find("graphs_consistent") != std::string::npos, "3580 AC4: graphs_consistent");
     CHECK(pure.find("callee → caller") != std::string::npos ||

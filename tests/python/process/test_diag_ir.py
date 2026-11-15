@@ -111,6 +111,11 @@ CASES = (
         "diag_once.ReportedOnceWithLocation.test_displayed_error_in_body_located",
     ),
     (
+        5241,
+        "test_pair_error_kind_same_in_display_and_define",
+        "diag_once.ReportedOnceWithLocation.test_pair_error_kind_same_in_display_and_define",
+    ),
+    (
         4909,
         "test_snapshots",
         "diag_snapshots.Snapshots.test_snapshots",
@@ -186,6 +191,11 @@ CASES = (
         "diag_5235.Diag5235.test_typecheck_memq_hint_matches_runtime",
     ),
     (
+        5301,
+        "test_zero_arg_check_is_a_call",
+        "diag_5235.Diag5235.test_zero_arg_check_is_a_call",
+    ),
+    (
         5234,
         "test_display_of_error_value_reports_error",
         "diag_5234.Diag5234.test_display_of_error_value_reports_error",
@@ -259,6 +269,11 @@ CASES = (
         5240,
         "test_division_by_zero_has_its_own_code",
         "diag_json_format.DiagJson.test_division_by_zero_has_its_own_code",
+    ),
+    (
+        5241,
+        "test_refusal_code_is_effect_denied",
+        "diag_json_format.DiagJson.test_refusal_code_is_effect_denied",
     ),
     (
         5240,

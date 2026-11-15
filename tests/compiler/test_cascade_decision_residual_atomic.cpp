@@ -69,8 +69,9 @@ using aura::compiler::CompilerService;
 // ── Issue #3257: last-look re-arm before peel ──
 static void ac3257_1_last_look_source() {
     std::println("\n--- #3257 AC1: last-look armed / size before peel ---");
-    const auto ixx = read_file("src/compiler/service.ixx");
-    auto pos = ixx.find("std::size_t relower_dirty_defines_from_workspace()");
+    const auto ixx =
+        read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
+    auto pos = ixx.find("std::size_t CompilerService::relower_dirty_defines_from_workspace()");
     CHECK(pos != std::string::npos, "3257 AC1: relower present");
     // Brace-matched relower body: #3491/#3611/#4172 kept growing it past the
     // old 30000/34200-char windows; the body itself is the window.
@@ -89,7 +90,8 @@ static void ac3257_1_last_look_source() {
 
 static void ac3257_2_attribution_prefers_partial() {
     std::println("\n--- #3257 AC2: new-edge attribution still prefers partial ---");
-    const auto ixx = read_file("src/compiler/service.ixx");
+    const auto ixx =
+        read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
     CHECK(ixx.find("Issue #3168: prefer new-edge-only mark over full fallback") !=
               std::string::npos,
           "3257 AC2: #3168 attribution preserved");
@@ -104,7 +106,8 @@ static void ac3257_2_attribution_prefers_partial() {
 
 static void ac3257_3_soft_zero_extra() {
     std::println("\n--- #3257 AC3: Soft + armed==0 last-look is acquire-only ---");
-    const auto ixx = read_file("src/compiler/service.ixx");
+    const auto ixx =
+        read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
     auto pos = ixx.find("Issue #3257: last-look armed immediately before attribution");
     CHECK(pos != std::string::npos, "3257 AC3: last-look cite");
     auto win = ixx.substr(pos, 900);
@@ -207,7 +210,8 @@ static void ac3657_5_source_and_linter();
 // workspace (W=2000) must never grow the scan counter.
 static void ac4930_1_warm_hit_uses_parent_link() {
     std::println("\n--- #4930: warm define-root hit uses the parent link ---");
-    const auto ixx = read_file("src/compiler/service.ixx");
+    const auto ixx =
+        read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
     auto pos = ixx.find("static bool define_root_is_child_(");
     CHECK(pos != std::string::npos, "4930: define_root_is_child_ present");
     const auto body = ixx.substr(pos, 900);
@@ -257,7 +261,8 @@ int run_test_cascade_decision_residual_atomic_3135() {
     std::println("=== Issue #3135: cascade-decision residual atomic ===");
     CHECK(true, "ac3135: issue stamp");
 
-    auto ixx = read_file("src/compiler/service.ixx");
+    auto ixx =
+        read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
 
     // ── AC1: source shape ──
     {
@@ -291,7 +296,8 @@ int run_test_cascade_decision_residual_atomic_3135() {
                     "AC1 reject path sets armed under lock");
 
         // relower_dirty_defines_from_workspace: critical section + re-check.
-        auto rel_pos = ixx.find("std::size_t relower_dirty_defines_from_workspace()");
+        auto rel_pos =
+            ixx.find("std::size_t CompilerService::relower_dirty_defines_from_workspace()");
         CHECK(rel_pos != std::string::npos, "AC1: relower function definition");
         // Window covers the #3257/#3283/#3348 last-look additions inside
         // relower (function body grew past 8KB after the #3480-#3491 P0 wave;
@@ -312,7 +318,7 @@ int run_test_cascade_decision_residual_atomic_3135() {
     // ── AC2: Soft / sandbox=off + clean (armed==0) skips the lock for zero cost ──
     {
         std::println("\n--- AC2: Soft skip path ---");
-        auto pos = ixx.find("std::size_t relower_dirty_defines_from_workspace()");
+        auto pos = ixx.find("std::size_t CompilerService::relower_dirty_defines_from_workspace()");
         auto end = pos + 12000; // #3310 moved the consult deeper into the fn
         auto block = ixx.substr(pos, end - pos);
         // need_lock must be the gate that decides skip-or-take.
@@ -327,7 +333,7 @@ int run_test_cascade_decision_residual_atomic_3135() {
     // ── AC3: Quiet happy path — no extra lock when need_lock is false ──
     {
         std::println("\n--- AC3: quiet happy path no extra lock ---");
-        auto pos = ixx.find("std::size_t relower_dirty_defines_from_workspace()");
+        auto pos = ixx.find("std::size_t CompilerService::relower_dirty_defines_from_workspace()");
         auto end = pos + 12000; // #3310 moved the consult deeper into the fn
         auto block = ixx.substr(pos, end - pos);
         // The defer_lock pattern ensures no atomic acquire happens when
@@ -361,7 +367,7 @@ int run_test_cascade_decision_residual_atomic_3135() {
     // ── AC4: Existing #3067 + #3097 paths preserved + re-check force-full ──
     {
         std::println("\n--- AC4: existing #3067 + #3097 + re-check force-full ---");
-        auto pos = ixx.find("std::size_t relower_dirty_defines_from_workspace()");
+        auto pos = ixx.find("std::size_t CompilerService::relower_dirty_defines_from_workspace()");
         // #3310 moved the consult deeper; #3381 caller-union + #3348
         // last-look grew the body past 12000; the #3646-era SSOT/audit
         // growth pushed the #3097 impact_ub consult past 20000 (~20.8k
@@ -472,7 +478,8 @@ int main() {
 // (need_lock + defer_lock pattern preserved, AC2).
 static void ac3168_1_production_rearm_new_edge_only() {
     std::println("\n--- #3168 AC1: Production — concurrent re-arm → new-edge-only attribution ---");
-    auto ixx = read_file("src/compiler/service.ixx");
+    auto ixx =
+        read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
     auto obs = read_file("src/compiler/observability_metrics.h");
     // Source-cite: snapshot block + attribution block + struct-end counter
     CHECK(ixx.find("Issue #3168: snapshot deferred_hybrid_edges_.size()") != std::string::npos,
@@ -525,7 +532,8 @@ static void ac3168_1_production_rearm_new_edge_only() {
 
 static void ac3168_2_soft_zero_extra() {
     std::println("\n--- #3168 AC2: Soft / Off + single-fiber + clean (armed==0) → zero extra ---");
-    auto ixx = read_file("src/compiler/service.ixx");
+    auto ixx =
+        read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
     // The need_lock + defer_lock pattern (preserved from #3135) must still gate
     // the cascade_decision_mtx_ acquisition; Soft/Off + clean path doesn't
     // pay the lock OR the initial_deferred_edges_size shared read.
@@ -549,7 +557,8 @@ static void ac3168_2_soft_zero_extra() {
 static void ac3168_3_partial_peel_preserved() {
     std::println("\n--- #3168 AC3: Attribution success → partial peel preserved (want_partial "
                  "stays true) ---");
-    auto ixx = read_file("src/compiler/service.ixx");
+    auto ixx =
+        read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
     auto build = read_file("build.py");
     // Attribution path: bump cascade_rearm_new_edge_only_total, do NOT
     // mark_all_blocks_dirty, do NOT bump partial_forced_full_by_impact_total.
@@ -579,7 +588,8 @@ static void ac3168_3_partial_peel_preserved() {
 
 static void ac3168_4_existing_3067_3097_3135_preserved() {
     std::println("\n--- #3168 AC4: #3067 / #3097 / #3135 paths preserved ---");
-    auto ixx = read_file("src/compiler/service.ixx");
+    auto ixx =
+        read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
     // #3067: drain at entry.
     CHECK(ixx.find("drain_deferred_hybrid_cascade_()") != std::string::npos,
           "3168 AC4: #3067 drain at entry preserved");
@@ -626,7 +636,8 @@ static void ac3168_5_source_and_linter() {
 // force full, distinguisher partial_forced_full_by_impact_total).
 static void ac3283_1_source_shape() {
     std::println("\n--- #3283 AC1: generation counter + both emplace sites lock-parity ---");
-    auto ixx = read_file("src/compiler/service.ixx");
+    auto ixx =
+        read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
     CHECK(ixx.find("Issue #3283") != std::string::npos, "3283 AC1: service.ixx cites #3283");
     CHECK(ixx.find("deferred_hybrid_gen_") != std::string::npos,
           "3283 AC1: deferred_hybrid_gen_ member");
@@ -645,8 +656,9 @@ static void ac3283_1_source_shape() {
 
 static void ac3283_2_gen_recheck_fail_closed() {
     std::println("\n--- #3283 AC2: gen0 snapshot + pre-peel fail-closed re-check ---");
-    auto ixx = read_file("src/compiler/service.ixx");
-    auto pos = ixx.find("std::size_t relower_dirty_defines_from_workspace()");
+    auto ixx =
+        read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
+    auto pos = ixx.find("std::size_t CompilerService::relower_dirty_defines_from_workspace()");
     CHECK(pos != std::string::npos, "3283 AC2: relower def");
     auto rel = ixx.substr(
         pos, 40000); // window covers relower growth through #3491; #3611 pushed cone_hit past
@@ -713,8 +725,9 @@ static void ac3283_4_linter_wiring() {
 // can complete a partial peel with a lagging caller dirty mask.
 static void ac3348_1_last_look_source() {
     std::println("\n--- #3348 AC1: last-look mirror counters before partial ---");
-    auto ixx = read_file("src/compiler/service.ixx");
-    auto pos = ixx.find("std::size_t relower_dirty_defines_from_workspace()");
+    auto ixx =
+        read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
+    auto pos = ixx.find("std::size_t CompilerService::relower_dirty_defines_from_workspace()");
     CHECK(pos != std::string::npos, "3348 AC1: relower def");
     auto rel =
         ixx.substr(pos, 42000); // relower body ends ~35.5KB after #3611; 37KB stays inside fn;
@@ -734,7 +747,8 @@ static void ac3348_1_last_look_source() {
 
 static void ac3348_2_soft_quiet() {
     std::println("\n--- #3348 AC2: Soft + counters flat → acquire only ---");
-    auto ixx = read_file("src/compiler/service.ixx");
+    auto ixx =
+        read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
     auto pos = ixx.find("Issue #3348: last-look NodeId / block-dep mirror growth");
     CHECK(pos != std::string::npos, "3348 AC2: last-look cite");
     auto win = ixx.substr(pos, 1600);
@@ -818,7 +832,8 @@ static void ac3348_4_linter_no_invent() {
 // post-mark dirty_n + impact_ub (#3310 prod gate; monotone partial→full).
 static void ac3611_1_peer_enters_peel_set() {
     std::println("\n--- #3611 AC1: attributed new edge pulls peer into peel set ---");
-    const auto ixx = read_file("src/compiler/service.ixx");
+    const auto ixx =
+        read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
     CHECK(ixx.find("Issue #3611: index-based walk") != std::string::npos,
           "3611 AC1: per-name loop index-based (mid-loop growth peeled)");
     CHECK(ixx.find("const std::string name = dirty_names[dn_i];") != std::string::npos,
@@ -853,7 +868,8 @@ static void ac3611_1_peer_enters_peel_set() {
 
 static void ac3611_2_reconsult_after_attribution() {
     std::println("\n--- #3611 AC2: want_partial reconsulted after peer marks ---");
-    const auto ixx = read_file("src/compiler/service.ixx");
+    const auto ixx =
+        read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
     auto pos = ixx.find("Issue #3611: attribution used to keep the stale");
     CHECK(pos != std::string::npos, "3611 AC2: #3611 block present");
     if (pos != std::string::npos) {
@@ -873,7 +889,8 @@ static void ac3611_2_reconsult_after_attribution() {
 
 static void ac3611_3_soft_clean_zero_extra() {
     std::println("\n--- #3611 AC3: Soft / Off + clean (armed==0) → zero extra ---");
-    const auto ixx = read_file("src/compiler/service.ixx");
+    const auto ixx =
+        read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
     // The #3611 peer + reconsult block must sit inside the
     // rearm_observed_mid_loop && want_partial gate (armed != 0 required) —
     // Soft / Off + clean single-fiber never reaches it.
@@ -960,7 +977,8 @@ static void ac3611_5_source_and_linter() {
 
 static void ac3657_2_reject_arms_pending_ub() {
     std::println("\n--- #3657 AC2: lockless reject arms pending UB ---");
-    const auto ixx = read_file("src/compiler/service.ixx");
+    const auto ixx =
+        read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
     auto rd_pos =
         ixx.find("void record_dependency(const std::string& caller, const std::string& callee)");
     CHECK(rd_pos != std::string::npos, "3657 AC2: record_dependency");

@@ -381,7 +381,7 @@ static void ac4457_cli_procedure_once() {
         f << "(define (f x) (+ x 1))\n";
         f << "(display \"one \") (display (f 1)) (newline)\n";
     }
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc = read_file("src/compiler/service_eval.cpp");
     CHECK(svc.find("Issue #4457") != std::string::npos, "4457: cite");
     const char* faces[][2] = {
         {"env -u AURA_PIPELINE_STRICT -u AURA_SANDBOX", "default"},

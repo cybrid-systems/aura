@@ -175,7 +175,8 @@ static void ac5_production_consult_reflects_strategy() {
 static void ac3691_quote_lambda_impact_uses_prod_helper() {
     std::println("\n--- #3691: quote/lambda + invalidate cascade use impact_checked_prod ---");
     const auto dirty = read_file("src/compiler/service_dirty.cpp");
-    const auto sixx = read_file("src/compiler/service.ixx");
+    const auto sixx =
+        read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
     CHECK(dirty.find("Issue #3691") != std::string::npos, "3691: dirty cites #3691");
     CHECK(dirty.find("should_partial_relower_impact_checked_prod") != std::string::npos,
           "3691 AC1: quote/lambda + cascade use _prod");
@@ -246,7 +247,8 @@ static void ac3691_quote_lambda_impact_uses_prod_helper() {
 // still enters the partial relower.
 static void ac4422_unknown_impact_skips_per_fn_commit() {
     std::println("\n--- #4422: prefer-partial and sweep consult impact ---");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc =
+        read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
     const auto pref = svc.find("EvalResult cache_define_prefer_partial(");
     const auto peel = svc.find("relower_only_dirty_blocks(name_str", pref);
     CHECK(pref != std::string::npos && peel != std::string::npos && pref < peel,

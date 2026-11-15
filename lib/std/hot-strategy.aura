@@ -65,11 +65,13 @@
 ; Workspace unparse is `(define <name> <expr>)`, or a begin of those.
 ; <expr> is the body actually running. A register! string may never have
 ; been installed, so heal must not record that string in its place.
+; symbol->string lives in std/string, which this module does not load.
+; (format "~a") is that function's body for a symbol.
 (define (hs-define-body form name)
   (if (not (pair? form))
     ""
     (let ((h (car form)))
-      (if (and (symbol? h) (string=? (symbol->string h) "begin"))
+      (if (and (symbol? h) (string=? (format "~a" h) "begin"))
         (let ((rest (cdr form))
               (found ""))
           (while (lambda () (and (pair? rest) (string=? found "")))
@@ -78,10 +80,10 @@
               (set! rest (cdr rest))))
           found)
         (if (and (symbol? h)
-                 (string=? (symbol->string h) "define")
+                 (string=? (format "~a" h) "define")
                  (pair? (cdr form))
                  (symbol? (car (cdr form)))
-                 (string=? (symbol->string (car (cdr form))) name)
+                 (string=? (format "~a" (car (cdr form))) name)
                  (pair? (cdr (cdr form))))
           (let ((printed (try (datum->string (car (cdr (cdr form))))
                               (catch (e) ""))))

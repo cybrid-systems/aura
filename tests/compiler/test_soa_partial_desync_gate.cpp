@@ -85,7 +85,8 @@ int run_test_soa_partial_desync_gate() {
     // ── AC1: source wiring ──
     {
         std::println("\n--- AC1: source cites 2181 ---");
-        const auto svc = read_file("src/compiler/service.ixx");
+        const auto svc =
+            read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
         const auto met = read_file("src/compiler/observability_metrics.h");
         const auto q = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
         CHECK(svc.find("2181") != std::string::npos, "service cites 2181");
