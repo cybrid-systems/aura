@@ -2,6 +2,9 @@
 ; match code-point indexing, and string-fill! drops the cached index.
 ; The flat-cost timer lives in tests/bench/string_ref_flat_cost.aura.
 (require "std/test" all:)
+(require "std/adaptive" all:)
+(require "std/hash" all:)
+(require "std/rule" all:)
 (test-file "string_index_o1_4548.aura")
 
 (define (dbl s k) (if (= k 0) s (dbl (string-append s s) (- k 1))))
@@ -42,5 +45,21 @@
   (check= 1024 (string-length w2))
   (check= (char->integer #\q) (string-ref w2 1023))
   (check= "qqqq" (substring w2 1020 1030)))
+
+; Issue #5238: std/adaptive used to export a 3-argument string-index closure,
+; silently replacing the core primitive and breaking the 2-argument form.
+(test-case "adaptive keeps the core string-index" (hash "issue" 5238)
+  (check= 2 (string-index "abcd" "c"))
+  (check= 2 (string-index "abcd" "c" 2))
+  (check= -1 (string-index "abcd" "c" 3))
+  (check= -1 (string-index "abcd" "zz")))
+
+; std/hash and std/rule used to define their own for-each; the core
+; primitive must stay visible after both requires.
+(test-case "hash and rule keep the core for-each" (hash "issue" 5238)
+  (check= #t (procedure? for-each))
+  (define seen (list))
+  (for-each (lambda (x) (set! seen (cons x seen))) (list 1 2 3))
+  (check= (list 3 2 1) seen))
 
 (test-finish)

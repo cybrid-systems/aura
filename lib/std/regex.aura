@@ -14,13 +14,7 @@
 (define (re-replace pattern str replacement)
   (let ((r (regex-replace pattern str replacement))) (if (string? r) r str)))
 
-;; string-index (local copy — avoids deps)
-(define (string-index haystack needle start)
-  (let ((hl (string-length haystack)) (nl (string-length needle)))
-    (let loop ((i start))
-      (if (> i (- hl nl)) -1
-        (if (string=? (substring haystack i (+ i nl)) needle) i
-          (loop (+ i 1)))))))
+;; string-index is the core primitive (2 or 3 arguments); Issue #5238.
 
 ;; Split string by regex matches
 (define (re-split pattern str)

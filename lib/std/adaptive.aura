@@ -2,18 +2,14 @@
 ;
 ; Returns lists, not hashes (avoids cross-module hash mutation bug).
 ; Uses cond, not if (avoids cross-module if-in-begin bug).
-(export string-index string-contains? string-trim measure-distance structured-diagnosis pid:analyze get-api-ref get-full-api-ref)
+(export string-contains? string-trim measure-distance structured-diagnosis pid:analyze get-api-ref get-full-api-ref)
 
 ; == Primitives ==
 
-(define string-index
-  (lambda (text substr start)
-    (let ((n (string-length text))
-          (m (string-length substr)))
-      (let loop ((i start))
-        (if (> i (- n m)) -1
-            (if (string=? (substring text i (+ i m)) substr) i
-                (loop (+ i 1))))))))
+; string-index is the core primitive (2 or 3 arguments; the 3rd is the
+; start index). Issue #5238: this module used to export a 3-argument
+; closure under the same name, silently replacing the primitive and
+; breaking the 2-argument form for every caller.
 
 (define string-contains?
   (lambda (text substr)
