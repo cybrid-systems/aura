@@ -398,7 +398,7 @@ static void emit_exec_result(std::string_view sid, const EvalValue& v, std::stri
                                  cs.evaluator().soft_error_message(v)};
         if (auto loc = cs.evaluator().error_location(v))
             d.location = *loc;
-        d.kind = d.display_kind();
+        // #5241: display_kind is the structured kind; no re-derivation.
         std::string line = "{\"session\":\"" + json_escape(sid) +
                            "\",\"status\":\"error\",\"msg\":\"" + json_escape(d.format()) +
                            "\",\"code\":\"" + json_escape(aura::diag::kind_ident(d.kind)) +

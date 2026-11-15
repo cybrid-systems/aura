@@ -123,10 +123,7 @@ EvalValue RegSplitParts::file_io_fail(Evaluator& ev, std::string_view op, std::s
     }
     msg += ": ";
     msg += why;
-    auto err = make_primitive_error(ev.string_heap_, ev.error_values_, msg,
-                                    ev.primitive_error_counter_ptr());
-    ev.mark_error_kind(err, Evaluator::kErrorMarkIo);
-    return err;
+    return ev.make_typed_error(msg, aura::diag::ErrorKind::IoError);
 }
 
 std::string RegSplitParts::file_errno_reason(int e) {
