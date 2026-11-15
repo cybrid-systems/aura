@@ -301,10 +301,8 @@ types::EvalValue Evaluator::ensure_std_host_prims(std::string_view module_path) 
         return types::make_void();
     if (want == (1u << 4) && (sandbox_mode() || effect_sandbox_mode() != 0)) {
         if (!require_effect(bits, op)) {
-            return primitives_detail::make_primitive_error(
-                string_heap_, error_values_,
-                aura::compiler::security::format_deny_reason(bits, capability_tenant_id(), op),
-                primitive_error_counter_ptr());
+            return make_refusal_error(
+                aura::compiler::security::format_deny_reason(bits, capability_tenant_id(), op));
         }
     }
     if ((std_host_prims_mask_ & want) != 0)
@@ -440,10 +438,12 @@ namespace {
     // deny is a policy refusal with actionable text, not an internal error.
     [[nodiscard]] aura::diag::Diagnostic macro_limit_diag_4876(const char* why,
                                                                std::string_view fallback) {
-        std::string r = aura::compiler::security::macro_limit_user_reason(why, fallback);
-        const auto k = r.starts_with("effect-denied:") ? aura::diag::ErrorKind::TypeError
-                                                       : aura::diag::ErrorKind::InternalError;
-        return aura::diag::Diagnostic{k, std::move(r)};
+        // Issue #5241: keyed on the sentinel reason code, not the text.
+        const bool deny = why != nullptr && std::string_view(why) == "capability-deny";
+        const auto k =
+            deny ? aura::diag::ErrorKind::EffectDenied : aura::diag::ErrorKind::InternalError;
+        return aura::diag::Diagnostic{
+            k, aura::compiler::security::macro_limit_user_reason(why, fallback)};
     }
 } // namespace
 

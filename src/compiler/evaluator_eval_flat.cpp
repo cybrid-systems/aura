@@ -3410,10 +3410,11 @@ legacy_eval_macro_self_evo_deny(bool stdlib_macro = false, aura::diag::SourceLoc
 // Issue #4876: a hygiene limit Diagnostic. The capability deny is a policy
 // refusal (TypeError, like every effect-denied), not an internal error.
 [[nodiscard]] Diagnostic macro_limit_diag_4876(const char* why, std::string_view fallback) {
-    std::string r = aura::compiler::security::macro_limit_user_reason(why, fallback);
-    const ErrorKind k =
-        r.starts_with("effect-denied:") ? ErrorKind::TypeError : ErrorKind::InternalError;
-    return Diagnostic{k, std::move(r)};
+    // Issue #5241: the sentinel reason code, not the rendered text, says
+    // whether this was a capability deny.
+    const bool deny = why != nullptr && std::string_view(why) == "capability-deny";
+    const ErrorKind k = deny ? ErrorKind::EffectDenied : ErrorKind::InternalError;
+    return Diagnostic{k, aura::compiler::security::macro_limit_user_reason(why, fallback)};
 }
 
 // ── eval_data_as_code: evaluate macro-expanded data as code ──

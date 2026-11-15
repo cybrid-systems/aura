@@ -647,11 +647,9 @@ void RegSplitParts::register_set_code_primitive(PrimRegistrar add, Evaluator& ev
             if (aura::compiler::security::panic_checkpoint_reinstall_depth() == 0 &&
                 !ev.require_effect(aura::compiler::security::kEffectMutate, set_code_op, 0,
                                    ev.capability_tenant_id())) {
-                return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                            aura::compiler::security::format_deny_reason(
-                                                aura::compiler::security::kEffectMutate,
-                                                ev.capability_tenant_id(), "set-code"),
-                                            ev.primitive_error_counter_ptr());
+                return ev.make_refusal_error(aura::compiler::security::format_deny_reason(
+                    aura::compiler::security::kEffectMutate, ev.capability_tenant_id(),
+                    "set-code"));
             }
             // Issue #4546: pre_cache (cache_define tree-walks a define whose
             // body stays off IR, e.g. a recursive letrec) re-keys top_ to the
@@ -1200,11 +1198,8 @@ void RegSplitParts::register_load_primitive(PrimRegistrar add, Evaluator& ev, Ma
         const std::string_view load_mutate_op = "load";
         if (!ev.require_effect(aura::compiler::security::kEffectMutate, load_mutate_op, 0,
                                ev.capability_tenant_id())) {
-            return make_primitive_error(
-                ev.string_heap_, ev.error_values_,
-                aura::compiler::security::format_deny_reason(
-                    aura::compiler::security::kEffectMutate, ev.capability_tenant_id(), "load"),
-                ev.primitive_error_counter_ptr());
+            return ev.make_refusal_error(aura::compiler::security::format_deny_reason(
+                aura::compiler::security::kEffectMutate, ev.capability_tenant_id(), "load"));
         }
 
         std::string content;

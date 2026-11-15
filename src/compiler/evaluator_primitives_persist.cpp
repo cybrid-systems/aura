@@ -535,12 +535,9 @@ void RegSplitParts::register_persist_deserialize(PrimRegistrar add, Evaluator& e
                 const std::string_view deser_mutate_op = "deserialize-workspace";
                 if (!ev.require_effect(aura::compiler::security::kEffectMutate, deser_mutate_op, 0,
                                        ev.capability_tenant_id())) {
-                    return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                                aura::compiler::security::format_deny_reason(
-                                                    aura::compiler::security::kEffectMutate,
-                                                    ev.capability_tenant_id(),
-                                                    "deserialize-workspace"),
-                                                ev.primitive_error_counter_ptr());
+                    return ev.make_refusal_error(aura::compiler::security::format_deny_reason(
+                        aura::compiler::security::kEffectMutate, ev.capability_tenant_id(),
+                        "deserialize-workspace"));
                 }
             }
             ev.lock_workspace_unique();

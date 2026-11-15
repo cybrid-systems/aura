@@ -52,6 +52,29 @@ class DiagJson(unittest.TestCase):
         self.assertIn("car: not a pair", obj["message"])
         self.assertIsInstance(obj["code"], str)
 
+    def test_refusal_code_is_effect_denied(self) -> None:
+        # Issue #5241: the JSON code and the human prefix come from the
+        # structured kind. Before, a denied set-car! printed "effect-denied"
+        # on the text face while this JSON carried code TypeError.
+        env = dict(os.environ)
+        for k in ("AURA_SANDBOX", "AURA_PRESET", "AURA_GRANT"):
+            env.pop(k, None)
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "d.aura"
+            p.write_text("(set-car! (cons 1 2) 9)\n")
+            r = subprocess.run(
+                [str(AURA_BIN), "--error-format=json", str(p)],
+                cwd=d,
+                capture_output=True,
+                text=True,
+                env=env,
+                timeout=120,
+            )
+        self.assertNotEqual(r.returncode, 0)
+        obj = last_json(r.stderr)
+        self.assertEqual(obj["code"], "EffectDenied")
+        self.assertIn("effect-denied:", obj["message"])
+
     def test_serve_error_uses_the_same_code_and_span(self) -> None:
         env = dict(os.environ)
         env["AURA_SANDBOX"] = "off"

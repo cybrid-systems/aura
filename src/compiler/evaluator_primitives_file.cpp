@@ -87,8 +87,7 @@ EvalValue RegSplitParts::file_deny_io(Evaluator& ev, std::string_view cap, std::
         ev.has_capability(aura::compiler::security::kCapWildcard))
         return make_void();
     ev.bump_capability_denial();
-    return make_primitive_error(ev.string_heap_, ev.error_values_, msg,
-                                ev.primitive_error_counter_ptr());
+    return ev.make_refusal_error(std::string(msg));
 }
 
 EvalValue RegSplitParts::file_deny_exec(Evaluator& ev, std::string_view msg) {
@@ -96,8 +95,7 @@ EvalValue RegSplitParts::file_deny_exec(Evaluator& ev, std::string_view msg) {
         ev.has_capability(aura::compiler::security::kCapWildcard))
         return make_void();
     ev.bump_capability_denial();
-    return make_primitive_error(ev.string_heap_, ev.error_values_, msg,
-                                ev.primitive_error_counter_ptr());
+    return ev.make_refusal_error(std::string(msg));
 }
 
 // Helper: check path is a regular file (skip directories). Uses lstat so
@@ -159,9 +157,7 @@ EvalValue RegSplitParts::file_deny_write_scope(Evaluator& ev, std::string_view o
     if (aura::compiler::security::path_in_write_scope(resolved))
         return make_void();
     ev.bump_capability_denial();
-    return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                aura::compiler::security::write_scope_deny_reason(op, path),
-                                ev.primitive_error_counter_ptr());
+    return ev.make_refusal_error(aura::compiler::security::write_scope_deny_reason(op, path));
 }
 
 // Issue #5033: read / read-file — stdin and file content ingestion.
@@ -234,10 +230,8 @@ void RegSplitParts::register_file_write_primitives(PrimRegistrar add, Evaluator&
     add("write-file", [&ev](std::span<const EvalValue> a) {
         using aura::compiler::security::kEffectWrite;
         if (!ev.require_effect(kEffectWrite, "write-file")) {
-            return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                        aura::compiler::security::format_deny_reason(
-                                            kEffectWrite, ev.capability_tenant_id(), "write-file"),
-                                        ev.primitive_error_counter_ptr());
+            return ev.make_refusal_error(aura::compiler::security::format_deny_reason(
+                kEffectWrite, ev.capability_tenant_id(), "write-file"));
         }
         if (auto denied = file_deny_io(ev, aura::compiler::security::kCapIoWrite,
                                        "capability denied: io-write required");
@@ -322,11 +316,8 @@ void RegSplitParts::register_file_write_primitives(PrimRegistrar add, Evaluator&
     add("make-directory", [&ev](std::span<const EvalValue> a) {
         using aura::compiler::security::kEffectWrite;
         if (!ev.require_effect(kEffectWrite, "make-directory")) {
-            return make_primitive_error(
-                ev.string_heap_, ev.error_values_,
-                aura::compiler::security::format_deny_reason(
-                    kEffectWrite, ev.capability_tenant_id(), "make-directory"),
-                ev.primitive_error_counter_ptr());
+            return ev.make_refusal_error(aura::compiler::security::format_deny_reason(
+                kEffectWrite, ev.capability_tenant_id(), "make-directory"));
         }
         if (auto denied = file_deny_io(ev, aura::compiler::security::kCapIoWrite,
                                        "capability denied: io-write required");
@@ -632,10 +623,8 @@ void RegSplitParts::register_exec_primitives(PrimRegistrar add, Evaluator& ev) {
         // stays contract; effect choke only when sandbox on / production face.
         using aura::compiler::security::kEffectExec;
         if (!ev.require_effect(kEffectExec, "shell")) {
-            return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                        aura::compiler::security::format_deny_reason(
-                                            kEffectExec, ev.capability_tenant_id(), "shell"),
-                                        ev.primitive_error_counter_ptr());
+            return ev.make_refusal_error(aura::compiler::security::format_deny_reason(
+                kEffectExec, ev.capability_tenant_id(), "shell"));
         }
         if (auto denied = file_deny_exec(ev, "capability denied: exec required"); is_error(denied))
             return denied;
@@ -713,11 +702,8 @@ void RegSplitParts::register_exec_primitives(PrimRegistrar add, Evaluator& ev) {
         // close as shell (string-cap alone skipped isolation / live mid).
         using aura::compiler::security::kEffectExec;
         if (!ev.require_effect(kEffectExec, "command-output")) {
-            return make_primitive_error(
-                ev.string_heap_, ev.error_values_,
-                aura::compiler::security::format_deny_reason(kEffectExec, ev.capability_tenant_id(),
-                                                             "command-output"),
-                ev.primitive_error_counter_ptr());
+            return ev.make_refusal_error(aura::compiler::security::format_deny_reason(
+                kEffectExec, ev.capability_tenant_id(), "command-output"));
         }
         if (auto denied = file_deny_exec(ev, "capability denied: exec required"); is_error(denied))
             return denied;

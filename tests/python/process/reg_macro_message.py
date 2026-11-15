@@ -48,7 +48,9 @@ class TestMacroDenyMessage4876(unittest.TestCase):
 
     def test_direct_run_does_not_cascade(self):
         p = _run(None, load=False)
-        self.assertEqual(p.returncode, 1, p.stderr)
+        # #5241: a capability refusal is structurally EffectDenied, so the
+        # #5240 exit table (effect belongs to the static bucket) gives 4.
+        self.assertEqual(p.returncode, 4, p.stderr)
         self.assertIn("effect-denied: macro-self-evo not granted", p.stderr)
         self.assertNotIn("unbound variable", p.stderr)
 

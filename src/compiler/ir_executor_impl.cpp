@@ -787,10 +787,11 @@ std::optional<Diagnostic> IRInterpreter::effect_deny_diagnostic_4896_(const Eval
         return std::nullopt;
     if (context_.evaluator->effect_sandbox_mode() == 0)
         return std::nullopt;
-    auto msg = context_.evaluator->soft_error_message(v);
-    if (!msg.starts_with("effect-denied:"))
+    // Issue #5241: the refusal kind is carried by the error value; the
+    // message text is not the classifier.
+    if (context_.evaluator->error_value_kind(v) != ErrorKind::EffectDenied)
         return std::nullopt;
-    Diagnostic d{ErrorKind::TypeError, std::move(msg)};
+    Diagnostic d{ErrorKind::EffectDenied, context_.evaluator->soft_error_message(v)};
     // Issue #4909: every refusal is located (the producer's location
     // when one was recorded; the calling sites add the instruction's).
     if (auto el = context_.evaluator->error_location(v))

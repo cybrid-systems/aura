@@ -11264,14 +11264,12 @@ public:
                             // error value below; callers can catch it.
                         }
                     }
-                    return primitives_detail::make_primitive_error(
-                        string_heap_, error_values_,
+                    return make_mutation_refused_error(
                         std::string("naked mutate: ") + std::string(name) +
-                            " requires MutationBoundaryGuard" +
-                            (heap_guard_reject_reason_.empty()
-                                 ? std::string()
-                                 : " (" + heap_guard_reject_reason_ + ")"),
-                        primitive_error_counter_ptr());
+                        " requires MutationBoundaryGuard" +
+                        (heap_guard_reject_reason_.empty()
+                             ? std::string()
+                             : " (" + heap_guard_reject_reason_ + ")"));
                 }
             }
             // Issue #1676: render-critical / rendering+hot fast path —
@@ -11304,10 +11302,8 @@ public:
                                 m->dispatch_effect_auto_deny_total.fetch_add(
                                     1, std::memory_order_relaxed);
                             }
-                            return primitives_detail::make_primitive_error(
-                                string_heap_, error_values_,
-                                security::format_deny_reason(req, capability_tenant_id_, name),
-                                primitive_error_counter_ptr());
+                            return make_refusal_error(
+                                security::format_deny_reason(req, capability_tenant_id_, name));
                         }
                     }
                 }
@@ -11333,10 +11329,8 @@ public:
                     m->capability_compile_denials.fetch_add(1, std::memory_order_relaxed);
                     m->cap_denial_total.fetch_add(1, std::memory_order_relaxed);
                 }
-                return primitives_detail::make_primitive_error(
-                    string_heap_, error_values_,
-                    "capability denied: privileged primitive requires kCapWildcard",
-                    primitive_error_counter_ptr());
+                return make_refusal_error(
+                    "capability denied: privileged primitive requires kCapWildcard");
             }
             // Issue #3235: heap mutators are Guard-gated (language
             // vector-set! / hash-set! / set-car!). Skip kCapSandbox so
@@ -11354,10 +11348,8 @@ public:
                 if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
                     m->cap_denial_total.fetch_add(1, std::memory_order_relaxed);
                 }
-                return primitives_detail::make_primitive_error(
-                    string_heap_, error_values_,
-                    "capability denied: sandboxed primitive requires kCapSandbox",
-                    primitive_error_counter_ptr());
+                return make_refusal_error(
+                    "capability denied: sandboxed primitive requires kCapSandbox");
             }
             // Issue #2057 / #2152 / #2583: non-bypassable required_effects at dispatch.
             // Uses explicit PrimMeta bits, or name-inferred bits when unset
@@ -11390,10 +11382,8 @@ public:
                             m->dispatch_effect_auto_deny_total.fetch_add(1,
                                                                          std::memory_order_relaxed);
                         }
-                        return primitives_detail::make_primitive_error(
-                            string_heap_, error_values_,
-                            security::format_deny_reason(req, capability_tenant_id_, name),
-                            primitive_error_counter_ptr());
+                        return make_refusal_error(
+                            security::format_deny_reason(req, capability_tenant_id_, name));
                     }
                 }
             }
@@ -18334,6 +18324,10 @@ public:
     static constexpr std::uint8_t kErrorMarkIo = 2;
     // #5241 batch 1: division by zero is its own kind, not TypeError.
     static constexpr std::uint8_t kErrorMarkDivZero = 3;
+    // #5241 batch 2: refusals carry their kind from creation; no caller
+    // recovers it from the message prefix.
+    static constexpr std::uint8_t kErrorMarkEffectDenied = 4;
+    static constexpr std::uint8_t kErrorMarkMutationRefused = 5;
     void mark_error_kind(types::EvalValue err, std::uint8_t mark) {
         if (!types::is_error(err) || types::is_string(err))
             return;
@@ -18352,6 +18346,25 @@ public:
     }
     void mark_user_error(types::EvalValue err) { mark_error_kind(err, kErrorMarkUser); }
     void mark_division_by_zero(types::EvalValue err) { mark_error_kind(err, kErrorMarkDivZero); }
+    void mark_effect_denied(types::EvalValue err) { mark_error_kind(err, kErrorMarkEffectDenied); }
+    void mark_mutation_refused(types::EvalValue err) {
+        mark_error_kind(err, kErrorMarkMutationRefused);
+    }
+    // Issue #5241: build a refusal error value that already carries its
+    // kind. Callers pass the Agent-readable reason; the kind never has to
+    // be re-derived from that text.
+    [[nodiscard]] types::EvalValue make_refusal_error(std::string msg) {
+        auto err = primitives_detail::make_primitive_error(
+            string_heap_, error_values_, std::move(msg), primitive_error_counter_ptr());
+        mark_effect_denied(err);
+        return err;
+    }
+    [[nodiscard]] types::EvalValue make_mutation_refused_error(std::string msg) {
+        auto err = primitives_detail::make_primitive_error(
+            string_heap_, error_values_, std::move(msg), primitive_error_counter_ptr());
+        mark_mutation_refused(err);
+        return err;
+    }
     [[nodiscard]] std::uint8_t error_mark(types::EvalValue err) const {
         if (!types::is_error(err) || types::is_string(err))
             return 0;
@@ -18369,8 +18382,14 @@ public:
                 return aura::diag::ErrorKind::IoError;
             case kErrorMarkDivZero:
                 return aura::diag::ErrorKind::DivisionByZero;
+            case kErrorMarkEffectDenied:
+                return aura::diag::ErrorKind::EffectDenied;
+            case kErrorMarkMutationRefused:
+                return aura::diag::ErrorKind::MutationRefused;
             default:
-                return aura::diag::ErrorKind::TypeError; // display_kind() maps refusals
+                // A primitive that is a genuine type mismatch (car on a
+                // non-pair, ...) keeps the default; refusals mark above.
+                return aura::diag::ErrorKind::TypeError;
         }
     }
     // Issue #4273: Soft serve must not report status=ok with value <error>
