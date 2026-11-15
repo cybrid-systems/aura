@@ -22,8 +22,10 @@
 #ifndef AURA_CORE_RUNTIME_CONFIG_HH
 #define AURA_CORE_RUNTIME_CONFIG_HH
 
+#include <array>
 #include <atomic>
 #include <cstddef>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <memory>
@@ -44,7 +46,7 @@ enum class Kind : unsigned char {
     Duration // milliseconds unless the name says otherwise
 };
 
-enum class Key : unsigned short {
+enum class Key : std::uint8_t {
 #define AURA_CONFIG_ENTRY(key, name, kind, dflt, doc) key,
 #include "runtime_config_table.inc"
 #undef AURA_CONFIG_ENTRY
@@ -58,24 +60,25 @@ struct Entry {
     const char* doc;
 };
 
-inline constexpr Entry kEntries[] = {
+inline constexpr auto kEntries = std::to_array<Entry>({
 #define AURA_CONFIG_ENTRY(key, name, kind, dflt, doc) {Key::key, name, Kind::kind, dflt, doc},
 #include "runtime_config_table.inc"
 #undef AURA_CONFIG_ENTRY
-};
+});
 
-inline constexpr std::size_t kEntryCount = sizeof(kEntries) / sizeof(kEntries[0]);
+inline constexpr std::size_t kEntryCount = kEntries.size();
 
 struct Slot {
     std::string text; // empty when unset
-    bool set = false;
     long long integer = 0;
     double real = 0.0;
+    bool set = false;
     bool flag = false;
+    char explicit_padding[6] = {};
 };
 
 struct Snapshot {
-    Slot slots[kEntryCount];
+    std::array<Slot, kEntryCount> slots;
 };
 
 namespace detail {
@@ -86,14 +89,15 @@ namespace detail {
     }
 
     inline std::mutex& build_mutex() noexcept {
-        static std::mutex m;
-        return m;
+        static std::mutex build_lock;
+        return build_lock;
     }
 
     // Kept alive so a pointer returned by raw() stays valid for a while even if
     // another thread reloads immediately afterwards.
-    inline std::shared_ptr<const Snapshot>* retired() noexcept {
-        static std::shared_ptr<const Snapshot> ring[4];
+    inline std::array<std::shared_ptr<const Snapshot>, 4>& retired() noexcept {
+        // NOLINTNEXTLINE(misc-const-correctness): reload() rotates this ring.
+        static std::array<std::shared_ptr<const Snapshot>, 4> ring;
         return ring;
     }
 
@@ -102,35 +106,35 @@ namespace detail {
         return next;
     }
 
-    inline std::string& override_slot(Key k) noexcept {
-        static std::string overrides[kEntryCount];
-        return overrides[static_cast<std::size_t>(k)];
+    inline std::string& override_slot(Key key) noexcept {
+        static std::array<std::string, kEntryCount> overrides;
+        return overrides.at(static_cast<std::size_t>(key));
     }
 
-    inline bool& override_set(Key k) noexcept {
-        static bool flags[kEntryCount] = {};
-        return flags[static_cast<std::size_t>(k)];
+    inline bool& override_set(Key key) noexcept {
+        static std::array<bool, kEntryCount> flags{};
+        return flags.at(static_cast<std::size_t>(key));
     }
 
-    inline void parse_into(Slot& s, const char* v) noexcept {
-        s.set = v != nullptr;
-        s.text = v ? v : "";
-        s.integer = v ? std::strtoll(v, nullptr, 10) : 0;
-        s.real = v ? std::strtod(v, nullptr) : 0.0;
+    inline void parse_into(Slot& slot, const char* value) noexcept {
+        slot.set = value != nullptr;
+        slot.text = value != nullptr ? value : "";
+        slot.integer = value != nullptr ? std::strtoll(value, nullptr, 10) : 0;
+        slot.real = value != nullptr ? std::strtod(value, nullptr) : 0.0;
         // Canonical on/off reading: set, non-empty, and not "0".
-        s.flag = v != nullptr && v[0] != '\0' && v[0] != '0';
+        slot.flag = value != nullptr && *value != '\0' && *value != '0';
     }
 
     inline std::shared_ptr<const Snapshot> build() {
         auto snap = std::make_shared<Snapshot>();
         for (std::size_t i = 0; i < kEntryCount; ++i) {
-            const Key k = kEntries[i].key;
-            const char* v = nullptr;
-            if (override_set(k))
-                v = override_slot(k).c_str();
+            const Key key = kEntries.at(i).key;
+            const char* value = nullptr;
+            if (override_set(key))
+                value = override_slot(key).c_str();
             else
-                v = std::getenv(kEntries[i].name);
-            parse_into(snap->slots[i], v);
+                value = std::getenv(kEntries.at(i).name);
+            parse_into(snap->slots.at(i), value);
         }
         return snap;
     }
@@ -139,7 +143,7 @@ namespace detail {
         auto snap = published().load(std::memory_order_acquire);
         if (snap)
             return snap;
-        std::lock_guard<std::mutex> lock(build_mutex());
+        std::lock_guard<std::mutex> const lock(build_mutex());
         snap = published().load(std::memory_order_acquire);
         if (!snap) {
             snap = build();
@@ -148,11 +152,11 @@ namespace detail {
         return snap;
     }
 
-    inline const Slot& slot(Key k) {
+    inline const Slot& slot(Key key) {
         // Keep the snapshot alive across the caller's use of the returned pointer.
         thread_local std::shared_ptr<const Snapshot> held;
         held = current();
-        return held->slots[static_cast<std::size_t>(k)];
+        return held->slots.at(static_cast<std::size_t>(key));
     }
 
 } // namespace detail
@@ -167,74 +171,74 @@ inline void initialize() {
 // Re-reads the environment into a fresh snapshot; the explicit reload point
 // after a deliberate environment change (test fixtures, wrapper setup).
 inline void reload() {
-    std::lock_guard<std::mutex> lock(detail::build_mutex());
-    auto next = detail::build();
+    std::lock_guard<std::mutex> const lock(detail::build_mutex());
+    auto const next = detail::build();
     auto prev = detail::published().load(std::memory_order_acquire);
     if (prev) {
-        auto* ring = detail::retired();
+        auto& ring = detail::retired();
         auto& idx = detail::retired_next();
-        ring[idx % 4] = prev;
+        ring.at(idx % 4) = std::move(prev);
         ++idx;
     }
     detail::published().store(next, std::memory_order_release);
 }
 
-inline const Entry& entry(Key k) noexcept {
-    return kEntries[static_cast<std::size_t>(k)];
+inline const Entry& entry(Key key) noexcept {
+    return kEntries.at(static_cast<std::size_t>(key));
 }
 
 inline std::span<const Entry> entries() noexcept {
-    return kEntries;
+    return std::span<const Entry, kEntryCount>(kEntries);
 }
 
 // Raw value as getenv would return it: nullptr when unset, exact text
 // otherwise. Existing comparisons against "off"/"hard"/"1" keep working.
-inline const char* raw(Key k) {
-    const Slot& s = detail::slot(k);
-    return s.set ? s.text.c_str() : nullptr;
+inline const char* raw(Key key) {
+    const Slot& slot_value = detail::slot(key);
+    return slot_value.set ? slot_value.text.c_str() : nullptr;
 }
 
-inline bool is_set(Key k) {
-    return detail::slot(k).set;
+inline bool is_set(Key key) {
+    return detail::slot(key).set;
 }
 
 // True when set, non-empty and not starting with '0'.
-inline bool flag(Key k) {
-    return detail::slot(k).flag;
+inline bool flag(Key key) {
+    return detail::slot(key).flag;
 }
 
-inline long long integer(Key k) {
-    return detail::slot(k).integer;
+inline long long integer(Key key) {
+    return detail::slot(key).integer;
 }
 
-inline std::size_t size(Key k) {
-    const long long v = detail::slot(k).integer;
-    return v > 0 ? static_cast<std::size_t>(v) : 0;
+inline std::size_t size(Key key) {
+    const long long value = detail::slot(key).integer;
+    return value > 0 ? static_cast<std::size_t>(value) : 0;
 }
 
-inline double real(Key k) {
-    return detail::slot(k).real;
+inline double real(Key key) {
+    return detail::slot(key).real;
 }
 
-inline std::string_view text(Key k) {
-    return detail::slot(k).text;
+inline std::string_view text(Key key) {
+    return detail::slot(key).text;
 }
 
 // Controlled override for embedders/tests that cannot touch the environment.
-inline void set_override(Key k, std::string_view value) {
+inline void set_override(Key key, std::string_view value) {
     {
-        std::lock_guard<std::mutex> lock(detail::build_mutex());
-        detail::override_slot(k).assign(value.begin(), value.end());
-        detail::override_set(k) = true;
+        std::lock_guard<std::mutex> const lock(detail::build_mutex());
+        detail::override_slot(key).assign(value.begin(), value.end());
+        detail::override_set(key) = true;
     }
     reload();
 }
 
-inline void clear_override(Key k) {
+inline void clear_override(Key key) {
     {
-        std::lock_guard<std::mutex> lock(detail::build_mutex());
-        detail::override_slot(k).clear();
-        detail::override_set(k) = false;
+        std::lock_guard<std::mutex> const lock(detail::build_mutex());
+        detail::override_slot(key).clear();
+        detail::override_set(key) = false;
     }
     reload();
 }
@@ -242,25 +246,25 @@ inline void clear_override(Key k) {
 // Test fixtures: set/unset the variable and refresh the same snapshot, so a
 // test that flips AURA_SANDBOX per case keeps the single parse path.
 inline int test_setenv(const char* name, const char* value, int overwrite) {
-    const int rc =
+    const int result_code =
 #if defined(_WIN32)
-        _putenv_s(name, value ? value : "");
+        _putenv_s(name, value != nullptr ? value : "");
 #else
-        ::setenv(name, value ? value : "", overwrite);
+        ::setenv(name, value != nullptr ? value : "", overwrite);
 #endif
     reload();
-    return rc;
+    return result_code;
 }
 
 inline int test_unsetenv(const char* name) {
-    const int rc =
+    const int result_code =
 #if defined(_WIN32)
         _putenv_s(name, "");
 #else
         ::unsetenv(name);
 #endif
     reload();
-    return rc;
+    return result_code;
 }
 
 } // namespace aura::config
