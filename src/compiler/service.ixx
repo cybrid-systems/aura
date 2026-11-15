@@ -4589,8 +4589,13 @@ public:
         cf.set_pipeline_epoch(pipeline_epoch);
         dce.set_pipeline_epoch(pipeline_epoch);
 
-        std::println(std::cerr, "PM: running {}->{}->{}->{}->{}->{}", ts.name(), tprop.name(),
-                     ck.name(), ar.name(), cf.name(), dce.name());
+        // Issue #5235: diagnostic output is the user's; the pass-pipeline
+        // trace stays behind an explicit debug switch.
+        if (const char* trace = std::getenv("AURA_IR_PIPELINE_TRACE");
+            trace != nullptr && *trace != '\0' && std::string_view(trace) != "0") {
+            std::println(std::cerr, "PM: running {}->{}->{}->{}->{}->{}", ts.name(), tprop.name(),
+                         ck.name(), ar.name(), cf.name(), dce.name());
+        }
 
         // Issue #163: use run_pipeline (Pass concept fold) instead of
         // individual *.run() calls. Short-circuits on has_error().
