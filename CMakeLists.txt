@@ -144,6 +144,7 @@ set(AURA_SERVICE_SOURCE_FILES
     src/compiler/service_cache_define.cpp
     src/compiler/service_dispatch_define.cpp
     src/compiler/service_module_io.cpp
+    src/compiler/service_fallback_decide.cpp
     src/compiler/service_dirty.cpp
     src/compiler/service_eval.cpp
     src/compiler/service_eval_ir.cpp
