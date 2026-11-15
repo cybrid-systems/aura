@@ -3874,10 +3874,12 @@ static std::optional<std::vector<std::string>> split_oneshot_forms(const std::st
                         ++col;
                     }
                 }
-                std::println(std::cerr,
-                             "error: {}:{}: parse error: unterminated block comment '#|'", line,
-                             col);
-                return std::nullopt;
+                // #5239: do not print a second parser here. Hand the whole
+                // source to the parser, whose Diagnostic names the file,
+                // snippet and the real cause.
+                (void)line;
+                (void)col;
+                return std::vector<std::string>{all_input};
             }
             if (depth > 0)
                 current.append(all_input, i, j - i);
@@ -3955,8 +3957,11 @@ static std::optional<std::vector<std::string>> split_oneshot_forms(const std::st
                     ++col;
                 }
             }
-            std::println(std::cerr, "error: {}:{}: parse error: unexpected '{}'", line, col, c);
-            return std::nullopt;
+            // #5239: parser is the single source of parse diagnostics.
+            (void)line;
+            (void)col;
+            (void)c;
+            return std::vector<std::string>{all_input};
         }
         if ((c == ')' || c == ']') && depth > 0) {
             current += c;
@@ -4006,17 +4011,11 @@ static std::optional<std::vector<std::string>> split_oneshot_forms(const std::st
                 else {
                     site = line_col_at(all_input.size());
                 }
-                std::println(std::cerr,
-                             "error: {}:{}: parse error: unclosed list: missing ')' before end "
-                             "of file; unclosed list opened at line {}, column {}",
-                             site.line, site.col, site.line, site.col);
-                if (site.semi) {
-                    std::println(std::cerr,
-                                 "hint: '(' before ';' opened a real list and the rest of the "
-                                 "line was commented out; a file-header comment should be ';' "
-                                 "without the leading '('");
-                }
-                return std::nullopt;
+                // #5239: the parser owns this diagnostic (it knows whether the
+                // real cause is an unclosed list or an unterminated string,
+                // and it carries the file/snippet).
+                (void)site;
+                return std::vector<std::string>{all_input};
             }
         }
     }

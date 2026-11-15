@@ -482,6 +482,14 @@ NodeId parse_expr(ParserState& s) {
                 s.deferred_line = tok.line;
                 s.deferred_column = tok.column;
             }
+            // #5239: a lexer error token must never be dropped silently. Its
+            // text is already the user-facing reason (e.g. an unterminated
+            // string) and the token carries the start position.
+            if (s.deferred_error.empty() && !tok.text.empty()) {
+                s.deferred_error = std::string(tok.text);
+                s.deferred_line = tok.line;
+                s.deferred_column = tok.column;
+            }
             return NULL_NODE;
         default:
             return NULL_NODE;
