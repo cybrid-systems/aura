@@ -339,33 +339,10 @@ void ObservabilityPrims::register_jit_p1(PrimRegistrar add, Evaluator& ev) {
                     : std::max<std::int64_t>(
                           0, 100 - static_cast<std::int64_t>((unhandled + fallback) * 100 /
                                                              std::max<std::uint64_t>(1, compiles)));
-            auto* ht = FlatHashTable::create(query_hash_capacity_for(22));
-            if (!ht)
+            primitives_detail::StatsKvTable insert_kv(
+                ev, ev.string_heap_, FlatHashTable::create(query_hash_capacity_for(22)));
+            if (!insert_kv.ok())
                 return make_void();
-            bool overflowed = false;
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            auto insert_kv = [&](const char* k_str, std::int64_t v) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (const char* p = k_str; *p; ++p)
-                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                const auto fp = ::aura::compiler::hash::fingerprint(h);
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
-                        meta[idx] = fp;
-                        auto kidx = ev.string_heap_.mint(k_str);
-                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
-                        ht->size++;
-                        return;
-                    }
-                }
-
-                overflowed = true;
-            };
             insert_kv("compiles", static_cast<std::int64_t>(compiles));
             insert_kv("hot-swaps", static_cast<std::int64_t>(hot_swaps));
             insert_kv("cached-fns", static_cast<std::int64_t>(cached_fns));
@@ -380,7 +357,7 @@ void ObservabilityPrims::register_jit_p1(PrimRegistrar add, Evaluator& ev) {
             insert_kv("hotswap-invalidate-total", static_cast<std::int64_t>(hotswap_invalidate));
             insert_kv("epoch-mismatch-hits", static_cast<std::int64_t>(epoch_mismatch));
             insert_kv("mutation-epoch", static_cast<std::int64_t>(mutation_epoch));
-            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
+            return insert_kv.finish();
         });
 }
 
@@ -485,33 +462,10 @@ void ObservabilityPrims::register_jit_p3(PrimRegistrar add, Evaluator& ev) {
             const std::uint64_t bottleneck_total = eval_flat + lowering + soa_dual + dirty_up +
                                                    dirty_early + passes_skip + shape_dispatch +
                                                    value_dispatch + arena_triggers;
-            auto* ht = FlatHashTable::create(query_hash_capacity_for(22));
-            if (!ht)
+            primitives_detail::StatsKvTable insert_kv(
+                ev, ev.string_heap_, FlatHashTable::create(query_hash_capacity_for(22)));
+            if (!insert_kv.ok())
                 return make_void();
-            bool overflowed = false;
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            auto insert_kv = [&](const char* k_str, std::int64_t v) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (const char* p = k_str; *p; ++p)
-                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                const auto fp = ::aura::compiler::hash::fingerprint(h);
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
-                        meta[idx] = fp;
-                        auto kidx = ev.string_heap_.mint(k_str);
-                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
-                        ht->size++;
-                        return;
-                    }
-                }
-
-                overflowed = true;
-            };
             insert_kv("eval-flat-calls", static_cast<std::int64_t>(eval_flat));
             insert_kv("lowering-calls", static_cast<std::int64_t>(lowering));
             insert_kv("soa-dual-emit-hits", static_cast<std::int64_t>(soa_dual));
@@ -526,7 +480,7 @@ void ObservabilityPrims::register_jit_p3(PrimRegistrar add, Evaluator& ev) {
             insert_kv("value-dispatch-hits", static_cast<std::int64_t>(value_dispatch));
             insert_kv("arena-alloc-triggers", static_cast<std::int64_t>(arena_triggers));
             insert_kv("bottleneck-total", static_cast<std::int64_t>(bottleneck_total));
-            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
+            return insert_kv.finish();
         });
 }
 
@@ -621,39 +575,8 @@ void ObservabilityPrims::register_jit_p5(PrimRegistrar add, Evaluator& ev) {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
                 // #2824: schema keys; keep load factor comfortable.
-                auto* ht = FlatHashTable::create(query_hash_capacity_for(39));
-                if (!ht)
-                    return make_void();
-                bool overflowed = false;
-                auto meta = ht->metadata();
-                auto keys = ht->keys();
-                auto vals = ht->values();
-                auto hcap = ht->capacity;
-                for (auto& [k, v] : kv) {
-                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                    for (char c : k)
-                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                    const auto fp = ::aura::compiler::hash::fingerprint(h);
-                    auto kidx = ev.string_heap_.mint(k);
-                    EvalValue key_ev = make_string(kidx);
-                    bool inserted = false;
-                    for (std::size_t at = 0; at < hcap; ++at) {
-                        auto idx = ((h >> 1) + at) & (hcap - 1);
-                        if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
-                            meta[idx] = fp;
-                            keys[idx] = key_ev.val;
-                            vals[idx] = v.val;
-                            ht->size++;
-                            inserted = true;
-                            break;
-                        }
-                    }
-                    if (!inserted) {
-                        overflowed = true;
-                        break;
-                    }
-                }
-                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
+                return primitives_detail::stats_hash_from_pairs(ev, ev.string_heap_,
+                                                                query_hash_capacity_for(39), kv);
             };
             const auto* m =
                 static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
@@ -1301,39 +1224,8 @@ void register_jit_p6_soa_dirty_stats(Evaluator& ev) {
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
                 // #2031 + #2109 + #2850/#2893/#2950 pure-anon / residual keys:
                 // capacity must leave open-addressing headroom for ~190 kvs.
-                auto* ht = FlatHashTable::create(query_hash_capacity_for(108));
-                if (!ht)
-                    return make_void();
-                bool overflowed = false;
-                auto meta = ht->metadata();
-                auto keys = ht->keys();
-                auto vals = ht->values();
-                auto hcap = ht->capacity;
-                for (auto& [k, v] : kv) {
-                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                    for (char c : k)
-                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                    const auto fp = ::aura::compiler::hash::fingerprint(h);
-                    auto kidx = ev.string_heap_mut().mint(k);
-                    EvalValue key_ev = make_string(kidx);
-                    bool inserted = false;
-                    for (std::size_t at = 0; at < hcap; ++at) {
-                        auto idx = ((h >> 1) + at) & (hcap - 1);
-                        if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
-                            meta[idx] = fp;
-                            keys[idx] = key_ev.val;
-                            vals[idx] = v.val;
-                            ht->size++;
-                            inserted = true;
-                            break;
-                        }
-                    }
-                    if (!inserted) {
-                        overflowed = true;
-                        break;
-                    }
-                }
-                return query_hash_finish(ht, ev.string_heap_mut(), overflowed, ev);
+                return primitives_detail::stats_hash_from_pairs(ev, ev.string_heap_mut(),
+                                                                query_hash_capacity_for(108), kv);
             };
             Evaluator::SoaDirtyStats s;
             if (ev.get_soa_dirty_stats_fn_) {
@@ -1397,39 +1289,8 @@ void ObservabilityPrims::register_jit_p7(PrimRegistrar add, Evaluator& ev) {
             // closure:stats / soa-dirty-stats primitives.
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(query_hash_capacity_for(18));
-                if (!ht)
-                    return make_void();
-                bool overflowed = false;
-                auto meta = ht->metadata();
-                auto keys = ht->keys();
-                auto vals = ht->values();
-                auto hcap = ht->capacity;
-                for (auto& [k, v] : kv) {
-                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                    for (char c : k)
-                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                    const auto fp = ::aura::compiler::hash::fingerprint(h);
-                    auto kidx = ev.string_heap_.mint(k);
-                    EvalValue key_ev = make_string(kidx);
-                    bool inserted = false;
-                    for (std::size_t at = 0; at < hcap; ++at) {
-                        auto idx = ((h >> 1) + at) & (hcap - 1);
-                        if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
-                            meta[idx] = fp;
-                            keys[idx] = key_ev.val;
-                            vals[idx] = v.val;
-                            ht->size++;
-                            inserted = true;
-                            break;
-                        }
-                    }
-                    if (!inserted) {
-                        overflowed = true;
-                        break;
-                    }
-                }
-                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
+                return primitives_detail::stats_hash_from_pairs(ev, ev.string_heap_,
+                                                                query_hash_capacity_for(18), kv);
             };
             std::uint64_t triggers = 0, skips = 0, compacts = 0, saved = 0;
             std::uint64_t paused = 0, mutations = 0, dirty = 0;
@@ -1564,39 +1425,8 @@ void ObservabilityPrims::register_jit_p8(PrimRegistrar add, Evaluator& ev) {
             // closure:stats / soa-dirty-stats primitives.
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(query_hash_capacity_for(16));
-                if (!ht)
-                    return make_void();
-                bool overflowed = false;
-                auto meta = ht->metadata();
-                auto keys = ht->keys();
-                auto vals = ht->values();
-                auto hcap = ht->capacity;
-                for (auto& [k, v] : kv) {
-                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                    for (char c : k)
-                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                    const auto fp = ::aura::compiler::hash::fingerprint(h);
-                    auto kidx = ev.string_heap_.mint(k);
-                    EvalValue key_ev = make_string(kidx);
-                    bool inserted = false;
-                    for (std::size_t at = 0; at < hcap; ++at) {
-                        auto idx = ((h >> 1) + at) & (hcap - 1);
-                        if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
-                            meta[idx] = fp;
-                            keys[idx] = key_ev.val;
-                            vals[idx] = v.val;
-                            ht->size++;
-                            inserted = true;
-                            break;
-                        }
-                    }
-                    if (!inserted) {
-                        overflowed = true;
-                        break;
-                    }
-                }
-                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
+                return primitives_detail::stats_hash_from_pairs(ev, ev.string_heap_,
+                                                                query_hash_capacity_for(16), kv);
             };
             // Issue #1519: prefer baked constants from cpp26_contract_stats
             // so Agents see live consteval/Contract density without
@@ -1644,39 +1474,8 @@ void ObservabilityPrims::register_jit_p9(PrimRegistrar add, Evaluator& ev) {
         "query:edsl-readiness", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(query_hash_capacity_for(14));
-                if (!ht)
-                    return make_void();
-                bool overflowed = false;
-                auto meta = ht->metadata();
-                auto keys = ht->keys();
-                auto vals = ht->values();
-                auto hcap = ht->capacity;
-                for (auto& [k, v] : kv) {
-                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                    for (char c : k)
-                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                    const auto fp = ::aura::compiler::hash::fingerprint(h);
-                    auto kidx = ev.string_heap_.mint(k);
-                    EvalValue key_ev = make_string(kidx);
-                    bool inserted = false;
-                    for (std::size_t at = 0; at < hcap; ++at) {
-                        auto idx = ((h >> 1) + at) & (hcap - 1);
-                        if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
-                            meta[idx] = fp;
-                            keys[idx] = key_ev.val;
-                            vals[idx] = v.val;
-                            ht->size++;
-                            inserted = true;
-                            break;
-                        }
-                    }
-                    if (!inserted) {
-                        overflowed = true;
-                        break;
-                    }
-                }
-                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
+                return primitives_detail::stats_hash_from_pairs(ev, ev.string_heap_,
+                                                                query_hash_capacity_for(14), kv);
             };
             std::uint64_t closure_stale = 0, linear_pass = 0;
             std::uint64_t atomic_commits = 0;
@@ -2660,39 +2459,8 @@ void ObservabilityPrims::register_jit_p11(PrimRegistrar add, Evaluator& ev) {
         "query:unified-error-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(query_hash_capacity_for(12));
-                if (!ht)
-                    return make_void();
-                bool overflowed = false;
-                auto meta = ht->metadata();
-                auto keys = ht->keys();
-                auto vals = ht->values();
-                auto hcap = ht->capacity;
-                for (auto& [k, v] : kv) {
-                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                    for (char c : k)
-                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                    const auto fp = ::aura::compiler::hash::fingerprint(h);
-                    auto kidx = ev.string_heap_.mint(k);
-                    EvalValue key_ev = make_string(kidx);
-                    bool inserted = false;
-                    for (std::size_t at = 0; at < hcap; ++at) {
-                        auto slot = ((h >> 1) + at) & (hcap - 1);
-                        if (meta[slot] == ::aura::compiler::hash::kEmptySlot) {
-                            meta[slot] = fp;
-                            keys[slot] = key_ev.val;
-                            vals[slot] = v.val;
-                            ht->size++;
-                            inserted = true;
-                            break;
-                        }
-                    }
-                    if (!inserted) {
-                        overflowed = true;
-                        break;
-                    }
-                }
-                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
+                return primitives_detail::stats_hash_from_pairs(ev, ev.string_heap_,
+                                                                query_hash_capacity_for(12), kv);
             };
             CompilerMetrics* m = ev.compiler_metrics()
                                      ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
@@ -2777,39 +2545,8 @@ void ObservabilityPrims::register_jit_p12(PrimRegistrar add, Evaluator& ev) {
         "query:arena-concurrent-compact-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(query_hash_capacity_for(13));
-                if (!ht)
-                    return make_void();
-                bool overflowed = false;
-                auto meta = ht->metadata();
-                auto keys = ht->keys();
-                auto vals = ht->values();
-                auto hcap = ht->capacity;
-                for (auto& [k, v] : kv) {
-                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                    for (char c : k)
-                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                    const auto fp = ::aura::compiler::hash::fingerprint(h);
-                    auto kidx = ev.string_heap_.mint(k);
-                    EvalValue key_ev = make_string(kidx);
-                    bool inserted = false;
-                    for (std::size_t at = 0; at < hcap; ++at) {
-                        auto slot = ((h >> 1) + at) & (hcap - 1);
-                        if (meta[slot] == ::aura::compiler::hash::kEmptySlot) {
-                            meta[slot] = fp;
-                            keys[slot] = key_ev.val;
-                            vals[slot] = v.val;
-                            ht->size++;
-                            inserted = true;
-                            break;
-                        }
-                    }
-                    if (!inserted) {
-                        overflowed = true;
-                        break;
-                    }
-                }
-                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
+                return primitives_detail::stats_hash_from_pairs(ev, ev.string_heap_,
+                                                                query_hash_capacity_for(13), kv);
             };
             CompilerMetrics* m = ev.compiler_metrics()
                                      ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
@@ -2910,39 +2647,8 @@ void ObservabilityPrims::register_jit_p13(PrimRegistrar add, Evaluator& ev) {
         "query:aot-safe-swap-boundary-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(query_hash_capacity_for(14));
-                if (!ht)
-                    return make_void();
-                bool overflowed = false;
-                auto meta = ht->metadata();
-                auto keys = ht->keys();
-                auto vals = ht->values();
-                auto hcap = ht->capacity;
-                for (auto& [k, v] : kv) {
-                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                    for (char c : k)
-                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                    const auto fp = ::aura::compiler::hash::fingerprint(h);
-                    auto kidx = ev.string_heap_.mint(k);
-                    EvalValue key_ev = make_string(kidx);
-                    bool inserted = false;
-                    for (std::size_t at = 0; at < hcap; ++at) {
-                        auto slot = ((h >> 1) + at) & (hcap - 1);
-                        if (meta[slot] == ::aura::compiler::hash::kEmptySlot) {
-                            meta[slot] = fp;
-                            keys[slot] = key_ev.val;
-                            vals[slot] = v.val;
-                            ht->size++;
-                            inserted = true;
-                            break;
-                        }
-                    }
-                    if (!inserted) {
-                        overflowed = true;
-                        break;
-                    }
-                }
-                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
+                return primitives_detail::stats_hash_from_pairs(ev, ev.string_heap_,
+                                                                query_hash_capacity_for(14), kv);
             };
             CompilerMetrics* m = ev.compiler_metrics()
                                      ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
@@ -3058,39 +2764,8 @@ void ObservabilityPrims::register_jit_p14(PrimRegistrar add, Evaluator& ev) {
         "query:ir-marker-hygiene-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(query_hash_capacity_for(14));
-                if (!ht)
-                    return make_void();
-                bool overflowed = false;
-                auto meta = ht->metadata();
-                auto keys = ht->keys();
-                auto vals = ht->values();
-                auto hcap = ht->capacity;
-                for (auto& [k, v] : kv) {
-                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                    for (char c : k)
-                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                    const auto fp = ::aura::compiler::hash::fingerprint(h);
-                    auto kidx = ev.string_heap_.mint(k);
-                    EvalValue key_ev = make_string(kidx);
-                    bool inserted = false;
-                    for (std::size_t at = 0; at < hcap; ++at) {
-                        auto slot = ((h >> 1) + at) & (hcap - 1);
-                        if (meta[slot] == ::aura::compiler::hash::kEmptySlot) {
-                            meta[slot] = fp;
-                            keys[slot] = key_ev.val;
-                            vals[slot] = v.val;
-                            ht->size++;
-                            inserted = true;
-                            break;
-                        }
-                    }
-                    if (!inserted) {
-                        overflowed = true;
-                        break;
-                    }
-                }
-                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
+                return primitives_detail::stats_hash_from_pairs(ev, ev.string_heap_,
+                                                                query_hash_capacity_for(14), kv);
             };
             CompilerMetrics* m = ev.compiler_metrics()
                                      ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
@@ -3211,39 +2886,8 @@ void ObservabilityPrims::register_jit_p15(PrimRegistrar add, Evaluator& ev) {
         "query:macro-provenance-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(query_hash_capacity_for(18));
-                if (!ht)
-                    return make_void();
-                bool overflowed = false;
-                auto meta = ht->metadata();
-                auto keys = ht->keys();
-                auto vals = ht->values();
-                auto hcap = ht->capacity;
-                for (auto& [k, v] : kv) {
-                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                    for (char c : k)
-                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                    const auto fp = ::aura::compiler::hash::fingerprint(h);
-                    auto kidx = ev.string_heap_.mint(k);
-                    EvalValue key_ev = make_string(kidx);
-                    bool inserted = false;
-                    for (std::size_t at = 0; at < hcap; ++at) {
-                        auto slot = ((h >> 1) + at) & (hcap - 1);
-                        if (meta[slot] == ::aura::compiler::hash::kEmptySlot) {
-                            meta[slot] = fp;
-                            keys[slot] = key_ev.val;
-                            vals[slot] = v.val;
-                            ht->size++;
-                            inserted = true;
-                            break;
-                        }
-                    }
-                    if (!inserted) {
-                        overflowed = true;
-                        break;
-                    }
-                }
-                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
+                return primitives_detail::stats_hash_from_pairs(ev, ev.string_heap_,
+                                                                query_hash_capacity_for(18), kv);
             };
             CompilerMetrics* m = ev.compiler_metrics()
                                      ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
@@ -3413,39 +3057,8 @@ void ObservabilityPrims::register_jit_p16(PrimRegistrar add, Evaluator& ev) {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
                 // Capacity power-of-two; #2116 adds desync hard-fail keys.
-                auto* ht = FlatHashTable::create(query_hash_capacity_for(24));
-                if (!ht)
-                    return make_void();
-                bool overflowed = false;
-                auto meta = ht->metadata();
-                auto keys = ht->keys();
-                auto vals = ht->values();
-                auto hcap = ht->capacity;
-                for (auto& [k, v] : kv) {
-                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                    for (char c : k)
-                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                    const auto fp = ::aura::compiler::hash::fingerprint(h);
-                    auto kidx = ev.string_heap_.mint(k);
-                    EvalValue key_ev = make_string(kidx);
-                    bool inserted = false;
-                    for (std::size_t at = 0; at < hcap; ++at) {
-                        auto slot = ((h >> 1) + at) & (hcap - 1);
-                        if (meta[slot] == ::aura::compiler::hash::kEmptySlot) {
-                            meta[slot] = fp;
-                            keys[slot] = key_ev.val;
-                            vals[slot] = v.val;
-                            ht->size++;
-                            inserted = true;
-                            break;
-                        }
-                    }
-                    if (!inserted) {
-                        overflowed = true;
-                        break;
-                    }
-                }
-                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
+                return primitives_detail::stats_hash_from_pairs(ev, ev.string_heap_,
+                                                                query_hash_capacity_for(24), kv);
             };
             CompilerMetrics* m = ev.compiler_metrics()
                                      ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
@@ -3785,39 +3398,8 @@ void ObservabilityPrims::register_jit_p18(PrimRegistrar add, Evaluator& ev) {
         "query:edsl-reflection-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(query_hash_capacity_for(13));
-                if (!ht)
-                    return make_void();
-                bool overflowed = false;
-                auto meta = ht->metadata();
-                auto keys = ht->keys();
-                auto vals = ht->values();
-                auto hcap = ht->capacity;
-                for (auto& [k, v] : kv) {
-                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                    for (char c : k)
-                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                    const auto fp = ::aura::compiler::hash::fingerprint(h);
-                    auto kidx = ev.string_heap_.mint(k);
-                    EvalValue key_ev = make_string(kidx);
-                    bool inserted = false;
-                    for (std::size_t at = 0; at < hcap; ++at) {
-                        auto slot = ((h >> 1) + at) & (hcap - 1);
-                        if (meta[slot] == ::aura::compiler::hash::kEmptySlot) {
-                            meta[slot] = fp;
-                            keys[slot] = key_ev.val;
-                            vals[slot] = v.val;
-                            ht->size++;
-                            inserted = true;
-                            break;
-                        }
-                    }
-                    if (!inserted) {
-                        overflowed = true;
-                        break;
-                    }
-                }
-                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
+                return primitives_detail::stats_hash_from_pairs(ev, ev.string_heap_,
+                                                                query_hash_capacity_for(13), kv);
             };
             CompilerMetrics* m = ev.compiler_metrics()
                                      ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
@@ -3933,39 +3515,8 @@ void ObservabilityPrims::register_jit_p19(PrimRegistrar add, Evaluator& ev) {
         "query:code-as-data-maturity-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(query_hash_capacity_for(13));
-                if (!ht)
-                    return make_void();
-                bool overflowed = false;
-                auto meta = ht->metadata();
-                auto keys = ht->keys();
-                auto vals = ht->values();
-                auto hcap = ht->capacity;
-                for (auto& [k, v] : kv) {
-                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                    for (char c : k)
-                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                    const auto fp = ::aura::compiler::hash::fingerprint(h);
-                    auto kidx = ev.string_heap_.mint(k);
-                    EvalValue key_ev = make_string(kidx);
-                    bool inserted = false;
-                    for (std::size_t at = 0; at < hcap; ++at) {
-                        auto slot = ((h >> 1) + at) & (hcap - 1);
-                        if (meta[slot] == ::aura::compiler::hash::kEmptySlot) {
-                            meta[slot] = fp;
-                            keys[slot] = key_ev.val;
-                            vals[slot] = v.val;
-                            ht->size++;
-                            inserted = true;
-                            break;
-                        }
-                    }
-                    if (!inserted) {
-                        overflowed = true;
-                        break;
-                    }
-                }
-                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
+                return primitives_detail::stats_hash_from_pairs(ev, ev.string_heap_,
+                                                                query_hash_capacity_for(13), kv);
             };
             CompilerMetrics* m = ev.compiler_metrics()
                                      ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
@@ -4080,39 +3631,8 @@ void ObservabilityPrims::register_jit_p20(PrimRegistrar add, Evaluator& ev) {
         "query:pattern-performance-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(query_hash_capacity_for(13));
-                if (!ht)
-                    return make_void();
-                bool overflowed = false;
-                auto meta = ht->metadata();
-                auto keys = ht->keys();
-                auto vals = ht->values();
-                auto hcap = ht->capacity;
-                for (auto& [k, v] : kv) {
-                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                    for (char c : k)
-                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                    const auto fp = ::aura::compiler::hash::fingerprint(h);
-                    auto kidx = ev.string_heap_.mint(k);
-                    EvalValue key_ev = make_string(kidx);
-                    bool inserted = false;
-                    for (std::size_t at = 0; at < hcap; ++at) {
-                        auto slot = ((h >> 1) + at) & (hcap - 1);
-                        if (meta[slot] == ::aura::compiler::hash::kEmptySlot) {
-                            meta[slot] = fp;
-                            keys[slot] = key_ev.val;
-                            vals[slot] = v.val;
-                            ht->size++;
-                            inserted = true;
-                            break;
-                        }
-                    }
-                    if (!inserted) {
-                        overflowed = true;
-                        break;
-                    }
-                }
-                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
+                return primitives_detail::stats_hash_from_pairs(ev, ev.string_heap_,
+                                                                query_hash_capacity_for(13), kv);
             };
             CompilerMetrics* m = ev.compiler_metrics()
                                      ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
@@ -4215,39 +3735,8 @@ void ObservabilityPrims::register_jit_p21(PrimRegistrar add, Evaluator& ev) {
         "query:mutate-batch-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(query_hash_capacity_for(13));
-                if (!ht)
-                    return make_void();
-                bool overflowed = false;
-                auto meta = ht->metadata();
-                auto keys = ht->keys();
-                auto vals = ht->values();
-                auto hcap = ht->capacity;
-                for (auto& [k, v] : kv) {
-                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                    for (char c : k)
-                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                    const auto fp = ::aura::compiler::hash::fingerprint(h);
-                    auto kidx = ev.string_heap_.mint(k);
-                    EvalValue key_ev = make_string(kidx);
-                    bool inserted = false;
-                    for (std::size_t at = 0; at < hcap; ++at) {
-                        auto slot = ((h >> 1) + at) & (hcap - 1);
-                        if (meta[slot] == ::aura::compiler::hash::kEmptySlot) {
-                            meta[slot] = fp;
-                            keys[slot] = key_ev.val;
-                            vals[slot] = v.val;
-                            ht->size++;
-                            inserted = true;
-                            break;
-                        }
-                    }
-                    if (!inserted) {
-                        overflowed = true;
-                        break;
-                    }
-                }
-                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
+                return primitives_detail::stats_hash_from_pairs(ev, ev.string_heap_,
+                                                                query_hash_capacity_for(13), kv);
             };
             CompilerMetrics* m = ev.compiler_metrics()
                                      ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
@@ -4354,39 +3843,8 @@ void ObservabilityPrims::register_jit_p22(PrimRegistrar add, Evaluator& ev) {
         "query:workspace-closedloop-orchestration-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(query_hash_capacity_for(13));
-                if (!ht)
-                    return make_void();
-                bool overflowed = false;
-                auto meta = ht->metadata();
-                auto keys = ht->keys();
-                auto vals = ht->values();
-                auto hcap = ht->capacity;
-                for (auto& [k, v] : kv) {
-                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                    for (char c : k)
-                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                    const auto fp = ::aura::compiler::hash::fingerprint(h);
-                    auto kidx = ev.string_heap_.mint(k);
-                    EvalValue key_ev = make_string(kidx);
-                    bool inserted = false;
-                    for (std::size_t at = 0; at < hcap; ++at) {
-                        auto slot = ((h >> 1) + at) & (hcap - 1);
-                        if (meta[slot] == ::aura::compiler::hash::kEmptySlot) {
-                            meta[slot] = fp;
-                            keys[slot] = key_ev.val;
-                            vals[slot] = v.val;
-                            ht->size++;
-                            inserted = true;
-                            break;
-                        }
-                    }
-                    if (!inserted) {
-                        overflowed = true;
-                        break;
-                    }
-                }
-                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
+                return primitives_detail::stats_hash_from_pairs(ev, ev.string_heap_,
+                                                                query_hash_capacity_for(13), kv);
             };
             CompilerMetrics* m = ev.compiler_metrics()
                                      ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
@@ -4502,39 +3960,8 @@ void ObservabilityPrims::register_jit_p23(PrimRegistrar add, Evaluator& ev) {
         "query:linear-ownership-gc-compiler-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(query_hash_capacity_for(13));
-                if (!ht)
-                    return make_void();
-                bool overflowed = false;
-                auto meta = ht->metadata();
-                auto keys = ht->keys();
-                auto vals = ht->values();
-                auto hcap = ht->capacity;
-                for (auto& [k, v] : kv) {
-                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                    for (char c : k)
-                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                    const auto fp = ::aura::compiler::hash::fingerprint(h);
-                    auto kidx = ev.string_heap_.mint(k);
-                    EvalValue key_ev = make_string(kidx);
-                    bool inserted = false;
-                    for (std::size_t at = 0; at < hcap; ++at) {
-                        auto slot = ((h >> 1) + at) & (hcap - 1);
-                        if (meta[slot] == ::aura::compiler::hash::kEmptySlot) {
-                            meta[slot] = fp;
-                            keys[slot] = key_ev.val;
-                            vals[slot] = v.val;
-                            ht->size++;
-                            inserted = true;
-                            break;
-                        }
-                    }
-                    if (!inserted) {
-                        overflowed = true;
-                        break;
-                    }
-                }
-                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
+                return primitives_detail::stats_hash_from_pairs(ev, ev.string_heap_,
+                                                                query_hash_capacity_for(13), kv);
             };
             CompilerMetrics* m = ev.compiler_metrics()
                                      ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
@@ -4694,39 +4121,8 @@ void ObservabilityPrims::register_jit_p24(PrimRegistrar add, Evaluator& ev) {
         "query:compiler-arena-closure-lifetime-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(query_hash_capacity_for(13));
-                if (!ht)
-                    return make_void();
-                bool overflowed = false;
-                auto meta = ht->metadata();
-                auto keys = ht->keys();
-                auto vals = ht->values();
-                auto hcap = ht->capacity;
-                for (auto& [k, v] : kv) {
-                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                    for (char c : k)
-                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                    const auto fp = ::aura::compiler::hash::fingerprint(h);
-                    auto kidx = ev.string_heap_.mint(k);
-                    EvalValue key_ev = make_string(kidx);
-                    bool inserted = false;
-                    for (std::size_t at = 0; at < hcap; ++at) {
-                        auto slot = ((h >> 1) + at) & (hcap - 1);
-                        if (meta[slot] == ::aura::compiler::hash::kEmptySlot) {
-                            meta[slot] = fp;
-                            keys[slot] = key_ev.val;
-                            vals[slot] = v.val;
-                            ht->size++;
-                            inserted = true;
-                            break;
-                        }
-                    }
-                    if (!inserted) {
-                        overflowed = true;
-                        break;
-                    }
-                }
-                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
+                return primitives_detail::stats_hash_from_pairs(ev, ev.string_heap_,
+                                                                query_hash_capacity_for(13), kv);
             };
             CompilerMetrics* m = ev.compiler_metrics()
                                      ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
@@ -4838,39 +4234,8 @@ void ObservabilityPrims::register_jit_p25(PrimRegistrar add, Evaluator& ev) {
         "query:incremental-quote-lambda-linear-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(query_hash_capacity_for(13));
-                if (!ht)
-                    return make_void();
-                bool overflowed = false;
-                auto meta = ht->metadata();
-                auto keys = ht->keys();
-                auto vals = ht->values();
-                auto hcap = ht->capacity;
-                for (auto& [k, v] : kv) {
-                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                    for (char c : k)
-                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                    const auto fp = ::aura::compiler::hash::fingerprint(h);
-                    auto kidx = ev.string_heap_.mint(k);
-                    EvalValue key_ev = make_string(kidx);
-                    bool inserted = false;
-                    for (std::size_t at = 0; at < hcap; ++at) {
-                        auto slot = ((h >> 1) + at) & (hcap - 1);
-                        if (meta[slot] == ::aura::compiler::hash::kEmptySlot) {
-                            meta[slot] = fp;
-                            keys[slot] = key_ev.val;
-                            vals[slot] = v.val;
-                            ht->size++;
-                            inserted = true;
-                            break;
-                        }
-                    }
-                    if (!inserted) {
-                        overflowed = true;
-                        break;
-                    }
-                }
-                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
+                return primitives_detail::stats_hash_from_pairs(ev, ev.string_heap_,
+                                                                query_hash_capacity_for(13), kv);
             };
             CompilerMetrics* m = ev.compiler_metrics()
                                      ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
@@ -7207,33 +6572,10 @@ void ObservabilityPrims::register_jit_p38(PrimRegistrar add, Evaluator& ev) {
                 recommendation = 2; // Phase 1 only (atomics wired, full migration deferred)
             else
                 recommendation = 3; // early-stage (no IR SoA migration activity yet)
-            auto* ht = FlatHashTable::create(query_hash_capacity_for(17));
-            if (!ht)
+            primitives_detail::StatsKvTable insert_kv(
+                ev, ev.string_heap_, FlatHashTable::create(query_hash_capacity_for(17)));
+            if (!insert_kv.ok())
                 return make_void();
-            bool overflowed = false;
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            auto insert_kv = [&](const char* k_str, std::int64_t v) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (const char* p = k_str; *p; ++p)
-                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                const auto fp = ::aura::compiler::hash::fingerprint(h);
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
-                        meta[idx] = fp;
-                        auto kidx = ev.string_heap_.mint(k_str);
-                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
-                        ht->size++;
-                        return;
-                    }
-                }
-
-                overflowed = true;
-            };
             insert_kv("soa-instructions-emitted-total", soa_emitted);
             insert_kv("dirty-block-skips-total", dirty_skips);
             insert_kv("clean-block-hit-rate-pct", clean_block_hit_rate);
@@ -7243,7 +6585,7 @@ void ObservabilityPrims::register_jit_p38(PrimRegistrar add, Evaluator& ev) {
             insert_kv("full-soa-migration-active", full_soa_migration_active);
             insert_kv("recommendation", recommendation);
             insert_kv("schema", 796);
-            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
+            return insert_kv.finish();
         });
 }
 
@@ -7631,33 +6973,10 @@ void ObservabilityPrims::register_jit_p44(PrimRegistrar add, Evaluator& ev) {
                             m->runtime_self_heal_invocations_total.load(std::memory_order_relaxed)
                     ? 1
                     : 0;
-            auto* ht = FlatHashTable::create(query_hash_capacity_for(18));
-            if (!ht)
+            primitives_detail::StatsKvTable insert_kv(
+                ev, ev.string_heap_, FlatHashTable::create(query_hash_capacity_for(18)));
+            if (!insert_kv.ok())
                 return make_void();
-            bool overflowed = false;
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            auto insert_kv = [&](const char* k_str, std::int64_t v) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (const char* p = k_str; *p; ++p)
-                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                const auto fp = ::aura::compiler::hash::fingerprint(h);
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
-                        meta[idx] = fp;
-                        auto kidx = ev.string_heap_.mint(k_str);
-                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
-                        ht->size++;
-                        return;
-                    }
-                }
-
-                overflowed = true;
-            };
             insert_kv("health-score", f_health_score);
             insert_kv("env-consistency", f_env_consistency);
             insert_kv("aot-fidelity", f_aot_fidelity);
@@ -7668,7 +6987,7 @@ void ObservabilityPrims::register_jit_p44(PrimRegistrar add, Evaluator& ev) {
             insert_kv("self-heal-invocations", f_self_heal_invocations);
             insert_kv("recommended-action", f_recommended_action);
             insert_kv("schema", 814);
-            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
+            return insert_kv.finish();
         });
 }
 
@@ -11385,33 +10704,10 @@ void register_jit_p97_per_fiber_mutation_depth_stats(Evaluator& ev) {
             const std::int64_t live_depth =
                 static_cast<std::int64_t>(Evaluator::mutation_boundary_depth());
             auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
-            auto* ht = FlatHashTable::create(query_hash_capacity_for(17));
-            if (!ht)
+            primitives_detail::StatsKvTable insert_kv(
+                ev, ev.string_heap_mut(), FlatHashTable::create(query_hash_capacity_for(17)));
+            if (!insert_kv.ok())
                 return make_void();
-            bool overflowed = false;
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            auto insert_kv = [&](const char* k_str, std::int64_t v) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (const char* p = k_str; *p; ++p)
-                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                const auto fp = ::aura::compiler::hash::fingerprint(h);
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
-                        meta[idx] = fp;
-                        auto kidx = ev.string_heap_mut().mint(k_str);
-                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
-                        ht->size++;
-                        return;
-                    }
-                }
-
-                overflowed = true;
-            };
             insert_kv("lifetime-max", lifetime_max);
             insert_kv("current-max", current_max);
             insert_kv("live-depth", live_depth);
@@ -11430,7 +10726,7 @@ void register_jit_p97_per_fiber_mutation_depth_stats(Evaluator& ev) {
             insert_kv("safe-yield-mandate-active", 1);
             insert_kv("issue", 1635);
             insert_kv("schema", 1635); // lineage 1591 / 1504
-            return query_hash_finish(ht, ev.string_heap_mut(), overflowed, ev);
+            return insert_kv.finish();
         });
 }
 
@@ -11981,38 +11277,15 @@ void register_jit_p97_gc_defer_reason_stats(Evaluator& ev) {
             (void)ev;
             // Capacity 256: #2088 + #2160 + #2173 + #2203 + #2204 MutationHold
             // + #2929 StealInvariant table keys (additive).
-            auto* ht = FlatHashTable::create(query_hash_capacity_for(135));
-            if (!ht)
+            primitives_detail::StatsKvTable insert_kv(
+                ev, ev.string_heap_mut(), FlatHashTable::create(query_hash_capacity_for(135)));
+            if (!insert_kv.ok())
                 return make_void();
-            bool overflowed = false;
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            auto insert_kv = [&](const char* k_str, std::int64_t v) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (const char* p = k_str; *p; ++p)
-                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                const auto fp = ::aura::compiler::hash::fingerprint(h);
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
-                        meta[idx] = fp;
-                        auto kidx = ev.string_heap_mut().mint(k_str);
-                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
-                        ht->size++;
-                        return;
-                    }
-                }
-
-                overflowed = true;
-            };
             gc_defer_reason_stats_live_kv(insert_kv);
             gc_defer_reason_stats_steal_complete_kv(insert_kv);
             gc_defer_reason_stats_steal_invariant_kv(insert_kv);
             gc_defer_reason_stats_panic_checkpoint_kv(ev, insert_kv);
-            return query_hash_finish(ht, ev.string_heap_mut(), overflowed, ev);
+            return insert_kv.finish();
         });
 }
 
@@ -12047,33 +11320,10 @@ void register_jit_p97_lifetime_contract_snapshot(Evaluator& ev) {
             // Capacity 128: #2300 base + #2341 densify axes + #2342 pin shards +
             // #2353 post-densify linear/type + #2365/#2368 pairing keys.
             // create(32) silently dropped late keys when the open-address table filled.
-            auto* ht = FlatHashTable::create(query_hash_capacity_for(93));
-            if (!ht)
+            primitives_detail::StatsKvTable insert_kv(
+                ev, ev.string_heap_mut(), FlatHashTable::create(query_hash_capacity_for(93)));
+            if (!insert_kv.ok())
                 return make_void();
-            bool overflowed = false;
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            auto insert_kv = [&](const char* k_str, std::int64_t v) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (const char* p = k_str; *p; ++p)
-                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                const auto fp = ::aura::compiler::hash::fingerprint(h);
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
-                        meta[idx] = fp;
-                        auto kidx = ev.string_heap_mut().mint(k_str);
-                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
-                        ht->size++;
-                        return;
-                    }
-                }
-
-                overflowed = true;
-            };
             insert_kv("lifetime-pin-live-count",
                       static_cast<std::int64_t>(snap.lifetime_pin_live_count));
             insert_kv("linear-pin-live-count",
@@ -12312,7 +11562,7 @@ void register_jit_p97_lifetime_contract_snapshot(Evaluator& ev) {
             insert_kv("pin-registry-shard-wired", 1);
             insert_kv("schema-2342", 2342);
             insert_kv("issue-2342", 2342);
-            return query_hash_finish(ht, ev.string_heap_mut(), overflowed, ev);
+            return insert_kv.finish();
         });
 }
 

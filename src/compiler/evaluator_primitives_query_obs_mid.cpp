@@ -287,33 +287,10 @@ void register_query_obs_mid_pattern_index_parts(PrimRegistrar add, std::pmr::vec
                 threshold_pct =
                     static_cast<std::int64_t>(ws->tag_arity_index_full_rebuild_threshold_pct());
             }
-            auto* ht = FlatHashTable::create(query_hash_capacity_for(27));
-            if (!ht)
+            primitives_detail::StatsKvTable insert_kv(
+                ev, string_heap, FlatHashTable::create(query_hash_capacity_for(27)));
+            if (!insert_kv.ok())
                 return make_void();
-            bool overflowed = false;
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            auto insert_kv = [&](const char* k_str, std::int64_t v) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (const char* p = k_str; *p; ++p)
-                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                const auto fp = ::aura::compiler::hash::fingerprint(h);
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
-                        meta[idx] = fp;
-                        auto kidx = string_heap.mint(k_str);
-                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
-                        ht->size++;
-                        return;
-                    }
-                }
-
-                overflowed = true;
-            };
             insert_kv("lazy-rebuilds",
                       static_cast<std::int64_t>(ev->get_pattern_index_lazy_rebuilds()));
             insert_kv("eager-mutate-rebuilds",
@@ -349,7 +326,7 @@ void register_query_obs_mid_pattern_index_parts(PrimRegistrar add, std::pmr::vec
             }
             insert_kv("schema-2763", 2763);
             insert_kv("issue-2763", 2763);
-            return query_hash_finish(ht, string_heap, overflowed, ev);
+            return insert_kv.finish();
         });
 
     // Issue #621 / #2403: query:pattern-index-stats-hash — Agent-discoverable
@@ -406,33 +383,10 @@ void register_query_obs_mid_pattern_index_parts(PrimRegistrar add, std::pmr::vec
             const std::int64_t query_index_hit_rate =
                 q_total == 0 ? 0 : static_cast<std::int64_t>((q_hit * 100) / q_total);
             // Capacity power-of-two; 64 slots for #2403 additive keys.
-            auto* ht = FlatHashTable::create(query_hash_capacity_for(28));
-            if (!ht)
+            primitives_detail::StatsKvTable insert_kv(
+                ev, string_heap, FlatHashTable::create(query_hash_capacity_for(28)));
+            if (!insert_kv.ok())
                 return make_void();
-            bool overflowed = false;
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            auto insert_kv = [&](const char* k_str, std::int64_t v) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (const char* p = k_str; *p; ++p)
-                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                const auto fp = ::aura::compiler::hash::fingerprint(h);
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
-                        meta[idx] = fp;
-                        auto kidx = string_heap.mint(k_str);
-                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
-                        ht->size++;
-                        return;
-                    }
-                }
-
-                overflowed = true;
-            };
             insert_kv("hits", static_cast<std::int64_t>(hits));
             insert_kv("misses", static_cast<std::int64_t>(misses));
             insert_kv("rebuilds", static_cast<std::int64_t>(rebuilds));
@@ -458,7 +412,7 @@ void register_query_obs_mid_pattern_index_parts(PrimRegistrar add, std::pmr::vec
             insert_kv("query-index-composite-wired", 1);
             insert_kv("schema-2403", 2403);
             insert_kv("issue-2403", 2403);
-            return query_hash_finish(ht, string_heap, overflowed, ev);
+            return insert_kv.finish();
         });
 }
 
@@ -485,33 +439,10 @@ void register_query_obs_mid_pattern_hygiene_parts(PrimRegistrar add, std::pmr::v
                 return make_void();
             // Capacity must be power-of-two (open-address mask hcap-1).
             // #2123 / #2525 / #2989 added several keys — 256 slots for open addressing.
-            auto* ht = FlatHashTable::create(query_hash_capacity_for(89));
-            if (!ht)
+            primitives_detail::StatsKvTable insert_kv(
+                ev, string_heap, FlatHashTable::create(query_hash_capacity_for(89)));
+            if (!insert_kv.ok())
                 return make_void();
-            bool overflowed = false;
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            auto insert_kv = [&](const char* k_str, std::int64_t v) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (const char* p = k_str; *p; ++p)
-                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                const auto fp = ::aura::compiler::hash::fingerprint(h);
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
-                        meta[idx] = fp;
-                        auto kidx = string_heap.mint(k_str);
-                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
-                        ht->size++;
-                        return;
-                    }
-                }
-
-                overflowed = true;
-            };
             const auto root_skips =
                 static_cast<std::int64_t>(ev->get_macro_introduced_skipped_in_query());
             const auto recursive_skips =
@@ -656,7 +587,7 @@ void register_query_obs_mid_pattern_hygiene_parts(PrimRegistrar add, std::pmr::v
                 insert_kv("schema-2989", 2989);
                 insert_kv("issue-2989", 2989);
             }
-            return query_hash_finish(ht, string_heap, overflowed, ev);
+            return insert_kv.finish();
         });
 
     // Issue #2989: dedicated Agent counters (int). Same values as
@@ -689,33 +620,10 @@ void register_query_obs_mid_pattern_hygiene_parts(PrimRegistrar add, std::pmr::v
             if (!ev)
                 return make_void();
             auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics());
-            auto* ht = FlatHashTable::create(query_hash_capacity_for(16));
-            if (!ht)
+            primitives_detail::StatsKvTable insert_kv(
+                ev, string_heap, FlatHashTable::create(query_hash_capacity_for(16)));
+            if (!insert_kv.ok())
                 return make_void();
-            bool overflowed = false;
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            auto insert_kv = [&](const char* k_str, std::int64_t v) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (const char* p = k_str; *p; ++p)
-                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                const auto fp = ::aura::compiler::hash::fingerprint(h);
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
-                        meta[idx] = fp;
-                        auto kidx = string_heap.mint(k_str);
-                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
-                        ht->size++;
-                        return;
-                    }
-                }
-
-                overflowed = true;
-            };
 
             const std::uint64_t where_hits =
                 m ? m->by_marker_where_filter_hits.load(std::memory_order_relaxed) : 0;
@@ -729,7 +637,7 @@ void register_query_obs_mid_pattern_hygiene_parts(PrimRegistrar add, std::pmr::v
             insert_kv("schema", 2242);
             insert_kv("issue", 2242);
             insert_kv("active", 1);
-            return query_hash_finish(ht, string_heap, overflowed, ev);
+            return insert_kv.finish();
         });
 }
 
@@ -756,33 +664,10 @@ void register_query_obs_mid_provenance_parts(PrimRegistrar add, std::pmr::vector
             if (m)
                 m->provenance_query_total.fetch_add(1, std::memory_order_relaxed);
 
-            auto* ht = FlatHashTable::create(query_hash_capacity_for(18));
-            if (!ht)
+            primitives_detail::StatsKvTable insert_kv(
+                ev, string_heap, FlatHashTable::create(query_hash_capacity_for(18)));
+            if (!insert_kv.ok())
                 return make_void();
-            bool overflowed = false;
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            auto insert_kv = [&](const char* k_str, std::int64_t v) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (const char* p = k_str; *p; ++p)
-                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                const auto fp = ::aura::compiler::hash::fingerprint(h);
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
-                        meta[idx] = fp;
-                        auto kidx = string_heap.mint(k_str);
-                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
-                        ht->size++;
-                        return;
-                    }
-                }
-
-                overflowed = true;
-            };
 
             const std::uint64_t prov_total =
                 m ? m->provenance_query_total.load(std::memory_order_relaxed) : 0;
@@ -801,7 +686,7 @@ void register_query_obs_mid_provenance_parts(PrimRegistrar add, std::pmr::vector
             insert_kv("schema", 2242);
             insert_kv("issue", 2242);
             insert_kv("active", 1);
-            return query_hash_finish(ht, string_heap, overflowed, ev);
+            return insert_kv.finish();
         });
 
     // Issue #2242: query:last-mutation-provenance — last hygiene stamp
@@ -907,33 +792,10 @@ void register_query_obs_mid_provenance_parts(PrimRegistrar add, std::pmr::vector
                 inv_records = static_cast<std::int64_t>(ws->invalidation_trace_records_total());
             }
 
-            auto* ht = FlatHashTable::create(query_hash_capacity_for(31));
-            if (!ht)
+            primitives_detail::StatsKvTable insert_kv(
+                ev, string_heap, FlatHashTable::create(query_hash_capacity_for(31)));
+            if (!insert_kv.ok())
                 return make_void();
-            bool overflowed = false;
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            auto insert_kv = [&](const char* k_str, std::int64_t v) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (const char* p = k_str; *p; ++p)
-                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                const auto fp = ::aura::compiler::hash::fingerprint(h);
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
-                        meta[idx] = fp;
-                        auto kidx = string_heap.mint(k_str);
-                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
-                        ht->size++;
-                        return;
-                    }
-                }
-
-                overflowed = true;
-            };
 
             // AC metric names (exact)
             insert_kv("pattern_hygiene_filter_hits",
@@ -964,7 +826,7 @@ void register_query_obs_mid_provenance_parts(PrimRegistrar add, std::pmr::vector
             insert_kv("schema", 1914);
             insert_kv("issue", 1914);
             insert_kv("active", 1);
-            return query_hash_finish(ht, string_heap, overflowed, ev);
+            return insert_kv.finish();
         });
 }
 
@@ -988,33 +850,10 @@ void register_query_obs_mid_macro_hygiene_parts(PrimRegistrar add, std::pmr::vec
                 return make_void();
             // Issue #2021: capacity 128 (power-of-2) — depth/concurrent keys
             // grew the dashboard past the old 48-slot open-address table.
-            auto* ht = FlatHashTable::create(query_hash_capacity_for(108));
-            if (!ht)
+            primitives_detail::StatsKvTable insert_kv(
+                ev, string_heap, FlatHashTable::create(query_hash_capacity_for(108)));
+            if (!insert_kv.ok())
                 return make_void();
-            bool overflowed = false;
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            auto insert_kv = [&](const char* k_str, std::int64_t v) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (const char* p = k_str; *p; ++p)
-                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                const auto fp = ::aura::compiler::hash::fingerprint(h);
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
-                        meta[idx] = fp;
-                        auto kidx = string_heap.mint(k_str);
-                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
-                        ht->size++;
-                        return;
-                    }
-                }
-
-                overflowed = true;
-            };
             auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics());
             const auto load_m =
                 [m](std::atomic<std::uint64_t> CompilerMetrics::* field) -> std::uint64_t {
@@ -1258,7 +1097,7 @@ void register_query_obs_mid_macro_hygiene_parts(PrimRegistrar add, std::pmr::vec
             insert_kv("audit-trail-wired", 1);
             insert_kv("issue", 1613); // lineage 1609 / 1501 / 486; depth keys #2021 / #2101
             insert_kv("schema", 1613);
-            return query_hash_finish(ht, string_heap, overflowed, ev);
+            return insert_kv.finish();
         });
 }
 
@@ -1326,33 +1165,10 @@ void register_query_obs_mid_checkpoint_parts(PrimRegistrar add, std::pmr::vector
             auto* ws = ev->workspace_flat();
             // Issue #2966: capacity 36 so schema-2966 + fail-reason + #4598 share/stamp keys fit
             // with existing workspace-snapshot counters (was 16 → silent drop).
-            auto* ht = FlatHashTable::create(query_hash_capacity_for(30));
-            if (!ht)
+            primitives_detail::StatsKvTable insert_kv(
+                ev, string_heap, FlatHashTable::create(query_hash_capacity_for(30)));
+            if (!insert_kv.ok())
                 return make_void();
-            bool overflowed = false;
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            auto insert_kv = [&](const char* k_str, std::int64_t v) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (const char* p = k_str; *p; ++p)
-                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                const auto fp = ::aura::compiler::hash::fingerprint(h);
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
-                        meta[idx] = fp;
-                        auto kidx = string_heap.mint(k_str);
-                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
-                        ht->size++;
-                        return;
-                    }
-                }
-
-                overflowed = true;
-            };
             const std::uint64_t workspace_size = ws ? ws->size() : 0;
             const std::uint64_t gen_age = ws ? ws->current_generation() : 0;
             const std::uint64_t wrap_epoch = ws ? ws->wrap_epoch() : 0;
@@ -1423,7 +1239,7 @@ void register_query_obs_mid_checkpoint_parts(PrimRegistrar add, std::pmr::vector
                       static_cast<std::int64_t>(ev->ast_snapshot_image_count()));
             insert_kv("schema-2966", 2966);
             insert_kv("issue-2966", 2966);
-            return query_hash_finish(ht, string_heap, overflowed, ev);
+            return insert_kv.finish();
         });
 }
 
@@ -1452,33 +1268,10 @@ void register_query_obs_mid_runtime_orchestration_parts(
             auto* ev = Evaluator::get_query_evaluator();
             if (!ev)
                 return make_void();
-            auto* ht = FlatHashTable::create(query_hash_capacity_for(21));
-            if (!ht)
+            primitives_detail::StatsKvTable insert_kv(
+                ev, string_heap, FlatHashTable::create(query_hash_capacity_for(21)));
+            if (!insert_kv.ok())
                 return make_void();
-            bool overflowed = false;
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            auto insert_kv = [&](const char* k_str, std::int64_t v) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (const char* p = k_str; *p; ++p)
-                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                const auto fp = ::aura::compiler::hash::fingerprint(h);
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
-                        meta[idx] = fp;
-                        auto kidx = string_heap.mint(k_str);
-                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
-                        ht->size++;
-                        return;
-                    }
-                }
-
-                overflowed = true;
-            };
             const std::uint64_t steal_attempts = aura_work_steal_attempts_total();
             const std::uint64_t steal_successes = aura_work_steal_successes_total();
             const std::uint64_t steal_deferred = aura_adaptive_steal_global_deferred_total();
@@ -1513,7 +1306,7 @@ void register_query_obs_mid_runtime_orchestration_parts(
             insert_kv("fiber-migration-attempts", static_cast<std::int64_t>(migration));
             insert_kv("runtime-orchestration-total", static_cast<std::int64_t>(total));
             insert_kv("runtime-orchestration-recommendation", recommendation);
-            return query_hash_finish(ht, string_heap, overflowed, ev);
+            return insert_kv.finish();
         });
 
     // Issue #513: query:aot-hot-reload-stats. Consolidated hash view of AOT
@@ -1532,33 +1325,10 @@ void register_query_obs_mid_runtime_orchestration_parts(
             auto* ev = Evaluator::get_query_evaluator();
             if (!ev)
                 return make_void();
-            auto* ht = FlatHashTable::create(query_hash_capacity_for(20));
-            if (!ht)
+            primitives_detail::StatsKvTable insert_kv(
+                ev, string_heap, FlatHashTable::create(query_hash_capacity_for(20)));
+            if (!insert_kv.ok())
                 return make_void();
-            bool overflowed = false;
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            auto insert_kv = [&](const char* k_str, std::int64_t v) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (const char* p = k_str; *p; ++p)
-                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                const auto fp = ::aura::compiler::hash::fingerprint(h);
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
-                        meta[idx] = fp;
-                        auto kidx = string_heap.mint(k_str);
-                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
-                        ht->size++;
-                        return;
-                    }
-                }
-
-                overflowed = true;
-            };
             const auto* m = static_cast<const CompilerMetrics*>(ev->compiler_metrics());
             const std::uint64_t attempts =
                 m ? m->aot_reload_attempts_.load(std::memory_order_relaxed) : 0;
@@ -1599,7 +1369,7 @@ void register_query_obs_mid_runtime_orchestration_parts(
             insert_kv("defuse-version", static_cast<std::int64_t>(defuse_ver));
             insert_kv("aot-hot-reload-total", static_cast<std::int64_t>(total));
             insert_kv("aot-hot-reload-recommendation", recommendation);
-            return query_hash_finish(ht, string_heap, overflowed, ev);
+            return insert_kv.finish();
         });
 }
 
@@ -1628,33 +1398,10 @@ void register_query_obs_mid_aot_reload_parts(PrimRegistrar add, std::pmr::vector
             auto* ev = Evaluator::get_query_evaluator();
             if (!ev)
                 return make_void();
-            auto* ht = FlatHashTable::create(query_hash_capacity_for(23));
-            if (!ht)
+            primitives_detail::StatsKvTable insert_kv(
+                ev, string_heap, FlatHashTable::create(query_hash_capacity_for(23)));
+            if (!insert_kv.ok())
                 return make_void();
-            bool overflowed = false;
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            auto insert_kv = [&](const char* k_str, std::int64_t v) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (const char* p = k_str; *p; ++p)
-                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                const auto fp = ::aura::compiler::hash::fingerprint(h);
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
-                        meta[idx] = fp;
-                        auto kidx = string_heap.mint(k_str);
-                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
-                        ht->size++;
-                        return;
-                    }
-                }
-
-                overflowed = true;
-            };
             const auto* m = static_cast<const CompilerMetrics*>(ev->compiler_metrics());
             const std::uint64_t attempts =
                 m ? m->aot_reload_attempts_.load(std::memory_order_relaxed) : 0;
@@ -1702,7 +1449,7 @@ void register_query_obs_mid_aot_reload_parts(PrimRegistrar add, std::pmr::vector
             insert_kv("swap-success-rate-pct", static_cast<std::int64_t>(success_rate_pct));
             insert_kv("aot-production-reload-total", static_cast<std::int64_t>(total));
             insert_kv("aot-production-reload-recommendation", recommendation);
-            return query_hash_finish(ht, string_heap, overflowed, ev);
+            return insert_kv.finish();
         });
 
     // Issue #523: query:envframe-production-safety-stats. Commercial P0 hash view
@@ -1725,33 +1472,10 @@ void register_query_obs_mid_aot_reload_parts(PrimRegistrar add, std::pmr::vector
             auto* ev = Evaluator::get_query_evaluator();
             if (!ev)
                 return make_void();
-            auto* ht = FlatHashTable::create(query_hash_capacity_for(19));
-            if (!ht)
+            primitives_detail::StatsKvTable insert_kv(
+                ev, string_heap, FlatHashTable::create(query_hash_capacity_for(19)));
+            if (!insert_kv.ok())
                 return make_void();
-            bool overflowed = false;
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            auto insert_kv = [&](const char* k_str, std::int64_t v) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (const char* p = k_str; *p; ++p)
-                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                const auto fp = ::aura::compiler::hash::fingerprint(h);
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
-                        meta[idx] = fp;
-                        auto kidx = string_heap.mint(k_str);
-                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
-                        ht->size++;
-                        return;
-                    }
-                }
-
-                overflowed = true;
-            };
             const auto* m = static_cast<const CompilerMetrics*>(ev->compiler_metrics());
             const std::uint64_t desync = ev->get_envframe_desync_detected();
             const std::uint64_t dual_sync = ev->get_bindings_dual_sync_count();
@@ -1785,7 +1509,7 @@ void register_query_obs_mid_aot_reload_parts(PrimRegistrar add, std::pmr::vector
             insert_kv("dual-path-sync-rate-pct", sync_rate_pct);
             insert_kv("envframe-production-safety-total", static_cast<std::int64_t>(total));
             insert_kv("envframe-production-safety-recommendation", recommendation);
-            return query_hash_finish(ht, string_heap, overflowed, ev);
+            return insert_kv.finish();
         });
 }
 
@@ -1816,33 +1540,10 @@ void register_query_obs_mid_production_guard_parts(PrimRegistrar add, std::pmr::
             if (!ev)
                 return make_void();
             auto* ws = ev->workspace_flat();
-            auto* ht = FlatHashTable::create(query_hash_capacity_for(20));
-            if (!ht)
+            primitives_detail::StatsKvTable insert_kv(
+                ev, string_heap, FlatHashTable::create(query_hash_capacity_for(20)));
+            if (!insert_kv.ok())
                 return make_void();
-            bool overflowed = false;
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            auto insert_kv = [&](const char* k_str, std::int64_t v) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (const char* p = k_str; *p; ++p)
-                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                const auto fp = ::aura::compiler::hash::fingerprint(h);
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
-                        meta[idx] = fp;
-                        auto kidx = string_heap.mint(k_str);
-                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
-                        ht->size++;
-                        return;
-                    }
-                }
-
-                overflowed = true;
-            };
             const std::uint64_t root_skips = ev->get_macro_introduced_skipped_in_query();
             const std::uint64_t recursive_skips = ev->get_pattern_recursive_macro_skipped();
             const std::uint64_t violations = ev->get_hygiene_violation_count();
@@ -1878,7 +1579,7 @@ void register_query_obs_mid_production_guard_parts(PrimRegistrar add, std::pmr::
             insert_kv("hygiene-filter-rate-pct", filter_rate_pct);
             insert_kv("macro-production-hygiene-total", static_cast<std::int64_t>(total));
             insert_kv("macro-production-hygiene-recommendation", recommendation);
-            return query_hash_finish(ht, string_heap, overflowed, ev);
+            return insert_kv.finish();
         });
 
     // Issue #525: query:guard-production-impact-stats. Commercial P0 hash view
@@ -1903,33 +1604,10 @@ void register_query_obs_mid_production_guard_parts(PrimRegistrar add, std::pmr::
             if (!ev)
                 return make_void();
             const auto entry = ev->get_latest_mutation_impact_entry();
-            auto* ht = FlatHashTable::create(query_hash_capacity_for(26));
-            if (!ht)
+            primitives_detail::StatsKvTable insert_kv(
+                ev, string_heap, FlatHashTable::create(query_hash_capacity_for(26)));
+            if (!insert_kv.ok())
                 return make_void();
-            bool overflowed = false;
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            auto insert_kv = [&](const char* k_str, std::int64_t v) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (const char* p = k_str; *p; ++p)
-                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                const auto fp = ::aura::compiler::hash::fingerprint(h);
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
-                        meta[idx] = fp;
-                        auto kidx = string_heap.mint(k_str);
-                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
-                        ht->size++;
-                        return;
-                    }
-                }
-
-                overflowed = true;
-            };
             const std::uint64_t snapshots = ev->get_impact_snapshot_count();
             const std::uint64_t impacts = ev->get_mutation_impact_count();
             const std::uint64_t dirty = ev->get_dirty_nodes_in_snapshot();
@@ -1971,7 +1649,7 @@ void register_query_obs_mid_production_guard_parts(PrimRegistrar add, std::pmr::
             insert_kv("validation-pass-rate-pct", pass_rate_pct);
             insert_kv("guard-production-impact-total", static_cast<std::int64_t>(total));
             insert_kv("guard-production-impact-recommendation", recommendation);
-            return query_hash_finish(ht, string_heap, overflowed, ev);
+            return insert_kv.finish();
         });
 }
 
@@ -2002,33 +1680,10 @@ void register_query_obs_mid_production_index_parts(PrimRegistrar add, std::pmr::
             if (!ev)
                 return make_void();
             auto* ws = ev->workspace_flat();
-            auto* ht = FlatHashTable::create(query_hash_capacity_for(28));
-            if (!ht)
+            primitives_detail::StatsKvTable insert_kv(
+                ev, string_heap, FlatHashTable::create(query_hash_capacity_for(28)));
+            if (!insert_kv.ok())
                 return make_void();
-            bool overflowed = false;
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            auto insert_kv = [&](const char* k_str, std::int64_t v) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (const char* p = k_str; *p; ++p)
-                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                const auto fp = ::aura::compiler::hash::fingerprint(h);
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
-                        meta[idx] = fp;
-                        auto kidx = string_heap.mint(k_str);
-                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
-                        ht->size++;
-                        return;
-                    }
-                }
-
-                overflowed = true;
-            };
             const std::uint64_t hits = ws ? ws->tag_arity_index_hits() : 0;
             const std::uint64_t misses = ws ? ws->tag_arity_index_misses() : 0;
             const std::uint64_t rebuilds = ws ? ws->tag_arity_index_rebuilds() : 0;
@@ -2084,7 +1739,7 @@ void register_query_obs_mid_production_index_parts(PrimRegistrar add, std::pmr::
             insert_kv("delta-hit-rate-pct", delta_hit_rate_pct);
             insert_kv("pattern-production-index-total", static_cast<std::int64_t>(total));
             insert_kv("pattern-production-index-recommendation", recommendation);
-            return query_hash_finish(ht, string_heap, overflowed, ev);
+            return insert_kv.finish();
         });
 
     // Issue #530: query:incremental-production-relower-stats. Commercial P0 hash
@@ -2107,33 +1762,10 @@ void register_query_obs_mid_production_index_parts(PrimRegistrar add, std::pmr::
             auto* ev = Evaluator::get_query_evaluator();
             if (!ev)
                 return make_void();
-            auto* ht = FlatHashTable::create(query_hash_capacity_for(27));
-            if (!ht)
+            primitives_detail::StatsKvTable insert_kv(
+                ev, string_heap, FlatHashTable::create(query_hash_capacity_for(27)));
+            if (!insert_kv.ok())
                 return make_void();
-            bool overflowed = false;
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            auto insert_kv = [&](const char* k_str, std::int64_t v) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (const char* p = k_str; *p; ++p)
-                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                const auto fp = ::aura::compiler::hash::fingerprint(h);
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
-                        meta[idx] = fp;
-                        auto kidx = string_heap.mint(k_str);
-                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
-                        ht->size++;
-                        return;
-                    }
-                }
-
-                overflowed = true;
-            };
             const auto* m = static_cast<const CompilerMetrics*>(ev->compiler_metrics());
             Evaluator::SoaDirtyStats soa;
             if (ev->get_soa_dirty_stats_fn_)
@@ -2192,7 +1824,7 @@ void register_query_obs_mid_production_index_parts(PrimRegistrar add, std::pmr::
             insert_kv("min-scope-hit-rate-pct", min_scope_hit_pct);
             insert_kv("incremental-production-relower-total", static_cast<std::int64_t>(total));
             insert_kv("incremental-production-relower-recommendation", recommendation);
-            return query_hash_finish(ht, string_heap, overflowed, ev);
+            return insert_kv.finish();
         });
 }
 
@@ -2228,33 +1860,10 @@ void register_query_obs_mid_jit_consistency_parts(PrimRegistrar add, std::pmr::v
             if (!ev)
                 return make_void();
             // Capacity power-of-two; #1917 adds critical coverage keys (~46 total).
-            auto* ht = FlatHashTable::create(query_hash_capacity_for(54));
-            if (!ht)
+            primitives_detail::StatsKvTable insert_kv(
+                ev, string_heap, FlatHashTable::create(query_hash_capacity_for(54)));
+            if (!insert_kv.ok())
                 return make_void();
-            bool overflowed = false;
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            auto insert_kv = [&](const char* k_str, std::int64_t v) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (const char* p = k_str; *p; ++p)
-                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                const auto fp = ::aura::compiler::hash::fingerprint(h);
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
-                        meta[idx] = fp;
-                        auto kidx = string_heap.mint(k_str);
-                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
-                        ht->size++;
-                        return;
-                    }
-                }
-
-                overflowed = true;
-            };
             std::uint64_t compiles = 0;
             std::uint64_t unhandled = 0;
             std::uint64_t fallback = aura_jit_fallback_count_v_read();
@@ -2382,7 +1991,7 @@ void register_query_obs_mid_jit_consistency_parts(PrimRegistrar add, std::pmr::v
             insert_kv("issue-1917", 1917);
             insert_kv("issue", 1658);
             insert_kv("schema", 1658); // lineage 532 / 1512 / 1289 / 427 → 1658 + #1917
-            return query_hash_finish(ht, string_heap, overflowed, ev);
+            return insert_kv.finish();
         });
 }
 
@@ -3099,33 +2708,10 @@ void register_query_obs_mid_children_column_parts(PrimRegistrar add, std::pmr::v
             auto* ev = Evaluator::get_query_evaluator();
             if (!ev)
                 return make_void();
-            auto* ht = FlatHashTable::create(query_hash_capacity_for(15));
-            if (!ht)
+            primitives_detail::StatsKvTable insert_kv(
+                ev, string_heap, FlatHashTable::create(query_hash_capacity_for(15)));
+            if (!insert_kv.ok())
                 return make_void();
-            bool overflowed = false;
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            auto insert_kv = [&](const char* k_str, std::int64_t v) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (const char* p = k_str; *p; ++p)
-                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                const auto fp = ::aura::compiler::hash::fingerprint(h);
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
-                        meta[idx] = fp;
-                        auto kidx = string_heap.mint(k_str);
-                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
-                        ht->size++;
-                        return;
-                    }
-                }
-
-                overflowed = true;
-            };
             auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics());
             const std::int64_t triggered = static_cast<std::int64_t>(
                 shape::shape_inval_on_compact_triggered.load(std::memory_order_relaxed));
@@ -3156,7 +2742,7 @@ void register_query_obs_mid_children_column_parts(PrimRegistrar add, std::pmr::v
             insert_kv("boundary-post-compact-checks", boundary_checks);
             insert_kv("fiber-steal-sync", fiber_sync);
             insert_kv("schema", 1521);
-            return query_hash_finish(ht, string_heap, overflowed, ev);
+            return insert_kv.finish();
         });
 }
 
@@ -3185,33 +2771,10 @@ void register_query_obs_mid_arena_contracts_parts(PrimRegistrar add, std::pmr::v
         "query:arena-production-compaction-stats",
         [&string_heap, &ev](std::span<const EvalValue> a) -> EvalValue {
             (void)a;
-            auto* ht = FlatHashTable::create(query_hash_capacity_for(27));
-            if (!ht)
+            primitives_detail::StatsKvTable insert_kv(
+                ev, string_heap, FlatHashTable::create(query_hash_capacity_for(27)));
+            if (!insert_kv.ok())
                 return make_void();
-            bool overflowed = false;
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            auto insert_kv = [&](const char* k_str, std::int64_t v) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (const char* p = k_str; *p; ++p)
-                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                const auto fp = ::aura::compiler::hash::fingerprint(h);
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
-                        meta[idx] = fp;
-                        auto kidx = string_heap.mint(k_str);
-                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
-                        ht->size++;
-                        return;
-                    }
-                }
-
-                overflowed = true;
-            };
             const auto& group = ev.arena_group();
             const auto stats = group.total_stats();
             const auto policy = group.auto_compact_policy_stats();
@@ -3271,7 +2834,7 @@ void register_query_obs_mid_arena_contracts_parts(PrimRegistrar add, std::pmr::v
             insert_kv("compaction-efficiency-pct", efficiency_pct);
             insert_kv("arena-production-compaction-total", static_cast<std::int64_t>(total));
             insert_kv("arena-production-compaction-recommendation", recommendation);
-            return query_hash_finish(ht, string_heap, overflowed, ev);
+            return insert_kv.finish();
         });
 
     // Issue #535: query:contracts-production-hotpath-stats. Commercial P1 hash
@@ -3295,33 +2858,10 @@ void register_query_obs_mid_arena_contracts_parts(PrimRegistrar add, std::pmr::v
             auto* ev = Evaluator::get_query_evaluator();
             if (!ev)
                 return make_void();
-            auto* ht = FlatHashTable::create(query_hash_capacity_for(24));
-            if (!ht)
+            primitives_detail::StatsKvTable insert_kv(
+                ev, string_heap, FlatHashTable::create(query_hash_capacity_for(24)));
+            if (!insert_kv.ok())
                 return make_void();
-            bool overflowed = false;
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            auto insert_kv = [&](const char* k_str, std::int64_t v) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (const char* p = k_str; *p; ++p)
-                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                const auto fp = ::aura::compiler::hash::fingerprint(h);
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
-                        meta[idx] = fp;
-                        auto kidx = string_heap.mint(k_str);
-                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
-                        ht->size++;
-                        return;
-                    }
-                }
-
-                overflowed = true;
-            };
             const auto* m = static_cast<const CompilerMetrics*>(ev->compiler_metrics());
             auto* ws = ev->workspace_flat();
             constexpr std::int64_t k_contract_sites = 6;
@@ -3378,7 +2918,7 @@ void register_query_obs_mid_arena_contracts_parts(PrimRegistrar add, std::pmr::v
             insert_kv("contracts-coverage-pct", coverage_pct);
             insert_kv("contracts-production-hotpath-total", static_cast<std::int64_t>(total));
             insert_kv("contracts-production-hotpath-recommendation", recommendation);
-            return query_hash_finish(ht, string_heap, overflowed, ev);
+            return insert_kv.finish();
         });
 }
 
@@ -3411,33 +2951,10 @@ void register_query_obs_mid_sv_verification_parts(PrimRegistrar add, std::pmr::v
                 return make_void();
             auto* ws = ev->workspace_flat();
             const auto* m = static_cast<const CompilerMetrics*>(ev->compiler_metrics());
-            auto* ht = FlatHashTable::create(query_hash_capacity_for(24));
-            if (!ht)
+            primitives_detail::StatsKvTable insert_kv(
+                ev, string_heap, FlatHashTable::create(query_hash_capacity_for(24)));
+            if (!insert_kv.ok())
                 return make_void();
-            bool overflowed = false;
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            auto insert_kv = [&](const char* k_str, std::int64_t v) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (const char* p = k_str; *p; ++p)
-                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                const auto fp = ::aura::compiler::hash::fingerprint(h);
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
-                        meta[idx] = fp;
-                        auto kidx = string_heap.mint(k_str);
-                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
-                        ht->size++;
-                        return;
-                    }
-                }
-
-                overflowed = true;
-            };
             const std::uint64_t feedback_mapped =
                 m ? m->feedback_mutate_hits_total.load(std::memory_order_relaxed) : 0;
             const std::uint64_t feedback_success =
@@ -3489,7 +3006,7 @@ void register_query_obs_mid_sv_verification_parts(PrimRegistrar add, std::pmr::v
             insert_kv("feedback-success-rate-pct", feedback_success_pct);
             insert_kv("sv-production-verification-total", static_cast<std::int64_t>(total));
             insert_kv("sv-production-verification-recommendation", recommendation);
-            return query_hash_finish(ht, string_heap, overflowed, ev);
+            return insert_kv.finish();
         });
 
     // Issue #540: query:eda-stability-stats. Commercial P0 hash view of
@@ -3514,33 +3031,10 @@ void register_query_obs_mid_sv_verification_parts(PrimRegistrar add, std::pmr::v
                 return make_void();
             auto* ws = ev->workspace_flat();
             const auto* m = static_cast<const CompilerMetrics*>(ev->compiler_metrics());
-            auto* ht = FlatHashTable::create(query_hash_capacity_for(21));
-            if (!ht)
+            primitives_detail::StatsKvTable insert_kv(
+                ev, string_heap, FlatHashTable::create(query_hash_capacity_for(21)));
+            if (!insert_kv.ok())
                 return make_void();
-            bool overflowed = false;
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            auto insert_kv = [&](const char* k_str, std::int64_t v) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (const char* p = k_str; *p; ++p)
-                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                const auto fp = ::aura::compiler::hash::fingerprint(h);
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
-                        meta[idx] = fp;
-                        auto kidx = string_heap.mint(k_str);
-                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
-                        ht->size++;
-                        return;
-                    }
-                }
-
-                overflowed = true;
-            };
             const std::uint64_t cross_cow = ev->get_cross_cow_invalidations();
             const std::uint64_t fiber_stale = ev->get_fiber_stale_ref_count();
             const std::uint64_t provenance = ev->get_provenance_mismatch();
@@ -3577,7 +3071,7 @@ void register_query_obs_mid_sv_verification_parts(PrimRegistrar add, std::pmr::v
             insert_kv("stale-ref-blocked-count", static_cast<std::int64_t>(stale_blocked));
             insert_kv("eda-stability-total", static_cast<std::int64_t>(total));
             insert_kv("eda-stability-recommendation", recommendation);
-            return query_hash_finish(ht, string_heap, overflowed, ev);
+            return insert_kv.finish();
         });
 }
 
@@ -3610,33 +3104,10 @@ void register_query_obs_mid_pattern_sv_parts(PrimRegistrar add, std::pmr::vector
                 return make_void();
             auto* ws = ev->workspace_flat();
             const auto* m = static_cast<const CompilerMetrics*>(ev->compiler_metrics());
-            auto* ht = FlatHashTable::create(query_hash_capacity_for(26));
-            if (!ht)
+            primitives_detail::StatsKvTable insert_kv(
+                ev, string_heap, FlatHashTable::create(query_hash_capacity_for(26)));
+            if (!insert_kv.ok())
                 return make_void();
-            bool overflowed = false;
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            auto insert_kv = [&](const char* k_str, std::int64_t v) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (const char* p = k_str; *p; ++p)
-                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                const auto fp = ::aura::compiler::hash::fingerprint(h);
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
-                        meta[idx] = fp;
-                        auto kidx = string_heap.mint(k_str);
-                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
-                        ht->size++;
-                        return;
-                    }
-                }
-
-                overflowed = true;
-            };
             const std::uint64_t defuse_used =
                 m ? m->per_defuse_index_used_total.load(std::memory_order_relaxed) : 0;
             const std::uint64_t defuse_visited =
@@ -3710,7 +3181,7 @@ void register_query_obs_mid_pattern_sv_parts(PrimRegistrar add, std::pmr::vector
             insert_kv("incremental-hit-rate-pct", incremental_hit_rate_pct);
             insert_kv("pattern-sv-verification-total", static_cast<std::int64_t>(total));
             insert_kv("pattern-sv-verification-recommendation", recommendation);
-            return query_hash_finish(ht, string_heap, overflowed, ev);
+            return insert_kv.finish();
         });
 }
 
@@ -3744,33 +3215,10 @@ void register_query_obs_mid_commercial_coverage_parts(
             if (!ev)
                 return make_void();
             const auto* m = static_cast<const CompilerMetrics*>(ev->compiler_metrics());
-            auto* ht = FlatHashTable::create(query_hash_capacity_for(30));
-            if (!ht)
+            primitives_detail::StatsKvTable insert_kv(
+                ev, string_heap, FlatHashTable::create(query_hash_capacity_for(30)));
+            if (!insert_kv.ok())
                 return make_void();
-            bool overflowed = false;
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            auto insert_kv = [&](const char* k_str, std::int64_t v) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (const char* p = k_str; *p; ++p)
-                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                const auto fp = ::aura::compiler::hash::fingerprint(h);
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
-                        meta[idx] = fp;
-                        auto kidx = string_heap.mint(k_str);
-                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
-                        ht->size++;
-                        return;
-                    }
-                }
-
-                overflowed = true;
-            };
             const std::uint64_t stale_refresh =
                 m ? m->closure_stale_refresh_count_.load(std::memory_order_relaxed) : 0;
             const std::uint64_t bridge_hits =
@@ -3859,7 +3307,7 @@ void register_query_obs_mid_commercial_coverage_parts(
             insert_kv("steal-violations-during-batch", static_cast<std::int64_t>(steal_violations));
             insert_kv("top5-commercial-coverage-total", static_cast<std::int64_t>(total));
             insert_kv("top5-commercial-coverage-recommendation", recommendation);
-            return query_hash_finish(ht, string_heap, overflowed, ev);
+            return insert_kv.finish();
         });
 
     // Issue #515: query:consolidated-p0-production-stats. Hash view of the
@@ -3881,33 +3329,10 @@ void register_query_obs_mid_commercial_coverage_parts(
                 return make_void();
             auto* ws = ev->workspace_flat();
             const auto* m = static_cast<const CompilerMetrics*>(ev->compiler_metrics());
-            auto* ht = FlatHashTable::create(query_hash_capacity_for(24));
-            if (!ht)
+            primitives_detail::StatsKvTable insert_kv(
+                ev, string_heap, FlatHashTable::create(query_hash_capacity_for(24)));
+            if (!insert_kv.ok())
                 return make_void();
-            bool overflowed = false;
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            auto insert_kv = [&](const char* k_str, std::int64_t v) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (const char* p = k_str; *p; ++p)
-                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                const auto fp = ::aura::compiler::hash::fingerprint(h);
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
-                        meta[idx] = fp;
-                        auto kidx = string_heap.mint(k_str);
-                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
-                        ht->size++;
-                        return;
-                    }
-                }
-
-                overflowed = true;
-            };
             const std::uint64_t checkpoint_save = ev->get_panic_checkpoint_save_count();
             const std::uint64_t checkpoint_commit = ev->get_panic_checkpoint_commit_count();
             const std::uint64_t gen_wrap = ws ? ws->generation_wrap_count() : 0;
@@ -3956,7 +3381,7 @@ void register_query_obs_mid_commercial_coverage_parts(
             insert_kv("orchestration-boundary-depth", static_cast<std::int64_t>(boundary_depth));
             insert_kv("consolidated-p0-production-total", static_cast<std::int64_t>(total));
             insert_kv("consolidated-p0-production-recommendation", recommendation);
-            return query_hash_finish(ht, string_heap, overflowed, ev);
+            return insert_kv.finish();
         });
 }
 

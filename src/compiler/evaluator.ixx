@@ -21288,6 +21288,144 @@ namespace primitives_detail {
         }
         return types::make_hash(hidx);
     }
+
+    // Issue #5244: one emitter for every stats/observability key/value hash.
+    //
+    // Before this, each obs/query block hand-rolled the same machinery: create
+    // the table, unpack metadata()/keys()/values()/capacity, write a 20-line
+    // FNV-1a probe-and-mint lambda, track its own overflow flag, then call
+    // query_hash_finish. 310 copies of that (variants differing only in the
+    // heap spelling and the value transform). The stat *names* and *values*
+    // stay where they are — they are the observable contract, not machinery —
+    // but the table protocol lives here exactly once.
+    //
+    // Usage (keeps the historical call shape so the emission rows read the
+    // same way in every file):
+    //     primitives_detail::StatsKvTable insert_kv(
+    //         ev, ev.string_heap_, FlatHashTable::create(query_hash_capacity_for(14)));
+    //     if (!insert_kv.ok())
+    //         return make_void();            // create() miss keeps the old arm
+    //     insert_kv("hotpath-calls", hotpath_calls);
+    //     insert_kv("schema", 633);
+    //     return insert_kv.finish();
+    template <class EvLike, class Heap> class StatsKvTable {
+    public:
+        // EvLike mirrors query_hash_finish: the stats faces hand the evaluator
+        // in as a reference or as a pointer, so normalize before storing.
+        StatsKvTable(EvLike& ev, Heap& heap, FlatHashTable* ht) noexcept
+            : ev_(as_evaluator(ev))
+            , heap_(heap)
+            , ht_(ht) {}
+
+        // Issue #3018/#3020: capacity miss is reported through ok(), so a
+        // caller keeps its own fail-soft return (void / partial hash / int).
+        [[nodiscard]] bool ok() const noexcept { return ht_ != nullptr; }
+        [[nodiscard]] bool overflowed() const noexcept { return overflowed_; }
+        [[nodiscard]] FlatHashTable* table() const noexcept { return ht_; }
+
+        // const: the #5031 split helpers receive the emitter as
+        // `const auto& insert_kv` (a captureless-lambda-compatible callable),
+        // so the table probe must be callable through a const object. The
+        // table and the heap are reached through pointers/references.
+        void operator()(const char* k_str, std::int64_t v) const {
+            if (!ht_ || !k_str) {
+                overflowed_ = true;
+                return;
+            }
+            std::uint64_t h = ::aura::core::consts::kFnvOffsetBasis;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::core::consts::kFnvPrime;
+            auto meta = ht_->metadata();
+            auto keys = ht_->keys();
+            auto vals = ht_->values();
+            const auto cap = ht_->capacity;
+            const auto kidx = heap_.mint(k_str);
+            const auto key_ev = types::make_string(static_cast<std::uint64_t>(kidx));
+            const auto val_ev = types::make_int(v);
+            for (std::size_t at = 0; at < cap; ++at) {
+                const auto idx = ((h >> 1) + at) & (cap - 1);
+                if (meta[idx] == ::aura::core::consts::kEmptySlot) {
+                    meta[idx] = ::aura::core::consts::fingerprint(h);
+                    keys[idx] = key_ev.val;
+                    vals[idx] = val_ev.val;
+                    ht_->size++;
+                    return;
+                }
+            }
+            overflowed_ = true;
+        }
+
+        types::EvalValue finish() const {
+            if (!ht_)
+                return types::make_void();
+            return query_hash_finish(ht_, heap_, overflowed_, ev_);
+        }
+
+    private:
+        template <class E> [[nodiscard]] static Evaluator& as_evaluator(E& ev) noexcept {
+            if constexpr (std::is_pointer_v<std::remove_cvref_t<E>>)
+                return *ev;
+            else
+                return ev;
+        }
+
+        Evaluator& ev_;
+        Heap& heap_;
+        FlatHashTable* ht_;
+        mutable bool overflowed_ = false;
+    };
+
+    // Issue #5244: the pair-span form of the same emitter. Every
+    // build_hash([&](std::span<const std::pair<std::string, EvalValue>>) {…})
+    // helper in the obs/query files hand-rolled this probe loop (160+ copies,
+    // differing only in the loop-local spelling). kStamp keeps the documented
+    // #3020 overflow behaviour (stamp hash-overflow keys in the same hash);
+    // kDrop keeps the older "capacity miss → destroy + void" arm verbatim.
+    enum class StatsHashOverflow : std::uint8_t { kStamp, kDrop };
+
+    template <class Heap>
+    types::EvalValue
+    stats_hash_from_pairs(Evaluator& ev, Heap& heap, std::size_t capacity_hint,
+                          std::span<const std::pair<std::string, types::EvalValue>> kv,
+                          StatsHashOverflow on_overflow = StatsHashOverflow::kStamp) {
+        auto* ht = FlatHashTable::create(capacity_hint);
+        if (!ht)
+            return types::make_void();
+        bool overflowed = false;
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        const auto cap = ht->capacity;
+        for (auto& [k, v] : kv) {
+            std::uint64_t h = ::aura::core::consts::kFnvOffsetBasis;
+            for (char c : k)
+                h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::core::consts::kFnvPrime;
+            const auto fp = ::aura::core::consts::fingerprint(h);
+            const auto kidx = heap.mint(k);
+            const auto key_ev = types::make_string(static_cast<std::uint64_t>(kidx));
+            bool inserted = false;
+            for (std::size_t at = 0; at < cap; ++at) {
+                const auto idx = ((h >> 1) + at) & (cap - 1);
+                if (meta[idx] == ::aura::core::consts::kEmptySlot) {
+                    meta[idx] = fp;
+                    keys[idx] = key_ev.val;
+                    vals[idx] = v.val;
+                    ht->size++;
+                    inserted = true;
+                    break;
+                }
+            }
+            if (!inserted) {
+                if (on_overflow == StatsHashOverflow::kDrop) {
+                    FlatHashTable::destroy(ht);
+                    return types::make_void();
+                }
+                overflowed = true;
+                break;
+            }
+        }
+        return query_hash_finish(ht, heap, overflowed, ev);
+    }
 } // namespace primitives_detail
 
 } // namespace aura::compiler
