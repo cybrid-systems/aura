@@ -118,6 +118,10 @@
 (ok5006 (pair? rec5006) "agent:recover-from-error still returns a result list")
 (ok5006 (boolean? (car rec5006)) "agent:recover-from-error reports ok as a bool")
 
+; Issue #5236: the retired-name hint must not name a version that has passed.
+(ok5006 (= -1 (string-find ref5006 "v0.2.0 alias window"))
+        "no alias hint names the v0.2.0 window")
+
 (if (= fails5006 0)
     (display "OK-5006 bare names\n")
     (exit 1))
