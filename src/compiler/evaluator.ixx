@@ -21332,27 +21332,27 @@ namespace primitives_detail {
         // `const auto& insert_kv` (a captureless-lambda-compatible callable),
         // so the table probe must be callable through a const object. The
         // table and the heap are reached through pointers/references.
-        void operator()(const char* k_str, std::int64_t v) const {
-            if (!ht_ || !k_str) {
+        void operator()(const char* key_text, std::int64_t value) const {
+            if (!ht_ || key_text == nullptr) {
                 overflowed_ = true;
                 return;
             }
-            std::uint64_t h = ::aura::core::consts::kFnvOffsetBasis;
-            for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::core::consts::kFnvPrime;
-            auto meta = ht_->metadata();
-            auto keys = ht_->keys();
-            auto vals = ht_->values();
-            const auto cap = ht_->capacity;
-            const auto kidx = heap_.mint(k_str);
-            const auto key_ev = types::make_string(static_cast<std::uint64_t>(kidx));
-            const auto val_ev = types::make_int(v);
-            for (std::size_t at = 0; at < cap; ++at) {
-                const auto idx = ((h >> 1) + at) & (cap - 1);
-                if (meta[idx] == ::aura::core::consts::kEmptySlot) {
-                    meta[idx] = ::aura::core::consts::fingerprint(h);
-                    keys[idx] = key_ev.val;
-                    vals[idx] = val_ev.val;
+            std::uint64_t hash = ::aura::core::consts::kFnvOffsetBasis;
+            for (char ch : std::string_view(key_text))
+                hash = (hash ^ static_cast<std::uint8_t>(ch)) * ::aura::core::consts::kFnvPrime;
+            auto meta = std::span(ht_->metadata(), static_cast<std::size_t>(ht_->capacity));
+            auto keys = std::span(ht_->keys(), static_cast<std::size_t>(ht_->capacity));
+            auto vals = std::span(ht_->values(), static_cast<std::size_t>(ht_->capacity));
+            const auto capacity = ht_->capacity;
+            const auto key_index = heap_.mint(key_text);
+            const auto key_ev = types::make_string(static_cast<std::uint64_t>(key_index));
+            const auto val_ev = types::make_int(value);
+            for (std::size_t probe = 0; probe < capacity; ++probe) {
+                const auto slot_index = ((hash >> 1) + probe) & (capacity - 1);
+                if (meta[slot_index] == ::aura::core::consts::kEmptySlot) {
+                    meta[slot_index] = ::aura::core::consts::fingerprint(hash);
+                    keys[slot_index] = key_ev.val;
+                    vals[slot_index] = val_ev.val;
                     ht_->size++;
                     return;
                 }
@@ -21391,30 +21391,30 @@ namespace primitives_detail {
     template <class Heap>
     types::EvalValue
     stats_hash_from_pairs(Evaluator& ev, Heap& heap, std::size_t capacity_hint,
-                          std::span<const std::pair<std::string, types::EvalValue>> kv,
+                          std::span<const std::pair<std::string, types::EvalValue>> pairs,
                           StatsHashOverflow on_overflow = StatsHashOverflow::kStamp) {
         auto* ht = FlatHashTable::create(capacity_hint);
         if (!ht)
             return types::make_void();
         bool overflowed = false;
-        auto meta = ht->metadata();
-        auto keys = ht->keys();
-        auto vals = ht->values();
+        auto meta = std::span(ht->metadata(), static_cast<std::size_t>(ht->capacity));
+        auto keys = std::span(ht->keys(), static_cast<std::size_t>(ht->capacity));
+        auto vals = std::span(ht->values(), static_cast<std::size_t>(ht->capacity));
         const auto cap = ht->capacity;
-        for (auto& [k, v] : kv) {
-            std::uint64_t h = ::aura::core::consts::kFnvOffsetBasis;
-            for (char c : k)
-                h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::core::consts::kFnvPrime;
-            const auto fp = ::aura::core::consts::fingerprint(h);
-            const auto kidx = heap.mint(k);
-            const auto key_ev = types::make_string(static_cast<std::uint64_t>(kidx));
+        for (auto& [key, value] : pairs) {
+            std::uint64_t hash = ::aura::core::consts::kFnvOffsetBasis;
+            for (char ch : key)
+                hash = (hash ^ static_cast<std::uint8_t>(ch)) * ::aura::core::consts::kFnvPrime;
+            const auto fingerprint = ::aura::core::consts::fingerprint(hash);
+            const auto key_index = heap.mint(key);
+            const auto key_ev = types::make_string(static_cast<std::uint64_t>(key_index));
             bool inserted = false;
-            for (std::size_t at = 0; at < cap; ++at) {
-                const auto idx = ((h >> 1) + at) & (cap - 1);
-                if (meta[idx] == ::aura::core::consts::kEmptySlot) {
-                    meta[idx] = fp;
-                    keys[idx] = key_ev.val;
-                    vals[idx] = v.val;
+            for (std::size_t probe = 0; probe < cap; ++probe) {
+                const auto slot_index = ((hash >> 1) + probe) & (cap - 1);
+                if (meta[slot_index] == ::aura::core::consts::kEmptySlot) {
+                    meta[slot_index] = fingerprint;
+                    keys[slot_index] = key_ev.val;
+                    vals[slot_index] = value.val;
                     ht->size++;
                     inserted = true;
                     break;
