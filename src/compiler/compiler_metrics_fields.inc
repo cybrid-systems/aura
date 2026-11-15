@@ -1,6 +1,10 @@
 // CompilerMetrics scalar atomics for engine:metrics grouped dump.
-// Sync with observability_metrics.h CompilerMetrics (append-only; arrays excluded).
-// 2352 scalar fields. Linter: check_compiler_metrics_fields_3737.py
+// GENERATED FILE (Issue #5244) — do not hand-edit a FIELD row.
+// Source of truth: struct CompilerMetrics in observability_metrics.h.
+// Regenerate after adding/removing a scalar atomic:
+//   python3 scripts/gen_compiler_metrics_fields.py
+// 2357 scalar fields. Generator + staleness gate:
+// scripts/gen_compiler_metrics_fields.py --check (wired into build.py gate).
 #ifndef AURA_COMPILER_METRICS_FIELD
 #error "define AURA_COMPILER_METRICS_FIELD(name) before including"
 #endif
