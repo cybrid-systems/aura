@@ -52,6 +52,11 @@ CASES = (
         "export_contracts.TestExportContracts5198.test_require_same_module_twice_does_not_warn",
     ),
     (
+        5306,
+        "test_reexport_of_stdlib_does_not_warn",
+        "export_contracts.TestExportContracts5198.test_reexport_of_stdlib_does_not_warn",
+    ),
+    (
         5199,
         "test_paren_semi_file_names_line_1",
         "export_unclosed.TestUnclosedList5199.test_paren_semi_file_names_line_1",

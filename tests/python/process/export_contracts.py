@@ -4,7 +4,8 @@
 iota / sorted? / vector-map succeed in either require order. extract-code
 stays the text extractor; llm:extract-code is the agent extractor. Requiring
 two modules that still define find independently warns and still loads.
-Requiring one module twice does not warn.
+Requiring one module twice does not warn. A module that only re-requires
+std/string does not count as the author of string-join.
 """
 
 from __future__ import annotations
@@ -141,6 +142,34 @@ class TestExportContracts5198(unittest.TestCase):
         self.assertEqual(p.stdout.strip(), "(1 2 3 4 5)")
         self.assertNotIn("will overwrite", p.stderr)
         self.assertNotIn("warning:", p.stderr)
+
+    def test_reexport_of_stdlib_does_not_warn(self) -> None:
+        # Two require paths to std/string. lib/m does not define string-join.
+        with tempfile.TemporaryDirectory() as tmp:
+            lib = Path(tmp) / "lib"
+            lib.mkdir()
+            (lib / "m.aura").write_text('(require "std/string" all:)\n(define (wf-x) 1)\n')
+            (lib / "m3.aura").write_text('(require "lib/m")\n(require "std/string" all:)\n(define (k) 1)\n')
+            main = Path(tmp) / "main3.aura"
+            main.write_text(
+                '(require "lib/m3")\n(display (string-join (list "a" "b") ",")) (newline)\n(display (wf-x)) (newline)\n'
+            )
+            env = dict(os.environ)
+            for key in ("AURA_SANDBOX", "AURA_PRESET", "AURA_PIPELINE_STRICT"):
+                env.pop(key, None)
+            env["AURA_PATH"] = os.pathsep.join((tmp, str(ROOT / "lib")))
+            p = subprocess.run(
+                [str(AURA_BIN), "--quiet", str(main)],
+                capture_output=True,
+                text=True,
+                env=env,
+                cwd=tmp,
+                timeout=90,
+            )
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(p.stdout.splitlines(), ["a,b", "1"])
+        self.assertNotIn("will overwrite", p.stderr)
+        self.assertNotIn("lib/m", p.stderr)
 
 
 if __name__ == "__main__":
