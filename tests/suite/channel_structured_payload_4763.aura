@@ -71,7 +71,9 @@
 
 ;; H (Issue #5294): repeated fiber -> main sends. The file-heap reclaim can
 ;; run between the receiver's decode and its first read, so these payloads
-;; must arrive intact on every round, not just on the first.
+;; must arrive intact on every round, not just on the first. The list loop
+;; is long on purpose: a list that contains a hash flaked well below 2000
+;; rounds (inner pair wiped to (), or the key string released).
 (define c3 (channel:create 1))
 (define hash_bad 0)
 (let loop ((k 0))
@@ -85,7 +87,7 @@
 
 (define list_bad 0)
 (let loop ((k 0))
-  (if (< k 200)
+  (if (< k 1000)
       (let ((ff (fiber:spawn (lambda () (channel:send c3 (list 1 (hash "tag" "a")))))))
         (let ((got (channel:recv c3)))
           (if (and (pair? got) (equal? (hash-ref (cadr got) "tag" #f) "a"))
@@ -93,7 +95,7 @@
               (set! list_bad (+ list_bad 1))))
         (fiber:join ff)
         (loop (+ k 1)))))
-(assert! (= list_bad 0) "H: 200 fiber list-of-hash sends arrive intact")
+(assert! (= list_bad 0) "H: 1000 fiber list-of-hash sends arrive intact")
 
 (if (= *fails* 0)
     (begin (display "OK-4763 structured channel payloads") (newline))

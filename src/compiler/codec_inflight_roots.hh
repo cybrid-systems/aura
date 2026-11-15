@@ -107,6 +107,24 @@ private:
     std::unique_lock<std::recursive_mutex> lock_;
 };
 
+// Held by a reclaim across collect() and the pair/string size sample.
+// Codec mints take this mutex before they allocate (CreationGuard), so a
+// slot below the sampled size is already in the collected roots, and a slot
+// allocated after the sample is past that size. Dropping the mutex between
+// the two lets a decode publish a cons the collect missed and the wipe then
+// clears: the outer list arrives as (1 ()), or the key string is released
+// and hash-ref misses while hash-length stays 1.
+struct RegistryLock {
+    RegistryLock()
+        : lock_(detail::registry_mutex()) {}
+    ~RegistryLock() = default;
+    RegistryLock(const RegistryLock&) = delete;
+    RegistryLock& operator=(const RegistryLock&) = delete;
+
+private:
+    std::unique_lock<std::recursive_mutex> lock_;
+};
+
 // One in-flight top-level decode. Nested decodes reuse the frame: a child
 // value must stay rooted while its parent attaches it.
 class ScopedFrame {
@@ -170,7 +188,9 @@ inline void publish_result(std::int64_t raw) {
 // Issue #5294: keep the WHOLE payload the decode just built rooted until the
 // next channel call. The root value alone leaves inner hashes reachable only
 // through pair slots, and a walk that misses them there hands the caller an
-// empty table inside an otherwise intact list.
+// empty table inside an otherwise intact list. The datum recv path must not
+// follow this with publish_result: that keeps only the root word and drops
+// the inner conses, strings and hashes just published.
 inline void publish_frame(std::uint64_t frame_id) {
     const std::scoped_lock<std::recursive_mutex> registry_lock(detail::registry_mutex());
     const auto frame_it = detail::frames().find(frame_id);
@@ -196,7 +216,9 @@ inline void publish_frame(std::uint64_t frame_id) {
 }
 
 // Appends every in-flight codec value to out. Returns how many were added
-// (0 = no decode is running anywhere in the process).
+// (0 = no decode is running anywhere in the process). Re-locks the registry,
+// so a caller already holding RegistryLock can sample heap sizes before the
+// lock drops.
 inline std::size_t collect(std::vector<std::int64_t>& out) {
     const std::scoped_lock<std::recursive_mutex> registry_lock(detail::registry_mutex());
     std::size_t added = 0;

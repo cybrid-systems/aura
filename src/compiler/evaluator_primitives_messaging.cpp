@@ -1271,12 +1271,13 @@ MessagingChannelCodec RegSplitParts::messaging_channel_codec(Evaluator& ev) {
     const auto channel_decode_4763 = codec.channel_decode_4763;
     codec.channel_recv_value_4763 = [&ev, channel_decode_4763](ChannelMessage&& msg) -> EvalValue {
         if (msg.kind == kChannelDatumKind4763) {
-            // Issue #5294: root the value past the decode frame - the caller
-            // stores it one frame up, and a sweep from a fiber body exit can
-            // land exactly in that gap.
-            const EvalValue recv_value = channel_decode_4763(msg.text);
-            codec_inflight_roots::publish_result(recv_value.val);
-            return recv_value;
+            // Issue #5294: publish_frame already rooted every cons, string and
+            // hash this payload names. publish_result would replace that set
+            // with the outer value alone, and a sweep that sampled the heap
+            // between the inner cons and the outer cons then wiped the inner
+            // pair (the list arrived as (1 ())) or released the key string
+            // (hash-ref of "tag" missed while hash-length stayed 1).
+            return channel_decode_4763(msg.text);
         }
         const EvalValue recv_value = channel_message_to_value(ev.string_heap_, std::move(msg));
         codec_inflight_roots::publish_result(recv_value.val);
@@ -2994,38 +2995,44 @@ void RegSplitParts::register_messaging_channel_primitives(PrimRegistrar add, Eva
             // Issue #4744: an immediate payload is returned as itself.
             return channel_recv_value_4763(std::move(*msg));
         }
-        // Issue #5274: certifiably parked for the whole wait — the segment
-        // keeps this body's live frames markable, so a sibling's sweep is not
-        // frozen out for the lifetime of a long-lived server.
-        TwPlainPark park_5274;
-        std::unique_lock ul(ch.mtx);
-        // Issue #2483: announce waiting receiver so rendezvous send can proceed.
-        ++ch.waiting_receivers;
-        ch.cv.notify_all();
-        // Issue #4840: this thread-backend wait is a cancellation safepoint.
-        // (fiber:cancel f) only sets the pending flag and wakes the join cv,
-        // so a raw cv.wait here parked the body forever and the following
-        // fiber:join hung. Poll at the same 50ms cadence as fiber:join.
-        while (!(ch.closed || !ch.queue.empty())) {
-            if (fiber_cancel_take(current_fiber_body_id())) {
-                --ch.waiting_receivers;
-                ul.unlock();
-                ch.cv.notify_all();
-                return fiber_cancel_condition_value(ev, ev.string_heap_, ev.error_values_,
-                                                    ev.primitive_error_counter_ptr());
+        // Issue #5274: certifiably parked for the wait only. The bracket
+        // promises this segment is stable (no EvalValue traffic). Decoding
+        // the payload mints pairs, strings and hashes; doing that while still
+        // parked let a sibling sweep cross-mark this body in the middle of
+        // the decode (#5294).
+        ChannelMessage msg;
+        bool got_msg = false;
+        {
+            TwPlainPark park_5274;
+            std::unique_lock ul(ch.mtx);
+            // Issue #2483: announce waiting receiver so rendezvous send can proceed.
+            ++ch.waiting_receivers;
+            ch.cv.notify_all();
+            // Issue #4840: this thread-backend wait is a cancellation safepoint.
+            // (fiber:cancel f) only sets the pending flag and wakes the join cv,
+            // so a raw cv.wait here parked the body forever and the following
+            // fiber:join hung. Poll at the same 50ms cadence as fiber:join.
+            while (!(ch.closed || !ch.queue.empty())) {
+                if (fiber_cancel_take(current_fiber_body_id())) {
+                    --ch.waiting_receivers;
+                    ul.unlock();
+                    ch.cv.notify_all();
+                    return fiber_cancel_condition_value(ev, ev.string_heap_, ev.error_values_,
+                                                        ev.primitive_error_counter_ptr());
+                }
+                ch.cv.wait_for(ul, std::chrono::milliseconds(50));
             }
-            ch.cv.wait_for(ul, std::chrono::milliseconds(50));
-        }
-        --ch.waiting_receivers;
-        if (ch.queue.empty()) {
+            --ch.waiting_receivers;
+            if (!ch.queue.empty()) {
+                msg = std::move(ch.queue.front());
+                ch.queue.pop_front();
+                got_msg = true;
+            }
             ul.unlock();
             ch.cv.notify_all();
-            return make_string(0);
         }
-        auto msg = std::move(ch.queue.front());
-        ch.queue.pop_front();
-        ul.unlock();
-        ch.cv.notify_all();
+        if (!got_msg)
+            return make_string(0);
         // Issue #4744: an immediate payload is returned as itself.
         return channel_recv_value_4763(std::move(msg));
     });

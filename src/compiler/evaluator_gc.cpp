@@ -1891,12 +1891,25 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
             for (const auto raw : metrics_keys)
                 roots.push_back(EvalValue(raw));
         }
-        // Issue #5294: a channel codec decode builds a hash/list/vector in
-        // a C++ frame; its values are unreachable until the top-level
-        // decode returns. Without this the mark frees the table the
-        // receiver is still filling and the caller reads an empty hash.
-        // The serial limit is read BEFORE these roots: a table minted after
-        // it is skipped by the release (the codec had not published yet).
+    }
+
+    // Issue #5294: collect the codec roots and sample the pair/string heaps
+    // under one hold of the codec registry. A decode mints under that same
+    // mutex (CreationGuard) before it publishes the slot. Releasing the mutex
+    // between the collect and the size read let the inner cons land inside
+    // the wipe limit without being a root: the outer list arrived as (1 ())
+    // and the key string was swapped to empty (hash-ref missed, hash-length
+    // stayed 1). A slot below the sample is already in the roots; a slot
+    // minted after the sample is past it and is left alone. The serial limit
+    // is read BEFORE the roots: a table minted after it is skipped by the
+    // release. free_slot_snapshot locks the alloc mutex itself — do not hold
+    // alloc_storage_lock_ across that call.
+    std::size_t n_pairs = 0;
+    std::size_t n_vecs = 0;
+    std::size_t n_strings = 0;
+    std::vector<std::uint8_t> free_at_mark;
+    {
+        codec_inflight_roots::RegistryLock codec_registry;
         hash_mint_limit = hash_mint_serial_next_.load(std::memory_order_acquire);
         std::vector<std::int64_t> codec_values;
         if (codec_inflight_roots::collect(codec_values) > 0) {
@@ -1904,17 +1917,18 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
             for (const auto raw : codec_values)
                 roots.push_back(EvalValue(raw));
         }
+        // Issue #4608: the size snapshot bounds the release to the slots that
+        // existed when the mark started (a slot minted after is newborn and
+        // stays live); the free-slot snapshot tells the release which slots
+        // were already reusable (or re-minted since the mark).
+        n_strings = string_heap_.size();
+        free_at_mark = string_heap_.free_slot_snapshot();
+        {
+            std::scoped_lock lock(alloc_storage_lock_);
+            n_pairs = pairs_.size();
+            n_vecs = vector_heap_.size();
+        }
     }
-
-    const std::size_t n_pairs = pairs_.size();
-    const std::size_t n_vecs = vector_heap_.size();
-    // Issue #4608: the string heap takes part in the mark. The size
-    // snapshot bounds the release to the slots that existed when the
-    // mark started (a slot minted after the mark is newborn and stays
-    // live); the free-slot snapshot tells the release which slots
-    // were already reusable (or re-minted since the mark).
-    const std::size_t n_strings = string_heap_.size();
-    const auto free_at_mark = string_heap_.free_slot_snapshot();
     std::vector<std::uint8_t> seen_pair(n_pairs, 0);
     std::vector<std::uint8_t> seen_vec(n_vecs, 0);
     std::vector<std::uint8_t> seen_hash;
@@ -2290,24 +2304,20 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
             channels_at_mark.push_back(c.get());
     }
 
+    // Issue #5294: pair, vector and string bounds are sampled with the codec
+    // roots below. An earlier snapshot let a parked channel:recv publish an
+    // inner cons into the wipe window before the outer cons existed.
     std::size_t n_pairs = 0;
     std::size_t n_vecs = 0;
     std::size_t n_cells = 0;
     std::size_t n_errs = 0;
+    std::size_t n_strings = 0;
+    std::vector<std::uint8_t> free_at_mark;
     {
         std::scoped_lock lock(alloc_storage_lock_);
-        n_pairs = pairs_.size();
-        n_vecs = vector_heap_.size();
         n_cells = cells_.size();
         n_errs = error_values_.size();
     }
-    // Issue #4608: the string heap takes part in the mark. The size
-    // snapshot bounds the release to the slots that existed when the
-    // mark started (a slot minted after the mark is newborn and stays
-    // live); the free-slot snapshot tells the release which slots
-    // were already reusable (or re-minted since the mark).
-    const std::size_t n_strings = string_heap_.size();
-    const auto free_at_mark = string_heap_.free_slot_snapshot();
     std::size_t n_frames = 0;
     {
         std::array<std::shared_lock<std::shared_mutex>, kEnvFramesShardCount> rlock;
@@ -2316,12 +2326,14 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
         n_frames = env_frames_.size();
     }
 
-    std::vector<std::uint8_t> seen_pair(n_pairs, 0);
-    std::vector<std::uint8_t> seen_vec(n_vecs, 0);
+    // Sized after the codec sample below. Constructing them from the zeros
+    // above would let the wipe treat every slot as unseen.
+    std::vector<std::uint8_t> seen_pair;
+    std::vector<std::uint8_t> seen_vec;
     std::vector<std::uint8_t> seen_hash;
     std::vector<std::uint8_t> seen_ev_cell(n_cells, 0);
     std::vector<std::uint8_t> seen_err(n_errs, 0);
-    std::vector<std::uint8_t> seen_string(n_strings, 0);
+    std::vector<std::uint8_t> seen_string;
     std::vector<std::uint8_t> live_frame(n_frames, 0);
     std::vector<std::uint8_t> frame_scanned(n_frames, 0);
     std::unordered_set<std::uint64_t> seen_ir;
@@ -2420,8 +2432,13 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
             for (const auto raw : metrics_keys)
                 work.push_back(EvalValue(raw));
         }
-        // Issue #5294: the codec's in-flight values (see the file-mode
-        // reclaim above) — the tree-walker mark needs the same roots.
+    }
+    // Issue #5294: same critical section as the file-mode reclaim. The size
+    // sample stays WITH the collect: moving it after this lock, or leaving
+    // the early snapshot in front of a later collect, is the window that
+    // wiped the inner cons.
+    {
+        codec_inflight_roots::RegistryLock codec_registry;
         hash_mint_limit = hash_mint_serial_next_.load(std::memory_order_acquire);
         std::vector<std::int64_t> codec_values;
         if (codec_inflight_roots::collect(codec_values) > 0) {
@@ -2429,7 +2446,17 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
             for (const auto raw : codec_values)
                 work.push_back(EvalValue(raw));
         }
+        n_strings = string_heap_.size();
+        free_at_mark = string_heap_.free_slot_snapshot();
+        {
+            std::scoped_lock lock(alloc_storage_lock_);
+            n_pairs = pairs_.size();
+            n_vecs = vector_heap_.size();
+        }
     }
+    seen_pair.assign(n_pairs, 0);
+    seen_vec.assign(n_vecs, 0);
+    seen_string.assign(n_strings, 0);
     // Issue #4608: the intern caches hold string indices (symbol
     // names, quote literals, keywords). They are roots: a cached
     // index must never be released under the cache.
