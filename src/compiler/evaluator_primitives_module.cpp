@@ -140,12 +140,15 @@ void Evaluator::warn_import_overwrite(Env* env, const std::string& name,
     }
     // A true re-export is the same object. Keep the module that first
     // installed it so a later distinct definition names that module.
+    // Snapshot the inner value. A later define in the importing module
+    // updates the cell in place; storing the cell would make that
+    // definition look like the original re-export (#5306).
     const bool same_object =
         tracked && local && found->second.module != label && unwrap(*local) == incoming;
     if (!same_object) {
         ImportBindOrigin origin;
         origin.module = label;
-        origin.value = val;
+        origin.value = incoming;
         if (tracked)
             found->second = std::move(origin);
         else
@@ -276,12 +279,35 @@ void register_module_primitives(PrimRegistrar add, Evaluator& ev) {
         // (parity with historical top_-only injection for std requires).
         auto* loaded_env = ev.modules_[mod_idx];
         Env* inject = ev.require_inject_env_ ? ev.require_inject_env_ : &ev.top_;
+        // Issue #5306: a binding this module only imported is a re-export.
+        // Warn and record the module that installed that same value, not
+        // the file that required it. A later define in this module stores
+        // a different value, so the require path stays the provider.
+        auto unwrap_bind = [&ev](EvalValue v) {
+            if (is_cell(v)) {
+                const auto ci = as_cell_id(v);
+                if (ci < ev.cells_.size())
+                    return ev.cells_[ci];
+            }
+            return v;
+        };
+        auto provider_for = [&](const std::string& name, const EvalValue& val) -> std::string {
+            const auto env_it = ev.import_bind_origin_.find(loaded_env);
+            if (env_it == ev.import_bind_origin_.end())
+                return path;
+            const auto name_it = env_it->second.find(name);
+            if (name_it == env_it->second.end())
+                return path;
+            if (unwrap_bind(name_it->second.value) != unwrap_bind(val))
+                return path;
+            return name_it->second.module;
+        };
         auto inject_one = [&](const std::string& name, const EvalValue& val) {
             // Issue #5198: warn when this require overwrites a name a
             // different module already installed here. The bind still
             // happens. The top_ mirror of a nested require is not a second
             // warning (the caller's require is the direct inject below).
-            ev.warn_import_overwrite(inject, name, val, path);
+            ev.warn_import_overwrite(inject, name, val, provider_for(name, val));
             inject->bind(name, val);
             // Nested module load: also publish on top_ so top-level after
             // (require "m" all:) can still resolve shared std names if the
