@@ -6,6 +6,7 @@ module;
 #include "castop_typed_meta.h" // Issue #2624 Phase A: CastOp src/dst typed meta side table
 #include "typed_mutation_audit.h" // Issue #3140 Phase C: last_type_linear_commit_proof_stamp_v_read() for epoch_or_mid plumbing
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
+#include "float_repr.hh" // Issue #5295: same reader-legal float spelling as append_float
 
 // Issue #2254: production SoA-only default. Macro must be in this TU's
 // GMF — module imports do not re-export preprocessor definitions from
@@ -2951,11 +2952,9 @@ std::string unparse_node(const FlatAST& flat, const StringPool& pool, NodeId id,
             // body_source both re-parse this text. The default arm printed
             // "()", which re-parses as the nil sentinel (LiteralInt 0), so
             // float literals in workspace lambda bodies evaluated to 0.
-            // Format like the #2922 SSOT unparser's append_float.
-            auto s = std::to_string(v.float_value);
-            if (s.find('.') == std::string::npos)
-                s += ".0";
-            return s;
+            // Issue #5295: same rule as the #2922 SSOT append_float.
+            // ".0" only when the spelling has no exponent and no fraction.
+            return format_float_shortest(v.float_value);
         }
 
         case NodeTag::LiteralString: {
