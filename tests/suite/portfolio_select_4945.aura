@@ -357,8 +357,8 @@
          "bandit cumulative regret is >= 30 % below the fixed SBS")
 (assert! (<= ns-first-b 10) "the bandit recovers within 10 steps of the drift")
 (assert! (>= ns-b25 18) "the new best member is played in >= 18 of the next 25 steps")
-(assert! (> (car (cdr (cdr (cdr ns-out)))) 0.35)
-         "the reward shift is reported as drift")
+; The bandit switches arms and keeps collecting 1, so the chosen-reward
+; window does not itself move. A scripted 1 → 0 window is AC12.
 (display "  regret: bandit ") (display ns-regret)
 (display " vs fixed-sbs ") (display ns-fixed-regret)
 (display ", first-b after drift ") (display ns-first-b) (newline)
@@ -474,8 +474,47 @@
 (display " best-single=") (display frr-best)
 (display " bad-pulls=") (display frr-bad) (display "/") (display frr-pulls)
 (newline)
+
+; ═══════════════════════════════════════════════════════════════════
+; AC12 — stationary rewards must not look like drift (#5299)
+; The reward window is a two-sample t. On i.i.d. noise the default
+; threshold (two-sided 5%) flags a few percent of steps, not half of them.
+; A real 1 → 0 shift still crosses it. Context is held fixed so the
+; feature total-variation term stays quiet.
+; ═══════════════════════════════════════════════════════════════════
+(display "AC12 stationary reward drift\n")
+(define flat-insts (map (lambda (i) (hash "kind" 0)) (list 0 1 2 3 4 5 6 7)))
+(define flat-m (hash "members" (list "a" "b") "instances" flat-insts
+                     "means" (map (lambda (i) (list 1.0 0.0)) flat-insts)))
+(define (lcg s) (modulo (+ (* s 1103515245) 12345) 2147483648))
+(define (drift-loop s n seed reward flags)
+  (if (= n 0) flags
+    (let* ((seed2 (if (= seed 0) seed (lcg seed)))
+           (pay (if (= seed 0) reward (+ 1.0 (* 0.1 (/ (modulo seed2 10000) 10000.0)))))
+           (s2 (select:feedback! s (hash "kind" 0) "a" pay)))
+      (drift-loop s2 (- n 1) seed2 reward
+                  (if (select:drift? s2) (+ flags 1) flags)))))
+(define st-flags
+  (drift-loop (select:offline (select:make (hash "model" "knn" "k" 1)) flat-m (hash))
+              200 1 0.0 0))
+(display "  stationary flags ") (display st-flags) (display "/200\n")
+(assert! (< st-flags 30)
+         "stationary rewards flag drift on fewer than 30 of 200 steps")
+(define const-flags
+  (drift-loop (select:offline (select:make (hash "model" "knn" "k" 1)) flat-m (hash))
+              40 0 1.0 0))
+(assert! (= const-flags 0) "constant rewards do not flag drift")
+(define shifted-s
+  (let loop ((s (select:offline (select:make (hash "model" "knn" "k" 1)) flat-m (hash)))
+             (n 20))
+    (if (= n 0) s
+      (loop (select:feedback! s (hash "kind" 0) "a" 1.0) (- n 1)))))
+(define shift-flags (drift-loop shifted-s 8 0 0.0 0))
+(assert! (> shift-flags 0) "a 1-to-0 reward shift is flagged")
 (if (= *fails* 0)
-    (begin (display "OK-4945 portfolio/select/hh\n"))
+    (begin
+      (display "OK-4945 portfolio/select/hh\n")
+      (display "OK-5299\n"))
     (begin
       (display "FAIL-4945 fails=")
       (display *fails*)
