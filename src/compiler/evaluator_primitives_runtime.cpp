@@ -17,6 +17,7 @@ module aura.compiler.evaluator;
 import std;
 import aura.compiler.evaluator_pure;
 import aura.compiler.value;
+import aura.diag; // Issue #5241: shared "kind: message" head for display errors
 
 // Issue #4603: JIT-inlined display error arm (aura_jit_runtime.cpp). The
 // evaluator owns error_values_ + the #4497 displayed-error counter.
@@ -107,8 +108,12 @@ namespace {
             if (auto loc = ev.error_location(v))
                 where = loc->format() + ": ";
         }
+        // Issue #5241: the display face names the same category as the
+        // located diagnostic face (type error: car: not a pair, not the
+        // bare cause), read from the structured kind of the error value.
+        const aura::diag::Diagnostic d{ev.error_value_kind(v), std::move(msg)};
         std::fflush(stdout);
-        std::print(stderr, "error: {}{}\n", where, msg);
+        std::print(stderr, "error: {}{}\n", where, d.format_head());
         std::fflush(stderr);
         g_displayed_errors.fetch_add(1, std::memory_order_relaxed);
         return true;
