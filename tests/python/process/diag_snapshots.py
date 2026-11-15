@@ -66,7 +66,7 @@ SNAPSHOTS: dict[str, tuple[str, int, str | None, str | None, str | None]] = {
     "4-require-std": ('(require "std/process")\n(require "std/fs")\n(display "loaded")\n', 0, None, None, "error"),
     "5-memq": (
         "(display (memq 1 (list 1 2)))\n",
-        1,
+        4,  # #5240: unbound is a static error
         "error: p.aura:1:11: unbound variable: memq",
         MEMQ,
         None,
