@@ -435,15 +435,16 @@ void RegSplitParts::register_math_scalar_primitives(
     auto unary_math = [&](const char* cause, auto fn) {
         // Copy the pointer and the predicate. [&] would dangle after
         // register returns; the heaps outlive the primitive table.
-        return [&string_heap, &error_values, primitive_error_counter, as_math_double, cause,
+        // #5241: an operand that is not a number is a type error at
+        // creation; the label never comes from the "expected number" text.
+        return [&ev, &string_heap, &error_values, primitive_error_counter, as_math_double, cause,
                 fn](const auto& a) -> EvalValue {
             if (a.empty())
                 return make_float(0.0);
             double d = 0.0;
             if (!as_math_double(a[0], d)) {
                 note_arith_mismatch(a[0], string_heap);
-                return make_primitive_error(string_heap, error_values, cause,
-                                            primitive_error_counter);
+                return ev.make_typed_error(cause, aura::diag::ErrorKind::TypeError);
             }
             return make_float(fn(d));
         };
@@ -478,7 +479,7 @@ void RegSplitParts::register_math_scalar_primitives(
                   pure_general(1, "(number) -> float", "e raised to the argument."));
     register_prim(
         add, ev, "pow",
-        [&string_heap, &error_values, primitive_error_counter,
+        [&ev, &string_heap, &error_values, primitive_error_counter,
          as_math_double](const auto& a) -> EvalValue {
             if (a.size() < 2)
                 return make_float(0.0);
@@ -486,8 +487,8 @@ void RegSplitParts::register_math_scalar_primitives(
             if (!as_math_double(a[0], x) || !as_math_double(a[1], y)) {
                 const auto& bad = aura::compiler::pure::is_arith_number(a[0]) ? a[1] : a[0];
                 note_arith_mismatch(bad, string_heap);
-                return make_primitive_error(string_heap, error_values, "pow: expected number",
-                                            primitive_error_counter);
+                return ev.make_typed_error("pow: expected number",
+                                           aura::diag::ErrorKind::TypeError);
             }
             return make_float(std::pow(x, y));
         },
@@ -506,7 +507,7 @@ void RegSplitParts::register_math_scalar_primitives(
     // float, same as floor / ceiling / truncate (#5157).
     register_prim(
         add, ev, "round",
-        [&string_heap, &error_values, primitive_error_counter,
+        [&ev, &string_heap, &error_values, primitive_error_counter,
          as_math_double](const auto& a) -> EvalValue {
             if (a.empty())
                 return make_float(0.0);
@@ -515,8 +516,8 @@ void RegSplitParts::register_math_scalar_primitives(
             double d = 0.0;
             if (!as_math_double(a[0], d)) {
                 note_arith_mismatch(a[0], string_heap);
-                return make_primitive_error(string_heap, error_values, "round: expected number",
-                                            primitive_error_counter);
+                return ev.make_typed_error("round: expected number",
+                                           aura::diag::ErrorKind::TypeError);
             }
             const double r = round_half_even(d);
             if (!std::isfinite(r))
@@ -651,8 +652,8 @@ void RegSplitParts::register_math_integer_primitives(
                 !try_coerce_int(a[0], string_heap, n)) {
                 const auto& bad = aura::compiler::pure::is_arith_number(a[1]) ? a[0] : a[1];
                 note_arith_mismatch(bad, string_heap);
-                return make_primitive_error(string_heap, error_values, "modulo: expected number",
-                                            primitive_error_counter);
+                return ev.make_typed_error("modulo: expected number",
+                                           aura::diag::ErrorKind::TypeError);
             }
             if (divisor == 0) {
                 auto err = make_primitive_error(
@@ -685,8 +686,8 @@ void RegSplitParts::register_math_integer_primitives(
                 !try_coerce_int(a[0], string_heap, n)) {
                 const auto& bad = aura::compiler::pure::is_arith_number(a[1]) ? a[0] : a[1];
                 note_arith_mismatch(bad, string_heap);
-                return make_primitive_error(string_heap, error_values, "mod: expected number",
-                                            primitive_error_counter);
+                return ev.make_typed_error("mod: expected number",
+                                           aura::diag::ErrorKind::TypeError);
             }
             if (divisor == 0) {
                 auto err = make_primitive_error(string_heap, error_values, "mod: division by zero",
@@ -719,8 +720,8 @@ void RegSplitParts::register_math_integer_primitives(
                 !try_coerce_int(a[0], string_heap, n)) {
                 const auto& bad = aura::compiler::pure::is_arith_number(a[1]) ? a[0] : a[1];
                 note_arith_mismatch(bad, string_heap);
-                return make_primitive_error(string_heap, error_values, "quotient: expected number",
-                                            primitive_error_counter);
+                return ev.make_typed_error("quotient: expected number",
+                                           aura::diag::ErrorKind::TypeError);
             }
             if (divisor == 0) {
                 auto err =
@@ -750,8 +751,8 @@ void RegSplitParts::register_math_integer_primitives(
                 !try_coerce_int(a[0], string_heap, n)) {
                 const auto& bad = aura::compiler::pure::is_arith_number(a[1]) ? a[0] : a[1];
                 note_arith_mismatch(bad, string_heap);
-                return make_primitive_error(string_heap, error_values, "remainder: expected number",
-                                            primitive_error_counter);
+                return ev.make_typed_error("remainder: expected number",
+                                           aura::diag::ErrorKind::TypeError);
             }
             if (divisor == 0) {
                 auto err =
@@ -770,7 +771,7 @@ void RegSplitParts::register_math_integer_primitives(
         pure_general(2, "(int int) -> int", "Remainder of integer division."));
     register_prim(
         add, ev, "abs",
-        [&string_heap, &error_values, primitive_error_counter,
+        [&ev, &string_heap, &error_values, primitive_error_counter,
          safe_abs_i64](std::span<const EvalValue> a) {
             if (a.empty()) {
                 return make_primitive_error(string_heap, error_values, "abs: too few args",
@@ -781,22 +782,22 @@ void RegSplitParts::register_math_integer_primitives(
             std::int64_t n = 0;
             if (!try_coerce_int(a[0], string_heap, n)) {
                 note_arith_mismatch(a[0], string_heap);
-                return make_primitive_error(string_heap, error_values, "abs: expected number",
-                                            primitive_error_counter);
+                return ev.make_typed_error("abs: expected number",
+                                           aura::diag::ErrorKind::TypeError);
             }
             return make_sat_int(safe_abs_i64(n));
         },
         pure_general(1, "(number) -> number", "Absolute value."));
     register_prim(
         add, ev, "gcd",
-        [&string_heap, &error_values, primitive_error_counter,
+        [&ev, &string_heap, &error_values, primitive_error_counter,
          safe_abs_i64](std::span<const EvalValue> a) {
             if (a.empty())
                 return make_int(0);
             if (const auto* bad = aura::compiler::pure::first_non_number(a)) {
                 note_arith_mismatch(*bad, string_heap);
-                return make_primitive_error(string_heap, error_values, "gcd: expected number",
-                                            primitive_error_counter);
+                return ev.make_typed_error("gcd: expected number",
+                                           aura::diag::ErrorKind::TypeError);
             }
             auto to_int = [&](const EvalValue& v) {
                 std::int64_t n = 0;
@@ -839,14 +840,14 @@ void RegSplitParts::register_math_minmax_primitives(
 
     register_prim(
         add, ev, "lcm",
-        [&string_heap, &error_values, primitive_error_counter,
+        [&ev, &string_heap, &error_values, primitive_error_counter,
          safe_abs_i64](std::span<const EvalValue> a) {
             if (a.empty())
                 return make_int(1);
             if (const auto* bad = aura::compiler::pure::first_non_number(a)) {
                 note_arith_mismatch(*bad, string_heap);
-                return make_primitive_error(string_heap, error_values, "lcm: expected number",
-                                            primitive_error_counter);
+                return ev.make_typed_error("lcm: expected number",
+                                           aura::diag::ErrorKind::TypeError);
             }
             auto to_int = [&](const EvalValue& v) {
                 std::int64_t n = 0;
@@ -890,13 +891,13 @@ void RegSplitParts::register_math_minmax_primitives(
         pure_general(2, "(int int) -> int", "Least common multiple."));
     register_prim(
         add, ev, "min",
-        [&string_heap, &error_values, primitive_error_counter](std::span<const EvalValue> a) {
+        [&ev, &string_heap, &error_values, primitive_error_counter](std::span<const EvalValue> a) {
             if (a.empty())
                 return make_int(0);
             if (const auto* bad = aura::compiler::pure::first_non_number(a)) {
                 note_arith_mismatch(*bad, string_heap);
-                return make_primitive_error(string_heap, error_values, "min: expected number",
-                                            primitive_error_counter);
+                return ev.make_typed_error("min: expected number",
+                                           aura::diag::ErrorKind::TypeError);
             }
             bool any_f = false;
             for (auto& v : a)
@@ -921,13 +922,13 @@ void RegSplitParts::register_math_minmax_primitives(
         pure_general(255, "(...numbers) -> number", "Minimum of numeric arguments."));
     register_prim(
         add, ev, "max",
-        [&string_heap, &error_values, primitive_error_counter](std::span<const EvalValue> a) {
+        [&ev, &string_heap, &error_values, primitive_error_counter](std::span<const EvalValue> a) {
             if (a.empty())
                 return make_int(0);
             if (const auto* bad = aura::compiler::pure::first_non_number(a)) {
                 note_arith_mismatch(*bad, string_heap);
-                return make_primitive_error(string_heap, error_values, "max: expected number",
-                                            primitive_error_counter);
+                return ev.make_typed_error("max: expected number",
+                                           aura::diag::ErrorKind::TypeError);
             }
             bool any_f = false;
             for (auto& v : a)

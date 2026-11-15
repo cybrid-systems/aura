@@ -415,8 +415,8 @@ void RegSplitParts::register_pair_constructor(PrimRegistrar add, Evaluator& ev,
                 }
             }
             if (a.empty() || !is_pair(a[0])) {
-                return make_primitive_error(string_heap, error_values, "car: not a pair",
-                                            primitive_error_counter);
+                // #5241: a pair-shape mismatch is a type error at creation.
+                return ev.make_typed_error("car: not a pair", aura::diag::ErrorKind::TypeError);
             }
             auto id = as_pair_idx(a[0]);
             if (id < pairs.size()) {
@@ -467,8 +467,7 @@ void RegSplitParts::register_pair_constructor(PrimRegistrar add, Evaluator& ev,
                 return types::EvalValue{g_pair_slots[id]->car};
             }
             // Issue #2998: corrupted pair index is a true error, not silent 0.
-            return make_primitive_error(string_heap, error_values, "car: corrupted pair",
-                                        primitive_error_counter);
+            return ev.make_typed_error("car: corrupted pair", aura::diag::ErrorKind::InternalError);
         },
         pure_general(1, "(pair) -> any", "First element of a pair."));
     register_prim(
@@ -476,8 +475,8 @@ void RegSplitParts::register_pair_constructor(PrimRegistrar add, Evaluator& ev,
         [&ev, &pairs, &string_heap, &error_values,
          primitive_error_counter](std::span<const EvalValue> a) {
             if (a.empty() || !is_pair(a[0])) {
-                return make_primitive_error(string_heap, error_values, "cdr: not a pair",
-                                            primitive_error_counter);
+                // #5241: same kind at creation as car.
+                return ev.make_typed_error("cdr: not a pair", aura::diag::ErrorKind::TypeError);
             }
             auto id = as_pair_idx(a[0]);
             if (id < pairs.size()) {
@@ -527,8 +526,7 @@ void RegSplitParts::register_pair_constructor(PrimRegistrar add, Evaluator& ev,
                 return types::EvalValue{g_pair_slots[id]->cdr};
             }
             // Issue #2998: corrupted pair index is a true error, not silent 0.
-            return make_primitive_error(string_heap, error_values, "cdr: corrupted pair",
-                                        primitive_error_counter);
+            return ev.make_typed_error("cdr: corrupted pair", aura::diag::ErrorKind::InternalError);
         },
         pure_general(1, "(pair) -> any", "Rest of a pair."));
 
