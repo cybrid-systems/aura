@@ -1,7 +1,9 @@
-; tests/suite/hot_strategy_rules.aura — Issue #5288
+; tests/suite/hot_strategy_rules.aura — Issue #5288 / #5298
 ; Each hot rule keeps its own last-good body, snapshot, and rollback.
 ; One registered name still heals by restoring that name's snapshot
 ; (#2582 AC2 / #5148). Several names rebind only the chosen rule.
+; A heal that changes the running body bumps the process version and
+; records that body (#5298). A second heal of the same body does not.
 ; Top-level asserts: the suite runner --load does not enter test-suite bodies.
 
 (require "std/hot-strategy" all:)
@@ -32,9 +34,18 @@
 (assert! (eq? (hot-strategy:heal!) #t) "no-arg heal of the only rule")
 (assert! (= (score 10) 20) "snapshot heal restored (weight x)")
 (assert! (= (weight 10) 20) "weight survived the heal")
+(assert! (= (hot-strategy:version) 3) "a snapshot heal bumps the version")
 (assert! (string=? (hot-strategy:last-good-body)
-                   "(define (score x) (- x 1))")
-         "heal does not rewrite the stored last-good body")
+                   "(lambda (x) (weight x))")
+         "snapshot heal records the restored body, not the withdrawn swap")
+(define v-second (hot-strategy:version))
+(assert! (eq? (hot-strategy:heal!) #t) "a second snapshot heal still succeeds")
+(assert! (= (score 10) 20) "a second heal stays on the restored score")
+(assert! (= (hot-strategy:version) v-second)
+         "a second heal of the same body does not bump")
+(assert! (string=? (hot-strategy:last-good-body)
+                   "(lambda (x) (weight x))")
+         "a second heal keeps the restored body")
 
 ; ── two names: register, swap, heal one, then heal the active name ──
 (display "AC2 per-name last-good\n")
@@ -87,24 +98,38 @@
          "trend's swap does not replace meanrev's snapshot")
 (assert! (not (= (hot-strategy:last-good-snap) snap-m-pre))
          "trend's snapshot is not meanrev's")
-(assert! (= (hot-strategy:version) 6)
-         "one pair plus two registers and two swaps is version 6")
+(assert! (= (hot-strategy:version) 7)
+         "the snapshot heal plus two registers and two swaps is version 7")
 
+(define v-before-heal (hot-strategy:version))
 (assert! (eq? (hot-strategy:heal! "meanrev") #t) "heal meanrev by name")
 (assert! (= (meanrev 0) 0) "meanrev rolled back to its own last-good")
 (assert! (= (trend 0) 2) "healing meanrev left trend at +2")
 (assert! (string=? (hot-strategy:active-name) "trend")
          "heal does not change the active name")
+(assert! (= (hot-strategy:last-good-snap "meanrev") snap-m-pre)
+         "heal keeps that name's snapshot")
 (assert! (string=? (hot-strategy:last-good-body "trend") trend-next)
-         "heal does not clear the other rule's stored body")
-(assert! (string=? (hot-strategy:last-good-body "meanrev") meanrev-next)
-         "heal does not clear the healed rule's stored body")
+         "heal does not rewrite the other rule's stored body")
+(assert! (string=? (hot-strategy:last-good-body "meanrev") "(lambda (x) x)")
+         "heal records the body meanrev is running")
+(assert! (= (hot-strategy:version) (+ v-before-heal 1))
+         "healing one name bumps the version")
 
 (assert! (eq? (hot-strategy:heal!) #t) "no-arg heal rolls back the active name")
 (assert! (= (trend 0) 0) "trend rolled back")
 (assert! (= (meanrev 0) 0) "meanrev stayed rolled back")
+(assert! (string=? (hot-strategy:last-good-body "trend") "(lambda (x) x)")
+         "healing the active name records its restored body")
+(assert! (string=? (hot-strategy:last-good-body "meanrev") "(lambda (x) x)")
+         "healing trend left meanrev's recorded body")
+(assert! (= (hot-strategy:version) (+ v-before-heal 2))
+         "healing the active name bumps the version again")
+(define v-refused (hot-strategy:version))
 (assert! (not (hot-strategy:heal! "absent")) "healing an unknown name is #f")
 (assert! (not (hot-strategy:heal! "")) "healing an empty name is #f")
+(assert! (= (hot-strategy:version) v-refused)
+         "a refused heal does not bump the version")
 
 ; Lambda body still swaps once other names are already registered (#2582 AC1).
 (display "AC3 lambda swap beside other rules\n")
@@ -116,11 +141,48 @@
 (assert! (eq? (car reg-l) #t) "register strat lambda")
 (assert! (eq? (car sw-l) #t) "swap strat to *3")
 (assert! (= (strat 5) 15) "strat is *3 after the lambda swap")
-(assert! (= (hot-strategy:version) 8)
-         "the lambda pair brings the process version to 8")
+(assert! (= (hot-strategy:version) 11)
+         "the lambda pair brings the process version to 11")
+
+; The reported repro (#5298): two lambda swaps, then heal. Other names are
+; already registered, so this heal rebinds r only. The fresh-process
+; one-name path is the score snapshot above.
+(display "AC4 heal records the restored lambda (#5298)\n")
+(set-code "(define (r x) 1)")
+(eval-current)
+(define reg-r (hot-strategy:register! "r" "(lambda (x) 1)"))
+(define sw-good (hot-strategy:swap! "r" "(lambda (x) 2)" "good"))
+(define sw-bad (hot-strategy:swap! "r" "(lambda (x) 3)" "bad"))
+(assert! (eq? (car reg-r) #t) "register r")
+(assert! (eq? (car sw-good) #t) "swap r to 2")
+(assert! (eq? (car sw-bad) #t) "swap r to 3")
+(assert! (= (r 0) 3) "r is 3 after the bad swap")
+(assert! (string=? (hot-strategy:last-good-body "r") "(lambda (x) 3)")
+         "last-good after the bad swap is the withdrawn body")
+(define v-bad (hot-strategy:version))
+(define body-trend (hot-strategy:last-good-body "trend"))
+(define body-strat (hot-strategy:last-good-body "strat"))
+(assert! (eq? (hot-strategy:heal! "r") #t) "heal r")
+(assert! (= (r 0) 2) "heal restored r to 2")
+(assert! (= (hot-strategy:version) (+ v-bad 1))
+         "heal moves the version off the withdrawn swap")
+(assert! (string=? (hot-strategy:last-good-body "r") "(lambda (x) 2)")
+         "last-good after heal is the body that is running")
+(assert! (string=? (hot-strategy:last-good-body "trend") body-trend)
+         "healing r left trend's stored body")
+(assert! (string=? (hot-strategy:last-good-body "strat") body-strat)
+         "healing r left strat's stored body")
+(define v-healed (hot-strategy:version))
+(assert! (eq? (hot-strategy:heal! "r") #t) "a second heal of r still succeeds")
+(assert! (= (r 0) 2) "a second heal leaves r at 2")
+(assert! (= (hot-strategy:version) v-healed) "a second heal does not bump again")
+(assert! (string=? (hot-strategy:last-good-body "r") "(lambda (x) 2)")
+         "a second heal keeps the restored lambda")
 
 (if (= *fails* 0)
-  (begin (display "OK-5288\n"))
+  (begin
+    (display "OK-5288\n")
+    (display "OK-5298\n"))
   (begin
     (display "FAIL-5288 fails=")
     (display *fails*)

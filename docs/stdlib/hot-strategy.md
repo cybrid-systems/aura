@@ -32,9 +32,9 @@
 
 ## Semantics
 
-- **Version** — process-local counter (`hot-strategy:version`); not durable across process restarts.
-- **Last-good** — one body and one snapshot per name. The body is the code string last successfully swapped or registered for that name. No-arg `last-good-body`, `last-good-snap`, and `active-name` report the latest successful `register!` or `swap!`. Pass a name to read that rule.
-- **heal!** — `(hot-strategy:heal!)` rolls back the active name. `(hot-strategy:heal! name)` rolls back that name. One registered name restores its snapshot. Several names rebind only the chosen name, so the others stay.
+- **Version** — process-local counter (`hot-strategy:version`); not durable across process restarts. `register!`, a successful `swap!`, and a `heal!` that installs a different body each increment it.
+- **Last-good** — one body and one snapshot per name. After `register!` or `swap!`, the body is the code string that call stored. After a successful `heal!`, the body is the expression now running (a one-name snapshot heal records the restored define; a several-name heal records the previous expression it rebound). No-arg `last-good-body`, `last-good-snap`, and `active-name` report the latest successful `register!` or `swap!`. Heal does not change the active name. Pass a name to read that rule.
+- **heal!** — `(hot-strategy:heal!)` rolls back the active name. `(hot-strategy:heal! name)` rolls back that name and leaves every other rule's stored body alone. One registered name restores its snapshot. Several names rebind only the chosen name, so the others stay. A second heal of a body that is already recorded leaves the version and that body unchanged. An unknown or empty name returns `#f` and does not bump the version (#5298).
 - **Freeze / coexistence** — concurrent fibers should use `mutate:atomic-batch-safe` if swapping multiple names.
 
 ## Rebind observability contract (Issue #2684 / denseness H7)
