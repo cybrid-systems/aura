@@ -286,6 +286,26 @@ CASES = (
         "diag_json_format.DiagJson.test_default_text_output_is_unchanged",
     ),
     (
+        5240,
+        "test_schema_fields_are_typed_and_one_object_per_line",
+        "diag_json_format.DiagJson.test_schema_fields_are_typed_and_one_object_per_line",
+    ),
+    (
+        5240,
+        "test_span_columns_are_utf8_bytes",
+        "diag_json_format.DiagJson.test_span_columns_are_utf8_bytes",
+    ),
+    (
+        5240,
+        "test_serve_kind_is_the_ident_and_node_id_is_gone",
+        "diag_json_format.DiagJson.test_serve_kind_is_the_ident_and_node_id_is_gone",
+    ),
+    (
+        5240,
+        "test_lsp_uses_the_cli_code_and_span",
+        "diag_json_format.DiagJson.test_lsp_uses_the_cli_code_and_span",
+    ),
+    (
         5239,
         "test_unterminated_string_every_file_mode",
         "diag_parse_splitter.ParseSplitter.test_unterminated_string_every_file_mode",

@@ -29,6 +29,23 @@ def last_json(stderr: str) -> dict:
     return json.loads(lines[-1])
 
 
+def frame(obj: dict) -> bytes:
+    raw = json.dumps(obj).encode()
+    return f"Content-Length: {len(raw)}\r\n\r\n".encode() + raw
+
+
+def read_frames(raw: bytes) -> list[dict]:
+    out = []
+    while raw:
+        head, _, rest = raw.partition(b"\r\n\r\n")
+        if not head or b"Content-Length:" not in head:
+            break
+        n = int(head.split(b":")[1].strip())
+        out.append(json.loads(rest[:n]))
+        raw = rest[n:]
+    return out
+
+
 class DiagJson(unittest.TestCase):
     def test_parse_error_has_stable_code_and_span(self) -> None:
         with tempfile.TemporaryDirectory() as d:
@@ -147,6 +164,96 @@ class DiagJson(unittest.TestCase):
             self.assertIn("error:", r.stderr)
             self.assertIn("^", r.stderr)
             self.assertNotIn('"code":', r.stderr)
+
+    def test_schema_fields_are_typed_and_one_object_per_line(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "u.aura"
+            src = '(display "abc)\n'
+            p.write_text(src)
+            stderr = run(["--error-format=json", str(p)], cwd=d).stderr
+            # NDJSON: every JSON-looking line is a complete object.
+            objs = [json.loads(ln) for ln in stderr.splitlines() if ln.startswith("{")]
+            self.assertEqual(len(objs), 1, stderr)
+            obj = objs[0]
+            self.assertEqual(set(obj) - {"hint", "notes", "snippet"}, {"code", "severity", "file", "span", "message"})
+            self.assertIsInstance(obj["code"], str)
+            self.assertEqual(obj["severity"], "error")
+            self.assertEqual(obj["file"], str(p))
+            self.assertIsInstance(obj["message"], str)
+            self.assertEqual(set(obj["span"]), {"start", "end"})
+            for edge in ("start", "end"):
+                self.assertEqual(set(obj["span"][edge]), {"line", "column"})
+                self.assertIsInstance(obj["span"][edge]["line"], int)
+                self.assertIsInstance(obj["span"][edge]["column"], int)
+            self.assertEqual(obj["span"]["start"], {"line": 1, "column": 10})
+            self.assertEqual(obj["snippet"], src.rstrip("\n"))
+
+    def test_span_columns_are_utf8_bytes(self) -> None:
+        # #5240: the schema pins 1-based UTF-8 byte columns (#5258 converts
+        # for LSP). é is 2 bytes, the emoji is 4; the column must follow the
+        # bytes, not code points or UTF-16 units.
+        for prefix in ("é", "🎉"):
+            src = f'(display "{prefix}" (undefinedfn 5))\n'
+            with tempfile.TemporaryDirectory() as d:
+                p = Path(d) / "u.aura"
+                p.write_text(src)
+                obj = last_json(run(["--error-format=json", str(p)], cwd=d).stderr)
+                self.assertEqual(obj["code"], "UnboundVariable", src)
+                self.assertEqual(obj["span"]["start"]["column"], src.encode("utf-8").index(b"undefinedfn") + 1, src)
+
+    def test_serve_kind_is_the_ident_and_node_id_is_gone(self) -> None:
+        env = dict(os.environ)
+        env["AURA_SANDBOX"] = "off"
+        proc = subprocess.run(
+            [str(AURA_BIN), "--serve"], input="(car 5)\n", capture_output=True, text=True, env=env, timeout=120
+        )
+        obj = [json.loads(ln) for ln in proc.stdout.splitlines() if ln.strip()][-1]
+        self.assertEqual(obj["status"], "error")
+        self.assertEqual(obj["kind"], "TypeError")
+        self.assertNotIn("node_id", obj)
+        cli = last_json(run(["--error-format=json", "-e", "(car 5)"]).stderr)
+        self.assertEqual(obj["code"], cli["code"])
+        self.assertEqual(obj["message"], cli["message"])
+        self.assertEqual(obj["span"], cli["span"])
+
+    def test_lsp_uses_the_cli_code_and_span(self) -> None:
+        src = "(display (memq 1 (list 1 2)))\n"
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "m.aura"
+            p.write_text(src)
+            uri = p.as_uri()
+            msgs = [
+                {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"rootUri": Path(d).as_uri()}},
+                {"jsonrpc": "2.0", "method": "initialized", "params": {}},
+                {
+                    "jsonrpc": "2.0",
+                    "method": "textDocument/didOpen",
+                    "params": {"textDocument": {"uri": uri, "languageId": "aura", "version": 1, "text": src}},
+                },
+                {"jsonrpc": "2.0", "id": 3, "method": "shutdown"},
+                {"jsonrpc": "2.0", "method": "exit"},
+            ]
+            env = dict(os.environ)
+            env.pop("AURA_SANDBOX", None)
+            env["AURA_RUNTIME_DIR"] = str(ROOT)
+            proc = subprocess.run(
+                [str(AURA_BIN), "lsp"],
+                input=b"".join(frame(m) for m in msgs),
+                capture_output=True,
+                env=env,
+                timeout=120,
+            )
+            diags = [
+                f["params"] for f in read_frames(proc.stdout) if f.get("method") == "textDocument/publishDiagnostics"
+            ]
+            mine = next(x for x in diags if x["uri"] == uri)["diagnostics"]
+            self.assertEqual(len(mine), 1, mine)
+            cli = last_json(run(["--error-format=json", str(p)], cwd=d).stderr)
+            self.assertEqual(cli["code"], "UnboundVariable")
+            self.assertEqual(mine[0]["code"], cli["code"])
+            # LSP characters are 0-based; the schema is 1-based bytes.
+            self.assertEqual(mine[0]["range"]["start"]["character"] + 1, cli["span"]["start"]["column"])
+            self.assertIn(cli["message"], mine[0]["message"])
 
 
 if __name__ == "__main__":
