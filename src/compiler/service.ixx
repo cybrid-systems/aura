@@ -1873,6 +1873,50 @@ public:
         return false;
     }
 
+    // Issue #5241: the one place a diagnostic kind becomes a core
+    // AuraErrorKind. A structured switch on the enum — never the display
+    // phrase, which is wording and may change.
+    [[nodiscard]] static aura::core::AuraErrorKind core_kind_of(aura::diag::ErrorKind k) noexcept {
+        using aura::diag::ErrorKind;
+        switch (k) {
+            case ErrorKind::ParseError:
+                return aura::core::AuraErrorKind::ParseError;
+            case ErrorKind::UnexpectedToken:
+                return aura::core::AuraErrorKind::UnexpectedToken;
+            case ErrorKind::UnterminatedSExpr:
+                return aura::core::AuraErrorKind::UnterminatedSExpr;
+            case ErrorKind::UnboundVariable:
+                return aura::core::AuraErrorKind::UnboundVariable;
+            case ErrorKind::DivisionByZero:
+                return aura::core::AuraErrorKind::DivisionByZero;
+            case ErrorKind::InvalidClosure:
+                return aura::core::AuraErrorKind::InvalidClosure;
+            case ErrorKind::ArityMismatch:
+                return aura::core::AuraErrorKind::ArityMismatch;
+            case ErrorKind::TypeError:
+                return aura::core::AuraErrorKind::TypeError;
+            case ErrorKind::OutOfMemory:
+                return aura::core::AuraErrorKind::ArenaOutOfMemory;
+            case ErrorKind::IRCorruption:
+            case ErrorKind::IRNoReturn:
+            case ErrorKind::InternalError:
+                return aura::core::AuraErrorKind::InternalInvariantViolation;
+            // The core enum has no separate category for these faces; they
+            // stay EvalError rather than being guessed from text.
+            case ErrorKind::UncaughtException:
+            case ErrorKind::Note:
+            case ErrorKind::Warning:
+            case ErrorKind::StaleWorkspace:
+            case ErrorKind::EffectDenied:
+            case ErrorKind::UserError:
+            case ErrorKind::ModuleError:
+            case ErrorKind::IoError:
+            case ErrorKind::MutationRefused:
+                return aura::core::AuraErrorKind::EvalError;
+        }
+        return aura::core::AuraErrorKind::EvalError;
+    }
+
     // Issue #808 Phase 1: AuraResult-facing eval entry (wraps EvalResult).
     // Hot-path eval_flat still returns EvalResult during migration; this
     // surface makes failure explicit as aura::core::AuraResult without
@@ -1885,7 +1929,7 @@ public:
         if (r)
             return *r;
         const auto& d = r.error();
-        return aura::core::make_unexpected_from_kind_name(aura::diag::kind_name(d.kind), d.message);
+        return aura::core::make_unexpected(core_kind_of(d.kind), d.message);
     }
 
     // Issue #807/#808/#809: convert an existing EvalResult without re-running eval.
@@ -1894,7 +1938,7 @@ public:
         if (r)
             return *r;
         const auto& d = r.error();
-        return aura::core::make_unexpected_from_kind_name(aura::diag::kind_name(d.kind), d.message);
+        return aura::core::make_unexpected(core_kind_of(d.kind), d.message);
     }
 
     // Issue #4899: file mode (oneshot) turns a top-level statement-position
