@@ -2070,6 +2070,50 @@ static void ac4714r2_production_mint_no_lock() {
           "4714R2 AC4: fiber completion publishes the slab before the result is ready");
 }
 
+// Issue #5292: a fiber stands the file-heap sweep down and resets the
+// mint counter, so its exit mark used to see a tiny live set and leave
+// the trigger at 128. The pair high-water stays, and every later
+// main-thread allocation re-scans it. The window has to count those
+// dead slots even when the burst double does not fire.
+static void ac5292_fiber_dead_heap_window() {
+    std::println("\n--- #5292: fiber dead high-water lifts the reclaim window ---");
+    {
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.note_live_set_for_reclaim_trigger(10, /*mints_since_mark=*/0,
+                                             /*dead_high_water=*/40000);
+        CHECK(ev.file_heap_allocs_trigger_for_test() == 40010 / 32 + 128,
+              "5292 AC1: dead high-water lifts the window off the floor (got " +
+                  std::to_string(ev.file_heap_allocs_trigger_for_test()) + ")");
+    }
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    (void)ev.reclaim_tw_unreachable({}, {});
+    auto joined = cs.eval("(fiber:join (fiber:spawn (lambda ()"
+                          " (let loop ((i 0) (s 0))"
+                          "   (if (>= i 8000) s"
+                          "       (loop (+ i 1) (+ s (car (list i i)))))))))");
+    CHECK(joined && is_int(*joined), "5292 AC2: list fiber joins");
+    const auto pairs = ev.pairs_size();
+    const auto trig = ev.file_heap_allocs_trigger_for_test();
+    CHECK(pairs >= 16000,
+          "5292 AC2: fiber left a pair high-water (got " + std::to_string(pairs) + ")");
+    CHECK(trig >= pairs / 32,
+          "5292 AC2: exit mark scales the window with the dead high-water (got " +
+              std::to_string(trig) + ", pairs " + std::to_string(pairs) + ")");
+    const auto m0 = ev.file_heap_reclaim_runs_for_test();
+    auto hashed = cs.eval("(let loop ((i 0) (s 0))"
+                          "  (if (>= i 1500) s"
+                          "      (loop (+ i 1) (+ s (hash-ref (hash \"a\" i) \"a\")))))");
+    const auto marks = ev.file_heap_reclaim_runs_for_test() - m0;
+    CHECK(hashed && is_int(*hashed), "5292 AC3: host hash loop evals");
+    // 1500 hash mints charge ~35 units each. At the 128 floor that is
+    // ~400 full-heap marks. The lifted window stays far under that.
+    CHECK(marks <= 120, "5292 AC3: host allocs do not re-scan at the 128 floor (got " +
+                            std::to_string(marks) + " marks)");
+    std::println("    5292: pairs={} trigger={} host-hash marks={}", pairs, trig, marks);
+}
+
 int run_test_pmr_alloc_fiber_safe() {
     // TEMPORARY local experiment (reverted before the commit): run only the
     // #4714 Row 2 block, which the full TSan run cannot reach past the
@@ -2103,6 +2147,7 @@ int run_test_pmr_alloc_fiber_safe() {
     ac4714s_string_space_accessor();
     ac4717_concurrent_mint_read();
     ac4714r2_production_mint_no_lock();
+    ac5292_fiber_dead_heap_window();
     std::println("\n=== #2651/#2997: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
