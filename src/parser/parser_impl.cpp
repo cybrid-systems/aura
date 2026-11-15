@@ -2056,6 +2056,19 @@ NodeId parse_check(ParserState& s) {
     // Creates TypeAnnotation node: child[0]=expr, sym_id=TypeName
     // If not followed by ': TypeName', treat as regular function call
     auto tok = s.lex.consume(); // 'check'
+    // #5301: `(check)` with no operands is a zero-argument call, so a user
+    // procedure named check stays callable from `(if (check) …)`. The
+    // annotation form is `(check expr : Type)`. parse_expr sees ')' and
+    // returns NULL, which #5235 then reports as a missing if condition.
+    if (s.lex.peek().kind == TokenKind::RParen) {
+        s.lex.consume();
+        auto check_sym = s.pool.intern("check");
+        auto func = s.flat.add_variable(check_sym);
+        const std::vector<NodeId> no_args;
+        auto id = s.flat.add_call(func, no_args);
+        s.flat.set_loc(id, tok.line, tok.column);
+        return id;
+    }
     auto expr = parse_expr(s);
     if (expr == NULL_NODE) {
         skip_rparen(s);

@@ -26,10 +26,34 @@ def run(args: list[str], cwd: str | None = None, sandbox: str = "off") -> subpro
 
 class Diag5235(unittest.TestCase):
     def test_if_requires_branches(self) -> None:
-        r = run(["-e", "(if)"])
-        self.assertNotEqual(r.returncode, 0)
-        self.assertIn("(if cond then [else])", r.stderr)
-        self.assertIn("1:4", r.stderr)
+        missing = run(["-e", "(if)"])
+        self.assertNotEqual(missing.returncode, 0)
+        self.assertIn("(if cond then [else])", missing.stderr)
+        self.assertIn("1:4", missing.stderr)
+        one_arm = run(["-e", "(if 1)"])
+        self.assertNotEqual(one_arm.returncode, 0)
+        self.assertIn("(if cond then [else])", one_arm.stderr)
+        self.assertIn("1:6", one_arm.stderr)
+
+    def test_zero_arg_check_is_a_call(self) -> None:
+        # #5301: `(check)` is a call. A null condition used to make #5235
+        # reject `(if (check) …)` inside a fiber lambda and at top level.
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "c.aura"
+            p.write_text(
+                "(define (check) #t)\n"
+                "(display (if (check) 1 0))\n"
+                "(display ((lambda () (if (check) 1 0))))\n"
+                "(display (fiber:join (fiber:spawn (lambda () (if (check) 1 0)))))\n"
+            )
+            r = run(["--quiet", str(p)], cwd=d)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertEqual(r.stdout, "111")
+
+        bare = run(["-e", "(check)"])
+        self.assertNotEqual(bare.returncode, 0)
+        self.assertIn("check failed: expected a truthy value, got no argument", bare.stderr)
+        self.assertNotIn("requires a condition", bare.stderr)
 
     def test_define_missing_name_has_location(self) -> None:
         r = run(["-e", "(define)"])
