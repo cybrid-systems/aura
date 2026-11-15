@@ -21,6 +21,14 @@
 ; A vector bound into the workspace root: writes to it stay Mutate-gated.
 (define published5195 (vector 1 2))
 
+; Issue #5305: a top-level let must not publish its fresh table onto the
+; workspace root. trie-insert's hash-set! has to store the key. A define
+; of the same table still requires Mutate (published5195 is the vector face).
+(define toplevel-trie-5305
+  (let ((t (make-trie)))
+    (trie-insert t "a")
+    (trie-search t "a")))
+
 (define (check)
   (and
    ; std/hash - COW hash-set on a fresh local table (op=hash-set!)
@@ -31,24 +39,31 @@
    ; error value that these callers discard, so the container alone shows
    ; nothing.
    (= 2 (hash-ref (frequencies (list 1 2 2)) 2))
-   (equal? (list 2 4) (hash-ref (core:group-by even? (list 1 2 3 4)) #t))
+   ; core:group-by returns an alist of (key group), first-seen key order,
+   ; not a hash. hash-ref of that alist is the default, even when the
+   ; internal hash-set! stored the group. The #t group is (2 4).
+   (equal? (list #t (list 2 4)) (assoc #t (core:group-by even? (list 1 2 3 4))))
    (set-contains? (set-adjoin (set) 1) 1)
    (let ((t (make-trie)))
      (trie-insert t "a")
      (trie-search t "a"))
+   toplevel-trie-5305
    ; std/bytevector + std/io build a local vector with vector-set!.
    ; bytevector? reads the tag slot: a denied tag write leaves an
    ; untagged vector whose length still looks right.
    (and (= 4 (bytevector-length (make-bytevector 4)))
         (bytevector? (make-bytevector 4)))
-   (equal? "a" (let ((p (open-output-string))) (write-char "a" p) (get-output-string p)))
+   ; write-char takes a character. A string argument does not enter the buffer.
+   (equal? "a" (let ((p (open-output-string))) (write-char #\a p) (get-output-string p)))
    ; local vector writes (vector-set! / vector-fill!) are not shared-state
    ; mutations. The loop runs the remembered-prim hot path after the
    ; first iteration, so both dispatch faces are covered.
+   ; vector-fill! writes every slot. Observe the set! first, then the fill.
    (let ((v (make-vector 3 0)))
      (vector-set! v 0 7)
-     (vector-fill! v 9)
-     (and (= 7 (vector-ref v 0)) (= 9 (vector-ref v 2))))
+     (and (= 7 (vector-ref v 0))
+          (begin (vector-fill! v 9)
+                 (and (= 9 (vector-ref v 0)) (= 9 (vector-ref v 2))))))
    (let ((v (make-vector 4 0)))
      (let fill ((j 0))
        (if (< j 4)
