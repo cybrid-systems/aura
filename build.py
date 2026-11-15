@@ -4715,12 +4715,17 @@ check_adaptive_thr_coverage
 check_adaptive_thr_coverage.py
 check_adt_exhaustiveness_production_hard
 check_adt_exhaustiveness_production_hard.py
+check_and_consume_tenant
+check_and_enforce_resume_snapshot_invariant
+check_and_record_effect
+check_and_record_effect_for_test
 check_aot_env_linear_stamp_coverage
 check_aot_env_linear_stamp_coverage.py
 check_aot_reload_policy_coverage
 check_aot_reload_policy_coverage.py
 check_aot_stale_probe_hard_reject_coverage
 check_aot_stale_probe_hard_reject_coverage.py
+check_apply_closure_equivalence
 check_arena_moving_compaction_coverage
 check_arena_moving_compaction_coverage.py
 check_chaos_soak_deploy_gate
@@ -4747,12 +4752,15 @@ check_export_held_handoff_coverage
 check_export_held_handoff_coverage.py
 check_filter_prim_infer_standard
 check_filter_prim_infer_standard.py
+check_flat_match
 check_hold_aware_steal_scoring_coverage
 check_hold_aware_steal_scoring_coverage.py
+check_incremental_soundness
 check_incremental_soundness_prod_coverage
 check_incremental_soundness_prod_coverage.py
 check_joint_epoch_bump_coverage
 check_joint_epoch_bump_coverage.py
+check_layered_evidence_coherence
 check_layout_stamp_fence_coverage
 check_layout_stamp_fence_coverage.py
 check_layout_stamp_shape_version_fence_coverage
@@ -4761,6 +4769,8 @@ check_lifetime_pin_remap_coverage
 check_lifetime_pin_remap_coverage.py
 check_linear_fast_path_or_semantics
 check_linear_fast_path_or_semantics.py
+check_macro_self_evo
+check_match_exhaustiveness
 check_mid_provenance_unified
 check_mid_provenance_unified.py
 check_moving_pin_contract_fail_closed_coverage
@@ -4775,12 +4785,17 @@ check_no_numeric_source_windows
 check_no_numeric_source_windows.py
 check_occurrence_persist_expected_fp_zero
 check_occurrence_persist_expected_fp_zero.py
+check_occurrence_refined_consistency
 check_orch_mvp_scope
 check_orch_mvp_scope.py
+check_orchestration_fibers
 check_owned_pair_slots_lock_coverage
 check_owned_pair_slots_lock_coverage.py
+check_pass_dod_compliance
+check_primcall_equivalence
 check_primitive_surface
 check_primitive_surface.py
+check_production_pure_wrap_pack
 check_pure_parallel_isolation_wording
 check_pure_parallel_isolation_wording.py
 check_query_result_full_provenance
@@ -4811,6 +4826,7 @@ check_source_to_ir_strict_coverage
 check_source_to_ir_strict_coverage.py
 check_source_window_budget
 check_source_window_budget.py
+check_split_bumps
 check_stable_func_id_eval_namespace_coverage
 check_stable_func_id_eval_namespace_coverage.py
 check_stamp_resolve_coverage
@@ -4821,13 +4837,17 @@ check_storm_clear_health_pass_coverage
 check_storm_clear_health_pass_coverage.py
 check_sync_remount_anon_coverage
 check_sync_remount_anon_coverage.py
+check_tenant_host_path
+check_tenant_http_scheme
 check_test_binding
 check_test_binding.py
 check_test_includes
 check_test_includes.py
+check_truncate_anti_starve
 check_wildcard_effects_for_fence
 check_wildcard_effects_for_fence.py
 check_wildcard_grant_effect_fence
+check_workspace_isolation
 cmd_adt_exhaust_dirty_cone_3005_coverage
 cmd_adt_exhaust_undermark_cone_3045_coverage
 cmd_arena_compact_hook_stats_coverage
@@ -4869,6 +4889,7 @@ cmd_list_end_of_list_void_coverage
 cmd_live_closure_stable_id_only_coverage
 cmd_load_cap_io_read_coverage
 cmd_must_deopt_getter_sticky_3247_coverage
+cmd_mutation_guard_coverage
 cmd_named_closure_stable_id_at_create_coverage
 cmd_occurrence_cone_truncate_drift_2672_coverage
 cmd_occurrence_hard_face_commit_2716_coverage
@@ -4892,8 +4913,6 @@ cmd_sync_remount_anon_coverage
 cmd_type_linear_commit_proof_stamp_2717_coverage
 cmd_validate_node_no_abort_coverage
 cmd_validate_post_restore_soa_coverage
-linear_force_unified
-residual_defer_steal_hard_and
 Issue #100
 Issue #101
 Issue #102
@@ -5258,6 +5277,7 @@ Issue #1680
 Issue #1681
 Issue #1682
 Issue #1684
+boom-1684
 Issue #1685
 Issue #1686
 Issue #1687
@@ -5568,6 +5588,7 @@ Issue #2152
 Issue #2153
 Issue #2154
 Issue #2155
+aura-reject-2155
 Issue #2156
 Issue #2157
 Issue #2158
@@ -5614,6 +5635,7 @@ Issue #2200
 Issue #2201
 Issue #2202
 Issue #2203
+issue-2203
 Issue #2204
 Issue #2205
 Issue #2206
@@ -5649,18 +5671,27 @@ Issue #2241
 Issue #2242
 Issue #2243
 Issue #2244
+issue-2244
 Issue #2245
 Issue #2246
+issue-2246
 Issue #2247
 Issue #2248
+issue-2248
 Issue #2249
+issue-2249
 Issue #2250
+issue-2250
 Issue #2251
+issue-2251
 Issue #2252
+issue-2252
 Issue #2253
 Issue #2254
 Issue #2256
+issue-2256
 Issue #2257
+issue-2257
 Issue #2258
 Issue #2259
 Issue #2260
@@ -5668,13 +5699,21 @@ Issue #2261
 Issue #2262
 Issue #2263
 Issue #2264
+issue-2267
 Issue #2268
+issue-2268
 Issue #2269
+issue-2269
 Issue #2271
+issue-2271
 Issue #2272
+issue-2272
 Issue #2273
+issue-2273
 Issue #2274
+issue-2274
 Issue #2275
+issue-2275
 Issue #2276
 Issue #2277
 Issue #2278
@@ -5695,21 +5734,27 @@ Issue #2294
 Issue #2295
 check_envframe_ownership_transfer_2295
 check_envframe_ownership_transfer_2295.py
+issue-2295
 Issue #2296
 check_residual_gc_defer_multi_eval_2296
 check_residual_gc_defer_multi_eval_2296.py
+issue-2296
 Issue #2297
 check_capture_cell_remap_2297
 check_capture_cell_remap_2297.py
+issue-2297
 Issue #2298
 check_general_object_pin_2298
 check_general_object_pin_2298.py
+issue-2298
 Issue #2299
 check_aot_per_eval_slot_invalidate_2299
 check_aot_per_eval_slot_invalidate_2299.py
+issue-2299
 Issue #2300
 check_lifetime_contract_snapshot_2300
 check_lifetime_contract_snapshot_2300.py
+issue-2300
 Issue #2301
 Issue #2302
 Issue #2304
@@ -5717,16 +5762,21 @@ Issue #2306
 Issue #2307
 Issue #2308
 Issue #2309
+issue-2309
 Issue #2310
 Issue #2312
+issue-2312
 Issue #2313
 Issue #2314
 Issue #2315
 Issue #2316
 Issue #2317
+issue-2317
 Issue #2318
+issue-2318
 Issue #2319
 Issue #2320
+issue-2320
 Issue #2321
 Issue #2333
 Issue #2335
@@ -5743,6 +5793,7 @@ Issue #2346
 check_steal_snapshot_hard_invariant_2346
 check_steal_snapshot_hard_invariant_2346.py
 Issue #2347
+issue-2347
 Issue #2348
 Issue #2349
 Issue #2350
@@ -5898,6 +5949,7 @@ check_dead_coercion_columnar_2431
 check_dead_coercion_columnar_2431.py
 Issue #2432
 Issue #2433
+check_production_pipeline_packs_2434
 Issue #2435
 check_hot_contract_placement_2435
 check_hot_contract_placement_2435.py
@@ -6003,6 +6055,7 @@ Issue #2496
 Issue #2497
 check_densify_ownership_scan_fail_gate_2497
 check_densify_ownership_scan_fail_gate_2497.py
+issue-2497
 Issue #2498
 check_fiber_reclaim_orphan_release_2498
 check_fiber_reclaim_orphan_release_2498.py
@@ -6062,6 +6115,7 @@ Issue #2537
 Issue #2538
 Issue #2539
 Issue #2540
+issue-2540
 Issue #2541
 Issue #2542
 Issue #2543
@@ -6122,10 +6176,12 @@ Issue #2587
 Issue #2588
 Issue #2589
 Issue #2590
+issue-2590
 Issue #2591
 Issue #2592
 Issue #2593
 Issue #2594
+issue-2594
 Issue #2595
 Issue #2596
 Issue #2597
@@ -6138,6 +6194,7 @@ check_aot_exhausted_min_dirty_retry_2601.py
 Issue #2602
 check_closure_sync_remount_2602
 check_closure_sync_remount_2602.py
+issue-2602
 Issue #2603
 check_cross_cow_soft_migrate_obs_2603
 check_cross_cow_soft_migrate_obs_2603.py
@@ -6148,6 +6205,7 @@ Issue #2605
 Issue #2606
 check_pereval_reemit_region_independence_2606
 check_pereval_reemit_region_independence_2606.py
+issue-2606
 Issue #2607
 Issue #2608
 Issue #2609
@@ -6180,6 +6238,7 @@ Issue #2628
 Issue #2630
 check_security_schedule_mutate_admit_2630
 check_security_schedule_mutate_admit_2630.py
+issue-2630
 check_orch_scope_child_2631
 check_orch_scope_child_2631.py
 Issue #2634
@@ -6191,8 +6250,10 @@ check_mid_fallback_hard_deny_2635.py
 Issue #2637
 Issue #2638
 Issue #2639
+issue-2639
 Issue #2640
 Issue #2641
+issue-2641
 Issue #2643
 Issue #2645
 check_dead_coercion_layered_evidence_2645
@@ -6230,9 +6291,13 @@ Issue #2662
 Issue #2663
 Issue #2664
 Issue #2665
+issue-2665
 Issue #2666
+issue-2666
 Issue #2667
+issue-2667
 Issue #2668
+issue-2668
 Issue #2669
 Issue #2670
 Issue #2671
@@ -6242,6 +6307,7 @@ Issue #2672
 check_occurrence_cone_truncate_drift_2672
 check_occurrence_cone_truncate_drift_2672.py
 Issue #2673
+issue-2673
 Issue #2674
 check_layered_evidence_coherence_2674
 check_layered_evidence_coherence_2674.py
@@ -6277,6 +6343,7 @@ check_evaluator_capture_tenant_2687.py
 Issue #2688
 check_capability_production_default_2688
 check_capability_production_default_2688.py
+issue-2688
 Issue #2689
 check_require_effect_on_ref_2689
 check_require_effect_on_ref_2689.py
@@ -6290,18 +6357,26 @@ Issue #2692
 check_aot_slot_owner_consistency_2692
 check_aot_slot_owner_consistency_2692.py
 cmd_aot_slot_owner_consistency_2692
+issue-2692
 Issue #2693
+issue-2693
 Issue #2694
+issue-2694
 Issue #2695
+issue-2695
 Issue #2696
+issue-2696
 Issue #2697
+issue-2697
 Issue #2698
+issue-2698
 Issue #2699
 check_steal_safety_transaction_2699
 check_steal_safety_transaction_2699.py
 Issue #2700
 check_handoff_ref_mailbox_gate_2700
 check_handoff_ref_mailbox_gate_2700.py
+issue-2700
 Issue #2701
 check_mutation_hold_budget_reject_2701
 check_mutation_hold_budget_reject_2701.py
@@ -6311,35 +6386,44 @@ check_resume_hard_fail_2702.py
 Issue #2703
 check_cone_outside_goal_drop_2703
 check_cone_outside_goal_drop_2703.py
+issue-2703
 Issue #2704
 check_occurrence_empty_after_fence_2704
 check_occurrence_empty_after_fence_2704.py
+issue-2704
 check_hard_capture_tenant_2705
 check_hard_capture_tenant_2705.py
 Issue #2706
 check_sole_require_effect_2706
 check_sole_require_effect_2706.py
+issue-2706
 Issue #2707
 check_mid_join_fail_closed_2707
 check_mid_join_fail_closed_2707.py
+issue-2707
 Issue #2708
 check_ownership_rebind_walk_2708
 check_ownership_rebind_walk_2708.py
 Issue #2709
 check_general_object_pin_auto_wire_2709
 check_general_object_pin_auto_wire_2709.py
+issue-2709
 Issue #2710
 check_panic_checkpoint_steal_hard_2710
 check_panic_checkpoint_steal_hard_2710.py
+issue-2710
 Issue #2711
 check_envframe_lifetime_proof_2711
 check_envframe_lifetime_proof_2711.py
+issue-2711
 Issue #2712
 check_epoch_invariant_soft_fuse_heal_2712
 check_epoch_invariant_soft_fuse_heal_2712.py
+issue-2712
 Issue #2713
 check_cross_eval_epoch_bump_2713
 check_cross_eval_epoch_bump_2713.py
+issue-2713
 Issue #2714
 check_captured_anon_sync_remount_prod_default_2714
 check_captured_anon_sync_remount_prod_default_2714.py
@@ -6349,13 +6433,18 @@ check_deferred_reemit_steal_sticky_2715.py
 Issue #2716
 check_occurrence_hard_face_commit_2716
 check_occurrence_hard_face_commit_2716.py
+issue-2716
 Issue #2717
 check_type_linear_commit_proof_stamp_2717
 check_type_linear_commit_proof_stamp_2717.py
+issue-2717
 Issue #2718
+issue-2718
 Issue #2719
 Issue #2720
+issue-2720
 Issue #2721
+issue-2721
 check_chaos_soak_hard_gate_2722
 check_chaos_soak_hard_gate_2722.py
 Issue #2723
@@ -6369,7 +6458,9 @@ check_fiber_evaluator_id_2727.py
 check_typed_mutation_audit_h_forward_ref_2728
 check_typed_mutation_audit_h_forward_ref_2728.py
 Issue #2742
+issue-2742
 Issue #2743
+issue-2743
 Issue #2744
 Issue #2745
 Issue #2746
@@ -6389,13 +6480,16 @@ check_chaos_soak_residual_zero_2755.py
 Issue #2756
 check_workflow_failure_policy_2756
 check_workflow_failure_policy_2756.py
+issue-2756
 Issue #2757
 check_region_mask_disjoint_admit_2757
 check_region_mask_disjoint_admit_2757.py
 Issue #2758
 check_type_linear_commit_proof_counts_2758
+issue-2758
 check_evaluator_stamp_sole_authority_2759
 check_evaluator_stamp_sole_authority_2759.py
+issue-2759
 Issue #2760
 check_region_impact_mask_admit_2760
 Issue #2761
@@ -6428,6 +6522,7 @@ check_tcp_listen_accept_2771.py
 Issue #2773
 check_unified_dirty_fence_2773
 check_unified_dirty_fence_2773.py
+issue-2773
 Issue #2774
 check_batch_dirty_multi_via_single_ban_2774
 check_batch_dirty_multi_via_single_ban_2774.py
@@ -6616,11 +6711,14 @@ check_general_object_pin_required_prod_default_2840.py
 Issue #2841
 check_cross_eval_cascade_owner_scoped_2841
 check_cross_eval_cascade_owner_scoped_2841.py
+issue-2841
 Issue #2842
 check_type_linear_commit_proof_goal_truth_2842
+issue-2842
 Issue #2843
 check_workflow_compose_aura_2843
 check_workflow_compose_aura_2843.py
+issue-2843
 Issue #2844
 check_steal_sole_enqueue_gate_2844
 check_steal_sole_enqueue_gate_2844.py
@@ -6629,6 +6727,7 @@ check_aot_reload_proof_fail_stamp_2845
 check_aot_reload_proof_fail_stamp_2845.py
 Issue #2846
 check_residual_defer_after_exit_2846
+issue-2846
 Issue #2847
 check_region_type_commit_gate_2847
 Issue #2848
@@ -6637,11 +6736,14 @@ check_mailbox_mid_mutation_delivery_2849
 check_mailbox_mid_mutation_delivery_2849.py
 Issue #2850
 check_pure_anon_sync_remount_budget_2850
+issue-2850
 Issue #2851
 Issue #2852
 Issue #2853
 Issue #2854
+issue-2854
 Issue #2855
+issue-2855
 Issue #2856
 Issue #2857
 Issue #2858
@@ -6669,28 +6771,35 @@ check_boids_2879.py
 check_fss_2880
 check_fss_2880.py
 Issue #2881
+issue-2881
 Issue #2882
 check_production_default_single_use_2882
 check_production_default_single_use_2882.py
 Issue #2883
 Issue #2884
+issue-2884
 check_join_cleanup_report_2885
 check_join_cleanup_report_2885.py
+issue-2885
 Issue #2886
 check_parallel_intend_region_concurrent_2886
 check_parallel_intend_region_concurrent_2886.py
+issue-2886
 Issue #2887
 check_agent_bp_degrade_2887
 check_agent_bp_degrade_2887.py
 Issue #2888
 check_lifetime_consistency_proof_2888
 check_lifetime_consistency_proof_2888.py
+issue-2888
 Issue #2889
 check_moving_known_roots_auto_register_2889
 check_moving_known_roots_auto_register_2889.py
+issue-2889
 Issue #2890
 check_steal_checkpoint_residual_2890
 check_steal_checkpoint_residual_2890.py
+issue-2890
 Issue #2891
 check_general_object_pin_required_2891
 check_general_object_pin_required_2891.py
@@ -6700,6 +6809,7 @@ check_post_compact_lifecycle_2892.py
 Issue #2893
 check_pure_anon_adaptive_budget_2893
 check_pure_anon_adaptive_budget_2893.py
+issue-2893
 Issue #2894
 Issue #2895
 Issue #2896
@@ -6727,6 +6837,7 @@ check_moving_sticky_densify_off_2905
 Issue #2906
 check_pcv_flatast_locked_exclusive_2906
 Issue #2907
+check_production_soa_dirty_pack_2907
 check_soa_sunset_bridge_2907
 Issue #2908
 check_shape_compact_no_global_bump_2908
@@ -6753,10 +6864,8 @@ check_current_source_unparse_2919
 check_current_source_unparse_2919.py
 Issue #2921
 current-source-roundtrip-2921
-current_source_roundtrip_2921
 Issue #2922
 ast-unparse-2922
-ast_unparse_2922
 check_ast_unparse_2922
 check_ast_unparse_2922.py
 Issue #2923
@@ -6766,17 +6875,14 @@ Issue #2924
 check_wait_reclaimed_2924
 check_wait_reclaimed_2924.py
 wait-reclaimed-2924
-wait_reclaimed_2924
 Issue #2925
 check_producer_bp_budget_2925
 check_producer_bp_budget_2925.py
 producer-bp-budget-2925
-producer_bp_budget_2925
 Issue #2926
 check_scope_resolve_2926
 check_scope_resolve_2926.py
 scope-resolve-2926
-scope_resolve_2926
 Issue #2927
 check_force_jit_reason_bit_map_2927
 check_force_jit_reason_bit_map_2927.py
@@ -6801,8 +6907,10 @@ check_restamp_budget_2934
 Issue #2935
 check_moving_known_roots_sticky_recovery_2935
 check_moving_known_roots_sticky_recovery_2935.py
+issue-2935
 check_batch_dirty_production_multi_only_2936
 check_batch_dirty_production_multi_only_2936.py
+issue-2936
 Issue #2937
 check_shape_profiler_shard_2937
 check_shape_profiler_shard_2937.py
@@ -6814,6 +6922,7 @@ check_solve_delta_dep_closure_2939
 Issue #2942
 check_side_effect_node_id_mandate_2942
 check_side_effect_node_id_mandate_2942.py
+issue-2942
 Issue #2943
 check_production_hard_fiber_default_2943
 check_production_hard_fiber_default_2943.py
@@ -6823,6 +6932,7 @@ check_mutation_session_grant_2944.py
 Issue #2945
 check_join_held_flags_2945
 check_join_held_flags_2945.py
+issue-2945
 Issue #2946
 check_agent_scope_concurrent_hard_deny_2946
 Issue #2947
@@ -6838,6 +6948,7 @@ check_pure_anon_bg_remount_2950
 check_pure_anon_bg_remount_2950.py
 Issue #2951
 check_cross_eval_hard_owner_scoped_2951
+issue-2951
 Issue #2952
 check_coverage_verify_min_dirty_2952
 Issue #2953
@@ -6881,20 +6992,22 @@ check_cross_tenant_grant_gate_2968
 check_cross_tenant_grant_gate_2968.py
 check_capability_write_fence_2969
 check_capability_write_fence_2969.py
+issue-2969
 Issue #2970
 check_join_wait_reclaimed_2970
 check_join_wait_reclaimed_2970.py
 Issue #2971
 check_general_object_pin_create_densify_2971
 check_general_object_pin_create_densify_2971.py
+issue-2971
 Issue #2972
 check_mailbox_credit_inflight_2972
 check_mailbox_credit_inflight_2972.py
 mailbox-credit-2972
-mailbox_credit_2972
 Issue #2973
 check_moving_pre_densify_completeness_2973
 check_moving_pre_densify_completeness_2973.py
+issue-2973
 Issue #2974
 check_workflow_run_2974
 check_workflow_run_2974.py
@@ -7004,6 +7117,7 @@ check_unified_restamp_3019.py
 Issue #3020
 check_query_hash_overflow_3020
 check_query_hash_overflow_3020.py
+headroom-3020
 Issue #3021
 check_envframe_closure_apply_protocol_3021
 check_envframe_closure_apply_protocol_3021.py
@@ -7019,6 +7133,7 @@ check_pure_anon_bg_overflow_must_deopt_3024.py
 Issue #3025
 check_reemit_owner_required_prod_multi_3025
 check_reemit_owner_required_prod_multi_3025.py
+issue-3025
 Issue #3026
 check_residual_force_agent_actionable_3026
 check_residual_force_agent_actionable_3026.py
@@ -7134,8 +7249,10 @@ check_hold_budget_inbody_window_3071
 Issue #3072
 check_steal_enqueue_sole_gate_3072
 check_steal_enqueue_sole_gate_3072.py
+issue-3072
 Issue #3073
 check_chaos_production_readiness_3073
+issue-3073
 Issue #3074
 check_mutate_dispatch_sole_guard_3074
 check_mutate_dispatch_sole_guard_3074.py
@@ -7231,6 +7348,7 @@ check_nonalloc_arena_hooks_3124.py
 Issue #3125
 check_cross_scope_directory_3125
 check_cross_scope_directory_3125.py
+issue-3125
 Issue #3126
 check_capability_admin_fence_3126
 check_capability_admin_fence_3126.py
@@ -7277,6 +7395,7 @@ Issue #3144
 Issue #3145
 check_cross_tenant_grant_principal_3145
 check_cross_tenant_grant_principal_3145.py
+issue-3145
 Issue #3146
 check_join_drain_reclaim_3146
 check_join_drain_reclaim_3146.py
@@ -8053,6 +8172,8 @@ check_deopt_pending_fast_path_3441.py
 Issue #3442
 check_scope_message_resolve_3442
 check_scope_message_resolve_3442.py
+dup-3442
+scope-send-3442
 Issue #3443
 check_ffi_jit_live_ptr_inventory_3443
 check_ffi_jit_live_ptr_inventory_3443.py
@@ -8116,6 +8237,9 @@ check_reemit_pipeline_reason_heal_3466.py
 Issue #3467
 check_reclaimed_put_deny_3467
 check_reclaimed_put_deny_3467.py
+clean-3467
+deferred-3467
+dup-3467
 Issue #3468
 check_stamp_rest_param_no_overstamp_3468
 check_stamp_rest_param_no_overstamp_3468.py
@@ -8264,7 +8388,9 @@ Issue #3583
 Issue #3584
 Issue #3585
 Issue #3587
+issue-3587
 Issue #3588
+issue-3588
 Issue #3589
 check_index_sync_structural_write_3589
 check_index_sync_structural_write_3589.py
@@ -8281,6 +8407,8 @@ check_join_reclaim_retry_3595.py
 Issue #3596
 Issue #3597
 Issue #3598
+ghost-3598
+pend-3598
 Issue #3599
 Issue #3600
 check_moving_untracked_split_3600
@@ -8406,8 +8534,11 @@ Issue #3643
 check_scope_join_tree_3643
 check_scope_join_tree_3643.py
 Issue #3644
+agent-3644
 check_reclaimed_slot_second_recycle_3644
 check_reclaimed_slot_second_recycle_3644.py
+soft-3644
+young-3644
 Issue #3645
 check_metrics_not_found_3645
 check_metrics_not_found_3645.py
@@ -8524,8 +8655,11 @@ Issue #3689
 Issue #3690
 Issue #3691
 Issue #3692
+issue-3692
 Issue #3693
+issue-3693
 Issue #3694
+issue-3694
 Issue #3695
 Issue #3696
 Issue #3697
@@ -8552,6 +8686,7 @@ Issue #3728
 Issue #3729
 Issue #3730
 Issue #3731
+deny-t7-3731
 Issue #3732
 Issue #3733
 Issue #3735
@@ -8578,6 +8713,7 @@ Issue #3754
 Issue #3755
 Issue #3756
 Issue #3757
+issue-3757
 Issue #3758
 Issue #3759
 Issue #3760
@@ -8656,6 +8792,7 @@ Issue #3796
 check_occurrence_coercion_ci_ok_3796
 check_occurrence_coercion_ci_ok_3796.py
 Issue #3797
+issue-3797
 Issue #3798
 Issue #3799
 check_session_revoke_fiber_zero_3799
@@ -8663,12 +8800,15 @@ check_session_revoke_fiber_zero_3799.py
 Issue #3800
 check_cross_tenant_grant_caller_ta_3800
 check_cross_tenant_grant_caller_ta_3800.py
+issue-3800
 Issue #3801
 check_isolation_deny_mid_join_3801
 check_isolation_deny_mid_join_3801.py
+issue-3801
 Issue #3802
 check_tenant_host_path_isolation_3802
 check_tenant_host_path_isolation_3802.py
+issue-3802
 Issue #3803
 check_agent_scope_region_key_isolation_3803
 check_agent_scope_region_key_isolation_3803.py
@@ -8676,12 +8816,19 @@ Issue #3804
 check_mailbox_bp_overflow_cohort_3804
 check_mailbox_bp_overflow_cohort_3804.py
 Issue #3805
+agent-3805
+done-3805
+live-3805
+scope-3805
+shape-3805
+soft-3805
 Issue #3806
 check_wal_overflow_wrap_3806
 check_wal_overflow_wrap_3806.py
 Issue #3808
 check_isolation_deny_obs_join_3808
 check_isolation_deny_obs_join_3808.py
+issue-3808
 Issue #3809
 check_boundary_soft_densify_restamp_3809
 check_boundary_soft_densify_restamp_3809.py
@@ -8764,6 +8911,7 @@ check_tenant_host_path_read_3835.py
 Issue #3836
 check_shell_require_effect_3836
 check_shell_require_effect_3836.py
+issue-3836
 Issue #3837
 Issue #3838
 check_wal_overflow_wrap_refuse_3838
@@ -8916,6 +9064,8 @@ check_orch_residuals_3941.py
 Issue #3942
 Issue #3943
 Issue #3944
+husk-3944
+live-3944
 Issue #3946
 Issue #3947
 Issue #3948
@@ -9504,6 +9654,8 @@ Issue #4390
 Issue #4391
 Issue #4392
 Issue #4393
+put-4393
+scope-4393
 Issue #4394
 Issue #4395
 Issue #4396
@@ -9566,6 +9718,7 @@ Issue #4455
 Issue #4456
 Issue #4457
 Issue #4460
+nosuchmod-4460
 Issue #4461
 Issue #4462
 Issue #4463
@@ -9768,6 +9921,7 @@ Issue #4687
 Issue #4688
 Issue #4689
 Issue #4690
+not-a-real-binding-4690
 Issue #4691
 Issue #4692
 Issue #4693
@@ -9903,6 +10057,7 @@ Issue #5208
 Issue #5211
 Issue #5212
 Issue #5213
+sekret-token-5214
 Issue #5244
 Issue #5274
 Issue #5275
@@ -10690,6 +10845,7 @@ Issue #5303
 # Issue #2262
 # Issue #2263
 # Issue #2264
+# Issue #2267
 # Issue #2268
 # Issue #2269
 # Issue #2271
@@ -10833,6 +10989,7 @@ Issue #5303
 # Issue #2431
 # Issue #2432
 # Issue #2433
+# Issue #2434
 # Issue #2435
 # Issue #2436
 # Issue #2437
@@ -12904,6 +13061,7 @@ Issue #5303
 # Issue #5211
 # Issue #5212
 # Issue #5213
+# Issue #5214
 # Issue #5244
 # Issue #5274
 # Issue #5275
