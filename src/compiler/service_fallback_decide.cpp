@@ -45,19 +45,39 @@ bool CompilerService::needs_tree_walker_fallback(const aura::ast::FlatAST& flat,
     // diagnostics face).
     if (flat.get(root).tag == aura::ast::NodeTag::Begin &&
         tree_walker_fallback_policy() != TreeWalkerFallbackPolicy::Allow) {
-        const auto begin_v = flat.get(root);
+        // Issue #5195: a macro that expands to (begin (define ...) ...)
+        // (define-record-type, define-struct, ...) yields a NESTED Begin
+        // child. That is still a top-level sequence, not an opaque
+        // subtree: without flattening, the generic subtree scan sees
+        // define names and lambda params as unknown variables and the
+        // strict gate hard-errors on every record definition. Collect
+        // define names through nested Begins first (so sequential
+        // sibling references resolve), then scan each nested sequence
+        // with the same define-aware rule.
         std::unordered_set<std::string> begin_defined;
-        for (auto cid : begin_v.children) {
-            if (cid >= flat.size())
-                continue;
-            const auto cv = flat.get(cid);
-            if (cv.tag == aura::ast::NodeTag::Define && !cv.children.empty())
-                begin_defined.insert(std::string(pool.resolve(cv.sym_id)));
-        }
-        for (auto cid : begin_v.children) {
-            if (cid >= flat.size())
-                continue;
-            const auto cv = flat.get(cid);
+        std::function<void(aura::ast::NodeId)> collect_defined = [&](aura::ast::NodeId id) {
+            if (id >= flat.size())
+                return;
+            const auto v = flat.get(id);
+            if (v.tag == aura::ast::NodeTag::Define && !v.children.empty()) {
+                begin_defined.insert(std::string(pool.resolve(v.sym_id)));
+                return;
+            }
+            if (v.tag == aura::ast::NodeTag::Begin)
+                for (auto c : v.children)
+                    collect_defined(c);
+        };
+        collect_defined(root);
+        std::function<bool(aura::ast::NodeId)> scan_sequence = [&](aura::ast::NodeId id) {
+            if (id >= flat.size())
+                return false;
+            const auto cv = flat.get(id);
+            if (cv.tag == aura::ast::NodeTag::Begin) {
+                for (auto c : cv.children)
+                    if (scan_sequence(c))
+                        return true;
+                return false;
+            }
             if (cv.tag == aura::ast::NodeTag::Define && !cv.children.empty()) {
                 // Define bodies are lambda-aware checked here too: a body
                 // that needs the walker (while, fiber:*, unknown refs) must
@@ -67,15 +87,12 @@ bool CompilerService::needs_tree_walker_fallback(const aura::ast::FlatAST& flat,
                 // never ran → growth=0 vacuous PASS).
                 const auto dbody = cv.child(0);
                 const auto dname = std::string(pool.resolve(cv.sym_id));
-                if (define_body_needs_tree_walker_fallback(flat, pool, dbody, dname,
-                                                           &begin_defined))
-                    return true;
-                continue;
+                return define_body_needs_tree_walker_fallback(flat, pool, dbody, dname,
+                                                              &begin_defined);
             }
-            if (subtree_needs_tree_walker_fallback(flat, pool, cid, &begin_defined))
-                return true;
-        }
-        return false;
+            return subtree_needs_tree_walker_fallback(flat, pool, id, &begin_defined);
+        };
+        return scan_sequence(root);
     }
     // Issue #657: quote-containing defines need bridge/fallback refresh.
     bool flat_has_quote = false;
