@@ -5911,6 +5911,13 @@ public:
     // walked (live/32, clamped to the window) so a large live heap
     // amortizes the full-heap mark instead of paying it every 128
     // allocations. Skipped reclaims reset both triggers to the floor.
+    // Issue #5292: `dead_high_water` is the free pair/vector/string/cell
+    // slots this mark still scanned. A fiber stands the sweep down and
+    // resets the mint counter, so the exit mark sees a small live set
+    // and does not take the #4525 burst double — the host then re-scans
+    // that dead high-water every 128 units (about 5×–35× on the next
+    // main-thread allocation loop). Those slots join the basis. The
+    // ceiling stays the reachable set's, which is at least 32768.
     // Issue #4525: when the mark fired on the file-heap window and most
     // of that window's mints died young (allocation-burst shape), the
     // next window doubles — mark frequency decouples from the mint rate
@@ -5918,7 +5925,8 @@ public:
     // reclaims. Boxed-scalar allocation (floats, post-#4502) is not
     // counted by the window at all, so numeric loops never drive marks.
     void note_live_set_for_reclaim_trigger(const std::size_t live_objects,
-                                           const std::uint64_t mints_since_mark) noexcept
+                                           const std::uint64_t mints_since_mark,
+                                           const std::size_t dead_high_water = 0) noexcept
         post(tw_closure_allocs_trigger_.load(std::memory_order_relaxed) >= kReclaimTriggerFloor &&
              tw_closure_allocs_trigger_.load(std::memory_order_relaxed) <=
                  reclaim_trigger_ceiling_for(live_objects) &&

@@ -1694,6 +1694,12 @@ namespace {
     };
 } // namespace
 
+// Issue #5292: slots the mark scanned that no live value names. The free
+// list keeps the high-water, and the seen_* vectors are sized to it.
+std::size_t reclaim_dead_slots(std::size_t high_water, std::size_t live) noexcept {
+    return high_water > live ? high_water - live : 0;
+}
+
 bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
     // Same destructive-GC predicate as compact_sweep. Do not also skip on
     // mutation_boundary_depth: a boundary held across cs.eval would disable
@@ -2136,8 +2142,17 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
         // heap is part of the walked heap now.
         // Issue #4613: the live hash tables count too - the hash table
         // walk is part of the mark.
+        // Issue #5292: free slots are still scanned. A fiber exit mark
+        // sees them with a reset mint counter, so count them here.
+        std::size_t live_cells_mark = 0;
+        for (const auto bit : seen_ev_cell)
+            live_cells_mark += bit ? 1 : 0;
+        const std::size_t dead_high_water =
+            reclaim_dead_slots(n_pairs, live_pairs) + reclaim_dead_slots(n_vecs, live_vecs) +
+            reclaim_dead_slots(n_strings, live_strings) +
+            reclaim_dead_slots(seen_ev_cell.size(), live_cells_mark);
         note_live_set_for_reclaim_trigger(live_pairs + live_vecs + live_strings + live_hash_units,
-                                          mints_at_mark);
+                                          mints_at_mark, dead_high_water);
     }
     // Issue #4597: finalize unreachable handles once, after every lock is
     // dropped. file_reclaim_active_ stays set until this function returns,
@@ -2182,10 +2197,16 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
 // so mark frequency decouples from the mint rate. Small-heap bursts
 // still clamp at the fixed 32768 (the #4525 guarantee); a large-heap
 // burst escalates up to live/4 instead of breaking the amortization.
+// Issue #5292: dead_high_water joins the basis before the divide. Burst
+// doubling still keys off the reachable set alone — a fiber's exit mark
+// has a reset mint counter, so the double does not fire, and the dead
+// slots are what lifts the window off the 128 floor.
 void Evaluator::note_live_set_for_reclaim_trigger(const std::size_t live_objects,
-                                                  const std::uint64_t mints_since_mark) noexcept {
-    const auto scaled =
-        static_cast<std::uint64_t>(live_objects) / kReclaimTriggerDivisor + kReclaimTriggerFloor;
+                                                  const std::uint64_t mints_since_mark,
+                                                  const std::size_t dead_high_water) noexcept {
+    const auto span =
+        static_cast<std::uint64_t>(live_objects) + static_cast<std::uint64_t>(dead_high_water);
+    const auto scaled = span / kReclaimTriggerDivisor + kReclaimTriggerFloor;
     auto next = scaled;
     if (mints_since_mark >= file_heap_allocs_trigger_ &&
         static_cast<std::uint64_t>(live_objects) * 2 < mints_since_mark)
@@ -2668,8 +2689,14 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
         // heap is part of the walked heap now.
         // Issue #4613: the live hash tables count too - the hash table
         // walk is part of the mark.
-        note_live_set_for_reclaim_trigger(
-            live_pairs + live_vecs + live_cells + live_strings + live_hash_units, mints_at_mark);
+        // Issue #5292: free slots are still scanned (see the file-mode
+        // call). The tree-walker exit mark is the one a CLI fiber runs.
+        const std::size_t dead_high_water =
+            reclaim_dead_slots(n_pairs, live_pairs) + reclaim_dead_slots(n_vecs, live_vecs) +
+            reclaim_dead_slots(n_strings, live_strings) + reclaim_dead_slots(n_cells, live_cells);
+        note_live_set_for_reclaim_trigger(live_pairs + live_vecs + live_cells + live_strings +
+                                              live_hash_units,
+                                          mints_at_mark, dead_high_water);
     }
     tw_closure_allocs_.store(0, std::memory_order_relaxed);
     // Issue #4525: benchmark observability — a full whole-heap mark ran.
