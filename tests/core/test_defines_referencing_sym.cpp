@@ -7,6 +7,7 @@
 //   AC3: source cites Issue #2448 + exclude_define parameter
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 
 #include <algorithm>
 #include <cstdint>
@@ -119,7 +120,7 @@ int run_test_defines_referencing_sym() {
                       std::string::npos,
               "skip by NodeId");
         // Old broken pattern must not remain as the only skip
-        auto svc = read_file("src/compiler/service.ixx");
+        auto svc = aura_test::service_module_source();
         CHECK(svc.find("defines_referencing_sym(v.sym_id, target)") != std::string::npos ||
                   svc.find("defines_referencing_sym(v.sym_id,") != std::string::npos,
               "service passes exclude NodeId");

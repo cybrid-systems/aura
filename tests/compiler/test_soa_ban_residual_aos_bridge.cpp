@@ -9,6 +9,7 @@
 //   AC5: observability marks residual bridge as test-only (schema-2520)
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 
 #include "compiler/observability_metrics.h"
 
@@ -189,7 +190,7 @@ static void ac1_grep_production() {
     std::println("\n--- AC1b: production sources limited to_aos_view sites ---");
     // Only ir_soa.ixx (definition) and pass_manager (gated bridge) may call.
     const auto low = read_file("src/compiler/lowering_impl.cpp");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc = aura_test::service_module_source();
     CHECK(low.find("to_aos_view(") == std::string::npos, "AC1b: lowering_impl no to_aos_view call");
     CHECK(svc.find("to_aos_view(") == std::string::npos, "AC1b: service.ixx no to_aos_view call");
 }

@@ -11,6 +11,7 @@
 //   AC6: source-cite + schema-2541
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 
 #include "compiler/aura_jit_bridge.h"
 #include "compiler/security_defaults.hh"
@@ -169,7 +170,7 @@ static void ac5_env_off_and_hard() {
 // ── AC6: source-cite + schema ───────────────────────────────────
 static void ac6_source_query() {
     std::println("\n--- AC6: source-cite + schema-2541 ---");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc = aura_test::service_module_source();
     const auto sec = read_file("src/compiler/security_defaults.hh");
     const auto bridge = read_file("src/compiler/aura_jit_bridge.cpp");
     CHECK(svc.find("#2541") != std::string::npos, "AC6: service cites #2541");

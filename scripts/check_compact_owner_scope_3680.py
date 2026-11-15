@@ -23,6 +23,9 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage"))
+from service_source import service_source  # #5242: interface + implementation units
+
 ROOT = Path(__file__).resolve().parent.parent
 SERVICE = ROOT / "src" / "compiler" / "service.ixx"
 REGISTRY = ROOT / "src" / "compiler" / "hot_update_registry.cpp"
@@ -123,7 +126,7 @@ def report_texts(svc: str, reg: str, env: str, ev: str) -> int:
 
 def self_test() -> int:
     svc, reg, env, ev = (
-        SERVICE.read_text(encoding="utf-8"),
+        service_source(),
         REGISTRY.read_text(encoding="utf-8"),
         ENV.read_text(encoding="utf-8"),
         EVAL.read_text(encoding="utf-8"),
@@ -179,7 +182,7 @@ def main() -> int:
     if "--self-test" in sys.argv:
         return self_test()
     rc = report_texts(
-        SERVICE.read_text(encoding="utf-8"),
+        service_source(),
         REGISTRY.read_text(encoding="utf-8"),
         ENV.read_text(encoding="utf-8"),
         EVAL.read_text(encoding="utf-8"),

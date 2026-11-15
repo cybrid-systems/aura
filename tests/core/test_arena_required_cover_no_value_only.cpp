@@ -37,6 +37,7 @@
 //   AC9: New 3156 linter script exists + self-test passes.
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 #include "compiler/source_contract.hpp"
 
 using aura::test::source_contract::brace_body;
@@ -219,7 +220,7 @@ static void ac3180_hot_path_cover_declarations() {
     // (slot for survivors, EXEMPT for transients). Each file under
     // tests/core sees the cover pattern at the create<T>() site.
     const auto eval_flat = read_file("src/compiler/evaluator_eval_flat.cpp");
-    const auto service = read_file("src/compiler/service.ixx");
+    const auto service = aura_test::service_module_source();
     const auto mod_load = read_file("src/compiler/evaluator_module_loader.cpp");
     const auto ws_tree = read_file("src/compiler/evaluator_workspace_tree.cpp");
 
@@ -735,7 +736,7 @@ static void ac3454_production_pure_wrap_soa() {
     std::println("\n--- #3454 AC: ProductionPureWrapPass SoA dirty entry, not AoS IRFunction& ---");
     const auto concepts = read_file("src/core/concept_constraints.ixx");
     const auto sig = read_file("src/compiler/pass_soa_sig.hh");
-    const auto service = read_file("src/compiler/service.ixx");
+    const auto service = aura_test::service_module_source();
     const auto pipeline = read_file("src/compiler/pass_pipeline_core.ixx");
     const auto pass_impls = read_file("src/compiler/pass_impls.ixx");
     const auto build = read_file("build.py");

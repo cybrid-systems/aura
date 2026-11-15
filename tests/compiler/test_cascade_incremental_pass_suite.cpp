@@ -9,6 +9,7 @@
 // AC6: existing pass contracts / shape-linear still green (source presence)
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 
 #include "compiler/observability_metrics.h"
 
@@ -57,7 +58,7 @@ std::int64_t href(CompilerService& cs, std::string_view key) {
 void ac1_source() {
     std::println("\n--- AC1: source cites #2044 ---");
     auto dirty = read_file("src/compiler/service_dirty.cpp");
-    auto svc = read_file("src/compiler/service.ixx");
+    auto svc = aura_test::service_module_source();
     // #2524: run_incremental_dirty_pipeline lives in pass_pipeline_core; facade re-exports.
     auto pm = read_file("src/compiler/pass_manager.ixx") +
               read_file("src/compiler/pass_pipeline_core.ixx") +
@@ -178,7 +179,7 @@ void ac5_sustained() {
 
 void ac6_suite_helper_source() {
     std::println("\n--- AC6: suite covers Shape/Escape/TypeProp ---");
-    auto svc = read_file("src/compiler/service.ixx");
+    auto svc = aura_test::service_module_source();
     CHECK(svc.find("ShapeWrap") != std::string::npos, "ShapeWrap");
     CHECK(svc.find("EscapeAnalysisWrap") != std::string::npos, "EscapeAnalysis");
     CHECK(svc.find("run_incremental_dirty_pass_suite_") != std::string::npos, "helper");

@@ -11,6 +11,7 @@
 //   AC4: Existing StormLevel wiring retained (#2190 / #2094 lineage).
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 #include "compiler/hot_update_registry.hh"
 #include "compiler/typed_mutation_audit.h"
 #include "compiler/aot_reload_consistency_proof.h" // Issue #4510: proof probe
@@ -205,7 +206,7 @@ static void ac3_query_schema_2212() {
 static void ac4_lineage_and_source() {
     std::println("\n--- AC4: #2190/#2094 lineage + source wiring ---");
     auto pure = read_file("src/compiler/ir_cache_pure.ixx");
-    auto svc = read_file("src/compiler/service.ixx");
+    auto svc = aura_test::service_module_source();
     auto obs = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
     CHECK(!pure.empty() && pure.find("Issue #2212") != std::string::npos, "ir_cache_pure #2212");
     CHECK(pure.find("prefer_partial_under_shape_storm") != std::string::npos, "prefer helper");
@@ -292,7 +293,7 @@ static void ac3986_shape_flip_empty_persist_forces_full() {
     CHECK(kShapeStormEmptyPersistIssue == 3986, "3986: issue stamp");
 
     const auto pure = read_file("src/compiler/ir_cache_pure.ixx");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc = aura_test::service_module_source();
     const auto dirty = read_file("src/compiler/service_dirty.cpp");
     CHECK(pure.find("shape_flipped_full_to_partial") != std::string::npos,
           "3986 AC1: decision latches Shape flip");
@@ -461,7 +462,7 @@ static void ac4157_shape_flip_stale_persist_fails_closed() {
     reset_residual_castop_persist_for_test();
     CHECK(aura::compiler::dirty::kResidualCastopFreshPersistIssue == 4157, "4157: issue stamp");
 
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc = aura_test::service_module_source();
     const auto dirty = read_file("src/compiler/dirty_propagation.ixx");
     CHECK(svc.find("Issue #4157") != std::string::npos, "4157 AC1: consult cites #4157");
     CHECK(svc.find("residual_castop_persist_fresh()") != std::string::npos,
@@ -983,7 +984,7 @@ static void ac4510_production_shape_deopt_owner_scoped() {
     }
 
     // Source lineage: helper + compact-arm test entry cited in service.ixx.
-    const auto ixx = read_file("src/compiler/service.ixx");
+    const auto ixx = aura_test::service_module_source();
     CHECK(ixx.find("demote_jit_native_owner_scoped_for_shape_deopt_") != std::string::npos,
           "#4510: owner-scoped demotion helper present in service.ixx");
     CHECK(ixx.find("Issue #4510") != std::string::npos, "#4510: service.ixx cites the issue");
@@ -1118,7 +1119,7 @@ static void ac4578_shape_deopt_erases_jit_bundle() {
               "#4578: Soft ArenaCompact still publishes the historical C-bridge bump");
     }
 
-    const auto ixx = read_file("src/compiler/service.ixx");
+    const auto ixx = aura_test::service_module_source();
     const auto arm = ixx.find("if (dirty_scope == shape::kShapeDirtyScopeArenaCompact)");
     CHECK(arm != std::string::npos, "4578: ArenaCompact arm present");
     if (arm != std::string::npos) {

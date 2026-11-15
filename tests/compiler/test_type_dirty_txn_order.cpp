@@ -9,6 +9,7 @@
 //   AC5: Unit test locks order via counters + inject/source hooks
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 
 #include "compiler/observability_metrics.h"
 
@@ -54,7 +55,7 @@ static void ac1_single_ordered_sequence() {
     std::println("\n--- AC1: single ordered sequence source-cite ---");
     const auto tci = read_file("src/compiler/type_checker_impl.cpp");
     const auto tch = read_file("src/compiler/type_checker.ixx");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc = aura_test::service_module_source();
     const auto etc = read_file("src/compiler/evaluator_typecheck.cpp");
     const auto ev = read_file("src/compiler/evaluator_primitives_eval.cpp");
 

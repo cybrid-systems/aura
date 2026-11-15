@@ -18,6 +18,7 @@
 //   All AC7-AC9 land Issue #2244 — Strict-mode hard-fail + rebuild contract.
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 #include "compiler/observability_metrics.h"
 
 // Stable-func-id probe for light-link detection (#2687 AC5 pattern).
@@ -108,7 +109,7 @@ IRFunction make_fn_with_source_stamps(std::string name, std::uint32_t n0, std::u
 void ac1_source() {
     std::println("\n--- AC1: source cites #2045 ---");
     auto pure = read_file("src/compiler/ir_cache_pure.ixx");
-    auto svc = read_file("src/compiler/service.ixx");
+    auto svc = aura_test::service_module_source();
     auto dirty = read_file("src/compiler/service_dirty.cpp");
     auto met = read_file("src/compiler/observability_metrics.h");
     auto q = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");

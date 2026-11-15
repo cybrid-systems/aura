@@ -12,6 +12,7 @@
 //   AC6: source wiring (#2101 + API + query keys)
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 
 #include "compiler/aura_jit_bridge.h"
 #include "compiler/grant_test_support.hh"
@@ -1852,7 +1853,7 @@ static void ac4078_soft_half_expand() {
     CHECK(cpp.find("Issue #4078") != std::string::npos, "4078: macro_expansion cites #4078");
     CHECK(cpp.find("aura_hygiene_expand_deny_blocks_eval") != std::string::npos,
           "4078: caller gate uses the fiber deny codes");
-    CHECK(read_file("src/compiler/service.ixx").find("aura_hygiene_expand_deny_blocks_eval") !=
+    CHECK(aura_test::service_module_source().find("aura_hygiene_expand_deny_blocks_eval") !=
               std::string::npos,
           "4078: CompilerService::eval consults the gate");
     CHECK(read_file("src/compiler/evaluator_primitives_eval.cpp")
@@ -3202,7 +3203,7 @@ static void ac4389_capability_deny_stamps_fiber() {
               "4389: no test_issue_4389.cpp");
         CHECK(read_file("docs/design/4389-macro-self-evo-fiber.md").empty(),
               "4389: no docs/design/4389-*");
-        const auto svc = read_file("src/compiler/service.ixx");
+        const auto svc = aura_test::service_module_source();
         const auto diag = svc.find("hygiene_expand_deny_diag_4078");
         CHECK(diag != std::string::npos &&
                   svc.find("aura_macro_hygiene_last_limit_reason_string()", diag) !=

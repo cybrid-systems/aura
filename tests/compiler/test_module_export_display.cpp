@@ -9,6 +9,7 @@
 //   AC5: source-cite — cache_module persists ir_cache_strings_ + gate
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 
 #include <cstdio>
 #include <cstdlib>
@@ -192,7 +193,7 @@ static void ac4_apply_and_let() {
 
 static void ac5_source_gate() {
     std::println("\n--- #2572 AC5: source-cite + gate ---");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc = aura_test::service_module_source();
     CHECK(svc.find("#2572") != std::string::npos, "AC5: service cites #2572");
     CHECK(svc.find("ir_cache_strings_[name] = ir_mod.string_pool") != std::string::npos ||
               svc.find("ir_cache_strings_[name] = ir_mod.string_pool;") != std::string::npos,

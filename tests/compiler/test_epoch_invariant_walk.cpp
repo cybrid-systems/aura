@@ -9,6 +9,7 @@
 //   AC5: source-cite walk body + tests/gate + schema-2366
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 
 #include "compiler/aura_jit_bridge.h"
 
@@ -121,7 +122,7 @@ static void ac4_hard_mode() {
     CHECK(aura_epoch_invariant_mode() == 2, "AC4: hard_enabled → mode 2");
     aura_set_epoch_invariant_hard_enabled(0);
     CHECK(aura_epoch_invariant_mode() == 0, "AC4: hard_enabled(0) → mode 0");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc = aura_test::service_module_source();
     CHECK(svc.find("mode >= 2") != std::string::npos ||
               svc.find("std::abort()") != std::string::npos,
           "AC4: hard abort path in service.ixx");
@@ -131,7 +132,7 @@ static void ac4_hard_mode() {
 // ── AC5 source-cite + query ──
 static void ac5_source_and_query() {
     std::println("\n--- AC5: source-cite + query schema-2366 ---");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc = aura_test::service_module_source();
     const auto br = read_file("src/compiler/aura_jit_bridge.cpp");
     const auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
 

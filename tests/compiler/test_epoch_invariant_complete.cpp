@@ -16,6 +16,7 @@
 //   #3540 AC5: schema-3540 + no new test file / design doc
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 
 #include "compiler/aura_jit_bridge.h"
 
@@ -144,7 +145,7 @@ static void ac4_soft_no_abort() {
 // ── AC5: source + query ──
 static void ac5_source_query() {
     std::println("\n--- #2501 AC5: source-cite + schema-2501 ---");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc = aura_test::service_module_source();
     const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
     const auto sec = read_file("src/compiler/security_defaults.hh");
     CHECK(svc.find("#2501") != std::string::npos, "AC5: service cites #2501");

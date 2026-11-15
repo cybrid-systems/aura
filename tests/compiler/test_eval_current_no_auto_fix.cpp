@@ -8,6 +8,7 @@
 //   AC4: gate wiring
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 
 #include "compiler/pipeline_policy.hh"
 
@@ -229,7 +230,7 @@ static void ac3927_set_then_compare() {
     }
     const auto low = read_file("src/compiler/lowering_impl.cpp");
     CHECK(low.find("#3927") != std::string::npos, "3927 AC5: lowering cites");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc = aura_test::service_module_source();
     CHECK(svc.find("#3927") != std::string::npos, "3927 AC5: cache_define cites");
     CHECK(read_file("docs/design/3927-set-const-fold.md").empty(), "3927: no docs/design");
     CHECK(read_file("tests/compiler/test_issue_3927.cpp").empty(), "3927: no test_issue_3927");
@@ -256,7 +257,7 @@ static void ac3918_batch_rebind_env() {
           "3918 AC: nested (begin (f -4))→4");
     const auto src = read_file("src/compiler/evaluator_eval_flat.cpp");
     CHECK(src.find("Issue #3918") != std::string::npos, "3918 AC: lockless cites");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc = aura_test::service_module_source();
     CHECK(svc.find("Issue #3918") != std::string::npos, "3918 AC: Path B env SSOT cites");
 }
 

@@ -16,6 +16,7 @@
 //   AC8 (#4109): source-cite + wiring (linter, ride-up, behind arm shape)
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 
 #include <cstdlib>
 #include <fstream>
@@ -197,7 +198,7 @@ static void ac5_source_gate() {
     const auto env = read_file("src/compiler/evaluator_env.cpp");
     CHECK(env.find("Issue #2579") != std::string::npos,
           "AC5: live module capture survives env_gen fence");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc = aura_test::service_module_source();
     CHECK(svc.find("#2579") != std::string::npos, "AC5: service cites #2579");
     CHECK(svc.find("sync_workspace_value_cells_from_env") != std::string::npos,
           "AC5: value-cell sync hook");

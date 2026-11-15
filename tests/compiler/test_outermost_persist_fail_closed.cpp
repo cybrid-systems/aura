@@ -16,6 +16,7 @@
 //   AC4: no docs/design/3376-*; no test_issue_3376.cpp per #1655 / #81967
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 #include "compiler/dce_elided_deopt_meta.h"
 #include "compiler/mutation_concurrency_health.hh"
 #include "compiler/typed_mutation_audit.h"
@@ -2336,8 +2337,7 @@ int run_test_outermost_persist_fail_closed() {
 
     {
         std::println("\n--- #3758: try_jit_execute consults commit_readiness before ScalarFn ---");
-        const auto ixx =
-            read_file("src/compiler/service.ixx") + read_file("src/compiler/service_jit.cpp");
+        const auto ixx = aura_test::service_module_source();
         const auto ir = read_file("src/compiler/ir_executor_impl.cpp");
         const auto tma = read_file("src/compiler/typed_mutation_audit.h");
         const auto jit = read_file("src/compiler/aura_jit.cpp");

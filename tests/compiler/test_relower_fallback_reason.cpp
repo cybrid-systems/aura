@@ -10,6 +10,7 @@
 //        parse → ParseFail; partial → Ok
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 #include "compiler/observability_metrics.h"
 
 #include <cstdint>
@@ -152,7 +153,7 @@ int run_test_relower_fallback_reason() {
     // ── AC5: desync → DesyncForceFull (source + gate) ──
     {
         std::println("\n--- AC5b: desync force full wiring ---");
-        auto svc = read_file("src/compiler/service.ixx");
+        auto svc = aura_test::service_module_source();
         auto dirty = read_file("src/compiler/service_dirty.cpp");
         CHECK(svc.find("RelowerFallbackReason::DesyncForceFull") != std::string::npos ||
                   dirty.find("DesyncForceFull") != std::string::npos,

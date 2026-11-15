@@ -24,6 +24,7 @@
 //        reference #3373. No docs/design/3373-* per #1655.
 
 #include "compiler/aura_jit_bridge.h"
+#include "../support/service_module_source.hh"
 #include "compiler/hot_update_registry.hh"
 #include "compiler/typed_mutation_audit.h"
 #include "test_harness.hpp"
@@ -248,7 +249,7 @@ static void ac5_query_schema_and_source() {
     const auto bridge = read_file("src/compiler/aura_jit_bridge.cpp");
     const auto hh = read_file("src/compiler/aura_jit_bridge.h");
     const auto stub = read_file("src/compiler/aura_jit_bridge_stub.cpp");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc = aura_test::service_module_source();
     const auto dirty = read_file("src/compiler/service_dirty.cpp");
     CHECK(bridge.find("#3373") != std::string::npos, "AC5: bridge cites #3373");
     CHECK(bridge.find("aura_install_production_dirty_iterator") != std::string::npos,

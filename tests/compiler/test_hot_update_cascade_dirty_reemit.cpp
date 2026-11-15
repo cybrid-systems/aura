@@ -19,6 +19,7 @@
 //        (Issue #2090 — pairs with #2035 cascade path)
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 #include "compiler/observability_metrics.h"
 #include "compiler/hot_update_registry.hh"
 #include "compiler/aura_jit_bridge.h"
@@ -139,7 +140,7 @@ static void ac1_source() {
     auto reg = read_file("src/compiler/hot_update_registry.hh");
     auto regcpp = read_file("src/compiler/hot_update_registry.cpp");
     auto dirty = read_file("src/compiler/service_dirty.cpp");
-    auto svc = read_file("src/compiler/service.ixx");
+    auto svc = aura_test::service_module_source();
     auto q = read_file("src/compiler/evaluator_primitives_mutate.cpp");
     CHECK(!reg.empty() && reg.find("#2035") != std::string::npos, "registry hh #2035");
     CHECK(reg.find("on_region_mask_from_dirty") != std::string::npos, "on_region_mask_from_dirty");
@@ -1205,7 +1206,7 @@ static void ac_soak_3573_mutate_reemit_hygiene() {
 static void ac3751_production_facade_feeds_dirty_ring() {
     std::println("\n--- #3751: production facade/store feeds dirty ring ---");
     const auto hur = read_file("src/compiler/hot_update_registry.cpp");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc = aura_test::service_module_source();
     const auto dirty = read_file("src/compiler/service_dirty.cpp");
     const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
     CHECK(hur.find("Issue #3751") != std::string::npos, "3751 AC1: facade cites #3751");

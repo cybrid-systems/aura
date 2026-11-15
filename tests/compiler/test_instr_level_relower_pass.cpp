@@ -10,6 +10,7 @@
 //   AC6: all-dirty mask ≡ full fold (equivalence)
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 #include "compiler/observability_metrics.h"
 #include "core/transparent_string_hash.hh"
 
@@ -97,7 +98,7 @@ int run_test_instr_level_relower_pass() {
     {
         std::println("\n--- AC5: source ---");
         auto pure = read_file("src/compiler/ir_cache_pure.ixx");
-        auto svc = read_file("src/compiler/service.ixx");
+        auto svc = aura_test::service_module_source();
         auto pm = read_file("src/compiler/pass_manager.ixx");
         auto opt = read_file("src/compiler/optimization_passes.ixx");
         auto met = read_file("src/compiler/observability_metrics.h");

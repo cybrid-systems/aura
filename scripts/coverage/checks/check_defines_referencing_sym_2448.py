@@ -14,6 +14,9 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from service_source import service_source  # #5242: interface + implementation units
+
 ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -36,7 +39,7 @@ def main() -> int:
             fails.append(f"{label}: unexpected {n!r}")
 
     ast = _read("src/core/ast.ixx")
-    svc = _read("src/compiler/service.ixx")
+    svc = service_source()
     test = _read("tests/core/test_defines_referencing_sym.cpp")
     build = _read("build.py")
     cmake = _read("CMakeLists.txt")

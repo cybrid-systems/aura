@@ -13,6 +13,7 @@
 //   AC4: Unit injects map desync and asserts recovery + partial retention.
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 #include "compiler/observability_metrics.h"
 #include "compiler/typed_mutation_audit.h"
 
@@ -191,7 +192,7 @@ void ac3_wireup_soundness() {
                dirty.find("prepare_source_to_ir_map_for_partial_") != std::string::npos),
           "service_dirty wires recover/prepare");
     CHECK(dirty.find("source_to_ir_desync_recovered_total") != std::string::npos ||
-              read_file("src/compiler/service.ixx").find("source_to_ir_desync_recovered_total") !=
+              aura_test::service_module_source().find("source_to_ir_desync_recovered_total") !=
                   std::string::npos,
           "dirty/service bumps recovered");
     CHECK(dirty.find("#2206") != std::string::npos, "dirty cites #2206");
@@ -357,7 +358,7 @@ void ac3068_relower_recovers_or_full() {
 static void ac3985_densify_success_invalidates_map() {
     std::println("\n--- #3985: densify success invalidates IR cache map/content latch ---");
     const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc = aura_test::service_module_source();
     CHECK(emb.find("Issue #3985") != std::string::npos, "3985: Phase-5 cites #3985");
     CHECK(svc.find("force_ir_cache_map_invalid_after_densify") != std::string::npos,
           "3985: densify map-invalid helper");

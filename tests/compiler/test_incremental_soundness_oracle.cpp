@@ -29,6 +29,7 @@
 //   partial-vs-partial prod_ok).
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 #include "compiler/frame_budget.hh"
 #include "compiler/observability_metrics.h"
 #include "compiler/typed_mutation_audit.h"
@@ -163,8 +164,7 @@ static void ac3_zero_cost_when_off() {
     CHECK(!incremental_soundness_enabled(), "disabled");
     // Gate path: callers must not full-lower when disabled.
     // Source-level: relower_define_blocks gates on incremental_soundness_enabled().
-    auto svc =
-        read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
+    auto svc = aura_test::service_module_source();
     CHECK(svc.find("incremental_soundness_enabled()") != std::string::npos, "service gate");
     CHECK(svc.find("check_incremental_soundness") != std::string::npos, "service check");
     // Force-off: even after a pure compare, process counters only move if called.
@@ -208,8 +208,7 @@ static void ac4_query_surface() {
 static void ac5_docs_and_wiring() {
     std::println("\n--- AC5: enable docs + source wiring ---");
     auto pure = read_file("src/compiler/ir_cache_pure.ixx");
-    auto svc =
-        read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
+    auto svc = aura_test::service_module_source();
     auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
     auto metrics = read_file("src/compiler/observability_metrics.h");
     CHECK(pure.find("Issue #2113") != std::string::npos || pure.find("#2113") != std::string::npos,

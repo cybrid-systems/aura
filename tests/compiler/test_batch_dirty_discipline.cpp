@@ -44,6 +44,7 @@
 //              no docs/design/; no test_issue_*.cpp
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 #include "compiler/typed_mutation_audit.h"
 
 #include <cstdint>
@@ -162,7 +163,7 @@ static void ac1_multi_batch() {
     CHECK(dce.find("mark_blocks_dirty(changed_blocks)") != std::string::npos ||
               dce.find("mark_blocks_dirty(changed") != std::string::npos,
           "AC1: DCE uses batch mark_blocks_dirty");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc = aura_test::service_module_source();
     CHECK(svc.find("mark_blocks_dirty_bit_only") != std::string::npos,
           "AC1: precise path has mark_blocks_dirty_bit_only");
     CHECK(svc.find("Issue #2615") != std::string::npos, "AC1: service cites #2615");
@@ -232,7 +233,7 @@ static void ac4_no_residual_loops() {
               dce.find("changed_blocks") != std::string::npos,
           "AC4: DCE batch marks via changed_blocks");
     CHECK(dce.find("Issue #2615") != std::string::npos, "AC4: DCE SoA run cites #2615");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc = aura_test::service_module_source();
     // precise path must batch bit-only (not N× single mark_block_dirty_bit_only loop only)
     CHECK(svc.find("apply_impact_scope_dirty") != std::string::npos,
           "AC4: apply_impact_scope_dirty present");
@@ -311,7 +312,7 @@ static void ac2681_source_cite() {
     std::println("\n--- #2681 AC6: source-cite + no regression ---");
     const auto soa = read_file("src/compiler/ir_soa.ixx");
     const auto dce = read_file("src/compiler/pass_impls.ixx");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc = aura_test::service_module_source();
     const auto q = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
 
     // Issue #2681 sentinel in all four production-side files.
@@ -597,7 +598,7 @@ static void ac2936_1_production_smoke_residual_zero() {
     CHECK(ir_dirty_batch_only_production_smoke_wired() == 1, "AC1: production smoke wired");
     // Production cascade sites use batch APIs (source-cite audit).
     const auto dce = read_file("src/compiler/pass_impls.ixx");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc = aura_test::service_module_source();
     CHECK(dce.find("mark_blocks_dirty(changed_blocks)") != std::string::npos ||
               dce.find("mark_blocks_dirty") != std::string::npos,
           "AC1: DCE production path uses mark_blocks_dirty");
@@ -936,7 +937,7 @@ static void ac3293_3_source_and_linter() {
 static void ac3355_1_production_batch_of_one() {
     std::println("\n--- #3355 AC1: production dual-emit batch-of-1 ---");
     const auto soa = read_file("src/compiler/ir_soa.ixx");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc = aura_test::service_module_source();
     CHECK(soa.find("kIrSoaSingleMarkProductionBanIssue = 3355") != std::string::npos,
           "3355 AC1: stamp in ir_soa.ixx");
     CHECK(soa.find("production TU hard-ban") != std::string::npos, "3355 AC1: ban comment");

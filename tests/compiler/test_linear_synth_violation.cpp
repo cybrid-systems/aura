@@ -10,6 +10,7 @@
 //   AC5: Counter + query schema-2357; source-cite synthesize paths
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 
 #include "compiler/observability_metrics.h"
 #include "compiler/typed_mutation_audit.h"
@@ -136,7 +137,7 @@ static void ac4_post_mutation_and_2108() {
     CHECK(tci.find("validate_ownership") != std::string::npos, "AC4: validate_ownership retained");
     const auto hard = read_file("src/compiler/type_checker_impl.cpp");
     // #2108 may live in service/composite path
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc = aura_test::service_module_source();
     CHECK(hard.find("linear_escape_commit_blocked") != std::string::npos ||
               svc.find("linear_escape") != std::string::npos ||
               hard.find("Issue #2108") != std::string::npos ||

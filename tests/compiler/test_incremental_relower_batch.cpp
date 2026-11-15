@@ -21,6 +21,7 @@
 // granular debug via `ninja test_incremental_relower_batch` on demand.
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 #include "compiler/observability_metrics.h"
 
 #include <atomic>
@@ -127,7 +128,7 @@ static void run_1639() {
     // AC1: source — per-block dirty bitmask wired into 5 local passes
     {
         std::println("\n--- AC1: per-block dirty bitmask wired into 5 local passes ---");
-        std::string svc = read_file("src/compiler/service.ixx");
+        std::string svc = aura_test::service_module_source();
         bool wired = contains(svc, "run_incremental_dirty_pipeline(ir_mod, ck_pass") &&
                      contains(svc, "run_incremental_dirty_pipeline(ir_mod, cf_pass") &&
                      contains(svc, "run_incremental_dirty_pipeline(ir_mod, tp_pass") &&
@@ -664,7 +665,7 @@ static void run_3068() {
         CHECK(href(cs, "map-ensure-before-partial-wired") == 1, "3068 AC4: wired");
         CHECK(href(cs, "partial_forced_full_by_impact_total") >= 0, "3068 AC4: impact counter");
         CHECK(href(cs, "source_to_ir_map_rebuild_total") >= 0, "3068 AC4: rebuild counter");
-        const auto svc = read_file("src/compiler/service.ixx");
+        const auto svc = aura_test::service_module_source();
         const auto pure = read_file("src/compiler/ir_cache_pure.ixx");
         const auto dirty = read_file("src/compiler/service_dirty.cpp");
         CHECK(svc.find("Issue #3068") != std::string::npos, "3068 AC4: service cite");

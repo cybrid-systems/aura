@@ -9,6 +9,7 @@
 //   AC5: source-cite + gate
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 
 #include "compiler/aura_jit.h"
 #include "compiler/hot_update_registry.hh"
@@ -164,7 +165,7 @@ static void ac5_source_and_gate() {
     const auto sp = read_file("src/compiler/shape_profiler.cpp");
     const auto hur = read_file("src/compiler/hot_update_registry.cpp");
     const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc = aura_test::service_module_source();
     const auto cmake = read_file("CMakeLists.txt");
     const auto build = read_file("build.py");
     const auto script = read_file("scripts/coverage/manifests/2370.json");

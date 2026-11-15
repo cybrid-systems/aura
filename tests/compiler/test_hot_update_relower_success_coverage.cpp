@@ -43,6 +43,7 @@
 // CompilerService::fnv1a_64 exactly.
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 
 #include "compiler/aura_jit_bridge.h"
 #include "compiler/hot_update_registry.hh"
@@ -120,7 +121,7 @@ int run_test_hot_update_relower_success_coverage() {
 
     auto hur = read_file("src/compiler/hot_update_registry.hh");
     auto sd = read_file("src/compiler/service_dirty.cpp");
-    auto svc = read_file("src/compiler/service.ixx");
+    auto svc = aura_test::service_module_source();
 
     // ── AC1: shared helper exists, both call sites use it, no
     //    std::hash in this path, misleading comment removed ──────────
@@ -310,7 +311,7 @@ int run_test_hot_update_relower_success_coverage() {
               "AC1: #3229 note_relower_success_define helper declared");
         CHECK(h.find("residual_force_for_define") != std::string::npos,
               "AC1: #3229 per-define residual accessor declared");
-        const auto s = read_file("src/compiler/service.ixx");
+        const auto s = aura_test::service_module_source();
         CHECK(s.find("note_relower_success_define") != std::string::npos,
               "AC1: #3229 store site stamps define-id");
         const auto d = read_file("src/compiler/service_dirty.cpp");
@@ -338,7 +339,7 @@ int run_test_hot_update_relower_success_coverage() {
     // ── #3229 AC3: #3136 hashed-name coverage retained ─────────────
     {
         std::println("\n--- #3229 AC3: #3136 hashed-name coverage retained ---");
-        const auto s = read_file("src/compiler/service.ixx");
+        const auto s = aura_test::service_module_source();
         // The store_define_v2 path still uses fnv1a_64 directly (same
         // hash as the new shared helper). #3383 fixes the cascade site
         // to match; #3136 hashed-name coverage is retained.

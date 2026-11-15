@@ -35,6 +35,7 @@
 // check-and-apply restores the snapshot when post-verify throws.
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 
 #include <cctype>
 #include <cstdlib>
@@ -1635,7 +1636,7 @@ static void ac4587_workspace_free_names() {
         auto bval = cs.eval("(b)");
         CHECK(bval && is_int(*bval) && as_int(*bval) == 5, "4587: (b) still 5 after rebind");
     }
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc = aura_test::service_module_source();
     CHECK(svc.find("Issue #4587") != std::string::npos, "4587: host cells and free-name refusal");
     const auto tc = read_file("src/compiler/type_checker_impl.cpp");
     CHECK(tc.find("Issue #4587") != std::string::npos, "4587: host names seed as Dynamic");

@@ -4,6 +4,7 @@
 // mutate/workspace force path, query:tenant-isolation-stats, stress deny.
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 
 #include "compiler/runtime_shared.h"
 #include "compiler/security_capabilities.h"
@@ -9692,7 +9693,7 @@ int main() {
             CHECK(body.find("aura_hash_get_flat_table_checked(hash_val,") != std::string::npos,
                   "4693: one-arg ABI forwards into the checked body");
         }
-        const auto svc = read_file("src/compiler/service.ixx");
+        const auto svc = aura_test::service_module_source();
         const auto hook = svc.find("int aura_jit_owner_check_isolation");
         CHECK(hook != std::string::npos, "4693: strong isolation hook located");
         if (hook != std::string::npos) {
@@ -9855,7 +9856,7 @@ int main() {
                       body.find("return 3") != std::string::npos,
                   "4694: deny codes stay 2 and 3");
         }
-        const auto svc = read_file("src/compiler/service.ixx");
+        const auto svc = aura_test::service_module_source();
         const auto hook = svc.find("int aura_jit_owner_check_isolation");
         CHECK(hook != std::string::npos, "4694: strong isolation hook located");
         if (hook != std::string::npos) {

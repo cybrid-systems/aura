@@ -10,6 +10,7 @@
 //   AC5: tests under tests/compiler/ src-aligned
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 #include "compiler/observability_metrics.h"
 #include "compiler/coercion_provenance_policy.hh"
 #include "compiler/lock_order_audit.h"
@@ -188,7 +189,7 @@ static void ac2_soft_metric_only() {
 static void ac3_lineage() {
     std::println("\n--- AC3: #2043/#2086/#2103/#2120 lineage retained ---");
     auto gc = read_file("src/compiler/evaluator_gc.cpp");
-    auto svc = read_file("src/compiler/service.ixx");
+    auto svc = aura_test::service_module_source();
     auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
     CHECK(gc.find("revalidate_linear_type_provenance_after_migration") != std::string::npos,
           "revalidate helper");

@@ -25,6 +25,7 @@
 //        computes the real value (legacy routing preserved).
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 
 #include "compiler/observability_metrics.h"
 #include "compiler/pipeline_policy.hh"
@@ -240,7 +241,7 @@ static void ac4_happy_path_and_source() {
     CHECK(m->tree_walker_fallback_forbidden_total.load() == forb0,
           "AC4: no forbidden bump on happy path");
 
-    auto svc = read_file("src/compiler/service.ixx");
+    auto svc = aura_test::service_module_source();
     auto pol = read_file("src/compiler/pipeline_policy.hh");
     auto sec = read_file("src/compiler/security_defaults.hh");
     CHECK(svc.find("consult_tree_walker_fallback_gate_") != std::string::npos, "gate helper");

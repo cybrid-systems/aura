@@ -60,6 +60,7 @@
 //         in the log, so a later overlay from the same base commits cleanly.
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 #include "compiler/fiber_cow_overlay.hh" // Issue #4715
 
 #include <algorithm>
@@ -1038,7 +1039,7 @@ static void ac20_cow_overlay_env_intercept_cite() {
           "AC20: set! of a top-level binding is captured by an open overlay");
     CHECK(flat.find("primitives_detail::t_fiber_cow_overlay_depth == 0") != std::string::npos,
           "AC20: the same-pool host chain read is skipped while an overlay is open");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc = aura_test::service_module_source();
     CHECK(svc.find("fiber_cow_overlay_capture_define") != std::string::npos,
           "AC20: the eval-current define bind is captured by an open overlay");
     const auto hh = read_file("src/compiler/fiber_cow_overlay.hh");

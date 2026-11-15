@@ -30,6 +30,7 @@
 //         gc_deferred_for_evaluator) in src/core/gc_hooks.h.
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 
 #include "compiler/mutation_concurrency_health.hh"
 #include "compiler/security_defaults.hh"
@@ -2271,7 +2272,7 @@ static void ac3420_5_source_cite_no_invent() {
     std::println("\n--- #3420 AC5–AC7: source-cite + sites + no invent ---");
     const auto arena = read_file("src/core/arena.ixx");
     const auto lp = read_file("src/core/lifetime_pin.hh");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc = aura_test::service_module_source();
     const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
     const auto zc = read_file("src/core/zero_copy_output.hh");
     const auto t = read_file("tests/core/test_moving_densify_fail_closed.cpp");
@@ -3200,7 +3201,7 @@ static void ac3308_6_source_and_linter() {
 static void ac3356_1_cone_limited_rewrite() {
     std::println("\n--- #3356 AC1: densify success + dirty cone → cone-limited rewrite ---");
     const auto hh = read_file("src/core/post_compact_lifecycle.hh");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc = aura_test::service_module_source();
     const auto arena = read_file("src/core/arena.ixx");
     const auto pin = read_file("src/core/lifetime_pin.hh");
     CHECK(hh.find("kDensifyConeRewriteIssue = 3356") != std::string::npos, "3356 AC1: stamp");
@@ -3225,7 +3226,7 @@ static void ac3356_1_cone_limited_rewrite() {
 static void ac3356_2_empty_cone_skip() {
     std::println("\n--- #3356 AC2: empty cone / objects_moved==0 → zero extra IR restamp ---");
     const auto hh = read_file("src/core/post_compact_lifecycle.hh");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc = aura_test::service_module_source();
     CHECK(hh.find("densify_cone_rewrite_skip_empty_total") != std::string::npos,
           "3356 AC2: skip_empty counter");
     CHECK(svc.find("object_remap_size() > 0") != std::string::npos, "3356 AC2: moved gate");
@@ -3236,7 +3237,7 @@ static void ac3356_2_empty_cone_skip() {
 static void ac3356_3_pin_fail_closed() {
     std::println("\n--- #3356 AC3: production pin rewrite-miss fail-closed ---");
     const auto arena = read_file("src/core/arena.ixx");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc = aura_test::service_module_source();
     CHECK(arena.find("verify_pins_under_moving_compact") != std::string::npos,
           "3356 AC3: pin verify fail-closed");
     CHECK(svc.find("verify_pins_under_moving_compact") != std::string::npos,
@@ -6993,7 +6994,7 @@ static void ac4067_source_cite() {
 // frame address out of the vector on Soft and on pin-required.
 static void ac4070_eval_drops_stack_densify_slots() {
     std::println("\n--- #4070: eval must not leave stack void** in densify slots ---");
-    const auto service = read_file("src/compiler/service.ixx");
+    const auto service = aura_test::service_module_source();
     CHECK(service.find("Issue #4070") != std::string::npos, "4070: service cites");
     CHECK(service.find("stack-cover-dies-at-return") != std::string::npos, "4070: EXEMPT reason");
     CHECK(service.find("reinterpret_cast<void**>(&pool_ptr)") == std::string::npos,

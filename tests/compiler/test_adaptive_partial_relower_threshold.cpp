@@ -9,6 +9,7 @@
 //   AC5: no regression on pure overloads / default suites
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 
 #include <cstdint>
 #include <cstdlib>
@@ -239,8 +240,7 @@ static void ac5_regression_pure() {
     CHECK(estimate_relower_blocks(5, 8) == 5, "est 5");
     CHECK(estimate_relower_blocks(8, 8) == static_cast<std::size_t>(-1), "est full");
     auto pure = read_file("src/compiler/ir_cache_pure.ixx");
-    auto svc =
-        read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
+    auto svc = aura_test::service_module_source();
     auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
     CHECK(pure.find("Issue #2112") != std::string::npos || pure.find("#2112") != std::string::npos,
           "pure cites #2112");
@@ -329,7 +329,7 @@ void ac4156_adaptive_thr_feeds_peel_inverted() {
     // Source-cite: decision core consults the face; reason bit + floor
     // constant exist; consult documents the inherited clamp.
     const auto irc = read_file("src/compiler/ir_cache_pure.ixx");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc = aura_test::service_module_source();
     CHECK(irc.find("Issue #4156") != std::string::npos, "4156: cite in ir_cache_pure.ixx");
     CHECK(irc.find("kAdaptiveReasonAdaptiveThrRisk") != std::string::npos, "4156: risk reason bit");
     CHECK(irc.find("kMinRatioBp") != std::string::npos, "4156: floor constant");

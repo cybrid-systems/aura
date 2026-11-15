@@ -16,6 +16,7 @@
 //   AC9: #1919 / #1621 lineage schema retained
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 #include "core/arena_auto_policy_stats.h"
 
 #include <cstdint>
@@ -199,11 +200,7 @@ static void ac5_production_sweep() {
 static void ac6_source_wiring() {
     std::println("\n--- AC6: post-compact resync always wired ---");
     std::string svc, pol, arena;
-    for (const char* p : {"src/compiler/service.ixx", "../src/compiler/service.ixx"}) {
-        svc = read_file(p);
-        if (!svc.empty())
-            break;
-    }
+    svc = aura_test::service_module_source();
     for (const char* p :
          {"src/core/arena_auto_policy_stats.h", "../src/core/arena_auto_policy_stats.h"}) {
         pol = read_file(p);

@@ -88,7 +88,7 @@
     },
     {
       "ac": "AC5",
-      "path": "src/compiler/service.ixx",
+      "path": "src/compiler/service_ctor.cpp",
       "contains": [
         "set_eval_owner"
       ]

@@ -53,6 +53,9 @@ import json
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from service_source import service_source  # #5242: interface + implementation units
+
 ROOT = Path(__file__).resolve().parents[3]
 
 IR_CACHE_PURE = ROOT / "src" / "compiler" / "ir_cache_pure.ixx"
@@ -81,7 +84,7 @@ def main() -> int:
 
     ir = _read(IR_CACHE_PURE)
     _read(EVALUATOR)
-    svc = _read(SERVICE)
+    svc = service_source()
     emb = _read(MUTATION_BOUNDARY)
     build = _read(BUILD_PY)
 

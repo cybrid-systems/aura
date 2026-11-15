@@ -15,6 +15,9 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from service_source import service_source  # #5242: interface + implementation units
+
 ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -34,7 +37,7 @@ def main() -> int:
 
     mut = _read("src/compiler/evaluator_primitives_mutate.cpp")
     ixx = _read("src/compiler/evaluator.ixx")
-    svc = _read("src/compiler/service.ixx")
+    svc = service_source()
     met = _read("src/compiler/observability_metrics.h")
     obs = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
     test = _read("tests/compiler/test_cascade_relower_silent_skip.cpp")

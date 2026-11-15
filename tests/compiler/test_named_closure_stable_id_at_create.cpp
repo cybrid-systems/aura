@@ -22,6 +22,7 @@
 //   AC6: src-aligned test + coverage gate (extend #2550 suite, no new file)
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 
 #include "compiler/aura_jit_bridge.h"
 #include "compiler/observability_metrics.h"
@@ -1034,7 +1035,7 @@ static void ac2841_1_dual_eval_cascade_owner_scoped() {
     // Source-cite: cascade stamps owner TLS + throttle prefers owner-scoped
     // invalidate without advancing g_aot_table_epoch (AC1 contract).
     const auto cpp = read_file("src/compiler/aura_jit_bridge.cpp");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc = aura_test::service_module_source();
     CHECK(cpp.find("aura_aot_invalidate_all_stale_slots_for_eval(owner)") != std::string::npos,
           "AC1: owner-scoped invalidate on throttle path");
     CHECK(cpp.find("g_cross_eval_epoch_action_throttled_total") != std::string::npos,
@@ -1135,7 +1136,7 @@ static void ac2841_3_single_eval_unchanged() {
 static void ac2841_4_soft_opt_in_production_default() {
     std::println("\n--- #2841 AC4: Soft opt-in preserved; production default owner-scoped ---");
     const auto cpp = read_file("src/compiler/aura_jit_bridge.cpp");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc = aura_test::service_module_source();
     CHECK(cpp.find("AURA_CROSS_EVAL_EPOCH_THROTTLE") != std::string::npos,
           "AC4: Soft env opt-in preserved");
     CHECK(cpp.find("production_defaults_active()") != std::string::npos,

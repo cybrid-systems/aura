@@ -11,6 +11,7 @@
 // AC8: lock_order_audit documents Mutate → linear+GC window
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 
 #include "compiler/observability_metrics.h"
 #include "compiler/runtime_shared.h"
@@ -57,7 +58,7 @@ std::int64_t href(CompilerService& cs, std::string_view key) {
 
 void ac1_source() {
     std::println("\n--- AC1: source cites #2043 ---");
-    auto svc = read_file("src/compiler/service.ixx");
+    auto svc = aura_test::service_module_source();
     auto dirty = read_file("src/compiler/service_dirty.cpp");
     auto lock = read_file("src/compiler/lock_order_audit.h");
     CHECK(!svc.empty() && svc.find("#2043") != std::string::npos, "service.ixx #2043");
