@@ -21,7 +21,7 @@
     },
     {
       "ac": "AC3",
-      "path": "src/compiler/service.ixx",
+      "path": "src/compiler/service_cache_define.cpp",
       "contains": [
         "printed_type_warnings",
         "Issue #5056"

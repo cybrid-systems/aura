@@ -184,7 +184,13 @@
         "Issue #4715 regression",
         "retire_ir_define_closure_",
         "retired_define_closure_owner_",
-        "kRetiredDefineHistory",
+        "kRetiredDefineHistory"
+      ]
+    },
+    {
+      "ac": "AC2-regression",
+      "path": "src/compiler/service_dispatch_define.cpp",
+      "contains": [
         "run_pinned_ir_closure_(pinned, pinned->closure_id, args, 0, &out)"
       ]
     },
