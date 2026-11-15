@@ -217,6 +217,31 @@ CASES = (
         "sand_std.LlmChatNetworkGrant.test_grant_or_sandbox_off_does_not_ask_for_network",
     ),
     (
+        5293,
+        "test_no_key_bumps_no_key",
+        "sand_std.LlmCallStats.test_no_key_bumps_no_key",
+    ),
+    (
+        5293,
+        "test_rate_limit_bumps_rate_limited",
+        "sand_std.LlmCallStats.test_rate_limit_bumps_rate_limited",
+    ),
+    (
+        5293,
+        "test_transport_failure_bumps_fail",
+        "sand_std.LlmCallStats.test_transport_failure_bumps_fail",
+    ),
+    (
+        5293,
+        "test_parsed_content_bumps_success",
+        "sand_std.LlmCallStats.test_parsed_content_bumps_success",
+    ),
+    (
+        5293,
+        "test_ungranted_network_leaves_outcome_counters_at_zero",
+        "sand_std.LlmCallStats.test_ungranted_network_leaves_outcome_counters_at_zero",
+    ),
+    (
         5086,
         "test_preset_dev_trial_mutates_child_not_live",
         "sand_dev_child.DevChildCow.test_preset_dev_trial_mutates_child_not_live",

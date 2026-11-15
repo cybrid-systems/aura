@@ -314,13 +314,19 @@
                        #t))))
                (catch (e) #t))))
        (if (not rate-ok)
-         "rate-limited"
+         ; #5293: the try keeps a lost stats free-var (#2735) from blocking.
+         (begin
+           (try (llm-stat-bump! "rate-limited") (catch (e) #f))
+           "rate-limited")
          (let ((key (getenv "LLM_API_KEY"))
                (clean (llm:sanitize-prompt body)))
          ; #4504: under an armed sandbox the fenced getenv returns an error
          ; value — degrade to the no-key path instead of propagating.
+         ; #5293: that degrade, a missing key, and an empty key are no-key.
          (if (or (not key) (error? key) (= (string-length key) 0))
-             ""
+             (begin
+               (try (llm-stat-bump! "no-key") (catch (e) #f))
+               "")
              (let* ((base (try (getenv "LLM_BASE_URL") (catch (e) #f)))
                     (url (if (string? base)
                            (string-append base "/chat/completions")
@@ -333,10 +339,21 @@
                            (http-post url clean key timeout)
                            (http-post url clean key))
                          (catch (e) (llm-http-error-text e)))))
+               ; #5293: connection failures come back as "http-post: ..."
+               ; (or the no-http-post sentinel once http-post is bound).
                (cond
-                 ((error? r) "no-http-post")
-                 ((string? r) r)
-                 (else ""))))))))))
+                 ((error? r)
+                  (begin
+                    (try (llm-stat-bump! "fail") (catch (e) #f))
+                    "no-http-post"))
+                 ((or (not (string? r))
+                      (equal? r "no-http-post")
+                      (string-prefix? r "http-post:")
+                      (string-prefix? r "http-get:"))
+                  (begin
+                    (try (llm-stat-bump! "fail") (catch (e) #f))
+                    (if (string? r) r "")))
+                 (else r))))))))))
 
 (define (llm:call-sandboxed body)
   (if (not (string? body))
@@ -399,7 +416,14 @@
          (hash "ok" #f "error" raw "content" ""))
         ((equal? raw "")
          (hash "ok" #f "error" "empty" "content" ""))
-        (else (llm:parse-response raw))))))
+        ; #5293: parse-ok still counts the parse. success is the call
+        ; that came back with content.
+        (else
+         (let ((parsed (llm:parse-response raw)))
+           (if (and (hash? parsed) (hash-ref parsed "ok" #f))
+             (llm-stat-bump! "success")
+             #f)
+           parsed))))))
 
 (define (aura-verify code)
   (if (set-code code)
