@@ -94,14 +94,14 @@ static void ac1_production_force_fail() {
           "AC1: rollback path on success=false");
 
     cs.evaluator().set_compiler_metrics(nullptr);
-    unsetenv("AURA_MUTATION_HOLD_SLO_US");
+    ::aura::config::test_unsetenv("AURA_MUTATION_HOLD_SLO_US");
 }
 
 // ── AC2: Soft metric-only ──
 static void ac2_soft_metric_only() {
     std::println("\n--- AC2: Soft/sandbox → metric only ---");
-    setenv("AURA_MUTATION_HOLD_SLO_SOFT", "1", 1);
-    setenv("AURA_MUTATION_HOLD_SLO_US", "2000", 1);
+    ::aura::config::test_setenv("AURA_MUTATION_HOLD_SLO_SOFT", "1", 1);
+    ::aura::config::test_setenv("AURA_MUTATION_HOLD_SLO_US", "2000", 1);
     CHECK(mutation_hold_slo_soft_mode(), "AC2: soft mode active");
 
     CompilerService cs;
@@ -184,7 +184,7 @@ static void ac4_disable_and_query() {
     CHECK(href(cs, "schema-2199") == 2199, "schema-2199 retained");
 
     cs.evaluator().set_compiler_metrics(nullptr);
-    unsetenv("AURA_MUTATION_HOLD_SLO_US");
+    ::aura::config::test_unsetenv("AURA_MUTATION_HOLD_SLO_US");
 }
 
 // ── AC5: source-cite + decision table ──
@@ -216,9 +216,9 @@ static void ac5_source_cite() {
 // ── AC6 (#5275): the SLO refusal names its gate; success clears it ──
 static void ac6_deny_gate_named() {
     std::println("\n--- AC6: hold-SLO deny is named, not anonymous (#5275) ---");
-    unsetenv("AURA_MUTATION_HOLD_SLO_SOFT");
-    unsetenv("AURA_SANDBOX");
-    setenv("AURA_MUTATION_HOLD_SLO_US", "2000", 1); // 2ms SLO
+    ::aura::config::test_unsetenv("AURA_MUTATION_HOLD_SLO_SOFT");
+    ::aura::config::test_unsetenv("AURA_SANDBOX");
+    ::aura::config::test_setenv("AURA_MUTATION_HOLD_SLO_US", "2000", 1); // 2ms SLO
     aura::compiler::typed_audit::clear_boundary_deny_op();
     aura::compiler::typed_audit::clear_last_boundary_deny_op();
 
@@ -289,7 +289,7 @@ static void ac8_rebind_observe_not_failed() {
           "AC8: the slow commit is still counted");
 
     cs.evaluator().set_compiler_metrics(nullptr);
-    unsetenv("AURA_MUTATION_HOLD_SLO_US");
+    ::aura::config::test_unsetenv("AURA_MUTATION_HOLD_SLO_US");
 }
 
 } // namespace
