@@ -35,7 +35,6 @@ def main() -> int:
     spawn = _read("src/orch/agent_spawn.h")
     agent = _read("src/compiler/evaluator_primitives_agent.cpp")
     test = _read("tests/orch/test_mailbox_bp_admit.cpp")
-    build = _read("build.py")
 
     must("Issue #2925" in spawn, "AC1: cites #2925")
     must("producer_bp_budget" in spawn, "AC1: producer_bp_budget field")
@@ -60,8 +59,12 @@ def main() -> int:
 
     must("2925" in test and "producer_bp_budget" in test, "AC6: test extended")
     must("#2925 AC1" in test or "2925 AC1" in test, "AC6: AC1 in test")
+    # Issue #5246: wired through the shared coverage runner — run_checks.py
+    # globs scripts/coverage/checks/check_*.py, replacing the deleted build.py
+    # `or cmd_*_coverage()` wrapper.
     must(
-        "producer-bp-budget-2925" in build or "producer_bp_budget_2925" in build,
+        (ROOT / "scripts" / "coverage" / "checks" / "check_producer_bp_budget_2925.py").is_file()
+        and "discover_checks" in _read("scripts/coverage/run_checks.py"),
         "AC6: build.py",
     )
     must(not (ROOT / "tests/orch/test_issue_2925.cpp").is_file(), "AC6: no invent")

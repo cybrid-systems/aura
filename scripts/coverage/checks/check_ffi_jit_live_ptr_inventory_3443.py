@@ -46,7 +46,6 @@ def main() -> int:
     dcr = _read("src/core/densify_consistency_report.h")
     test = _read("tests/core/test_moving_densify_fail_closed.cpp")
     loop = _read("tests/compiler/test_densify_root_closure_closed_loop.cpp")
-    build = _read("build.py")
 
     must("Issue #3443" in arena, "AC1: arena.ixx cites #3443")
     must("note_ffi_opaque_create_exempt(void* p, const char* reason)" in arena, "AC1: pointer-form helper")
@@ -77,7 +76,14 @@ def main() -> int:
     must("schema-3443" not in arena and "schema-3443" not in dcr, "AC6: no schema-3443")
 
     must("kFfiJitLivePtrInventoryIssue = 3443" in dcr, "AC6: stamp")
-    must("check_ffi_jit_live_ptr_inventory_3443" in build, "AC6: build.py")
+    # Issue #5246: wired through the shared coverage runner — run_checks.py
+    # globs scripts/coverage/checks/check_*.py, replacing the deleted build.py
+    # `or cmd_*_coverage()` wrapper.
+    must(
+        (ROOT / "scripts" / "coverage" / "checks" / "check_ffi_jit_live_ptr_inventory_3443.py").is_file()
+        and "discover_checks" in _read("scripts/coverage/run_checks.py"),
+        "AC6: build.py",
+    )
     must("3443 AC6" in test, "AC6: no-invent test")
     must(not (ROOT / "tests/core/test_issue_3443.cpp").is_file(), "AC6: no invent core")
     must(not (ROOT / "tests/issues/test_issue_3443.cpp").is_file(), "AC6: no invent issues")

@@ -79,10 +79,11 @@
     },
     {
       "ac": "AC9",
-      "path": "build.py",
-      "contains_any": [
-        "agent-recovery-2917",
-        "agent_recovery_2917"
+      "path": "scripts/coverage/run_checks.py",
+      "contains": [
+        "_run_manifests",
+        "runner.py",
+        "--all"
       ]
     }
   ]

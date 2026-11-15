@@ -92,8 +92,14 @@ def main() -> int:
     must("current-source :workspace" in suite or "(current-source :workspace)" in suite, "AC5: suite uses :workspace")
     must("set-code" in suite, "AC5: suite set-code path")
 
-    build = _read("build.py")
-    must("ast-snapshot-workspace-2918" in build or "ast_snapshot_workspace_2918" in build, "AC5: build.py gate")
+    # Issue #5246: wired through the shared coverage runner — run_checks.py
+    # globs scripts/coverage/checks/check_*.py, replacing the deleted build.py
+    # `or cmd_*_coverage()` wrapper.
+    must(
+        (ROOT / "scripts" / "coverage" / "checks" / "check_ast_snapshot_workspace_2918.py").is_file()
+        and "discover_checks" in _read("scripts/coverage/run_checks.py"),
+        "AC5: build.py gate",
+    )
 
     if fails:
         for f in fails:

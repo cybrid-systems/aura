@@ -13081,23 +13081,6 @@ def cmd_agent_scope_concurrency_2976_coverage():
     return 0
 
 
-def cmd_agent_scope_concurrent_hard_deny_2946_coverage():
-    """Issue #2946: production AgentScope concurrent hard deny default.
-
-    Refine #2399: production_defaults_active → HardDeny (structured fail,
-    no handle mutation); Soft / sandbox=off metric-only; env ABORT=0
-    opt-out / =1 HardAbort; hard_deny counter + schema-2946.
-    """
-    print(f"{B}=== AgentScope concurrent hard deny coverage (#2946) ==={N}")
-    script = COVERAGE_CHECKS / "check_agent_scope_concurrent_hard_deny_2946.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("AgentScope concurrent hard deny (#2946) coverage contract rows failed")
-        return 1
-    ok("AgentScope concurrent hard deny (#2946) coverage clean")
-    return 0
-
-
 def cmd_mailbox_hold_slo_security_schedule_2947_coverage():
     """Issue #2947: mailbox under-boundary wait p99 SLO → security schedule deny.
 
@@ -13126,16 +13109,6 @@ def cmd_wal_append_fail_schedule_3211_coverage():
     return 0
 
 
-def cmd_wal_append_fail_schedule_3211():
-    """Issue #3211: production WAL append-fail breach hard-denies next mutate.
-
-    security-schedule-gate consumes decide_wal_append_fail_slo.would_arm_degraded.
-    Soft / WAL-off never hard-deny. Existing #3056 posture keys unchanged.
-    """
-    print(f"{B}=== wal append-fail schedule (#3211) ==={N}")
-    return cmd_wal_append_fail_schedule_3211_coverage()
-
-
 def cmd_wal_fail_closed_force_wal_3302_coverage():
     """Issue #3302: force_wal default-arms WAL fail-closed (static)."""
     print(f"{B}=== wal fail-closed force_wal coverage (#3302) ==={N}")
@@ -13146,44 +13119,6 @@ def cmd_wal_fail_closed_force_wal_3302_coverage():
         return 1
     ok("wal fail-closed force_wal (#3302) coverage clean")
     return 0
-
-
-def cmd_wal_fail_closed_force_wal_3302():
-    """Issue #3302: force_wal pairs durable WAL with fail-closed by default.
-
-    Soft / AURA_SANDBOX=off stays fail-open. Explicit
-    AURA_WAL_APPEND_FAIL_OPEN=1 opts out; AURA_WAL_APPEND_FAIL_CLOSED=1
-    still forces on. #3109 overflow ring / Strict entry deny unchanged.
-    """
-    print(f"{B}=== wal fail-closed force_wal (#3302) ==={N}")
-    return cmd_wal_fail_closed_force_wal_3302_coverage()
-
-
-def cmd_atomic_batch_macro_audit_3301_coverage():
-    """Issue #3301: atomic-batch batch-level MacroIntroduced audit (static)."""
-    print(f"{B}=== atomic-batch macro audit coverage (#3301) ==={N}")
-    script = COVERAGE_CHECKS / "check_atomic_batch_macro_audit_3301.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("atomic-batch macro audit (#3301) coverage contract rows failed")
-        return 1
-    ok("atomic-batch macro audit (#3301) coverage clean")
-    return 0
-
-
-def cmd_atomic_batch_macro_audit_3301():
-    """Issue #3301: atomic-batch dispatcher batch-level MacroIntroduced audit.
-
-    The dispatcher must not depend on every current AND future lockless
-    helper carrying its own hygiene gate: a helper appended to
-    kAtomicBatchLocklessOps without the gate inherits a default-deny hole
-    under production defaults (Restricted + Strict). #3301 adds a
-    batch-entry target walk (table target_arg metadata) that denies the
-    whole batch before any sub-op runs; batch-form :allow-macro? #t /
-    per-sub-op opt-out / global allow all respected. Soft/Off zero-cost.
-    """
-    print(f"{B}=== atomic-batch macro audit (#3301) ==={N}")
-    return cmd_atomic_batch_macro_audit_3301_coverage()
 
 
 def cmd_bp_threshold_ssot_2948_coverage():
@@ -13199,22 +13134,6 @@ def cmd_bp_threshold_ssot_2948_coverage():
         fail("BP threshold SSOT (#2948) coverage contract rows failed")
         return 1
     ok("BP threshold SSOT (#2948) coverage clean")
-    return 0
-
-
-def cmd_force_jit_repromote_only_covered_default_2949_coverage():
-    """Issue #2949: production default force_jit only_covered partial re-promote.
-
-    Refine #2895/#2502: production → only_covered; Soft wholesale;
-    env=0 opt-out; sticky set wins; schema-2949.
-    """
-    print(f"{B}=== force_jit only_covered default coverage (#2949) ==={N}")
-    script = COVERAGE_CHECKS / "check_force_jit_repromote_only_covered_default_2949.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("force_jit only_covered default (#2949) coverage contract rows failed")
-        return 1
-    ok("force_jit only_covered default (#2949) coverage clean")
     return 0
 
 
@@ -13234,23 +13153,6 @@ def cmd_pure_anon_bg_remount_2950_coverage():
     return 0
 
 
-def cmd_coverage_verify_min_dirty_2952_coverage():
-    """Issue #2952: storm-clear + exhaust auto coverage-verify min-dirty.
-
-    Production residual (force & ~last_success) auto-seeds min-dirty +
-    one #2601-gated reemit on storm clear / force drain. Soft observe-
-    only; env=0 opt-out; schema-2952.
-    """
-    print(f"{B}=== coverage-verify min-dirty coverage (#2952) ==={N}")
-    script = COVERAGE_CHECKS / "check_coverage_verify_min_dirty_2952.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("coverage-verify min-dirty (#2952) coverage contract rows failed")
-        return 1
-    ok("coverage-verify min-dirty (#2952) coverage clean")
-    return 0
-
-
 def cmd_reload_recovery_playbook_2953_coverage():
     """Issue #2953: Agent recovery playbook single action.
 
@@ -13264,27 +13166,6 @@ def cmd_reload_recovery_playbook_2953_coverage():
         fail("reload recovery playbook (#2953) coverage contract rows failed")
         return 1
     ok("reload recovery playbook (#2953) coverage clean")
-    return 0
-
-
-def cmd_pure_parallel_isolation_wording_coverage():
-    """Issue #2593: forbid advertising parallel-intend :pure #t as
-    transactional isolation (wording-drift gate).
-
-    Scans src/orch/, src/compiler/evaluator_primitives_agent.cpp, and
-    docs/ for banned phrases pairing pure-parallel terminology with
-    transactional / ACID / serializable isolation-level claims beyond
-    `best-effort-pure`. Disclaimer lines (containing 'never' / 'NOT' /
-    'not' / 'best-effort' / 'forbid' / 'footgun' / 'do not' etc.) are
-    accepted.
-    """
-    print(f"{B}=== pure parallel isolation wording-drift coverage (#2593) ==={N}")
-    script = COVERAGE_CHECKS / "check_pure_parallel_isolation_wording.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("pure parallel isolation wording (#2593) drift detected")
-        return 1
-    ok("pure parallel isolation wording (#2593) clean (no drift)")
     return 0
 
 
@@ -13408,54 +13289,6 @@ def cmd_captured_anon_sync_remount_prod_default_2714_coverage():
         fail("captured anon sync remount prod default (#2714) contract rows failed")
         return 1
     ok("captured anon sync remount prod default (#2714) clean")
-    return 0
-
-
-def cmd_post_moving_canary_steal_lcp_3308_coverage():
-    """Issue #3308: post-Moving temporary/known canary × steal×compact race
-    (hold-pin + LCP joint residual after #3210/#3182/#3055).
-
-    Closes the production residual where the canary inventory
-    (post_moving_live_canaries_) is cleared BEFORE the unified
-    LifetimeConsistencyProof (LCP) is stamped. A steal that races
-    densify could observe SOLVED + empty residual face while the CS
-    still had dirty + pending known ptrs between rewrite and clear.
-    Fix is additive + ordering + reuse existing LCP face SSOT:
-
-      1. arena.ixx densify success path stamps the LCP
-         (make_lifetime_consistency_proof + stamp) BEFORE
-         post_moving_live_canaries_.clear(). Proof.would_allow_commit
-         reflects stale canary / pin_contract / untracked / residual state.
-      2. evaluator_fiber_mutation.cpp steal_complete path re-consults
-         g_lcp_last_would_allow_commit + g_lcp_last_mutation_epoch
-         BEFORE the Issue #2888 stamp helper (which overwrites densify
-         state). If last densify had objects_moved > 0 (epoch != 0) AND
-         LCP says deny → bump g_moving_post_moving_stale_total + refuse.
-
-    Contract rows (AC1-AC6 from the test file):
-
-      AC1: arena.ixx densify success path stamps LCP BEFORE canary clear
-      AC2: arena.ixx includes core/lifetime_consistency_proof.hh
-      AC3: LCP proof.would_allow_commit reflects incomplete state
-           (moving_incomplete_remap / pin_contract_held /
-            untracked_kept_count / post_moving_stale_count)
-      AC4: steal_complete re-consults LCP atomics BEFORE the Issue #2888
-           stamp helper (whole-file scope — fix may live in helper or
-           strong def)
-      AC5: refuse/soft-degrade on 'last_epoch != 0 && !last_would_allow'
-           + bumps g_moving_post_moving_stale_total
-      AC6: no docs/design/3308-*; no test_issue_3308.cpp; linter present
-    """
-    print(f"{B}=== post moving canary steal LCP (#3308) ==={N}")
-    script = ROOT / "scripts" / "check_post_moving_canary_steal_lcp_3308.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script), "--self-test"], cwd=ROOT)
-    if r.returncode != 0:
-        fail("post moving canary steal LCP (#3308) contract rows failed")
-        return 1
-    ok("post moving canary steal LCP (#3308) clean")
     return 0
 
 
@@ -14696,211 +14529,6 @@ def cmd_soak_pr_short_3387_coverage():
     return 0
 
 
-def cmd_pending_full_solve_residual_hardlatch_3307_coverage():
-    """Issue #3307: budget-allow must hard-latch pending residual face
-    (anti SOLVED-with-dirty mid-window after #3190/#3031/#2994).
-
-    Closes the production residual where escalate_locality_slo_if_
-    production's budget-allow path returns SOLVED with dirty bits still
-    set and merges roots into pending_full_solve_roots_, but does NOT
-    call note_pending_full_solve_residual(residual, /*hard=*/true).
-    Without this, mid-batch IR / Agent poll observes SOLVED face +
-    empty residual face while CS still has dirty + pending roots between
-    #2994 handoff and #3190/#3031 drain. The fix is additive: one new
-    note_pending_full_solve_residual(residual, true) call under if
-    (hard) — Soft path stays observe-only, quiet path zero extra cost.
-
-    Contract rows (AC1-AC5 from the test file):
-
-      AC1: budget-allow path under if (hard) calls
-           note_pending_full_solve_residual(residual, /*hard=*/true)
-      AC2: Soft path (if !hard) does NOT call
-           note_pending_full_solve_residual (observe-only via existing
-           #2994 contract)
-      AC3: quiet residual==0 path does NOT call
-           note_pending_full_solve_residual (zero extra atomics)
-      AC4: drain_pending_full_solve_before_commit clears face via
-           note_pending_full_solve_residual(0, true) on SOLVED
-      AC5: commit_readiness_live_policy still reads
-           pending_full_solve_residual_face_hit() (no new query key)
-    """
-    print(f"{B}=== pending full solve residual hardlatch (#3307) ==={N}")
-    script = ROOT / "scripts" / "check_pending_full_solve_residual_hardlatch_3307.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script), "--self-test"], cwd=ROOT)
-    if r.returncode != 0:
-        fail("pending full solve residual hardlatch (#3307) contract rows failed")
-        return 1
-    ok("pending full solve residual hardlatch (#3307) clean")
-    return 0
-
-
-def cmd_intermediate_create_value_only_soak_3306_coverage():
-    """Issue #3306: defense-in-depth — densify entry fail-close now also
-    fail-closes when intermediate_create_value_only_total > 0 under required.
-
-    Closes the dual-track residual where older call sites still hit
-    note_intermediate_create_auto_wire_ under required densify-tracked
-    allocates (leaving a value-only intermediate in intermediate_creates_
-    that the existing has_unpinned_intermediate_creates_() scan should
-    already catch via push_back, but this OR clause belt-and-suspenders
-    the soak invariant — value_only_total == 0 under production required,
-    per AC2 of #3306). #3156 already routes required+both-null through
-    the inventory path; this is the soak-invariant enforcement.
-
-    Contract rows (AC1-AC4 from the test file):
-
-      AC1: densify entry fail-close OR-condition includes
-           intermediate_create_value_only_total_v_read() > 0
-      AC2: existing fail-close fields preserved (pin_contract_held=false,
-           moving_incomplete_remap=true, moving_blocked_precondition=true,
-           soft_gated=true, sticky densify-off via
-           g_moving_incomplete_remap_sticky_densify_off)
-      AC3: comment block documents the #3306 defense-in-depth close
-      AC4: no docs/design/3306-*; no test_issue_3306.cpp (extend existing
-           test_general_object_pin_coverage_gate instead)
-    """
-    print(f"{B}=== intermediate create value only soak (#3306) ==={N}")
-    script = ROOT / "scripts" / "check_intermediate_create_value_only_soak_3306.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script), "--self-test"], cwd=ROOT)
-    if r.returncode != 0:
-        fail("intermediate create value only soak (#3306) contract rows failed")
-        return 1
-    ok("intermediate create value only soak (#3306) clean")
-    return 0
-
-
-def cmd_ir_typed_entry_proof_authority_3305_coverage():
-    """Issue #3305: dual-authority close — ir_typed_entry_commit_readiness_ok
-    must also consult the last TypeLinearCommitProof face (same SSOT as
-    linear_fast_path_ok / linear_move_drop_elision_ok).
-
-    Closes the P0 typed-mutation residual where
-    commit_readiness_live_policy() fills faces only — solve_status /
-    linear_ok / blame_ok stay at their defaults (solve_status=0,
-    linear_ok=true). Mid-boundary IR entry could therefore return true
-    after a Reject proof was stamped while Move/Drop correctly blocks.
-    The fix is additive: pure atomic loads against the proof-face SSOT
-    (g_last_type_linear_proof_outcome + g_last_proof_would_allow_commit
-    + g_last_proof_linear_ok), reusing the existing
-    g_linear_fast_path_elide_blocked_production_total counter (no new
-    query key).
-
-    Contract rows (AC1-AC4 from the test file):
-
-      AC1: ir_typed_entry_commit_readiness_ok consults the last proof face
-      AC2: linear_move_drop_elision_ok / linear_fast_path_ok still consult
-           the proof-face SSOT (no regression of #3186 / #2964)
-      AC3: Soft / depth==0 production guard preserved (zero extra cost)
-      AC4: Existing counter bumped in >=3 reject paths (Reject +
-           would_allow=0 + linear_ok=0 + cr.would_allow_commit=false)
-    """
-    print(f"{B}=== ir typed entry proof authority (#3305) ==={N}")
-    script = ROOT / "scripts" / "check_ir_typed_entry_proof_authority_3305.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script), "--self-test"], cwd=ROOT)
-    if r.returncode != 0:
-        fail("ir typed entry proof authority (#3305) contract rows failed")
-        return 1
-    ok("ir typed entry proof authority (#3305) clean")
-    return 0
-
-
-def cmd_capability_deny_reason_uniformity_3304_coverage():
-    """Issue #3304: unify Agent-stable reject reasons + harden lightweight
-    / fine_rollback MacroIntroduced restore.
-
-    Closes the production residual where (1) some deny paths only bump
-    counters without stamping kHygieneLimitReason*, and (2) MacroSelfEvo
-    capability deny uses free-form text — weaker for Agent replay tooling
-    than structured codes. The fix introduces a parallel
-    kCapabilityDenyReason* family (4 codes: NotGranted, ProvenanceFence,
-    PolicyMissing, LimitsZero) plus a unified kHygieneLimitReason
-    CapabilityDeny=7 sentinel so the agent's existing last_limit_reason
-    surface routes correctly.
-
-    Contract rows (AC1-AC6 from the test file):
-
-      AC1: ixx declares kHygieneLimitReasonCapabilityDeny = 7
-      AC2: hygiene_last_limit_reason_string() returns "capability-deny" for code 7
-      AC3: kCapabilityDenyReason* family + atomic + accessors in capability_model.hh
-      AC4: 4 MacroSelfEvo deny sites stamp new code via note_capability_deny_last_reason
-      AC5: note_capability_deny_last_reason also stamps unified sentinel 7
-      AC6: no remaining direct store(2,...) / store(3,...) sites
-    """
-    print(f"{B}=== capability deny reason uniformity (#3304) ==={N}")
-    script = ROOT / "scripts" / "check_capability_deny_reason_uniformity_3304.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script), "--self-test"], cwd=ROOT)
-    if r.returncode != 0:
-        fail("capability deny reason uniformity (#3304) contract rows failed")
-        return 1
-    ok("capability deny reason uniformity (#3304) clean")
-    return 0
-
-
-def cmd_steal_abort_reason_coverage_3303_coverage():
-    """Issue #3303: ConcurrentCloneGuard nested steal visibility + stable reason.
-
-    Closes the production residual where mid-walk fiber steal during a
-    nested expand walk left a brief window where partial MacroIntroduced
-    nodes were visible to concurrent readers before
-    ExpandCheckpointGuard::try_restore() + NameMapCheckpoint rollback.
-    The steal-abort path also used kHygieneLimitReasonPassLimit (3) as
-    the g_macro_clone_last_reject_reason code, which was semantically
-    wrong (pass-limit and steal-abort are distinct reasons).
-
-    Contract rows (AC1-AC8 from the test file):
-
-      AC1: ixx declares kHygieneLimitReasonStealAbort = 6 + nested counter
-      AC2: steal-abort site stamps StealAbort via store + note_hygiene_last_limit_reason
-      AC3: hygiene_last_limit_reason_string() returns "steal-abort" for code 6
-      AC4: steal0 capture runs at all depths (was depth==0 only)
-      AC5: steal detection runs at all depths (outer guard is new_id != NULL_NODE)
-      AC6: nested steal-check counter bumped at depth>0
-      AC7: ConcurrentCloneGuard ownership doc (top-level owns, nested never re-claims)
-      AC8: C bridge reset clears g_macro_clone_nested_steal_check_total
-    """
-    print(f"{B}=== steal abort reason coverage (#3303) ==={N}")
-    script = ROOT / "scripts" / "check_steal_abort_reason_coverage_3303.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script), "--self-test"], cwd=ROOT)
-    if r.returncode != 0:
-        fail("steal abort reason coverage (#3303) contract rows failed")
-        return 1
-    ok("steal abort reason coverage (#3303) clean")
-    return 0
-
-
-def cmd_concurrent_clone_prod_zero_half_tree_3321_coverage():
-    """Issue #3321: production zero half-tree + stable Agent reason.
-
-    Residual after #3303: 16-slot same-flat reject was counter-only;
-    nested steal kept cloning siblings. Production fail-fast + distinct
-    last_limit_reason strings (codes 8/9). Soft/Off quiet path unchanged.
-    Extends test_concurrent_clone_steal_abort_visibility; no schema-3321.
-    """
-    print(f"{B}=== concurrent clone prod zero half-tree (#3321) ==={N}")
-    script = COVERAGE_CHECKS / "check_concurrent_clone_prod_zero_half_tree_3321.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("concurrent clone prod zero half-tree (#3321) linter failed")
-        return 1
-    ok("concurrent clone prod zero half-tree (#3321) clean")
-    return 0
-
-
 def cmd_deferred_reemit_steal_sticky_2715_coverage():
     """Issue #2715: deferred reemit on steal stays sticky until BoundaryExit.
 
@@ -14982,35 +14610,6 @@ def cmd_occurrence_hard_face_commit_2716_coverage():
         fail("occurrence hard face commit (#2716) contract rows failed")
         return 1
     ok("occurrence hard face commit (#2716) clean")
-    return 0
-
-
-def cmd_type_linear_commit_proof_counts_2758_coverage():
-    """Issue #2758: fill TypeLinearCommitProof root/goal counts from real walks."""
-    print(f"{B}=== type linear commit proof counts (#2758) ==={N}")
-    script = COVERAGE_CHECKS / "check_type_linear_commit_proof_counts_2758.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("type linear commit proof counts (#2758) contract rows failed")
-        return 1
-    ok("type linear commit proof counts (#2758) clean")
-    return 0
-
-
-def cmd_type_linear_commit_proof_goal_truth_2842_coverage():
-    """Issue #2842: freeze Occurrence truth (count + fingerprint) at stamp.
-
-    Residual of #2758: live_goal_count from CS size + bounded goal_fingerprint
-    so Agents detect densify/steal content drift without N-key join. Gauge is
-    fallback-only when CS unavailable under production.
-    """
-    print(f"{B}=== type linear commit proof goal truth (#2842) ==={N}")
-    script = COVERAGE_CHECKS / "check_type_linear_commit_proof_goal_truth_2842.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("type linear commit proof goal truth (#2842) contract rows failed")
-        return 1
-    ok("type linear commit proof goal truth (#2842) clean")
     return 0
 
 
@@ -15163,175 +14762,6 @@ def cmd_root_remap_pass_coverage():
         fail("RootRemapPass real rewrite coverage contract rows failed")
         return 1
     ok("RootRemapPass real rewrite coverage clean")
-    return 0
-
-
-def cmd_envframe_ownership_transfer_coverage():
-    """Issue #2295: EnvFrame ownership transfer protocol (transfer_to / drop).
-
-    Validates the 5-AC contract from #2295:
-      AC1: EnvFrameRef::transfer_to / drop API + metrics.
-      AC2: refresh_after_fiber_migration wires transfer / drop.
-      AC3: Happy path keeps ownership atomics at 0 (unit test).
-      AC4: hold_gen_mismatch surface retained.
-      AC5: Query keys + schema-2295 + tests extension.
-    """
-    print(f"{B}=== EnvFrame ownership transfer coverage (#2295) ==={N}")
-    script = COVERAGE_CHECKS / "check_envframe_ownership_transfer_2295.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("EnvFrame ownership transfer coverage contract rows failed")
-        return 1
-    ok("EnvFrame ownership transfer coverage clean")
-    return 0
-
-
-def cmd_residual_gc_defer_multi_eval_coverage():
-    """Issue #2296: Phase-5 residual Clear + multi-eval orphan steal harden.
-
-    Validates AC1–AC5: force_clear_all, bit reconcile on steal, zero-cost
-    happy path, Hard/Soft retained, query correlation + decision table.
-    """
-    print(f"{B}=== residual multi-eval Clear harden coverage (#2296) ==={N}")
-    script = COVERAGE_CHECKS / "check_residual_gc_defer_multi_eval_2296.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("residual multi-eval Clear harden coverage contract rows failed")
-        return 1
-    ok("residual multi-eval Clear harden coverage clean")
-    return 0
-
-
-def cmd_residual_defer_after_exit_coverage():
-    """Issue #2846: residual-defer-after-exit closed loop.
-
-    Validates close_residual_defer_after_exit on outermost success+failure
-    and steal-complete; Soft observe; production Clear force; query schema-2846.
-    """
-    print(f"{B}=== residual-defer-after-exit closed loop (#2846) ==={N}")
-    script = COVERAGE_CHECKS / "check_residual_defer_after_exit_2846.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail(
-            "Issue #2846 residual-defer-after-exit linter failed — run "
-            "python3 scripts/coverage/checks/check_residual_defer_after_exit_2846.py"
-        )
-        return 1
-    ok("residual-defer-after-exit closed loop (#2846) coverage clean")
-    return 0
-
-
-def cmd_outermost_exit_residual_pin_2975_coverage():
-    """Issue #2975: outermost-exit residual + pin_contract production hard gate."""
-    print(f"{B}=== outermost-exit residual+pin hard gate (#2975) ==={N}")
-    script = COVERAGE_CHECKS / "check_outermost_exit_residual_pin_2975.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail(
-            "Issue #2975 outermost-exit residual+pin linter failed — run "
-            "python3 scripts/coverage/checks/check_outermost_exit_residual_pin_2975.py"
-        )
-        return 1
-    ok("outermost-exit residual+pin hard gate (#2975) coverage clean")
-    return 0
-
-
-def cmd_capture_cell_remap_coverage():
-    """Issue #2297: structural capture-cell remount after densify.
-
-    Validates densify object_remap context, remount cell walk after env_gen
-    PRIMARY, metrics/query schema-2297, RootRemapPass publish.
-    """
-    print(f"{B}=== structural capture-cell remount coverage (#2297) ==={N}")
-    script = COVERAGE_CHECKS / "check_capture_cell_remap_2297.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("structural capture-cell remount coverage contract rows failed")
-        return 1
-    ok("structural capture-cell remount coverage clean")
-    return 0
-
-
-def cmd_general_object_pin_coverage():
-    """Issue #2298: non-render general object pin-or-remap protocol.
-
-    Validates pin_or_fail / GeneralObjectPin, fail-closed validate counters,
-    PinOwner retained, Soft zero remap, inventory + query schema-2298.
-    """
-    print(f"{B}=== general object pin-or-remap coverage (#2298) ==={N}")
-    script = COVERAGE_CHECKS / "check_general_object_pin_2298.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("general object pin-or-remap coverage contract rows failed")
-        return 1
-    ok("general object pin-or-remap coverage clean")
-    return 0
-
-
-def cmd_aot_per_eval_slot_invalidate_coverage():
-    """Issue #2299: per-eval physical invalidate of generation-behind AOT slots.
-
-    Validates owner_eval filter, nullptr process-default, ordering invariant,
-    last-eval / per-eval counters + schema-2299, RegisterOwnerGuard.
-    """
-    print(f"{B}=== per-eval AOT slot invalidate coverage (#2299) ==={N}")
-    script = COVERAGE_CHECKS / "check_aot_per_eval_slot_invalidate_2299.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("per-eval AOT slot invalidate coverage contract rows failed")
-        return 1
-    ok("per-eval AOT slot invalidate coverage clean")
-    return 0
-
-
-def cmd_aot_exhausted_min_dirty_retry_2601_coverage():
-    """Issue #2601: exhausted min-dirty retry closed loop under sustained
-    Global storm. Refines #2544 (one-shot min-dirty) + #2502 (force-JIT
-    re-promote window). Validates the 4 new counters, retry hook in
-    on_reemit_pipeline_call, decide/consume in registry, decide driver
-    in aura_jit_bridge.cpp, optional pending-idle policy knob, and
-    schema-2601 / issue-2601 cross-link on query:aot-stats +
-    query:reload-recovery-state + test_issue_2544 #2601 ACs.
-    """
-    print(f"{B}=== exhausted min-dirty retry closed-loop coverage (#2601) ==={N}")
-    script = COVERAGE_CHECKS / "check_aot_exhausted_min_dirty_retry_2601.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("exhausted min-dirty retry coverage contract rows failed")
-        return 1
-    ok("exhausted min-dirty retry closed-loop coverage clean")
-    return 0
-
-
-def cmd_lifetime_contract_snapshot_coverage():
-    """Issue #2300: query:lifetime-contract-snapshot pure Agent surface.
-
-    Validates pure make_lifetime_contract_snapshot formula, MutationHold +
-    linear live counts, force_reason priority, schema-2300 additive keys.
-    """
-    print(f"{B}=== lifetime-contract-snapshot coverage (#2300) ==={N}")
-    script = COVERAGE_CHECKS / "check_lifetime_contract_snapshot_2300.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("lifetime-contract-snapshot coverage contract rows failed")
-        return 1
-    ok("lifetime-contract-snapshot coverage clean")
-    return 0
-
-
-def cmd_steal_snapshot_hard_invariant_coverage():
-    """Issue #2346: resume MutationSafetySnapshot hard-invariant (fail-closed).
-
-    Soft: mismatch metric only. Hard / production canary: mark-failed +
-    steal-snapshot-hard-fail-total. Happy path: one existing snapshot sample.
-    """
-    print(f"{B}=== steal-snapshot hard-invariant coverage (#2346) ==={N}")
-    script = COVERAGE_CHECKS / "check_steal_snapshot_hard_invariant_2346.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("steal-snapshot hard-invariant coverage contract rows failed")
-        return 1
-    ok("steal-snapshot hard-invariant coverage clean")
     return 0
 
 
@@ -15631,25 +15061,6 @@ def cmd_batch_dirty_production_multi_only_2936():
     return cmd_batch_dirty_production_multi_only_2936_coverage()
 
 
-def cmd_moving_unified_success_2682_coverage():
-    """Issue #2682: Moving densify unified success gate (5-condition AND).
-
-    Single unified predicate used by Phase-5 outermost exit,
-    AdaptiveCompactResult consumers, and Agent health surface. Folds
-    moving_blocked_precondition + pin_contract_held + root_remap fails +
-    untracked_kept_count > 0 (when objects_moved > 0). Additive
-    observability: moving-unified-success-total / -fail-total + schema-2682.
-    """
-    print(f"{B}=== moving densify unified success gate coverage (#2682) ==={N}")
-    script = COVERAGE_CHECKS / "check_moving_unified_success_2682.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("moving densify unified success gate (#2682) coverage contract rows failed")
-        return 1
-    ok("moving densify unified success gate (#2682) coverage clean")
-    return 0
-
-
 def cmd_moving_sticky_densify_off_2905_coverage():
     """Issue #2905: sticky densify-off auto-clear + Agent visibility (static)."""
     print(f"{B}=== moving sticky densify-off coverage (#2905) ==={N}")
@@ -15735,18 +15146,6 @@ def cmd_general_object_pin_allocate_3053_coverage():
     return 0
 
 
-def cmd_general_object_pin_allocate_3053():
-    """Issue #3053: allocate paths join required pin / slot / EXEMPT cover.
-
-    try_allocate / allocate_checked / create share allocate_raw_impl
-    auto-wire for small-pool densify-tracked pointers. Value-only
-    register_external_root_for_densify stays non-covering. Soft is one
-    required-active load. No second registry; adopt-site floor stays 7.
-    """
-    print(f"{B}=== general-object-pin allocate residual (#3053) ==={N}")
-    return cmd_general_object_pin_allocate_3053_coverage()
-
-
 def cmd_mid_fallback_refuse_se_3054_coverage():
     """Issue #3054: mid-fallback refuse joinable SecurityEvent (static)."""
     print(f"{B}=== mid-fallback refuse SE coverage (#3054) ==={N}")
@@ -15759,17 +15158,6 @@ def cmd_mid_fallback_refuse_se_3054_coverage():
     return 0
 
 
-def cmd_mid_fallback_refuse_se_3054():
-    """Issue #3054: production mid-fallback refuse emits one joinable SE.
-
-    resolve_audit_mutation_id hard refuse dual-writes InvariantFail with
-    reason mid-fallback-refused via emit_security_event_durable. TLS
-    single-shot under the same boundary. Soft emits nothing.
-    """
-    print(f"{B}=== mid-fallback refuse SE (#3054) ==={N}")
-    return cmd_mid_fallback_refuse_se_3054_coverage()
-
-
 def cmd_wal_append_fail_slo_3056_coverage():
     """Issue #3056: production WAL append_fail posture arm (static)."""
     print(f"{B}=== WAL append_fail SLO coverage (#3056) ==={N}")
@@ -15780,17 +15168,6 @@ def cmd_wal_append_fail_slo_3056_coverage():
         return 1
     ok("WAL append_fail SLO (#3056) coverage clean")
     return 0
-
-
-def cmd_wal_append_fail_slo_3056():
-    """Issue #3056: production WAL append_fail arms security-posture.
-
-    Mutation + SE WAL share decide_wal_append_fail_slo. Production +
-    enabled + fail past SLO → wal-append-fail-breach. Soft / WAL-off
-    stay observe-only. Mutation commit remains fail-open.
-    """
-    print(f"{B}=== WAL append_fail SLO (#3056) ==={N}")
-    return cmd_wal_append_fail_slo_3056_coverage()
 
 
 def cmd_moving_pre_densify_completeness_2973_coverage():
@@ -15851,17 +15228,6 @@ def cmd_moving_post_moving_stale_3055_coverage():
     return 0
 
 
-def cmd_moving_post_moving_stale_3055():
-    """Issue #3055: post-Moving objects_moved consistency.
-
-    After objects_moved>0, known-path live ptrs still holding a
-    last_object_remap_ key fail-close (incomplete + sticky). Slot + pin
-    + RootRemapPass stay the only remap mechanisms. Soft / no-move skip.
-    """
-    print(f"{B}=== moving post-Moving stale (#3055) ==={N}")
-    return cmd_moving_post_moving_stale_3055_coverage()
-
-
 def cmd_moving_temporary_canary_3210_coverage():
     """Issue #3210: temporary EnvFrame/Closure/JIT/FFI live-ptr canary (static)."""
     print(f"{B}=== moving temporary canary coverage (#3210) ==={N}")
@@ -15874,18 +15240,6 @@ def cmd_moving_temporary_canary_3210_coverage():
     return 0
 
 
-def cmd_moving_temporary_canary_3210():
-    """Issue #3210: exhaustive post-Moving canary for temporary live ptrs.
-
-    Stack/temp EnvFrame/Closure/JIT/FFI holders that cannot be lasting
-    void** slots drain into post_moving_live_canaries_ before Moving
-    densify. objects_moved>0 ∧ canary still a last_object_remap_ key
-    fail-closes (existing gate). Soft / Off empty-list early return.
-    """
-    print(f"{B}=== moving temporary canary (#3210) ==={N}")
-    return cmd_moving_temporary_canary_3210_coverage()
-
-
 def cmd_compiler_metrics_fields_3737_coverage():
     """Issue #3737: compiler_metrics_fields.inc matches CompilerMetrics atomics (static)."""
     print(f"{B}=== compiler_metrics_fields.inc coverage (#3737) ==={N}")
@@ -15896,12 +15250,6 @@ def cmd_compiler_metrics_fields_3737_coverage():
         return 1
     ok("compiler_metrics_fields.inc (#3737) coverage clean")
     return 0
-
-
-def cmd_compiler_metrics_fields_3737():
-    """Issue #3737: grouped engine:metrics dump lists every CompilerMetrics atomic."""
-    print(f"{B}=== compiler_metrics_fields.inc (#3737) ==={N}")
-    return cmd_compiler_metrics_fields_3737_coverage()
 
 
 def cmd_steal_complete_total_ssot_3779_coverage():
@@ -15918,12 +15266,6 @@ def cmd_steal_complete_total_ssot_3779_coverage():
     return 0
 
 
-def cmd_steal_complete_total_ssot_3779():
-    """Issue #3779: Agent-visible steal_complete_total single SSOT."""
-    print(f"{B}=== steal_complete_total SSOT (#3779) ==={N}")
-    return cmd_steal_complete_total_ssot_3779_coverage()
-
-
 def cmd_mutation_wal_miss_fail_closed_3780_coverage():
     """Issue #3780: structural mutation WAL miss fail-closed before persist (static)."""
     print(f"{B}=== mutation WAL miss fail-closed (#3780) ==={N}")
@@ -15936,12 +15278,6 @@ def cmd_mutation_wal_miss_fail_closed_3780_coverage():
         return 1
     ok("mutation WAL miss fail-closed (#3780) coverage clean")
     return 0
-
-
-def cmd_mutation_wal_miss_fail_closed_3780():
-    """Issue #3780: emit_mutation_audit WAL miss fail-closed before Occurrence persist."""
-    print(f"{B}=== mutation WAL miss fail-closed (#3780) ==={N}")
-    return cmd_mutation_wal_miss_fail_closed_3780_coverage()
 
 
 def cmd_densify_this_window_rewrite_3781_coverage():
@@ -15958,12 +15294,6 @@ def cmd_densify_this_window_rewrite_3781_coverage():
     return 0
 
 
-def cmd_densify_this_window_rewrite_3781():
-    """Issue #3781: rewrite paths use this-window relocate pairs; #3469 resolve retained."""
-    print(f"{B}=== densify this-window rewrite (#3781) ==={N}")
-    return cmd_densify_this_window_rewrite_3781_coverage()
-
-
 def cmd_densify_entry_lcp_skip_compact_3782_coverage():
     """Issue #3782: densify-entry LCP skip-compact (static)."""
     print(f"{B}=== densify-entry LCP skip-compact (#3782) ==={N}")
@@ -15976,12 +15306,6 @@ def cmd_densify_entry_lcp_skip_compact_3782_coverage():
         return 1
     ok("densify-entry LCP skip-compact (#3782) coverage clean")
     return 0
-
-
-def cmd_densify_entry_lcp_skip_compact_3782():
-    """Issue #3782: densify-entry LCP reject skips compact; eval-keyed consult."""
-    print(f"{B}=== densify-entry LCP skip-compact (#3782) ==={N}")
-    return cmd_densify_entry_lcp_skip_compact_3782_coverage()
 
 
 def cmd_auto_arm_densify_health_publish_3783_coverage():
@@ -15998,12 +15322,6 @@ def cmd_auto_arm_densify_health_publish_3783_coverage():
     return 0
 
 
-def cmd_auto_arm_densify_health_publish_3783():
-    """Issue #3783: auto-arm Moving publishes densify health; Phase-5 real blocked."""
-    print(f"{B}=== auto-arm densify health publish (#3783) ==={N}")
-    return cmd_auto_arm_densify_health_publish_3783_coverage()
-
-
 def cmd_anon_peer_empty_name_soft_stale_3784_coverage():
     """Issue #3784: empty-name peer leave-native (static)."""
     print(f"{B}=== anon peer empty-name soft-stale (#3784) ==={N}")
@@ -16016,12 +15334,6 @@ def cmd_anon_peer_empty_name_soft_stale_3784_coverage():
         return 1
     ok("anon peer empty-name soft-stale (#3784) coverage clean")
     return 0
-
-
-def cmd_anon_peer_empty_name_soft_stale_3784():
-    """Issue #3784: empty-name peer closures leave native under hard owner-scoped."""
-    print(f"{B}=== anon peer empty-name soft-stale (#3784) ==={N}")
-    return cmd_anon_peer_empty_name_soft_stale_3784_coverage()
 
 
 def cmd_sync_remount_storm_gate_3785_coverage():
@@ -16038,12 +15350,6 @@ def cmd_sync_remount_storm_gate_3785_coverage():
     return 0
 
 
-def cmd_sync_remount_storm_gate_3785():
-    """Issue #3785: sync covered remount honors residual storm gate."""
-    print(f"{B}=== sync remount storm gate (#3785) ==={N}")
-    return cmd_sync_remount_storm_gate_3785_coverage()
-
-
 def cmd_soft_global_critical_remount_3812_coverage():
     """Issue #3812: Soft Global critical-bypass covered remount gate (static)."""
     print(f"{B}=== soft Global critical remount (#3812) ==={N}")
@@ -16058,12 +15364,6 @@ def cmd_soft_global_critical_remount_3812_coverage():
     return 0
 
 
-def cmd_soft_global_critical_remount_3812():
-    """Issue #3812: Soft Global x critical bypass success covered remount gate."""
-    print(f"{B}=== soft Global critical remount (#3812) ==={N}")
-    return cmd_soft_global_critical_remount_3812_coverage()
-
-
 def cmd_steal_checkpoint_dual_track_3813_coverage():
     """Issue #3813: steal checkpoint probe dual-track (static)."""
     print(f"{B}=== steal checkpoint dual-track (#3813) ==={N}")
@@ -16076,12 +15376,6 @@ def cmd_steal_checkpoint_dual_track_3813_coverage():
         return 1
     ok("steal checkpoint dual-track (#3813) coverage clean")
     return 0
-
-
-def cmd_steal_checkpoint_dual_track_3813():
-    """Issue #3813: steal checkpoint probe aligns with dual-fresh clocks."""
-    print(f"{B}=== steal checkpoint dual-track (#3813) ==={N}")
-    return cmd_steal_checkpoint_dual_track_3813_coverage()
 
 
 def cmd_sticky_force_empty_residual_3814_coverage():
@@ -16118,12 +15412,6 @@ def cmd_move_node_parent_hygiene_3815_coverage():
     return 0
 
 
-def cmd_move_node_parent_hygiene_3815():
-    """Issue #3815: mutate:move-node gates MacroIntroduced new_parent."""
-    print(f"{B}=== move-node parent hygiene (#3815) ==={N}")
-    return cmd_move_node_parent_hygiene_3815_coverage()
-
-
 def cmd_clone_walk_rename_deny_abort_3816_coverage():
     """Issue #3816: clone-walk rename deny abort before add_*/marker (static)."""
     print(f"{B}=== clone-walk rename deny abort (#3816) ==={N}")
@@ -16136,12 +15424,6 @@ def cmd_clone_walk_rename_deny_abort_3816_coverage():
         return 1
     ok("clone-walk rename deny abort (#3816) coverage clean")
     return 0
-
-
-def cmd_clone_walk_rename_deny_abort_3816():
-    """Issue #3816: clone-walk rename_binding deny aborts before add_*."""
-    print(f"{B}=== clone-walk rename deny abort (#3816) ==={N}")
-    return cmd_clone_walk_rename_deny_abort_3816_coverage()
 
 
 def cmd_rest_spine_orphan_rewind_3817_coverage():
@@ -16158,12 +15440,6 @@ def cmd_rest_spine_orphan_rewind_3817_coverage():
     return 0
 
 
-def cmd_rest_spine_orphan_rewind_3817():
-    """Issue #3817: production rewind of pre-clone MacroIntroduced rest spine."""
-    print(f"{B}=== rest-spine orphan rewind (#3817) ==={N}")
-    return cmd_rest_spine_orphan_rewind_3817_coverage()
-
-
 def cmd_post_persist_linear_deny_coercion_undo_3818_coverage():
     """Issue #3818: #3472 post-persist deny undoes #3545 CoercionMap journal (static)."""
     print(f"{B}=== post-persist linear deny CoercionMap undo (#3818) ==={N}")
@@ -16176,12 +15452,6 @@ def cmd_post_persist_linear_deny_coercion_undo_3818_coverage():
         return 1
     ok("post-persist linear deny CoercionMap undo (#3818) coverage clean")
     return 0
-
-
-def cmd_post_persist_linear_deny_coercion_undo_3818():
-    """Issue #3818: #3472 post-persist linear deny undoes CoercionMap journal."""
-    print(f"{B}=== post-persist linear deny CoercionMap undo (#3818) ==={N}")
-    return cmd_post_persist_linear_deny_coercion_undo_3818_coverage()
 
 
 def cmd_occurrence_persist_fp_mismatch_dual_track_3819_coverage():
@@ -16198,12 +15468,6 @@ def cmd_occurrence_persist_fp_mismatch_dual_track_3819_coverage():
     return 0
 
 
-def cmd_occurrence_persist_fp_mismatch_dual_track_3819():
-    """Issue #3819: Occurrence persist fingerprint mismatch reject is prod||Full."""
-    print(f"{B}=== occurrence persist fp mismatch dual-track (#3819) ==={N}")
-    return cmd_occurrence_persist_fp_mismatch_dual_track_3819_coverage()
-
-
 def cmd_pending_offer_map_miss_retain_3820_coverage():
     """Issue #3820: pending offer retains map-miss under prod||Full (static)."""
     print(f"{B}=== pending offer map-miss retain (#3820) ==={N}")
@@ -16216,12 +15480,6 @@ def cmd_pending_offer_map_miss_retain_3820_coverage():
         return 1
     ok("pending offer map-miss retain (#3820) coverage clean")
     return 0
-
-
-def cmd_pending_offer_map_miss_retain_3820():
-    """Issue #3820: solve_delta pending offer retains var_to_constraints_ miss."""
-    print(f"{B}=== pending offer map-miss retain (#3820) ==={N}")
-    return cmd_pending_offer_map_miss_retain_3820_coverage()
 
 
 def cmd_synth_hard_fail_abort_force_dirty_3821_coverage():
@@ -16238,12 +15496,6 @@ def cmd_synth_hard_fail_abort_force_dirty_3821_coverage():
     return 0
 
 
-def cmd_synth_hard_fail_abort_force_dirty_3821():
-    """Issue #3821: synth-hard-fail abort begins IR fence and force-dirties."""
-    print(f"{B}=== synth-hard-fail abort force-dirty (#3821) ==={N}")
-    return cmd_synth_hard_fail_abort_force_dirty_3821_coverage()
-
-
 def cmd_prod_soa_writeback_sync_3822_coverage():
     """Issue #3822: prod_soa hot pack syncs dirty SoA into AoS writeback (static)."""
     print(f"{B}=== prod_soa writeback sync (#3822) ==={N}")
@@ -16256,12 +15508,6 @@ def cmd_prod_soa_writeback_sync_3822_coverage():
         return 1
     ok("prod_soa writeback sync (#3822) coverage clean")
     return 0
-
-
-def cmd_prod_soa_writeback_sync_3822():
-    """Issue #3822: Production SoA PureWrap mirrors dirty blocks into AoS writeback."""
-    print(f"{B}=== prod_soa writeback sync (#3822) ==={N}")
-    return cmd_prod_soa_writeback_sync_3822_coverage()
 
 
 def cmd_production_mark_node_dep_union_3823_coverage():
@@ -16278,12 +15524,6 @@ def cmd_production_mark_node_dep_union_3823_coverage():
     return 0
 
 
-def cmd_production_mark_node_dep_union_3823():
-    """Issue #3823: Production mark-time node-dep body-dirty union before peel."""
-    print(f"{B}=== production mark node-dep union (#3823) ==={N}")
-    return cmd_production_mark_node_dep_union_3823_coverage()
-
-
 def cmd_steal_force_clear_hold_foreign_3824_coverage():
     """Issue #3824: force_clear refuses foreign live MutationHold (static)."""
     print(f"{B}=== steal force_clear hold foreign (#3824) ==={N}")
@@ -16296,12 +15536,6 @@ def cmd_steal_force_clear_hold_foreign_3824_coverage():
         return 1
     ok("steal force_clear hold foreign (#3824) coverage clean")
     return 0
-
-
-def cmd_steal_force_clear_hold_foreign_3824():
-    """Issue #3824: steal/force_clear must not drop another Guard's MutationHold."""
-    print(f"{B}=== steal force_clear hold foreign (#3824) ==={N}")
-    return cmd_steal_force_clear_hold_foreign_3824_coverage()
 
 
 def cmd_hold_budget_safepoint_force_release_3825_coverage():
@@ -16318,12 +15552,6 @@ def cmd_hold_budget_safepoint_force_release_3825_coverage():
     return 0
 
 
-def cmd_hold_budget_safepoint_force_release_3825():
-    """Issue #3825: safepoint fail-closed unlocks via force_release_hold_budget_inbody."""
-    print(f"{B}=== hold-budget safepoint force-release (#3825) ==={N}")
-    return cmd_hold_budget_safepoint_force_release_3825_coverage()
-
-
 def cmd_edge_free_latch_gate_3826_coverage():
     """Issue #3826: edge-free hold under multi-worker latch gated (static)."""
     print(f"{B}=== edge-free latch gate (#3826) ==={N}")
@@ -16336,12 +15564,6 @@ def cmd_edge_free_latch_gate_3826_coverage():
         return 1
     ok("edge-free latch gate (#3826) coverage clean")
     return 0
-
-
-def cmd_edge_free_latch_gate_3826():
-    """Issue #3826: Ready residual sticky + join Reclaimed gate edge-free holds."""
-    print(f"{B}=== edge-free latch gate (#3826) ==={N}")
-    return cmd_edge_free_latch_gate_3826_coverage()
 
 
 def cmd_query_children_parent_schema2_3827_coverage():
@@ -16358,12 +15580,6 @@ def cmd_query_children_parent_schema2_3827_coverage():
     return 0
 
 
-def cmd_query_children_parent_schema2_3827():
-    """Issue #3827: children/parent finish via maybe_result under Production."""
-    print(f"{B}=== query children/parent schema-2 (#3827) ==={N}")
-    return cmd_query_children_parent_schema2_3827_coverage()
-
-
 def cmd_mutate_from_feedback_ssot_3828_coverage():
     """Issue #3828: from-verification-feedback add_mutate SSOT (static)."""
     print(f"{B}=== mutate from-verification-feedback SSOT (#3828) ==={N}")
@@ -16376,12 +15592,6 @@ def cmd_mutate_from_feedback_ssot_3828_coverage():
         return 1
     ok("mutate from-verification-feedback SSOT (#3828) coverage clean")
     return 0
-
-
-def cmd_mutate_from_feedback_ssot_3828():
-    """Issue #3828: route from-verification-feedback through add_mutate SSOT."""
-    print(f"{B}=== mutate from-verification-feedback SSOT (#3828) ==={N}")
-    return cmd_mutate_from_feedback_ssot_3828_coverage()
 
 
 def cmd_dense_columnar_fingerprint_3829_coverage():
@@ -16399,12 +15609,6 @@ def cmd_dense_columnar_fingerprint_3829_coverage():
     return 0
 
 
-def cmd_dense_columnar_fingerprint_3829():
-    """Issue #3829: capture across-Guard fingerprint on dense children_columnar spans."""
-    print(f"{B}=== dense columnar fingerprint (#3829) ==={N}")
-    return cmd_dense_columnar_fingerprint_3829_coverage()
-
-
 def cmd_empty_type_annotation_no_dynamic_3830_coverage():
     """Issue #3830: covered TypeAnnotation empty arm must not cache Dynamic (static)."""
     print(f"{B}=== empty TypeAnnotation no-Dynamic (#3830) ==={N}")
@@ -16418,12 +15622,6 @@ def cmd_empty_type_annotation_no_dynamic_3830_coverage():
         return r
     ok("empty TypeAnnotation no-Dynamic (#3830) coverage clean")
     return 0
-
-
-def cmd_empty_type_annotation_no_dynamic_3830():
-    """Issue #3830: empty TypeAnnotation synthesizes fresh_var (I1 parity)."""
-    print(f"{B}=== empty TypeAnnotation no-Dynamic (#3830) ==={N}")
-    return cmd_empty_type_annotation_no_dynamic_3830_coverage()
 
 
 def cmd_dirty_aware_storm_force_full_cap_3831_coverage():
@@ -16441,12 +15639,6 @@ def cmd_dirty_aware_storm_force_full_cap_3831_coverage():
     return 0
 
 
-def cmd_dirty_aware_storm_force_full_cap_3831():
-    """Issue #3831: Cap DirtyAware all-1s rewrite while Global storm held."""
-    print(f"{B}=== dirty-aware storm force-full cap (#3831) ==={N}")
-    return cmd_dirty_aware_storm_force_full_cap_3831_coverage()
-
-
 def cmd_apply_closure_tls_cache_3832_coverage():
     """Issue #3832: apply_closure TLS cache skips process-wide closures_mtx_."""
     print(f"{B}=== apply_closure TLS cache (#3832) ==={N}")
@@ -16460,12 +15652,6 @@ def cmd_apply_closure_tls_cache_3832_coverage():
         return r
     ok("apply_closure TLS cache (#3832) coverage clean")
     return 0
-
-
-def cmd_apply_closure_tls_cache_3832():
-    """Issue #3832: Epoch-local TLS cache for apply_closure happy path."""
-    print(f"{B}=== apply_closure TLS cache (#3832) ==={N}")
-    return cmd_apply_closure_tls_cache_3832_coverage()
 
 
 def cmd_ir_soa_column_arena_3833_coverage():
@@ -16483,12 +15669,6 @@ def cmd_ir_soa_column_arena_3833_coverage():
     return 0
 
 
-def cmd_ir_soa_column_arena_3833():
-    """Issue #3833: Migrate IR SoA columns off default heap; keep BMI pins."""
-    print(f"{B}=== IR SoA column arena (#3833) ==={N}")
-    return cmd_ir_soa_column_arena_3833_coverage()
-
-
 def cmd_call_ownerless_fail_closed_3834_coverage():
     """Issue #3834: IR Call primitive arm ownerless production fail-closed."""
     print(f"{B}=== Call ownerless fail-closed (#3834) ==={N}")
@@ -16502,12 +15682,6 @@ def cmd_call_ownerless_fail_closed_3834_coverage():
         return r
     ok("Call ownerless fail-closed (#3834) coverage clean")
     return 0
-
-
-def cmd_call_ownerless_fail_closed_3834():
-    """Issue #3834: Mirror PrimCall ownerless production fail-closed onto Call."""
-    print(f"{B}=== Call ownerless fail-closed (#3834) ==={N}")
-    return cmd_call_ownerless_fail_closed_3834_coverage()
 
 
 def cmd_tenant_host_path_read_3835_coverage():
@@ -16941,17 +16115,6 @@ def cmd_unified_restamp_query_visible_3058_coverage():
     return 0
 
 
-def cmd_unified_restamp_query_visible_3058():
-    """Issue #3058: unify restamp + query:*-stable over-budget visibility.
-
-    Steal-adjacent probe uses unified_restamp_after_boundary.
-    query:as-stable-ref / query:ensure-ref reject torn gens.
-    Soft / under-budget unchanged. Additive schema-3058.
-    """
-    print(f"{B}=== unified restamp query-visible (#3058) ==={N}")
-    return cmd_unified_restamp_query_visible_3058_coverage()
-
-
 def cmd_hot_update_decide_and_reemit_3059_coverage():
     """Issue #3059: decide_and_reemit production facade (static)."""
     print(f"{B}=== hot-update decide_and_reemit coverage (#3059) ==={N}")
@@ -17050,17 +16213,6 @@ def cmd_ffi_opaque_pin_or_remap_3057_coverage():
         return 1
     ok("FFI opaque slot-cover residual (#3057) coverage clean")
     return 0
-
-
-def cmd_ffi_opaque_pin_or_remap_3057():
-    """Issue #3057: densify-tracked FFI opaque aliases are slot-covered.
-
-    #3022 create-point observe is not remap cover. Known-root walk
-    registers opaque_heap_ slots. Soft / no Moving skip the walk.
-    EXEMPT still requires a reason.
-    """
-    print(f"{B}=== FFI opaque slot-cover residual (#3057) ==={N}")
-    return cmd_ffi_opaque_pin_or_remap_3057_coverage()
 
 
 def cmd_linear_root_abort_release_3023_coverage():
@@ -17522,50 +16674,6 @@ def cmd_residual_force_agent_actionable_3026():
     return cmd_residual_force_agent_actionable_3026_coverage()
 
 
-def cmd_shape_storm_isolation_2683_coverage():
-    """Issue #2683: production default PerEval deopt-storm isolation.
-
-    Storm enter isolates only the evaluating context's SpecJIT / profile
-    versioning; process-global shape_version advances only for explicit
-    hard fences that must be process-wide. Concurrent evals under
-    HighMutation no longer cross-invalidate solely due to peer storm enter.
-    Env override AURA_SHAPE_STORM_ISOLATION=global restores legacy
-    process-global bump for experiments; default production = per-eval.
-    Additive observability: shape-storm-per-eval-isolations-total +
-    shape-storm-global-bump-total + schema-2683.
-    """
-    print(f"{B}=== shape storm PerEval isolation coverage (#2683) ==={N}")
-    script = COVERAGE_CHECKS / "check_shape_storm_isolation_2683.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("shape storm PerEval isolation (#2683) coverage contract rows failed")
-        return 1
-    ok("shape storm PerEval isolation (#2683) coverage clean")
-    return 0
-
-
-def cmd_evaluator_capture_tenant_2687_coverage():
-    """Issue #2687: per-Evaluator isolation_capture_tenant (close #2659 residual stamp race).
-
-    Three counters distinguish the production multi-tenant path
-    (Evaluator::stamp_stable_ref uses capability_tenant_id_) from the
-    legacy global-fallback path (maybe_stamp_stable_ref_isolation_tenant
-    reads g_isolation_capture_tenant atomic). Production default =
-    local path; global-fallback should stay 0 under multi-eval
-    (legacy single-tenant / test harness only). Additive observability:
-    isolation-capture-stamp-local-total / -global-fallback-total /
-    -evaluator-miss-total + schema-2687.
-    """
-    print(f"{B}=== evaluator capture tenant coverage (#2687) ==={N}")
-    script = COVERAGE_CHECKS / "check_evaluator_capture_tenant_2687.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("evaluator capture tenant (#2687) coverage contract rows failed")
-        return 1
-    ok("evaluator capture tenant (#2687) coverage clean")
-    return 0
-
-
 def cmd_hard_capture_tenant_2705_coverage():
     """Issue #2705: production hard-close FlatAST global capture fallback.
 
@@ -17604,68 +16712,6 @@ def cmd_evaluator_stamp_sole_authority_2759_coverage():
     return 0
 
 
-def cmd_capability_production_default_2688_coverage():
-    """Issue #2688: production-default hard_fiber_isolation + grant epoch retain window.
-
-    Wired inside apply_production_security_defaults: Strict/multi-tenant
-    → hard_fiber_isolation=true + K=64; Restricted → K=16 hard=false
-    (#2536 soft share); Soft → K=0 hard=false. Env overrides
-    AURA_HARD_FIBER_ISOLATION / AURA_GRANT_EPOCH_RETAIN documented in
-    security_defaults.hh L124-127. Additive observability:
-    capability-hard-fiber-isolation + capability-grant-epoch-retain-window
-    + capability-epoch-fence-hit-total + capability-fiber-hard-deny-total
-    + schema-2688.
-    """
-    print(f"{B}=== capability production default armed coverage (#2688) ==={N}")
-    script = COVERAGE_CHECKS / "check_capability_production_default_2688.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("capability production default armed (#2688) coverage contract rows failed")
-        return 1
-    ok("capability production default armed (#2688) coverage clean")
-    return 0
-
-
-def cmd_closure_anon_captured_remount_2691_coverage():
-    """Issue #2691: sync remount captured anon (sid==0 && has env/linear).
-
-    Closes the residual first-call MustDeopt window for high-capture-rate
-    anonymous closures. The full anon walk (#2637/#2666) covers all
-    sid==0 closures; the captured walk further filters on
-    aura_closure_has_env_or_linear_captures(cid) so pure anon (no
-    captures) stays on touch-time policy #2550/#2605. Distinct
-    counters (anon_captured_ok / _fail) so Agents can distinguish
-    "must remount" (captured) from "touch-time policy" (pure anon).
-    Soft zero-cost when no captures match.
-    """
-    print(f"{B}=== closure anon captured remount coverage (#2691) ==={N}")
-    script = COVERAGE_CHECKS / "check_closure_anon_captured_remount_2691.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("closure anon captured remount (#2691) coverage contract rows failed")
-        return 1
-    ok("closure anon captured remount (#2691) coverage clean")
-    return 0
-
-
-def cmd_pure_anon_sync_remount_budget_2850_coverage():
-    """Issue #2850: bounded pure-anon sync remount quota on reemit success.
-
-    Residual of #2691/#2714: pure anon (sid==0, no env/linear) stayed on
-    touch-time MustDeopt after reemit. Bounded budget (default 64 under
-    production; 0 Soft) remounts pure-anon within budget to close the
-    first-call tax. Distinct pure_anon_ok / pure_anon_skip_budget counters.
-    """
-    print(f"{B}=== pure-anon sync remount budget coverage (#2850) ==={N}")
-    script = COVERAGE_CHECKS / "check_pure_anon_sync_remount_budget_2850.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("pure-anon sync remount budget (#2850) coverage contract rows failed")
-        return 1
-    ok("pure-anon sync remount budget (#2850) coverage clean")
-    return 0
-
-
 def cmd_pure_anon_adaptive_budget_2893_coverage():
     """Issue #2893: adaptive pure-anon remount budget + pressure signal
     (refine #2850).
@@ -17686,99 +16732,6 @@ def cmd_pure_anon_adaptive_budget_2893_coverage():
     return 0
 
 
-def cmd_residual_remount_round_robin_2928_coverage():
-    """Issue #2928: budgeted residual live-closure remount (round-robin).
-
-    Outside reemit-success; cursor + budget B (default 32); quiet pipeline
-    + BoundaryExit; storm/throttle skip; Soft/budget=0 zero cost.
-    """
-    print(f"{B}=== residual remount round-robin coverage (#2928) ==={N}")
-    script = COVERAGE_CHECKS / "check_residual_remount_round_robin_2928.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("residual remount round-robin (#2928) coverage contract rows failed")
-        return 1
-    ok("residual remount round-robin (#2928) coverage clean")
-    return 0
-
-
-def cmd_residual_remount_prefer_force_jit_2977_coverage():
-    """Issue #2977: residual remount prefer force_jit / last_success."""
-    print(f"{B}=== residual remount prefer force_jit coverage (#2977) ==={N}")
-    script = COVERAGE_CHECKS / "check_residual_remount_prefer_force_jit_2977.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("residual remount prefer force_jit (#2977) coverage contract rows failed")
-        return 1
-    ok("residual remount prefer force_jit (#2977) coverage clean")
-    return 0
-
-
-def cmd_epoch_residual_merged_heal_2980_coverage():
-    """Issue #2980: event-walk + residual remount merged heal."""
-    print(f"{B}=== epoch+residual merged heal coverage (#2980) ==={N}")
-    script = COVERAGE_CHECKS / "check_epoch_residual_merged_heal_2980.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("epoch+residual merged heal (#2980) coverage contract rows failed")
-        return 1
-    ok("epoch+residual merged heal (#2980) coverage clean")
-    return 0
-
-
-def cmd_reemit_success_sync_covered_remount_2978_coverage():
-    """Issue #2978: reemit-success sync covered-named remount."""
-    print(f"{B}=== reemit-success sync covered remount coverage (#2978) ==={N}")
-    script = COVERAGE_CHECKS / "check_reemit_success_sync_covered_remount_2978.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("reemit-success sync covered remount (#2978) coverage contract rows failed")
-        return 1
-    ok("reemit-success sync covered remount (#2978) coverage clean")
-    return 0
-
-
-def cmd_aot_slot_owner_consistency_2692_coverage():
-    """Issue #2692: cross-eval sid ↔ AOT slot owner consistency assert.
-
-    Post-#2670 production assert that the slot stamped for a given sid
-    is owned by the same eval that owns the sid map entry. Soft
-    single-eval / process-default (filter eval = nullptr) keeps
-    cross_eval_sid_owner_mismatch_total at 0. Production hard path
-    clears the slot to prevent the next call from hitting a wrong
-    table. Additive on top of #2606 owner filter + #2550 stable_ref
-    stamp + #2670 nested map.
-    """
-    print(f"{B}=== aot slot owner consistency coverage (#2692) ==={N}")
-    script = COVERAGE_CHECKS / "check_aot_slot_owner_consistency_2692.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("aot slot owner consistency (#2692) coverage contract rows failed")
-        return 1
-    ok("aot slot owner consistency (#2692) coverage clean")
-    return 0
-
-
-def cmd_require_effect_on_ref_2689_coverage():
-    """Issue #2689: mandate require_effect_on_ref on all StableNodeRef side-effect paths.
-
-    Closes #2658 residual late-isolation window. Coverage linter scans
-    evaluator_primitives*.cpp + evaluator_security.cpp for functions/lambdas
-    that have StableNodeRef in scope + call require_effect( but do NOT
-    name ref_tenant / require_effect_on_ref. Current audit: 0 violations
-    (mutate:force already correctly uses ref_tenant from unpacked
-    StableNodeRef). The linter catches future regressions.
-    """
-    print(f"{B}=== require_effect_on_ref coverage (#2689) ==={N}")
-    script = COVERAGE_CHECKS / "check_require_effect_on_ref_2689.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("require_effect_on_ref coverage (#2689) contract rows failed")
-        return 1
-    ok("require_effect_on_ref coverage (#2689) clean")
-    return 0
-
-
 def cmd_sole_require_effect_2706_coverage():
     """Issue #2706: sole public side-effect gate = require_effect / on_ref.
 
@@ -17796,29 +16749,6 @@ def cmd_sole_require_effect_2706_coverage():
         fail("sole require_effect gate (#2706) coverage contract rows failed")
         return 1
     ok("sole require_effect gate (#2706) coverage clean")
-    return 0
-
-
-def cmd_pending_recovery_drain_2690_coverage():
-    """Issue #2690: unified PendingRecovery drain (close residual unhealed windows).
-
-    Single owner of pending recovery bits (deferred reemit / force_jit /
-    region_mask). Both maybe_storm_clear_health_pass (StormClear) and
-    outermost MutationBoundary success exit (BoundaryExit) route through
-    drain_pending_recovery(why). Exchange-not-check semantics: a
-    concurrent drain in the same ms observes kinds == 0 (cheap) and
-    bumps double_drain_prevented to surface the race. Closes residual
-    unhealed window from novel interleavings (storm exit without
-    pipeline call, boundary exit mid-storm-clear, steal with
-    deferred pending).
-    """
-    print(f"{B}=== pending recovery drain coverage (#2690) ==={N}")
-    script = COVERAGE_CHECKS / "check_pending_recovery_drain_2690.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("pending recovery drain coverage (#2690) contract rows failed")
-        return 1
-    ok("pending recovery drain coverage (#2690) clean")
     return 0
 
 
@@ -18377,23 +17307,6 @@ def cmd_fiber_spawn_cli_coverage():
     return 0
 
 
-def cmd_fiber_spawn_cli_dtor_drain_coverage():
-    """Issue #3394: thread-fiber workers joinable + drained at ~Evaluator.
-
-    The fiber:spawn CLI thread fallback no longer detaches its worker;
-    fiber:join joins it, and ~Evaluator drains outstanding fibers before
-    arena teardown (bounded best-effort, #2078 contract).
-    """
-    print(f"{B}=== thread-fiber dtor drain coverage (#3394) ==={N}")
-    script = COVERAGE_CHECKS / "check_fiber_spawn_cli_dtor_drain_3394.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("thread-fiber dtor drain (#3394) coverage contract rows failed")
-        return 1
-    ok("thread-fiber dtor drain (#3394) coverage clean")
-    return 0
-
-
 def cmd_query_default_stamped_coverage():
     """Issue #3395: production default Agent-facing query:* stamps schema-2.
 
@@ -18659,23 +17572,6 @@ def cmd_stable_ref_probe_3400_coverage():
         fail("grant lifetime alignment (#3436) coverage contract rows failed")
         return 1
     ok("grant lifetime alignment (#3436) coverage clean")
-    return 0
-
-
-def cmd_query_result_soft_prod_transition_coverage():
-    """Issue #3311: Soft → Production arm invalidates Soft-only schema-2 QueryResult.
-
-    Production stamp sets kQueryResultMatchSchema2Prod; freshness under
-    hard requires the Prod marker → cached Soft-stamped matches fail closed
-    (SoftOnlyNoProvenance + stale counter). Soft stays observe-only.
-    """
-    print(f"{B}=== query-result Soft→Production transition (#3311) ==={N}")
-    script = COVERAGE_CHECKS / "check_query_result_soft_prod_transition_3311.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("query-result Soft→Production transition (#3311) coverage rows failed")
-        return 1
-    ok("query-result Soft→Production transition (#3311) coverage clean")
     return 0
 
 
@@ -18972,30 +17868,6 @@ def cmd_production_pure_wrap_soa_3454_coverage():
         return 1
     ok("ProductionPureWrapPass SoA dirty entry (#3454) coverage clean")
     return 0
-
-
-def cmd_occurrence_coercion_ci_ok_3796_coverage():
-    """Issue #3796: coercion batch CI AC anchors after #3698/#3699."""
-    print(f"{B}=== occurrence coercion CI ok (#3796) ==={N}")
-    script = COVERAGE_CHECKS / "check_occurrence_coercion_ci_ok_3796.py"
-    if not script.exists():
-        fail(f"missing {script}")
-    r = run([sys.executable, str(script)], cwd=ROOT)
-    if r != 0:
-        fail("occurrence coercion CI ok (#3796) coverage contract rows failed")
-    ok("occurrence coercion CI ok (#3796) coverage clean")
-
-
-def cmd_escape_analysis_pure_wrap_3795_coverage():
-    """Issue #3795: EscapeAnalysisWrap ProductionPureWrapPass SoA dirty entry."""
-    print(f"{B}=== EscapeAnalysisWrap ProductionPureWrap (#3795) ==={N}")
-    script = COVERAGE_CHECKS / "check_escape_analysis_pure_wrap_3795.py"
-    if not script.exists():
-        fail(f"missing {script}")
-    r = run([sys.executable, str(script)], cwd=ROOT)
-    if r != 0:
-        fail("EscapeAnalysisWrap ProductionPureWrap (#3795) coverage contract rows failed")
-    ok("EscapeAnalysisWrap ProductionPureWrap (#3795) coverage clean")
 
 
 def cmd_destroy_dtor_index_3456_coverage():
@@ -19306,61 +18178,6 @@ def cmd_deopt_pending_fast_path_3441_coverage():
         fail("deopt_pending_fast_path (#3441) coverage contract rows failed")
         return 1
     ok("deopt_pending_fast_path (#3441) coverage clean")
-    return 0
-
-
-def cmd_ffi_jit_live_ptr_inventory_3443_coverage():
-    """Issue #3443: FFI/JIT live ptrs outside opaque_heap_ fail-closed.
-
-    EXEMPT is observe-only. Arena-tracked + no slot + no canary under
-    required+Moving fail-closes on existing untracked / stale / breach
-    face. opaque_heap_ remains FFI cover SSOT. modules_ Env* become
-    lasting slots. No second pin registry / no new query key.
-    Extends test_moving_densify_fail_closed + densify_root_closure.
-    """
-    print(f"{B}=== ffi_jit_live_ptr_inventory coverage (#3443) ==={N}")
-    script = COVERAGE_CHECKS / "check_ffi_jit_live_ptr_inventory_3443.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("ffi_jit_live_ptr_inventory (#3443) coverage contract rows failed")
-        return 1
-    ok("ffi_jit_live_ptr_inventory (#3443) coverage clean")
-    return 0
-
-
-def cmd_scope_message_resolve_3442_coverage():
-    """Issue #3442: message prims resolve name-table then session-local scope.
-
-    orch:scope-spawn agents lived only in AgentScope::handles_. send/recv
-    /ask/join consulted AgentNameTable only. Session-local fallback
-    (name-table first, then AgentScope::find). No second owning put,
-    no AgentRegistry, no new query key. Extends test_agent_scope /
-    test_agent_name_table_isolation / test_orch_scope.
-    """
-    print(f"{B}=== scope_message_resolve coverage (#3442) ==={N}")
-    script = COVERAGE_CHECKS / "check_scope_message_resolve_3442.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("scope_message_resolve (#3442) coverage contract rows failed")
-        return 1
-    ok("scope_message_resolve (#3442) coverage clean")
-    return 0
-
-
-def cmd_scope_child_address_3444_coverage():
-    """Issue #3444: orch:scope-child returns path; spawn/watch/join/resolve accept it.
-
-    Residual of #2631: spawn_child reference discarded. Addressing key
-    reuses directory scope_path. One Evaluator map. HardDeny / dangling
-    → ok=#f. Extends test_agent_scope_hierarchy + test_orch_scope.
-    """
-    print(f"{B}=== scope_child_address coverage (#3444) ==={N}")
-    script = COVERAGE_CHECKS / "check_scope_child_address_3444.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("scope_child_address (#3444) coverage contract rows failed")
-        return 1
-    ok("scope_child_address (#3444) coverage clean")
     return 0
 
 
@@ -20127,22 +18944,6 @@ def cmd_occurrence_persist_production_2910():
     return cmd_occurrence_persist_production_2910_coverage()
 
 
-def cmd_occurrence_persist_production_default_2896_coverage():
-    """Issue #2896: production-default outermost success persist + fence face.
-
-    Production/Full enable persist without env; Soft zero cost; fence miss
-    latches #2704 face; schema-2896 fidelity keys.
-    """
-    print(f"{B}=== OccurrenceGoal production-default persist coverage (#2896) ==={N}")
-    script = COVERAGE_CHECKS / "check_occurrence_persist_production_default_2896.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("OccurrenceGoal production-default persist (#2896) coverage contract rows failed")
-        return 1
-    ok("OccurrenceGoal production-default persist (#2896) coverage clean")
-    return 0
-
-
 def cmd_occurrence_goal_vacuous_solve_prevent_coverage():
     """Issue #2647: live OccurrenceGoal + empty dirty must not vacuous-SOLVED.
 
@@ -20201,50 +19002,6 @@ def cmd_issue_coverage():
     return 0
 
 
-def cmd_type_linear_evolution_snapshot_2897_coverage():
-    """Issue #2897: query:type-linear-evolution-snapshot Agent join reduction.
-
-    Single atomic/last-proof poll for type×linear×occurrence self-evo;
-    pure SSOT fold; schema-2897; Soft quiet zeros.
-    """
-    print(f"{B}=== type-linear-evolution-snapshot coverage (#2897) ==={N}")
-    script = COVERAGE_CHECKS / "check_type_linear_evolution_snapshot_2897.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("type-linear-evolution-snapshot (#2897) coverage contract rows failed")
-        return 1
-    ok("type-linear-evolution-snapshot (#2897) coverage clean")
-    return 0
-
-
-def cmd_composite_required_type_2898_coverage():
-    """Issue #2898: required TypeId invariant set on composite_txn_commit.
-
-    Agents hard-require TypeIds concrete before composite commit; Soft
-    observe; empty span zero cost; schema-2898.
-    """
-    print(f"{B}=== composite required TypeId coverage (#2898) ==={N}")
-    script = COVERAGE_CHECKS / "check_composite_required_type_2898.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("composite required TypeId (#2898) coverage contract rows failed")
-        return 1
-    ok("composite required TypeId (#2898) coverage clean")
-    return 0
-
-
-def cmd_composite_required_type_default_2983_coverage():
-    """Issue #2983: production default required TypeId set."""
-    print(f"{B}=== composite required TypeId default coverage (#2983) ==={N}")
-    script = COVERAGE_CHECKS / "check_composite_required_type_default_2983.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("composite required TypeId default (#2983) coverage contract rows failed")
-        return 1
-    ok("composite required TypeId default (#2983) coverage clean")
-    return 0
-
-
 def cmd_linear_compact_root_consistency_2984_coverage():
     """Issue #2984: arena compact vs TypeLinearCommitProof.linear_root_count."""
     print(f"{B}=== linear compact root consistency coverage (#2984) ==={N}")
@@ -20254,18 +19011,6 @@ def cmd_linear_compact_root_consistency_2984_coverage():
         fail("linear compact root consistency (#2984) coverage contract rows failed")
         return 1
     ok("linear compact root consistency (#2984) coverage clean")
-    return 0
-
-
-def cmd_mutation_concurrency_health_admit_2985_coverage():
-    """Issue #2985: production concurrency-health admit reject."""
-    print(f"{B}=== mutation-concurrency-health admit coverage (#2985) ==={N}")
-    script = COVERAGE_CHECKS / "check_mutation_concurrency_health_admit_2985.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("mutation-concurrency-health admit (#2985) coverage contract rows failed")
-        return 1
-    ok("mutation-concurrency-health admit (#2985) coverage clean")
     return 0
 
 
@@ -20293,35 +19038,6 @@ def cmd_mailbox_delivery_safety_2987_coverage():
     return 0
 
 
-def cmd_mailbox_residual_hard_reject_3036_coverage():
-    """Issue #3036: production mailbox residual RejectHard fail-closed."""
-    print(f"{B}=== mailbox residual hard-reject coverage (#3036) ==={N}")
-    script = COVERAGE_CHECKS / "check_mailbox_residual_hard_reject_3036.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("mailbox residual hard-reject (#3036) coverage contract rows failed")
-        return 1
-    ok("mailbox residual hard-reject (#3036) coverage clean")
-    return 0
-
-
-def cmd_mailbox_residual_hard_reject_3036():
-    """Alias for coverage check."""
-    return cmd_mailbox_residual_hard_reject_3036_coverage()
-
-
-def cmd_mutate_invalidate_incremental_2988_coverage():
-    """Issue #2988: mutate success DefUse/IR/JIT invalidate close-loop."""
-    print(f"{B}=== mutate invalidate incremental coverage (#2988) ==={N}")
-    script = COVERAGE_CHECKS / "check_mutate_invalidate_incremental_2988.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("mutate invalidate incremental (#2988) coverage contract rows failed")
-        return 1
-    ok("mutate invalidate incremental (#2988) coverage clean")
-    return 0
-
-
 def cmd_query_concurrent_hygiene_safe_span_2989_coverage():
     """Issue #2989: query concurrent SafePCVSpan + hygiene default."""
     print(f"{B}=== query concurrent hygiene SafePCVSpan coverage (#2989) ==={N}")
@@ -20331,18 +19047,6 @@ def cmd_query_concurrent_hygiene_safe_span_2989_coverage():
         fail("query concurrent hygiene SafePCVSpan (#2989) coverage contract rows failed")
         return 1
     ok("query concurrent hygiene SafePCVSpan (#2989) coverage clean")
-    return 0
-
-
-def cmd_workspace_concurrent_policy_2990_coverage():
-    """Issue #2990: ConcurrentMutationPolicy SingleWriter / ScopedParallel."""
-    print(f"{B}=== workspace ConcurrentMutationPolicy coverage (#2990) ==={N}")
-    script = COVERAGE_CHECKS / "check_workspace_concurrent_policy_2990.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("workspace ConcurrentMutationPolicy (#2990) coverage contract rows failed")
-        return 1
-    ok("workspace ConcurrentMutationPolicy (#2990) coverage clean")
     return 0
 
 
@@ -20358,23 +19062,6 @@ def cmd_scoped_parallel_overlap_hard_reject_3039_coverage():
     return 0
 
 
-def cmd_scoped_parallel_overlap_hard_reject_3039():
-    """Alias for coverage check."""
-    return cmd_scoped_parallel_overlap_hard_reject_3039_coverage()
-
-
-def cmd_coercion_provenance_hf_mutate_2991_coverage():
-    """Issue #2991: coercion provenance completeness under hf mutate."""
-    print(f"{B}=== coercion provenance hf-mutate coverage (#2991) ==={N}")
-    script = COVERAGE_CHECKS / "check_coercion_provenance_hf_mutate_2991.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("coercion provenance hf-mutate (#2991) coverage contract rows failed")
-        return 1
-    ok("coercion provenance hf-mutate (#2991) coverage clean")
-    return 0
-
-
 def cmd_coercion_hf_lag_hot_residual_3046_coverage():
     """Issue #3046: session-mid always-stamp + residual CastOp density keep."""
     print(f"{B}=== coercion hf-lag / hot residual coverage (#3046) ==={N}")
@@ -20384,40 +19071,6 @@ def cmd_coercion_hf_lag_hot_residual_3046_coverage():
         fail("coercion hf-lag / hot residual (#3046) coverage contract rows failed")
         return 1
     ok("coercion hf-lag / hot residual (#3046) coverage clean")
-    return 0
-
-
-def cmd_hot_residual_soft_must_deopt_3084_coverage():
-    """Issue #3084: Soft residual CastOp MustDeopt (static)."""
-    print(f"{B}=== Soft residual CastOp MustDeopt coverage (#3084) ==={N}")
-    script = COVERAGE_CHECKS / "check_hot_residual_soft_must_deopt_3084.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("Soft residual CastOp MustDeopt (#3084) coverage contract rows failed")
-        return 1
-    ok("Soft residual CastOp MustDeopt (#3084) coverage clean")
-    return 0
-
-
-def cmd_hot_residual_soft_must_deopt_3084():
-    """Issue #3084: Soft leftover CastOp marks MustDeopt, no relower.
-
-    Production density-keep + force-JIT unchanged. leftover==0 Quiet.
-    Blame-complete default unchanged.
-    """
-    print(f"{B}=== Soft residual CastOp MustDeopt (#3084) ==={N}")
-    return cmd_hot_residual_soft_must_deopt_3084_coverage()
-
-
-def cmd_gradual_permissiveness_2992_coverage():
-    """Issue #2992: non-strict ground-type Warning + AURA_GRADUAL_PERMISSIVENESS."""
-    print(f"{B}=== gradual permissiveness coverage (#2992) ==={N}")
-    script = COVERAGE_CHECKS / "check_gradual_permissiveness_2992.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("gradual permissiveness (#2992) coverage contract rows failed")
-        return 1
-    ok("gradual permissiveness (#2992) coverage clean")
     return 0
 
 
@@ -20441,18 +19094,6 @@ def cmd_production_defaults_force_strict_unify_3430_coverage():
     return 0
 
 
-def cmd_typecheck_metrics_tier_2993_coverage():
-    """Issue #2993: type-check metrics tier minimal default."""
-    print(f"{B}=== typecheck metrics tier coverage (#2993) ==={N}")
-    script = COVERAGE_CHECKS / "check_typecheck_metrics_tier_2993.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("typecheck metrics tier (#2993) coverage contract rows failed")
-        return 1
-    ok("typecheck metrics tier (#2993) coverage clean")
-    return 0
-
-
 def cmd_occurrence_commit_health_2995_coverage():
     """Issue #2995: unified OccurrenceCommitHealth + single-shot recover."""
     print(f"{B}=== OccurrenceCommitHealth coverage (#2995) ==={N}")
@@ -20462,24 +19103,6 @@ def cmd_occurrence_commit_health_2995_coverage():
         fail("OccurrenceCommitHealth (#2995) coverage contract rows failed")
         return 1
     ok("OccurrenceCommitHealth (#2995) coverage clean")
-    return 0
-
-
-def cmd_occurrence_commit_health_2995():
-    """Issue #2995: single OccurrenceCommitHealth + ensure recover entry."""
-    print(f"{B}=== OccurrenceCommitHealth (#2995) ==={N}")
-    return cmd_occurrence_commit_health_2995_coverage()
-
-
-def cmd_solve_delta_locality_budget_2994_coverage():
-    """Issue #2994: Agent locality residual budget."""
-    print(f"{B}=== locality residual budget coverage (#2994) ==={N}")
-    script = COVERAGE_CHECKS / "check_solve_delta_locality_budget_2994.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("locality residual budget (#2994) coverage contract rows failed")
-        return 1
-    ok("locality residual budget (#2994) coverage clean")
     return 0
 
 
@@ -20647,44 +19270,6 @@ def cmd_adt_exhaust_undermark_cone_3045_coverage():
     return 0
 
 
-def cmd_adt_exhaust_complete_seed_3083_coverage():
-    """Issue #3083: ADT exhaust complete seed after mutate (static)."""
-    print(f"{B}=== ADT exhaust complete seed coverage (#3083) ==={N}")
-    script = COVERAGE_CHECKS / "check_adt_exhaust_complete_seed_3083.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("ADT exhaust complete seed (#3083) coverage contract rows failed")
-        return 1
-    ok("ADT exhaust complete seed (#3083) coverage clean")
-    return 0
-
-
-def cmd_adt_exhaust_complete_seed_3083():
-    """Issue #3083: every match of a mutated ADT type enters the cone.
-
-    Incomplete call-site lists are completed. Production still
-    hard-rejects residual under-mark. Soft observe-only. Empty → 0.
-    """
-    print(f"{B}=== ADT exhaust complete seed (#3083) ==={N}")
-    return cmd_adt_exhaust_complete_seed_3083_coverage()
-
-
-def cmd_linear_ir_fastpath_2899_coverage():
-    """Issue #2899: proven Move/Drop IR fast-path after TypeLinear proof.
-
-    Skip redundant provenance re-sim when proof fresh; escape/Reject/
-    mid-boundary block; schema-2899.
-    """
-    print(f"{B}=== linear IR fast-path coverage (#2899) ==={N}")
-    script = COVERAGE_CHECKS / "check_linear_ir_fastpath_2899.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("linear IR fast-path (#2899) coverage contract rows failed")
-        return 1
-    ok("linear IR fast-path (#2899) coverage clean")
-    return 0
-
-
 def cmd_linear_fast_path_unified_2964_coverage():
     """Issue #2964: unified linear_fast_path_ok + force revalidate.
 
@@ -20739,48 +19324,6 @@ def cmd_type_linear_proof_clear_on_abort_3030():
     return cmd_type_linear_proof_clear_on_abort_3030_coverage()
 
 
-def cmd_pending_full_solve_residual_3031_coverage():
-    """Issue #3031: pending_full_solve / locality residual drain before commit.
-
-    Production/Full escalate then hard-reject (force_reason 16) if still
-    dirty. Soft observe. Quiet (no residual) is two size reads.
-    """
-    print(f"{B}=== pending_full_solve residual coverage (#3031) ==={N}")
-    script = COVERAGE_CHECKS / "check_pending_full_solve_residual_3031.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("pending_full_solve residual (#3031) coverage contract rows failed")
-        return 1
-    ok("pending_full_solve residual (#3031) coverage clean")
-    return 0
-
-
-def cmd_pending_full_solve_residual_3031():
-    """Alias for coverage check."""
-    return cmd_pending_full_solve_residual_3031_coverage()
-
-
-def cmd_rehydrate_miss_invalidate_3032_coverage():
-    """Issue #3032: densify/steal rehydrate-miss invalidates linear_fast_path.
-
-    Production/Full miss → Reject + invalidate_gen + force deopt/revalidate.
-    Soft observe. Quiet (no miss) is zero extra.
-    """
-    print(f"{B}=== rehydrate-miss invalidate coverage (#3032) ==={N}")
-    script = COVERAGE_CHECKS / "check_rehydrate_miss_invalidate_3032.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("rehydrate-miss invalidate (#3032) coverage contract rows failed")
-        return 1
-    ok("rehydrate-miss invalidate (#3032) coverage clean")
-    return 0
-
-
-def cmd_rehydrate_miss_invalidate_3032():
-    """Alias for coverage check."""
-    return cmd_rehydrate_miss_invalidate_3032_coverage()
-
-
 def cmd_half_green_ir_steal_densify_3063_coverage():
     """Issue #3063: steal/densify success invalidate-before-restamp (static)."""
     print(f"{B}=== half-green IR steal/densify coverage (#3063) ==={N}")
@@ -20803,16 +19346,6 @@ def cmd_rehydrate_miss_lowering_elision_3085_coverage():
         return 1
     ok("rehydrate-miss lowering elision (#3085) coverage clean")
     return 0
-
-
-def cmd_rehydrate_miss_lowering_elision_3085():
-    """Issue #3085: densify/steal rehydrate-miss blocks Move lowering elision.
-
-    invalidate_gen is consulted by depth_or_densify_block. Abort clear
-    unchanged. Soft / no densify: inv==0.
-    """
-    print(f"{B}=== rehydrate-miss lowering elision (#3085) ==={N}")
-    return cmd_rehydrate_miss_lowering_elision_3085_coverage()
 
 
 def cmd_half_green_ir_steal_densify_3063():
@@ -21110,36 +19643,6 @@ def cmd_hold_budget_inbody_window_3071_coverage():
     return 0
 
 
-def cmd_hold_budget_inbody_window_3071():
-    """Issue #3071: in-body non-poll window after hold-budget cancel.
-
-    Soft/Off: observe only. Production: re-arm force-safepoint (no unlock).
-    """
-    print(f"{B}=== hold-budget in-body window (#3071) ==={N}")
-    return cmd_hold_budget_inbody_window_3071_coverage()
-
-
-def cmd_chaos_production_readiness_3073_coverage():
-    """Issue #3073: production soak readiness gate (static)."""
-    print(f"{B}=== chaos production readiness coverage (#3073) ==={N}")
-    script = COVERAGE_CHECKS / "check_chaos_production_readiness_3073.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("chaos production readiness (#3073) coverage contract rows failed")
-        return 1
-    ok("chaos production readiness (#3073) coverage clean")
-    return 0
-
-
-def cmd_chaos_production_readiness_3073():
-    """Issue #3073: residual-zero × hold-after-cancel max soak gate.
-
-    Soft/unit: print only. Production soak: fail-closed.
-    """
-    print(f"{B}=== chaos production readiness (#3073) ==={N}")
-    return cmd_chaos_production_readiness_3073_coverage()
-
-
 def cmd_mutate_dispatch_sole_guard_3074_coverage():
     """Issue #3074: mutate_dispatch sole Guard acquire (static)."""
     print(f"{B}=== mutate_dispatch sole-guard coverage (#3074) ==={N}")
@@ -21150,15 +19653,6 @@ def cmd_mutate_dispatch_sole_guard_3074_coverage():
         return 1
     ok("mutate_dispatch sole-guard (#3074) coverage clean")
     return 0
-
-
-def cmd_mutate_dispatch_sole_guard_3074():
-    """Issue #3074: structural mutate:* acquire only via mutate_dispatch.
-
-    Soft: existing try_acquire Soft path. GUARD_EXEMPT unchanged.
-    """
-    print(f"{B}=== mutate_dispatch sole-guard (#3074) ==={N}")
-    return cmd_mutate_dispatch_sole_guard_3074_coverage()
 
 
 def cmd_mutate_reg_kind_3452_coverage():
@@ -21205,15 +19699,6 @@ def cmd_query_epoch_production_strict_3075_coverage():
     return 0
 
 
-def cmd_query_epoch_production_strict_3075():
-    """Issue #3075: production_defaults → QueryEpoch strict on.
-
-    Soft/dev remains off. Restamp-budget force already shipped (#3041).
-    """
-    print(f"{B}=== query-epoch production strict (#3075) ==={N}")
-    return cmd_query_epoch_production_strict_3075_coverage()
-
-
 def cmd_soft_observe_not_hard_3076_coverage():
     """Issue #3076: Soft-observe is not a Hard production guarantee (static)."""
     print(f"{B}=== soft-observe not Hard coverage (#3076) ==={N}")
@@ -21226,36 +19711,6 @@ def cmd_soft_observe_not_hard_3076_coverage():
     return 0
 
 
-def cmd_soft_observe_not_hard_3076():
-    """Issue #3076: production Hard-sibling faces reject; Soft observe stays 0.
-
-    Soft/dev unchanged. Schema-3076 tags Soft counters as not-guarantee.
-    """
-    print(f"{B}=== soft-observe not Hard (#3076) ==={N}")
-    return cmd_soft_observe_not_hard_3076_coverage()
-
-
-def cmd_soft_timeout_export_non_authoritative_3081_coverage():
-    """Issue #3081: Soft TIMEOUT export is not query:type authority (static)."""
-    print(f"{B}=== soft TIMEOUT export non-authoritative coverage (#3081) ==={N}")
-    script = COVERAGE_CHECKS / "check_soft_timeout_export_non_authoritative_3081.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("soft TIMEOUT export non-authoritative (#3081) coverage contract rows failed")
-        return 1
-    ok("soft TIMEOUT export non-authoritative (#3081) coverage clean")
-    return 0
-
-
-def cmd_soft_timeout_export_non_authoritative_3081():
-    """Issue #3081: Soft + allow_timeout_commit TIMEOUT is not query:type authority.
-
-    Production fail-closed unchanged. No new metrics shape.
-    """
-    print(f"{B}=== soft TIMEOUT export non-authoritative (#3081) ==={N}")
-    return cmd_soft_timeout_export_non_authoritative_3081_coverage()
-
-
 def cmd_nested_occurrence_provisional_3082_coverage():
     """Issue #3082: mid/nested MutationBoundary occurrence is provisional (static)."""
     print(f"{B}=== nested occurrence provisional coverage (#3082) ==={N}")
@@ -21265,32 +19720,6 @@ def cmd_nested_occurrence_provisional_3082_coverage():
         fail("nested occurrence provisional (#3082) coverage contract rows failed")
         return 1
     ok("nested occurrence provisional (#3082) coverage clean")
-    return 0
-
-
-def cmd_nested_occurrence_provisional_3082():
-    """Issue #3082: mid/nested MutationBoundary marks occurrence provisional.
-
-    Nested success never durable-persists. query:type stays in-flight
-    until outermost persist. Soft empty / no nested: zero extra persist.
-    """
-    print(f"{B}=== nested occurrence provisional (#3082) ==={N}")
-    return cmd_nested_occurrence_provisional_3082_coverage()
-
-
-def cmd_solver_budget_2900_coverage():
-    """Issue #2900: SolverBudget Agent-controlled delta TIMEOUT policy.
-
-    Soft allow_timeout_commit exports TIMEOUT; production still escalates;
-    default budget unchanged; schema-2900.
-    """
-    print(f"{B}=== SolverBudget coverage (#2900) ==={N}")
-    script = COVERAGE_CHECKS / "check_solver_budget_2900.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("SolverBudget (#2900) coverage contract rows failed")
-        return 1
-    ok("SolverBudget (#2900) coverage clean")
     return 0
 
 
@@ -21332,49 +19761,6 @@ def cmd_solve_delta_dep_closure_2939():
     return cmd_solve_delta_dep_closure_2939_coverage()
 
 
-def cmd_solve_delta_locality_slo_2913_coverage():
-    """Issue #2913: solve_delta locality SLO (anti silent under-constrain).
-
-    Soft residual observe; production/Full escalate full; quiet zero cost;
-    schema-2913.
-    """
-    print(f"{B}=== solve_delta locality SLO coverage (#2913) ==={N}")
-    script = COVERAGE_CHECKS / "check_solve_delta_locality_slo_2913.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("solve_delta locality SLO (#2913) coverage contract rows failed")
-        return 1
-    ok("solve_delta locality SLO (#2913) coverage clean")
-    return 0
-
-
-def cmd_prim_error_convention_2998_coverage():
-    """Issue #2998: residual silent sentinels on core primitives."""
-    print(f"{B}=== prim error convention coverage (#2998) ==={N}")
-    script = COVERAGE_CHECKS / "check_prim_error_convention_2998.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("prim error convention (#2998) coverage contract rows failed")
-        return 1
-    ok("prim error convention (#2998) coverage clean")
-    return 0
-
-
-def cmd_query_primitives_split_2914_coverage():
-    """Issue #2914: split evaluator_primitives_query.cpp + error convention.
-
-    Peels under LOC budget; register_query_primitives orchestrates; docs.
-    """
-    print(f"{B}=== query primitives split coverage (#2914) ==={N}")
-    script = COVERAGE_CHECKS / "check_query_primitives_split_2914.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("query primitives split (#2914) coverage contract rows failed")
-        return 1
-    ok("query primitives split (#2914) coverage clean")
-    return 0
-
-
 def cmd_prim_register_core_2996_coverage():
     """Issue #2996: core TUs migrated to register_prim + PrimSpec."""
     print(f"{B}=== core register_prim migration coverage (#2996) ==={N}")
@@ -21384,85 +19770,6 @@ def cmd_prim_register_core_2996_coverage():
         fail("core register_prim migration (#2996) coverage contract rows failed")
         return 1
     ok("core register_prim migration (#2996) coverage clean")
-    return 0
-
-
-def cmd_prim_register_core_2996():
-    """Issue #2996: migrate list/math/json/pair/vector onto register_prim."""
-    print(f"{B}=== core register_prim migration (#2996) ==={N}")
-    return cmd_prim_register_core_2996_coverage()
-
-
-def cmd_prim_registrar_scaffold_2915_coverage():
-    """Issue #2915: PrimRegistrar + PrimMeta scaffolding + agent contract.
-
-    Scaffold header, misc proof migration, authoring docs, registry note.
-    """
-    print(f"{B}=== prim registrar scaffold coverage (#2915) ==={N}")
-    script = COVERAGE_CHECKS / "check_prim_registrar_scaffold_2915.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("prim registrar scaffold (#2915) coverage contract rows failed")
-        return 1
-    ok("prim registrar scaffold (#2915) coverage clean")
-    return 0
-
-
-def cmd_list_ctor_hotpath_2997_coverage():
-    """Issue #2997: list/json constructor lock SLO + unlimited/small fast-path."""
-    print(f"{B}=== list ctor hot-path coverage (#2997) ==={N}")
-    script = COVERAGE_CHECKS / "check_list_ctor_hotpath_2997.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("list ctor hot-path (#2997) coverage contract rows failed")
-        return 1
-    ok("list ctor hot-path (#2997) coverage clean")
-    return 0
-
-
-def cmd_prim_heap_quota_2916_coverage():
-    """Issue #2916: multi-fiber prim heap soft quotas + Agent stats.
-
-    Shared pairs/strings/vectors soft limits; constructors return errors;
-    query:prim-heap-quota-stats schema-2916.
-    """
-    print(f"{B}=== prim heap quota coverage (#2916) ==={N}")
-    script = COVERAGE_CHECKS / "check_prim_heap_quota_2916.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("prim heap quota (#2916) coverage contract rows failed")
-        return 1
-    ok("prim heap quota (#2916) coverage clean")
-    return 0
-
-
-def cmd_agent_recovery_2917_coverage():
-    """Issue #2917: closed-loop agent:recover-from-error + recovery stats.
-
-    Diagnose → apply-fix under Guard; query:agent-recovery-stats schema-2917.
-    """
-    print(f"{B}=== agent recovery coverage (#2917) ==={N}")
-    script = COVERAGE_CHECKS / "check_agent_recovery_2917.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("agent recovery (#2917) coverage contract rows failed")
-        return 1
-    ok("agent recovery (#2917) coverage clean")
-    return 0
-
-
-def cmd_ast_snapshot_workspace_2918_coverage():
-    """Issue #2918: ast:snapshot / ast:diff use workspace source (:workspace).
-
-    Dual-workspace Phase 1 — no bare current-source for agent checkpoints.
-    """
-    print(f"{B}=== ast snapshot workspace coverage (#2918) ==={N}")
-    script = COVERAGE_CHECKS / "check_ast_snapshot_workspace_2918.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("ast snapshot workspace (#2918) coverage contract rows failed")
-        return 1
-    ok("ast snapshot workspace (#2918) coverage clean")
     return 0
 
 
@@ -21481,81 +19788,6 @@ def cmd_ast_snapshot_fail_reason_2966_coverage():
     return 0
 
 
-def cmd_current_source_unparse_2919_coverage():
-    """Issue #2919: current-source unparse P0 tags + string/lambda roundtrip.
-
-    TypeAnnotation/Coercion/DefineType/Linear family + dotted rest + escapes.
-    """
-    print(f"{B}=== current-source unparse coverage (#2919) ==={N}")
-    script = COVERAGE_CHECKS / "check_current_source_unparse_2919.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("current-source unparse (#2919) coverage contract rows failed")
-        return 1
-    ok("current-source unparse (#2919) coverage clean")
-    return 0
-
-
-def cmd_workspace_source_ssot_2920_coverage():
-    """Issue #2920: workspace source SSOT after mutate (FlatAST authoritative).
-
-    Invalidate text cache on Guard mutate; JIT/serialize use live unparse.
-    """
-    print(f"{B}=== workspace source SSOT coverage (#2920) ==={N}")
-    script = COVERAGE_CHECKS / "check_workspace_source_ssot_2920.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("workspace source SSOT (#2920) coverage contract rows failed")
-        return 1
-    ok("workspace source SSOT (#2920) coverage clean")
-    return 0
-
-
-def cmd_current_source_roundtrip_2921_coverage():
-    """Issue #2921: current-source / snapshot roundtrip regression matrix.
-
-    Table-driven unit test + suite locking #2918–#2920.
-    """
-    print(f"{B}=== current-source roundtrip coverage (#2921) ==={N}")
-    script = COVERAGE_CHECKS / "check_current_source_roundtrip_2921.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("current-source roundtrip (#2921) coverage contract rows failed")
-        return 1
-    ok("current-source roundtrip (#2921) coverage clean")
-    return 0
-
-
-def cmd_ast_unparse_2922_coverage():
-    """Issue #2922: extract ast_unparse library + optional pretty-print.
-
-    current-source thin wrapper; snapshot without primitive re-entry.
-    """
-    print(f"{B}=== ast_unparse extract coverage (#2922) ==={N}")
-    script = COVERAGE_CHECKS / "check_ast_unparse_2922.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("ast_unparse (#2922) coverage contract rows failed")
-        return 1
-    ok("ast_unparse (#2922) coverage clean")
-    return 0
-
-
-def cmd_isolation_decide_2923_coverage():
-    """Issue #2923: authoritative IsolationLevel decide_isolation API.
-
-    C++ + Aura share one pure decision; no second ternary in agent.
-    """
-    print(f"{B}=== isolation decide coverage (#2923) ==={N}")
-    script = COVERAGE_CHECKS / "check_isolation_decide_2923.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("isolation decide (#2923) coverage contract rows failed")
-        return 1
-    ok("isolation decide (#2923) coverage clean")
-    return 0
-
-
 def cmd_parallel_mutate_region_keys_prod_deny_3353_coverage():
     """Issue #3353: production_defaults mutate missing-keys structured deny.
 
@@ -21568,36 +19800,6 @@ def cmd_parallel_mutate_region_keys_prod_deny_3353_coverage():
         fail("production mutate region-keys deny (#3353) coverage contract rows failed")
         return 1
     ok("production mutate region-keys deny (#3353) coverage clean")
-    return 0
-
-
-def cmd_wait_reclaimed_2924_coverage():
-    """Issue #2924: wait_reclaimed_body after JoinStatus::Reclaimed.
-
-    Explicit wait for still-running body; #2661 preserved on timeout.
-    """
-    print(f"{B}=== wait_reclaimed_body coverage (#2924) ==={N}")
-    script = COVERAGE_CHECKS / "check_wait_reclaimed_2924.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("wait_reclaimed (#2924) coverage contract rows failed")
-        return 1
-    ok("wait_reclaimed (#2924) coverage clean")
-    return 0
-
-
-def cmd_producer_bp_budget_2925_coverage():
-    """Issue #2925: producer BP self-throttle budget for attached agents.
-
-    Consecutive Backpressure → throttle; default off; composes with #2887.
-    """
-    print(f"{B}=== producer BP budget coverage (#2925) ==={N}")
-    script = COVERAGE_CHECKS / "check_producer_bp_budget_2925.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("producer BP budget (#2925) coverage contract rows failed")
-        return 1
-    ok("producer BP budget (#2925) coverage clean")
     return 0
 
 
@@ -21617,21 +19819,6 @@ def cmd_mailbox_credit_inflight_2972_coverage():
     return 0
 
 
-def cmd_scope_resolve_2926_coverage():
-    """Issue #2926: session-local scope-resolve by name.
-
-    AgentScope::find + orch:scope-resolve; no global AgentRegistry.
-    """
-    print(f"{B}=== scope-resolve coverage (#2926) ==={N}")
-    script = COVERAGE_CHECKS / "check_scope_resolve_2926.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("scope-resolve (#2926) coverage contract rows failed")
-        return 1
-    ok("scope-resolve (#2926) coverage clean")
-    return 0
-
-
 def cmd_force_jit_reason_bit_map_2927_coverage():
     """Issue #2927: AotReloadFail → force_jit_regions_mask stable bit groups.
 
@@ -21645,18 +19832,6 @@ def cmd_force_jit_reason_bit_map_2927_coverage():
         fail("force-JIT reason→bit map (#2927) coverage contract rows failed")
         return 1
     ok("force-JIT reason→bit map (#2927) coverage clean")
-    return 0
-
-
-def cmd_staging_dlopen_ops_recovery_2982_coverage():
-    """Issue #2982: Staging/Dlopen ops recovery surface."""
-    print(f"{B}=== Staging/Dlopen ops recovery coverage (#2982) ==={N}")
-    script = COVERAGE_CHECKS / "check_staging_dlopen_ops_recovery_2982.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("Staging/Dlopen ops recovery (#2982) coverage contract rows failed")
-        return 1
-    ok("Staging/Dlopen ops recovery (#2982) coverage clean")
     return 0
 
 
@@ -21709,22 +19884,6 @@ def cmd_mutation_mirror_canary_2956_coverage():
     return 0
 
 
-def cmd_steal_lifetime_proof_residual_2957_coverage():
-    """Issue #2957: residual hard-AND arm (f) last LifetimeConsistencyProof.
-
-    Production + fresh negative proof after densify → RejectHard without
-    ticket stamp. Soft / no densify / would_allow: no new rejects.
-    """
-    print(f"{B}=== steal lifetime-proof residual coverage (#2957) ==={N}")
-    script = COVERAGE_CHECKS / "check_steal_lifetime_proof_residual_2957.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("steal lifetime-proof residual (#2957) coverage contract rows failed")
-        return 1
-    ok("steal lifetime-proof residual (#2957) coverage clean")
-    return 0
-
-
 def cmd_mailbox_defer_slo_hold_cancel_2958_coverage():
     """Issue #2958: mailbox defer-wait SLO → hold-budget cancel.
 
@@ -21738,23 +19897,6 @@ def cmd_mailbox_defer_slo_hold_cancel_2958_coverage():
         fail("mailbox defer-SLO hold-cancel (#2958) coverage contract rows failed")
         return 1
     ok("mailbox defer-SLO hold-cancel (#2958) coverage clean")
-    return 0
-
-
-def cmd_mailbox_hold_slo_ssot_soak_3002_coverage():
-    """Issue #3002: mailbox hold p99 SSOT + soak fail-closed cancel/release.
-
-    fill_mailbox_hold_slo_live_ and #2958 share live p99/throttle sample.
-    Production + signal + holder → one-shot cancel. Soak aborts if p99
-    stays hot without cancel / forced-fail-closed.
-    """
-    print(f"{B}=== mailbox hold SLO SSOT soak coverage (#3002) ==={N}")
-    script = COVERAGE_CHECKS / "check_mailbox_hold_slo_ssot_soak_3002.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("mailbox hold SLO SSOT soak (#3002) coverage contract rows failed")
-        return 1
-    ok("mailbox hold SLO SSOT soak (#3002) coverage clean")
     return 0
 
 
@@ -21789,45 +19931,6 @@ def cmd_query_stable_ref_stamp_2960_coverage():
         return 1
     ok("query stable-ref stamp (#2960) coverage clean")
     return 0
-
-
-def cmd_query_stable_ref_restamp_lag_3000_coverage():
-    """Issue #3000: query:*-stable restamp-lag export face.
-
-    Production + restamp-budget exceeded + node not eagerly restamped
-    rejects export (typed restamp-lag); Soft observe only. schema-3000
-    on stable-ref-stats-hash + generation-stats. Residual of #2934/#2960.
-    """
-    print(f"{B}=== query stable-ref restamp-lag coverage (#3000) ==={N}")
-    script = COVERAGE_CHECKS / "check_query_stable_ref_restamp_lag_3000.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("query stable-ref restamp-lag (#3000) coverage contract rows failed")
-        return 1
-    ok("query stable-ref restamp-lag (#3000) coverage clean")
-    return 0
-
-
-def cmd_restamp_over_budget_export_3037_coverage():
-    """Issue #3037: restamp over-budget reject StableNodeRef export.
-
-    Production + over-budget marks generation torn; query:*-stable
-    rejects even after lazy-align. Soft observe only. schema-3037
-    on stable-ref-stats-hash. Residual of #2960/#3000.
-    """
-    print(f"{B}=== restamp over-budget export coverage (#3037) ==={N}")
-    script = COVERAGE_CHECKS / "check_restamp_over_budget_export_3037.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("restamp over-budget export (#3037) coverage contract rows failed")
-        return 1
-    ok("restamp over-budget export (#3037) coverage clean")
-    return 0
-
-
-def cmd_restamp_over_budget_export_3037():
-    """Alias for coverage check."""
-    return cmd_restamp_over_budget_export_3037_coverage()
 
 
 def cmd_rename_replace_hygiene_restamp_2961_coverage():
@@ -21974,11 +20077,6 @@ def cmd_steal_residual_rearm_resample_3038_coverage():
     return 0
 
 
-def cmd_steal_residual_rearm_resample_3038():
-    """Alias for coverage check."""
-    return cmd_steal_residual_rearm_resample_3038_coverage()
-
-
 def cmd_steal_invariant_table_2929_coverage():
     """Issue #2929: StealInvariant table for steal_safety_transaction hard-AND.
 
@@ -22005,15 +20103,6 @@ def cmd_steal_enqueue_sole_gate_3072_coverage():
         return 1
     ok("steal enqueue sole-gate (#3072) coverage clean")
     return 0
-
-
-def cmd_steal_enqueue_sole_gate_3072():
-    """Issue #3072: every stolen Ready enqueue dominated by transaction Ok.
-
-    Soft/Off: linter still runs; no new runtime force.
-    """
-    print(f"{B}=== steal enqueue sole-gate (#3072) ==={N}")
-    return cmd_steal_enqueue_sole_gate_3072_coverage()
 
 
 def cmd_bridge_epoch_zero_stale_2930_coverage():
@@ -22046,82 +20135,6 @@ def cmd_chaos_steal_gc_nightly_2931_coverage():
         fail("chaos steal-gc nightly (#2931) coverage contract rows failed")
         return 1
     ok("chaos steal-gc nightly (#2931) coverage clean")
-    return 0
-
-
-def cmd_chaos_steal_lifetime_envframe_3001_coverage():
-    """Issue #3001: chaos soak fail-closed on LifetimeProofOk / EnvFrameOk.
-
-    Additive to #2931: residual_lifetime_proof_reject / envframe_lag /
-    rearm_race without matching RejectHard is soak-abort. Soft metric-only.
-    """
-    print(f"{B}=== chaos steal lifetime/envframe soak fail-closed (#3001) ==={N}")
-    script = COVERAGE_CHECKS / "check_chaos_steal_lifetime_envframe_3001.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("chaos steal lifetime/envframe (#3001) coverage contract rows failed")
-        return 1
-    ok("chaos steal lifetime/envframe (#3001) coverage clean")
-    return 0
-
-
-def cmd_hold_budget_dtor_consume_2999_coverage():
-    """Issue #2999: outermost Guard dtor consume of hold-budget cancel."""
-    print(f"{B}=== hold-budget dtor consume coverage (#2999) ==={N}")
-    script = COVERAGE_CHECKS / "check_hold_budget_dtor_consume_2999.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("hold-budget dtor consume (#2999) coverage contract rows failed")
-        return 1
-    ok("hold-budget dtor consume (#2999) coverage clean")
-    return 0
-
-
-def cmd_hold_budget_forced_fail_closed_2932_coverage():
-    """Issue #2932: hold-budget overtime forced outermost fail-closed.
-
-    force-safepoint paired with cancel; check_gc_safepoint consume path;
-    Soft metric-only; outermost-only; residual #2846 on failure exit.
-    """
-    print(f"{B}=== hold-budget forced fail-closed coverage (#2932) ==={N}")
-    script = COVERAGE_CHECKS / "check_hold_budget_forced_fail_closed_2932.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("hold-budget forced fail-closed (#2932) coverage contract rows failed")
-        return 1
-    ok("hold-budget forced fail-closed (#2932) coverage clean")
-    return 0
-
-
-def cmd_query_result_binding_2933_coverage():
-    """Issue #2933: first-class QueryResult binding for multi-round AI memory.
-
-    QueryEpoch + matches + optional pin; :as-query-result opt-in on major
-    query:* surfaces; result-fresh? / result-matches; additive metrics.
-    """
-    print(f"{B}=== query result binding coverage (#2933) ==={N}")
-    script = COVERAGE_CHECKS / "check_query_result_binding_2933.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("query result binding (#2933) coverage contract rows failed")
-        return 1
-    ok("query result binding (#2933) coverage clean")
-    return 0
-
-
-def cmd_restamp_budget_2934_coverage():
-    """Issue #2934: Guard exit restamp budget + Agent-visible metrics.
-
-    Soft-degrade over budget (incremental/lazy); default unlimited Soft;
-    schema-2934 keys on restamp / mutation-boundary surfaces.
-    """
-    print(f"{B}=== restamp budget coverage (#2934) ==={N}")
-    script = COVERAGE_CHECKS / "check_restamp_budget_2934.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("restamp budget (#2934) coverage contract rows failed")
-        return 1
-    ok("restamp budget (#2934) coverage clean")
     return 0
 
 
@@ -23231,30 +21244,6 @@ def cmd_layout_stamp_fence_coverage():
     return 0
 
 
-def cmd_closure_sync_remount_2602_coverage():
-    """Issue #2602: synchronous remount_or_force_deopt walk for named
-    live closures (stable_func_id != 0) on reemit success. Refines
-    #2542 (restamp) + #2503 (remount shared path) + #2550 (named
-    stable_func_id at create). Closes the MustDeopt window between
-    reemit and first call.
-
-    Validates the 2 new sync counters (live_closure_sync_remount_ok
-    / _fail_total, distinct from call-time closure_capture_remount_*),
-    sync walk function + declaration + stub, named-only skip
-    (anonymous sid=0 stay on call-time path), zero-cost stub,
-    query surface keys + schema cross-links (#2542 / #2503 / #2550
-    preserved), and ac2602_* test sections.
-    """
-    print(f"{B}=== closure sync remount coverage (#2602) ==={N}")
-    script = COVERAGE_CHECKS / "check_closure_sync_remount_2602.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("closure sync remount coverage contract rows failed")
-        return 1
-    ok("closure sync remount coverage clean")
-    return 0
-
-
 def cmd_orch_scope_child_2631_coverage():
     """Issue #2631: Aura surface for hierarchical AgentScope
     (orch:scope-child). Closes the script-side tree supervision
@@ -23616,6 +21605,40 @@ def _gate_changed_runtime_suites() -> int:
     return rc
 
 
+def _gate_steps(*, fix: bool, changed: bool, scripts_only: bool) -> list[tuple[str, Callable[[], int]]]:
+    """Ordered gate pipeline: (label, callable); a non-zero return aborts.
+
+    Issue #5246: this replaces the historical ~60-call hand-wired `or` chain.
+    Coverage is a single step — scripts/coverage/run_checks.py owns the whole
+    check_*.py set (parallel, cascade-free) plus the per-check argv that used
+    to be spelled out here as ~40 separate 'or cmd_*_coverage()' calls.
+    """
+    check = not fix
+    steps: list[tuple[str, Callable[[], int]]] = [
+        ("docs", lambda: cmd_docs(check=check)),
+        ("cli-templates", lambda: cmd_cli_templates(check=check)),
+        ("lint", cmd_lint),
+    ]
+    if not scripts_only:
+        steps.append(("format", cmd_format))
+    steps.extend(
+        [
+            ("fixtures", cmd_fixtures),
+            ("primitive-surface", cmd_primitive_surface),
+            ("test-registry", cmd_test_registry),
+            ("test-binding", cmd_test_binding),
+            ("new-test-files", cmd_new_test_files),
+            ("dead-heap-push", cmd_dead_heap_push),
+            ("catch-silent-swallow", cmd_catch_silent_swallow),
+            ("aot-env-linear-stamp", cmd_aot_env_linear_stamp),
+            ("legacy-test-inventory", cmd_legacy_test_inventory),
+            ("soak-pr-short-3387", cmd_soak_pr_short_3387_coverage),
+            ("coverage", lambda: _run_parallel_coverage_checks(changed=changed)),
+        ]
+    )
+    return steps
+
+
 def cmd_gate():
     """Fast static checks for CI / pre-push.
 
@@ -23633,24 +21656,12 @@ def cmd_gate():
                       (or AURA_GATE_FULL=1)
 
     Issue #1572/#1573/#1668/#1669/#1931/#1957/#1966/#2057/#2168 lineage
-    preserved; execution is batched rather than a 300-deep `or` chain.
+    preserved; execution order lives in the _gate_steps table (Issue #5246).
     """
     fix = "--fix" in sys.argv[2:]
-    scripts_only = "--scripts-only" in sys.argv[2:] or os.environ.get("AURA_GATE_SCRIPTS_ONLY", "").strip() in (
-        "1",
-        "true",
-        "yes",
-    )
-    changed = "--changed" in sys.argv[2:] or os.environ.get("AURA_GATE_CHANGED", "").strip() in (
-        "1",
-        "true",
-        "yes",
-    )
-    full = "--full" in sys.argv[2:] or os.environ.get("AURA_GATE_FULL", "").strip() in (
-        "1",
-        "true",
-        "yes",
-    )
+    scripts_only = "--scripts-only" in sys.argv[2:] or _env_flag("AURA_GATE_SCRIPTS_ONLY")
+    changed = "--changed" in sys.argv[2:] or _env_flag("AURA_GATE_CHANGED")
+    full = "--full" in sys.argv[2:] or _env_flag("AURA_GATE_FULL")
     if full:
         changed = False
 
@@ -23663,89 +21674,19 @@ def cmd_gate():
         mode += "+full"
     print(f"{B}═══ Gate ({mode}) ═══{N}")
 
-    # Defer sequential coverage scripts inside cmd_lint to the parallel runner.
     os.environ["AURA_LINT_SKIP_COVERAGE"] = "1"
     os.environ["AURA_COVERAGE_NO_CASCADE"] = "1"
     if changed:
         os.environ["AURA_FORMAT_CHANGED"] = "1"
 
     t_gate = time.time()
-    rc = cmd_docs(check=not fix) or cmd_cli_templates(check=not fix) or cmd_lint()
-    if rc:
-        return rc
     if scripts_only:
         info("scripts-only: skipping clang-format (cross-platform gate)")
-    else:
-        rc = cmd_format()
+    for label, step in _gate_steps(fix=fix, changed=changed, scripts_only=scripts_only):
+        rc = step()
         if rc:
+            fail(f"gate step failed: {label}")
             return rc
-
-    # Small non-coverage audits (not part of check_*.py glob / have side policy).
-    rc = (
-        cmd_fixtures()
-        or cmd_primitive_surface()
-        or cmd_test_registry()
-        or cmd_test_binding()
-        or cmd_new_test_files()
-        or cmd_side_effect_security()
-        or cmd_naming_convention()
-        or cmd_dead_heap_push()
-        or cmd_catch_silent_swallow()
-        or cmd_mutation_guard_coverage()
-        or cmd_orch_mvp_scope()
-        or cmd_aot_env_linear_stamp()
-        or cmd_legacy_test_inventory()
-        or cmd_source_to_ir_strict()
-        # Chaos SOAK coverage-only gates wired into the main pre-push chain
-        # (fast static checks; full SOAK runtime stays release.yml / command
-        # table per #2722 AC4).
-        or cmd_chaos_soak_hard_gate_2722_coverage()
-        or cmd_chaos_soak_residual_zero_2755_coverage()
-        or cmd_mutation_boundary_ssot_3384_coverage()
-        or cmd_steal_safety_lifetime_proof_latch_3385_coverage()
-        or cmd_query_stable_hard_reject_torn_latch_3386_coverage()
-        or cmd_soak_pr_short_3387_coverage()
-        or cmd_join_reclaim_retry_3595_coverage()
-        or cmd_moving_untracked_split_3600_coverage()
-        or cmd_lockless_hygiene_se_3601_coverage()
-        or cmd_ffi_apply_densify_refuse_3602_coverage()
-        or cmd_closure_dispatch_entry_3635_coverage()
-        or cmd_region_storm_attribution_3636_coverage()
-        or cmd_macro_boundary_backstop_3637_coverage()
-        or cmd_query_index_telemetry_3638_coverage()
-        or cmd_wal_window_miss_catalog_3603_coverage()
-        or cmd_panic_aba_gc_defer_drain_3604_coverage()
-        or cmd_facade_owner_scope_clock_skip_3605_coverage()
-        or cmd_nested_qq_depth_3606_coverage()
-        or cmd_remount_reason_domain_3607_coverage()
-        or cmd_expand_checkpoint_local_rollback_3608_coverage()
-        or cmd_reexpand_tenant_principal_3609_coverage()
-        or cmd_real_quiet_live_tc_3610_coverage()
-        or cmd_cascade_rearm_reconsult_3611_coverage()
-        or cmd_remount_densify_pairing_strip_3612_coverage()
-        or cmd_mailbox_holder_send_lock_order_3613_coverage()
-        or cmd_outermost_persist_order_3614_coverage()
-        or cmd_occurrence_drain_order_4250_coverage()
-        or cmd_dual_graph_parity_cone_3615_coverage()
-        or cmd_chaos_guard_hold_smoke_3620_coverage()
-        or cmd_steal_identity_proof_3621_coverage()
-        or cmd_type_dynamic_production_3622_coverage()
-        or cmd_occurrence_recover_regate_3623_coverage()
-        or cmd_recover_solve_status_4170_coverage()
-        or cmd_type_export_face_3624_coverage()
-        or cmd_render_fast_audit_3625_coverage()
-        or cmd_closure_calls_hotpath_3626_coverage()
-        or cmd_pack_pipeline_strict_3627_coverage()
-        or cmd_undeclared_mt_autodetect_3630_coverage()
-        or cmd_reclaimed_batch_join_3631_coverage()
-        or cmd_moving_cover_reconciliation_3633_coverage()
-    )
-    if rc:
-        return rc
-
-    rc = _run_parallel_coverage_checks(changed=changed)
-    if rc:
-        return rc
 
     # Chaos runtime profiles (need cmake tree / binary). Static coverage for
     # these issues already ran via run_checks. On --changed pre-push, skip the
@@ -24646,36 +22587,6 @@ def cmd_security():
 # ═══════════════════════════════════════════════════════════════
 
 
-def cmd_occurrence_densify_root_scan_2642_coverage():
-    """Issue #2642: Phase-5 O(dirty) live linear-root consistency scan.
-    Schema + source-cite + coverage gate (extends the densify/linear
-    check scripts). Per #2609 AND, this scan is entity-level beyond
-    the flag hard-AND — see type_checker.ixx:3867 densify gate.
-    """
-    print(f"{B}=== densify root scan (#2642) ==={N}")
-    script = COVERAGE_CHECKS / "check_occurrence_densify_root_scan_2642.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("occurrence densify root scan (#2642) coverage failed")
-        return 1
-    ok("occurrence densify root scan (#2642) coverage clean")
-    return 0
-
-
-def run_bench_llm():
-    """Run LLM benchmarks (DeepSeek / MiniMax / Grok) in parallel."""
-    print(f"{B}═══ LLM Benchmark (3 models in parallel) ═══{N}")
-    # Issue #1932: thin entrypoint or tests/bench/run_bench_all.py
-    bench_script = ROOT / "tests" / "run_bench_all.py"
-    if not bench_script.exists():
-        bench_script = ROOT / "tests" / "bench" / "run_bench_all.py"
-    if not bench_script.exists():
-        fail(f"Script not found: {bench_script}")
-        return 1
-    env = {**os.environ, "AURA_BIN": str(AURA), "PYTHONUNBUFFERED": "1"}
-    return run([sys.executable, str(bench_script)], env=env)
-
-
 # ═══════════════════════════════════════════════════════════════
 # Main
 # ═══════════════════════════════════════════════════════════════
@@ -24738,12 +22649,10 @@ def main():
         "dual-dep-graph-parity": cmd_dual_dep_graph_parity_coverage,
         "adaptive-thr": cmd_adaptive_thr_coverage,
         "aot-reload-policy": cmd_aot_reload_policy_coverage,
-        "closure-sync-remount-2602": cmd_closure_sync_remount_2602_coverage,
         "cross-cow-soft-migrate-2603": cmd_cross_cow_soft_migrate_obs_2603_coverage,
         "reemit-auto-drain-2604": cmd_reemit_auto_drain_boundary_2604_coverage,
         "security-schedule-mutate-admit-2630": cmd_security_schedule_mutate_admit_2630_coverage,
         "orch-scope-child-2631": cmd_orch_scope_child_2631_coverage,
-        "aot-exhausted-min-dirty-retry-2601": cmd_aot_exhausted_min_dirty_retry_2601_coverage,
         "layout-stamp-fence": cmd_layout_stamp_fence_coverage,
         "env-gen-fence": cmd_env_gen_fence_coverage,
         "aot-stale-probe-hard-reject": cmd_aot_stale_probe_hard_reject_coverage,
@@ -24754,30 +22663,13 @@ def main():
         "shape-storm-isolation": cmd_shape_storm_isolation_coverage,
         "incremental-soundness-prod": cmd_incremental_soundness_prod_coverage,
         "register-render-hot-prim": cmd_register_render_hot_prim_coverage,
-        "prim-registrar-scaffold-2915": cmd_prim_registrar_scaffold_2915_coverage,
-        "prim-register-core-2996": cmd_prim_register_core_2996,
         "prim-register-core-2996-coverage": cmd_prim_register_core_2996_coverage,
-        "prim-heap-quota-2916": cmd_prim_heap_quota_2916_coverage,
-        "list-ctor-hotpath-2997": cmd_list_ctor_hotpath_2997_coverage,
-        "agent-recovery-2917": cmd_agent_recovery_2917_coverage,
-        "ast-snapshot-workspace-2918": cmd_ast_snapshot_workspace_2918_coverage,
         "ast-snapshot-fail-reason-2966": cmd_ast_snapshot_fail_reason_2966_coverage,
         "ast-snapshot-fail-reason-2966-coverage": cmd_ast_snapshot_fail_reason_2966_coverage,
-        "current-source-unparse-2919": cmd_current_source_unparse_2919_coverage,
-        "workspace-source-ssot-2920": cmd_workspace_source_ssot_2920_coverage,
-        "current-source-roundtrip-2921": cmd_current_source_roundtrip_2921_coverage,
-        "ast-unparse-2922": cmd_ast_unparse_2922_coverage,
-        "isolation-decide-2923": cmd_isolation_decide_2923_coverage,
         "parallel-mutate-region-keys-prod-deny-3353": cmd_parallel_mutate_region_keys_prod_deny_3353_coverage,
         "parallel-mutate-region-keys-prod-deny-3353-coverage": cmd_parallel_mutate_region_keys_prod_deny_3353_coverage,
-        "wait-reclaimed-2924": cmd_wait_reclaimed_2924_coverage,
-        "producer-bp-budget-2925": cmd_producer_bp_budget_2925_coverage,
         "mailbox-credit-2972": cmd_mailbox_credit_inflight_2972_coverage,
-        "scope-resolve-2926": cmd_scope_resolve_2926_coverage,
         "force-jit-reason-bit-map-2927": cmd_force_jit_reason_bit_map_2927_coverage,
-        "residual-remount-2928": cmd_residual_remount_round_robin_2928_coverage,
-        "residual-remount-prefer-2977": cmd_residual_remount_prefer_force_jit_2977_coverage,
-        "reemit-success-sync-covered-2978": cmd_reemit_success_sync_covered_remount_2978_coverage,
         "remount-reason-domain-3607": cmd_remount_reason_domain_3607_coverage,
         "expand-checkpoint-local-rollback-3608": cmd_expand_checkpoint_local_rollback_3608_coverage,
         "reexpand-tenant-principal-3609": cmd_reexpand_tenant_principal_3609_coverage,
@@ -24788,21 +22680,11 @@ def main():
         "outermost-persist-order-3614": cmd_outermost_persist_order_3614_coverage,
         "occurrence-drain-order-4250": cmd_occurrence_drain_order_4250_coverage,
         "dual-graph-parity-cone-3615": cmd_dual_graph_parity_cone_3615_coverage,
-        "epoch-residual-merged-heal-2980": cmd_epoch_residual_merged_heal_2980_coverage,
         "steal-invariant-table-2929": cmd_steal_invariant_table_2929_coverage,
-        "steal-enqueue-sole-gate-3072": cmd_steal_enqueue_sole_gate_3072,
         "steal-enqueue-sole-gate-3072-coverage": cmd_steal_enqueue_sole_gate_3072_coverage,
         "bridge-epoch-zero-stale-2930": cmd_bridge_epoch_zero_stale_2930_coverage,
         "chaos-steal-gc-nightly-2931": cmd_chaos_steal_gc_nightly_2931,
         "chaos-steal-gc-nightly-2931-coverage": cmd_chaos_steal_gc_nightly_2931_coverage,
-        "chaos-steal-lifetime-envframe-3001": cmd_chaos_steal_lifetime_envframe_3001_coverage,
-        "hold-budget-forced-fail-closed-2932": cmd_hold_budget_forced_fail_closed_2932_coverage,
-        "hold-budget-dtor-consume-2999": cmd_hold_budget_dtor_consume_2999_coverage,
-        "query-result-binding-2933": cmd_query_result_binding_2933_coverage,
-        "restamp-budget-2934": cmd_restamp_budget_2934_coverage,
-        "query-primitives-split-2914": cmd_query_primitives_split_2914_coverage,
-        "prim-error-convention-2998": cmd_prim_error_convention_2998_coverage,
-        "solve-delta-locality-slo-2913": cmd_solve_delta_locality_slo_2913_coverage,
         "solve-delta-dep-closure-2939": cmd_solve_delta_dep_closure_2939,
         "solve-delta-dep-closure-2939-coverage": cmd_solve_delta_dep_closure_2939_coverage,
         "coverage": cmd_coverage,
@@ -24829,54 +22711,35 @@ def main():
         "batch-dirty-discipline": cmd_batch_dirty_discipline_coverage,
         "batch-dirty-production-multi-only-2936": cmd_batch_dirty_production_multi_only_2936,
         "batch-dirty-production-multi-only-2936-coverage": cmd_batch_dirty_production_multi_only_2936_coverage,
-        "moving-unified-success-2682": cmd_moving_unified_success_2682_coverage,
         "moving-sticky-densify-off-2905": cmd_moving_sticky_densify_off_2905,
         "moving-sticky-densify-off-2905-coverage": cmd_moving_sticky_densify_off_2905_coverage,
         "moving-known-roots-sticky-recovery-2935": cmd_moving_known_roots_sticky_recovery_2935,
         "moving-known-roots-sticky-recovery-2935-coverage": cmd_moving_known_roots_sticky_recovery_2935_coverage,
         "general-object-pin-create-densify-2971": cmd_general_object_pin_create_densify_2971,
         "general-object-pin-create-densify-2971-coverage": cmd_general_object_pin_create_densify_2971_coverage,
-        "general-object-pin-allocate-3053": cmd_general_object_pin_allocate_3053,
         "general-object-pin-allocate-3053-coverage": cmd_general_object_pin_allocate_3053_coverage,
-        "mid-fallback-refuse-se-3054": cmd_mid_fallback_refuse_se_3054,
         "mid-fallback-refuse-se-3054-coverage": cmd_mid_fallback_refuse_se_3054_coverage,
-        "wal-append-fail-slo-3056": cmd_wal_append_fail_slo_3056,
         "wal-append-fail-slo-3056-coverage": cmd_wal_append_fail_slo_3056_coverage,
-        "wal-append-fail-schedule-3211": cmd_wal_append_fail_schedule_3211,
         "wal-append-fail-schedule-3211-coverage": cmd_wal_append_fail_schedule_3211_coverage,
-        "wal-fail-closed-force-wal-3302": cmd_wal_fail_closed_force_wal_3302,
         "wal-fail-closed-force-wal-3302-coverage": cmd_wal_fail_closed_force_wal_3302_coverage,
-        "atomic-batch-macro-audit-3301": cmd_atomic_batch_macro_audit_3301,
-        "atomic-batch-macro-audit-3301-coverage": cmd_atomic_batch_macro_audit_3301_coverage,
         "moving-pre-densify-completeness-2973": cmd_moving_pre_densify_completeness_2973,
         "moving-pre-densify-completeness-2973-coverage": cmd_moving_pre_densify_completeness_2973_coverage,
         "moving-incomplete-remap-3017": cmd_moving_incomplete_remap_3017,
         "moving-incomplete-remap-3017-coverage": cmd_moving_incomplete_remap_3017_coverage,
-        "moving-post-moving-stale-3055": cmd_moving_post_moving_stale_3055,
         "moving-post-moving-stale-3055-coverage": cmd_moving_post_moving_stale_3055_coverage,
-        "moving-temporary-canary-3210": cmd_moving_temporary_canary_3210,
         "moving-temporary-canary-3210-coverage": cmd_moving_temporary_canary_3210_coverage,
-        "compiler-metrics-fields-3737": cmd_compiler_metrics_fields_3737,
         "compiler-metrics-fields-3737-coverage": cmd_compiler_metrics_fields_3737_coverage,
-        "steal-complete-total-ssot-3779": cmd_steal_complete_total_ssot_3779,
         "steal-complete-total-ssot-3779-coverage": cmd_steal_complete_total_ssot_3779_coverage,
-        "mutation-wal-miss-fail-closed-3780": cmd_mutation_wal_miss_fail_closed_3780,
         "mutation-wal-miss-fail-closed-3780-coverage": cmd_mutation_wal_miss_fail_closed_3780_coverage,
-        "densify-this-window-rewrite-3781": cmd_densify_this_window_rewrite_3781,
         "densify-this-window-rewrite-3781-coverage": cmd_densify_this_window_rewrite_3781_coverage,
-        "densify-entry-lcp-skip-compact-3782": cmd_densify_entry_lcp_skip_compact_3782,
         "densify-entry-lcp-skip-compact-3782-coverage": cmd_densify_entry_lcp_skip_compact_3782_coverage,
-        "auto-arm-densify-health-publish-3783": cmd_auto_arm_densify_health_publish_3783,
         "auto-arm-densify-health-publish-3783-coverage": cmd_auto_arm_densify_health_publish_3783_coverage,
-        "anon-peer-empty-name-soft-stale-3784": cmd_anon_peer_empty_name_soft_stale_3784,
         "anon-peer-empty-name-soft-stale-3784-coverage": cmd_anon_peer_empty_name_soft_stale_3784_coverage,
-        "sync-remount-storm-gate-3785": cmd_sync_remount_storm_gate_3785,
         "sync-remount-storm-gate-3785-coverage": cmd_sync_remount_storm_gate_3785_coverage,
         "engine-metrics-hash-overflow-3018": cmd_engine_metrics_hash_overflow_3018,
         "engine-metrics-hash-overflow-3018-coverage": cmd_engine_metrics_hash_overflow_3018_coverage,
         "unified-restamp-3019": cmd_unified_restamp_3019,
         "unified-restamp-3019-coverage": cmd_unified_restamp_3019_coverage,
-        "unified-restamp-query-visible-3058": cmd_unified_restamp_query_visible_3058,
         "unified-restamp-query-visible-3058-coverage": cmd_unified_restamp_query_visible_3058_coverage,
         "hot-update-decide-and-reemit-3059": cmd_hot_update_decide_and_reemit_3059,
         "hot-update-decide-and-reemit-3059-coverage": cmd_hot_update_decide_and_reemit_3059_coverage,
@@ -24888,7 +22751,6 @@ def main():
         "envframe-closure-apply-protocol-3021-coverage": cmd_envframe_closure_apply_protocol_3021_coverage,
         "ffi-opaque-pin-or-remap-3022": cmd_ffi_opaque_pin_or_remap_3022,
         "ffi-opaque-pin-or-remap-3022-coverage": cmd_ffi_opaque_pin_or_remap_3022_coverage,
-        "ffi-opaque-pin-or-remap-3057": cmd_ffi_opaque_pin_or_remap_3057,
         "ffi-opaque-pin-or-remap-3057-coverage": cmd_ffi_opaque_pin_or_remap_3057_coverage,
         "linear-root-abort-release-3023": cmd_linear_root_abort_release_3023,
         "linear-root-abort-release-3023-coverage": cmd_linear_root_abort_release_3023_coverage,
@@ -24955,8 +22817,6 @@ def main():
         "workflow-run-2974-coverage": cmd_workflow_run_2974_coverage,
         "agent-scope-concurrency-2976": cmd_agent_scope_concurrency_2976_coverage,
         "agent-scope-concurrency-2976-coverage": cmd_agent_scope_concurrency_2976_coverage,
-        "outermost-exit-residual-pin-2975": cmd_outermost_exit_residual_pin_2975_coverage,
-        "outermost-exit-residual-pin-2975-coverage": cmd_outermost_exit_residual_pin_2975_coverage,
         "pcv-flatast-locked-exclusive-2906": cmd_pcv_flatast_locked_exclusive_2906,
         "pcv-shared-cow-tls": cmd_pcv_shared_cow_tls_3429_coverage,
         "pcv-flatast-locked-exclusive-2906-coverage": cmd_pcv_flatast_locked_exclusive_2906_coverage,
@@ -24973,56 +22833,28 @@ def main():
         "solve-delta-partial-cleared-3169-coverage": cmd_solve_delta_partial_cleared_3169,
         "soft-timeout-quarantine-3331": cmd_soft_timeout_quarantine_3331,
         "soft-timeout-quarantine-3331-coverage": cmd_soft_timeout_quarantine_3331,
-        "shape-storm-per-eval-default-2683": cmd_shape_storm_isolation_2683_coverage,
-        "evaluator-capture-tenant-2687": cmd_evaluator_capture_tenant_2687_coverage,
         "hard-capture-tenant-2705": cmd_hard_capture_tenant_2705_coverage,
         "evaluator-stamp-sole-authority-2759": cmd_evaluator_stamp_sole_authority_2759_coverage,
-        "capability-production-default-2688": cmd_capability_production_default_2688_coverage,
-        "closure-anon-captured-remount-2691": cmd_closure_anon_captured_remount_2691_coverage,
-        "pure-anon-sync-remount-budget-2850": cmd_pure_anon_sync_remount_budget_2850_coverage,
         "pure-anon-adaptive-budget-2893": cmd_pure_anon_adaptive_budget_2893_coverage,
-        "coverage-verify-min-dirty-2952": cmd_coverage_verify_min_dirty_2952_coverage,
         "reload-recovery-playbook-2953": cmd_reload_recovery_playbook_2953_coverage,
-        "staging-dlopen-ops-recovery-2982": cmd_staging_dlopen_ops_recovery_2982_coverage,
-        "composite-required-type-default-2983": cmd_composite_required_type_default_2983_coverage,
         "linear-compact-root-consistency-2984": cmd_linear_compact_root_consistency_2984_coverage,
-        "mutation-concurrency-health-admit-2985": cmd_mutation_concurrency_health_admit_2985_coverage,
         "mutate-guard-coverage-2986": cmd_mutate_guard_coverage_2986_coverage,
         "mailbox-delivery-safety-2987": cmd_mailbox_delivery_safety_2987_coverage,
-        "mailbox-residual-hard-reject-3036": cmd_mailbox_residual_hard_reject_3036,
-        "mailbox-residual-hard-reject-3036-coverage": cmd_mailbox_residual_hard_reject_3036_coverage,
-        "mutate-invalidate-incremental-2988": cmd_mutate_invalidate_incremental_2988_coverage,
         "query-concurrent-hygiene-safe-span-2989": cmd_query_concurrent_hygiene_safe_span_2989_coverage,
-        "workspace-concurrent-policy-2990": cmd_workspace_concurrent_policy_2990_coverage,
-        "scoped-parallel-overlap-hard-reject-3039": cmd_scoped_parallel_overlap_hard_reject_3039,
         "scoped-parallel-overlap-hard-reject-3039-coverage": cmd_scoped_parallel_overlap_hard_reject_3039_coverage,
-        "coercion-provenance-hf-mutate-2991": cmd_coercion_provenance_hf_mutate_2991_coverage,
         "coercion-hf-lag-hot-residual-3046": cmd_coercion_hf_lag_hot_residual_3046_coverage,
-        "hot-residual-soft-must-deopt-3084": cmd_hot_residual_soft_must_deopt_3084,
-        "hot-residual-soft-must-deopt-3084-coverage": cmd_hot_residual_soft_must_deopt_3084_coverage,
-        "gradual-permissiveness-2992": cmd_gradual_permissiveness_2992_coverage,
         "empty-pair-no-dynamic": cmd_empty_pair_no_dynamic_3432_coverage,
         "production-defaults-force-strict-unify": cmd_production_defaults_force_strict_unify_3430_coverage,
-        "typecheck-metrics-tier-2993": cmd_typecheck_metrics_tier_2993_coverage,
-        "solve-delta-locality-budget-2994": cmd_solve_delta_locality_budget_2994_coverage,
         "solve-delta-timeout-fail-closed-3003": cmd_solve_delta_timeout_fail_closed_3003_coverage,
         "adt-exhaust-dirty-cone-3005": cmd_adt_exhaust_dirty_cone_3005_coverage,
         "adt-exhaust-undermark-cone-3045": cmd_adt_exhaust_undermark_cone_3045_coverage,
-        "adt-exhaust-complete-seed-3083": cmd_adt_exhaust_complete_seed_3083,
-        "adt-exhaust-complete-seed-3083-coverage": cmd_adt_exhaust_complete_seed_3083_coverage,
         "steal-decision-per-fiber-2954": cmd_steal_decision_per_fiber_2954_coverage,
-        "steal-residual-rearm-resample-3038": cmd_steal_residual_rearm_resample_3038,
         "steal-residual-rearm-resample-3038-coverage": cmd_steal_residual_rearm_resample_3038_coverage,
         "production-abi-selfcheck-2955": cmd_production_abi_selfcheck_2955_coverage,
         "mutation-mirror-canary-2956": cmd_mutation_mirror_canary_2956_coverage,
-        "steal-lifetime-proof-residual-2957": cmd_steal_lifetime_proof_residual_2957_coverage,
         "mailbox-defer-slo-hold-cancel-2958": cmd_mailbox_defer_slo_hold_cancel_2958_coverage,
-        "mailbox-hold-slo-ssot-soak-3002": cmd_mailbox_hold_slo_ssot_soak_3002_coverage,
         "topology-dual-restore-2959": cmd_topology_dual_restore_2959_coverage,
         "query-stable-ref-stamp-2960": cmd_query_stable_ref_stamp_2960_coverage,
-        "query-stable-ref-restamp-lag-3000": cmd_query_stable_ref_restamp_lag_3000_coverage,
-        "restamp-over-budget-export-3037": cmd_restamp_over_budget_export_3037,
-        "restamp-over-budget-export-3037-coverage": cmd_restamp_over_budget_export_3037_coverage,
         "rename-replace-hygiene-restamp-2961": cmd_rename_replace_hygiene_restamp_2961_coverage,
         "structural-macro-hygiene-3027": cmd_structural_macro_hygiene_3027,
         "structural-macro-hygiene-3027-coverage": cmd_structural_macro_hygiene_3027_coverage,
@@ -25036,10 +22868,6 @@ def main():
         "macro-self-evo-grant-fence-3029-coverage": cmd_macro_self_evo_grant_fence_3029_coverage,
         "type-linear-proof-clear-on-abort-3030": cmd_type_linear_proof_clear_on_abort_3030,
         "type-linear-proof-clear-on-abort-3030-coverage": cmd_type_linear_proof_clear_on_abort_3030_coverage,
-        "pending-full-solve-residual-3031": cmd_pending_full_solve_residual_3031,
-        "pending-full-solve-residual-3031-coverage": cmd_pending_full_solve_residual_3031_coverage,
-        "rehydrate-miss-invalidate-3032": cmd_rehydrate_miss_invalidate_3032,
-        "rehydrate-miss-invalidate-3032-coverage": cmd_rehydrate_miss_invalidate_3032_coverage,
         "half-green-ir-steal-densify-3063": cmd_half_green_ir_steal_densify_3063,
         "half-green-ir-steal-densify-3063-coverage": cmd_half_green_ir_steal_densify_3063_coverage,
         "linear-fast-path-clear-on-restamp-3171": cmd_linear_fast_path_clear_on_restamp_3171,
@@ -25054,7 +22882,6 @@ def main():
         "query-surface-3175-coverage": cmd_query_surface_3175_coverage,
         "ffi-surface-3176": cmd_ffi_surface_3176,
         "ffi-surface-3176-coverage": cmd_ffi_surface_3176_coverage,
-        "rehydrate-miss-lowering-elision-3085": cmd_rehydrate_miss_lowering_elision_3085,
         "rehydrate-miss-lowering-elision-3085-coverage": cmd_rehydrate_miss_lowering_elision_3085_coverage,
         "inline-macro-body-marker-3064": cmd_inline_macro_body_marker_3064,
         "inline-macro-body-marker-3064-coverage": cmd_inline_macro_body_marker_3064_coverage,
@@ -25070,24 +22897,13 @@ def main():
         "abort-force-generation-fence-3069-coverage": cmd_abort_force_generation_fence_3069_coverage,
         "storm-exit-hysteresis-peer-soft-stale-3070": cmd_storm_exit_hysteresis_peer_soft_stale_3070,
         "storm-exit-hysteresis-peer-soft-stale-3070-coverage": cmd_storm_exit_hysteresis_peer_soft_stale_3070_coverage,
-        "hold-budget-inbody-window-3071": cmd_hold_budget_inbody_window_3071,
         "hold-budget-inbody-window-3071-coverage": cmd_hold_budget_inbody_window_3071_coverage,
-        "chaos-production-readiness-3073": cmd_chaos_production_readiness_3073,
-        "chaos-production-readiness-3073-coverage": cmd_chaos_production_readiness_3073_coverage,
-        "mutate-dispatch-sole-guard-3074": cmd_mutate_dispatch_sole_guard_3074,
-        "mutate-from-feedback-ssot-3828": cmd_mutate_from_feedback_ssot_3828,
         "mutate-from-feedback-ssot-3828-coverage": cmd_mutate_from_feedback_ssot_3828_coverage,
-        "dense-columnar-fingerprint-3829": cmd_dense_columnar_fingerprint_3829,
         "dense-columnar-fingerprint-3829-coverage": cmd_dense_columnar_fingerprint_3829_coverage,
-        "empty-type-annotation-no-dynamic-3830": cmd_empty_type_annotation_no_dynamic_3830,
         "empty-type-annotation-no-dynamic-3830-coverage": cmd_empty_type_annotation_no_dynamic_3830_coverage,
-        "dirty-aware-storm-force-full-cap-3831": cmd_dirty_aware_storm_force_full_cap_3831,
         "dirty-aware-storm-force-full-cap-3831-coverage": cmd_dirty_aware_storm_force_full_cap_3831_coverage,
-        "apply-closure-tls-cache-3832": cmd_apply_closure_tls_cache_3832,
         "apply-closure-tls-cache-3832-coverage": cmd_apply_closure_tls_cache_3832_coverage,
-        "ir-soa-column-arena-3833": cmd_ir_soa_column_arena_3833,
         "ir-soa-column-arena-3833-coverage": cmd_ir_soa_column_arena_3833_coverage,
-        "call-ownerless-fail-closed-3834": cmd_call_ownerless_fail_closed_3834,
         "call-ownerless-fail-closed-3834-coverage": cmd_call_ownerless_fail_closed_3834_coverage,
         "tenant-host-path-read-3835": cmd_tenant_host_path_read_3835,
         "tenant-host-path-read-3835-coverage": cmd_tenant_host_path_read_3835_coverage,
@@ -25125,21 +22941,13 @@ def main():
         "mutate-reg-kind-3452-coverage": cmd_mutate_reg_kind_3452_coverage,
         "transform-engine-guard-3352": cmd_transform_engine_guard_3352_coverage,
         "transform-engine-guard-3352-coverage": cmd_transform_engine_guard_3352_coverage,
-        "query-epoch-production-strict-3075": cmd_query_epoch_production_strict_3075,
         "query-epoch-production-strict-3075-coverage": cmd_query_epoch_production_strict_3075_coverage,
-        "soft-observe-not-hard-3076": cmd_soft_observe_not_hard_3076,
         "soft-observe-not-hard-3076-coverage": cmd_soft_observe_not_hard_3076_coverage,
-        "soft-timeout-export-non-authoritative-3081": cmd_soft_timeout_export_non_authoritative_3081,
-        "soft-timeout-export-non-authoritative-3081-coverage": cmd_soft_timeout_export_non_authoritative_3081_coverage,
-        "nested-occurrence-provisional-3082": cmd_nested_occurrence_provisional_3082,
         "nested-occurrence-provisional-3082-coverage": cmd_nested_occurrence_provisional_3082_coverage,
-        "aot-slot-owner-consistency-2692": cmd_aot_slot_owner_consistency_2692_coverage,
-        "require-effect-on-ref-2689": cmd_require_effect_on_ref_2689_coverage,
         "sole-require-effect-2706": cmd_sole_require_effect_2706_coverage,
         "mid-join-fail-closed-2707": cmd_mid_join_fail_closed_2707_coverage,
         "provenance-contributing-mid-3333": cmd_provenance_contributing_mid_3333,
         "provenance-contributing-mid-3333-coverage": cmd_provenance_contributing_mid_3333,
-        "pending-recovery-drain-2690": cmd_pending_recovery_drain_2690_coverage,
         "value-tag-hotpath-ban": cmd_value_tag_hotpath_ban_coverage,
         "shape-compact-storm-isolation": cmd_shape_compact_storm_isolation_coverage,
         "shape-compact-dirty-fnkey-3455": cmd_shape_compact_dirty_fnkey_3455_coverage,
@@ -25164,12 +22972,8 @@ def main():
         "pure-wrap-dirty-entry-3405-coverage": cmd_pure_wrap_dirty_entry_3405_coverage,
         "production-pure-wrap-soa-3454": cmd_production_pure_wrap_soa_3454_coverage,
         "production-pure-wrap-soa-3454-coverage": cmd_production_pure_wrap_soa_3454_coverage,
-        "escape-analysis-pure-wrap-3795": cmd_escape_analysis_pure_wrap_3795_coverage,
         "escape-soa-no-flat-4262": cmd_escape_soa_no_flat_4262,
         "primfn-no-std-function-4261": cmd_primfn_no_std_function_4261,
-        "occurrence-coercion-ci-ok-3796": cmd_occurrence_coercion_ci_ok_3796_coverage,
-        "occurrence-coercion-ci-ok-3796-coverage": cmd_occurrence_coercion_ci_ok_3796_coverage,
-        "escape-analysis-pure-wrap-3795-coverage": cmd_escape_analysis_pure_wrap_3795_coverage,
         "destroy-dtor-index-3456": cmd_destroy_dtor_index_3456_coverage,
         "destroy-dtor-index-3456-coverage": cmd_destroy_dtor_index_3456_coverage,
         "recover-fail-clear-persist-3406": cmd_recover_fail_clear_persist_3406_coverage,
@@ -25186,12 +22990,6 @@ def main():
         "deopt-pending-closure-call-3412-coverage": cmd_deopt_pending_closure_call_3412_coverage,
         "deopt-pending-fast-path-3441": cmd_deopt_pending_fast_path_3441_coverage,
         "deopt-pending-fast-path-3441-coverage": cmd_deopt_pending_fast_path_3441_coverage,
-        "scope-message-resolve-3442": cmd_scope_message_resolve_3442_coverage,
-        "scope-message-resolve-3442-coverage": cmd_scope_message_resolve_3442_coverage,
-        "scope-child-address-3444": cmd_scope_child_address_3444_coverage,
-        "scope-child-address-3444-coverage": cmd_scope_child_address_3444_coverage,
-        "ffi-jit-live-ptr-inventory-3443": cmd_ffi_jit_live_ptr_inventory_3443_coverage,
-        "ffi-jit-live-ptr-inventory-3443-coverage": cmd_ffi_jit_live_ptr_inventory_3443_coverage,
         "partial-reemit-success-coverage-3413": cmd_partial_reemit_success_coverage_3413_coverage,
         "partial-reemit-success-coverage-3413-coverage": cmd_partial_reemit_success_coverage_3413_coverage,
         "reemit-pipeline-reason-coverage-3445": cmd_reemit_pipeline_reason_coverage_3445_coverage,
@@ -25215,7 +23013,6 @@ def main():
         "hash-table-grow": cmd_hash_table_grow_coverage,
         "subsecond-clock": cmd_subsecond_clock_coverage,
         "fiber-spawn-cli": cmd_fiber_spawn_cli_coverage,
-        "fiber-spawn-cli-dtor-drain": cmd_fiber_spawn_cli_dtor_drain_coverage,
         "query-default-stamped": cmd_query_default_stamped_coverage,
         "query-default-schema2-export-3449": cmd_query_default_schema2_export_3449_coverage,
         "query-default-schema2-export-3449-coverage": cmd_query_default_schema2_export_3449_coverage,
@@ -25232,7 +23029,6 @@ def main():
         "as-stable-ref-v2": cmd_as_stable_ref_v2_coverage,
         "as-stable-ref-prod-int-reject": cmd_as_stable_ref_prod_int_reject_coverage,
         "stable-ref-probe-3400": cmd_stable_ref_probe_3400_coverage,
-        "query-result-soft-prod-transition": cmd_query_result_soft_prod_transition_coverage,
         "cone-truncate-force-closure-2909": cmd_cone_truncate_force_closure_2909,
         "cone-truncate-force-closure-2909-coverage": cmd_cone_truncate_force_closure_2909_coverage,
         "cone-outside-goal-drop-recover-reject-2962": cmd_cone_outside_goal_drop_recover_reject_2962_coverage,
@@ -25247,7 +23043,6 @@ def main():
         "occurrence-commit-snapshot-2938": cmd_occurrence_commit_snapshot_2938,
         "occurrence-persist-audit-atomic-3004": cmd_occurrence_persist_audit_atomic_3004_coverage,
         "occurrence-commit-snapshot-2938-coverage": cmd_occurrence_commit_snapshot_2938_coverage,
-        "occurrence-commit-health-2995": cmd_occurrence_commit_health_2995,
         "occurrence-commit-health-2995-coverage": cmd_occurrence_commit_health_2995_coverage,
         "refined-consistency-commit-gate-2911": cmd_refined_consistency_commit_gate_2911,
         "refined-consistency-commit-gate-2911-coverage": cmd_refined_consistency_commit_gate_2911_coverage,
@@ -25258,7 +23053,6 @@ def main():
         "demo": test_demo,
         "regression": lambda: cmd_test(["regression"]),
         "bench": cmd_bench,
-        "bench-llm": run_bench_llm,
         "pgo": cmd_pgo,
         "repro": cmd_repro,
         "sbom": cmd_sbom,

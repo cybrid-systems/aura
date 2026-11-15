@@ -54,7 +54,6 @@ def main() -> int:
     t_iso = _read("tests/orch/test_agent_name_table_isolation.cpp")
     t_scope = _read("tests/orch/test_agent_scope.cpp")
     t_orch = _read("tests/orch/test_orch_scope.cpp")
-    build = _read("build.py")
 
     must("Issue #3442" in agent, "AC1: evaluator_primitives_agent.cpp cites #3442")
     must("resolve_aura_agent" in agent, "AC1: resolve_aura_agent helper")
@@ -95,7 +94,14 @@ def main() -> int:
     must("#3442" in readme, "AC5: README cites #3442")
     must("schema-3442" not in agent, "AC6: no schema-3442 query key")
     must("g_3442_" not in agent, "AC6: no g_3442_* counter")
-    must("check_scope_message_resolve_3442" in build, "AC7: build.py wires linter")
+    # Issue #5246: wired through the shared coverage runner — run_checks.py
+    # globs scripts/coverage/checks/check_*.py, replacing the deleted build.py
+    # `or cmd_*_coverage()` wrapper.
+    must(
+        (ROOT / "scripts" / "coverage" / "checks" / "check_scope_message_resolve_3442.py").is_file()
+        and "discover_checks" in _read("scripts/coverage/run_checks.py"),
+        "AC7: build.py wires linter",
+    )
     must("3442 AC1" in t_orch, "AC7: test_orch_scope extended")
     must("3442 AC1" in t_scope, "AC7: test_agent_scope extended")
     must("3442 AC" in t_iso, "AC7: test_agent_name_table_isolation extended")

@@ -39,7 +39,6 @@ def main() -> int:
     poh = _read("src/serve/parallel_orch.h")
     agent = _read("src/compiler/evaluator_primitives_agent.cpp")
     test = _read("tests/orch/test_parallel_intend_pure_contract.cpp")
-    build = _read("build.py")
 
     must("Issue #2923" in poh, "AC1: parallel_orch cites #2923")
     must("enum class IsolationLevel" in poh, "AC1: IsolationLevel enum")
@@ -65,7 +64,14 @@ def main() -> int:
 
     must("2923" in test and "decide_isolation" in test, "AC5: contract test extended")
     must("#2923 AC1" in test, "AC5: AC1 row in test")
-    must("isolation-decide-2923" in build or "isolation_decide_2923" in build, "AC5: build.py")
+    # Issue #5246: wired through the shared coverage runner — run_checks.py
+    # globs scripts/coverage/checks/check_*.py, replacing the deleted build.py
+    # `or cmd_*_coverage()` wrapper.
+    must(
+        (ROOT / "scripts" / "coverage" / "checks" / "check_isolation_decide_2923.py").is_file()
+        and "discover_checks" in _read("scripts/coverage/run_checks.py"),
+        "AC5: build.py",
+    )
 
     must(not (ROOT / "tests/orch/test_issue_2923.cpp").is_file(), "AC5: no invent test_issue_2923")
     docs = ROOT / "docs" / "design"

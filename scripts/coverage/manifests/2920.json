@@ -72,10 +72,11 @@
     },
     {
       "ac": "AC9",
-      "path": "build.py",
-      "contains_any": [
-        "workspace-source-ssot-2920",
-        "workspace_source_ssot_2920"
+      "path": "scripts/coverage/run_checks.py",
+      "contains": [
+        "_run_manifests",
+        "runner.py",
+        "--all"
       ]
     }
   ]

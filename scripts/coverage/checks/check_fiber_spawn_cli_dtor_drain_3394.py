@@ -41,7 +41,6 @@ def main() -> int:
     _read("src/compiler/messaging_bridge.h")
     doc = _read("docs/stdlib/fiber-spawn.md")
     test = _read("tests/compiler/test_fiber_spawn_cli.cpp")
-    build = _read("build.py")
 
     # AC1: registry + no detach on the spawn path.
     must("#3394" in msg, "AC1: messaging cites #3394")
@@ -150,8 +149,12 @@ def main() -> int:
     )
 
     # Gate wiring.
+    # Issue #5246: wired through the shared coverage runner — run_checks.py
+    # globs scripts/coverage/checks/check_*.py, replacing the deleted build.py
+    # `or cmd_*_coverage()` wrapper.
     must(
-        "check_fiber_spawn_cli_dtor_drain_3394" in build,
+        (ROOT / "scripts" / "coverage" / "checks" / "check_fiber_spawn_cli_dtor_drain_3394.py").is_file()
+        and "discover_checks" in _read("scripts/coverage/run_checks.py"),
         "gate: build.py wires the linter",
     )
 
