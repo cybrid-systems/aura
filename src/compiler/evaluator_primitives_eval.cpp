@@ -18,6 +18,7 @@ module;
 #include "compiler/mark_all_owner_clear.hh" // Issue #4360: set-code clears IR owners
 #include "float_repr.hh"                    // Issue #4746: one decimal spelling (#4468)
 #include "compiler/chunk_io.hh"             // #4936 std::array file chunks
+#include "compiler/form_split.hh"           // #5239: single form splitter
 
 module aura.compiler.evaluator;
 
@@ -2115,82 +2116,11 @@ void RegSplitParts::register_mutate_check_primitive(PrimRegistrar add, Evaluator
                 return make_pair(head);
             };
 
-            // (0) Strict paren balance. parse_to_flat's special forms can absorb a
-            // missing ) at EOF (parse_if / parse_define do not run the generic
-            // parse_list tail check), so a dry-run gate that promises strict
-            // parsing has to reject unbalanced source itself. Comparing numeric
-            // char codes keeps this scanner independent of literal escaping.
+            // (0) Strict paren balance — the one shared scanner (#5239).
             {
-                int depth = 0;
-                bool in_str = false, esc = false, in_comment = false;
-                std::string balance_err;
-                std::size_t line = 1;
-                struct Open {
-                    std::size_t line;
-                    bool semi;
-                };
-                std::vector<Open> opens;
-                for (std::size_t i = 0; i < candidate.size(); ++i) {
-                    const char ch = candidate[i];
-                    if (ch == '\n')
-                        ++line;
-                    if (in_comment) {
-                        if (ch == 10)
-                            in_comment = false; // newline
-                        continue;
-                    }
-                    if (in_str) {
-                        if (esc) {
-                            esc = false;
-                            continue;
-                        }
-                        if (ch == 92) {
-                            esc = true;
-                            continue;
-                        } // backslash
-                        if (ch == 34)
-                            in_str = false; // close quote
-                        continue;
-                    }
-                    if (ch == 59) {
-                        in_comment = true;
-                        continue;
-                    } // ; comment
-                    if (ch == 34) {
-                        in_str = true;
-                        continue;
-                    } // open quote
-                    if (ch == 40) { // (
-                        const bool semi = i + 1 < candidate.size() && candidate[i + 1] == ';';
-                        opens.push_back(Open{line, semi});
-                        ++depth;
-                    } else if (ch == 41) { // )
-                        if (!opens.empty())
-                            opens.pop_back();
-                        if (--depth < 0) {
-                            balance_err = "unexpected )";
-                            break;
-                        }
-                    }
-                }
-                if (balance_err.empty() && in_str)
-                    balance_err = "unterminated string literal";
-                if (balance_err.empty() && depth != 0) {
-                    // Issue #5199: same face as the reader — name the opener.
-                    balance_err = "unclosed list: missing ) before end of input";
-                    if (!opens.empty()) {
-                        balance_err +=
-                            "; unclosed list opened at line " + std::to_string(opens.back().line);
-                        if (opens.back().semi) {
-                            balance_err +=
-                                "; '(' before ';' opened a real list and the rest of the line "
-                                "was commented out; a file-header comment should be ';' without "
-                                "the leading '('";
-                        }
-                    }
-                }
-                if (!balance_err.empty())
-                    return tagged("parse-error", balance_err);
+                const auto split = aura::compiler::form_split::split_top_level_forms(candidate);
+                if (!split.ok())
+                    return tagged("parse-error", split.error);
             }
 
             // (1) Strict parse of the candidate on its own.
