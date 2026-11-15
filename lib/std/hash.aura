@@ -24,10 +24,6 @@
 (define (make-hash) (hash))
 
 
-(define (for-each f lst)
-  (if (null? lst) #t
-    (begin (f (car lst)) (for-each f (cdr lst)))))
-
 ; (hash-set h k v) -- COPY-ON-WRITE: returns a NEW hash with k -> v and
 ; leaves h UNCHANGED. Issue #4614: the old wrapper was
 ; (define (hash-set h k v) (hash-set! h k v) h), i.e. it aliased the

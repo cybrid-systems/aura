@@ -70,6 +70,21 @@ std::string import_module_label(std::string_view path) {
 
 namespace aura::compiler {
 
+namespace {
+    // Issue #5238: these stdlib exports deliberately wrap a core primitive with
+    // the same public contract (or restore it per test case). They are not the
+    // silent contract change the warning exists to catch, so keep them quiet.
+    [[nodiscard]] bool is_known_core_wrapper(std::string_view module, std::string_view name) {
+        if (module == "std/string")
+            return name == "string-join";
+        if (module == "std/math")
+            return name == "gcd" || name == "lcm";
+        if (module == "std/test")
+            return name == "check" || name == "check=";
+        return false;
+    }
+} // namespace
+
 void Evaluator::forget_import_bind_origin(const Env* env) noexcept {
     if (env != nullptr)
         import_bind_origin_.erase(env);
@@ -112,6 +127,16 @@ void Evaluator::warn_import_overwrite(Env* env, const std::string& name,
         std::println(std::cerr,
                      "warning: {} was already defined by {}; {}'s definition will overwrite it.",
                      name, found->second.module, label);
+    }
+    // Issue #5238: a module export must not silently replace a core primitive
+    // with a different contract. Re-exporting the primitive value itself
+    // (`(define floor floor)`) is not an override and stays quiet.
+    if (env->lookup_primitive(name) && !types::is_primitive(incoming) &&
+        !is_known_core_wrapper(label, name) && (!tracked || found->second.module != label) &&
+        (!local || unwrap(*local) != incoming)) {
+        std::println(std::cerr,
+                     "warning: {} is a core primitive; {}'s definition will overwrite it.", name,
+                     label);
     }
     // A true re-export is the same object. Keep the module that first
     // installed it so a later distinct definition names that module.
