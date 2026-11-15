@@ -12,7 +12,13 @@
         "staging_retry_eligible",
         "note_ops_fail_dlopen",
         "last_dlopen_path_hash",
-        "last_dlopen_errno_class",
+        "last_dlopen_errno_class"
+      ]
+    },
+    {
+      "ac": "AC1 snapshot",
+      "path": "src/compiler/aura_snapshot_abi.hh",
+      "contains": [
         "schema_2982"
       ]
     },
