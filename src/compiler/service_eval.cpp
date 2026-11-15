@@ -15,6 +15,43 @@ import std;
 
 namespace aura::compiler {
 
+namespace {
+
+    // Issue #5195: a macro registered by a required module (or an earlier eval)
+    // has its MacroDef in that module's flat, so the in-flat MacroDef scan and
+    // macro_expand_all cannot expand it here. Its call survives the static pass
+    // and the #2213 gate would read the callee as an unknown variable and
+    // hard-error on the strict face. Macros are walker constructs for the same
+    // reason as #4846's legacy in-flat MacroDef: route the call to the walker.
+    // Only the live root subtree counts; orphaned forms stripped by
+    // pre_exec_requires must not route the program to the walker.
+    [[nodiscard]] bool flat_has_registered_macro_call(const aura::ast::FlatAST& flat,
+                                                      const aura::ast::StringPool& pool,
+                                                      aura::ast::NodeId root,
+                                                      const Evaluator& evaluator) {
+        if (root == aura::ast::NULL_NODE || root >= flat.size())
+            return false;
+        bool found = false;
+        flat.walk_subtree(root, [&](aura::ast::NodeId id) {
+            if (found)
+                return;
+            const auto v = flat.get(id);
+            if (v.tag != aura::ast::NodeTag::Call || v.children.empty())
+                return;
+            const auto callee = v.child(0);
+            if (callee >= flat.size())
+                return;
+            const auto callee_v = flat.get(callee);
+            if (callee_v.tag != aura::ast::NodeTag::Variable)
+                return;
+            if (evaluator.is_registered_macro(pool.resolve(callee_v.sym_id)))
+                found = true;
+        });
+        return found;
+    }
+
+} // namespace
+
 [[nodiscard]] EvalResult CompilerService::eval(std::string_view input) {
     // Issue #4674: CLI oneshot holds this lock in main (#4356). Tests,
     // the REPL, and --serve enter eval directly. Thread-fallback
@@ -510,6 +547,18 @@ namespace aura::compiler {
     // was a single require). Treat as a no-op.
     if (expanded_root == aura::ast::NULL_NODE) {
         return EvalResult(types::make_void());
+    }
+
+    // Issue #5195: take the walker arm for calls to macros registered by a
+    // required module / an earlier eval (see the helper above).
+    if (flat_has_registered_macro_call(*flat_ptr, *pool_ptr, expanded_root, evaluator_)) {
+        auto result =
+            evaluator_.eval_flat(*flat_ptr, *pool_ptr, expanded_root, evaluator_.top_env());
+        for (auto& name :
+             aura::compiler::collect_user_bindings(*flat_ptr, *pool_ptr, expanded_root)) {
+            user_bindings_.insert(std::move(name));
+        }
+        return result;
     }
 
     // Compile-time AST validation (structural correctness)

@@ -3894,6 +3894,13 @@ public:
     // plain CLI face. The flag lives in the running body's Context, so it does
     // not leak into nested spawned bodies (#5064).
     void set_file_diag_in_fiber_body(bool on) noexcept { eval_ctx().file_diag_in_fiber_body = on; }
+    // Issue #5195: is this name a macro registered by an earlier eval or a
+    // required module? The MacroDef lives in the module's flat, not the
+    // caller's, so a scan for in-flat MacroDef nodes cannot see it — the
+    // service gate needs this to route macro calls to the walker.
+    [[nodiscard]] bool is_registered_macro(std::string_view name) const {
+        return macros_.find(std::string(name)) != macros_.end();
+    }
     // Issue #4901: registry sequence for FlatAST::macro_view_seq_4901.
     [[nodiscard]] std::uint64_t macro_seq_4901() const noexcept {
         return macro_seq_4901_.load(std::memory_order_acquire);
