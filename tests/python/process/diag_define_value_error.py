@@ -60,7 +60,9 @@ class DefineValueError(unittest.TestCase):
         for pipeline in (None, "force-soa"):
             with self.subTest(pipeline=pipeline or "default"):
                 r = run_prog("(display (memq 1 (list 1)))\n", pipeline)
-                self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+                # #5240: unbound is static (4); the force-soa face reports
+                # it as "cannot call", which is still a runtime TypeError (1).
+                self.assertIn(r.returncode, (1, 4), r.stdout + r.stderr)
                 self.assertIn("did you mean 'member'?", r.stderr, r.stderr)
 
 

@@ -85,6 +85,18 @@ class DiagJson(unittest.TestCase):
         self.assertEqual(obj["message"], "x")
         self.assertEqual(obj["span"]["start"], {"line": 1, "column": 2})
 
+    def test_exit_code_table(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "u.aura"
+            p.write_text('(display "abc)\n')
+            self.assertEqual(run([str(p)], cwd=d).returncode, 3)  # parse
+        self.assertEqual(run(["-e", "(display zz)"]).returncode, 4)  # static/unbound
+        self.assertEqual(run(["-e", "(car 5)"]).returncode, 1)  # runtime
+        env = dict(os.environ)
+        env["AURA_SANDBOX"] = "off"
+        empty = subprocess.run([str(AURA_BIN)], input="", capture_output=True, text=True, env=env, timeout=120)
+        self.assertEqual(empty.returncode, 2)  # usage
+
     def test_default_text_output_is_unchanged(self) -> None:
         with tempfile.TemporaryDirectory() as d:
             p = Path(d) / "u.aura"
