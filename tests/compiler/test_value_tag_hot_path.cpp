@@ -343,6 +343,76 @@ static void ac7_float_local_loop_4524() {
     }
 }
 
+// #5304: a named-let whose step calls a primitive or a literal function stays
+// on the integer loop after the 16-site table is full, and a side-effecting
+// call still runs once per step.
+static void ac8_named_let_calls_5304() {
+    std::println("\n--- AC8 (#5304): named-let calls stay on the integer loop ---");
+    CompilerService cs;
+    std::int64_t mod20 = 0;
+    for (int i = 0; i < 20; ++i)
+        mod20 += i % 7;
+    std::int64_t mod_big = 0;
+    constexpr int kN = 200000;
+    for (int i = 0; i < kN; ++i)
+        mod_big += i % 7;
+
+    std::string fillers;
+    for (int i = 0; i < 12; ++i) {
+        fillers += "(define (fill" + std::to_string(i) +
+                   ") (let loop ((i 0) (s 0)) (if (< i 3) (loop (+ i 1) (+ s " + std::to_string(i) +
+                   ")) s)))\n(fill" + std::to_string(i) + ")\n";
+    }
+    const std::string src =
+        "(define V (vector 1 2 3 4 5 6 7 8))\n"
+        "(define (five) 5)\n"
+        "(define T 0)\n"
+        "(define (tick) (set! T (+ T 1)) 1)\n"
+        "(define (a n) (let loop ((i 0) (s 0)) (if (< i n) (loop (+ i 1) (+ s 3)) s)))\n"
+        "(define (b n) (let loop ((i 0) (s 0)) (if (< i n) (loop (+ i 1) (+ s (five))) s)))\n"
+        "(define (c n) (let loop ((i 0) (s 0)) (if (< i n) (loop (+ i 1) (+ s (vector-ref V 5))) "
+        "s)))\n"
+        "(define (d n) (let loop ((i 0) (s 0)) (if (< i n) (loop (+ i 1) (+ s (modulo i 7))) s)))\n"
+        "(define (dm n) (let loop ((i 0) (s 0)) (if (< i n) (loop (+ i 1) (+ s (mod i 7))) s)))\n"
+        "(define (e n) (let loop ((i 0) (s 0)) (if (< i n) (loop (+ i 1) (+ s (list-ref (list 1 2 "
+        "3) 2))) s)))\n"
+        "(define (f n) (let ((v (vector 1 2 3 4 5 6 7 8))) (let loop ((i 0) (s 0)) (if (< i n) "
+        "(loop (+ i 1) (+ s (vector-ref v 5))) s))))\n"
+        "(define (g n) (let loop ((i 0) (s 0)) (if (< i n) (loop (+ i 1) (+ s (tick))) s)))\n"
+        "(define sa (a 20))\n"
+        "(define sb (b 20))\n"
+        "(define sc (c 20))\n"
+        "(define sd (d 20))\n"
+        "(define se (e 20))\n"
+        "(define sf (f 20))\n"
+        "(define sg (g 20))\n"
+        "(define st T)\n"
+        "(vector-set! V 5 9)\n"
+        "(define sc2 (c 4))\n" +
+        fillers +
+        "(define t0 (monotonic-ms))\n"
+        "(define rc (a " +
+        std::to_string(kN) +
+        "))\n"
+        "(define t1 (monotonic-ms))\n"
+        "(define rm (d " +
+        std::to_string(kN) +
+        "))\n"
+        "(define t2 (monotonic-ms))\n"
+        "(display (list sa sb sc sd se sf sg st sc2 rc rm (- t1 t0) (- t2 t1)))\n"
+        "(newline)\n"
+        "(if (and (= sa 60) (= sb 100) (= sc 120) (= sd " +
+        std::to_string(mod20) +
+        ") (= se 60) (= sf 120) (= sg 20) (= st 20) (= sc2 36)"
+        " (= rc " +
+        std::to_string(static_cast<long long>(3) * kN) + ") (= rm " + std::to_string(mod_big) +
+        ") (= (dm 20) sd)"
+        " (< (- t2 t1) (+ (* (- t1 t0) 3) 15))) 1 0)\n";
+    auto g = cs.eval(src);
+    CHECK(g.has_value() && types::is_int(*g) && types::as_int(*g) == 1,
+          "5304 values match and modulo stays within 3x of the const loop");
+}
+
 } // namespace
 
 int run_test_value_tag_hot_path() {
@@ -354,6 +424,7 @@ int run_test_value_tag_hot_path() {
     ac5_eval_semantics();
     ac6_classify_order_4524();
     ac7_float_local_loop_4524();
+    ac8_named_let_calls_5304();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
