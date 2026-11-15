@@ -327,10 +327,11 @@ int run_test_cache_stamp_restamp_contract() {
 
     {
         std::println("\n--- #3481 AC2: instr peel does not content-restamp ---");
-        const auto svc = read_file("src/compiler/service.ixx");
+        const auto svc =
+            read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
         const auto peel = svc.find("bool relower_affected_instrs_");
         CHECK(peel != std::string::npos, "3481 AC2: instr peel exists");
-        const auto relower = svc.find("bool relower_define_blocks(");
+        const auto relower = svc.find("bool CompilerService::relower_define_blocks(");
         CHECK(relower != std::string::npos, "3481 AC2: relower_define_blocks");
         const auto win = aura::test::aura_source_block_after(svc, relower);
         CHECK(win.find("ack_cache_entry_fences_live_") != std::string::npos,

@@ -459,7 +459,8 @@ static void ac3324_2_map_not_green_with_preabort_ids() {
 
 static void ac3324_3_relower_skips_partial() {
     std::println("\n--- #3324 AC3: relower_define_blocks skips partial on abort_map_invalid ---");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc =
+        read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
     CHECK(svc.find("Issue #3324") != std::string::npos, "3324 AC3: service cites #3324");
     CHECK(svc.find("if (it->second.abort_map_invalid)") != std::string::npos,
           "3324 AC3: lookup consults abort_map_invalid");
@@ -920,11 +921,13 @@ static void ac4084_3_prologue_zero_is_not_success() {
         CHECK(gate != std::string::npos && fence > gate,
               "4084 AC3: erase sits inside the production gate");
     }
-    const auto jit = svc.find("Issue #4084: prologue deopt's fixnum 0 is not a successful value.\n"
-                              "        // nullopt");
+    const auto jit_src = read_file("src/compiler/service_jit.cpp");
+    const auto jit =
+        jit_src.find("Issue #4084: prologue deopt's fixnum 0 is not a successful value.\n"
+                     "    // nullopt");
     CHECK(jit != std::string::npos, "4084 AC3: try_jit cites the sentinel");
     if (jit != std::string::npos) {
-        const auto win = svc.substr(jit, 500);
+        const auto win = jit_src.substr(jit, 500);
         const auto ret = win.find("return std::nullopt");
         const auto dec = win.find("result_type");
         CHECK(ret != std::string::npos && dec != std::string::npos && ret < dec,

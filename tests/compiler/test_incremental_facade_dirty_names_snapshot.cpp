@@ -96,7 +96,8 @@ int run_test_incremental_facade_dirty_names_snapshot() {
                  "caller union at peel entry ===");
     CHECK(true, "ac3381: issue stamp");
 
-    auto ixx = read_file("src/compiler/service.ixx");
+    auto ixx =
+        read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
     auto dir = read_file("src/compiler/service_dirty.cpp");
     auto cache = read_file("src/compiler/ir_cache_pure.ixx");
     auto hot = read_file("src/compiler/hot_update_registry.cpp");
@@ -110,8 +111,8 @@ int run_test_incremental_facade_dirty_names_snapshot() {
         // The fix lives in relower_dirty_defines_from_workspace, after the
         // dirty_names snapshot and before the per-entry loop. Find the
         // body of the function and verify the union step is present.
-        const auto peel_body =
-            find_fn_body(ixx, "std::size_t relower_dirty_defines_from_workspace()", 16000);
+        const auto peel_body = find_fn_body(
+            ixx, "std::size_t CompilerService::relower_dirty_defines_from_workspace()", 16000);
         CHECK(!peel_body.empty(), "AC1: relower_dirty_defines_from_workspace found");
         if (!peel_body.empty()) {
             // 1a. The #3381 block is present and gated on
@@ -161,8 +162,8 @@ int run_test_incremental_facade_dirty_names_snapshot() {
     {
         std::println("\n--- AC2: never silent skip — non-zero dirty mask OR "
                      "take-full for the cone ---");
-        const auto peel_body =
-            find_fn_body(ixx, "std::size_t relower_dirty_defines_from_workspace()", 16000);
+        const auto peel_body = find_fn_body(
+            ixx, "std::size_t CompilerService::relower_dirty_defines_from_workspace()", 16000);
         CHECK(!peel_body.empty(), "AC2: relower_dirty_defines_from_workspace found");
         if (!peel_body.empty()) {
             // 2a. The caller-union appends to dirty_names BEFORE the
@@ -196,8 +197,8 @@ int run_test_incremental_facade_dirty_names_snapshot() {
     //    no extra BFS ─────────────────────────────────────────────────
     {
         std::println("\n--- AC3: Soft / Off + clean (armed==0) zero extra cost ---");
-        const auto peel_body =
-            find_fn_body(ixx, "std::size_t relower_dirty_defines_from_workspace()", 16000);
+        const auto peel_body = find_fn_body(
+            ixx, "std::size_t CompilerService::relower_dirty_defines_from_workspace()", 16000);
         // 3a. The #3381 block is gated on production_defaults_active()
         //     || initial_armed. Under Soft + clean single-fiber, neither
         //     is true → the union + mark step is skipped entirely (zero
@@ -255,8 +256,8 @@ int run_test_incremental_facade_dirty_names_snapshot() {
     //    interpreter visibility changes ─────────────────────────────
     {
         std::println("\n--- AC5: non-duplicative to #3345 ---");
-        const auto peel_body =
-            find_fn_body(ixx, "std::size_t relower_dirty_defines_from_workspace()", 16000);
+        const auto peel_body = find_fn_body(
+            ixx, "std::size_t CompilerService::relower_dirty_defines_from_workspace()", 16000);
         // The #3381/#3474 block lives in the peel (relower) path only — it
         // touches dirty_names / dep_graph_ / mark_caller_body_dirty /
         // mark_all_blocks_dirty. It does NOT touch:
@@ -295,8 +296,8 @@ int run_test_incremental_facade_dirty_names_snapshot() {
               "AC6: existing incremental_soundness_mismatch_prod_total counter retained");
         // 6c. The fix bumps partial_forced_full_by_impact_total on the
         //     gen-moved fail-closed take-full path (#3283 shape).
-        const auto peel_body =
-            find_fn_body(ixx, "std::size_t relower_dirty_defines_from_workspace()", 16000);
+        const auto peel_body = find_fn_body(
+            ixx, "std::size_t CompilerService::relower_dirty_defines_from_workspace()", 16000);
         if (!peel_body.empty()) {
             const auto block_pos = peel_body.find("Issue #3381");
             if (block_pos != std::string::npos) {
@@ -350,8 +351,8 @@ int run_test_incremental_facade_dirty_names_snapshot() {
     // ── #3474: peel FIFO cone + no Soft-invalidate teardown ────────
     {
         std::println("\n--- #3474: FIFO called_by cone, no dep_graph teardown ---");
-        const auto peel_body =
-            find_fn_body(ixx, "std::size_t relower_dirty_defines_from_workspace()", 16000);
+        const auto peel_body = find_fn_body(
+            ixx, "std::size_t CompilerService::relower_dirty_defines_from_workspace()", 16000);
         const auto block_pos = peel_body.find("Issue #3381");
         CHECK(block_pos != std::string::npos, "3474: #3381 peel block found");
         if (block_pos != std::string::npos) {

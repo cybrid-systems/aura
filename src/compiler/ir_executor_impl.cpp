@@ -779,24 +779,14 @@ EvalResult IRInterpreter::execute() {
     return drain_call_stack(base);
 }
 
-// Issue #4896: see ir_executor.ixx. The tree-walker raises a dispatch deny
-// at the call; the IR only stored it in a local, so a statement-position
-// `(set-car! q 5)` under Restricted force-soa was dropped with rc=0.
-std::optional<Diagnostic> IRInterpreter::effect_deny_diagnostic_4896_(const EvalValue& v) const {
-    if (!is_error(v) || types::is_string(v) || !context_.evaluator || !ex_stack_.empty())
-        return std::nullopt;
-    if (context_.evaluator->effect_sandbox_mode() == 0)
-        return std::nullopt;
-    // Issue #5241: the refusal kind is carried by the error value; the
-    // message text is not the classifier.
-    if (context_.evaluator->error_value_kind(v) != ErrorKind::EffectDenied)
-        return std::nullopt;
-    Diagnostic d{ErrorKind::EffectDenied, context_.evaluator->soft_error_message(v)};
-    // Issue #4909: every refusal is located (the producer's location
-    // when one was recorded; the calling sites add the instruction's).
-    if (auto el = context_.evaluator->error_location(v))
-        d.location = *el;
-    return d;
+// Issue #4896: a statement-position EffectDenied used to die in a local
+// and the force-soa file exited 0. Issue #4899 now returns that value
+// from the entry (emit_error_escape) and file mode turns it into a
+// diagnostic. Raising here also fired for an expression the caller
+// binds — (read-file ...) / (getenv ...) — so CompilerService::eval
+// saw unexpected instead of the refusal value.
+std::optional<Diagnostic> IRInterpreter::effect_deny_diagnostic_4896_(const EvalValue&) const {
+    return std::nullopt;
 }
 
 // Issue #1513 / #1616: dual-check IRClosure (bridge_epoch + EnvFrame version_/id
@@ -2313,7 +2303,7 @@ namespace {
                         }
                     }
                 }
-                if (auto deny = (st.self.*st.deny)(out)) // #4896
+                if (auto deny = (st.self.*st.deny)(out)) // #4896 (predicate empty; #4899)
                 {
                     if (!deny->location.valid()) // Issue #4909
                         deny->location = ir_call_arity_loc(&instr, st.context.evaluator);
@@ -2412,12 +2402,9 @@ namespace {
                     }
                 }
                 if (presult) {
-                    // Issue #4896: a Restricted dispatch deny comes back as
-                    // an error value. In statement position (top-level
-                    // `(set-car! q 5)` on the force-soa face) the local was
-                    // discarded: the write was dropped, no diagnostic, rc=0.
-                    // The tree-walker raises it; do the same when no IR
-                    // handler is open in this frame.
+                    // Issue #4896: the refusal stays an error value. Statement
+                    // position is reported by #4899 (emit_error_escape + file
+                    // mode), not by rewriting the value into a diagnostic.
                     if (auto deny = (st.self.*st.deny)(*presult)) {
                         if (!deny->location.valid()) // Issue #4909
                             deny->location = ir_call_arity_loc(&instr, st.context.evaluator);
@@ -2554,7 +2541,7 @@ namespace {
                         if (st.context.evaluator) {
                             locals[ops[3]] = st.context.evaluator->invoke_prim_with_telemetry(
                                 prim_name, call_args, [&]() { return (*pfn)(call_args); });
-                            // Issue #4896: same deny raise as the PrimCall arm.
+                            // Issue #4896: same predicate as the PrimCall arm.
                             if (auto deny = (st.self.*st.deny)(locals[ops[3]])) {
                                 if (!deny->location.valid()) // Issue #4909
                                     deny->location =

@@ -35,8 +35,6 @@
 #include <string_view>
 #endif
 
-#include "hash_meta.h" // Issue #4612: kTombstoneSlot (deleted hash slot)
-
 namespace aura::compiler::query_result_decode {
 
 inline constexpr int kQueryResultHashResolveIssue = 3424;
@@ -165,6 +163,11 @@ query_result_is_fresh_with_refs(const aura::core::QueryResult& qr, const aura::a
 }
 
 #ifndef AURA_QUERY_RESULT_DECODE_FRESHNESS_ONLY
+// Issue #4612: kTombstoneSlot. Only the full decoder reads hash slots.
+// A freshness-only TU that already imported the evaluator BMI must not
+// include hash_meta.h again (the include guard does not cross the BMI).
+#include "hash_meta.h"
+
 enum class HashNodeKind : std::uint8_t { NotHash = 0, Ok = 1, Stale = 2, BadArg = 3 };
 
 struct HashNodeResolve {

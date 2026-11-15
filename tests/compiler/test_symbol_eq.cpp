@@ -131,7 +131,7 @@ static void ac5_source_gate() {
     const auto flat = read_file("src/compiler/evaluator_eval_flat.cpp");
     CHECK(flat.find("#2568") != std::string::npos, "AC5: eval_flat cites #2568");
     CHECK(flat.find("short_str_cache_") != std::string::npos, "AC5: short_str_cache intern");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc = read_file("src/compiler/service_eval.cpp");
     CHECK(svc.find("#2568") != std::string::npos, "AC5: service Quote-before-IR");
     const auto low = read_file("src/compiler/lowering_impl.cpp");
     CHECK(low.find("#2568") != std::string::npos, "AC5: lowering Quote Variable→ConstString");

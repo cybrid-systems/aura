@@ -89,7 +89,8 @@ void ac1_source() {
           "partial path helper");
     auto pure = read_file("src/compiler/ir_cache_pure.ixx");
     CHECK(pure.find("should_partial_relower") != std::string::npos, "pure helper");
-    auto svc = read_file("src/compiler/service.ixx");
+    auto svc =
+        read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
     CHECK(svc.find("partial_recompile") != std::string::npos, "JIT partial_recompile wired");
 }
 
@@ -466,7 +467,8 @@ static void ac3550_3_soft_observe_only() {
 
 static void ac3550_4_source_cite_no_invent() {
     std::println("\n--- #3550 AC5: source-cite + no invent / no new query ---");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc =
+        read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
     const auto dirty = read_file("src/compiler/service_dirty.cpp");
     const auto pure = read_file("src/compiler/ir_cache_pure.ixx");
     const auto t = read_file("tests/compiler/test_partial_relower_cascade.cpp");
@@ -595,7 +597,8 @@ static void ac3584_2_soundness_oracle() {
     CHECK(incremental_soundness_mismatch_atomic().load(std::memory_order_relaxed) == mm0,
           "3584 AC2: no soundness mismatch");
     CHECK(href(cs, "schema-2113") == 2113, "3584 AC2: schema-2113 retained");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc =
+        read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
     const auto pure = read_file("src/compiler/ir_cache_pure.ixx");
     CHECK(svc.find("#3584") != std::string::npos, "3584 AC2: service cites #3584");
     CHECK(pure.find("#3584") != std::string::npos, "3584 AC2: estimate cites #3584");
@@ -628,7 +631,8 @@ static void ac3584_3_soft_no_invent() {
     CHECK(g_partial_relower_callee_cascade_precompute_observe_total.load(
               std::memory_order_relaxed) >= obs0,
           "3584 AC3: Soft observe family intact");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc =
+        read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
     const auto t = read_file("tests/compiler/test_partial_relower_cascade.cpp");
     CHECK(svc.find("schema-3584") == std::string::npos, "3584 AC3: no schema-3584");
     const auto obs = read_file("src/compiler/observability_metrics.h");
@@ -691,7 +695,8 @@ static void ac3656_2_hub_not_define_count_full() {
           "3656 AC2: old define-count mix would force full");
     CHECK(absorb_callee_cone_into_impact_ub(1, 0) == 1,
           "3656 AC2: clean callee cone does not bump ub");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc =
+        read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
     const auto peel = svc.find("Issue #3584: precompute returns already-dirty callee");
     CHECK(peel != std::string::npos, "3656 AC2: peel cites #3584 block units");
     CHECK(svc.find("estimate_relower_blocks(dirty_n, get_partial_relower_threshold())") !=
@@ -739,7 +744,8 @@ static void ac3656_4_soft_zero_extra() {
 
 static void ac3656_5_source_cite_no_invent() {
     std::println("\n--- #3656 AC5: source-cite + no invent / no query rewrite ---");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc =
+        read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
     const auto dirty = read_file("src/compiler/service_dirty.cpp");
     const auto pure = read_file("src/compiler/ir_cache_pure.ixx");
     const auto prop = read_file("src/compiler/dirty_propagation.ixx");
@@ -886,7 +892,8 @@ static void ac3892_2_skip_does_not_bump() {
 
 static void ac3892_3_fail_closed_full_unchanged() {
     std::println("\n--- #3892 AC3: fail-closed full still uses existing distinguisher ---");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc =
+        read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
     const auto cite = svc.find("Issue #3892");
     CHECK(cite != std::string::npos, "3892 AC3: #3892 cite");
     if (cite != std::string::npos) {
@@ -933,7 +940,8 @@ static std::int64_t ac4083_keep(std::int64_t* /*locals*/, std::uint32_t /*argc*/
 // forbids a second invalidate(name) inside partial_recompile.
 static void ac4083_drop_native_after_partial_relower() {
     std::println("\n--- #4083: drop jit cache and closure native after partial relower ---");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc =
+        read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
     const auto cite = svc.find("Issue #4083: partial_recompile only removes");
     CHECK(cite != std::string::npos, "4083: success arm cites the drop");
     if (cite != std::string::npos) {
@@ -1118,7 +1126,8 @@ static void ac4577_mark_all_drops_jit_bundle() {
                   erase < drop && drop < inv,
               "#4577: production mark_all bundle-erases and drops before invalidate_all");
     }
-    const auto ixx = read_file("src/compiler/service.ixx");
+    const auto ixx =
+        read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
     const auto note = ixx.find("Issue #4577: full relower stores new IR");
     CHECK(note != std::string::npos, "4577: store_define_v2 cites the bundle drop");
     if (note != std::string::npos) {

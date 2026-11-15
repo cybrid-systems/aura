@@ -170,15 +170,16 @@ static int exit_code_for_kind(aura::diag::ErrorKind k) {
         case K::UnterminatedSExpr:
             return 3;
         case K::UnboundVariable:
-        // TypeError stays in the runtime bucket until #5241 types primitive
-        // errors at creation; a static TypeError is indistinguishable today.
-        case K::ArityMismatch:
         case K::InvalidClosure:
         case K::EffectDenied:
         case K::ModuleError:
         case K::MutationRefused:
         case K::StaleWorkspace:
             return 4;
+        // TypeError stays in the runtime bucket until #5241 types primitive
+        // errors at creation; a static TypeError is indistinguishable today.
+        // ArityMismatch is call-time (#4467): the program has started, so it
+        // stays in the runtime bucket with TypeError. Unbound stays static.
         default:
             return 1;
     }

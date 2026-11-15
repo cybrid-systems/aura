@@ -1174,7 +1174,8 @@ static void ac3749_production_facade_evicts_jit_cache() {
         CHECK(stamp != std::string::npos && evict != std::string::npos && evict > stamp,
               "3749 AC1: invalidate_function evicts after stamp");
     }
-    CHECK(ixx.find("aura_jit_is_deopt_pending(ir_fn.name.c_str())") != std::string::npos,
+    CHECK(read_file("src/compiler/service_jit.cpp")
+                  .find("aura_jit_is_deopt_pending(ir_fn.name.c_str())") != std::string::npos,
           "3749 AC1: try_jit_execute cache-hit refuses deopt_pending");
 
     CHECK(rt.find("aura_jit_is_deopt_pending(slow_cname.c_str())") != std::string::npos,
@@ -1786,8 +1787,10 @@ static void ac4073_stale_epoch_try_jit_does_not_invoke() {
 // jit_sample_epoch, and the #4073 consumption contract stays intact.
 static void ac4338_sampled_epoch_stamp() {
     std::println("\n--- #4338: jit cache stamps the sampled mutation epoch ---");
-    const auto ixx = read_file("src/compiler/service.ixx");
-    CHECK(ixx.find("Issue #4338") != std::string::npos, "4338: service.ixx cites");
+    const auto ixx = read_file("src/compiler/service.ixx") +
+                     read_file("src/compiler/service_jit.cpp") +
+                     read_file("src/compiler/service_exec_jit.cpp");
+    CHECK(ixx.find("Issue #4338") != std::string::npos, "4338: jit TUs cite the sampled epoch");
     // exec_jit captures before lower_to_ir (the true IR sample point);
     // try_jit_execute captures at entry under the shared mutate lock.
     CHECK(
@@ -1897,13 +1900,15 @@ static void ac4341_sampled_epoch_restamp() {
           "4341: store_define_v2 stamps the sampled epoch");
     // relower_define_blocks samples BEFORE any per-fn / full re-lower and
     // feeds both the partial restamp and the full-fallback store.
-    CHECK(ixx.find("const std::uint64_t ir_sample_epoch = aura::core::current_mutation_epoch();") !=
+    const auto relower = read_file("src/compiler/service_relower.cpp");
+    CHECK(relower.find(
+              "const std::uint64_t ir_sample_epoch = aura::core::current_mutation_epoch();") !=
               std::string::npos,
           "4341: relower samples before the lower");
-    CHECK(ixx.find("restamp_cache_entry_live_(it->second, ir_sample_epoch, name)") !=
+    CHECK(relower.find("restamp_cache_entry_live_(it->second, ir_sample_epoch, name)") !=
               std::string::npos,
           "4341: per-fn partial restamps the sampled epoch");
-    CHECK(ixx.find("ir_mod.string_pool, ir_sample_epoch);") != std::string::npos,
+    CHECK(relower.find("ir_mod.string_pool, ir_sample_epoch);") != std::string::npos,
           "4341: full-fallback store stamps the sampled epoch");
     // Cascade-reemit restamps re-assert the already-stamped sampled
     // mutation_count — never advance to live.

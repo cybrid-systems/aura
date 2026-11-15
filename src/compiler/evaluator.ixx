@@ -173,7 +173,8 @@ public:
                 meta.required_effects = inferred;
         }
         const std::size_t slot = ordered_names_.size();
-        ordered_names_.push_back(name);
+        // Moved before the map inserts. Those keys copy ordered_names_.back().
+        ordered_names_.push_back(std::move(name));
         // Issue #4599: after finalize_hot_table the effect-mask vectors are
         // dense. A later add() appends one unknown slot. The initial
         // registration leaves them empty so finalize sizes them once.
@@ -183,7 +184,7 @@ public:
         const bool is_hot = (meta.perf_tier == kPrimPerfHot);
         meta_.push_back(std::move(meta));
         fn_slots_.push_back(func);
-        table_[name] = std::move(func);
+        table_[ordered_names_.back()] = std::move(func);
         // Issue #899: O(1) reverse index for slot_for_name.
         name_to_slot_[ordered_names_.back()] = slot;
         // Issue #1356: provisional hot-tier entry (finalized after all regs).
@@ -2373,7 +2374,7 @@ export struct WorkspaceTree {
     [[nodiscard]] ast::NodeId remap_node_id(std::uint32_t from_layer, ast::NodeId id,
                                             std::uint32_t to_layer) const noexcept;
     [[nodiscard]] std::optional<ast::FlatAST::StableNodeRef>
-    resolve_stable_ref(std::uint32_t from_layer, ast::FlatAST::StableNodeRef ref,
+    resolve_stable_ref(std::uint32_t from_layer, const ast::FlatAST::StableNodeRef& ref,
                        std::uint32_t to_layer) const noexcept;
 };
 
@@ -18353,15 +18354,15 @@ public:
     // Issue #5241: build a refusal error value that already carries its
     // kind. Callers pass the Agent-readable reason; the kind never has to
     // be re-derived from that text.
-    [[nodiscard]] types::EvalValue make_refusal_error(std::string msg) {
-        auto err = primitives_detail::make_primitive_error(
-            string_heap_, error_values_, std::move(msg), primitive_error_counter_ptr());
+    [[nodiscard]] types::EvalValue make_refusal_error(std::string_view msg) {
+        auto err = primitives_detail::make_primitive_error(string_heap_, error_values_, msg,
+                                                           primitive_error_counter_ptr());
         mark_effect_denied(err);
         return err;
     }
-    [[nodiscard]] types::EvalValue make_mutation_refused_error(std::string msg) {
-        auto err = primitives_detail::make_primitive_error(
-            string_heap_, error_values_, std::move(msg), primitive_error_counter_ptr());
+    [[nodiscard]] types::EvalValue make_mutation_refused_error(std::string_view msg) {
+        auto err = primitives_detail::make_primitive_error(string_heap_, error_values_, msg,
+                                                           primitive_error_counter_ptr());
         mark_mutation_refused(err);
         return err;
     }
@@ -21087,7 +21088,7 @@ inline ast::NodeId WorkspaceTree::remap_node_id(std::uint32_t from_layer, ast::N
 }
 
 inline std::optional<ast::FlatAST::StableNodeRef>
-WorkspaceTree::resolve_stable_ref(std::uint32_t from_layer, ast::FlatAST::StableNodeRef ref,
+WorkspaceTree::resolve_stable_ref(std::uint32_t from_layer, const ast::FlatAST::StableNodeRef& ref,
                                   std::uint32_t to_layer) const noexcept {
     if (from_layer >= nodes_.size() || to_layer >= nodes_.size())
         return std::nullopt;

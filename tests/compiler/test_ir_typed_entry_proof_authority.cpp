@@ -600,7 +600,8 @@ int run_test_ir_typed_entry_proof_authority() {
 
     {
         std::println("\n--- #3758: try_jit_execute ScalarFn consults same helper as execute() ---");
-        const auto ixx = read_file("src/compiler/service.ixx");
+        const auto ixx =
+            read_file("src/compiler/service.ixx") + read_file("src/compiler/service_jit.cpp");
         const auto ir = read_file("src/compiler/ir_executor_impl.cpp");
         CHECK(ixx.find("Issue #3758") != std::string::npos, "3758: try_jit_execute cites #3758");
         CHECK(ixx.find("jit_execute_commit_readiness_blocked()") != std::string::npos,
