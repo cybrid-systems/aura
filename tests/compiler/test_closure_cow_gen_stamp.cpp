@@ -198,7 +198,7 @@ static void ac3_write_path_foreign() {
 static void ac4_soft_disabled() {
     std::println("\n--- #2547 AC4: soft disabled → hard on gen mismatch ---");
     clear_env();
-    ::aura::config::test_setenv("AURA_CROSS_COW_SOFT_MIGRATE", "0", 1);
+    setenv("AURA_CROSS_COW_SOFT_MIGRATE", "0", 1);
     CompilerMetrics metrics{};
     aura_set_aot_metrics(&metrics);
     aura_set_live_workspace_cow_gen(3);

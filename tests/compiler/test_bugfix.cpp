@@ -391,16 +391,15 @@ int run_test_bugfix() {
     {
         ::aura::config::test_unsetenv("AURA_4597_G");
         CompilerService cs;
-        auto r = cs.eval(
-            "(begin (require \"std/ffi\" all:)"
-            " (define ::aura::config::test_setenv(c-func -1 \"setenv\" \"(String String Int) -> "
-            "Int\"))"
-            " (define strdup (c-func -1 \"strdup\" \"(String) -> Opaque\"))"
-            " (define ::aura::config::test_unsetenv(c-func -1 \"unsetenv\" \"(Opaque) -> Int\"))"
-            " (setenv \"AURA_4597_G\" \"1\" 1)"
-            " (define hg (c-handle (strdup \"AURA_4597_G\") unsetenv))"
-            " (set! hg #f)"
-            " (gc-heap))");
+        auto r = cs.eval("(begin (require \"std/ffi\" all:)"
+                         " (define setenv(c-func -1 \"setenv\" \"(String String Int) -> "
+                         "Int\"))"
+                         " (define strdup (c-func -1 \"strdup\" \"(String) -> Opaque\"))"
+                         " (define unsetenv(c-func -1 \"unsetenv\" \"(Opaque) -> Int\"))"
+                         " (setenv \"AURA_4597_G\" \"1\" 1)"
+                         " (define hg (c-handle (strdup \"AURA_4597_G\") unsetenv))"
+                         " (set! hg #f)"
+                         " (gc-heap))");
         CHECK(r && is_bool(*r) && as_bool(*r), "4597: gc-heap ran");
         CHECK(::getenv("AURA_4597_G") == nullptr, "4597: gc-heap ran the handle finalizer");
         ::aura::config::test_unsetenv("AURA_4597_G");

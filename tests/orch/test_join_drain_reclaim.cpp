@@ -11201,9 +11201,9 @@ int run_test_join_drain_reclaim() {
             fiber_owned->set_state(FiberState::Done);
             fiber_owned->note_body_exit_if_reclaimed();
             if (!prev_sb_s.empty())
-                ::aura::config::test_setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+                setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
             else
-                ::aura::config::test_unsetenv("AURA_SANDBOX");
+                unsetenv("AURA_SANDBOX");
             restore_sb();
         }
 
@@ -11211,7 +11211,7 @@ int run_test_join_drain_reclaim() {
         {
             apply_dev_audit_defaults();
             set_mode(SandboxMode::Off);
-            ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
+            setenv("AURA_SANDBOX", "off", 1);
             auto fiber_owned = std::make_unique<Fiber>([] {});
             fiber_owned->mark_reclaimed();
             AgentHandle h;

@@ -8,7 +8,7 @@
 #include "core/runtime_config.hh"
 #include "compiler/observability_metrics.h"
 #include "compiler/typed_mutation_audit.h"
-#include <cstdlib>  // setenv / ::aura::config::test_unsetenv(#4321), mkdtemp (#5213)
+#include <cstdlib>  // setenv / unsetenv(#4321), mkdtemp (#5213)
 #include <stdlib.h> // mkdtemp
 #include <fstream>  // #5051 source-cite
 #include <iterator> // #5051 source-cite
