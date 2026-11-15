@@ -408,6 +408,19 @@ static void emit_exec_result(std::string_view sid, const EvalValue& v, std::stri
                     "},\"end\":{\"line\":" + std::to_string(d.location.line) +
                     ",\"column\":" + std::to_string(d.location.column) + "}}";
         }
+        // #5240: hint/notes complete the shared schema; the session/status/
+        // display shell is async-only.
+        if (!d.suggestion.empty())
+            line += ",\"hint\":\"" + json_escape(d.suggestion) + "\"";
+        if (!d.context_stack.empty()) {
+            line += ",\"notes\":[";
+            for (std::size_t i = 0; i < d.context_stack.size(); ++i) {
+                if (i != 0)
+                    line += ',';
+                line += "\"" + json_escape(d.context_stack[i]) + "\"";
+            }
+            line += ']';
+        }
         if (!display.empty())
             line += ",\"display\":\"" + json_escape(display) + "\"";
         line += "}";

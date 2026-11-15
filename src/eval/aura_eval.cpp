@@ -134,7 +134,8 @@ void append_json_string(std::string& out, std::string_view s) {
 
 [[nodiscard]] std::string error_json(std::string_view message, std::string_view kind,
                                      std::string_view code, std::uint32_t line,
-                                     std::uint32_t column) {
+                                     std::uint32_t column, std::string_view hint = {},
+                                     const std::vector<std::string>* notes = nullptr) {
     std::string out = "{\"status\":\"error\",\"message\":";
     append_json_string(out, message);
     if (!kind.empty()) {
@@ -158,6 +159,20 @@ void append_json_string(std::string& out, std::string_view s) {
                ",\"column\":" + std::to_string(col) +
                "},\"end\":{\"line\":" + std::to_string(line) +
                ",\"column\":" + std::to_string(col) + "}}";
+    }
+    // #5240: hint/notes complete the shared schema (optional).
+    if (!hint.empty()) {
+        out += ",\"hint\":";
+        append_json_string(out, hint);
+    }
+    if (notes && !notes->empty()) {
+        out += ",\"notes\":[";
+        for (std::size_t i = 0; i < notes->size(); ++i) {
+            if (i != 0)
+                out += ',';
+            append_json_string(out, (*notes)[i]);
+        }
+        out += ']';
     }
     out.push_back('}');
     return out;
@@ -184,7 +199,7 @@ void append_json_string(std::string& out, std::string_view s) {
             const auto& d = r.error();
             *result_json = heap_copy(error_json(d.message, aura::diag::kind_name(d.kind),
                                                 aura::diag::kind_ident(d.kind), d.location.line,
-                                                d.location.column));
+                                                d.location.column, d.suggestion, &d.context_stack));
             return AURA_EVAL_ERROR;
         }
         const auto& v = *r;

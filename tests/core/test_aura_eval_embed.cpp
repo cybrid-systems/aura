@@ -132,6 +132,10 @@ void test_errors(aura_eval_session* s) {
     check(st == AURA_EVAL_ERROR, "unbound name is AURA_EVAL_ERROR");
     check(has(rec.c_str(), "\"status\":\"error\""), "record says error");
     check(has(rec.c_str(), "\"message\""), "record carries a message");
+    // #5240: the same stable code and span the CLI/serve schema carries.
+    check(has(rec.c_str(), "\"code\":\"UnboundVariable\""), "record carries the stable code");
+    check(has(rec.c_str(), "\"span\":{\"start\":{\"line\":1,\"column\":2}"),
+          "record carries a 1-based span");
 
     const std::string syntax = run(s, "(+ 1", &st);
     check(st == AURA_EVAL_ERROR && has(syntax.c_str(), "\"status\":\"error\""),
