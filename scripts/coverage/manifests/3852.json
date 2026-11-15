@@ -5,7 +5,7 @@
   "checks": [
     {
       "ac": "AC1-force-dirty-aot",
-      "path": "src/compiler/service.ixx",
+      "path": "src/compiler/service_dirty.cpp",
       "contains": [
         "Issue #3852",
         "aura_aot_note_cross_eval_epoch_force_bump()",

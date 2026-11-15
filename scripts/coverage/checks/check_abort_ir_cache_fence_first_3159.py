@@ -73,7 +73,12 @@ import argparse
 import json
 import re
 import sys
+import sys as _sys
 from pathlib import Path
+from pathlib import Path as _Path
+
+_sys.path.insert(0, str(_Path(__file__).resolve().parents[1]))
+from service_source import service_source  # #5242: interface + implementation units
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -89,6 +94,8 @@ def _read_text(path: Path) -> tuple[str, bool]:
     if not path.exists():
         return ("", False)
     try:
+        if path == SERVICE_IXX:
+            return (service_source(), True)
         return (path.read_text(encoding="utf-8", errors="replace"), True)
     except OSError:
         return ("", False)

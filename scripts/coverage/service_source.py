@@ -6,28 +6,31 @@ sentence, not a character window, so it reads the whole module surface.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-_UNITS = (
-    "service.ixx",
-    "service_ctor.cpp",
-    "service_dirty.cpp",
-    "service_eval.cpp",
-    "service_eval_ir.cpp",
-    "service_exec_jit.cpp",
-    "service_jit.cpp",
-    "service_relower.cpp",
-    "service_snapshot.cpp",
-    "service_typed_mutate.cpp",
-)
+_INTERFACE = "service.ixx"
 
 
 def service_source() -> str:
     base = ROOT / "src" / "compiler"
+    # Implementation units first: contract rows locate a definition with
+    # find("Ret name("), which would otherwise hit the in-class declaration.
+    units = sorted(p.name for p in base.glob("service_*.cpp"))
+    units.append(_INTERFACE)
     parts = []
-    for unit in _UNITS:
+    for unit in units:
         path = base / unit
-        if path.exists():
-            parts.append(path.read_text(encoding="utf-8", errors="ignore"))
-    return chr(10).join(parts)
+        if not path.exists():
+            continue
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        if unit.endswith(".cpp"):
+            # Re-indent one level so rows written for the old in-class bodies
+            # (which end with "\n    }\n") keep locating the function end.
+            text = "\n".join(("    " + line) if line.strip() else line for line in text.split("\n"))
+        parts.append(text)
+    # Moved bodies are out-of-class definitions (CompilerService::name); strip
+    # the qualifier so existing contract rows that pin "Ret name(...)" keep
+    # matching after a #5242 move.
+    return re.sub(r"(?<![&:])CompilerService::", "", chr(10).join(parts))

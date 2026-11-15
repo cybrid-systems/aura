@@ -21,7 +21,12 @@ from __future__ import annotations
 
 import re
 import sys
+import sys as _sys
 from pathlib import Path
+from pathlib import Path as _Path
+
+_sys.path.insert(0, str(_Path(__file__).resolve().parents[1]))
+from service_source import service_source  # #5242: interface + implementation units
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -39,7 +44,7 @@ def main() -> int:
             fails.append(f"{label}: missing {n!r}")
 
     emb = _read("src/compiler/evaluator_mutation_boundary.cpp")
-    svc = _read("src/compiler/service.ixx")
+    svc = service_source()
     t = _read("tests/compiler/test_abort_ir_cache_fence_first.cpp")
     build = _read("build.py")
 

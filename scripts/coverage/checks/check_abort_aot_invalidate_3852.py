@@ -21,7 +21,12 @@ Exit 0 = all rows satisfied.
 from __future__ import annotations
 
 import sys
+import sys as _sys
 from pathlib import Path
+from pathlib import Path as _Path
+
+_sys.path.insert(0, str(_Path(__file__).resolve().parents[1]))
+from service_source import service_source  # #5242: interface + implementation units
 
 ROOT = Path(__file__).resolve().parents[3]
 SVC = "src/compiler/service.ixx"
@@ -34,6 +39,8 @@ LINTER = "check_abort_aot_invalidate_3852"
 
 
 def _read(rel: str) -> str:
+    if rel == SVC:
+        return service_source()
     p = ROOT / rel
     return p.read_text(encoding="utf-8", errors="replace") if p.is_file() else ""
 

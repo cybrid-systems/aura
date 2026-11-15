@@ -4,15 +4,22 @@
   "ok": "OK: Issue #3069 folded from check_abort_force_generation_fence_3069.py — all AC rows satisfied",
   "checks": [
     {
-      "ac": "AC1",
+      "ac": "AC1-decl",
       "path": "src/compiler/service.ixx",
       "contains": [
         "Issue #3069",
         "abort_force_generation_",
         "abort_force_in_progress_",
         "fetch_add(1, std::memory_order_release)",
-        "abort_force_generation = gen",
         "success-path restamp acks"
+      ]
+    },
+    {
+      "ac": "AC1-body",
+      "path": "src/compiler/service_dirty.cpp",
+      "contains": [
+        "Issue #3069",
+        "abort_force_generation = gen"
       ]
     },
     {
