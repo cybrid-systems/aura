@@ -14,7 +14,9 @@ apply_production_security_defaults / TypedMutationAudit Full|Sampled ratio=1).
 Contract (one row per AC):
   AC1 lub no longer early-returns Dynamic before normalize; the production
       block normalizes first, then is_var (#4515), then the same ground gate
-      that reports TypeError + void_type() (#4107). Ordering is asserted.
+      that reports TypeError + void_type() (#4107). An unbound scalar join
+      stays a remembered variable (#5300) instead of publishing Dynamic.
+      Ordering is asserted.
   AC2 the gate records last_join_gate_error_ and synthesize_flat's IfExpr arm
       stamps the node TypeError + mark_dirty and returns before the cache
       tail (no solved Void cache); infer_flat's root IfExpr guard mirrors the
@@ -65,7 +67,7 @@ def main() -> int:
 
     # AC1: production face normalizes both sides before is_var / the gate.
     n_norm = body.find("cs_.normalize(a)")
-    n_isvar = body.find("reg_.is_var(a) || reg_.is_var(b)")
+    n_isvar = body.find("reg_.is_var(a)")
     n_gate = body.find("last_join_gate_error_ = true;")
     n_report = body.find("diag_.report(")
     if min(n_norm, n_isvar, n_gate, n_report) < 0:
@@ -80,10 +82,13 @@ def main() -> int:
                 f"(normalize={n_norm} is_var={n_isvar} flag={n_gate} report={n_report})"
             )
 
-    # AC1: only the two intentional Dynamic returns remain — the #4515
-    # unbound-var join inside the production block and the Soft/Off tail.
-    if body.count("return reg_.dynamic_type()") != 2:
-        fails.append("AC1: lub must keep exactly two Dynamic returns (#4515 unbound join + Soft/Off tail)")
+    # AC1: Soft/Off is the only dynamic_type() return. An unbound scalar
+    # join stays a remembered variable (#5300). A real Dynamic arm still
+    # returns Dynamic so the next ground hits this gate (#4684).
+    if body.count("return reg_.dynamic_type()") != 1:
+        fails.append("AC1: lub must keep exactly one dynamic_type() return (Soft/Off tail)")
+    must("return remember(*tag);", "AC1 unbound scalar join stays a variable", body)
+    must("var ∪ Dynamic stays Dynamic", "AC1 real Dynamic arm", body)
 
     must("incompatible ground types", "AC1 gate message", body)
     must("Issue #4684", "AC1 cite impl", impl)
@@ -102,7 +107,7 @@ def main() -> int:
         "ac4684_1_dynamic_arm_gate_prod",
         "ac4684_2_dynamic_arm_soft_gradual",
         "ac4684_3_4107_two_grounds_preserved",
-        "ac4684_4_4515_unbound_rep_stays_dynamic",
+        "ac4684_4_4515_unbound_rep_stays_variable",
         "ac4684_5_consistent_unify_dynamic_int_prod_false",
     ):
         must(ac, "AC3 runtime", tir)

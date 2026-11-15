@@ -6,10 +6,10 @@
       "ac": "AC1-normalize-before-dynamic",
       "path": "src/compiler/type_checker_impl.cpp",
       "contains": [
-        "Issue #4684: a branch whose synthesized TypeId is already",
+        "ahead of this block (Issue #4684)",
         "last_join_gate_error_ = false;",
         "a = cs_.normalize(a);",
-        "if (reg_.is_var(a) || reg_.is_var(b))",
+        "const bool a_var = reg_.is_var(a);",
         "incompatible ground types"
       ]
     },
@@ -46,7 +46,7 @@
         "ac4684_1_dynamic_arm_gate_prod",
         "ac4684_2_dynamic_arm_soft_gradual",
         "ac4684_3_4107_two_grounds_preserved",
-        "ac4684_4_4515_unbound_rep_stays_dynamic",
+        "ac4684_4_4515_unbound_rep_stays_variable",
         "ac4684_5_consistent_unify_dynamic_int_prod_false"
       ]
     },

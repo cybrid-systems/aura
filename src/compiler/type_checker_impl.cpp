@@ -5023,7 +5023,7 @@ TypeId InferenceEngine::lub(TypeId a, TypeId b) {
     // reported (last_type_export_authoritative_).
     if (!(aura::compiler::typed_audit::production_hard_face_active() ||
           aura::compiler::typed_audit::production_defaults_active()))
-        return reg_.dynamic_type();
+        return reg_.dynamic_type(); // safe fallback
 
     a = cs_.normalize(a);
     b = cs_.normalize(b);
