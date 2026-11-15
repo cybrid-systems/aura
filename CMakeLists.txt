@@ -140,6 +140,7 @@ set(AURA_EVALUATOR_SOURCE_FILES
 )
 # Wave 5: service implementation partitions (same module: aura.compiler.service).
 set(AURA_SERVICE_SOURCE_FILES
+    src/compiler/service_ctor.cpp
     src/compiler/service_dirty.cpp
     src/compiler/service_eval.cpp
     src/compiler/service_eval_ir.cpp
