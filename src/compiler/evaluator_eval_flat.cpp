@@ -9180,10 +9180,20 @@ Evaluator::FlatStep Evaluator::eval_flat_on_let_letrec(EvalFlatCursor& cur,
         // interfere. A cell-binding top-level let gets its own
         // child env, parented at a registered copy of top_, so
         // each define owns its cell (normal capture, no
-        // live-top consult). A plain value bind has no
-        // captured cell, so it keeps the in-place fast path.
+        // live-top consult).
+        // Issue #5305: a plain value used to stay on that live
+        // top_. The bind is a workspace-root binding, so
+        // note_workspace_binding seals a fresh hash or vector
+        // and Restricted refuses the body's hash-set!
+        // (trie-insert of a top-level let). The name also
+        // outlives the let, so skipping the seal alone would
+        // leave a workspace table writable without Mutate.
+        // The same child keeps the value off the root for the
+        // body only. An inner let (current_env != &top_) keeps
+        // the #4599 in-place bind. define and module bindings
+        // still seal and keep the grant.
         Env* bind_env = const_cast<Env*>(&eval_env);
-        const bool scoped_child = needs_cell && current_env == &top_;
+        const bool scoped_child = current_env == &top_;
         if (scoped_child) {
             cur.pin_if_current_in_tail();
             const Env& let_parent = *current_env;
