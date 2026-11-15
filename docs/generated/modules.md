@@ -2,7 +2,7 @@
 
 # C++ Modules (generated)
 
-**67** `export module` declarations in `src/**/*.ixx`.
+**56** `export module` declarations in `src/**/*.ixx`.
 
 | Module | File |
 |--------|------|
@@ -13,14 +13,11 @@
 | `aura.compiler.coercion_map` | `src/compiler/coercion_map.ixx` |
 | `aura.compiler.compute_kind` | `src/compiler/compute_kind.ixx` |
 | `aura.compiler.constant_folding` | `src/compiler/constant_folding.ixx` |
-| `aura.compiler.covergroup_sampling` | `src/compiler/covergroup_sampling.ixx` |
 | `aura.compiler.dirty_propagation` | `src/compiler/dirty_propagation.ixx` |
 | `aura.compiler.evaluator` | `src/compiler/evaluator.ixx` |
 | `aura.compiler.evaluator_pure` | `src/compiler/evaluator_pure.ixx` |
-| `aura.compiler.ffi_hot_path` | `src/compiler/ffi_hot_path.ixx` |
 | `aura.compiler.ffi_primitives` | `src/compiler/ffi_primitives.ixx` |
 | `aura.compiler.hardware_backend` | `src/compiler/hardware_backend.ixx` |
-| `aura.compiler.hot_path_primitives` | `src/compiler/hot_path_primitives.ixx` |
 | `aura.compiler.ir` | `src/compiler/ir.ixx` |
 | `aura.compiler.ir_cache_pure` | `src/compiler/ir_cache_pure.ixx` |
 | `aura.compiler.ir_executor` | `src/compiler/ir_executor.ixx` |
@@ -39,14 +36,12 @@
 | `aura.compiler.soa_view` | `src/compiler/soa_view.ixx` |
 | `aura.compiler.type_checker` | `src/compiler/type_checker.ixx` |
 | `aura.compiler.type_concepts` | `src/compiler/type_concepts.ixx` |
-| `aura.compiler.typed_mutation_audit_pass` | `src/compiler/typed_mutation_audit_pass.ixx` |
 | `aura.compiler.value` | `src/compiler/value.ixx` |
 | `aura.core` | `src/core/core.ixx` |
 | `aura.core.arena` | `src/core/arena.ixx` |
 | `aura.core.ast` | `src/core/ast.ixx` |
 | `aura.core.ast_mutation_pipeline` | `src/core/ast_mutation_pipeline.ixx` |
 | `aura.core.ast_unparse` | `src/core/ast_unparse.ixx` |
-| `aura.core.capability_model` | `src/core/capability_model.ixx` |
 | `aura.core.concept_constraints` | `src/core/concept_constraints.ixx` |
 | `aura.core.concepts` | `src/core/concepts.ixx` |
 | `aura.core.consts` | `src/core/consts.ixx` |
@@ -59,17 +54,11 @@
 | `aura.core.mutators` | `src/core/mutators.ixx` |
 | `aura.core.panic_checkpoint_raii` | `src/core/panic_checkpoint_raii.ixx` |
 | `aura.core.resource_quota` | `src/core/resource_quota.ixx` |
-| `aura.core.sandbox` | `src/core/sandbox.ixx` |
 | `aura.core.transaction_guard` | `src/core/transaction_guard.ixx` |
 | `aura.core.type` | `src/core/type.ixx` |
 | `aura.core.type_arena` | `src/core/type_arena.ixx` |
-| `aura.core.workspace_isolation` | `src/core/workspace_isolation.ixx` |
-| `aura.core.zero_copy_output` | `src/core/zero_copy_output.ixx` |
 | `aura.diag` | `src/compiler/diag.ixx` |
-| `aura.orch` | `src/orch/orch.ixx` |
 | `aura.parser.lexer` | `src/parser/lexer.ixx` |
 | `aura.parser.parser` | `src/parser/parser.ixx` |
 | `aura.reflect` | `src/reflect/reflect.ixx` |
-| `aura.serve.multi_fiber_mailbox` | `src/serve/multi_fiber_mailbox.ixx` |
-| `aura.serve.parallel_orch` | `src/serve/parallel_orch.ixx` |
 | `aura.test.strategy` | `src/test/test_strategy.ixx` |

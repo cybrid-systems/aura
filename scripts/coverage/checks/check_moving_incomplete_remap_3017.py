@@ -39,7 +39,6 @@ SCAN_FILES = [
     "src/compiler/evaluator_primitives_memory.cpp",
     "src/compiler/ffi_primitives_impl.cpp",
     "src/compiler/ffi_hot_path.hh",
-    "src/compiler/ffi_hot_path.ixx",
 ]
 
 # Bare allocate that is NOT ASTArena::create (the create leg of the triad).

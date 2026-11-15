@@ -40,13 +40,11 @@ ROOT = Path(__file__).resolve().parents[1]
 
 # Files where the SOLE writer is allowed to touch the registry atomic.
 # - sandbox.hh is the SSOT authority (set_mode body).
-# - sandbox.ixx only re-exports; listed so accidental second body stays
-#   scannable but must not reintroduce direct writes.
 # - capability_model.hh declares the friend + the private field, but does
 #   NOT write the field directly (the friend is the only writer).
+# Issue #5236: sandbox.ixx was an unused re-export module and is gone.
 AUTHORITY_FILES = {
     "src/core/sandbox.hh",
-    "src/core/sandbox.ixx",
     # The CapabilityRegistry field is private; direct writes inside the
     # class (e.g. clear_for_test) are allowed, but the field is
     # forward-declared so no `reg.sandbox_mode = ` should appear here.

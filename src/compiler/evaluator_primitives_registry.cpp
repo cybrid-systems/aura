@@ -171,7 +171,7 @@ namespace {
                     continue;
                 retire_name(prims, slot,
                             "DEPRECATED (#5009): prefer (" + std::string(entry.verb) +
-                                " …) — this name retires after the v0.2.0 alias window.");
+                                " …) — this name retires after the #5009 alias window.");
                 retired = true;
                 break;
             }
@@ -200,7 +200,7 @@ namespace {
                     continue;
                 retire_name(prims, slot,
                             "DEPRECATED (#5006): use " + std::string(bare.replaces) +
-                                " — this name retires after the v0.2.0 alias window.");
+                                " — this name retires after the #5006 alias window.");
                 retired = true;
                 break;
             }
