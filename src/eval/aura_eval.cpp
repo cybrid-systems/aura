@@ -133,12 +133,18 @@ void append_json_string(std::string& out, std::string_view s) {
 }
 
 [[nodiscard]] std::string error_json(std::string_view message, std::string_view kind,
-                                     std::uint32_t line, std::uint32_t column) {
+                                     std::string_view code, std::uint32_t line,
+                                     std::uint32_t column) {
     std::string out = "{\"status\":\"error\",\"message\":";
     append_json_string(out, message);
     if (!kind.empty()) {
         out += ",\"kind\":";
         append_json_string(out, kind);
+    }
+    // #5240: code is the stable kind_ident, shared with the CLI/serve schema.
+    if (!code.empty()) {
+        out += ",\"code\":";
+        append_json_string(out, code);
     }
     if (line != 0) {
         out += ",\"line\":";
@@ -147,6 +153,11 @@ void append_json_string(std::string& out, std::string_view s) {
             out += ",\"column\":";
             out += std::to_string(column);
         }
+        const auto col = column != 0 ? column : 1;
+        out += ",\"span\":{\"start\":{\"line\":" + std::to_string(line) +
+               ",\"column\":" + std::to_string(col) +
+               "},\"end\":{\"line\":" + std::to_string(line) +
+               ",\"column\":" + std::to_string(col) + "}}";
     }
     out.push_back('}');
     return out;
@@ -172,7 +183,8 @@ void append_json_string(std::string& out, std::string_view s) {
         if (!r) {
             const auto& d = r.error();
             *result_json = heap_copy(error_json(d.message, aura::diag::kind_name(d.kind),
-                                                d.location.line, d.location.column));
+                                                aura::diag::kind_ident(d.kind), d.location.line,
+                                                d.location.column));
             return AURA_EVAL_ERROR;
         }
         const auto& v = *r;
@@ -180,8 +192,10 @@ void append_json_string(std::string& out, std::string_view s) {
         if (aura::compiler::types::is_error(v) && !aura::compiler::types::is_string(v)) {
             // A refused form (a bad car, a blocked mutate) is a value, not a
             // throw; report it as an error with the evaluator's cause text.
-            *result_json = heap_copy(
-                error_json(s.service.evaluator().soft_error_message(v), "error-value", 0, 0));
+            const auto ev_kind = s.service.evaluator().error_value_kind(v);
+            *result_json =
+                heap_copy(error_json(s.service.evaluator().soft_error_message(v), "error-value",
+                                     aura::diag::kind_ident(ev_kind), 0, 0));
             return AURA_EVAL_ERROR;
         }
         std::string out = "{\"status\":\"ok\",\"value\":";
@@ -192,11 +206,11 @@ void append_json_string(std::string& out, std::string_view s) {
         *result_json = heap_copy(std::move(out));
         return AURA_EVAL_OK;
     } catch (const std::exception& e) {
-        *result_json = heap_copy(error_json(e.what(), "internal-error", 0, 0));
+        *result_json = heap_copy(error_json(e.what(), "internal error", "InternalError", 0, 0));
         return AURA_EVAL_INTERNAL;
     } catch (...) {
-        *result_json =
-            heap_copy(error_json("unknown exception during eval", "internal-error", 0, 0));
+        *result_json = heap_copy(
+            error_json("unknown exception during eval", "internal error", "InternalError", 0, 0));
         return AURA_EVAL_INTERNAL;
     }
 }
@@ -303,8 +317,8 @@ int aura_eval_file(aura_eval_session* session, const char* path, char** result_j
         return AURA_EVAL_INVALID_ARGUMENT;
     std::FILE* f = std::fopen(path, "rb");
     if (!f) {
-        *result_json =
-            heap_copy(error_json(std::string("cannot read file: ") + path, "io-error", 0, 0));
+        *result_json = heap_copy(
+            error_json(std::string("cannot read file: ") + path, "io-error", "IoError", 0, 0));
         return AURA_EVAL_IO_ERROR;
     }
     std::string code;

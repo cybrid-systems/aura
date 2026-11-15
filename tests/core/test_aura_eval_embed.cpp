@@ -143,7 +143,8 @@ void test_errors(aura_eval_session* s) {
           "session survives an error");
 
     const std::string refused = run(s, "(car 5)", &st);
-    check(st == AURA_EVAL_ERROR && has(refused.c_str(), "error-value"),
+    check(st == AURA_EVAL_ERROR && has(refused.c_str(), "error-value") &&
+              has(refused.c_str(), "\"code\":\"TypeError\""),
           "error value is reported, not printed as a value");
 }
 
