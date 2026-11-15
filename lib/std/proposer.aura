@@ -35,10 +35,13 @@
 ;
 ; ── Scope guard (the boundary is mechanical, not prompt text) ──────
 ; A proposal is refused unless EVERY define it writes is in ctx "defines"
-; and none is protected. The guard also refuses: unparsable text, a size
-; overrun, capability-bearing code (net/ffi/process/grants), injection
-; markers (llm:injection-risk?), and a directly self-recursive define
-; with no conditional (it cannot terminate). Every refusal is appended
+; and none is protected. A protected name is also refused when a body
+; set!s it, defines it again inside the body, or hands it to eval /
+; eval-current / load / set-code / mutate:rebind. The guard also refuses:
+; unparsable text, a size overrun, capability-bearing code
+; (net/ffi/process/grants), injection markers (llm:injection-risk?), and
+; a directly self-recursive define with no conditional (it cannot
+; terminate). Every refusal is appended
 ; to the ctx audit sink (prop:audit) with a reason string; the proposal
 ; never reaches the caller. At run time the engine still enforces the
 ; workspace's capability/sandbox grants and the MutationBoundary; this
@@ -497,6 +500,125 @@
               (string-append "non-terminating: " name)
               #f)))))
 
+; Heads that execute or install code. A quoted set! is data until one of
+; these runs it. eval-current and load carry no inspectable payload.
+(define prop-rewrite-heads
+  (list 'eval 'eval-current 'load 'set-code 'mutate:rebind))
+
+(define (prop-protected-hit? name protected)
+  (and (string? name) (member? name protected)))
+
+(define (prop-protected-reason name)
+  (string-append "protected: " name))
+
+(define (prop-direct-protected-write form protected)
+  (if (not (and (pair? form) (symbol? (car form))))
+      #f
+      (let ((h (car form)))
+        (cond
+          ((and (eq? h 'set!) (pair? (cdr form)) (symbol? (car (cdr form))))
+           (let ((n (symbol->string (car (cdr form)))))
+             (if (prop-protected-hit? n protected) n #f)))
+          ((or (eq? h 'define) (eq? h 'define-syntax)
+               (eq? h 'define-macro) (eq? h 'define-values))
+           (let ((n (prop-form-name form)))
+             (if (prop-protected-hit? n protected) n #f)))
+          (else #f)))))
+
+(define (prop-literal-name v)
+  (cond ((symbol? v) (symbol->string v))
+        ((string? v) v)
+        ((and (pair? v) (eq? (car v) 'quote)
+              (pair? (cdr v)) (symbol? (car (cdr v))))
+         (symbol->string (car (cdr v))))
+        (else #f)))
+
+(define (prop-static-payload? v)
+  (or (string? v) (number? v) (boolean? v) (null? v)
+      (and (pair? v) (symbol? (car v))
+           (or (eq? (car v) 'quote) (eq? (car v) 'quasiquote)))))
+
+; Unparsable text can still spell a protected write. A parsed payload is
+; scanned as code instead, so a mention inside a string literal is data.
+(define (prop-protected-in-text s protected)
+  (if (not (and (string? s)
+                (or (string-contains? s "set!")
+                    (string-contains? s "define"))))
+      #f
+      (let loop ((ns protected))
+        (cond ((null? ns) #f)
+              ((string-contains? s (car ns)) (car ns))
+              (else (loop (cdr ns)))))))
+
+; -> reason string, or a list of (mode . datum) frames to keep scanning.
+(define (prop-enqueue-rewrite form protected)
+  (let ((h (car form)) (args (if (pair? (cdr form)) (cdr form) (list))))
+    (cond
+      ((or (eq? h 'eval-current) (eq? h 'load))
+       (prop-protected-reason (symbol->string h)))
+      ((eq? h 'mutate:rebind)
+       (if (null? args)
+           (prop-protected-reason "mutate:rebind")
+           (let ((n (prop-literal-name (car args))))
+             (if (not n)
+                 (prop-protected-reason "mutate:rebind")
+                 (if (prop-protected-hit? n protected)
+                     (prop-protected-reason n)
+                     (let loop ((xs (cdr args)) (acc (list)))
+                       (if (null? xs)
+                           (reverse acc)
+                           (loop (cdr xs) (cons (cons 'exec (car xs)) acc)))))))))
+      ((or (eq? h 'eval) (eq? h 'set-code))
+       (if (null? args)
+           (prop-protected-reason (symbol->string h))
+           (let loop ((xs args) (acc (list)))
+             (cond ((null? xs) (reverse acc))
+                   ((not (prop-static-payload? (car xs)))
+                    (prop-protected-reason (symbol->string h)))
+                   (else (loop (cdr xs) (cons (cons 'exec (car xs)) acc)))))))
+      (else #f))))
+
+(define (prop-protected-scan root protected)
+  (if (or (not (list? protected)) (null? protected))
+      #f
+      (let loop ((stack (list (cons 'code root))))
+        (if (null? stack)
+            #f
+            (let* ((top (car stack))
+                   (mode (car top))
+                   (x (cdr top))
+                   (rest (cdr stack)))
+              (cond
+                ((and (string? x) (eq? mode 'exec))
+                 (let ((p (prop:parse x)))
+                   (if (prop-opt p "ok" #f)
+                       (loop (append (map (lambda (f) (cons 'code f))
+                                          (prop-opt p "forms" (list)))
+                                     rest))
+                       (let ((hit (prop-protected-in-text x protected)))
+                         (if hit (prop-protected-reason hit) (loop rest))))))
+                ((not (pair? x)) (loop rest))
+                ((and (eq? mode 'code) (symbol? (car x))
+                      (or (eq? (car x) 'quote) (eq? (car x) 'quasiquote)))
+                 (loop rest))
+                ((and (eq? mode 'exec) (symbol? (car x))
+                      (or (eq? (car x) 'quote) (eq? (car x) 'quasiquote)))
+                 (if (pair? (cdr x))
+                     (loop (cons (cons 'exec (car (cdr x))) rest))
+                     (loop rest)))
+                (else
+                 (let ((wrote (prop-direct-protected-write x protected)))
+                   (if wrote
+                       (prop-protected-reason wrote)
+                       (if (and (eq? mode 'code) (symbol? (car x))
+                                (member? (car x) prop-rewrite-heads))
+                           (let ((more (prop-enqueue-rewrite x protected)))
+                             (if (string? more)
+                                 more
+                                 (loop (append more rest))))
+                           (loop (cons (cons mode (car x))
+                                       (cons (cons mode (cdr x)) rest)))))))))))))
+
 (define (prop:scope-check genome ctx)
   (cond
     ((not (string? genome)) "genome: not-a-string")
@@ -538,8 +660,10 @@
               (loop (cdr fs) (string-append "scope: " name)))
              (else
               (let ((cap (prop-capability-scan f))
+                    (prot (prop-protected-scan f protected))
                     (term (prop-termination-check f)))
                 (cond (cap (loop (cdr fs) cap))
+                      (prot (loop (cdr fs) prot))
                       (term (loop (cdr fs) term))
                       (else (loop (cdr fs) #f))))))))))))
 
