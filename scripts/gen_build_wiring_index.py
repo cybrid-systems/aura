@@ -28,6 +28,8 @@ MARKER = "# --- coverage wiring index (#5246) ---------------------------------"
 
 def names() -> list[str]:
     checks = sorted(p.stem for p in CHECKS.glob("check_*.py"))
+    # Root scripts/check_*.py are discovered by run_checks.py too.
+    checks += sorted(p.stem for p in (ROOT / "scripts").glob("check_*.py"))
     out = set(checks)
     out.update(c + ".py" for c in checks)
     if LEGACY.is_file():
