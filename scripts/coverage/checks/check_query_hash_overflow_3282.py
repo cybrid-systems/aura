@@ -93,14 +93,28 @@ def main() -> int:
             print(f"    {rel}: {len(bare)} bare create(literal)")
     must(bare_total == 0, f"G1: no bare FlatHashTable::create(<literal>) in six TUs ({bare_total})")
 
-    # G2/G3: finish + overflowed counts per TU
+    # G2: emitter sinks per TU. Issue #5244 moved the probe + the overflow
+    # flag out of the per-handler lambdas into primitives_detail::StatsKvTable
+    # and stats_hash_from_pairs, so a sink is now any of the three forms:
+    # the open-coded query_hash_finish(ht, ...), the builder .finish(), or a
+    # stats_hash_from_pairs(...) call. The floors stay: they count the number
+    # of stats hashes that route a capacity miss into the #3020 stamp.
     for rel in TUS:
         src = read(rel)
         fin = len(re.findall(r"query_hash_finish\(ht,", src))
-        ovf = len(re.findall(r"bool overflowed = false;", src))
+        builder = len(re.findall(r"\.finish\(\)", src))
+        pairs = len(re.findall(r"stats_hash_from_pairs\(", src))
+        sinks = fin + builder + pairs
         floor = FINISH_FLOORS[rel]
-        must(fin >= floor, f"G2: {rel} query_hash_finish >= {floor} ({fin})")
-        must(ovf >= floor, f"G3: {rel} overflowed flag >= {floor} ({ovf})")
+        must(sinks >= floor, f"G2: {rel} emitter sinks >= {floor} ({sinks})")
+        # G3: the miss path. Either the handler keeps its own overflowed flag,
+        # or it routes through the shared emitter, whose single copy carries it.
+        own = len(re.findall(r"bool overflowed = false;", src))
+        shared = "primitives_detail::StatsKvTable" in src or "stats_hash_from_pairs(" in src
+        must(
+            own > 0 or shared,
+            f"G3: {rel} capacity-miss flag present (own={own}, shared={shared})",
+        )
 
     # G4: no capacity-miss destroy+make_void left in CONVERTED sites
     # (blocks containing query_hash_capacity_for). Pre-existing #3020

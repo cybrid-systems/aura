@@ -95,7 +95,16 @@ def main() -> int:
     if i < 0:
         fails.append("AC1: capability-effect-stats handler not found")
     else:
-        j = sec.find("return query_hash_finish", i)
+        # Issue #5244: the handler may finish through the shared emitter.
+        ends = [
+            x
+            for x in (
+                sec.find("return query_hash_finish", i),
+                sec.find("return insert_kv.finish()", i),
+            )
+            if x > i
+        ]
+        j = min(ends) if ends else -1
         if j < 0:
             fails.append("AC1: capability-effect handler finish not found")
         else:
@@ -104,9 +113,19 @@ def main() -> int:
             effect_live = len(keys)
             if effect_live + HEADROOM > PLANNED:
                 fails.append(f"AC1: live {effect_live} + {HEADROOM} > planned {PLANNED}")
-            must("bool overflowed = false", "AC1 overflowed flag", block)
-            must("overflowed = true", "AC1 bounded insert stamps overflow", block)
-            must("return query_hash_finish(ht, ev.string_heap_, overflowed, ev)", "AC1 finish", block)
+            # Issue #5244: the bounded probe + its overflow stamp live in
+            # primitives_detail::StatsKvTable; the handler must route its keys
+            # through the shared emitter (or keep the local probe + flag).
+            routed = "primitives_detail::StatsKvTable" in block or (
+                "bool overflowed = false" in block and "overflowed = true" in block
+            )
+            if not routed:
+                fails.append("AC1 overflowed flag / bounded insert path")
+            if (
+                "return query_hash_finish(ht, ev.string_heap_, overflowed, ev)" not in block
+                and "return insert_kv.finish()" not in block
+            ):
+                fails.append("AC1 finish")
             # AC2: append-only — legacy keys preserved, stamps at end.
             for k in (
                 "schema",
@@ -126,7 +145,7 @@ def main() -> int:
             tail = block.rfind('insert_kv("schema-4141"')
             if tail < 0:
                 fails.append("AC2: schema-4141 stamp missing")
-            elif "return query_hash_finish" not in block[tail:]:
+            elif "return query_hash_finish" not in block[tail:] and "return insert_kv.finish()" not in block[tail:]:
                 fails.append("AC2: #4141 stamps not at handler end")
             must('insert_kv("issue-4141"', "AC2 issue-4141 stamp", block)
 
