@@ -81,11 +81,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from threading import Lock
 
-# Issue #1932: harness lives under tests/python/; bench cases under tests/bench/
+# Issue #1932: harness lives under tests/python/; bench cases under tests/bench/.
 _ROOT_FOR_PATH = Path(__file__).resolve().parent
 sys.path.insert(0, str(_ROOT_FOR_PATH / "tests" / "python"))
 sys.path.insert(0, str(_ROOT_FOR_PATH / "tests" / "bench"))
-from _aura_harness import AFFECTED_DOC, B, G, N, R, Y, fail, info, ok, run, warn  # noqa: E402
+from _aura_harness import AFFECTED_DOC  # noqa: E402
 from aura_file_runner import (  # noqa: E402
     CommandSpec,
     SnippetSpec,
@@ -99,12 +99,34 @@ from integ_cases import load_integ_cases  # noqa: E402
 from issue_tier import issues_tier, load_fast_targets, resolve_issue_targets  # noqa: E402
 from smoke_cases import load_smoke_cases  # noqa: E402
 
-ROOT = Path(__file__).resolve().parent
-SCRIPTS = ROOT / "scripts"
-COVERAGE_CHECKS = SCRIPTS / "coverage" / "checks"
-COVERAGE_RUNNER = SCRIPTS / "coverage" / "runner.py"
-COVERAGE_RUN_CHECKS = SCRIPTS / "coverage" / "run_checks.py"
-COVERAGE_MANIFESTS = SCRIPTS / "coverage" / "manifests"
+# Issue #5246: paths, terminal colours, the process runner and sanitizer
+# routing live in tools/build/core.py; build.py re-exports them for the
+# commands that still live here.
+from tools.build import core as _core  # noqa: E402
+from tools.build.core import (  # noqa: E402
+    AUDIT,
+    AURA,
+    BENCH,
+    BUILD,
+    COVERAGE_CHECKS,
+    COVERAGE_MANIFESTS,
+    COVERAGE_RUN_CHECKS,
+    COVERAGE_RUNNER,
+    ROOT,
+    SANITIZER_FLAGS,
+    TEST_BIN,
+    TOOLS,
+    B,
+    G,
+    N,
+    R,
+    Y,
+    fail,
+    info,
+    ok,
+    run,
+    warn,
+)
 
 
 def _issue_from_check_stem(stem: str) -> str | None:
@@ -138,81 +160,21 @@ def _coverage_run(script: Path) -> subprocess.CompletedProcess:
     return subprocess.CompletedProcess(args=[], returncode=1)
 
 
-TOOLS = SCRIPTS / "tools"
-AUDIT = SCRIPTS / "audit"
-BENCH = ROOT / "tests" / "benchmark.py"  # thin entry → tests/bench/benchmark.py
-
-
-def _default_build_dir() -> Path:
-    """Resolve build directory (Issue #1573: AURA_BUILD_DIR for macOS build-mac etc.)."""
-    raw = os.environ.get("AURA_BUILD_DIR", "").strip()
-    if raw:
-        p = Path(raw)
-        return p if p.is_absolute() else ROOT / p
-    return ROOT / "build"
-
-
-BUILD = _default_build_dir()
-AURA = BUILD / "aura"
-TEST_BIN = BUILD / "test_ir"
-
-
 # ═══════════════════════════════════════════════════════════════
-# Sanitizer configuration (Issue #299)
-#
-# Pass --sanitizer={asan|ubsan|tsan} to any build.py subcommand
-# to route compilation into build_<san>/ with the right flags.
-# No flag = normal Debug/RelWithDebInfo build, behavior unchanged.
+# Sanitizer routing (Issue #299) — state lives in tools/build/core.py;
+# this wrapper re-binds the names commands here read (BUILD/AURA/TEST_BIN).
 # ═══════════════════════════════════════════════════════════════
-
-# Each entry: (CFLAGS/CXXFLAGS, LDFLAGS, CMAKE_BUILD_TYPE override or None)
-# -O1 is required for tsan (lower opt levels reduce false positives).
-# frame-pointer is needed for clean stack traces under asan/ubsan.
-SANITIZER_FLAGS = {
-    "asan": (
-        "-fsanitize=address -fno-omit-frame-pointer",
-        "-fsanitize=address",
-        None,  # honor user AURA_BUILD_TYPE
-    ),
-    "ubsan": (
-        "-fsanitize=undefined -fno-omit-frame-pointer",
-        "-fsanitize=undefined",
-        None,
-    ),
-    "tsan": (
-        # -Wno-error=mismatched-new-delete: GCC's TSan instrumentation inlines
-        # LLVM IRBuilder CreateLoad (llvm/IR/IRBuilder.h:1950) and flags LLVM's
-        # intrusive User::operator new/delete pairing as mismatched-new-delete;
-        # with -Werror that kills the build (observed in aura_jit.cpp via
-        # LLVMBuilder::load). Downgrade that one diagnostic to a warning —
-        # all other -Werror checks stay on.
-        # -Wno-error=tsan: GCC 16 flags the atomic_thread_fence wrapper in
-        # src/core/atomic_fence_port.h as a TSan-instrumentation warning
-        # ("atomic_thread_fence ... not supported") and -Werror kills the
-        # build (#4711). Same narrowing as the mismatched-new-delete entry.
-        "-fsanitize=thread -fno-omit-frame-pointer -Wno-error=mismatched-new-delete -Wno-error=tsan",
-        "-fsanitize=thread",
-        "Debug",  # force -O0; -O2/-O3 explode TSan false positives
-    ),
-}
 
 
 def _apply_sanitizer(name: str) -> None:
-    """Rebind BUILD/AURA/TEST_BIN to a sanitizer-specific build dir.
+    """Route BUILD/AURA/TEST_BIN through the sanitizer-specific build dir.
 
-    Called from main() after parsing --sanitizer=NAME from sys.argv.
-    Idempotent: empty name restores the default build/ tree (or AURA_BUILD_DIR).
+    The state lives in tools/build/core.py (#5246); re-bind this module's
+    names so the commands that still live here read the same paths.
     """
     global BUILD, AURA, TEST_BIN
-    if name:
-        if name not in SANITIZER_FLAGS:
-            fail(f"unknown --sanitizer={name!r} (choose from: asan, ubsan, tsan)")
-            sys.exit(2)
-        BUILD = ROOT / f"build_{name}"
-    else:
-        BUILD = _default_build_dir()
-    AURA = BUILD / "aura"
-    TEST_BIN = BUILD / "test_ir"
+    _core.apply_sanitizer(name)
+    BUILD, AURA, TEST_BIN = _core.BUILD, _core.AURA, _core.TEST_BIN
 
 
 # ═══════════════════════════════════════════════════════════════

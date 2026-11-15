@@ -130,7 +130,9 @@ class CiToolchainImage(unittest.TestCase):
         tsan = presets["tsan"]["cacheVariables"]["CMAKE_CXX_FLAGS"]
         self.assertIn("-Wno-error=mismatched-new-delete", tsan)
         self.assertIn("-Wno-error=tsan", tsan)
-        build_py = (ROOT / "build.py").read_text()
+        # Issue #5246: sanitizer flags moved to tools/build/core.py; the
+        # preset must still agree with the build tooling, wherever it lives.
+        build_py = (ROOT / "build.py").read_text() + (ROOT / "tools" / "build" / "core.py").read_text()
         for flag in ("-Wno-error=mismatched-new-delete", "-Wno-error=tsan"):
             self.assertIn(flag, build_py)
         self.assertIn("-Werror=experimental", build_py)
