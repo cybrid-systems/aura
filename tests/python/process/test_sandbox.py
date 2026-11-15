@@ -222,6 +222,16 @@ CASES = (
         "sand_dev_child.DevChildCow.test_preset_dev_trial_mutates_child_not_live",
     ),
     (
+        5289,
+        "test_trials_keep_io_read",
+        "sand_dev_child.DevChildCow.test_trials_keep_io_read",
+    ),
+    (
+        5289,
+        "test_child_rebind_cycles_keep_io_read",
+        "sand_dev_child.DevChildCow.test_child_rebind_cycles_keep_io_read",
+    ),
+    (
         5169,
         "test_checker_accepts_tree",
         "sand_stdlib_unbound.TestIssue5169StdlibUnbound.test_checker_accepts_tree",

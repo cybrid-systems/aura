@@ -53,6 +53,84 @@ def env() -> dict[str, str]:
     return out
 
 
+TRIALS = """
+(require "std/evo-core" all:)
+(require "std/llm" all:)
+(set-code "(define (rule-entry x) 0)")
+(eval-current)
+
+(define (show tag)
+  (display tag)
+  (display " ")
+  (write (capability? "io-read"))
+  (display " ")
+  (write (try (getenv "HOME") (catch (e) e)))
+  (newline))
+
+(define (one k)
+  (evo:trial
+    (evo:candidate
+      (string-append "(lambda (x) " (number->string k) ")")
+      (hash "target" "rule-entry"))
+    (hash "apply" evo:default-apply
+          "evaluate" (lambda (c)
+                       (hash "objectives" (hash "v" (rule-entry 0)))))))
+
+(show "before")
+(for-each one (list 1 2 3 4 5))
+(show "after")
+(define chat (try (llm:chat "sys" "ping" (hash "max_tokens" 8) 2)
+                  (catch (e) e)))
+(display "chat-hash ")
+(display (hash? chat))
+(newline)
+(display "chat-error ")
+(display (if (hash? chat) (hash-ref chat "error" "missing") chat))
+(newline)
+"""
+
+CYCLES = """
+(require "std/mutate" all:)
+(set-code "(define (rule-entry x) 0)")
+(eval-current)
+
+(define (cycle)
+  (let ((c (workspace :create "child")))
+    (workspace :switch c)
+    (mutate :rebind "rule-entry" "(lambda (x) 1)" "child")
+    (workspace :switch 0)
+    (workspace :discard c)))
+
+(define (show tag)
+  (display tag)
+  (display " ")
+  (write (capability? "io-read"))
+  (display " ")
+  (write (try (getenv "HOME") (catch (e) e)))
+  (newline))
+
+(show "before")
+(for-each (lambda (k) (cycle)) (list 1 2 3 4 5))
+(show "after")
+"""
+
+
+def run_dev(program: str, *args: str) -> subprocess.CompletedProcess[str]:
+    face = env()
+    for key in ("LLM_API_KEY", "LLM_BASE_URL", "LLM_MODEL", "LLM_TIMEOUT"):
+        face.pop(key, None)
+    with tempfile.TemporaryDirectory() as d:
+        (Path(d) / "p.aura").write_text(program)
+        return subprocess.run(
+            [str(AURA_BIN), "--preset", "dev", "--quiet", *args, "p.aura"],
+            cwd=d,
+            capture_output=True,
+            text=True,
+            env=face,
+            timeout=120,
+        )
+
+
 class DevChildCow(unittest.TestCase):
     def test_preset_dev_trial_mutates_child_not_live(self) -> None:
         with tempfile.TemporaryDirectory() as d:
@@ -72,6 +150,22 @@ class DevChildCow(unittest.TestCase):
             self.assertIn("Y 45", r.stdout)
             self.assertIn("LIVE 15", r.stdout)
             self.assertIn("UNCHANGED #t", r.stdout)
+
+    def test_trials_keep_io_read(self) -> None:
+        r = run_dev(TRIALS, "--grant", "net")
+        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
+        self.assertIn("before #t", r.stdout)
+        self.assertIn("after #t", r.stdout)
+        self.assertNotIn("capability denied", r.stdout + r.stderr)
+        self.assertIn("chat-hash #t", r.stdout)
+        self.assertIn("chat-error empty", r.stdout)
+
+    def test_child_rebind_cycles_keep_io_read(self) -> None:
+        r = run_dev(CYCLES)
+        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
+        self.assertIn("before #t", r.stdout)
+        self.assertIn("after #t", r.stdout)
+        self.assertNotIn("capability denied", r.stdout + r.stderr)
 
 
 if __name__ == "__main__":
