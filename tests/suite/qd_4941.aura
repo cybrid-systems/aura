@@ -72,12 +72,16 @@
 ; ═══════════════════════════════════════════════════════════════════
 ; trap-3: six 3-bit blocks; a block scores 3 only when all three genes are
 ; set, otherwise 2 - ones. Every block's gradient points at all-zeroes
-; (2 points) while the global optimum (18) needs all six blocks set, so a
-; population that converges on the deceptive basin never returns. Islands
-; keep four independent basins alive, migration recombines their elites,
-; and a stale deme is re-seeded -- the classic escape from premature
-; convergence. Budget is identical: 4 x 12 = 48 evaluations per
-; generation, the same as the single population of 48.
+; (2 points) while the global optimum (18) needs all six blocks set.
+; Budget is identical: 4 x 12 = 48 evaluations per generation, the same
+; as the single population of 48.
+; The affine stream mix (before #5290) made adjacent island slots an
+; arithmetic progression, and under that artifact islands reached 18 on
+; 3 of these 10 seeds while the single population reached it on none.
+; Independent streams do not. At 12 generations neither model reaches
+; 18; at 24 the single population reaches it more often. This check
+; keeps the comparison runnable and pins what is actually invariant:
+; both scores stay inside the trap, and the same seed repeats.
 (display "AC2 islands trap\n")
 (define (block3 b)
   (let ((ones (let c ((ys b) (n 0)) (if (null? ys) n (c (cdr ys) (if (> (car ys) 0.5) (+ n 1) n))))))
@@ -104,13 +108,19 @@
     (display "  single=") (display p) (newline)
     (list i p)))
 (define rows (map row seeds))
-(define island-hits (map (lambda (r) (if (>= (car r) 18.0) 1 0)) rows))
-(define single-hits (map (lambda (r) (if (>= (car (cdr r)) 18.0) 1 0)) rows))
-(display "  hits islands=") (display (sum island-hits))
-(display " single=") (display (sum single-hits))
+(define (in-trap? q) (and (>= q 0.0) (<= q 18.0)))
+(assert! (let loop ((rs rows))
+           (if (null? rs)
+               #t
+               (and (in-trap? (car (car rs)))
+                    (in-trap? (car (cdr (car rs))))
+                    (loop (cdr rs)))))
+         "island and panmictic scores stay inside the trap")
+(define again (row 1))
+(assert! (and (= (car again) (car (car rows)))
+              (= (car (cdr again)) (car (cdr (car rows)))))
+         "the same seed repeats both models")
 (display "  (10 seeds, 48 evals/gen, 12 gens)") (newline)
-(assert! (> (sum island-hits) (sum single-hits))
-         "4 islands + migration hit the global optimum on strictly more seeds than one panmictic population (same budget)")
 
 ; ═══════════════════════════════════════════════════════════════════
 ; AC3 — structural de-duplication

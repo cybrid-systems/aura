@@ -208,18 +208,34 @@
 ; ═══════════════════════════════════════════════════════════════════
 ; Deterministic RNG — one independent stream per (seed, gen, slot)
 ; ═══════════════════════════════════════════════════════════════════
-; 32-bit LCG (mod 2^31-1). Every step is < 2^63, so no mode, JIT or
-; sanitizer changes the sequence: same seed + same coordinates = same draws.
+; 32-bit LCG (mod 2^31-1). Every product stays inside the fixnum range
+; [-2^62, 2^62-1], so no mode, JIT or sanitizer changes the sequence:
+; same seed + same coordinates = same draws.
+;
+; Issue #5290: an affine mix of (seed, gen, slot) made the first draw of
+; adjacent slots or generations an arithmetic progression mod 2^31-1, so
+; a small evo:rng-int! repeated. Each coordinate is diffused with a
+; multiply-xorshift before the three streams are combined.
 
 (define evo-m31 2147483647)
+; Odd multipliers from the 32-bit low-bias mixer, small enough that
+; (m31 * k) does not leave the fixnum range.
+(define evo-mix-k 73244475)
+(define evo-mix-k2 65497)
+
+(define (evo-diffuse n)
+  (let* ((h (modulo n evo-m31))
+         (h1 (bitwise-xor h (arithmetic-shift h -16)))
+         (h2 (modulo (* h1 evo-mix-k) evo-m31))
+         (h3 (bitwise-xor h2 (arithmetic-shift h2 -13)))
+         (h4 (modulo (* h3 evo-mix-k2) evo-m31)))
+    (bitwise-xor h4 (arithmetic-shift h4 -16))))
 
 (define (evo-mix a b c)
-  (let* ((x (modulo (+ (* (modulo a evo-m31) 48271)
-                       (* (modulo b evo-m31) 65537)
-                       (modulo c evo-m31))
-                    evo-m31))
-         (y (modulo (+ (* x 48271) 11) evo-m31))
-         (z (modulo (+ (* y 48271) 7) evo-m31)))
+  (let* ((x (bitwise-xor (evo-diffuse a)
+                         (bitwise-xor (arithmetic-shift (evo-diffuse b) 1)
+                                      (arithmetic-shift (evo-diffuse c) 2))))
+         (z (modulo (evo-diffuse x) evo-m31)))
     (if (= z 0) 1 z)))
 
 (define (evo:rng seed gen slot)
