@@ -18332,6 +18332,8 @@ public:
     // I/O op is "io error:". Indexed like error_locations_, same lock.
     static constexpr std::uint8_t kErrorMarkUser = 1;
     static constexpr std::uint8_t kErrorMarkIo = 2;
+    // #5241 batch 1: division by zero is its own kind, not TypeError.
+    static constexpr std::uint8_t kErrorMarkDivZero = 3;
     void mark_error_kind(types::EvalValue err, std::uint8_t mark) {
         if (!types::is_error(err) || types::is_string(err))
             return;
@@ -18349,6 +18351,7 @@ public:
         user_error_marks_[idx] = mark;
     }
     void mark_user_error(types::EvalValue err) { mark_error_kind(err, kErrorMarkUser); }
+    void mark_division_by_zero(types::EvalValue err) { mark_error_kind(err, kErrorMarkDivZero); }
     [[nodiscard]] std::uint8_t error_mark(types::EvalValue err) const {
         if (!types::is_error(err) || types::is_string(err))
             return 0;
@@ -18364,6 +18367,8 @@ public:
                 return aura::diag::ErrorKind::UserError;
             case kErrorMarkIo:
                 return aura::diag::ErrorKind::IoError;
+            case kErrorMarkDivZero:
+                return aura::diag::ErrorKind::DivisionByZero;
             default:
                 return aura::diag::ErrorKind::TypeError; // display_kind() maps refusals
         }
@@ -18406,8 +18411,10 @@ public:
     // Issue #4461: integer `/` by zero. Same error value as modulo, so a
     // literal zero and a zero from a binding agree.
     [[nodiscard]] types::EvalValue make_div_zero_error() {
-        return primitives_detail::make_primitive_error(
+        auto err = primitives_detail::make_primitive_error(
             string_heap_, error_values_, "/: division by zero", &primitive_error_count_);
+        mark_division_by_zero(err);
+        return err;
     }
     // Issue #4463: same error-value shape as division by zero, so try
     // binds the cause string. `cause` is the mismatch detail without
