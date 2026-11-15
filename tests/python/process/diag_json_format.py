@@ -66,6 +66,25 @@ class DiagJson(unittest.TestCase):
         self.assertEqual(obj["span"]["start"], {"line": 1, "column": 2})
         self.assertIn("car: not a pair", obj["message"])
 
+    def test_serve_async_error_uses_the_same_code_and_span(self) -> None:
+        env = dict(os.environ)
+        env["AURA_SANDBOX"] = "off"
+        p = subprocess.run(
+            [str(AURA_BIN), "--serve-async"],
+            input='(error "x")\n',
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=120,
+        )
+        replies = [json.loads(ln) for ln in p.stdout.splitlines() if ln.strip()]
+        self.assertTrue(replies, p.stderr)
+        obj = replies[-1]
+        self.assertEqual(obj["status"], "error")
+        self.assertEqual(obj["code"], "UserError")
+        self.assertEqual(obj["message"], "x")
+        self.assertEqual(obj["span"]["start"], {"line": 1, "column": 2})
+
     def test_default_text_output_is_unchanged(self) -> None:
         with tempfile.TemporaryDirectory() as d:
             p = Path(d) / "u.aura"
