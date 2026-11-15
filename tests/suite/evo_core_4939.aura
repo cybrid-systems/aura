@@ -374,6 +374,34 @@
 (assert! (string=? (hash-ref blob "algo") (hash-ref (evo:report h3) "algo")) "json round-trip keeps algo")
 (assert! (not (= -1 (string-index (evo:help) "4939" 0))) "help mentions 4939")
 
+; ═══════════════════════════════════════════════════════════════════
+; Issue #5296 — a trial that rebinds one define must not turn a sibling
+; variadic define into a fixed-arity one. Last on purpose: set-code
+; replaces the live workspace the cases above already checked.
+; ═══════════════════════════════════════════════════════════════════
+(display "AC8 variadic define survives a trial\n")
+(set-code "(define (f5296 a . rest) (list a rest)) (define (g5296 x) (+ x 1))")
+(eval-current)
+(define before5296 (try (f5296 1 2 3) (catch (e) e)))
+(assert! (equal? before5296 (list 1 (list 2 3))) "variadic before trial")
+(define body5296 "(lambda (x) (+ x 2))")
+(define cand5296 (evo:candidate body5296 (hash "target" "g5296" "thought" "x")))
+(define tr5296
+  (evo:trial cand5296
+             (hash "apply" (lambda (c)
+                             (if (eq? (mutate :rebind "g5296" body5296 "t5296") #t)
+                                 (begin (eval-current) #t)
+                                 #f))
+                   "evaluate" (lambda (c)
+                                (hash "objectives" (hash "y" (g5296 1))
+                                      "constraints" (hash "ok" 0.0)
+                                      "behavior" (hash)))
+                   "timeout-ms" 60000)))
+(assert! (string=? "ok" (hash-ref tr5296 "status" "?")) "variadic trial status ok")
+(define after5296 (try (f5296 1 2 3) (catch (e) e)))
+(assert! (equal? after5296 (list 1 (list 2 3))) "variadic after trial")
+(assert! (= 2 (g5296 1)) "trial rebind did not leak into the parent")
+
 (if (= *fails* 0)
     (begin (display "OK-4939 evo-core\n"))
     (begin

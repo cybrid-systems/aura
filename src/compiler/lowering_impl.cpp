@@ -3014,10 +3014,20 @@ std::string unparse_node(const FlatAST& flat, const StringPool& pool, NodeId id,
         }
 
         case NodeTag::Lambda: {
+            // Bit 0 is the dotted-rest flag (FlatAST::add_lambda). Issue #5296:
+            // workspace:switch republishes every define through this printer,
+            // then the sandbox-off specialiser re-reads that text. Without
+            // the dot, the #4621 rest gate does not fire and a variadic
+            // define is rebound as fixed-arity (`f expects 2 arguments`).
+            const bool dotted = (v.int_value & 1) != 0;
+            const auto n = v.params.size();
             std::string s = "(lambda (";
-            for (std::size_t i = 0; i < v.params.size(); ++i) {
+            for (std::size_t i = 0; i < n; ++i) {
+                const bool rest = dotted && i + 1 == n;
                 if (i > 0)
                     s += " ";
+                if (rest)
+                    s += ". ";
                 s += pool.resolve(v.params[i]);
             }
             s += ")\n" + indent_str(indent + 1);
