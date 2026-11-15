@@ -4894,459 +4894,1764 @@ cmd_validate_node_no_abort_coverage
 cmd_validate_post_restore_soa_coverage
 linear_force_unified
 residual_defer_steal_hard_and
+Issue #100
+Issue #101
+Issue #102
+Issue #103
+Issue #106
+Issue #107
+Issue #113
+Issue #114
+Issue #115
+Issue #119
+Issue #121
+Issue #124
+Issue #125
+Issue #130
+Issue #160
+Issue #161
+Issue #173
+Issue #178
+Issue #183
+Issue #187
+Issue #189
+Issue #192
+Issue #206
+Issue #211
+Issue #212
+Issue #213
+Issue #218
+Issue #219
+Issue #220
+Issue #223
+Issue #224
+Issue #226
+Issue #254
+Issue #261
+Issue #268
+Issue #278
+Issue #283
+Issue #289
+Issue #300
+Issue #306
+Issue #307
+Issue #322
+Issue #324
+Issue #335
+Issue #339
+Issue #344
+Issue #354
+Issue #365
+Issue #368
+Issue #378
+Issue #381
+Issue #384
+Issue #393
+Issue #398
+Issue #399
+Issue #400
+Issue #403
+Issue #404
+Issue #405
+Issue #406
+Issue #407
+Issue #408
+Issue #411
+Issue #414
+Issue #416
+Issue #417
+Issue #418
+Issue #419
+Issue #420
+Issue #421
+Issue #422
+Issue #423
+Issue #424
+Issue #427
+Issue #432
+Issue #438
+Issue #441
+Issue #454
+Issue #464
+Issue #467
+Issue #468
+Issue #477
+Issue #478
+Issue #480
+Issue #489
+Issue #491
+Issue #495
+Issue #506
+Issue #508
+Issue #509
+Issue #514
+Issue #517
+Issue #518
+Issue #526
+Issue #527
+Issue #529
+Issue #531
+Issue #536
+Issue #542
+Issue #543
+Issue #544
+Issue #545
+Issue #546
+Issue #547
+Issue #548
+Issue #551
+Issue #552
+Issue #553
+Issue #554
+Issue #556
+Issue #560
+Issue #561
+Issue #562
+Issue #563
+Issue #564
+Issue #565
+Issue #570
+Issue #571
+Issue #573
+Issue #574
+Issue #575
+Issue #576
+Issue #577
+Issue #583
+Issue #588
+Issue #592
+Issue #593
+Issue #594
+Issue #595
+Issue #596
+Issue #597
+Issue #598
+Issue #599
+Issue #600
+Issue #602
+Issue #604
+Issue #605
+Issue #607
+Issue #608
+Issue #609
+Issue #610
+Issue #611
+Issue #612
+Issue #619
+Issue #623
+Issue #627
+Issue #628
+Issue #629
+Issue #634
+Issue #635
+Issue #636
+Issue #638
+Issue #639
+Issue #642
+Issue #652
+Issue #653
+Issue #654
+Issue #655
+Issue #657
+Issue #658
+Issue #659
+Issue #673
+Issue #674
+Issue #685
+Issue #731
+Issue #737
+Issue #738
+Issue #739
+Issue #740
+Issue #741
+Issue #742
+Issue #743
+Issue #744
+Issue #745
+Issue #746
+Issue #747
+Issue #751
+Issue #752
+Issue #753
+Issue #754
+Issue #755
+Issue #798
+Issue #799
+Issue #800
+Issue #803
+Issue #805
+Issue #818
+Issue #881
+Issue #923
+Issue #941
+Issue #957
+Issue #986
+Issue #1013
+Issue #1014
+Issue #1047
+Issue #1097
+Issue #1202
+Issue #1241
+Issue #1242
+Issue #1289
+Issue #1301
+Issue #1321
+Issue #1356
+Issue #1359
+Issue #1360
+Issue #1361
+Issue #1362
+Issue #1364
+Issue #1365
+Issue #1366
+Issue #1367
+Issue #1368
+Issue #1369
+Issue #1370
+Issue #1371
+Issue #1372
+Issue #1373
+Issue #1374
+Issue #1375
+Issue #1376
+Issue #1377
+Issue #1378
+Issue #1380
+Issue #1381
+Issue #1387
+Issue #1388
+Issue #1389
+Issue #1390
+Issue #1393
+Issue #1397
+Issue #1398
+Issue #1401
+Issue #1407
+Issue #1408
+Issue #1410
+Issue #1411
+Issue #1412
+Issue #1413
+Issue #1416
+Issue #1420
+Issue #1425
+Issue #1433
+Issue #1434
+Issue #1435
+Issue #1436
+Issue #1437
+Issue #1439
+Issue #1444
+Issue #1445
+Issue #1446
+Issue #1458
+Issue #1465
+Issue #1469
+Issue #1476
+Issue #1478
+Issue #1480
+Issue #1481
+Issue #1482
+Issue #1483
+Issue #1490
+Issue #1495
+Issue #1496
+Issue #1501
+Issue #1503
+Issue #1504
+Issue #1506
+Issue #1511
+Issue #1518
+Issue #1519
+Issue #1526
+Issue #1531
+Issue #1534
+Issue #1535
+Issue #1543
+Issue #1546
+Issue #1547
+Issue #1548
+Issue #1557
+Issue #1565
+Issue #1566
+Issue #1567
+Issue #1568
+Issue #1575
+Issue #1576
+Issue #1577
+Issue #1579
+Issue #1580
+Issue #1581
+Issue #1582
+Issue #1583
+Issue #1584
+Issue #1585
+Issue #1586
+Issue #1587
+Issue #1588
+Issue #1589
+Issue #1590
+Issue #1591
+Issue #1592
+Issue #1594
+Issue #1595
+Issue #1596
+Issue #1597
+Issue #1598
+Issue #1599
+Issue #1600
+Issue #1601
+Issue #1602
+Issue #1604
+Issue #1605
+Issue #1606
+Issue #1607
+Issue #1608
+Issue #1609
+Issue #1610
+Issue #1611
+Issue #1612
+Issue #1613
+Issue #1614
+Issue #1615
+Issue #1616
+Issue #1617
+Issue #1618
+Issue #1619
+Issue #1620
+Issue #1621
+Issue #1622
+Issue #1623
+Issue #1624
+Issue #1626
+Issue #1627
+Issue #1628
+Issue #1631
+Issue #1633
+Issue #1634
+Issue #1635
+Issue #1636
+Issue #1638
+Issue #1639
+Issue #1640
+Issue #1641
+Issue #1648
+Issue #1652
+Issue #1655
+Issue #1657
+Issue #1658
+Issue #1659
+Issue #1660
+Issue #1661
+Issue #1662
+Issue #1663
+Issue #1664
+Issue #1665
+Issue #1666
+Issue #1667
+Issue #1670
+Issue #1671
+Issue #1672
+Issue #1678
+Issue #1679
+Issue #1680
+Issue #1681
+Issue #1682
+Issue #1684
+Issue #1685
+Issue #1686
+Issue #1687
+Issue #1688
+Issue #1689
+Issue #1690
+Issue #1691
+Issue #1692
+Issue #1693
+Issue #1694
+Issue #1695
+Issue #1696
+Issue #1697
+Issue #1699
+Issue #1700
+Issue #1701
+Issue #1702
+Issue #1703
+Issue #1706
+Issue #1707
+Issue #1708
+Issue #1709
+Issue #1710
+Issue #1711
+Issue #1712
+Issue #1714
+Issue #1715
+Issue #1716
+Issue #1717
+Issue #1718
+Issue #1719
+Issue #1720
+Issue #1721
+Issue #1722
+Issue #1723
+Issue #1724
+Issue #1725
+Issue #1726
+Issue #1727
+Issue #1728
+Issue #1729
+Issue #1730
+Issue #1731
+Issue #1732
+Issue #1733
+Issue #1734
+Issue #1739
+Issue #1740
+Issue #1745
+Issue #1746
+Issue #1747
+Issue #1753
+Issue #1754
+Issue #1755
+Issue #1756
+Issue #1757
+Issue #1764
+Issue #1765
+Issue #1766
+Issue #1767
+Issue #1768
+Issue #1769
+Issue #1770
+Issue #1771
+Issue #1772
+Issue #1779
+Issue #1780
+Issue #1781
+Issue #1782
+Issue #1783
+Issue #1785
+Issue #1786
+Issue #1787
+Issue #1795
+Issue #1797
+Issue #1806
+Issue #1816
+Issue #1818
+Issue #1827
+Issue #1835
+Issue #1837
+Issue #1838
+Issue #1839
+Issue #1840
+Issue #1842
+Issue #1843
+Issue #1844
+Issue #1845
+Issue #1846
+Issue #1847
+Issue #1848
+Issue #1849
+Issue #1850
+Issue #1851
+Issue #1852
+Issue #1853
+Issue #1854
+Issue #1855
+Issue #1856
+Issue #1857
+Issue #1858
+Issue #1859
+Issue #1860
+Issue #1861
+Issue #1862
+Issue #1863
+Issue #1864
+Issue #1865
+Issue #1866
+Issue #1867
+Issue #1868
+Issue #1869
+Issue #1870
+Issue #1871
+Issue #1872
+Issue #1873
+Issue #1874
+Issue #1875
+Issue #1876
+Issue #1877
+Issue #1878
+Issue #1879
+Issue #1880
+Issue #1881
+Issue #1882
+Issue #1883
+Issue #1884
+Issue #1885
+Issue #1887
+Issue #1888
+Issue #1889
+Issue #1890
+Issue #1891
+Issue #1892
+Issue #1893
+Issue #1894
+Issue #1895
+Issue #1896
+Issue #1897
+Issue #1898
+Issue #1899
+Issue #1908
+Issue #1909
+Issue #1910
+Issue #1911
+Issue #1912
+Issue #1913
+Issue #1914
+Issue #1916
+Issue #1917
+Issue #1918
+Issue #1919
+Issue #1924
+Issue #1927
+Issue #1928
+Issue #1929
+Issue #1930
+Issue #1931
+Issue #1947
+Issue #1948
+Issue #1949
+Issue #1966
+Issue #1987
+Issue #1988
+Issue #1989
+Issue #1990
+Issue #1991
+Issue #1992
+Issue #1993
+Issue #1994
+Issue #1996
+Issue #2000
+Issue #2001
+Issue #2002
+Issue #2003
+Issue #2004
+Issue #2006
+Issue #2007
+Issue #2008
+Issue #2010
+Issue #2011
+Issue #2012
+Issue #2013
+Issue #2014
+Issue #2015
+Issue #2016
+Issue #2017
+Issue #2018
+Issue #2019
+Issue #2020
+Issue #2021
+Issue #2022
+Issue #2023
+Issue #2024
+Issue #2025
+Issue #2026
+Issue #2027
+Issue #2028
+Issue #2029
+Issue #2030
+Issue #2031
+Issue #2032
+Issue #2033
+Issue #2034
+Issue #2035
+Issue #2036
+Issue #2037
+Issue #2038
+Issue #2040
+Issue #2041
+Issue #2042
+Issue #2043
+Issue #2044
+Issue #2045
+Issue #2046
+Issue #2052
+Issue #2054
+Issue #2055
+Issue #2056
+Issue #2057
+Issue #2058
+Issue #2059
+Issue #2060
+Issue #2061
+Issue #2062
+Issue #2063
+Issue #2064
+Issue #2065
+Issue #2066
+Issue #2067
+Issue #2068
+Issue #2072
+Issue #2073
+Issue #2074
+Issue #2075
+Issue #2076
+Issue #2077
+Issue #2078
+Issue #2079
+Issue #2080
+Issue #2081
+Issue #2082
+Issue #2083
+Issue #2084
+Issue #2085
+Issue #2086
+Issue #2087
+Issue #2088
+Issue #2089
+Issue #2090
+Issue #2092
+Issue #2093
+Issue #2094
+Issue #2095
+Issue #2096
+Issue #2097
+Issue #2098
+Issue #2099
+Issue #2100
+Issue #2101
+Issue #2102
+Issue #2103
+Issue #2104
+Issue #2105
+Issue #2106
+Issue #2107
+Issue #2108
+Issue #2109
+Issue #2110
+Issue #2111
+Issue #2112
+Issue #2113
+Issue #2114
+Issue #2115
+Issue #2116
+Issue #2117
+Issue #2118
+Issue #2119
+Issue #2120
+Issue #2121
+Issue #2122
+Issue #2123
+Issue #2124
+Issue #2125
+Issue #2126
+Issue #2127
+Issue #2128
+Issue #2129
+Issue #2130
+Issue #2131
+Issue #2132
+Issue #2133
+Issue #2137
+Issue #2139
+Issue #2140
+Issue #2141
+Issue #2142
+Issue #2143
+Issue #2144
+Issue #2145
+Issue #2146
+Issue #2147
+Issue #2148
+Issue #2149
+Issue #2150
+Issue #2151
+Issue #2152
+Issue #2153
+Issue #2154
+Issue #2155
+Issue #2156
+Issue #2157
+Issue #2158
+Issue #2159
+Issue #2161
+Issue #2162
+Issue #2163
+Issue #2164
+Issue #2165
+Issue #2166
+Issue #2167
+Issue #2169
+Issue #2170
+Issue #2171
+Issue #2172
+Issue #2173
+Issue #2174
+Issue #2175
+Issue #2176
+Issue #2177
+Issue #2178
+Issue #2179
+Issue #2180
+Issue #2181
+Issue #2182
+Issue #2183
+Issue #2184
+Issue #2185
+Issue #2186
+Issue #2187
+Issue #2188
+Issue #2189
+Issue #2190
+Issue #2191
+Issue #2192
+Issue #2193
+Issue #2194
+Issue #2195
+Issue #2196
+Issue #2197
+Issue #2198
+Issue #2199
+Issue #2200
+Issue #2201
+Issue #2202
+Issue #2203
+Issue #2204
+Issue #2205
+Issue #2206
+Issue #2207
+Issue #2208
+Issue #2209
+Issue #2210
+Issue #2211
+Issue #2212
+Issue #2219
+Issue #2220
+Issue #2221
+Issue #2222
+Issue #2223
+Issue #2224
+Issue #2225
+Issue #2226
+Issue #2227
+Issue #2228
+Issue #2229
+Issue #2230
+Issue #2231
+Issue #2232
+Issue #2233
+Issue #2234
+Issue #2235
+Issue #2236
+Issue #2237
+Issue #2238
+Issue #2239
+Issue #2240
+Issue #2241
+Issue #2242
+Issue #2243
+Issue #2244
+Issue #2245
+Issue #2246
+Issue #2247
+Issue #2248
+Issue #2249
+Issue #2250
+Issue #2251
+Issue #2252
+Issue #2253
+Issue #2254
+Issue #2256
+Issue #2257
+Issue #2258
+Issue #2259
+Issue #2260
+Issue #2261
+Issue #2262
+Issue #2263
+Issue #2264
+Issue #2268
+Issue #2269
+Issue #2271
+Issue #2272
+Issue #2273
+Issue #2274
+Issue #2275
+Issue #2276
+Issue #2277
+Issue #2278
+Issue #2280
+Issue #2281
+Issue #2282
+Issue #2283
+Issue #2284
+Issue #2285
+Issue #2286
+Issue #2287
+Issue #2288
+Issue #2289
+Issue #2290
+Issue #2291
+Issue #2293
+Issue #2294
+Issue #2295
 check_envframe_ownership_transfer_2295
 check_envframe_ownership_transfer_2295.py
+Issue #2296
 check_residual_gc_defer_multi_eval_2296
 check_residual_gc_defer_multi_eval_2296.py
+Issue #2297
 check_capture_cell_remap_2297
 check_capture_cell_remap_2297.py
+Issue #2298
 check_general_object_pin_2298
 check_general_object_pin_2298.py
+Issue #2299
 check_aot_per_eval_slot_invalidate_2299
 check_aot_per_eval_slot_invalidate_2299.py
+Issue #2300
 check_lifetime_contract_snapshot_2300
 check_lifetime_contract_snapshot_2300.py
+Issue #2301
+Issue #2302
+Issue #2304
+Issue #2306
+Issue #2307
+Issue #2308
+Issue #2309
+Issue #2310
+Issue #2312
+Issue #2313
+Issue #2314
+Issue #2315
+Issue #2316
+Issue #2317
+Issue #2318
+Issue #2319
+Issue #2320
+Issue #2321
+Issue #2333
+Issue #2335
+Issue #2337
+Issue #2338
+Issue #2339
+Issue #2340
+Issue #2341
+Issue #2342
+Issue #2343
+Issue #2344
+Issue #2345
+Issue #2346
 check_steal_snapshot_hard_invariant_2346
 check_steal_snapshot_hard_invariant_2346.py
+Issue #2347
+Issue #2348
+Issue #2349
+Issue #2350
+Issue #2351
+Issue #2352
+Issue #2353
+Issue #2354
+Issue #2355
+Issue #2356
+Issue #2357
+Issue #2358
+Issue #2359
+Issue #2360
+Issue #2361
+Issue #2362
 check_envframe_ownership_steal_densify_2362
 check_envframe_ownership_steal_densify_2362.py
+Issue #2363
+Issue #2364
+Issue #2365
+Issue #2366
+Issue #2367
+Issue #2368
 check_densify_remap_pairing_2368
 check_densify_remap_pairing_2368.py
+Issue #2369
 check_live_closure_stable_id_only_2369
 check_live_closure_stable_id_only_2369.py
+Issue #2370
+Issue #2371
+Issue #2372
 check_steal_snapshot_soft_production_lock_2372
 check_steal_snapshot_soft_production_lock_2372.py
+Issue #2374
 check_legacy_pin_registry_cleanup_2374
 check_legacy_pin_registry_cleanup_2374.py
+Issue #2375
 check_pin_bulk_all_shards_2375
 check_pin_bulk_all_shards_2375.py
+Issue #2376
+Issue #2377
 check_steal_complete_strong_entry_2377
 check_steal_complete_strong_entry_2377.py
+Issue #2378
 check_mailbox_defer_drain_sla_2378
 check_mailbox_defer_drain_sla_2378.py
+Issue #2379
+Issue #2381
 check_arena_compact_hook_stats_2381
 check_arena_compact_hook_stats_2381.py
+Issue #2382
 check_arena_dtor_clears_hooks_2382
 check_arena_dtor_clears_hooks_2382.py
+Issue #2383
 check_has_on_compact_hook_lock_2383
 check_has_on_compact_hook_lock_2383.py
+Issue #2384
 check_require_effect_live_mid_2384
 check_require_effect_live_mid_2384.py
+Issue #2385
+Issue #2386
 check_grant_macro_self_evo_stamp_2386
 check_grant_macro_self_evo_stamp_2386.py
+Issue #2387
 check_capability_string_matrix_unify_2387
+Issue #2388
 check_security_audit_fold_2388
 check_security_audit_fold_2388.py
+Issue #2389
+Issue #2390
 check_validate_node_no_abort_2390
 check_validate_node_no_abort_2390.py
+Issue #2391
 check_validate_post_restore_soa_2391
 check_validate_post_restore_soa_2391.py
+Issue #2392
 check_fixup_deltas_2392
 check_fixup_deltas_2392.py
+Issue #2393
+Issue #2394
 check_last_validated_generation_atomic_2394
+Issue #2395
 check_stable_ref_wire_endian_2395
+Issue #2396
+Issue #2397
+Issue #2398
+Issue #2399
+Issue #2400
+Issue #2402
+Issue #2403
+Issue #2404
 check_stable_ref_export_2404
 check_stable_ref_export_2404.py
+Issue #2405
+Issue #2406
+Issue #2408
 check_stringpool_bytes_total_lock_2408
 check_stringpool_bytes_total_lock_2408.py
+Issue #2409
 check_stringpool_buf_fragmentation_lock_2409
 check_stringpool_buf_fragmentation_lock_2409.py
+Issue #2410
 check_node_meta_bounds_2410
 check_node_meta_bounds_2410.py
+Issue #2411
 check_node_meta_gap_2411
 check_node_meta_gap_2411.py
+Issue #2412
 check_reset_slot_parent_edges_2412
 check_reset_slot_parent_edges_2412.py
+Issue #2413
 check_flatast_add_node_lock_2413
 check_flatast_add_node_lock_2413.py
+Issue #2414
 check_summary_recompute_sym_2414
 check_summary_recompute_sym_2414.py
+Issue #2415
 check_summary_flags_guard_2415
 check_summary_flags_guard_2415.py
+Issue #2416
+Issue #2417
 check_binding_gens_atomic_2417
 check_binding_gens_atomic_2417.py
+Issue #2418
 check_structural_metadata_lock_order_2418
 check_structural_metadata_lock_order_2418.py
+Issue #2419
+Issue #2420
 check_tag_arity_key_hash_2420
 check_tag_arity_key_hash_2420.py
+Issue #2421
 check_restamp_lazy_align_atomic_2421
 check_restamp_lazy_align_atomic_2421.py
+Issue #2422
 check_subtree_gen_atomic_2422
 check_subtree_gen_atomic_2422.py
+Issue #2423
 check_dirty_column_lock_2423
 check_dirty_column_lock_2423.py
+Issue #2424
 check_subtree_dirty_bounds_2424
 check_subtree_dirty_bounds_2424.py
+Issue #2425
+Issue #2426
+Issue #2427
+Issue #2428
 check_gc_defer_arm_fetch_or_2428
 check_gc_defer_arm_fetch_or_2428.py
+Issue #2429
+Issue #2430
+Issue #2431
 check_dead_coercion_columnar_2431
 check_dead_coercion_columnar_2431.py
+Issue #2432
+Issue #2433
+Issue #2435
 check_hot_contract_placement_2435
 check_hot_contract_placement_2435.py
+Issue #2436
+Issue #2437
+Issue #2438
+Issue #2439
+Issue #2440
+Issue #2441
+Issue #2442
+Issue #2443
+Issue #2444
+Issue #2445
 check_add_node_builder_contract_2445
 check_add_node_builder_contract_2445.py
+Issue #2446
+Issue #2447
+Issue #2448
 check_defines_referencing_sym_2448
 check_defines_referencing_sym_2448.py
+Issue #2449
+Issue #2450
+Issue #2451
+Issue #2452
+Issue #2453
+Issue #2454
+Issue #2455
 check_restore_children_structural_lock_2455
 check_restore_children_structural_lock_2455.py
+Issue #2456
 check_subtree_uses_sym_template_bloat_2456
 check_subtree_uses_sym_template_bloat_2456.py
+Issue #2457
+Issue #2458
+Issue #2459
 check_castop_density_closed_loop_2459
 check_castop_density_closed_loop_2459.py
+Issue #2460
+Issue #2461
+Issue #2462
+Issue #2463
+Issue #2465
+Issue #2467
+Issue #2468
+Issue #2469
+Issue #2471
 check_ir_optimize_type_info_chain_2471
 check_ir_optimize_type_info_chain_2471.py
+Issue #2472
 check_closure_call_must_deopt_toctou_2472
 check_closure_call_must_deopt_toctou_2472.py
+Issue #2473
 check_gc_closures_mtx_flush_sweep_2473
 check_gc_closures_mtx_flush_sweep_2473.py
 check_ffi_hot_path_cache_toctou_2474
 check_ffi_hot_path_cache_toctou_2474.py
+Issue #2475
 check_aura_jit_unused_fn_lock_2475
 check_aura_jit_unused_fn_lock_2475.py
+Issue #2476
 check_partial_recompile_single_evict_2476
 check_partial_recompile_single_evict_2476.py
+Issue #2477
 check_emit_object_deprecated_2477
 check_emit_object_deprecated_2477.py
+Issue #2478
 check_command_line_cap_io_read_2478
 check_command_line_cap_io_read_2478.py
+Issue #2479
+Issue #2480
 check_json_parse_number_exception_2480
 check_json_parse_number_exception_2480.py
+Issue #2481
 check_json_parse_object_grow_2481
 check_json_parse_object_grow_2481.py
+Issue #2482
 check_list_end_of_list_void_2482
 check_list_end_of_list_void_2482.py
+Issue #2483
 check_channel_rendezvous_2483
 check_channel_rendezvous_2483.py
+Issue #2484
 check_eval_current_no_auto_fix_2484
 check_eval_current_no_auto_fix_2484.py
+Issue #2485
 check_load_cap_io_read_2485
 check_load_cap_io_read_2485.py
+Issue #2486
 check_gc_heap_cells_clear_2486
 check_gc_heap_cells_clear_2486.py
+Issue #2487
+Issue #2488
+Issue #2489
+Issue #2490
 check_require_effect_auto_isolation_2490
 check_require_effect_auto_isolation_2490.py
+Issue #2491
+Issue #2492
+Issue #2493
+Issue #2494
+Issue #2495
+Issue #2496
+Issue #2497
 check_densify_ownership_scan_fail_gate_2497
 check_densify_ownership_scan_fail_gate_2497.py
+Issue #2498
 check_fiber_reclaim_orphan_release_2498
 check_fiber_reclaim_orphan_release_2498.py
+Issue #2499
+Issue #2500
+Issue #2501
+Issue #2502
+Issue #2503
+Issue #2504
+Issue #2505
+Issue #2506
+Issue #2507
+Issue #2508
+Issue #2509
+Issue #2510
 check_steal_complete_restamp_txn_2510
 check_steal_complete_restamp_txn_2510.py
+Issue #2511
+Issue #2512
+Issue #2513
+Issue #2514
 check_linear_synth_boundary_authority_2514
 check_linear_synth_boundary_authority_2514.py
+Issue #2515
 check_orch_soft_boundary_unified_2515
 check_orch_soft_boundary_unified_2515.py
+Issue #2516
 check_type_dirty_txn_order_2516
 check_type_dirty_txn_order_2516.py
+Issue #2517
+Issue #2518
+Issue #2519
+Issue #2520
 check_soa_ban_residual_aos_bridge_2520
 check_soa_ban_residual_aos_bridge_2520.py
+Issue #2521
+Issue #2522
+Issue #2523
+Issue #2524
 check_module_partition_map_2524
 check_module_partition_map_2524.py
+Issue #2525
+Issue #2526
+Issue #2527
+Issue #2528
 check_restamp_sla_observability_2528
 check_restamp_sla_observability_2528.py
+Issue #2529
+Issue #2530
+Issue #2531
+Issue #2532
+Issue #2533
+Issue #2534
+Issue #2535
+Issue #2536
+Issue #2537
+Issue #2538
+Issue #2539
+Issue #2540
+Issue #2541
+Issue #2542
+Issue #2543
+Issue #2544
+Issue #2545
 check_linear_force_unified_2545
 check_linear_force_unified_2545.py
+Issue #2546
 check_residual_defer_steal_hard_and_2546
 check_residual_defer_steal_hard_and_2546.py
+Issue #2547
+Issue #2548
+Issue #2549
 check_is_stealable_snapshot_gate_2549
 check_is_stealable_snapshot_gate_2549.py
+Issue #2550
 check_named_closure_stable_id_at_create_2550
 check_named_closure_stable_id_at_create_2550.py
+Issue #2551
+Issue #2552
+Issue #2553
+Issue #2555
 check_transaction_guard_migration_2555
 check_transaction_guard_migration_2555.py
+Issue #2556
+Issue #2557
+Issue #2558
+Issue #2559
 check_linear_three_layer_wire_2559
 check_linear_three_layer_wire_2559.py
+Issue #2560
 check_partial_cone_cap_2560
 check_partial_cone_cap_2560.py
+Issue #2561
+Issue #2562
+Issue #2564
+Issue #2566
+Issue #2567
+Issue #2568
+Issue #2569
+Issue #2570
+Issue #2571
+Issue #2572
+Issue #2573
+Issue #2574
+Issue #2575
+Issue #2576
+Issue #2577
+Issue #2578
+Issue #2579
+Issue #2581
+Issue #2582
+Issue #2583
+Issue #2584
+Issue #2585
+Issue #2586
+Issue #2587
+Issue #2588
+Issue #2589
+Issue #2590
+Issue #2591
+Issue #2592
+Issue #2593
+Issue #2594
+Issue #2595
+Issue #2596
+Issue #2597
+Issue #2598
+Issue #2599
+Issue #2600
+Issue #2601
 check_aot_exhausted_min_dirty_retry_2601
 check_aot_exhausted_min_dirty_retry_2601.py
+Issue #2602
 check_closure_sync_remount_2602
 check_closure_sync_remount_2602.py
+Issue #2603
 check_cross_cow_soft_migrate_obs_2603
 check_cross_cow_soft_migrate_obs_2603.py
+Issue #2604
 check_reemit_auto_drain_boundary_2604
 check_reemit_auto_drain_boundary_2604.py
+Issue #2605
+Issue #2606
 check_pereval_reemit_region_independence_2606
 check_pereval_reemit_region_independence_2606.py
+Issue #2607
+Issue #2608
+Issue #2609
+Issue #2610
+Issue #2611
 check_dce_elided_deopt_meta_2611
 check_dce_elided_deopt_meta_2611.py
+Issue #2613
+Issue #2614
+Issue #2615
 check_batch_dirty_discipline_2615
 check_batch_dirty_discipline_2615.py
+Issue #2616
 check_value_tag_hotpath_ban_2616
 check_value_tag_hotpath_ban_2616.py
+Issue #2617
 check_shape_compact_storm_isolation_2617
 check_shape_compact_storm_isolation_2617.py
+Issue #2618
 check_soa_residual_production_smoke_2618
 check_soa_residual_production_smoke_2618.py
+Issue #2619
+Issue #2620
+Issue #2621
+Issue #2622
+Issue #2624
+Issue #2626
+Issue #2627
+Issue #2628
+Issue #2630
 check_security_schedule_mutate_admit_2630
 check_security_schedule_mutate_admit_2630.py
 check_orch_scope_child_2631
 check_orch_scope_child_2631.py
+Issue #2634
 check_pure_probe_hardening_2634
 check_pure_probe_hardening_2634.py
+Issue #2635
 check_mid_fallback_hard_deny_2635
 check_mid_fallback_hard_deny_2635.py
+Issue #2637
+Issue #2638
+Issue #2639
+Issue #2640
+Issue #2641
+Issue #2643
+Issue #2645
 check_dead_coercion_layered_evidence_2645
 check_dead_coercion_layered_evidence_2645.py
+Issue #2646
 check_occurrence_cone_outside_invalidate_2646
 check_occurrence_cone_outside_invalidate_2646.py
+Issue #2647
 check_occurrence_goal_vacuous_solve_prevent_2647
 check_occurrence_goal_vacuous_solve_prevent_2647.py
+Issue #2648
+Issue #2650
+Issue #2651
 check_pmr_alloc_fiber_safe_2651
 check_pmr_alloc_fiber_safe_2651.py
+Issue #2652
 check_string_heap_corruption_guard_2652
 check_string_heap_corruption_guard_2652.py
+Issue #2653
 check_module_path_refuse_2653
 check_module_path_refuse_2653.py
+Issue #2654
 check_hash_table_grow_2654
+Issue #2655
 check_subsecond_clock_2655
+Issue #2656
 check_fiber_spawn_cli_2656
 check_fiber_spawn_cli_2656.py
+Issue #2657
+Issue #2658
+Issue #2659
+Issue #2660
+Issue #2661
+Issue #2662
+Issue #2663
+Issue #2664
+Issue #2665
+Issue #2666
+Issue #2667
+Issue #2668
+Issue #2669
+Issue #2670
+Issue #2671
 check_composite_drift_inject_2671
 check_composite_drift_inject_2671.py
+Issue #2672
 check_occurrence_cone_truncate_drift_2672
 check_occurrence_cone_truncate_drift_2672.py
+Issue #2673
+Issue #2674
 check_layered_evidence_coherence_2674
 check_layered_evidence_coherence_2674.py
+Issue #2675
 check_linear_enforce_effective_2675
+Issue #2676
 check_shared_heap_serial_2676
 check_shared_heap_serial_2676.py
+Issue #2677
 check_resume_invariants_2677
 check_resume_invariants_2677.py
 check_module_import_contiguity_2678
 check_module_import_contiguity_2678.py
+Issue #2679
 check_chaos_soak_2679
 check_chaos_soak_2679.py
+Issue #2680
 check_mailbox_boundary_interleave_2680
 check_mailbox_boundary_interleave_2680.py
+Issue #2681
+Issue #2682
 check_moving_unified_success_2682
 check_moving_unified_success_2682.py
+Issue #2683
 check_shape_storm_isolation_2683
 check_shape_storm_isolation_2683.py
+Issue #2684
+Issue #2685
+Issue #2686
+Issue #2687
 check_evaluator_capture_tenant_2687
 check_evaluator_capture_tenant_2687.py
+Issue #2688
 check_capability_production_default_2688
 check_capability_production_default_2688.py
+Issue #2689
 check_require_effect_on_ref_2689
 check_require_effect_on_ref_2689.py
+Issue #2690
 check_pending_recovery_drain_2690
 check_pending_recovery_drain_2690.py
+Issue #2691
 check_closure_anon_captured_remount_2691
 check_closure_anon_captured_remount_2691.py
+Issue #2692
 check_aot_slot_owner_consistency_2692
 check_aot_slot_owner_consistency_2692.py
 cmd_aot_slot_owner_consistency_2692
+Issue #2693
+Issue #2694
+Issue #2695
+Issue #2696
+Issue #2697
+Issue #2698
+Issue #2699
 check_steal_safety_transaction_2699
 check_steal_safety_transaction_2699.py
+Issue #2700
 check_handoff_ref_mailbox_gate_2700
 check_handoff_ref_mailbox_gate_2700.py
+Issue #2701
 check_mutation_hold_budget_reject_2701
 check_mutation_hold_budget_reject_2701.py
+Issue #2702
 check_resume_hard_fail_2702
 check_resume_hard_fail_2702.py
+Issue #2703
 check_cone_outside_goal_drop_2703
 check_cone_outside_goal_drop_2703.py
+Issue #2704
 check_occurrence_empty_after_fence_2704
 check_occurrence_empty_after_fence_2704.py
 check_hard_capture_tenant_2705
 check_hard_capture_tenant_2705.py
+Issue #2706
 check_sole_require_effect_2706
 check_sole_require_effect_2706.py
+Issue #2707
 check_mid_join_fail_closed_2707
 check_mid_join_fail_closed_2707.py
+Issue #2708
 check_ownership_rebind_walk_2708
 check_ownership_rebind_walk_2708.py
+Issue #2709
 check_general_object_pin_auto_wire_2709
 check_general_object_pin_auto_wire_2709.py
+Issue #2710
 check_panic_checkpoint_steal_hard_2710
 check_panic_checkpoint_steal_hard_2710.py
+Issue #2711
 check_envframe_lifetime_proof_2711
 check_envframe_lifetime_proof_2711.py
+Issue #2712
 check_epoch_invariant_soft_fuse_heal_2712
 check_epoch_invariant_soft_fuse_heal_2712.py
+Issue #2713
 check_cross_eval_epoch_bump_2713
 check_cross_eval_epoch_bump_2713.py
+Issue #2714
 check_captured_anon_sync_remount_prod_default_2714
 check_captured_anon_sync_remount_prod_default_2714.py
+Issue #2715
 check_deferred_reemit_steal_sticky_2715
 check_deferred_reemit_steal_sticky_2715.py
+Issue #2716
 check_occurrence_hard_face_commit_2716
 check_occurrence_hard_face_commit_2716.py
+Issue #2717
 check_type_linear_commit_proof_stamp_2717
 check_type_linear_commit_proof_stamp_2717.py
+Issue #2718
+Issue #2719
+Issue #2720
+Issue #2721
 check_chaos_soak_hard_gate_2722
 check_chaos_soak_hard_gate_2722.py
+Issue #2723
+Issue #2724
+Issue #2726
 check_cross_fiber_hold_budget_cancel_2726
 check_cross_fiber_hold_budget_cancel_2726.py
+Issue #2727
 check_fiber_evaluator_id_2727
 check_fiber_evaluator_id_2727.py
 check_typed_mutation_audit_h_forward_ref_2728
 check_typed_mutation_audit_h_forward_ref_2728.py
+Issue #2742
+Issue #2743
+Issue #2744
+Issue #2745
+Issue #2746
+Issue #2747
+Issue #2748
+Issue #2749
+Issue #2750
+Issue #2751
+Issue #2752
 check_try_steal_from_txn_2752
 check_try_steal_from_txn_2752.py
+Issue #2753
+Issue #2754
 check_region_cone_disjoint_admit_2754
 check_chaos_soak_residual_zero_2755
 check_chaos_soak_residual_zero_2755.py
+Issue #2756
 check_workflow_failure_policy_2756
 check_workflow_failure_policy_2756.py
+Issue #2757
 check_region_mask_disjoint_admit_2757
 check_region_mask_disjoint_admit_2757.py
+Issue #2758
 check_type_linear_commit_proof_counts_2758
 check_evaluator_stamp_sole_authority_2759
 check_evaluator_stamp_sole_authority_2759.py
+Issue #2760
 check_region_impact_mask_admit_2760
+Issue #2761
 check_region_mask_overlap_admit_2761
 check_region_mask_overlap_admit_2761.py
+Issue #2762
 check_post_mutate_macro_reexpand_2762
 check_post_mutate_macro_reexpand_2762.py
+Issue #2763
 check_query_pattern_delta_hygiene_2763
 check_query_pattern_delta_hygiene_2763.py
+Issue #2764
 check_ir_jit_macro_marker_enforcement_2764
+Issue #2765
 check_guard_reflect_validate_2765
+Issue #2766
 check_module_require_export_order_2766
 check_module_require_export_order_2766.py
+Issue #2768
 check_orchestrator_agent_stdin_2768
 check_orchestrator_agent_stdin_2768.py
+Issue #2769
 check_stdlib_require_export_audit_2769
 check_stdlib_require_export_audit_2769.py
 check_string_split_iterative_2770
 check_string_split_iterative_2770.py
+Issue #2771
 check_tcp_listen_accept_2771
 check_tcp_listen_accept_2771.py
+Issue #2773
 check_unified_dirty_fence_2773
 check_unified_dirty_fence_2773.py
+Issue #2774
 check_batch_dirty_multi_via_single_ban_2774
 check_batch_dirty_multi_via_single_ban_2774.py
+Issue #2775
+Issue #2776
 check_aot_reload_consistency_stamp_concurrent_2776
 check_aot_reload_consistency_stamp_concurrent_2776.py
+Issue #2777
 check_agent_scope_read_guard_2777
+Issue #2778
+Issue #2779
+Issue #2780
+Issue #2781
+Issue #2782
+Issue #2783
+Issue #2784
 check_workspace_sync_from_body_2784
 check_workspace_sync_from_body_2784.py
+Issue #2785
 check_workspace_switch_bind_2785
 check_workspace_switch_bind_2785.py
+Issue #2786
 check_workspace_lock_active_flag_2786
 check_workspace_lock_active_flag_2786.py
+Issue #2787
 check_workspace_rollback_latest_2787
 check_workspace_rollback_latest_2787.py
+Issue #2788
 check_workspace_rollback_to_2788
 check_workspace_rollback_to_2788.py
+Issue #2789
 check_workspace_delete_subtree_2789
 check_workspace_delete_subtree_2789.py
+Issue #2790
 check_atomic_batch_partial_failure_2790
 check_atomic_batch_partial_failure_2790.py
+Issue #2791
 check_rebind_parse_failure_no_leak_2791
 check_rebind_parse_failure_no_leak_2791.py
+Issue #2792
 check_rebind_new_body_hygiene_2792
 check_rebind_new_body_hygiene_2792.py
+Issue #2793
 check_replace_value_audit_consistency_2793
 check_replace_value_audit_consistency_2793.py
+Issue #2794
 check_atomic_batch_move_noop_2794
 check_atomic_batch_move_noop_2794.py
+Issue #2795
 check_rebind_rollback_nodeid_validity_2795
 check_rebind_rollback_nodeid_validity_2795.py
+Issue #2796
 check_atomic_batch_rollback_metric_noise_2796
 check_atomic_batch_rollback_metric_noise_2796.py
+Issue #2797
 check_replace_subtree_new_body_hygiene_2797
 check_replace_subtree_new_body_hygiene_2797.py
+Issue #2798
 check_replace_pattern_no_match_no_leak_2798
 check_replace_pattern_no_match_no_leak_2798.py
+Issue #2799
 check_tweak_literal_audit_consistency_2799
 check_tweak_literal_audit_consistency_2799.py
+Issue #2800
 check_replace_pattern_multi_match_nodeid_stability_2800
 check_replace_pattern_multi_match_nodeid_stability_2800.py
+Issue #2801
 check_move_node_hygiene_2801
 check_move_node_hygiene_2801.py
+Issue #2802
 check_atomic_batch_replace_pattern_sibling_2802
 check_atomic_batch_replace_pattern_sibling_2802.py
+Issue #2803
 check_move_node_partial_failure_no_dangling_2803
 check_move_node_partial_failure_no_dangling_2803.py
+Issue #2804
 check_clone_walk_gensym_ceiling_2804
 check_clone_walk_gensym_ceiling_2804.py
+Issue #2805
 check_dotted_rest_builtin_rename_2805
 check_dotted_rest_builtin_rename_2805.py
+Issue #2806
 check_concurrent_clone_hygiene_depth_2806
 check_concurrent_clone_hygiene_depth_2806.py
+Issue #2807
 check_unquote_splicing_hygiene_2807
 check_unquote_splicing_hygiene_2807.py
+Issue #2808
 check_stamp_rest_param_hygiene_marker_2808
 check_stamp_rest_param_hygiene_marker_2808.py
+Issue #2809
 check_qq_unwrap_targeted_restamp_2809
 check_qq_unwrap_targeted_restamp_2809.py
+Issue #2810
 check_clone_provenance_per_evaluator_2810
 check_clone_provenance_per_evaluator_2810.py
+Issue #2811
 check_gensym_ceiling_serial_drift_2811
 check_gensym_ceiling_serial_drift_2811.py
+Issue #2812
 check_cascade_bfs_invalidate_after_guard_2812
 check_cascade_bfs_invalidate_after_guard_2812.py
+Issue #2813
 check_cascade_relower_silent_skip_2813
 check_cascade_relower_silent_skip_2813.py
+Issue #2814
 check_capture_audit_event_forced_enforcement_link_2814
 check_capture_audit_event_forced_enforcement_link_2814.py
+Issue #2815
 check_cascade_multi_define_stale_2815
 check_cascade_multi_define_stale_2815.py
+Issue #2816
 check_cascade_path2_define_index_2816
 check_cascade_path2_define_index_2816.py
+Issue #2817
 check_cascade_defuse_touch_null_define_2817
 check_cascade_defuse_touch_null_define_2817.py
+Issue #2818
 check_should_audit_sampled_default_2818
 check_should_audit_sampled_default_2818.py
+Issue #2819
 check_audit_trail_lockfree_2819
 check_audit_trail_lockfree_2819.py
+Issue #2820
 check_alloc_block_seal_last_2820
 check_alloc_block_seal_last_2820.py
+Issue #2821
 check_enable_soa_dual_emit_no_reset_2821
 check_enable_soa_dual_emit_no_reset_2821.py
+Issue #2822
 check_run_one_epoch_default_2822
 check_run_one_epoch_default_2822.py
+Issue #2823
 check_run_one_yield_hook_actual_2823
 check_run_one_yield_hook_actual_2823.py
+Issue #2824
 check_dirty_pipeline_counter_isolation_2824
 check_dirty_pipeline_counter_isolation_2824.py
+Issue #2825
 check_emit_soa_source_marker_propagation_2825
 check_emit_soa_source_marker_propagation_2825.py
+Issue #2826
 check_self_func_id_usage_2826
 check_self_func_id_usage_2826.py
+Issue #2827
 check_run_one_requires_expression_partial_2827
 check_run_one_requires_expression_partial_2827.py
+Issue #2828
 check_linear_ownership_branch_cellget_2828
 check_linear_ownership_branch_cellget_2828.py
+Issue #2829
 check_linear_ownership_refcount_inc_2829
 check_linear_ownership_refcount_inc_2829.py
+Issue #2830
 check_dce_pass_variable_args_2830
 check_dce_pass_variable_args_2830.py
+Issue #2831
 check_tco_dead_block_accumulation_2831
 check_tco_dead_block_accumulation_2831.py
+Issue #2832
 check_tco_arg_base_oob_2832
 check_tco_arg_base_oob_2832.py
+Issue #2833
 check_tco_jump_terminator_2833
 check_tco_jump_terminator_2833.py
+Issue #2834
 check_dce_branch_block_id_overprotect_2834
 check_dce_branch_block_id_overprotect_2834.py
 check_restricted_multi_tenant_hard_fiber_2835
 check_restricted_multi_tenant_hard_fiber_2835.py
+Issue #2836
 check_mid_fallback_zero_tolerance_2836
 check_mid_fallback_zero_tolerance_2836.py
+Issue #2837
 check_moving_external_root_remap_2837
 check_moving_external_root_remap_2837.py
+Issue #2838
 check_parallel_intend_force_lock_prod_default_2838
 check_parallel_intend_force_lock_prod_default_2838.py
+Issue #2839
 check_side_effect_fiber_principal_2839
 check_side_effect_fiber_principal_2839.py
+Issue #2840
 check_general_object_pin_required_prod_default_2840
 check_general_object_pin_required_prod_default_2840.py
+Issue #2841
 check_cross_eval_cascade_owner_scoped_2841
 check_cross_eval_cascade_owner_scoped_2841.py
+Issue #2842
 check_type_linear_commit_proof_goal_truth_2842
+Issue #2843
 check_workflow_compose_aura_2843
 check_workflow_compose_aura_2843.py
+Issue #2844
 check_steal_sole_enqueue_gate_2844
 check_steal_sole_enqueue_gate_2844.py
+Issue #2845
 check_aot_reload_proof_fail_stamp_2845
 check_aot_reload_proof_fail_stamp_2845.py
+Issue #2846
 check_residual_defer_after_exit_2846
+Issue #2847
 check_region_type_commit_gate_2847
+Issue #2848
+Issue #2849
 check_mailbox_mid_mutation_delivery_2849
 check_mailbox_mid_mutation_delivery_2849.py
+Issue #2850
 check_pure_anon_sync_remount_budget_2850
+Issue #2851
+Issue #2852
+Issue #2853
+Issue #2854
+Issue #2855
+Issue #2856
+Issue #2857
+Issue #2858
+Issue #2859
+Issue #2860
+Issue #2861
+Issue #2862
+Issue #2863
+Issue #2864
+Issue #2865
 check_std_socket_require_path_2865
 check_std_socket_require_path_2865.py
 check_set_code_module_bind_2868
@@ -5363,48 +6668,78 @@ check_boids_2879
 check_boids_2879.py
 check_fss_2880
 check_fss_2880.py
+Issue #2881
+Issue #2882
 check_production_default_single_use_2882
 check_production_default_single_use_2882.py
+Issue #2883
+Issue #2884
 check_join_cleanup_report_2885
 check_join_cleanup_report_2885.py
+Issue #2886
 check_parallel_intend_region_concurrent_2886
 check_parallel_intend_region_concurrent_2886.py
+Issue #2887
 check_agent_bp_degrade_2887
 check_agent_bp_degrade_2887.py
+Issue #2888
 check_lifetime_consistency_proof_2888
 check_lifetime_consistency_proof_2888.py
+Issue #2889
 check_moving_known_roots_auto_register_2889
 check_moving_known_roots_auto_register_2889.py
+Issue #2890
 check_steal_checkpoint_residual_2890
 check_steal_checkpoint_residual_2890.py
+Issue #2891
 check_general_object_pin_required_2891
 check_general_object_pin_required_2891.py
+Issue #2892
 check_post_compact_lifecycle_2892
 check_post_compact_lifecycle_2892.py
+Issue #2893
 check_pure_anon_adaptive_budget_2893
 check_pure_anon_adaptive_budget_2893.py
+Issue #2894
+Issue #2895
+Issue #2896
 check_occurrence_persist_production_default_2896
 check_occurrence_persist_production_default_2896.py
+Issue #2897
 check_type_linear_evolution_snapshot_2897
+Issue #2898
 check_composite_required_type_2898
+Issue #2899
 check_linear_ir_fastpath_2899
+Issue #2900
 check_solver_budget_2900
+Issue #2901
 check_steal_residual_rearm_race_2901
 check_steal_residual_rearm_race_2901.py
 check_hot_update_registry_2902
 check_hot_update_registry_2902.py
+Issue #2903
 check_mailbox_under_boundary_wait_2903
+Issue #2904
 check_dirty_columnar_2904
+Issue #2905
 check_moving_sticky_densify_off_2905
+Issue #2906
 check_pcv_flatast_locked_exclusive_2906
+Issue #2907
 check_soa_sunset_bridge_2907
+Issue #2908
 check_shape_compact_no_global_bump_2908
 check_shape_compact_no_global_bump_2908.py
+Issue #2909
 check_cone_truncate_force_closure_2909
 check_occurrence_persist_production_2910
 check_occurrence_persist_production_2910.py
+Issue #2911
 check_refined_consistency_commit_gate_2911
+Issue #2912
 check_layered_evidence_force_full_2912
+Issue #2913
 check_solve_delta_locality_slo_2913
 check_query_primitives_split_2914
 check_query_primitives_split_2914.py
@@ -5416,1283 +6751,2286 @@ check_ast_snapshot_workspace_2918
 check_ast_snapshot_workspace_2918.py
 check_current_source_unparse_2919
 check_current_source_unparse_2919.py
+Issue #2921
 current-source-roundtrip-2921
 current_source_roundtrip_2921
+Issue #2922
 ast-unparse-2922
 ast_unparse_2922
 check_ast_unparse_2922
 check_ast_unparse_2922.py
+Issue #2923
 check_isolation_decide_2923
 check_isolation_decide_2923.py
+Issue #2924
 check_wait_reclaimed_2924
 check_wait_reclaimed_2924.py
 wait-reclaimed-2924
 wait_reclaimed_2924
+Issue #2925
 check_producer_bp_budget_2925
 check_producer_bp_budget_2925.py
 producer-bp-budget-2925
 producer_bp_budget_2925
+Issue #2926
 check_scope_resolve_2926
 check_scope_resolve_2926.py
 scope-resolve-2926
 scope_resolve_2926
+Issue #2927
 check_force_jit_reason_bit_map_2927
 check_force_jit_reason_bit_map_2927.py
 force-jit-reason-bit-map-2927
+Issue #2928
 check_residual_remount_round_robin_2928
 residual-remount-2928
+Issue #2929
 check_steal_invariant_table_2929
 check_steal_invariant_table_2929.py
 steal-invariant-table-2929
+Issue #2930
 bridge-epoch-zero-stale-2930
 check_bridge_epoch_zero_stale_2930
 check_bridge_epoch_zero_stale_2930.py
+Issue #2932
 check_hold_budget_forced_fail_closed_2932
+Issue #2933
 check_query_result_binding_2933
+Issue #2934
 check_restamp_budget_2934
+Issue #2935
 check_moving_known_roots_sticky_recovery_2935
 check_moving_known_roots_sticky_recovery_2935.py
 check_batch_dirty_production_multi_only_2936
 check_batch_dirty_production_multi_only_2936.py
+Issue #2937
 check_shape_profiler_shard_2937
 check_shape_profiler_shard_2937.py
+Issue #2938
 check_occurrence_commit_snapshot_2938
 check_occurrence_commit_snapshot_2938.py
+Issue #2939
 check_solve_delta_dep_closure_2939
+Issue #2942
 check_side_effect_node_id_mandate_2942
 check_side_effect_node_id_mandate_2942.py
+Issue #2943
 check_production_hard_fiber_default_2943
 check_production_hard_fiber_default_2943.py
+Issue #2944
 check_mutation_session_grant_2944
 check_mutation_session_grant_2944.py
+Issue #2945
 check_join_held_flags_2945
 check_join_held_flags_2945.py
+Issue #2946
 check_agent_scope_concurrent_hard_deny_2946
+Issue #2947
 check_mailbox_hold_slo_security_schedule_2947
 check_mailbox_hold_slo_security_schedule_2947.py
+Issue #2948
 check_bp_threshold_ssot_2948
 check_bp_threshold_ssot_2948.py
+Issue #2949
 check_force_jit_repromote_only_covered_default_2949
+Issue #2950
 check_pure_anon_bg_remount_2950
 check_pure_anon_bg_remount_2950.py
+Issue #2951
 check_cross_eval_hard_owner_scoped_2951
+Issue #2952
 check_coverage_verify_min_dirty_2952
+Issue #2953
 check_reload_recovery_playbook_2953
 check_reload_recovery_playbook_2953.py
+Issue #2954
 check_steal_decision_per_fiber_2954
 check_steal_decision_per_fiber_2954.py
+Issue #2955
 check_production_abi_selfcheck_2955
 check_production_abi_selfcheck_2955.py
+Issue #2956
 check_mutation_mirror_canary_2956
 check_mutation_mirror_canary_2956.py
+Issue #2957
 check_steal_lifetime_proof_residual_2957
+Issue #2958
 check_mailbox_defer_slo_hold_cancel_2958
 check_mailbox_defer_slo_hold_cancel_2958.py
+Issue #2959
 check_topology_dual_restore_2959
 check_topology_dual_restore_2959.py
+Issue #2960
 check_query_stable_ref_stamp_2960
 check_query_stable_ref_stamp_2960.py
+Issue #2961
 check_rename_replace_hygiene_restamp_2961
 check_rename_replace_hygiene_restamp_2961.py
+Issue #2962
 check_cone_outside_goal_drop_recover_reject_2962
+Issue #2963
 check_instance_repair_before_full_2963
+Issue #2964
 check_linear_fast_path_unified_2964
+Issue #2966
 check_ast_snapshot_fail_reason_2966
+Issue #2967
 check_capability_durable_gate_2967
 check_capability_durable_gate_2967.py
 check_cross_tenant_grant_gate_2968
 check_cross_tenant_grant_gate_2968.py
 check_capability_write_fence_2969
 check_capability_write_fence_2969.py
+Issue #2970
 check_join_wait_reclaimed_2970
 check_join_wait_reclaimed_2970.py
+Issue #2971
 check_general_object_pin_create_densify_2971
 check_general_object_pin_create_densify_2971.py
+Issue #2972
 check_mailbox_credit_inflight_2972
 check_mailbox_credit_inflight_2972.py
 mailbox-credit-2972
 mailbox_credit_2972
+Issue #2973
 check_moving_pre_densify_completeness_2973
 check_moving_pre_densify_completeness_2973.py
+Issue #2974
 check_workflow_run_2974
 check_workflow_run_2974.py
+Issue #2975
 check_outermost_exit_residual_pin_2975
+Issue #2976
 check_agent_scope_concurrency_2976
 check_agent_scope_concurrency_2976.py
+Issue #2977
 check_residual_remount_prefer_force_jit_2977
 residual-remount-prefer-2977
+Issue #2978
 check_reemit_success_sync_covered_remount_2978
 reemit-success-sync-covered-2978
+Issue #2979
 check_layered_evidence_phase5_consume_2979
+Issue #2980
 check_epoch_residual_merged_heal_2980
+Issue #2981
 check_type_linear_proof_empty_after_fence_2981
+Issue #2982
 check_staging_dlopen_ops_recovery_2982
+Issue #2983
 check_composite_required_type_default_2983
+Issue #2984
 check_linear_compact_root_consistency_2984
 check_linear_compact_root_consistency_2984.py
+Issue #2985
 check_mutation_concurrency_health_admit_2985
+Issue #2986
+Issue #2987
 check_mailbox_delivery_safety_2987
 check_mailbox_delivery_safety_2987.py
+Issue #2988
 check_mutate_invalidate_incremental_2988
+Issue #2989
 check_query_concurrent_hygiene_safe_span_2989
 check_query_concurrent_hygiene_safe_span_2989.py
+Issue #2990
 check_workspace_concurrent_policy_2990
+Issue #2991
 check_coercion_provenance_hf_mutate_2991
+Issue #2992
+Issue #2993
+Issue #2994
 check_solve_delta_locality_budget_2994
+Issue #2995
 check_occurrence_commit_health_2995
 check_occurrence_commit_health_2995.py
+Issue #2996
 check_prim_register_core_2996
 check_prim_register_core_2996.py
+Issue #2997
 check_list_ctor_hotpath_2997
 check_list_ctor_hotpath_2997.py
 check_prim_error_convention_2998
 check_prim_error_convention_2998.py
+Issue #2999
 check_hold_budget_dtor_consume_2999
+Issue #3000
 check_query_stable_ref_restamp_lag_3000
+Issue #3001
 check_chaos_steal_lifetime_envframe_3001
+Issue #3002
 check_mailbox_hold_slo_ssot_soak_3002
+Issue #3003
 check_solve_delta_timeout_fail_closed_3003
 check_solve_delta_timeout_fail_closed_3003.py
+Issue #3004
 check_occurrence_persist_audit_atomic_3004
 check_occurrence_persist_audit_atomic_3004.py
+Issue #3005
 check_adt_exhaust_dirty_cone_3005
+Issue #3006
 check_linear_fast_path_dirty_revalidate_3006
+Issue #3007
 check_dead_coercion_hot_residual_3007
+Issue #3010
 check_allow_cross_tenant_admin_3010
 check_allow_cross_tenant_admin_3010.py
 check_isolation_deny_fiber_3011
 check_isolation_deny_fiber_3011.py
+Issue #3012
 check_join_must_wait_reclaimed_3012
 check_join_must_wait_reclaimed_3012.py
+Issue #3013
 check_agent_send_handoff_required_3013
 check_agent_send_handoff_required_3013.py
+Issue #3014
 check_body_acquire_rejected_3014
 check_body_acquire_rejected_3014.py
+Issue #3015
 check_scope_bp_inherit_3015
 check_scope_bp_inherit_3015.py
+Issue #3016
 check_boundary_audit_mid_3016
 check_boundary_audit_mid_3016.py
+Issue #3017
 check_moving_incomplete_remap_3017
 check_moving_incomplete_remap_3017.py
+Issue #3018
 check_engine_metrics_hash_overflow_3018
 check_engine_metrics_hash_overflow_3018.py
+Issue #3019
 check_unified_restamp_3019
 check_unified_restamp_3019.py
+Issue #3020
 check_query_hash_overflow_3020
 check_query_hash_overflow_3020.py
+Issue #3021
 check_envframe_closure_apply_protocol_3021
 check_envframe_closure_apply_protocol_3021.py
+Issue #3022
 check_ffi_opaque_pin_or_remap_3022
 check_ffi_opaque_pin_or_remap_3022.py
+Issue #3023
 check_linear_root_abort_release_3023
 check_linear_root_abort_release_3023.py
+Issue #3024
 check_pure_anon_bg_overflow_must_deopt_3024
 check_pure_anon_bg_overflow_must_deopt_3024.py
+Issue #3025
 check_reemit_owner_required_prod_multi_3025
 check_reemit_owner_required_prod_multi_3025.py
+Issue #3026
 check_residual_force_agent_actionable_3026
 check_residual_force_agent_actionable_3026.py
+Issue #3027
 check_structural_macro_hygiene_3027
 check_structural_macro_hygiene_3027.py
+Issue #3028
 check_tls_depth_same_flat_clone_3028
 check_tls_depth_same_flat_clone_3028.py
+Issue #3029
 check_macro_self_evo_grant_fence_3029
 check_macro_self_evo_grant_fence_3029.py
+Issue #3030
 check_type_linear_proof_clear_on_abort_3030
 check_type_linear_proof_clear_on_abort_3030.py
+Issue #3031
 check_pending_full_solve_residual_3031
+Issue #3032
 check_rehydrate_miss_invalidate_3032
+Issue #3033
+Issue #3034
+Issue #3035
 check_hold_budget_forced_unlock_3035
+Issue #3036
 check_mailbox_residual_hard_reject_3036
+Issue #3037
 check_restamp_over_budget_export_3037
+Issue #3038
 check_steal_residual_rearm_resample_3038
 check_steal_residual_rearm_resample_3038.py
+Issue #3039
 check_scoped_parallel_overlap_hard_reject_3039
 check_scoped_parallel_overlap_hard_reject_3039.py
+Issue #3040
 check_compile_node_id_entry_3040
 check_compile_node_id_entry_3040.py
+Issue #3041
 check_restamp_budget_query_epoch_stale_3041
 check_restamp_budget_query_epoch_stale_3041.py
+Issue #3042
 check_pure_wrap_no_std_function_3042
 check_pure_wrap_no_std_function_3042.py
+Issue #3043
 check_hot_contract_soft_observe_3043
 check_hot_contract_soft_observe_3043.py
+Issue #3044
 check_bidirectional_tag_coverage_3044
 check_bidirectional_tag_coverage_3044.py
+Issue #3045
 check_adt_exhaust_undermark_cone_3045
+Issue #3046
+Issue #3048
 check_session_grant_steal_3048
+Issue #3049
 check_quota_per_tenant_3049
+Issue #3050
 check_join_auto_wait_reclaimed_3051
 check_join_auto_wait_reclaimed_3051.py
+Issue #3052
 check_join_fail_policy_3052
 check_join_fail_policy_3052.py
+Issue #3053
 check_general_object_pin_allocate_3053
 check_general_object_pin_allocate_3053.py
+Issue #3054
 check_mid_fallback_refuse_se_3054
 check_mid_fallback_refuse_se_3054.py
+Issue #3055
 check_moving_post_moving_stale_3055
 check_moving_post_moving_stale_3055.py
+Issue #3056
 check_wal_append_fail_slo_3056
 check_wal_append_fail_slo_3056.py
+Issue #3057
 check_ffi_opaque_pin_or_remap_3057
 check_ffi_opaque_pin_or_remap_3057.py
+Issue #3058
 check_unified_restamp_query_visible_3058
 check_unified_restamp_query_visible_3058.py
+Issue #3059
 check_hot_update_decide_and_reemit_3059
 check_hot_update_decide_and_reemit_3059.py
+Issue #3060
 check_pure_anon_pressure_force_leave_3060
 check_pure_anon_pressure_force_leave_3060.py
+Issue #3061
 check_move_replace_allow_macro_3061
 check_move_replace_allow_macro_3061.py
+Issue #3062
 check_macro_expand_noboundary_limit_3062
 check_macro_expand_noboundary_limit_3062.py
+Issue #3063
 check_half_green_ir_steal_densify_3063
 check_half_green_ir_steal_densify_3063.py
+Issue #3064
 check_inline_macro_body_marker_3064
+Issue #3065
 check_dead_coercion_elim_cone_3065
 cmd_dead_coercion_elim_cone_3065
+Issue #3066
 check_composite_audit_mid_se_join_3066
 cmd_composite_audit_mid_se_join_3066
+Issue #3067
 check_hybrid_deferred_cascade_3067
 cmd_hybrid_deferred_cascade_3067
+Issue #3068
 check_partial_map_ensure_3068
 check_partial_map_ensure_3068.py
+Issue #3069
+Issue #3070
+Issue #3071
 check_hold_budget_inbody_window_3071
+Issue #3072
 check_steal_enqueue_sole_gate_3072
 check_steal_enqueue_sole_gate_3072.py
+Issue #3073
 check_chaos_production_readiness_3073
+Issue #3074
 check_mutate_dispatch_sole_guard_3074
 check_mutate_dispatch_sole_guard_3074.py
+Issue #3075
 check_query_epoch_production_strict_3075
 check_query_epoch_production_strict_3075.py
+Issue #3076
 check_soft_observe_not_hard_3076
 check_soft_observe_not_hard_3076.py
+Issue #3081
 check_soft_timeout_export_non_authoritative_3081
+Issue #3082
 check_nested_occurrence_provisional_3082
 check_nested_occurrence_provisional_3082.py
+Issue #3083
 check_adt_exhaust_complete_seed_3083
+Issue #3084
 check_hot_residual_soft_must_deopt_3084
+Issue #3085
 check_rehydrate_miss_lowering_elision_3085
 check_rehydrate_miss_lowering_elision_3085.py
+Issue #3088
+Issue #3089
+Issue #3090
 check_grant_mid_refused_3090
 check_grant_mid_refused_3090.py
+Issue #3091
 check_type_linear_proof_mid_3091
 check_type_linear_proof_mid_3091.py
+Issue #3092
+Issue #3093
 check_intermediate_cover_3093
 check_intermediate_cover_3093.py
+Issue #3094
 check_concurrent_clone_name_map_3094
 check_concurrent_clone_name_map_3094.py
+Issue #3095
+Issue #3096
+Issue #3097
+Issue #3098
+Issue #3099
+Issue #3100
+Issue #3101
+Issue #3102
+Issue #3103
+Issue #3104
+Issue #3106
 check_hot_contract_harden_3106
 check_hot_contract_harden_3106.py
+Issue #3107
 check_hot_residual_soft_relower_3107
 check_hot_residual_soft_relower_3107.py
+Issue #3108
 check_occurrence_recover_not_solved_3108
 check_occurrence_recover_not_solved_3108.py
 check_wal_append_fail_closed_3109
 check_wal_append_fail_closed_3109.py
+Issue #3110
 check_join_drain_reclaim_3110
 check_join_drain_reclaim_3110.py
+Issue #3111
 check_mailbox_held_ref_steal_3111
+Issue #3112
 check_dual_track_facade_3112
 check_dual_track_facade_3112.py
+Issue #3113
+Issue #3114
 check_evolution_audit_decision_3114
 check_evolution_audit_decision_3114.py
+Issue #3115
 check_scalar_macro_hygiene_3115
 check_scalar_macro_hygiene_3115.py
+Issue #3116
 check_coercion_abort_dual_clear_3116
 check_coercion_abort_dual_clear_3116.py
+Issue #3117
 check_abort_restore_ir_map_fence_3117
 check_abort_restore_ir_map_fence_3117.py
+Issue #3118
 check_hold_budget_cancel_force_release_3118
+Issue #3119
+Issue #3120
 check_residual_castop_type_txn_3120
+Issue #3121
 check_query_stable_restamp_lag_3121
 check_query_stable_restamp_lag_3121.py
+Issue #3122
+Issue #3123
 check_production_auto_arm_moving_3123
+Issue #3124
 check_nonalloc_arena_hooks_3124
 check_nonalloc_arena_hooks_3124.py
+Issue #3125
 check_cross_scope_directory_3125
 check_cross_scope_directory_3125.py
+Issue #3126
 check_capability_admin_fence_3126
 check_capability_admin_fence_3126.py
+Issue #3127
 check_mailbox_bp_overflow_3127
 check_mailbox_bp_overflow_3127.py
+Issue #3128
 check_sticky_densify_recover_3128
 check_sticky_densify_recover_3128.py
+Issue #3129
 check_facade_owns_full_invalidate_3129
 check_facade_owns_full_invalidate_3129.py
+Issue #3130
 check_linear_move_drop_elision_3130
 check_linear_move_drop_elision_3130.py
+Issue #3131
 check_scalar_mutate_hygiene_3131
 check_scalar_mutate_hygiene_3131.py
+Issue #3132
 check_macro_self_evo_chokepoint_3132
 check_macro_self_evo_chokepoint_3132.py
+Issue #3133
 check_hold_budget_synthetic_yield_3133
 check_hold_budget_synthetic_yield_3133.py
+Issue #3134
 check_steal_safety_production_residual_zero_3134
 check_steal_safety_production_residual_zero_3134.py
+Issue #3135
 check_cascade_decision_residual_atomic_3135
 check_cascade_decision_residual_atomic_3135.py
+Issue #3136
 check_relower_success_coverage_3136
 check_relower_success_coverage_3136.py
+Issue #3137
+Issue #3138
+Issue #3139
+Issue #3140
 check_castop_typed_meta_phase_c_3140
 check_castop_typed_meta_phase_c_3140.py
+Issue #3141
+Issue #3142
+Issue #3143
+Issue #3144
+Issue #3145
 check_cross_tenant_grant_principal_3145
 check_cross_tenant_grant_principal_3145.py
+Issue #3146
 check_join_drain_reclaim_3146
 check_join_drain_reclaim_3146.py
+Issue #3147
 check_mailbox_bp_scope_handle_3147
 check_mailbox_bp_scope_handle_3147.py
+Issue #3148
 check_handoff_join_via_token_3148
 check_handoff_join_via_token_3148.py
+Issue #3150
+Issue #3151
+Issue #3152
+Issue #3153
+Issue #3154
+Issue #3155
+Issue #3156
 check_intermediate_cover_no_value_only_3156
 check_intermediate_cover_no_value_only_3156.py
+Issue #3157
 check_macro_clone_target_atomicity_3157
 check_macro_clone_target_atomicity_3157.py
+Issue #3158
 check_occurrence_abort_restore_3158
 check_occurrence_abort_restore_3158.py
+Issue #3159
 check_abort_ir_cache_fence_first_3159
 check_abort_ir_cache_fence_first_3159.py
+Issue #3160
 check_hold_budget_inbody_escalate_3160
 check_hold_budget_inbody_escalate_3160.py
+Issue #3161
 check_impact_rearm_coverage_3161
 check_impact_rearm_coverage_3161.py
+Issue #3162
 check_steal_safety_sticky_fail_3162
 check_steal_safety_sticky_fail_3162.py
+Issue #3163
 check_storm_hysteresis_refresh_3163
 check_storm_hysteresis_refresh_3163.py
+Issue #3164
 check_hold_after_cancel_hard_soak_3164
 check_hold_after_cancel_hard_soak_3164.py
+Issue #3165
 check_dual_dep_graph_parity_strict_fail_closed_3165
 check_dual_dep_graph_parity_strict_fail_closed_3165.py
+Issue #3166
 check_nested_guard_exit_dirty_pending_3166
 check_nested_guard_exit_dirty_pending_3166.py
 check_pcv_span_stale_coverage_3167
 check_pcv_span_stale_coverage_3167.py
+Issue #3168
 cascade-rearm-new-edge-only-3168
 check_cascade_rearm_new_edge_only_3168
 check_cascade_rearm_new_edge_only_3168.py
 cmd_cascade_rearm_new_edge_only_3168
+Issue #3169
 check_solve_delta_partial_cleared_3169
 check_solve_delta_partial_cleared_3169.py
+Issue #3170
 check_occurrence_persist_fingerprint_3170
 check_occurrence_persist_fingerprint_3170.py
+Issue #3171
 check_linear_fast_path_clear_on_restamp_3171
 check_linear_fast_path_clear_on_restamp_3171.py
+Issue #3172
 check_compile_surface_3172
 check_compile_surface_3172.py
+Issue #3173
 check_arena_surface_3173
 check_arena_surface_3173.py
+Issue #3174
 check_io_net_git_surface_3174
 check_io_net_git_surface_3174.py
 check_query_surface_3175
 check_query_surface_3175.py
+Issue #3176
 check_ffi_surface_3176
 check_ffi_surface_3176.py
+Issue #3177
 check_durable_session_bind_3177
 check_durable_session_bind_3177.py
+Issue #3178
 check_wal_overflow_mid_3178
 check_wal_overflow_mid_3178.py
+Issue #3179
 check_per_scope_bp_admit_3179
 check_per_scope_bp_admit_3179.py
+Issue #3180
 check_production_small_pool_cover_3180
 check_production_small_pool_cover_3180.py
+Issue #3181
 check_quote_clone_hygiene_3181
 check_quote_clone_hygiene_3181.py
+Issue #3182
 check_post_moving_stale_hard_gate_3182
 check_post_moving_stale_hard_gate_3182.py
+Issue #3183
 check_gensym_ceiling_rest_bypass_3183
 check_gensym_ceiling_rest_bypass_3183.py
 check_abort_restore_force_dirty_3184
 check_abort_restore_force_dirty_3184.py
+Issue #3185
 check_densify_entry_lcp_consult_3185
 check_densify_entry_lcp_consult_3185.py
+Issue #3186
 check_linear_move_drop_elision_ok_3186
 check_linear_move_drop_elision_ok_3186.py
+Issue #3187
 check_dual_dep_graph_strict_or_production_3187
 check_dual_dep_graph_strict_or_production_3187.py
+Issue #3188
 check_production_facade_minimal_ir_shape_3188
 check_production_facade_minimal_ir_shape_3188.py
+Issue #3189
 check_partial_impact_upper_bound_3189
 check_partial_impact_upper_bound_3189.py
+Issue #3190
 check_residual_drain_outermost_stamp_3190
+Issue #3191
 check_macro_hygiene_default_deny_3191
+Issue #3192
 check_mutate_dispatch_sole_entry_3192
 check_mutate_dispatch_sole_entry_3192.py
+Issue #3193
 check_nested_abort_authority_face_3193
 check_nested_abort_authority_face_3193.py
+Issue #3194
 check_hold_budget_inbody_force_release_3194
 check_hold_budget_inbody_force_release_3194.py
+Issue #3195
 check_production_multi_worker_residual_sticky_3195
 check_production_multi_worker_residual_sticky_3195.py
+Issue #3196
 check_nested_guard_authority_gap_3196
 check_nested_guard_authority_gap_3196.py
 check_naked_mutate_prim_meta_3197
 check_naked_mutate_prim_meta_3197.py
+Issue #3198
 check_query_stable_restamp_export_uniform_3198
 check_query_stable_restamp_export_uniform_3198.py
+Issue #3199
 check_shape_compact_no_all_shards_lock_3199
 check_shape_compact_no_all_shards_lock_3199.py
+Issue #3200
 check_moving_pin_guard_soft_gate_3200
 check_moving_pin_guard_soft_gate_3200.py
+Issue #3201
 check_ir_dirty_batch_only_production_default_3201
 check_ir_dirty_batch_only_production_default_3201.py
+Issue #3202
 check_production_strict_ground_unify_3202
 check_production_strict_ground_unify_3202.py
+Issue #3203
 check_soft_timeout_export_uniform_gate_3203
 check_soft_timeout_export_uniform_gate_3203.py
+Issue #3204
 check_stable_ref_export_production_hard_reject_3204
 check_stable_ref_export_production_hard_reject_3204.py
+Issue #3205
 check_evolution_audit_decision_durable_3205
 check_evolution_audit_decision_durable_3205.py
+Issue #3206
 check_workflow_residual_action_3206
+Issue #3207
 check_dual_evaluator_cascade_3207
 check_dual_evaluator_cascade_3207.py
+Issue #3208
+Issue #3209
 check_session_grant_quiesce_3209
 check_session_grant_quiesce_3209.py
+Issue #3210
 check_moving_temporary_canary_3210
 check_moving_temporary_canary_3210.py
+Issue #3211
 check_wal_append_fail_schedule_3211
 check_wal_append_fail_schedule_3211.py
+Issue #3212
 check_mailbox_handoff_dual_track_3212
 check_mailbox_handoff_dual_track_3212.py
+Issue #3213
 check_atomic_batch_allow_macro_3213
 check_atomic_batch_allow_macro_3213.py
+Issue #3214
 check_production_all_densify_allocate_cover_3214
 check_production_all_densify_allocate_cover_3214.py
+Issue #3215
 check_hygiene_agent_reason_strings_3215
 check_hygiene_agent_reason_strings_3215.py
+Issue #3216
 check_identity_plane_handoff_boundary_3216
 check_identity_plane_handoff_boundary_3216.py
+Issue #3217
 check_deny_restore_then_stamp_3217
 check_deny_restore_then_stamp_3217.py
+Issue #3219
 check_eval_core_joint_after_production_facade_3219
 check_eval_core_joint_after_production_facade_3219.py
+Issue #3220
 check_reclaimed_pending_lifecycle_3220
 check_reclaimed_pending_lifecycle_3220.py
+Issue #3221
 check_cascade_reason_not_residual_force_heal_3221
 check_cascade_reason_not_residual_force_heal_3221.py
+Issue #3222
 check_hold_budget_inbody_force_unlock_3222
 check_hold_budget_inbody_force_unlock_3222.py
+Issue #3223
 check_cross_fiber_urgent_inbody_poll_3223
 check_cross_fiber_urgent_inbody_poll_3223.py
+Issue #3224
 check_ir_typed_entry_commit_readiness_3224
 check_ir_typed_entry_commit_readiness_3224.py
+Issue #3225
 check_occurrence_persist_seq_3225
+Issue #3226
 check_prod_soundness_real_compare_3226
+Issue #3227
 check_linear_post_migration_proof_rebind_3227
+Issue #3228
 check_residual_castop_undermark_cone_3228
 check_residual_castop_undermark_cone_3228.py
+Issue #3229
 check_relower_success_define_collision_3229
+Issue #3230
 check_query_stable_restamp_lag_hard_reject_3230
 check_query_stable_restamp_lag_hard_reject_3230.py
+Issue #3231
+Issue #3232
 check_nested_abort_authority_face_3232
 check_nested_abort_authority_face_3232.py
+Issue #3233
 check_pcv_stale_span_exclusive_3233
+Issue #3234
 check_pass_scc_no_std_function_3234
+Issue #3235
 check_container_mutate_guard_3235
+Issue #3236
 check_adt_exhaust_commit_recheck_3236
+Issue #3237
 check_type_export_full_audit_gate_3237
 check_type_export_full_audit_gate_3237.py
+Issue #3238
 check_linear_fast_path_live_mutation_densify_3238
 check_linear_fast_path_live_mutation_densify_3238.py
+Issue #3239
 check_sv_eda_surface_retired_3239
 check_sv_eda_surface_retired_3239.py
+Issue #3241
 check_session_grant_peer_fiber_3241
 check_session_grant_peer_fiber_3241.py
+Issue #3242
 check_typed_summary_wal_3242
 check_typed_summary_wal_3242.py
 check_parallel_region_key_missing_3243
 check_parallel_region_key_missing_3243.py
+Issue #3244
 check_metrics_hash_overflow_posture_3244
 check_metrics_hash_overflow_posture_3244.py
+Issue #3245
 check_ensure_reclaimed_cleanup_adoption_3245
 check_ensure_reclaimed_cleanup_adoption_3245.py
+Issue #3246
 check_evolution_audit_suggested_next_3246
 check_evolution_audit_suggested_next_3246.py
+Issue #3247
 check_must_deopt_getter_sticky_3247
 check_must_deopt_getter_sticky_3247.py
+Issue #3248
 check_residual_force_fail_exit_age_3248
 check_residual_force_fail_exit_age_3248.py
+Issue #3249
 check_linear_nested_abort_drain_3249
 check_linear_nested_abort_drain_3249.py
+Issue #3250
 check_restart_n_spec_boundary_3250
 check_restart_n_spec_boundary_3250.py
+Issue #3251
 check_agent_deny_class_3251
 check_agent_deny_class_3251.py
+Issue #3252
 check_hygiene_checkpoint_gen_drift_3252
 check_hygiene_checkpoint_gen_drift_3252.py
+Issue #3253
 check_repair_solved_residual_3253
 check_repair_solved_residual_3253.py
+Issue #3254
 check_hold_budget_noncoop_force_edge_3254
 check_hold_budget_noncoop_force_edge_3254.py
+Issue #3255
 check_dual_dep_graph_soft_parity_partial_3255
 check_dual_dep_graph_soft_parity_partial_3255.py
+Issue #3256
 check_mailbox_defer_slo_hold_unify_3256
 check_mailbox_defer_slo_hold_unify_3256.py
+Issue #3257
 check_deferred_hybrid_rearm_last_look_3257
 check_deferred_hybrid_rearm_last_look_3257.py
+Issue #3258
 check_abort_force_lookup_reject_3258
 check_abort_force_lookup_reject_3258.py
+Issue #3259
 check_restamp_hot_cone_budget_3259
 check_restamp_hot_cone_budget_3259.py
+Issue #3260
 check_macro_provenance_counter_unify_3260
 check_macro_provenance_counter_unify_3260.py
+Issue #3261
 check_flush_mutation_boundary_toctou_3261
 check_flush_mutation_boundary_toctou_3261.py
+Issue #3262
 check_gc_safepoint_restamp_lock_3262
 check_gc_safepoint_restamp_lock_3262.py
+Issue #3263
 check_quote_lambda_marker_once_3263
 check_quote_lambda_marker_once_3263.py
+Issue #3264
 check_cascade_dep_graph_atomic_3264
 check_cascade_dep_graph_atomic_3264.py
+Issue #3265
 check_jit_fn_marker_atomic_3265
 check_jit_fn_marker_atomic_3265.py
+Issue #3266
 check_module_realpath_toctou_3266
 check_module_realpath_toctou_3266.py
+Issue #3267
 check_env_publish_lock_3267
 check_env_publish_lock_3267.py
+Issue #3268
 check_guard_flag_atomic_ref_3268
 check_guard_flag_atomic_ref_3268.py
+Issue #3269
 check_arena_compact_toctou_3269
 check_arena_compact_toctou_3269.py
+Issue #3270
 check_primid_drift_3270
 check_primid_drift_3270.py
+Issue #3271
 check_shape_dirty_hook_no_std_function_3271
 check_shape_dirty_hook_no_std_function_3271.py
+Issue #3272
 check_host_forget_window_3272
 check_host_forget_window_3272.py
+Issue #3273
 check_handoff_observation_only_3273
 check_handoff_observation_only_3273.py
+Issue #3274
 check_ffi_opaque_densify_cover_3274
 check_ffi_opaque_densify_cover_3274.py
+Issue #3275
 check_tenant_scope_link_gate_3275
 check_tenant_scope_link_gate_3275.py
+Issue #3276
 check_privileged_grant_callsite_allowlist_3276
 check_privileged_grant_callsite_allowlist_3276.py
+Issue #3277
 check_pure_anon_no_boundary_force_leave_3277
 check_pure_anon_no_boundary_force_leave_3277.py
+Issue #3278
 check_cross_flat_schema_homology_3278
 check_cross_flat_schema_homology_3278.py
+Issue #3279
 check_session_bound_orphan_sweep_3279
 check_session_bound_orphan_sweep_3279.py
+Issue #3280
 check_invariant_deny_se_dual_write_3280
 check_invariant_deny_se_dual_write_3280.py
+Issue #3281
 check_mid_bound_abort_authority_3281
 check_mid_bound_abort_authority_3281.py
+Issue #3282
 check_query_hash_overflow_3282
 check_query_hash_overflow_3282.py
+Issue #3283
 check_deferred_rearm_lag_3283
 check_deferred_rearm_lag_3283.py
+Issue #3284
 check_evolution_audit_se_mid_miss_3284
 check_evolution_audit_se_mid_miss_3284.py
+Issue #3285
 check_noncoop_force_release_1slo_3285
 check_noncoop_force_release_1slo_3285.py
+Issue #3286
 check_production_query_result_schema2_3286
 check_production_query_result_schema2_3286.py
+Issue #3287
 check_restamp_residual_lag_deny_3287
 check_restamp_residual_lag_deny_3287.py
+Issue #3288
 check_production_residual_sticky_continuous_3288
 check_production_residual_sticky_continuous_3288.py
+Issue #3289
 check_under_boundary_hold_progress_3289
 check_under_boundary_hold_progress_3289.py
+Issue #3290
 check_steal_invariant_call_site_coverage_3290
 check_steal_invariant_call_site_coverage_3290.py
+Issue #3291
 check_ffi_opaque_create_site_cover_3291
 check_ffi_opaque_create_site_cover_3291.py
+Issue #3292
 check_pcv_hotpath_metrics_layout_3292
 check_pcv_hotpath_metrics_layout_3292.py
+Issue #3293
 check_ir_dirty_batch_only_production_default_3293
 check_ir_dirty_batch_only_production_default_3293.py
+Issue #3294
 check_type_export_outermost_face_3294
 check_type_export_outermost_face_3294.py
+Issue #3295
 check_linear_force_full_validate_3295
 check_linear_force_full_validate_3295.py
+Issue #3296
 check_require_effect_mid_ssot_3296
 check_require_effect_mid_ssot_3296.py
+Issue #3297
 check_reclaimed_dtor_under_account_3297
 check_reclaimed_dtor_under_account_3297.py
+Issue #3298
 check_parallel_mutate_region_keys_3299
 check_parallel_mutate_region_keys_3299.py
+Issue #3300
+Issue #3301
 check_atomic_batch_macro_audit_3301
 check_wal_fail_closed_force_wal_3302
 check_wal_fail_closed_force_wal_3302.py
+Issue #3303
 check_steal_abort_reason_coverage_3303
 check_steal_abort_reason_coverage_3303.py
+Issue #3304
 check_capability_deny_reason_uniformity_3304
 check_capability_deny_reason_uniformity_3304.py
+Issue #3305
 check_ir_typed_entry_proof_authority_3305
 check_ir_typed_entry_proof_authority_3305.py
+Issue #3306
 check_intermediate_create_value_only_soak_3306
 check_intermediate_create_value_only_soak_3306.py
+Issue #3307
 check_pending_full_solve_residual_hardlatch_3307
 check_pending_full_solve_residual_hardlatch_3307.py
+Issue #3308
 check_post_moving_canary_steal_lcp_3308
 check_post_moving_canary_steal_lcp_3308.py
+Issue #3309
 check_unified_restamp_single_entry_3309
 check_unified_restamp_single_entry_3309.py
+Issue #3310
 check_impact_ub_production_3310
 check_impact_ub_production_3310.py
+Issue #3311
 check_query_result_soft_prod_transition_3311
 check_query_result_soft_prod_transition_3311.py
+Issue #3312
 check_nested_return_not_triad_3312
 check_nested_return_not_triad_3312.py
+Issue #3313
 check_hot_contract_production_harden_3313
 check_hot_contract_production_harden_3313.py
+Issue #3314
 check_append_only_layout_stamps_3314
 check_append_only_layout_stamps_3314.py
+Issue #3315
 check_production_dirty_soa_no_pred_3315
 check_production_dirty_soa_no_pred_3315.py
+Issue #3316
+Issue #3317
 check_adt_exhaust_outermost_recheck_3317
+Issue #3318
 check_coercion_blame_epoch_restamp_3318
+Issue #3319
 check_sampled_deny_se_emit_3319
+Issue #3320
+Issue #3321
 check_concurrent_clone_prod_zero_half_tree_3321
+Issue #3322
 check_nested_observation_window_3322
 check_nested_observation_window_3322.py
+Issue #3323
 check_pure_anon_overflow_dispatch_race_3323
 check_pure_anon_overflow_dispatch_race_3323.py
+Issue #3324
 check_abort_restore_stale_map_stamp_3324
 check_abort_restore_stale_map_stamp_3324.py
+Issue #3325
 check_hold_budget_no_edge_force_3325
 check_hold_budget_no_edge_force_3325.py
+Issue #3326
 check_factory_default_cover_3326
 check_factory_default_cover_3326.py
+Issue #3327
 check_restamp_hot_cone_agent_held_3327
 check_restamp_hot_cone_agent_held_3327.py
 check_pcv_stale_span_query_refresh_3328
 check_pcv_stale_span_query_refresh_3328.py
 check_production_pipeline_purity_3329
 check_production_pipeline_purity_3329.py
+Issue #3330
 check_bidirectional_uncovered_no_dynamic_3330
 check_bidirectional_uncovered_no_dynamic_3330.py
+Issue #3331
 check_soft_timeout_quarantine_3331
 check_soft_timeout_quarantine_3331.py
+Issue #3332
 check_allow_cross_scoped_grant_3332
 check_allow_cross_scoped_grant_3332.py
+Issue #3333
 check_provenance_contributing_mid_3333
 check_provenance_contributing_mid_3333.py
+Issue #3334
 check_reclaimed_abandon_3334
 check_reclaimed_abandon_3334.py
+Issue #3335
 check_mutation_audit_epoch_3335
 check_mutation_audit_epoch_3335.py
+Issue #3336
 check_agent_send_safe_preference_3336
 check_agent_send_safe_preference_3336.py
+Issue #3337
 check_scope_bp_overflow_teardown_3337
 check_scope_bp_overflow_teardown_3337.py
+Issue #3338
 check_wal_mid_lookup_window_3338
 check_wal_mid_lookup_window_3338.py
+Issue #3339
 check_agent_decision_facade_headroom_3339
 check_agent_decision_facade_headroom_3339.py
+Issue #3340
 check_cross_flat_provenance_homology_3340
 check_cross_flat_provenance_homology_3340.py
+Issue #3341
 check_fiber_hygiene_last_limit_reason_3341
 check_fiber_hygiene_last_limit_reason_3341.py
+Issue #3342
 check_pure_anon_heal_starvation_3342
 check_pure_anon_heal_starvation_3342.py
+Issue #3343
 check_production_weak_abi_commit_readiness_3343
 check_production_weak_abi_commit_readiness_3343.py
+Issue #3344
 check_mutate_hygiene_continuous_gate_3344
 check_mutate_hygiene_continuous_gate_3344.py
+Issue #3345
 check_production_hybrid_depth1_fanout_3345
 check_production_hybrid_depth1_fanout_3345.py
+Issue #3346
 check_stamp_last_look_densify_steal_abort_3346
 check_stamp_last_look_densify_steal_abort_3346.py
+Issue #3347
 check_residual_castop_readiness_undermark_3347
 check_residual_castop_readiness_undermark_3347.py
+Issue #3348
 check_nonstale_mirror_growth_force_full_3348
 check_nonstale_mirror_growth_force_full_3348.py
+Issue #3349
 check_dead_coercion_persist_before_partial_3349
 check_dead_coercion_persist_before_partial_3349.py
+Issue #3350
 check_linear_root_moving_remap_3350
 check_linear_root_moving_remap_3350.py
+Issue #3351
 check_peer_ir_name_soft_stale_3351
 check_peer_ir_name_soft_stale_3351.py
 check_transform_engine_guard_3352
 check_transform_engine_guard_3352.py
 check_parallel_mutate_region_keys_prod_deny_3353
 check_parallel_mutate_region_keys_prod_deny_3353.py
+Issue #3354
 check_query_pattern_find_hygiene_align_3354
 check_query_pattern_find_hygiene_align_3354.py
+Issue #3355
 check_ir_soa_single_mark_production_ban_3355
 check_ir_soa_single_mark_production_ban_3355.py
+Issue #3356
 check_densify_cone_rewrite_3356
 check_densify_cone_rewrite_3356.py
+Issue #3357
 check_shape_tls_record_merge_3357
 check_shape_tls_record_merge_3357.py
+Issue #3358
 check_adt_exhaust_replace_type_cone_3358
 check_adt_exhaust_replace_type_cone_3358.py
+Issue #3359
 check_castop_abort_elision_interleave_3359
 check_castop_abort_elision_interleave_3359.py
+Issue #3360
 check_soft_timeout_export_refuse_3360
 check_soft_timeout_export_refuse_3360.py
+Issue #3361
+Issue #3362
+Issue #3363
+Issue #3364
+Issue #3365
+Issue #3366
+Issue #3367
+Issue #3368
+Issue #3369
 check_mailbox_held_ref_steal_3369
+Issue #3370
 check_arena_auto_arm_known_roots_3370
 check_arena_auto_arm_known_roots_3370.py
+Issue #3371
 check_evolution_audit_decision_forensic_source_3371
 check_evolution_audit_decision_forensic_source_3371.py
+Issue #3372
 check_densify_fail_window_vacuous_axes_3372
+Issue #3373
+Issue #3374
+Issue #3375
+Issue #3376
+Issue #3377
+Issue #3378
+Issue #3379
+Issue #3380
+Issue #3381
+Issue #3382
+Issue #3383
+Issue #3384
 check_mutation_boundary_ssot_3384
 check_mutation_boundary_ssot_3384.py
+Issue #3385
 check_steal_safety_lifetime_proof_latch_3385
 check_steal_safety_lifetime_proof_latch_3385.py
+Issue #3386
 check_query_stable_hard_reject_torn_latch_3386
 check_query_stable_hard_reject_torn_latch_3386.py
 check_soak_pr_short_3387
 check_soak_pr_short_3387.py
+Issue #3388
+Issue #3389
+Issue #3390
+Issue #3391
+Issue #3392
+Issue #3393
+Issue #3394
 check_fiber_spawn_cli_dtor_drain_3394
 check_fiber_spawn_cli_dtor_drain_3394.py
+Issue #3395
 check_query_default_stamped_3395
 check_query_default_stamped_3395.py
+Issue #3396
 check_unpack_stable_ref_arg_v2_3396
 check_unpack_stable_ref_arg_v2_3396.py
+Issue #3397
 check_query_children_stable_no_tls_3397
 check_query_children_stable_no_tls_3397.py
+Issue #3398
 check_as_stable_ref_v2_3398
 check_as_stable_ref_v2_3398.py
+Issue #3399
 check_structural_mutate_resolve_helper_3399
 check_structural_mutate_resolve_helper_3399.py
 check_stable_ref_probe_3400
 check_stable_ref_probe_3400.py
+Issue #3401
 check_eval_flat_hot_path_3401
 check_eval_flat_hot_path_3401.py
+Issue #3402
 check_dense_children_columns_3402
 check_dense_children_columns_3402.py
 dense-children-columns-3402
+Issue #3403
 check_inline_pass_soa_3403
 check_inline_pass_soa_3403.py
 inline-pass-soa-3403
+Issue #3404
 arena-auto-arm-soft-fallback-3404
 check_arena_auto_arm_soft_fallback_3404
 check_arena_auto_arm_soft_fallback_3404.py
+Issue #3405
 check_pure_wrap_dirty_entry_3405
 check_pure_wrap_dirty_entry_3405.py
 pure-wrap-dirty-entry-3405
+Issue #3406
 check_recover_fail_clear_persist_3406
 check_recover_fail_clear_persist_3406.py
+Issue #3407
 check_synthesize_set_walks_rhs_3407
 check_synthesize_set_walks_rhs_3407.py
 check_set_assignment_hygiene_3408
 check_set_assignment_hygiene_3408.py
+Issue #3409
 check_grant_ssot_ta_fence_3409
 check_grant_ssot_ta_fence_3409.py
+Issue #3410
 check_dual_fresh_mutate_soft_migrate_3410
 check_dual_fresh_mutate_soft_migrate_3410.py
+Issue #3411
 check_wildcard_ta_string_gate_3411
 check_wildcard_ta_string_gate_3411.py
+Issue #3412
 check_deopt_pending_closure_call_3412
 check_deopt_pending_closure_call_3412.py
+Issue #3413
 check_partial_reemit_success_coverage_3413
 check_partial_reemit_success_coverage_3413.py
+Issue #3414
 check_no_tls_live_policy_default_solved_3414
 check_no_tls_live_policy_default_solved_3414.py
+Issue #3415
 check_bare_nodeid_foreign_stamp_3415
 check_bare_nodeid_foreign_stamp_3415.py
 check_last_proof_eval_identity_3416
 check_last_proof_eval_identity_3416.py
+Issue #3417
 check_cascade_skip_subtree_full_cone_3417
 check_cascade_skip_subtree_full_cone_3417.py
+Issue #3418
 check_proof_goal_fingerprint_overflow_3418
 check_proof_goal_fingerprint_overflow_3418.py
+Issue #3419
 check_jit_typed_entry_every_function_3419
 check_jit_typed_entry_every_function_3419.py
+Issue #3420
 check_factory_refuse_uncovered_3420
 check_factory_refuse_uncovered_3420.py
+Issue #3421
 check_apply_closure_densify_hard_refuse_3421
 check_apply_closure_densify_hard_refuse_3421.py
+Issue #3423
 check_add_mutate_acquire_before_body_3423
 check_add_mutate_acquire_before_body_3423.py
+Issue #3424
 check_query_result_hash_resolve_3424
 check_query_result_hash_resolve_3424.py
+Issue #3425
 check_as_stable_ref_prod_int_reject_3425
 check_as_stable_ref_prod_int_reject_3425.py
+Issue #3426
 check_restamp_hot_cone_held_overflow_3426
 check_restamp_hot_cone_held_overflow_3426.py
+Issue #3427
 check_query_find_prod_no_scan_3427
 check_query_find_prod_no_scan_3427.py
+Issue #3428
 check_hot_contract_view_at_harden_3428
 check_hot_contract_view_at_harden_3428.py
+Issue #3429
 check_pcv_shared_cow_tls_3429
 check_pcv_shared_cow_tls_3429.py
+Issue #3430
 check_production_defaults_force_strict_unify_3430
 check_production_defaults_force_strict_unify_3430.py
+Issue #3431
 check_occurrence_unstaged_expected_fp_3431
 check_occurrence_unstaged_expected_fp_3431.py
+Issue #3432
 check_empty_pair_no_dynamic_3432
 check_empty_pair_no_dynamic_3432.py
+Issue #3433
 check_join_cleanup_fork_3433
 check_join_cleanup_fork_3433.py
+Issue #3434
 check_tenant_spawn_mandate_3434
 check_tenant_spawn_mandate_3434.py
+Issue #3435
 check_relocate_drop_tracking_3435
 check_relocate_drop_tracking_3435.py
+Issue #3436
 check_grant_lifetime_alignment_3436
 check_grant_lifetime_alignment_3436.py
+Issue #3437
 check_scope_session_drop_3437
 check_scope_session_drop_3437.py
+Issue #3438
 check_scoped_linear_drain_3438
 check_scoped_linear_drain_3438.py
+Issue #3439
+Issue #3440
 check_outermost_persist_reject_restore_3440
 check_outermost_persist_reject_restore_3440.py
+Issue #3441
 check_deopt_pending_fast_path_3441
 check_deopt_pending_fast_path_3441.py
+Issue #3442
 check_scope_message_resolve_3442
 check_scope_message_resolve_3442.py
+Issue #3443
 check_ffi_jit_live_ptr_inventory_3443
 check_ffi_jit_live_ptr_inventory_3443.py
+Issue #3444
 check_scope_child_address_3444
 check_scope_child_address_3444.py
+Issue #3445
 check_reemit_pipeline_reason_coverage_3445
 check_reemit_pipeline_reason_coverage_3445.py
+Issue #3446
 check_linear_epoch_fence_elision_typed_3446
 check_linear_epoch_fence_elision_typed_3446.py
+Issue #3447
 check_jit_dual_fresh_c_bridge_3447
 check_jit_dual_fresh_c_bridge_3447.py
+Issue #3448
 check_linear_zero_root_green_face_drop_3448
 check_linear_zero_root_green_face_drop_3448.py
+Issue #3449
 check_query_default_schema2_export_3449
 check_query_default_schema2_export_3449.py
+Issue #3450
 check_add_mutate_read_only_fence_3450
 check_add_mutate_read_only_fence_3450.py
+Issue #3451
 check_nested_gap_query_epoch_stale_3451
 check_nested_gap_query_epoch_stale_3451.py
 check_mutate_reg_kind_3452
 check_mutate_reg_kind_3452.py
 check_set_child_locked_dense_inplace_3453
 check_set_child_locked_dense_inplace_3453.py
+Issue #3454
 check_production_pure_wrap_soa_3454
 check_production_pure_wrap_soa_3454.py
 production-pure-wrap-soa-3454
+Issue #3455
 check_shape_compact_dirty_fnkey_3455
 check_shape_compact_dirty_fnkey_3455.py
 check_destroy_dtor_index_3456
 check_destroy_dtor_index_3456.py
+Issue #3457
 check_eval_flat_sym_intern_3457
 check_eval_flat_sym_intern_3457.py
+Issue #3458
 check_tenant_scope_release_key_3458
 check_tenant_scope_release_key_3458.py
+Issue #3459
+Issue #3460
 check_se_wal_sidecar_pair_3460
 check_se_wal_sidecar_pair_3460.py
+Issue #3461
+Issue #3462
+Issue #3463
 check_agent_wait_reclaimed_scope_resolve_3463
 check_agent_wait_reclaimed_scope_resolve_3463.py
+Issue #3464
+Issue #3465
+Issue #3466
 check_reemit_pipeline_reason_heal_3466
 check_reemit_pipeline_reason_heal_3466.py
+Issue #3467
 check_reclaimed_put_deny_3467
 check_reclaimed_put_deny_3467.py
+Issue #3468
 check_stamp_rest_param_no_overstamp_3468
 check_stamp_rest_param_no_overstamp_3468.py
+Issue #3469
 check_apply_closure_densify_multi_window_3469
 check_apply_closure_densify_multi_window_3469.py
+Issue #3470
 check_inner_expand_unwrap_depth_3470
 check_inner_expand_unwrap_depth_3470.py
+Issue #3471
 check_jit_dual_fresh_table_stamp_3471
 check_jit_dual_fresh_table_stamp_3471.py
+Issue #3472
 check_persist_green_phase1_linear_deny_3472
 check_persist_green_phase1_linear_deny_3472.py
+Issue #3473
 check_ffi_alias_slot_register_3473
 check_ffi_alias_slot_register_3473.py
+Issue #3474
 check_production_called_by_cone_bfs_3474
 check_production_called_by_cone_bfs_3474.py
+Issue #3475
 check_macro_introduced_native_fail_closed_3475
 check_macro_introduced_native_fail_closed_3475.py
+Issue #3476
 check_scheduler_production_ready_weld_3476
 check_scheduler_production_ready_weld_3476.py
+Issue #3477
 check_solve_delta_dirty_skip_residual_3477
 check_solve_delta_dirty_skip_residual_3477.py
+Issue #3478
 check_pure_anon_budget_skip_must_deopt_3478
 check_pure_anon_budget_skip_must_deopt_3478.py
+Issue #3479
 check_steal_envframe_handoff_elevation_3479
 check_steal_envframe_handoff_elevation_3479.py
+Issue #3480
 check_hold_budget_add_mutate_inbody_poll_3480
 check_hold_budget_add_mutate_inbody_poll_3480.py
+Issue #3481
 check_aot_facade_content_restamp_3481
 check_aot_facade_content_restamp_3481.py
+Issue #3482
 check_steal_densify_persist_clear_3482
 check_steal_densify_persist_clear_3482.py
+Issue #3483
 check_steal_complete_latch_strong_3483
 check_steal_complete_latch_strong_3483.py
+Issue #3484
 check_peel_zero_mask_fail_closed_3484
 check_peel_zero_mask_fail_closed_3484.py
+Issue #3485
 check_mailbox_hold_budget_p99_union_3485
 check_mailbox_hold_budget_p99_union_3485.py
+Issue #3486
 check_dual_dep_graph_inject_oracle_3486
 check_dual_dep_graph_inject_oracle_3486.py
+Issue #3487
 check_query_stable_restamp_latch_export_3487
 check_query_stable_restamp_latch_export_3487.py
+Issue #3488
 check_production_pure_wrap_hot_pack_3488
 check_production_pure_wrap_hot_pack_3488.py
+Issue #3489
 check_ir_soa_single_mark_deleted_3489
 check_ir_soa_single_mark_deleted_3489.py
+Issue #3490
 check_hot_contract_harden_cache_3490
 check_hot_contract_harden_cache_3490.py
 check_pcv_unique_zero_atomic_3491
 check_pcv_unique_zero_atomic_3491.py
+Issue #3494
+Issue #3495
+Issue #3496
+Issue #3497
+Issue #3498
+Issue #3499
+Issue #3500
+Issue #3501
+Issue #3502
+Issue #3503
+Issue #3504
+Issue #3505
+Issue #3506
+Issue #3507
+Issue #3508
+Issue #3509
+Issue #3510
+Issue #3511
+Issue #3513
+Issue #3514
+Issue #3515
+Issue #3516
+Issue #3517
+Issue #3518
+Issue #3519
+Issue #3521
+Issue #3525
+Issue #3526
+Issue #3527
+Issue #3528
+Issue #3529
+Issue #3530
+Issue #3531
+Issue #3532
+Issue #3533
+Issue #3539
+Issue #3540
+Issue #3541
+Issue #3542
+Issue #3543
+Issue #3544
+Issue #3546
+Issue #3547
+Issue #3548
+Issue #3549
+Issue #3551
+Issue #3553
+Issue #3555
+Issue #3556
+Issue #3557
+Issue #3558
+Issue #3559
+Issue #3560
+Issue #3561
+Issue #3562
+Issue #3563
+Issue #3564
+Issue #3566
+Issue #3568
+Issue #3569
+Issue #3570
+Issue #3571
+Issue #3572
+Issue #3573
+Issue #3574
+Issue #3575
+Issue #3576
+Issue #3577
+Issue #3578
+Issue #3579
+Issue #3580
+Issue #3581
+Issue #3582
+Issue #3583
+Issue #3584
+Issue #3585
+Issue #3587
+Issue #3588
+Issue #3589
 check_index_sync_structural_write_3589
 check_index_sync_structural_write_3589.py
+Issue #3590
+Issue #3591
 check_linear_elision_fast_path_3591
 check_linear_elision_fast_path_3591.py
+Issue #3592
+Issue #3593
+Issue #3594
+Issue #3595
 check_join_reclaim_retry_3595
 check_join_reclaim_retry_3595.py
+Issue #3596
+Issue #3597
+Issue #3598
+Issue #3599
+Issue #3600
 check_moving_untracked_split_3600
 check_moving_untracked_split_3600.py
+Issue #3601
 check_lockless_hygiene_se_3601
 check_lockless_hygiene_se_3601.py
+Issue #3602
 check_ffi_apply_densify_refuse_3602
 check_ffi_apply_densify_refuse_3602.py
+Issue #3603
 check_wal_window_miss_catalog_3603
 check_wal_window_miss_catalog_3603.py
+Issue #3604
 check_panic_aba_gc_defer_drain_3604
 check_panic_aba_gc_defer_drain_3604.py
+Issue #3605
 check_facade_owner_scope_clock_skip_3605
 check_facade_owner_scope_clock_skip_3605.py
+Issue #3606
 check_nested_qq_depth_3606
 check_nested_qq_depth_3606.py
+Issue #3607
 check_remount_reason_domain_3607
 check_remount_reason_domain_3607.py
+Issue #3608
 check_expand_checkpoint_local_rollback_3608
 check_expand_checkpoint_local_rollback_3608.py
+Issue #3609
 check_reexpand_tenant_principal_3609
 check_reexpand_tenant_principal_3609.py
+Issue #3610
 check_real_quiet_live_tc_3610
 check_real_quiet_live_tc_3610.py
+Issue #3611
 check_cascade_rearm_reconsult_3611
 check_cascade_rearm_reconsult_3611.py
+Issue #3612
 check_remount_densify_pairing_strip_3612
 check_remount_densify_pairing_strip_3612.py
+Issue #3613
 check_mailbox_holder_send_lock_order_3613
 check_mailbox_holder_send_lock_order_3613.py
+Issue #3614
 check_outermost_persist_order_3614
 check_outermost_persist_order_3614.py
+Issue #3615
 check_dual_graph_parity_cone_3615
 check_dual_graph_parity_cone_3615.py
+Issue #3616
 check_jit_anon_linear_prologue_3616
 check_jit_anon_linear_prologue_3616.py
+Issue #3617
 check_steal_eval_keyed_residual_3617
 check_steal_eval_keyed_residual_3617.py
+Issue #3618
 check_residual_persist_attribution_3618
 check_residual_persist_attribution_3618.py
+Issue #3619
+Issue #3620
 check_chaos_guard_hold_smoke_3620
 check_chaos_guard_hold_smoke_3620.py
+Issue #3621
 check_steal_identity_proof_3621
 check_steal_identity_proof_3621.py
+Issue #3622
 check_type_dynamic_production_3622
 check_type_dynamic_production_3622.py
+Issue #3623
 check_occurrence_recover_regate_3623
 check_occurrence_recover_regate_3623.py
+Issue #3624
 check_type_export_face_3624
 check_type_export_face_3624.py
+Issue #3625
 check_render_fast_audit_3625
 check_render_fast_audit_3625.py
+Issue #3626
 check_closure_calls_hotpath_3626
 check_closure_calls_hotpath_3626.py
 check_pack_pipeline_strict_3627
 check_pack_pipeline_strict_3627.py
+Issue #3628
+Issue #3629
+Issue #3630
 check_undeclared_mt_autodetect_3630
 check_undeclared_mt_autodetect_3630.py
+Issue #3631
 check_reclaimed_batch_join_3631
 check_reclaimed_batch_join_3631.py
+Issue #3632
 check_scope_bp_sender_attribution_3632
 check_scope_bp_sender_attribution_3632.py
+Issue #3633
 check_moving_cover_reconciliation_3633
 check_moving_cover_reconciliation_3633.py
+Issue #3634
+Issue #3635
 check_closure_dispatch_entry_3635
 check_closure_dispatch_entry_3635.py
+Issue #3636
 check_region_storm_attribution_3636
 check_region_storm_attribution_3636.py
+Issue #3637
 check_macro_boundary_backstop_3637
 check_macro_boundary_backstop_3637.py
+Issue #3638
 check_query_index_telemetry_3638
 check_query_index_telemetry_3638.py
+Issue #3639
 check_wal_append_miss_deny_3639
 check_wal_append_miss_deny_3639.py
+Issue #3640
 check_unpack_spine_gate_3640
 check_unpack_spine_gate_3640.py
+Issue #3641
 check_occupancy_collision_failclosed_3641
 check_occupancy_collision_failclosed_3641.py
+Issue #3642
 check_recv_stale_nullopt_3642
 check_recv_stale_nullopt_3642.py
+Issue #3643
 check_scope_join_tree_3643
 check_scope_join_tree_3643.py
+Issue #3644
 check_reclaimed_slot_second_recycle_3644
 check_reclaimed_slot_second_recycle_3644.py
+Issue #3645
 check_metrics_not_found_3645
 check_metrics_not_found_3645.py
+Issue #3646
+Issue #3647
 check_closure_densify_slots_3647
 check_closure_densify_slots_3647.py
+Issue #3648
 check_apply_window_gate_3648
 check_apply_window_gate_3648.py
+Issue #3649
 check_storm_exit_coverage_verify_3649
 check_storm_exit_coverage_verify_3649.py
+Issue #3650
 check_rollback_mse_3650
 check_rollback_mse_3650.py
+Issue #3651
 check_expand_all_deny_codes_3651
 check_expand_all_deny_codes_3651.py
+Issue #3652
 check_lockless_allow_mse_3652
 check_lockless_allow_mse_3652.py
+Issue #3653
 check_outermost_persist_audit_order_3653
 check_outermost_persist_audit_order_3653.py
+Issue #3654
 check_jit_linear_post_mutate_unset_3654
 check_jit_linear_post_mutate_unset_3654.py
+Issue #3655
 check_persist_sdo_before_unstaged_3655
 check_persist_sdo_before_unstaged_3655.py
+Issue #3656
 check_callee_cone_partial_absorb_3656
 check_callee_cone_partial_absorb_3656.py
+Issue #3657
 check_unslotted_string_edge_parity_3657
 check_unslotted_string_edge_parity_3657.py
+Issue #3658
 check_type_dirty_txn_before_cascade_3658
 check_type_dirty_txn_before_cascade_3658.py
+Issue #3659
 check_boundary_safe_uses_snap_3659
 check_boundary_safe_uses_snap_3659.py
+Issue #3660
 check_query_result_per_match_fresh_3660
 check_query_result_per_match_fresh_3660.py
+Issue #3661
 check_packed_v2_no_occupancy_refresh_3661
 check_packed_v2_no_occupancy_refresh_3661.py
+Issue #3662
 check_is_coercible_dynamic_prod_3662
 check_is_coercible_dynamic_prod_3662.py
+Issue #3663
 check_linear_move_elision_abort_live_3663
 check_linear_move_elision_abort_live_3663.py
+Issue #3664
 check_replace_pattern_match_sub_no_std_function_3664
 check_replace_pattern_match_sub_no_std_function_3664.py
 check_insert_remove_child_locked_dense_splice_3665
 check_insert_remove_child_locked_dense_splice_3665.py
+Issue #3666
 check_hot_contract_production_pack_3666
 check_hot_contract_production_pack_3666.py
+Issue #3668
 check_quota_tenant_keying_3668
 check_quota_tenant_keying_3668.py
+Issue #3669
 check_isolation_audit_caller_3669
 check_isolation_audit_caller_3669.py
+Issue #3670
 check_resume_mid_join_3670
 check_resume_mid_join_3670.py
+Issue #3671
 check_scope_join_tree_visibility_3671
 check_scope_join_tree_visibility_3671.py
+Issue #3672
 check_bp_scope_tenant_3672
 check_bp_scope_tenant_3672.py
+Issue #3673
 check_recv_under_boundary_3673
 check_recv_under_boundary_3673.py
+Issue #3674
 check_wal_fold_autoscan_3674
 check_wal_fold_autoscan_3674.py
+Issue #3675
+Issue #3676
+Issue #3677
+Issue #3678
+Issue #3679
 check_envframe_scan_order_3679
 check_envframe_scan_order_3679.py
+Issue #3680
 check_compact_owner_scope_3680
 check_compact_owner_scope_3680.py
+Issue #3681
 check_apply_pre_reemit_refuse_3681
 check_apply_pre_reemit_refuse_3681.py
+Issue #3682
 check_last_success_coverage_evidence_3682
 check_last_success_coverage_evidence_3682.py
+Issue #3683
 check_hygiene_deny_kind_uniformity_3683
 check_hygiene_deny_kind_uniformity_3683.py
+Issue #3684
 check_inner_expand_refuse_3684
 check_inner_expand_refuse_3684.py
+Issue #3685
 check_clone_session_policy_3685
 check_clone_session_policy_3685.py
+Issue #3686
+Issue #3687
+Issue #3688
+Issue #3689
+Issue #3690
+Issue #3691
+Issue #3692
+Issue #3693
+Issue #3694
+Issue #3695
+Issue #3696
+Issue #3697
+Issue #3698
+Issue #3699
+Issue #3700
+Issue #3701
+Issue #3702
+Issue #3703
 check_quote_intern_lock_3703
 check_quote_intern_lock_3703.py
+Issue #3720
 check_mse_session_bound_3721
 check_mse_session_bound_3721.py
+Issue #3722
 check_rollback_effect_gate_3722
 check_rollback_effect_gate_3722.py
+Issue #3723
+Issue #3724
+Issue #3725
+Issue #3726
+Issue #3727
+Issue #3728
+Issue #3729
+Issue #3730
+Issue #3731
+Issue #3732
+Issue #3733
+Issue #3735
+Issue #3736
+Issue #3737
 check_compiler_metrics_fields_3737
 check_compiler_metrics_fields_3737.py
+Issue #3738
+Issue #3739
+Issue #3740
+Issue #3742
+Issue #3743
+Issue #3744
+Issue #3745
+Issue #3746
+Issue #3747
+Issue #3748
+Issue #3749
+Issue #3750
+Issue #3751
+Issue #3752
+Issue #3753
+Issue #3754
+Issue #3755
+Issue #3756
+Issue #3757
+Issue #3758
+Issue #3759
+Issue #3760
+Issue #3761
+Issue #3762
+Issue #3763
+Issue #3764
+Issue #3765
+Issue #3766
+Issue #3767
+Issue #3768
+Issue #3769
+Issue #3770
 check_ast_ref_stamp_3772
 check_ast_ref_stamp_3772.py
+Issue #3773
+Issue #3774
+Issue #3775
+Issue #3776
+Issue #3777
+Issue #3778
 check_occurrence_mid_join_ssot_3778
 check_occurrence_mid_join_ssot_3778.py
+Issue #3779
 check_steal_complete_total_ssot_3779
 check_steal_complete_total_ssot_3779.py
+Issue #3780
 check_mutation_wal_miss_fail_closed_3780
 check_mutation_wal_miss_fail_closed_3780.py
+Issue #3781
 check_densify_this_window_rewrite_3781
 check_densify_this_window_rewrite_3781.py
+Issue #3782
 check_densify_entry_lcp_skip_compact_3782
 check_densify_entry_lcp_skip_compact_3782.py
+Issue #3783
 check_auto_arm_densify_health_publish_3783
 check_auto_arm_densify_health_publish_3783.py
+Issue #3784
 check_anon_peer_empty_name_soft_stale_3784
 check_anon_peer_empty_name_soft_stale_3784.py
+Issue #3785
 check_sync_remount_storm_gate_3785
 check_sync_remount_storm_gate_3785.py
+Issue #3786
 check_allow_macro_inline_mse_3786
 check_allow_macro_inline_mse_3786.py
+Issue #3787
 check_sticky_last_limit_deny_all_3787
 check_sticky_last_limit_deny_all_3787.py
+Issue #3788
 check_partial_occurrence_drift_escalate_3788
 check_partial_occurrence_drift_escalate_3788.py
+Issue #3789
 check_remount_last_zero_agent_face_3789
 check_remount_last_zero_agent_face_3789.py
+Issue #3790
 check_rollback_mutation_boundary_guard_3790
 check_rollback_mutation_boundary_guard_3790.py
+Issue #3791
 check_mailbox_lock_audit_pairs_3791
 check_mailbox_lock_audit_pairs_3791.py
+Issue #3792
 check_mutation_history_tenant_filter_3792
 check_mutation_history_tenant_filter_3792.py
+Issue #3793
 check_replace_pattern_kw_unify_3793
 check_replace_pattern_kw_unify_3793.py
+Issue #3794
 check_partial_drift_grant_refuse_3794
 check_partial_drift_grant_refuse_3794.py
+Issue #3795
 check_escape_analysis_pure_wrap_3795
 check_escape_analysis_pure_wrap_3795.py
+Issue #3796
 check_occurrence_coercion_ci_ok_3796
 check_occurrence_coercion_ci_ok_3796.py
+Issue #3797
+Issue #3798
+Issue #3799
 check_session_revoke_fiber_zero_3799
 check_session_revoke_fiber_zero_3799.py
+Issue #3800
 check_cross_tenant_grant_caller_ta_3800
 check_cross_tenant_grant_caller_ta_3800.py
+Issue #3801
 check_isolation_deny_mid_join_3801
 check_isolation_deny_mid_join_3801.py
+Issue #3802
 check_tenant_host_path_isolation_3802
 check_tenant_host_path_isolation_3802.py
+Issue #3803
 check_agent_scope_region_key_isolation_3803
 check_agent_scope_region_key_isolation_3803.py
+Issue #3804
 check_mailbox_bp_overflow_cohort_3804
 check_mailbox_bp_overflow_cohort_3804.py
+Issue #3805
+Issue #3806
 check_wal_overflow_wrap_3806
 check_wal_overflow_wrap_3806.py
+Issue #3808
 check_isolation_deny_obs_join_3808
 check_isolation_deny_obs_join_3808.py
+Issue #3809
 check_boundary_soft_densify_restamp_3809
 check_boundary_soft_densify_restamp_3809.py
+Issue #3810
 check_soft_gen_bump_this_window_3810
 check_soft_gen_bump_this_window_3810.py
+Issue #3811
 check_agent_soft_densify_restamp_3811
 check_agent_soft_densify_restamp_3811.py
+Issue #3812
 check_soft_global_critical_remount_3812
 check_soft_global_critical_remount_3812.py
 check_steal_checkpoint_dual_track_3813
 check_steal_checkpoint_dual_track_3813.py
+Issue #3814
 check_sticky_force_empty_residual_3814
 check_sticky_force_empty_residual_3814.py
+Issue #3815
 check_move_node_parent_hygiene_3815
 check_move_node_parent_hygiene_3815.py
+Issue #3816
 check_clone_walk_rename_deny_abort_3816
 check_clone_walk_rename_deny_abort_3816.py
+Issue #3817
 check_rest_spine_orphan_rewind_3817
 check_rest_spine_orphan_rewind_3817.py
+Issue #3818
 check_post_persist_linear_deny_coercion_undo_3818
 check_post_persist_linear_deny_coercion_undo_3818.py
+Issue #3819
 check_occurrence_persist_fp_mismatch_dual_track_3819
 check_occurrence_persist_fp_mismatch_dual_track_3819.py
+Issue #3820
 check_pending_offer_map_miss_retain_3820
 check_pending_offer_map_miss_retain_3820.py
+Issue #3821
 check_synth_hard_fail_abort_force_dirty_3821
 check_synth_hard_fail_abort_force_dirty_3821.py
+Issue #3822
 check_prod_soa_writeback_sync_3822
 check_prod_soa_writeback_sync_3822.py
+Issue #3823
 check_production_mark_node_dep_union_3823
 check_production_mark_node_dep_union_3823.py
+Issue #3824
 check_steal_force_clear_hold_foreign_3824
 check_steal_force_clear_hold_foreign_3824.py
+Issue #3825
 check_hold_budget_safepoint_force_release_3825
 check_hold_budget_safepoint_force_release_3825.py
+Issue #3826
 check_edge_free_latch_gate_3826
 check_edge_free_latch_gate_3826.py
+Issue #3827
 check_query_children_parent_schema2_3827
 check_query_children_parent_schema2_3827.py
+Issue #3828
 check_mutate_from_feedback_ssot_3828
 check_mutate_from_feedback_ssot_3828.py
+Issue #3829
 check_dense_columnar_fingerprint_3829
 check_dense_columnar_fingerprint_3829.py
+Issue #3830
 check_empty_type_annotation_no_dynamic_3830
 check_empty_type_annotation_no_dynamic_3830.py
+Issue #3831
 check_dirty_aware_storm_force_full_cap_3831
 check_dirty_aware_storm_force_full_cap_3831.py
+Issue #3832
 check_apply_closure_tls_cache_3832
 check_apply_closure_tls_cache_3832.py
 check_ir_soa_column_arena_3833
 check_ir_soa_column_arena_3833.py
+Issue #3834
 check_call_ownerless_fail_closed_3834
 check_call_ownerless_fail_closed_3834.py
+Issue #3835
 check_tenant_host_path_read_3835
 check_tenant_host_path_read_3835.py
+Issue #3836
 check_shell_require_effect_3836
 check_shell_require_effect_3836.py
+Issue #3837
+Issue #3838
 check_wal_overflow_wrap_refuse_3838
 check_wal_overflow_wrap_refuse_3838.py
+Issue #3839
 check_string_grant_session_bound_3839
 check_string_grant_session_bound_3839.py
+Issue #3840
 check_parallel_intend_region_eval_mu_3840
 check_parallel_intend_region_eval_mu_3840.py
+Issue #3841
 check_quota_recycle_must_wait_ssot_3841
 check_quota_recycle_must_wait_ssot_3841.py
+Issue #3842
 check_scope_sweep_reclaimed_pending_3842
 check_scope_sweep_reclaimed_pending_3842.py
+Issue #3843
 check_require_effect_full_hard_mid_3843
 check_require_effect_full_hard_mid_3843.py
 cmd_require_effect_full_hard_mid_3843
+Issue #3844
 check_grant_epoch_no_phantom_3844
 check_grant_epoch_no_phantom_3844.py
+Issue #3845
 check_promote_force_join_mid_no_invent_3845
 check_promote_force_join_mid_no_invent_3845.py
 cmd_promote_force_join_mid_no_invent_3845
 check_reload_recovery_state_headroom_3846
 check_reload_recovery_state_headroom_3846.py
+Issue #3848
 check_densify_refuse_zero_move_3848
 check_densify_refuse_zero_move_3848.py
+Issue #3849
 check_apply_closure_happy_path_densify_3849
 check_apply_closure_happy_path_densify_3849.py
+Issue #3850
 check_steal_panic_moving_gate_3850
 check_steal_panic_moving_gate_3850.py
+Issue #3851
 check_pure_anon_budget_skip_sticky_3851
 check_pure_anon_budget_skip_sticky_3851.py
+Issue #3852
 check_abort_aot_invalidate_3852
 check_abort_aot_invalidate_3852.py
 check_ir_soa_column_slab_shard_3853
 check_ir_soa_column_slab_shard_3853.py
+Issue #3854
 check_mse_revoke_fiber_3854
 check_mse_revoke_fiber_3854.py
+Issue #3855
 check_wal_miss_se_compensate_3855
 check_wal_miss_se_compensate_3855.py
 check_wal_miss_ring_flip_3856
 check_wal_miss_ring_flip_3856.py
+Issue #3857
 check_temp_canary_moving_gate_3857
 check_temp_canary_moving_gate_3857.py
+Issue #3858
 check_restore_checkpoint_mse_3858
 check_restore_checkpoint_mse_3858.py
+Issue #3859
+Issue #3860
+Issue #3861
+Issue #3862
+Issue #3863
+Issue #3864
+Issue #3865
+Issue #3866
+Issue #3867
+Issue #3868
 check_flatast_seqlock_get_3868
 check_flatast_seqlock_get_3868.py
+Issue #3869
 check_storm_force_full_counter_3869
 check_storm_force_full_counter_3869.py
+Issue #3870
 check_pass_purity_effect_3870
 check_pass_purity_effect_3870.py
+Issue #3871
 check_letrec_check_synth_3871
 check_letrec_check_synth_3871.py
+Issue #3872
 check_mutate_session_hard_gate_3872
 check_mutate_session_hard_gate_3872.py
+Issue #3873
 check_health_advisory_face_3873
 check_health_advisory_face_3873.py
+Issue #3874
 check_audit_event_tenant_3874
 check_audit_event_tenant_3874.py
+Issue #3875
 check_revoke_epoch_hard_only_3875
 check_revoke_epoch_hard_only_3875.py
+Issue #3876
+Issue #3877
+Issue #3878
+Issue #3879
+Issue #3880
+Issue #3881
+Issue #3882
+Issue #3883
+Issue #3884
+Issue #3885
+Issue #3886
+Issue #3887
+Issue #3888
+Issue #3889
+Issue #3890
+Issue #3891
+Issue #3892
+Issue #3893
+Issue #3894
+Issue #3895
+Issue #3896
+Issue #3897
+Issue #3898
+Issue #3899
+Issue #3900
+Issue #3902
 check_soft_revoke_epoch_honest_3902
 check_soft_revoke_epoch_honest_3902.py
+Issue #3903
 check_correlate_tenant_passthrough_3903
 check_correlate_tenant_passthrough_3903.py
+Issue #3904
 check_mse_ta_posture_3904
 check_mse_ta_posture_3904.py
+Issue #3905
+Issue #3906
+Issue #3907
+Issue #3908
+Issue #3909
+Issue #3910
+Issue #3912
+Issue #3915
+Issue #3916
+Issue #3917
+Issue #3918
+Issue #3919
+Issue #3930
+Issue #3931
+Issue #3932
+Issue #3934
+Issue #3938
+Issue #3939
+Issue #3940
+Issue #3941
 check_orch_residuals_3941
 check_orch_residuals_3941.py
+Issue #3942
+Issue #3943
+Issue #3944
+Issue #3946
+Issue #3947
+Issue #3948
+Issue #3951
+Issue #3952
+Issue #3953
+Issue #3954
+Issue #3955
+Issue #3956
+Issue #3957
+Issue #3958
+Issue #3964
+Issue #3965
+Issue #3966
+Issue #3967
+Issue #3968
+Issue #3969
+Issue #3972
 check_jit_densify_remap_3972
 check_jit_densify_remap_3972.py
+Issue #3973
 check_native_moving_canary_env_note_3973
 check_native_moving_canary_env_note_3973.py
+Issue #3974
+Issue #3975
+Issue #3976
+Issue #3977
+Issue #3978
+Issue #3979
+Issue #3980
+Issue #3981
+Issue #3982
+Issue #3983
+Issue #3984
+Issue #3985
+Issue #3986
+Issue #3987
+Issue #3988
+Issue #3989
+Issue #3990
+Issue #3991
+Issue #3992
+Issue #3993
+Issue #3994
+Issue #3995
+Issue #3996
+Issue #3997
+Issue #3998
+Issue #3999
+Issue #4000
+Issue #4001
 check_agent_recv_typed_preference_4001
 check_agent_recv_typed_preference_4001.py
+Issue #4002
+Issue #4004
+Issue #4005
+Issue #4006
+Issue #4007
+Issue #4008
+Issue #4009
+Issue #4010
+Issue #4011
+Issue #4012
 check_aot_metrics_deopt_ssot_4013
 check_aot_metrics_deopt_ssot_4013.py
+Issue #4014
+Issue #4015
+Issue #4016
+Issue #4017
+Issue #4018
+Issue #4019
+Issue #4020
+Issue #4021
+Issue #4022
+Issue #4023
+Issue #4024
+Issue #4025
+Issue #4026
+Issue #4029
+Issue #4030
+Issue #4031
+Issue #4032
 check_steal_densify_inflight_boundary_safe_4033
 check_steal_densify_inflight_boundary_safe_4033.py
+Issue #4034
+Issue #4036
 check_mutation_choke_4036
 check_mutation_choke_4036.py
+Issue #4037
 check_agent_fingerprint_gate_4037
 check_agent_fingerprint_gate_4037.py
+Issue #4038
 check_session_revoke_host_cohort_4038
 check_session_revoke_host_cohort_4038.py
+Issue #4039
 check_nodeid_collision_4039
 check_nodeid_collision_4039.py
+Issue #4040
+Issue #4041
+Issue #4042
+Issue #4043
+Issue #4044
+Issue #4045
+Issue #4046
+Issue #4047
+Issue #4049
 check_agent_reply_payload_4049
 check_agent_reply_payload_4049.py
+Issue #4050
 check_supervise_join_4050
 check_supervise_join_4050.py
+Issue #4051
 check_occupancy_torn_read_4051
 check_occupancy_torn_read_4051.py
+Issue #4052
 check_isolation_deny_epoch_4052
 check_isolation_deny_epoch_4052.py
 check_soft_ready_http_post_denseness_4053
@@ -6703,158 +9041,271 @@ check_soft_ready_http_post_three_batch_4055
 check_soft_ready_http_post_three_batch_4055.py
 check_soft_ready_http_post_after_probe_4056
 check_soft_ready_http_post_after_probe_4056.py
+Issue #4057
 check_pair_slot_tenant_4057
 check_pair_slot_tenant_4057.py
+Issue #4058
 check_capability_stack_authorization_4058
 check_capability_stack_authorization_4058.py
+Issue #4059
 check_load_tenant_mutate_4059
 check_load_tenant_mutate_4059.py
+Issue #4060
+Issue #4061
+Issue #4062
+Issue #4063
+Issue #4064
+Issue #4065
+Issue #4066
+Issue #4067
+Issue #4068
+Issue #4069
+Issue #4070
+Issue #4071
+Issue #4072
+Issue #4073
+Issue #4074
+Issue #4075
+Issue #4076
+Issue #4077
+Issue #4078
+Issue #4079
+Issue #4080
+Issue #4081
+Issue #4082
+Issue #4083
+Issue #4084
+Issue #4085
+Issue #4086
+Issue #4087
 check_authority_gap_lifecycle_4087
 check_authority_gap_lifecycle_4087.py
+Issue #4088
 check_query_bare_nodeid_4088
 check_query_bare_nodeid_4088.py
+Issue #4089
 check_fiber_type_belt_4089
 check_fiber_type_belt_4089.py
+Issue #4090
 check_shape_hotpath_4090
 check_shape_hotpath_4090.py
+Issue #4091
 check_shape_dirty_cone_4091
 check_shape_dirty_cone_4091.py
+Issue #4093
 check_jit_heap_tenant_4093
 check_jit_heap_tenant_4093.py
+Issue #4094
 check_closure_capture_tenant_4094
 check_closure_capture_tenant_4094.py
+Issue #4095
+Issue #4096
+Issue #4097
+Issue #4098
+Issue #4099
+Issue #4100
+Issue #4101
+Issue #4102
+Issue #4103
+Issue #4104
+Issue #4105
+Issue #4106
 check_query_bare_nodeid_4106
 check_query_bare_nodeid_4106.py
+Issue #4107
 check_type_ground_gate_4107
 check_type_ground_gate_4107.py
+Issue #4108
 check_shape_sync_index_4108
 check_shape_sync_index_4108.py
+Issue #4109
 check_materialize_defuse_4109
 check_materialize_defuse_4109.py
+Issue #4110
 check_hash_tenant_stamp_4110
 check_hash_tenant_stamp_4110.py
+Issue #4111
 check_pair_read_tenant_4111
 check_pair_read_tenant_4111.py
+Issue #4112
 check_agent_export_occupancy_4112
 check_agent_export_occupancy_4112.py
+Issue #4113
 check_resolve_stamped_occupancy_4113
 check_resolve_stamped_occupancy_4113.py
+Issue #4114
 check_join_fail_failfast_4114
 check_join_fail_failfast_4114.py
+Issue #4115
 check_scope_join_sweep_4115
 check_scope_join_sweep_4115.py
+Issue #4117
 check_se_wal_join_4118
 check_se_wal_join_4118.py
+Issue #4120
 check_replay_mid_last_stamped_4120
 check_replay_mid_last_stamped_4120.py
 check_typed_mutation_audit_trail_headroom_4121
 check_typed_mutation_audit_trail_headroom_4121.py
+Issue #4122
+Issue #4124
 check_temp_canary_bind_4124
 check_temp_canary_bind_4124.py
+Issue #4125
 check_apply_densify_inflight_4125
 check_apply_densify_inflight_4125.py
+Issue #4126
 check_jit_reemit_install_4126
 check_jit_reemit_install_4126.py
+Issue #4127
 check_lockless_macro_allow_latch_4127
 check_lockless_macro_allow_latch_4127.py
+Issue #4128
 check_workspace_lock_stamp_4128
 check_workspace_lock_stamp_4128.py
+Issue #4129
 check_character_literal_4129
 check_character_literal_4129.py
+Issue #4130
 check_empty_list_unparse_4130
 check_empty_list_unparse_4130.py
+Issue #4131
 check_oneshot_sigterm_4131
 check_oneshot_sigterm_4131.py
+Issue #4132
 check_export_name_unparse_4132
 check_export_name_unparse_4132.py
+Issue #4133
 check_mse_caller_only_ta_4133
 check_mse_caller_only_ta_4133.py
+Issue #4134
 check_jit_owner_failclosed_4134
 check_jit_owner_failclosed_4134.py
+Issue #4135
 check_grant_node_provenance_4135
 check_grant_node_provenance_4135.py
+Issue #4136
 check_caller_sweep_4136
 check_caller_sweep_4136.py
+Issue #4137
 check_agent_recv_steal_handoff_4137
 check_agent_recv_steal_handoff_4137.py
+Issue #4138
 check_agent_join_scope_compact_4138
 check_agent_join_scope_compact_4138.py
+Issue #4139
 check_join_token_observe_4139
 check_join_token_observe_4139.py
+Issue #4140
 check_densify_health_headroom_4140
 check_densify_health_headroom_4140.py
+Issue #4141
 check_capability_effect_headroom_4141
 check_capability_effect_headroom_4141.py
 check_wal_miss_refuse_next_4142
 check_wal_miss_refuse_next_4142.py
+Issue #4143
 check_moving_sticky_recovery_4143
 check_moving_sticky_recovery_4143.py
+Issue #4144
 check_envframe_pool_slot_remap_4144
 check_envframe_pool_slot_remap_4144.py
+Issue #4145
 check_soft_autowire_unreachable_4145
 check_soft_autowire_unreachable_4145.py
+Issue #4146
 check_facade_cone_jit_drop_4146
 check_facade_cone_jit_drop_4146.py
+Issue #4147
 check_residual_force_rearm_4147
 check_residual_force_rearm_4147.py
+Issue #4148
 check_jit_drop_must_deopt_4148
 check_jit_drop_must_deopt_4148.py
+Issue #4149
 check_hygiene_limit_stamp_4149
 check_hygiene_limit_stamp_4149.py
+Issue #4150
 check_hygiene_last_limit_fiber_4150
 check_hygiene_last_limit_fiber_4150.py
+Issue #4151
 check_macro_child_walk_gate_4151
 check_macro_child_walk_gate_4151.py
+Issue #4152
 check_deferred_green_steal_fence_4152
 check_deferred_green_steal_fence_4152.py
+Issue #4153
 check_txn_dirty_green_4153
 check_txn_dirty_green_4153.py
+Issue #4154
 check_residual_castop_remirror_4154
 check_residual_castop_remirror_4154.py
+Issue #4155
 check_residual_castop_densify_clear_4155
 check_residual_castop_densify_clear_4155.py
+Issue #4156
 check_adaptive_thr_4156
 check_adaptive_thr_4156.py
+Issue #4157
 check_shape_flip_persist_fresh_4157
 check_shape_flip_persist_fresh_4157.py
+Issue #4158
 check_edge_free_hold_4158
 check_edge_free_hold_4158.py
 check_chaos_ready_residual_gate_4159
 check_chaos_ready_residual_gate_4159.py
+Issue #4160
 check_mailbox_holder_bound_4160
 check_mailbox_holder_bound_4160.py
+Issue #4161
 check_rejecthard_bit_coverage_4161
 check_rejecthard_bit_coverage_4161.py
+Issue #4162
 check_query_free_slot_4162
 check_query_free_slot_4162.py
+Issue #4163
 check_query_index_free_slot_4163
 check_query_index_free_slot_4163.py
+Issue #4164
 check_ref_layout_gen_paint_4164
 check_ref_layout_gen_paint_4164.py
+Issue #4165
 check_agent_fiber_isolation_4165
 check_agent_fiber_isolation_4165.py
+Issue #4166
 check_shape_merge_lock_scope_4166
 check_shape_merge_lock_scope_4166.py
+Issue #4167
 check_hot_contract_pack_face_4167
 check_hot_contract_pack_face_4167.py
+Issue #4168
 check_ir_dirty_soft_pretend_amortized_4168
 check_ir_dirty_soft_pretend_amortized_4168.py
+Issue #4169
 check_apply_closure_tls_seq_4169
 check_apply_closure_tls_seq_4169.py
+Issue #4170
 check_recover_solve_status_4170
 check_recover_solve_status_4170.py
+Issue #4171
 check_blame_ok_vacuous_4171
 check_blame_ok_vacuous_4171.py
+Issue #4172
 check_residual_undermark_jit_4172
 check_residual_undermark_jit_4172.py
+Issue #4173
 check_sampled_leftover_audit_4173
 check_sampled_leftover_audit_4173.py
+Issue #4174
 check_recover_truncation_4174
 check_recover_truncation_4174.py
+Issue #4175
 check_r7rs_string_compare_4175
 check_r7rs_string_compare_4175.py
+Issue #4176
 check_serve_async_join_wake_4176
 check_serve_async_join_wake_4176.py
+Issue #4177
 check_list_take_drop_4177
 check_list_take_drop_4177.py
 check_oneshot_stdlib_4178
@@ -6865,84 +9316,362 @@ check_oneshot_stdlib_4224
 check_oneshot_stdlib_4224.py
 check_oneshot_filter_4228
 check_oneshot_filter_4228.py
+Issue #4229
 check_serve_async_capture_honesty_4229
 check_serve_async_capture_honesty_4229.py
+Issue #4230
 check_fiber_join_done_face_4230
 check_fiber_join_done_face_4230.py
+Issue #4231
 check_fiber_body_exception_4231
 check_fiber_body_exception_4231.py
+Issue #4232
 check_soft_list_prims_4232
 check_soft_list_prims_4232.py
+Issue #4233
 check_tenant_exec_jail_4233
 check_tenant_exec_jail_4233.py
+Issue #4234
 check_exec_high_risk_force_4234
 check_exec_high_risk_force_4234.py
 check_agent_mint_per_agent_4235
 check_agent_mint_per_agent_4235.py
+Issue #4236
 check_join_fail_circuitbreaker_4236
 check_join_fail_circuitbreaker_4236.py
+Issue #4237
 check_restart_fuel_4237
 check_restart_fuel_4237.py
+Issue #4238
 check_scope_region_admit_4238
 check_scope_region_admit_4238.py
+Issue #4239
 check_require_effect_join_refuse_4239
 check_require_effect_join_refuse_4239.py
+Issue #4240
 check_wal_prune_fold_4240
 check_wal_prune_fold_4240.py
+Issue #4241
 check_mid_refuse_ordering_4241
 check_mid_refuse_ordering_4241.py
+Issue #4242
 check_remap_tombstone_quarantine_4242
 check_remap_tombstone_quarantine_4242.py
+Issue #4243
 check_relocate_identity_4243
 check_relocate_identity_4243.py
+Issue #4244
 check_interior_int_remap_4244
 check_interior_int_remap_4244.py
+Issue #4245
+Issue #4246
+Issue #4247
+Issue #4248
+Issue #4249
+Issue #4250
 check_occurrence_drain_order_4250
 check_occurrence_drain_order_4250.py
+Issue #4251
 check_dep_closure_miss_4251
 check_dep_closure_miss_4251.py
+Issue #4252
 check_occurrence_owner_tc_steal_4252
 check_occurrence_owner_tc_steal_4252.py
+Issue #4257
+Issue #4258
+Issue #4259
+Issue #4260
 check_primfn_no_std_function_4261
 check_primfn_no_std_function_4261.py
+Issue #4262
 check_escape_soa_no_flat_4262
 check_escape_soa_no_flat_4262.py
 check_ir_soa_column_slab_upstream_4263
 check_ir_soa_column_slab_upstream_4263.py
+Issue #4264
 check_serve_setcode_parity_4264
 check_serve_setcode_parity_4264.py
+Issue #4265
 check_pick_best_call_cache_4265
 check_pick_best_call_cache_4265.py
+Issue #4266
 check_safe_refactor_typecheck_4266
 check_safe_refactor_typecheck_4266.py
+Issue #4267
 check_synthesize_optimize_score_4267
 check_synthesize_optimize_score_4267.py
+Issue #4270
+Issue #4271
+Issue #4272
+Issue #4273
 check_setcode_pick_parity_4272_4273
 check_setcode_pick_parity_4272_4273.py
+Issue #4277
+Issue #4278
+Issue #4279
+Issue #4280
 check_name_table_region_admit_4280
 check_name_table_region_admit_4280.py
+Issue #4281
+Issue #4286
+Issue #4287
+Issue #4288
+Issue #4289
+Issue #4290
+Issue #4291
+Issue #4292
+Issue #4293
+Issue #4294
+Issue #4296
+Issue #4297
+Issue #4298
+Issue #4299
+Issue #4301
+Issue #4303
+Issue #4304
+Issue #4305
+Issue #4306
+Issue #4307
+Issue #4308
+Issue #4309
+Issue #4310
+Issue #4311
+Issue #4312
+Issue #4313
+Issue #4314
+Issue #4315
+Issue #4316
+Issue #4317
+Issue #4318
+Issue #4319
+Issue #4321
+Issue #4322
+Issue #4323
+Issue #4326
+Issue #4327
+Issue #4328
+Issue #4329
+Issue #4330
+Issue #4331
+Issue #4332
+Issue #4334
+Issue #4335
+Issue #4336
+Issue #4337
+Issue #4338
+Issue #4339
+Issue #4340
+Issue #4341
+Issue #4342
+Issue #4343
+Issue #4344
+Issue #4345
+Issue #4346
+Issue #4347
+Issue #4348
+Issue #4349
+Issue #4350
+Issue #4353
+Issue #4355
+Issue #4357
+Issue #4359
+Issue #4360
+Issue #4362
+Issue #4365
+Issue #4372
+Issue #4373
+Issue #4374
+Issue #4375
+Issue #4377
+Issue #4379
+Issue #4380
 check_tenant_jail_4380
 check_tenant_jail_4380.py
+Issue #4381
 check_git_tenant_jail_4381
 check_git_tenant_jail_4381.py
+Issue #4382
 check_http_tenant_scheme_4382
 check_http_tenant_scheme_4382.py
+Issue #4383
+Issue #4384
+Issue #4385
+Issue #4386
+Issue #4387
+Issue #4388
+Issue #4389
+Issue #4390
+Issue #4391
+Issue #4392
+Issue #4393
+Issue #4394
+Issue #4395
+Issue #4396
+Issue #4397
+Issue #4398
+Issue #4399
+Issue #4400
+Issue #4401
+Issue #4402
+Issue #4403
+Issue #4404
+Issue #4405
+Issue #4406
+Issue #4407
+Issue #4408
+Issue #4409
+Issue #4410
+Issue #4411
+Issue #4413
+Issue #4414
+Issue #4415
+Issue #4416
+Issue #4417
+Issue #4418
+Issue #4419
+Issue #4420
+Issue #4421
+Issue #4422
+Issue #4423
+Issue #4424
+Issue #4425
+Issue #4426
+Issue #4427
+Issue #4428
+Issue #4429
+Issue #4430
+Issue #4431
+Issue #4432
+Issue #4433
+Issue #4434
+Issue #4435
+Issue #4436
+Issue #4438
+Issue #4439
+Issue #4440
+Issue #4441
+Issue #4442
+Issue #4443
+Issue #4444
+Issue #4445
+Issue #4446
+Issue #4448
+Issue #4449
+Issue #4450
+Issue #4451
+Issue #4452
+Issue #4453
+Issue #4454
+Issue #4455
+Issue #4456
+Issue #4457
+Issue #4460
+Issue #4461
+Issue #4462
+Issue #4463
+Issue #4464
+Issue #4465
+Issue #4466
+Issue #4467
+Issue #4468
+Issue #4469
+Issue #4470
+Issue #4471
+Issue #4472
+Issue #4473
+Issue #4474
 check_reclaim_trigger_large_heap_4474
 check_reclaim_trigger_large_heap_4474.py
+Issue #4475
+Issue #4476
+Issue #4477
 check_prim_shadow_eval_current_4477
 check_prim_shadow_eval_current_4477.py
+Issue #4478
+Issue #4480
+Issue #4482
+Issue #4483
+Issue #4492
+Issue #4497
 check_value_encoding_single_source_4502
 check_value_encoding_single_source_4502.py
+Issue #4504
+Issue #4505
+Issue #4506
+Issue #4507
+Issue #4508
+Issue #4510
+Issue #4511
+Issue #4513
+Issue #4514
+Issue #4515
+Issue #4516
+Issue #4517
+Issue #4518
+Issue #4519
+Issue #4520
+Issue #4521
+Issue #4522
+Issue #4523
+Issue #4524
+Issue #4525
+Issue #4527
+Issue #4528
+Issue #4529
+Issue #4530
+Issue #4531
+Issue #4532
+Issue #4533
+Issue #4534
+Issue #4538
+Issue #4539
+Issue #4540
+Issue #4542
+Issue #4543
+Issue #4544
+Issue #4545
+Issue #4548
+Issue #4551
+Issue #4553
+Issue #4554
+Issue #4555
+Issue #4557
+Issue #4558
 check_tenant_string_sink_4559
 check_tenant_string_sink_4559.py
+Issue #4560
+Issue #4561
+Issue #4563
+Issue #4564
+Issue #4565
+Issue #4569
+Issue #4575
+Issue #4576
+Issue #4577
+Issue #4578
+Issue #4579
+Issue #4580
+Issue #4581
+Issue #4583
+Issue #4584
+Issue #4585
+Issue #4586
+Issue #4587
+Issue #4588
+Issue #4589
 check_top_letrec_no_selfcopy_frame_4595
 check_top_letrec_no_selfcopy_frame_4595.py
+Issue #4596
+Issue #4597
+Issue #4598
 check_boundary_exit_counters_4598
 check_boundary_exit_counters_4598.py
 check_snapshot_share_stamps_4598
 check_snapshot_share_stamps_4598.py
+Issue #4599
 check_call_resolve_cache_4599
 check_call_resolve_cache_4599.py
+Issue #4600
 check_jit_assumption_gate_4600
 check_jit_assumption_gate_4600.py
 check_jit_frame_deopt_4600
@@ -6953,87 +9682,1131 @@ check_jit_reuse_lowering_4600
 check_jit_reuse_lowering_4600.py
 check_jit_pair_mutation_4602
 check_jit_pair_mutation_4602.py
+Issue #4606
 check_jit_prim_callee_refuse_4606
 check_jit_prim_callee_refuse_4606.py
+Issue #4607
 check_jit_unbound_callee_4607
 check_jit_unbound_callee_4607.py
+Issue #4608
 check_string_heap_reclaim_4608
 check_string_heap_reclaim_4608.py
+Issue #4611
 check_prim_call_arg_rooting_4611
 check_prim_call_arg_rooting_4611.py
+Issue #4612
 check_hash_probe_4612
 check_hash_probe_4612.py
+Issue #4613
 check_pair_vector_hash_reclaim_4613
 check_pair_vector_hash_reclaim_4613.py
+Issue #4614
 check_vector_hash_cow_4614
 check_vector_hash_cow_4614.py
 check_block_prefix_offsets_4615
 check_block_prefix_offsets_4615.py
+Issue #4624
+Issue #4630
+Issue #4631
+Issue #4632
+Issue #4633
+Issue #4636
+Issue #4639
+Issue #4641
+Issue #4642
+Issue #4643
+Issue #4644
+Issue #4645
+Issue #4646
+Issue #4647
+Issue #4648
+Issue #4649
+Issue #4650
+Issue #4651
+Issue #4652
 check_query_and_replace_guard_fail_4652
 check_query_and_replace_guard_fail_4652.py
+Issue #4653
 check_partial_refusal_commit_4653
 check_partial_refusal_commit_4653.py
+Issue #4654
 check_wal_slo_header_contract_4657
 check_wal_slo_header_contract_4657.py
+Issue #4658
+Issue #4659
+Issue #4661
+Issue #4662
+Issue #4663
+Issue #4664
+Issue #4665
 check_mutate_hygiene_gate_4665
 check_mutate_hygiene_gate_4665.py
+Issue #4666
+Issue #4667
+Issue #4670
+Issue #4671
 check_jit_per_op_typed_entry_readiness_4671
 check_jit_per_op_typed_entry_readiness_4671.py
+Issue #4672
 check_outermost_abort_forced_dirty_4672
 check_outermost_abort_forced_dirty_4672.py
+Issue #4673
+Issue #4674
 check_issue_test_main_linkage_4675
 check_issue_test_main_linkage_4675.py
 check_aot_runtime_weak_stub_4676
 check_aot_runtime_weak_stub_4676.py
+Issue #4681
+Issue #4684
 check_if_dynamic_arm_ground_gate_4684
 check_if_dynamic_arm_ground_gate_4684.py
+Issue #4685
+Issue #4686
 check_se_wal_second_enable_4686
 check_se_wal_second_enable_4686.py
+Issue #4687
+Issue #4688
+Issue #4689
+Issue #4690
+Issue #4691
+Issue #4692
+Issue #4693
+Issue #4694
+Issue #4695
+Issue #4696
 check_pin_stable_refs_provenance_4696
 check_pin_stable_refs_provenance_4696.py
+Issue #4697
+Issue #4698
+Issue #4699
+Issue #4700
+Issue #4701
+Issue #4702
+Issue #4704
+Issue #4707
+Issue #4714
+Issue #4715
+Issue #4716
+Issue #4717
+Issue #4719
+Issue #4721
+Issue #4722
+Issue #4723
+Issue #4724
+Issue #4725
+Issue #4726
+Issue #4727
 check_ir_const_symbol_intern_4727
 check_ir_const_symbol_intern_4727.py
+Issue #4728
+Issue #4729
+Issue #4730
+Issue #4731
+Issue #4732
+Issue #4735
+Issue #4736
+Issue #4737
+Issue #4742
+Issue #4743
+Issue #4744
+Issue #4745
+Issue #4747
+Issue #4749
+Issue #4750
+Issue #4751
+Issue #4752
+Issue #4753
+Issue #4756
+Issue #4759
+Issue #4763
+Issue #4766
+Issue #4768
+Issue #4769
+Issue #4770
+Issue #4771
+Issue #4772
+Issue #4774
+Issue #4779
+Issue #4783
+Issue #4787
+Issue #4790
 check_frame_gc_4790
 check_frame_gc_4790.py
+Issue #4791
+Issue #4792
+Issue #4793
+Issue #4816
+Issue #4827
+Issue #4832
+Issue #4841
+Issue #4853
+Issue #4855
+Issue #4858
+Issue #4876
+Issue #4884
+Issue #4885
+Issue #4886
+Issue #4891
+Issue #4896
+Issue #4899
+Issue #4902
+Issue #4905
+Issue #4909
+Issue #4916
+Issue #4917
+Issue #4919
+Issue #4921
+Issue #4922
+Issue #4923
+Issue #4924
+Issue #4925
+Issue #4926
+Issue #4927
+Issue #4928
+Issue #4930
+Issue #4932
+Issue #4933
+Issue #4936
+Issue #4946
+Issue #4965
 check_primitive_tiers_5008
 check_primitive_tiers_5008.py
+Issue #5033
+Issue #5041
+Issue #5051
+Issue #5054
+Issue #5057
+Issue #5087
+Issue #5117
 check_orch_doc_hint_5118
 check_orch_doc_hint_5118.py
 check_stdlib_surface_drift_5132
 check_stdlib_surface_drift_5132.py
+Issue #5139
+Issue #5141
+Issue #5144
+Issue #5145
+Issue #5146
+Issue #5147
+Issue #5148
+Issue #5149
+Issue #5151
 check_stdlib_unbound_5169
 check_stdlib_unbound_5169.py
+Issue #5173
+Issue #5175
+Issue #5190
 check_stdlib_list_prim_shadow_5192
 check_stdlib_list_prim_shadow_5192.py
+Issue #5195
+Issue #5208
+Issue #5211
+Issue #5212
+Issue #5213
+Issue #5244
+Issue #5274
+Issue #5275
+Issue #5279
+Issue #5280
+Issue #5281
+Issue #5282
+Issue #5289
+Issue #5292
+Issue #5295
+Issue #5300
+Issue #5303
 """
+# Issue #100
+# Issue #101
+# Issue #102
+# Issue #103
+# Issue #106
+# Issue #107
+# Issue #113
+# Issue #114
+# Issue #115
+# Issue #119
+# Issue #121
+# Issue #124
+# Issue #125
+# Issue #130
+# Issue #160
+# Issue #161
+# Issue #173
+# Issue #178
+# Issue #183
+# Issue #187
+# Issue #189
+# Issue #192
+# Issue #206
+# Issue #211
+# Issue #212
+# Issue #213
+# Issue #218
+# Issue #219
+# Issue #220
+# Issue #223
+# Issue #224
+# Issue #226
+# Issue #254
+# Issue #261
+# Issue #268
+# Issue #278
+# Issue #283
+# Issue #289
+# Issue #300
+# Issue #306
+# Issue #307
+# Issue #322
+# Issue #324
+# Issue #335
+# Issue #339
+# Issue #344
+# Issue #354
+# Issue #365
+# Issue #368
+# Issue #378
+# Issue #381
+# Issue #384
+# Issue #393
+# Issue #398
+# Issue #399
+# Issue #400
+# Issue #403
+# Issue #404
+# Issue #405
+# Issue #406
+# Issue #407
+# Issue #408
+# Issue #411
+# Issue #414
+# Issue #416
+# Issue #417
+# Issue #418
+# Issue #419
+# Issue #420
+# Issue #421
+# Issue #422
+# Issue #423
+# Issue #424
+# Issue #427
+# Issue #432
+# Issue #438
+# Issue #441
+# Issue #454
+# Issue #464
+# Issue #467
+# Issue #468
+# Issue #477
+# Issue #478
+# Issue #480
+# Issue #489
+# Issue #491
+# Issue #495
+# Issue #506
+# Issue #508
+# Issue #509
+# Issue #514
+# Issue #517
+# Issue #518
+# Issue #526
+# Issue #527
+# Issue #529
+# Issue #531
+# Issue #536
+# Issue #542
+# Issue #543
+# Issue #544
+# Issue #545
+# Issue #546
+# Issue #547
+# Issue #548
+# Issue #551
+# Issue #552
+# Issue #553
+# Issue #554
+# Issue #556
+# Issue #560
+# Issue #561
+# Issue #562
+# Issue #563
+# Issue #564
+# Issue #565
+# Issue #570
+# Issue #571
+# Issue #573
+# Issue #574
+# Issue #575
+# Issue #576
+# Issue #577
+# Issue #583
+# Issue #588
+# Issue #592
+# Issue #593
+# Issue #594
+# Issue #595
+# Issue #596
+# Issue #597
+# Issue #598
+# Issue #599
+# Issue #600
+# Issue #602
+# Issue #604
+# Issue #605
+# Issue #607
+# Issue #608
+# Issue #609
+# Issue #610
+# Issue #611
+# Issue #612
+# Issue #619
+# Issue #623
+# Issue #627
+# Issue #628
+# Issue #629
+# Issue #634
+# Issue #635
+# Issue #636
+# Issue #638
+# Issue #639
+# Issue #642
+# Issue #652
+# Issue #653
+# Issue #654
+# Issue #655
+# Issue #657
+# Issue #658
+# Issue #659
+# Issue #673
+# Issue #674
+# Issue #685
+# Issue #731
+# Issue #737
+# Issue #738
+# Issue #739
+# Issue #740
+# Issue #741
+# Issue #742
+# Issue #743
+# Issue #744
+# Issue #745
+# Issue #746
+# Issue #747
+# Issue #751
+# Issue #752
+# Issue #753
+# Issue #754
+# Issue #755
+# Issue #798
+# Issue #799
+# Issue #800
+# Issue #803
+# Issue #805
+# Issue #818
+# Issue #881
+# Issue #923
+# Issue #941
+# Issue #957
+# Issue #986
+# Issue #1013
+# Issue #1014
+# Issue #1047
+# Issue #1097
+# Issue #1202
+# Issue #1241
+# Issue #1242
+# Issue #1289
+# Issue #1301
+# Issue #1321
+# Issue #1356
+# Issue #1359
+# Issue #1360
+# Issue #1361
+# Issue #1362
+# Issue #1364
+# Issue #1365
+# Issue #1366
+# Issue #1367
+# Issue #1368
+# Issue #1369
+# Issue #1370
+# Issue #1371
+# Issue #1372
+# Issue #1373
+# Issue #1374
+# Issue #1375
+# Issue #1376
+# Issue #1377
+# Issue #1378
+# Issue #1380
+# Issue #1381
+# Issue #1387
+# Issue #1388
+# Issue #1389
+# Issue #1390
+# Issue #1393
+# Issue #1397
+# Issue #1398
+# Issue #1401
+# Issue #1407
+# Issue #1408
+# Issue #1410
+# Issue #1411
+# Issue #1412
+# Issue #1413
+# Issue #1416
+# Issue #1420
+# Issue #1425
+# Issue #1433
+# Issue #1434
+# Issue #1435
+# Issue #1436
+# Issue #1437
+# Issue #1439
+# Issue #1444
+# Issue #1445
+# Issue #1446
+# Issue #1458
+# Issue #1465
+# Issue #1469
+# Issue #1476
+# Issue #1478
+# Issue #1480
+# Issue #1481
+# Issue #1482
+# Issue #1483
+# Issue #1490
+# Issue #1495
+# Issue #1496
+# Issue #1501
+# Issue #1503
+# Issue #1504
+# Issue #1506
+# Issue #1511
+# Issue #1518
+# Issue #1519
+# Issue #1526
+# Issue #1531
+# Issue #1534
+# Issue #1535
+# Issue #1543
+# Issue #1546
+# Issue #1547
+# Issue #1548
+# Issue #1557
+# Issue #1565
+# Issue #1566
+# Issue #1567
+# Issue #1568
+# Issue #1575
+# Issue #1576
+# Issue #1577
+# Issue #1579
+# Issue #1580
+# Issue #1581
+# Issue #1582
+# Issue #1583
+# Issue #1584
+# Issue #1585
+# Issue #1586
+# Issue #1587
+# Issue #1588
+# Issue #1589
+# Issue #1590
+# Issue #1591
+# Issue #1592
+# Issue #1594
+# Issue #1595
+# Issue #1596
+# Issue #1597
+# Issue #1598
+# Issue #1599
+# Issue #1600
+# Issue #1601
+# Issue #1602
+# Issue #1604
+# Issue #1605
+# Issue #1606
+# Issue #1607
+# Issue #1608
+# Issue #1609
+# Issue #1610
+# Issue #1611
+# Issue #1612
+# Issue #1613
+# Issue #1614
+# Issue #1615
+# Issue #1616
+# Issue #1617
+# Issue #1618
+# Issue #1619
+# Issue #1620
+# Issue #1621
+# Issue #1622
+# Issue #1623
+# Issue #1624
+# Issue #1626
+# Issue #1627
+# Issue #1628
+# Issue #1631
+# Issue #1633
+# Issue #1634
+# Issue #1635
+# Issue #1636
+# Issue #1638
+# Issue #1639
+# Issue #1640
+# Issue #1641
+# Issue #1648
+# Issue #1652
+# Issue #1655
+# Issue #1657
+# Issue #1658
+# Issue #1659
+# Issue #1660
+# Issue #1661
+# Issue #1662
+# Issue #1663
+# Issue #1664
+# Issue #1665
+# Issue #1666
+# Issue #1667
+# Issue #1670
+# Issue #1671
+# Issue #1672
+# Issue #1678
+# Issue #1679
+# Issue #1680
+# Issue #1681
+# Issue #1682
+# Issue #1684
+# Issue #1685
+# Issue #1686
+# Issue #1687
+# Issue #1688
+# Issue #1689
+# Issue #1690
+# Issue #1691
+# Issue #1692
+# Issue #1693
+# Issue #1694
+# Issue #1695
+# Issue #1696
+# Issue #1697
+# Issue #1699
+# Issue #1700
+# Issue #1701
+# Issue #1702
+# Issue #1703
+# Issue #1706
+# Issue #1707
+# Issue #1708
+# Issue #1709
+# Issue #1710
+# Issue #1711
+# Issue #1712
+# Issue #1714
+# Issue #1715
+# Issue #1716
+# Issue #1717
+# Issue #1718
+# Issue #1719
+# Issue #1720
+# Issue #1721
+# Issue #1722
+# Issue #1723
+# Issue #1724
+# Issue #1725
+# Issue #1726
+# Issue #1727
+# Issue #1728
+# Issue #1729
+# Issue #1730
+# Issue #1731
+# Issue #1732
+# Issue #1733
+# Issue #1734
+# Issue #1739
+# Issue #1740
+# Issue #1745
+# Issue #1746
+# Issue #1747
+# Issue #1753
+# Issue #1754
+# Issue #1755
+# Issue #1756
+# Issue #1757
+# Issue #1764
+# Issue #1765
+# Issue #1766
+# Issue #1767
+# Issue #1768
+# Issue #1769
+# Issue #1770
+# Issue #1771
+# Issue #1772
+# Issue #1779
+# Issue #1780
+# Issue #1781
+# Issue #1782
+# Issue #1783
+# Issue #1785
+# Issue #1786
+# Issue #1787
+# Issue #1795
+# Issue #1797
+# Issue #1806
+# Issue #1816
+# Issue #1818
+# Issue #1827
+# Issue #1835
+# Issue #1837
+# Issue #1838
+# Issue #1839
+# Issue #1840
+# Issue #1842
+# Issue #1843
+# Issue #1844
+# Issue #1845
+# Issue #1846
+# Issue #1847
+# Issue #1848
+# Issue #1849
+# Issue #1850
+# Issue #1851
+# Issue #1852
+# Issue #1853
+# Issue #1854
+# Issue #1855
+# Issue #1856
+# Issue #1857
+# Issue #1858
+# Issue #1859
+# Issue #1860
+# Issue #1861
+# Issue #1862
+# Issue #1863
+# Issue #1864
+# Issue #1865
+# Issue #1866
+# Issue #1867
+# Issue #1868
+# Issue #1869
+# Issue #1870
+# Issue #1871
+# Issue #1872
+# Issue #1873
+# Issue #1874
+# Issue #1875
+# Issue #1876
+# Issue #1877
+# Issue #1878
+# Issue #1879
+# Issue #1880
+# Issue #1881
+# Issue #1882
+# Issue #1883
+# Issue #1884
+# Issue #1885
+# Issue #1887
+# Issue #1888
+# Issue #1889
+# Issue #1890
+# Issue #1891
+# Issue #1892
+# Issue #1893
+# Issue #1894
+# Issue #1895
+# Issue #1896
+# Issue #1897
+# Issue #1898
+# Issue #1899
+# Issue #1908
+# Issue #1909
+# Issue #1910
+# Issue #1911
+# Issue #1912
+# Issue #1913
+# Issue #1914
+# Issue #1916
+# Issue #1917
+# Issue #1918
+# Issue #1919
+# Issue #1924
+# Issue #1927
+# Issue #1928
+# Issue #1929
+# Issue #1930
+# Issue #1931
+# Issue #1947
+# Issue #1948
+# Issue #1949
+# Issue #1966
+# Issue #1987
+# Issue #1988
+# Issue #1989
+# Issue #1990
+# Issue #1991
+# Issue #1992
+# Issue #1993
+# Issue #1994
+# Issue #1996
+# Issue #2000
+# Issue #2001
+# Issue #2002
+# Issue #2003
+# Issue #2004
+# Issue #2006
+# Issue #2007
+# Issue #2008
+# Issue #2010
+# Issue #2011
+# Issue #2012
+# Issue #2013
+# Issue #2014
+# Issue #2015
+# Issue #2016
+# Issue #2017
+# Issue #2018
+# Issue #2019
+# Issue #2020
+# Issue #2021
+# Issue #2022
+# Issue #2023
+# Issue #2024
+# Issue #2025
+# Issue #2026
+# Issue #2027
+# Issue #2028
+# Issue #2029
+# Issue #2030
+# Issue #2031
+# Issue #2032
+# Issue #2033
+# Issue #2034
+# Issue #2035
+# Issue #2036
+# Issue #2037
+# Issue #2038
+# Issue #2040
+# Issue #2041
+# Issue #2042
+# Issue #2043
+# Issue #2044
+# Issue #2045
+# Issue #2046
+# Issue #2052
+# Issue #2054
+# Issue #2055
+# Issue #2056
+# Issue #2057
+# Issue #2058
+# Issue #2059
+# Issue #2060
+# Issue #2061
+# Issue #2062
+# Issue #2063
+# Issue #2064
+# Issue #2065
+# Issue #2066
+# Issue #2067
+# Issue #2068
+# Issue #2072
+# Issue #2073
+# Issue #2074
+# Issue #2075
+# Issue #2076
+# Issue #2077
+# Issue #2078
+# Issue #2079
+# Issue #2080
+# Issue #2081
+# Issue #2082
+# Issue #2083
+# Issue #2084
+# Issue #2085
+# Issue #2086
+# Issue #2087
+# Issue #2088
+# Issue #2089
+# Issue #2090
+# Issue #2092
+# Issue #2093
+# Issue #2094
+# Issue #2095
+# Issue #2096
+# Issue #2097
+# Issue #2098
+# Issue #2099
+# Issue #2100
+# Issue #2101
+# Issue #2102
+# Issue #2103
+# Issue #2104
+# Issue #2105
+# Issue #2106
+# Issue #2107
+# Issue #2108
+# Issue #2109
+# Issue #2110
+# Issue #2111
+# Issue #2112
+# Issue #2113
+# Issue #2114
+# Issue #2115
+# Issue #2116
+# Issue #2117
+# Issue #2118
+# Issue #2119
+# Issue #2120
+# Issue #2121
+# Issue #2122
+# Issue #2123
+# Issue #2124
+# Issue #2125
+# Issue #2126
+# Issue #2127
+# Issue #2128
+# Issue #2129
+# Issue #2130
+# Issue #2131
+# Issue #2132
+# Issue #2133
+# Issue #2137
+# Issue #2139
+# Issue #2140
+# Issue #2141
+# Issue #2142
+# Issue #2143
+# Issue #2144
+# Issue #2145
+# Issue #2146
+# Issue #2147
+# Issue #2148
+# Issue #2149
+# Issue #2150
+# Issue #2151
+# Issue #2152
+# Issue #2153
+# Issue #2154
+# Issue #2155
+# Issue #2156
+# Issue #2157
+# Issue #2158
+# Issue #2159
+# Issue #2161
+# Issue #2162
+# Issue #2163
+# Issue #2164
+# Issue #2165
+# Issue #2166
+# Issue #2167
+# Issue #2169
+# Issue #2170
+# Issue #2171
+# Issue #2172
+# Issue #2173
+# Issue #2174
+# Issue #2175
+# Issue #2176
+# Issue #2177
+# Issue #2178
+# Issue #2179
+# Issue #2180
+# Issue #2181
+# Issue #2182
+# Issue #2183
+# Issue #2184
+# Issue #2185
+# Issue #2186
+# Issue #2187
+# Issue #2188
+# Issue #2189
+# Issue #2190
+# Issue #2191
+# Issue #2192
+# Issue #2193
+# Issue #2194
+# Issue #2195
+# Issue #2196
+# Issue #2197
+# Issue #2198
+# Issue #2199
+# Issue #2200
+# Issue #2201
+# Issue #2202
+# Issue #2203
+# Issue #2204
+# Issue #2205
+# Issue #2206
+# Issue #2207
+# Issue #2208
+# Issue #2209
+# Issue #2210
+# Issue #2211
+# Issue #2212
+# Issue #2219
+# Issue #2220
+# Issue #2221
+# Issue #2222
+# Issue #2223
+# Issue #2224
+# Issue #2225
+# Issue #2226
+# Issue #2227
+# Issue #2228
+# Issue #2229
+# Issue #2230
+# Issue #2231
+# Issue #2232
+# Issue #2233
+# Issue #2234
+# Issue #2235
+# Issue #2236
+# Issue #2237
+# Issue #2238
+# Issue #2239
+# Issue #2240
+# Issue #2241
+# Issue #2242
+# Issue #2243
+# Issue #2244
+# Issue #2245
+# Issue #2246
+# Issue #2247
+# Issue #2248
+# Issue #2249
+# Issue #2250
+# Issue #2251
+# Issue #2252
+# Issue #2253
+# Issue #2254
+# Issue #2256
+# Issue #2257
+# Issue #2258
+# Issue #2259
+# Issue #2260
+# Issue #2261
+# Issue #2262
+# Issue #2263
+# Issue #2264
+# Issue #2268
+# Issue #2269
+# Issue #2271
+# Issue #2272
+# Issue #2273
+# Issue #2274
+# Issue #2275
+# Issue #2276
+# Issue #2277
+# Issue #2278
+# Issue #2280
+# Issue #2281
+# Issue #2282
+# Issue #2283
+# Issue #2284
+# Issue #2285
+# Issue #2286
+# Issue #2287
+# Issue #2288
+# Issue #2289
+# Issue #2290
+# Issue #2291
+# Issue #2293
+# Issue #2294
 # Issue #2295
 # Issue #2296
 # Issue #2297
 # Issue #2298
 # Issue #2299
 # Issue #2300
+# Issue #2301
+# Issue #2302
+# Issue #2304
+# Issue #2306
+# Issue #2307
+# Issue #2308
+# Issue #2309
+# Issue #2310
+# Issue #2312
+# Issue #2313
+# Issue #2314
+# Issue #2315
+# Issue #2316
+# Issue #2317
+# Issue #2318
+# Issue #2319
+# Issue #2320
+# Issue #2321
+# Issue #2333
+# Issue #2335
+# Issue #2337
+# Issue #2338
+# Issue #2339
+# Issue #2340
+# Issue #2341
+# Issue #2342
+# Issue #2343
+# Issue #2344
+# Issue #2345
 # Issue #2346
+# Issue #2347
+# Issue #2348
+# Issue #2349
+# Issue #2350
+# Issue #2351
+# Issue #2352
+# Issue #2353
+# Issue #2354
+# Issue #2355
+# Issue #2356
+# Issue #2357
+# Issue #2358
+# Issue #2359
+# Issue #2360
+# Issue #2361
 # Issue #2362
+# Issue #2363
+# Issue #2364
+# Issue #2365
+# Issue #2366
+# Issue #2367
 # Issue #2368
 # Issue #2369
+# Issue #2370
+# Issue #2371
 # Issue #2372
 # Issue #2374
 # Issue #2375
+# Issue #2376
 # Issue #2377
 # Issue #2378
+# Issue #2379
 # Issue #2381
 # Issue #2382
 # Issue #2383
 # Issue #2384
+# Issue #2385
 # Issue #2386
 # Issue #2387
 # Issue #2388
+# Issue #2389
 # Issue #2390
 # Issue #2391
 # Issue #2392
+# Issue #2393
 # Issue #2394
 # Issue #2395
+# Issue #2396
+# Issue #2397
+# Issue #2398
+# Issue #2399
+# Issue #2400
+# Issue #2402
+# Issue #2403
 # Issue #2404
+# Issue #2405
+# Issue #2406
 # Issue #2408
 # Issue #2409
 # Issue #2410
@@ -7042,21 +10815,57 @@ check_stdlib_list_prim_shadow_5192.py
 # Issue #2413
 # Issue #2414
 # Issue #2415
+# Issue #2416
 # Issue #2417
 # Issue #2418
+# Issue #2419
 # Issue #2420
 # Issue #2421
 # Issue #2422
 # Issue #2423
 # Issue #2424
+# Issue #2425
+# Issue #2426
+# Issue #2427
 # Issue #2428
+# Issue #2429
+# Issue #2430
 # Issue #2431
+# Issue #2432
+# Issue #2433
 # Issue #2435
+# Issue #2436
+# Issue #2437
+# Issue #2438
+# Issue #2439
+# Issue #2440
+# Issue #2441
+# Issue #2442
+# Issue #2443
+# Issue #2444
 # Issue #2445
+# Issue #2446
+# Issue #2447
 # Issue #2448
+# Issue #2449
+# Issue #2450
+# Issue #2451
+# Issue #2452
+# Issue #2453
+# Issue #2454
 # Issue #2455
 # Issue #2456
+# Issue #2457
+# Issue #2458
 # Issue #2459
+# Issue #2460
+# Issue #2461
+# Issue #2462
+# Issue #2463
+# Issue #2465
+# Issue #2467
+# Issue #2468
+# Issue #2469
 # Issue #2471
 # Issue #2472
 # Issue #2473
@@ -7065,6 +10874,7 @@ check_stdlib_list_prim_shadow_5192.py
 # Issue #2476
 # Issue #2477
 # Issue #2478
+# Issue #2479
 # Issue #2480
 # Issue #2481
 # Issue #2482
@@ -7072,48 +10882,179 @@ check_stdlib_list_prim_shadow_5192.py
 # Issue #2484
 # Issue #2485
 # Issue #2486
+# Issue #2487
+# Issue #2488
+# Issue #2489
 # Issue #2490
+# Issue #2491
+# Issue #2492
+# Issue #2493
+# Issue #2494
+# Issue #2495
+# Issue #2496
 # Issue #2497
 # Issue #2498
+# Issue #2499
+# Issue #2500
+# Issue #2501
+# Issue #2502
+# Issue #2503
+# Issue #2504
+# Issue #2505
+# Issue #2506
+# Issue #2507
+# Issue #2508
+# Issue #2509
 # Issue #2510
+# Issue #2511
+# Issue #2512
+# Issue #2513
 # Issue #2514
 # Issue #2515
 # Issue #2516
+# Issue #2517
+# Issue #2518
+# Issue #2519
 # Issue #2520
+# Issue #2521
+# Issue #2522
+# Issue #2523
 # Issue #2524
+# Issue #2525
+# Issue #2526
+# Issue #2527
 # Issue #2528
+# Issue #2529
+# Issue #2530
+# Issue #2531
+# Issue #2532
+# Issue #2533
+# Issue #2534
+# Issue #2535
+# Issue #2536
+# Issue #2537
+# Issue #2538
+# Issue #2539
+# Issue #2540
+# Issue #2541
+# Issue #2542
+# Issue #2543
+# Issue #2544
 # Issue #2545
 # Issue #2546
+# Issue #2547
+# Issue #2548
 # Issue #2549
 # Issue #2550
+# Issue #2551
+# Issue #2552
+# Issue #2553
 # Issue #2555
+# Issue #2556
+# Issue #2557
+# Issue #2558
 # Issue #2559
 # Issue #2560
+# Issue #2561
+# Issue #2562
+# Issue #2564
+# Issue #2566
+# Issue #2567
+# Issue #2568
+# Issue #2569
+# Issue #2570
+# Issue #2571
+# Issue #2572
+# Issue #2573
+# Issue #2574
+# Issue #2575
+# Issue #2576
+# Issue #2577
+# Issue #2578
+# Issue #2579
+# Issue #2581
+# Issue #2582
+# Issue #2583
+# Issue #2584
+# Issue #2585
+# Issue #2586
+# Issue #2587
+# Issue #2588
+# Issue #2589
+# Issue #2590
+# Issue #2591
+# Issue #2592
+# Issue #2593
+# Issue #2594
+# Issue #2595
+# Issue #2596
+# Issue #2597
+# Issue #2598
+# Issue #2599
+# Issue #2600
 # Issue #2601
 # Issue #2602
 # Issue #2603
 # Issue #2604
+# Issue #2605
 # Issue #2606
+# Issue #2607
+# Issue #2608
+# Issue #2609
+# Issue #2610
 # Issue #2611
+# Issue #2613
+# Issue #2614
 # Issue #2615
 # Issue #2616
 # Issue #2617
 # Issue #2618
+# Issue #2619
+# Issue #2620
+# Issue #2621
+# Issue #2622
+# Issue #2624
+# Issue #2626
+# Issue #2627
+# Issue #2628
 # Issue #2630
 # Issue #2631
 # Issue #2634
 # Issue #2635
+# Issue #2637
+# Issue #2638
+# Issue #2639
+# Issue #2640
+# Issue #2641
+# Issue #2643
 # Issue #2645
 # Issue #2646
 # Issue #2647
+# Issue #2648
+# Issue #2650
 # Issue #2651
 # Issue #2652
 # Issue #2653
 # Issue #2654
 # Issue #2655
 # Issue #2656
+# Issue #2657
+# Issue #2658
+# Issue #2659
+# Issue #2660
+# Issue #2661
+# Issue #2662
+# Issue #2663
+# Issue #2664
+# Issue #2665
+# Issue #2666
+# Issue #2667
+# Issue #2668
+# Issue #2669
+# Issue #2670
 # Issue #2671
 # Issue #2672
+# Issue #2673
 # Issue #2674
 # Issue #2675
 # Issue #2676
@@ -7121,14 +11062,24 @@ check_stdlib_list_prim_shadow_5192.py
 # Issue #2678
 # Issue #2679
 # Issue #2680
+# Issue #2681
 # Issue #2682
 # Issue #2683
+# Issue #2684
+# Issue #2685
+# Issue #2686
 # Issue #2687
 # Issue #2688
 # Issue #2689
 # Issue #2690
 # Issue #2691
 # Issue #2692
+# Issue #2693
+# Issue #2694
+# Issue #2695
+# Issue #2696
+# Issue #2697
+# Issue #2698
 # Issue #2699
 # Issue #2700
 # Issue #2701
@@ -7148,11 +11099,28 @@ check_stdlib_list_prim_shadow_5192.py
 # Issue #2715
 # Issue #2716
 # Issue #2717
+# Issue #2718
+# Issue #2719
+# Issue #2720
+# Issue #2721
 # Issue #2722
+# Issue #2723
+# Issue #2724
 # Issue #2726
 # Issue #2727
 # Issue #2728
+# Issue #2742
+# Issue #2743
+# Issue #2744
+# Issue #2745
+# Issue #2746
+# Issue #2747
+# Issue #2748
+# Issue #2749
+# Issue #2750
+# Issue #2751
 # Issue #2752
+# Issue #2753
 # Issue #2754
 # Issue #2755
 # Issue #2756
@@ -7172,8 +11140,15 @@ check_stdlib_list_prim_shadow_5192.py
 # Issue #2771
 # Issue #2773
 # Issue #2774
+# Issue #2775
 # Issue #2776
 # Issue #2777
+# Issue #2778
+# Issue #2779
+# Issue #2780
+# Issue #2781
+# Issue #2782
+# Issue #2783
 # Issue #2784
 # Issue #2785
 # Issue #2786
@@ -7238,8 +11213,23 @@ check_stdlib_list_prim_shadow_5192.py
 # Issue #2845
 # Issue #2846
 # Issue #2847
+# Issue #2848
 # Issue #2849
 # Issue #2850
+# Issue #2851
+# Issue #2852
+# Issue #2853
+# Issue #2854
+# Issue #2855
+# Issue #2856
+# Issue #2857
+# Issue #2858
+# Issue #2859
+# Issue #2860
+# Issue #2861
+# Issue #2862
+# Issue #2863
+# Issue #2864
 # Issue #2865
 # Issue #2868
 # Issue #2869
@@ -7248,7 +11238,10 @@ check_stdlib_list_prim_shadow_5192.py
 # Issue #2878
 # Issue #2879
 # Issue #2880
+# Issue #2881
 # Issue #2882
+# Issue #2883
+# Issue #2884
 # Issue #2885
 # Issue #2886
 # Issue #2887
@@ -7258,6 +11251,8 @@ check_stdlib_list_prim_shadow_5192.py
 # Issue #2891
 # Issue #2892
 # Issue #2893
+# Issue #2894
+# Issue #2895
 # Issue #2896
 # Issue #2897
 # Issue #2898
@@ -7342,11 +11337,14 @@ check_stdlib_list_prim_shadow_5192.py
 # Issue #2983
 # Issue #2984
 # Issue #2985
+# Issue #2986
 # Issue #2987
 # Issue #2988
 # Issue #2989
 # Issue #2990
 # Issue #2991
+# Issue #2992
+# Issue #2993
 # Issue #2994
 # Issue #2995
 # Issue #2996
@@ -7384,6 +11382,8 @@ check_stdlib_list_prim_shadow_5192.py
 # Issue #3030
 # Issue #3031
 # Issue #3032
+# Issue #3033
+# Issue #3034
 # Issue #3035
 # Issue #3036
 # Issue #3037
@@ -7395,8 +11395,10 @@ check_stdlib_list_prim_shadow_5192.py
 # Issue #3043
 # Issue #3044
 # Issue #3045
+# Issue #3046
 # Issue #3048
 # Issue #3049
+# Issue #3050
 # Issue #3051
 # Issue #3052
 # Issue #3053
@@ -7415,6 +11417,8 @@ check_stdlib_list_prim_shadow_5192.py
 # Issue #3066
 # Issue #3067
 # Issue #3068
+# Issue #3069
+# Issue #3070
 # Issue #3071
 # Issue #3072
 # Issue #3073
@@ -7426,10 +11430,23 @@ check_stdlib_list_prim_shadow_5192.py
 # Issue #3083
 # Issue #3084
 # Issue #3085
+# Issue #3088
+# Issue #3089
 # Issue #3090
 # Issue #3091
+# Issue #3092
 # Issue #3093
 # Issue #3094
+# Issue #3095
+# Issue #3096
+# Issue #3097
+# Issue #3098
+# Issue #3099
+# Issue #3100
+# Issue #3101
+# Issue #3102
+# Issue #3103
+# Issue #3104
 # Issue #3106
 # Issue #3107
 # Issue #3108
@@ -7437,13 +11454,16 @@ check_stdlib_list_prim_shadow_5192.py
 # Issue #3110
 # Issue #3111
 # Issue #3112
+# Issue #3113
 # Issue #3114
 # Issue #3115
 # Issue #3116
 # Issue #3117
 # Issue #3118
+# Issue #3119
 # Issue #3120
 # Issue #3121
+# Issue #3122
 # Issue #3123
 # Issue #3124
 # Issue #3125
@@ -7458,11 +11478,24 @@ check_stdlib_list_prim_shadow_5192.py
 # Issue #3134
 # Issue #3135
 # Issue #3136
+# Issue #3137
+# Issue #3138
+# Issue #3139
 # Issue #3140
+# Issue #3141
+# Issue #3142
+# Issue #3143
+# Issue #3144
 # Issue #3145
 # Issue #3146
 # Issue #3147
 # Issue #3148
+# Issue #3150
+# Issue #3151
+# Issue #3152
+# Issue #3153
+# Issue #3154
+# Issue #3155
 # Issue #3156
 # Issue #3157
 # Issue #3158
@@ -7515,6 +11548,7 @@ check_stdlib_list_prim_shadow_5192.py
 # Issue #3205
 # Issue #3206
 # Issue #3207
+# Issue #3208
 # Issue #3209
 # Issue #3210
 # Issue #3211
@@ -7536,6 +11570,7 @@ check_stdlib_list_prim_shadow_5192.py
 # Issue #3228
 # Issue #3229
 # Issue #3230
+# Issue #3231
 # Issue #3232
 # Issue #3233
 # Issue #3234
@@ -7601,7 +11636,9 @@ check_stdlib_list_prim_shadow_5192.py
 # Issue #3295
 # Issue #3296
 # Issue #3297
+# Issue #3298
 # Issue #3299
+# Issue #3300
 # Issue #3301
 # Issue #3302
 # Issue #3303
@@ -7617,9 +11654,11 @@ check_stdlib_list_prim_shadow_5192.py
 # Issue #3313
 # Issue #3314
 # Issue #3315
+# Issue #3316
 # Issue #3317
 # Issue #3318
 # Issue #3319
+# Issue #3320
 # Issue #3321
 # Issue #3322
 # Issue #3323
@@ -7660,14 +11699,39 @@ check_stdlib_list_prim_shadow_5192.py
 # Issue #3358
 # Issue #3359
 # Issue #3360
+# Issue #3361
+# Issue #3362
+# Issue #3363
+# Issue #3364
+# Issue #3365
+# Issue #3366
+# Issue #3367
+# Issue #3368
 # Issue #3369
 # Issue #3370
 # Issue #3371
 # Issue #3372
+# Issue #3373
+# Issue #3374
+# Issue #3375
+# Issue #3376
+# Issue #3377
+# Issue #3378
+# Issue #3379
+# Issue #3380
+# Issue #3381
+# Issue #3382
+# Issue #3383
 # Issue #3384
 # Issue #3385
 # Issue #3386
 # Issue #3387
+# Issue #3388
+# Issue #3389
+# Issue #3390
+# Issue #3391
+# Issue #3392
+# Issue #3393
 # Issue #3394
 # Issue #3395
 # Issue #3396
@@ -7712,6 +11776,7 @@ check_stdlib_list_prim_shadow_5192.py
 # Issue #3436
 # Issue #3437
 # Issue #3438
+# Issue #3439
 # Issue #3440
 # Issue #3441
 # Issue #3442
@@ -7731,8 +11796,13 @@ check_stdlib_list_prim_shadow_5192.py
 # Issue #3456
 # Issue #3457
 # Issue #3458
+# Issue #3459
 # Issue #3460
+# Issue #3461
+# Issue #3462
 # Issue #3463
+# Issue #3464
+# Issue #3465
 # Issue #3466
 # Issue #3467
 # Issue #3468
@@ -7759,9 +11829,95 @@ check_stdlib_list_prim_shadow_5192.py
 # Issue #3489
 # Issue #3490
 # Issue #3491
+# Issue #3494
+# Issue #3495
+# Issue #3496
+# Issue #3497
+# Issue #3498
+# Issue #3499
+# Issue #3500
+# Issue #3501
+# Issue #3502
+# Issue #3503
+# Issue #3504
+# Issue #3505
+# Issue #3506
+# Issue #3507
+# Issue #3508
+# Issue #3509
+# Issue #3510
+# Issue #3511
+# Issue #3513
+# Issue #3514
+# Issue #3515
+# Issue #3516
+# Issue #3517
+# Issue #3518
+# Issue #3519
+# Issue #3521
+# Issue #3525
+# Issue #3526
+# Issue #3527
+# Issue #3528
+# Issue #3529
+# Issue #3530
+# Issue #3531
+# Issue #3532
+# Issue #3533
+# Issue #3539
+# Issue #3540
+# Issue #3541
+# Issue #3542
+# Issue #3543
+# Issue #3544
+# Issue #3546
+# Issue #3547
+# Issue #3548
+# Issue #3549
+# Issue #3551
+# Issue #3553
+# Issue #3555
+# Issue #3556
+# Issue #3557
+# Issue #3558
+# Issue #3559
+# Issue #3560
+# Issue #3561
+# Issue #3562
+# Issue #3563
+# Issue #3564
+# Issue #3566
+# Issue #3568
+# Issue #3569
+# Issue #3570
+# Issue #3571
+# Issue #3572
+# Issue #3573
+# Issue #3574
+# Issue #3575
+# Issue #3576
+# Issue #3577
+# Issue #3578
+# Issue #3579
+# Issue #3580
+# Issue #3581
+# Issue #3582
+# Issue #3583
+# Issue #3584
+# Issue #3585
+# Issue #3587
+# Issue #3588
 # Issue #3589
+# Issue #3590
 # Issue #3591
+# Issue #3592
+# Issue #3593
+# Issue #3594
 # Issue #3595
+# Issue #3596
+# Issue #3597
+# Issue #3598
+# Issue #3599
 # Issue #3600
 # Issue #3601
 # Issue #3602
@@ -7781,6 +11937,7 @@ check_stdlib_list_prim_shadow_5192.py
 # Issue #3616
 # Issue #3617
 # Issue #3618
+# Issue #3619
 # Issue #3620
 # Issue #3621
 # Issue #3622
@@ -7789,10 +11946,13 @@ check_stdlib_list_prim_shadow_5192.py
 # Issue #3625
 # Issue #3626
 # Issue #3627
+# Issue #3628
+# Issue #3629
 # Issue #3630
 # Issue #3631
 # Issue #3632
 # Issue #3633
+# Issue #3634
 # Issue #3635
 # Issue #3636
 # Issue #3637
@@ -7804,6 +11964,7 @@ check_stdlib_list_prim_shadow_5192.py
 # Issue #3643
 # Issue #3644
 # Issue #3645
+# Issue #3646
 # Issue #3647
 # Issue #3648
 # Issue #3649
@@ -7831,6 +11992,10 @@ check_stdlib_list_prim_shadow_5192.py
 # Issue #3672
 # Issue #3673
 # Issue #3674
+# Issue #3675
+# Issue #3676
+# Issue #3677
+# Issue #3678
 # Issue #3679
 # Issue #3680
 # Issue #3681
@@ -7838,11 +12003,79 @@ check_stdlib_list_prim_shadow_5192.py
 # Issue #3683
 # Issue #3684
 # Issue #3685
+# Issue #3686
+# Issue #3687
+# Issue #3688
+# Issue #3689
+# Issue #3690
+# Issue #3691
+# Issue #3692
+# Issue #3693
+# Issue #3694
+# Issue #3695
+# Issue #3696
+# Issue #3697
+# Issue #3698
+# Issue #3699
+# Issue #3700
+# Issue #3701
+# Issue #3702
 # Issue #3703
+# Issue #3720
 # Issue #3721
 # Issue #3722
+# Issue #3723
+# Issue #3724
+# Issue #3725
+# Issue #3726
+# Issue #3727
+# Issue #3728
+# Issue #3729
+# Issue #3730
+# Issue #3731
+# Issue #3732
+# Issue #3733
+# Issue #3735
+# Issue #3736
 # Issue #3737
+# Issue #3738
+# Issue #3739
+# Issue #3740
+# Issue #3742
+# Issue #3743
+# Issue #3744
+# Issue #3745
+# Issue #3746
+# Issue #3747
+# Issue #3748
+# Issue #3749
+# Issue #3750
+# Issue #3751
+# Issue #3752
+# Issue #3753
+# Issue #3754
+# Issue #3755
+# Issue #3756
+# Issue #3757
+# Issue #3758
+# Issue #3759
+# Issue #3760
+# Issue #3761
+# Issue #3762
+# Issue #3763
+# Issue #3764
+# Issue #3765
+# Issue #3766
+# Issue #3767
+# Issue #3768
+# Issue #3769
+# Issue #3770
 # Issue #3772
+# Issue #3773
+# Issue #3774
+# Issue #3775
+# Issue #3776
+# Issue #3777
 # Issue #3778
 # Issue #3779
 # Issue #3780
@@ -7862,12 +12095,15 @@ check_stdlib_list_prim_shadow_5192.py
 # Issue #3794
 # Issue #3795
 # Issue #3796
+# Issue #3797
+# Issue #3798
 # Issue #3799
 # Issue #3800
 # Issue #3801
 # Issue #3802
 # Issue #3803
 # Issue #3804
+# Issue #3805
 # Issue #3806
 # Issue #3808
 # Issue #3809
@@ -7898,6 +12134,7 @@ check_stdlib_list_prim_shadow_5192.py
 # Issue #3834
 # Issue #3835
 # Issue #3836
+# Issue #3837
 # Issue #3838
 # Issue #3839
 # Issue #3840
@@ -7918,6 +12155,15 @@ check_stdlib_list_prim_shadow_5192.py
 # Issue #3856
 # Issue #3857
 # Issue #3858
+# Issue #3859
+# Issue #3860
+# Issue #3861
+# Issue #3862
+# Issue #3863
+# Issue #3864
+# Issue #3865
+# Issue #3866
+# Issue #3867
 # Issue #3868
 # Issue #3869
 # Issue #3870
@@ -7926,19 +12172,146 @@ check_stdlib_list_prim_shadow_5192.py
 # Issue #3873
 # Issue #3874
 # Issue #3875
+# Issue #3876
+# Issue #3877
+# Issue #3878
+# Issue #3879
+# Issue #3880
+# Issue #3881
+# Issue #3882
+# Issue #3883
+# Issue #3884
+# Issue #3885
+# Issue #3886
+# Issue #3887
+# Issue #3888
+# Issue #3889
+# Issue #3890
+# Issue #3891
+# Issue #3892
+# Issue #3893
+# Issue #3894
+# Issue #3895
+# Issue #3896
+# Issue #3897
+# Issue #3898
+# Issue #3899
+# Issue #3900
 # Issue #3902
 # Issue #3903
 # Issue #3904
+# Issue #3905
+# Issue #3906
+# Issue #3907
+# Issue #3908
+# Issue #3909
+# Issue #3910
+# Issue #3912
+# Issue #3915
+# Issue #3916
+# Issue #3917
+# Issue #3918
+# Issue #3919
+# Issue #3930
+# Issue #3931
+# Issue #3932
+# Issue #3934
+# Issue #3938
+# Issue #3939
+# Issue #3940
 # Issue #3941
+# Issue #3942
+# Issue #3943
+# Issue #3944
+# Issue #3946
+# Issue #3947
+# Issue #3948
+# Issue #3951
+# Issue #3952
+# Issue #3953
+# Issue #3954
+# Issue #3955
+# Issue #3956
+# Issue #3957
+# Issue #3958
+# Issue #3964
+# Issue #3965
+# Issue #3966
+# Issue #3967
+# Issue #3968
+# Issue #3969
 # Issue #3972
 # Issue #3973
+# Issue #3974
+# Issue #3975
+# Issue #3976
+# Issue #3977
+# Issue #3978
+# Issue #3979
+# Issue #3980
+# Issue #3981
+# Issue #3982
+# Issue #3983
+# Issue #3984
+# Issue #3985
+# Issue #3986
+# Issue #3987
+# Issue #3988
+# Issue #3989
+# Issue #3990
+# Issue #3991
+# Issue #3992
+# Issue #3993
+# Issue #3994
+# Issue #3995
+# Issue #3996
+# Issue #3997
+# Issue #3998
+# Issue #3999
+# Issue #4000
 # Issue #4001
+# Issue #4002
+# Issue #4004
+# Issue #4005
+# Issue #4006
+# Issue #4007
+# Issue #4008
+# Issue #4009
+# Issue #4010
+# Issue #4011
+# Issue #4012
 # Issue #4013
+# Issue #4014
+# Issue #4015
+# Issue #4016
+# Issue #4017
+# Issue #4018
+# Issue #4019
+# Issue #4020
+# Issue #4021
+# Issue #4022
+# Issue #4023
+# Issue #4024
+# Issue #4025
+# Issue #4026
+# Issue #4029
+# Issue #4030
+# Issue #4031
+# Issue #4032
 # Issue #4033
+# Issue #4034
 # Issue #4036
 # Issue #4037
 # Issue #4038
 # Issue #4039
+# Issue #4040
+# Issue #4041
+# Issue #4042
+# Issue #4043
+# Issue #4044
+# Issue #4045
+# Issue #4046
+# Issue #4047
 # Issue #4049
 # Issue #4050
 # Issue #4051
@@ -7950,6 +12323,33 @@ check_stdlib_list_prim_shadow_5192.py
 # Issue #4057
 # Issue #4058
 # Issue #4059
+# Issue #4060
+# Issue #4061
+# Issue #4062
+# Issue #4063
+# Issue #4064
+# Issue #4065
+# Issue #4066
+# Issue #4067
+# Issue #4068
+# Issue #4069
+# Issue #4070
+# Issue #4071
+# Issue #4072
+# Issue #4073
+# Issue #4074
+# Issue #4075
+# Issue #4076
+# Issue #4077
+# Issue #4078
+# Issue #4079
+# Issue #4080
+# Issue #4081
+# Issue #4082
+# Issue #4083
+# Issue #4084
+# Issue #4085
+# Issue #4086
 # Issue #4087
 # Issue #4088
 # Issue #4089
@@ -7957,6 +12357,17 @@ check_stdlib_list_prim_shadow_5192.py
 # Issue #4091
 # Issue #4093
 # Issue #4094
+# Issue #4095
+# Issue #4096
+# Issue #4097
+# Issue #4098
+# Issue #4099
+# Issue #4100
+# Issue #4101
+# Issue #4102
+# Issue #4103
+# Issue #4104
+# Issue #4105
 # Issue #4106
 # Issue #4107
 # Issue #4108
@@ -7967,9 +12378,11 @@ check_stdlib_list_prim_shadow_5192.py
 # Issue #4113
 # Issue #4114
 # Issue #4115
+# Issue #4117
 # Issue #4118
 # Issue #4120
 # Issue #4121
+# Issue #4122
 # Issue #4124
 # Issue #4125
 # Issue #4126
@@ -8044,9 +12457,18 @@ check_stdlib_list_prim_shadow_5192.py
 # Issue #4242
 # Issue #4243
 # Issue #4244
+# Issue #4245
+# Issue #4246
+# Issue #4247
+# Issue #4248
+# Issue #4249
 # Issue #4250
 # Issue #4251
 # Issue #4252
+# Issue #4257
+# Issue #4258
+# Issue #4259
+# Issue #4260
 # Issue #4261
 # Issue #4262
 # Issue #4263
@@ -8054,16 +12476,252 @@ check_stdlib_list_prim_shadow_5192.py
 # Issue #4265
 # Issue #4266
 # Issue #4267
+# Issue #4270
+# Issue #4271
+# Issue #4272
 # Issue #4273
+# Issue #4277
+# Issue #4278
+# Issue #4279
 # Issue #4280
+# Issue #4281
+# Issue #4286
+# Issue #4287
+# Issue #4288
+# Issue #4289
+# Issue #4290
+# Issue #4291
+# Issue #4292
+# Issue #4293
+# Issue #4294
+# Issue #4296
+# Issue #4297
+# Issue #4298
+# Issue #4299
+# Issue #4301
+# Issue #4303
+# Issue #4304
+# Issue #4305
+# Issue #4306
+# Issue #4307
+# Issue #4308
+# Issue #4309
+# Issue #4310
+# Issue #4311
+# Issue #4312
+# Issue #4313
+# Issue #4314
+# Issue #4315
+# Issue #4316
+# Issue #4317
+# Issue #4318
+# Issue #4319
+# Issue #4321
+# Issue #4322
+# Issue #4323
+# Issue #4326
+# Issue #4327
+# Issue #4328
+# Issue #4329
+# Issue #4330
+# Issue #4331
+# Issue #4332
+# Issue #4334
+# Issue #4335
+# Issue #4336
+# Issue #4337
+# Issue #4338
+# Issue #4339
+# Issue #4340
+# Issue #4341
+# Issue #4342
+# Issue #4343
+# Issue #4344
+# Issue #4345
+# Issue #4346
+# Issue #4347
+# Issue #4348
+# Issue #4349
+# Issue #4350
+# Issue #4353
+# Issue #4355
+# Issue #4357
+# Issue #4359
+# Issue #4360
+# Issue #4362
+# Issue #4365
+# Issue #4372
+# Issue #4373
+# Issue #4374
+# Issue #4375
+# Issue #4377
+# Issue #4379
 # Issue #4380
 # Issue #4381
 # Issue #4382
+# Issue #4383
+# Issue #4384
+# Issue #4385
+# Issue #4386
+# Issue #4387
+# Issue #4388
+# Issue #4389
+# Issue #4390
+# Issue #4391
+# Issue #4392
+# Issue #4393
+# Issue #4394
+# Issue #4395
+# Issue #4396
+# Issue #4397
+# Issue #4398
+# Issue #4399
+# Issue #4400
+# Issue #4401
+# Issue #4402
+# Issue #4403
+# Issue #4404
+# Issue #4405
+# Issue #4406
+# Issue #4407
+# Issue #4408
+# Issue #4409
+# Issue #4410
+# Issue #4411
+# Issue #4413
+# Issue #4414
+# Issue #4415
+# Issue #4416
+# Issue #4417
+# Issue #4418
+# Issue #4419
+# Issue #4420
+# Issue #4421
+# Issue #4422
+# Issue #4423
+# Issue #4424
+# Issue #4425
+# Issue #4426
+# Issue #4427
+# Issue #4428
+# Issue #4429
+# Issue #4430
+# Issue #4431
+# Issue #4432
+# Issue #4433
+# Issue #4434
+# Issue #4435
+# Issue #4436
+# Issue #4438
+# Issue #4439
+# Issue #4440
+# Issue #4441
+# Issue #4442
+# Issue #4443
+# Issue #4444
+# Issue #4445
+# Issue #4446
+# Issue #4448
+# Issue #4449
+# Issue #4450
+# Issue #4451
+# Issue #4452
+# Issue #4453
+# Issue #4454
+# Issue #4455
+# Issue #4456
+# Issue #4457
+# Issue #4460
+# Issue #4461
+# Issue #4462
+# Issue #4463
+# Issue #4464
+# Issue #4465
+# Issue #4466
+# Issue #4467
+# Issue #4468
+# Issue #4469
+# Issue #4470
+# Issue #4471
+# Issue #4472
+# Issue #4473
 # Issue #4474
+# Issue #4475
+# Issue #4476
 # Issue #4477
+# Issue #4478
+# Issue #4480
+# Issue #4482
+# Issue #4483
+# Issue #4492
+# Issue #4497
 # Issue #4502
+# Issue #4504
+# Issue #4505
+# Issue #4506
+# Issue #4507
+# Issue #4508
+# Issue #4510
+# Issue #4511
+# Issue #4513
+# Issue #4514
+# Issue #4515
+# Issue #4516
+# Issue #4517
+# Issue #4518
+# Issue #4519
+# Issue #4520
+# Issue #4521
+# Issue #4522
+# Issue #4523
+# Issue #4524
+# Issue #4525
+# Issue #4527
+# Issue #4528
+# Issue #4529
+# Issue #4530
+# Issue #4531
+# Issue #4532
+# Issue #4533
+# Issue #4534
+# Issue #4538
+# Issue #4539
+# Issue #4540
+# Issue #4542
+# Issue #4543
+# Issue #4544
+# Issue #4545
+# Issue #4548
+# Issue #4551
+# Issue #4553
+# Issue #4554
+# Issue #4555
+# Issue #4557
+# Issue #4558
 # Issue #4559
+# Issue #4560
+# Issue #4561
+# Issue #4563
+# Issue #4564
+# Issue #4565
+# Issue #4569
+# Issue #4575
+# Issue #4576
+# Issue #4577
+# Issue #4578
+# Issue #4579
+# Issue #4580
+# Issue #4581
+# Issue #4583
+# Issue #4584
+# Issue #4585
+# Issue #4586
+# Issue #4587
+# Issue #4588
+# Issue #4589
 # Issue #4595
+# Issue #4596
+# Issue #4597
 # Issue #4598
 # Issue #4599
 # Issue #4600
@@ -8076,21 +12734,185 @@ check_stdlib_list_prim_shadow_5192.py
 # Issue #4613
 # Issue #4614
 # Issue #4615
+# Issue #4624
+# Issue #4630
+# Issue #4631
+# Issue #4632
+# Issue #4633
+# Issue #4636
+# Issue #4639
+# Issue #4641
+# Issue #4642
+# Issue #4643
+# Issue #4644
+# Issue #4645
+# Issue #4646
+# Issue #4647
+# Issue #4648
+# Issue #4649
+# Issue #4650
+# Issue #4651
 # Issue #4652
 # Issue #4653
+# Issue #4654
 # Issue #4657
+# Issue #4658
+# Issue #4659
+# Issue #4661
+# Issue #4662
+# Issue #4663
+# Issue #4664
 # Issue #4665
+# Issue #4666
+# Issue #4667
+# Issue #4670
 # Issue #4671
 # Issue #4672
+# Issue #4673
+# Issue #4674
 # Issue #4675
 # Issue #4676
+# Issue #4681
 # Issue #4684
+# Issue #4685
 # Issue #4686
+# Issue #4687
+# Issue #4688
+# Issue #4689
+# Issue #4690
+# Issue #4691
+# Issue #4692
+# Issue #4693
+# Issue #4694
+# Issue #4695
 # Issue #4696
+# Issue #4697
+# Issue #4698
+# Issue #4699
+# Issue #4700
+# Issue #4701
+# Issue #4702
+# Issue #4704
+# Issue #4707
+# Issue #4714
+# Issue #4715
+# Issue #4716
+# Issue #4717
+# Issue #4719
+# Issue #4721
+# Issue #4722
+# Issue #4723
+# Issue #4724
+# Issue #4725
+# Issue #4726
 # Issue #4727
+# Issue #4728
+# Issue #4729
+# Issue #4730
+# Issue #4731
+# Issue #4732
+# Issue #4735
+# Issue #4736
+# Issue #4737
+# Issue #4742
+# Issue #4743
+# Issue #4744
+# Issue #4745
+# Issue #4747
+# Issue #4749
+# Issue #4750
+# Issue #4751
+# Issue #4752
+# Issue #4753
+# Issue #4756
+# Issue #4759
+# Issue #4763
+# Issue #4766
+# Issue #4768
+# Issue #4769
+# Issue #4770
+# Issue #4771
+# Issue #4772
+# Issue #4774
+# Issue #4779
+# Issue #4783
+# Issue #4787
 # Issue #4790
+# Issue #4791
+# Issue #4792
+# Issue #4793
+# Issue #4816
+# Issue #4827
+# Issue #4832
+# Issue #4841
+# Issue #4853
+# Issue #4855
+# Issue #4858
+# Issue #4876
+# Issue #4884
+# Issue #4885
+# Issue #4886
+# Issue #4891
+# Issue #4896
+# Issue #4899
+# Issue #4902
+# Issue #4905
+# Issue #4909
+# Issue #4916
+# Issue #4917
+# Issue #4919
+# Issue #4921
+# Issue #4922
+# Issue #4923
+# Issue #4924
+# Issue #4925
+# Issue #4926
+# Issue #4927
+# Issue #4928
+# Issue #4930
+# Issue #4932
+# Issue #4933
+# Issue #4936
+# Issue #4946
+# Issue #4965
 # Issue #5008
+# Issue #5033
+# Issue #5041
+# Issue #5051
+# Issue #5054
+# Issue #5057
+# Issue #5087
+# Issue #5117
 # Issue #5118
 # Issue #5132
+# Issue #5139
+# Issue #5141
+# Issue #5144
+# Issue #5145
+# Issue #5146
+# Issue #5147
+# Issue #5148
+# Issue #5149
+# Issue #5151
 # Issue #5169
+# Issue #5173
+# Issue #5175
+# Issue #5190
 # Issue #5192
+# Issue #5195
+# Issue #5208
+# Issue #5211
+# Issue #5212
+# Issue #5213
+# Issue #5244
+# Issue #5274
+# Issue #5275
+# Issue #5279
+# Issue #5280
+# Issue #5281
+# Issue #5282
+# Issue #5289
+# Issue #5292
+# Issue #5295
+# Issue #5300
+# Issue #5303
