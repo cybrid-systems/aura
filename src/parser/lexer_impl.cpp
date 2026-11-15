@@ -91,8 +91,12 @@ Token Lexer::advance() {
             if (c == '#' && pos_ + 1 < source_.size()) {
                 auto next = source_[pos_ + 1];
                 if (next == 'f' || next == 't') {
+                    // #5235: column unit is raw source bytes, not the token
+                    // text ("1" is the decoded value of the two-byte "#t").
                     pos_ += 2;
-                    return make_tok(TokenKind::Bool, (next == 't') ? "1" : "0");
+                    Token btok{TokenKind::Bool, (next == 't') ? "1" : "0", line_, col_};
+                    col_ += 2;
+                    return btok;
                 }
                 if (next == '(') {
                     pos_ += 2;
@@ -115,6 +119,10 @@ Token Lexer::advance() {
     }
 }
 Token Lexer::read_string() {
+    // #5235: the token text is the DECODED value; the column advance must be
+    // the raw source span (quotes + escapes), or every later token on the
+    // line is short by at least the two quotes.
+    const std::size_t start = pos_;
     pos_++; // skip opening "
     string_buf_.clear();
     while (pos_ < source_.size() && source_[pos_] != '"') {
@@ -180,7 +188,9 @@ Token Lexer::read_string() {
     }
     if (pos_ < source_.size())
         pos_++; // skip closing "
-    return make_tok(TokenKind::String, string_buf_);
+    Token r{TokenKind::String, string_buf_, line_, col_};
+    col_ += static_cast<std::uint32_t>(pos_ - start);
+    return r;
 }
 
 Token Lexer::read_number() {
@@ -281,13 +291,17 @@ Token Lexer::read_character() {
             ++digits;
         }
         string_buf_ = std::to_string(v);
-        return make_tok(TokenKind::Character, string_buf_);
+        Token ctok{TokenKind::Character, string_buf_, line_, col_};
+        col_ += static_cast<std::uint32_t>(pos_ - start);
+        return ctok;
     }
     // Single-character form for non-alphabetic characters: #\0 #\- #\( #\ ...
     if (!std::isalpha(static_cast<unsigned char>(c))) {
         ++pos_;
         string_buf_ = std::to_string(static_cast<unsigned char>(c));
-        return make_tok(TokenKind::Character, string_buf_);
+        Token ctok{TokenKind::Character, string_buf_, line_, col_};
+        col_ += static_cast<std::uint32_t>(pos_ - start);
+        return ctok;
     }
     // Alphabetic start: read the full name run, then named-form lookup.
     const std::size_t ns = pos_;
@@ -298,7 +312,9 @@ Token Lexer::read_character() {
     if (name.size() == 1) {
         // Lone letter: #\a #\b ...
         string_buf_ = std::to_string(static_cast<unsigned char>(name[0]));
-        return make_tok(TokenKind::Character, string_buf_);
+        Token ctok{TokenKind::Character, string_buf_, line_, col_};
+        col_ += static_cast<std::uint32_t>(pos_ - start);
+        return ctok;
     }
     // Named form lookup (case-insensitive).
     std::string lower(name);
@@ -330,7 +346,9 @@ Token Lexer::read_character() {
     if (cp < 0)
         return make_tok(TokenKind::Error, source_.substr(start, pos_ - start)); // unknown name
     string_buf_ = std::to_string(cp);
-    return make_tok(TokenKind::Character, string_buf_);
+    Token ctok{TokenKind::Character, string_buf_, line_, col_};
+    col_ += static_cast<std::uint32_t>(pos_ - start);
+    return ctok;
 }
 // Issue #4805: `|text|` reads as the symbol whose name is `text` (R7RS 2.1).
 // \| and \\ escape, \n \t \r as in strings, and `||` is the empty symbol.
@@ -353,7 +371,9 @@ Token Lexer::read_pipe_symbol() {
     if (pos_ >= source_.size())
         return make_tok(TokenKind::Error, source_.substr(start, pos_ - start));
     pos_++; // closing |
-    auto tok = make_tok(TokenKind::Identifier, string_buf_);
+    // #5235: advance by the raw |...| span (bars + escapes), not the decoded.
+    Token tok{TokenKind::Identifier, string_buf_, line_, col_};
+    col_ += static_cast<std::uint32_t>(pos_ - start);
     tok.quoted = true; // Issue #4806
     return tok;
 }

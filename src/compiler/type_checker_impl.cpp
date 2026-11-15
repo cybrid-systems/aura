@@ -6395,8 +6395,22 @@ TypeId InferenceEngine::synthesize_flat_var(FlatAST& flat, StringPool& pool, Nod
         if (!mod_info.empty())
             msg += mod_info;
 
+        // #5235: the runtime face has a hand-written hint for the common
+        // R7RS procedures Aura does not provide. Use the same text here so
+        // --typecheck and file mode agree (memq previously suggested 'mean').
+        std::string suggestion;
+        if (var_name == "memq" || var_name == "memv")
+            suggestion =
+                "did you mean 'member'? (Aura's member compares with equal?; memq/memv are not "
+                "provided)";
+        else if (var_name == "assq" || var_name == "assv")
+            suggestion =
+                "did you mean 'assoc'? (Aura's assoc compares with equal?; assq/assv are not "
+                "provided)";
+        else if (!best.empty())
+            suggestion = "did you mean '" + best + "'?";
         auto d = Diagnostic(ErrorKind::UnboundVariable, msg, cur_loc_)
-                     .with_suggestion(!best.empty() ? "did you mean '" + best + "'?" : "");
+                     .with_suggestion(std::move(suggestion));
         diag_.report(std::move(d));
         // Issue #118: tag the node so AuraQuery `(has-error? N)`
         // finds the unbound variable. This is the most

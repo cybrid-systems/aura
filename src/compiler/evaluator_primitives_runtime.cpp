@@ -1238,12 +1238,22 @@ void RegSplitParts::register_error_primitives(PrimRegistrar add, Evaluator& ev) 
     });
 
     add("check", [&ev](std::span<const EvalValue> a) -> EvalValue {
-        if (a.empty())
-            return make_error(0);
+        if (a.empty()) {
+            auto sid = static_cast<std::uint64_t>(
+                ev.push_string_heap("check failed: expected a truthy value, got no argument"));
+            auto eidx = primitives_detail::push_error_cause(ev.error_values_, make_string(sid));
+            return make_error(eidx);
+        }
         if (is_truthy(a[0]))
             return make_int(1);
-        // Store failing value as error cause
-        auto eidx = primitives_detail::push_error_cause(ev.error_values_, a[0]);
+        // #5235: a raw failing value as the cause printed as "type error:
+        // <error>" in file mode. Name the check and show the actual value.
+        const std::string seen =
+            format_value(a[0], ev.string_heap_, ev.pairs_, 0, &ev.primitives_, ev.keyword_table(),
+                         ev.vector_heap_, ev.symbol_table_);
+        auto sid = static_cast<std::uint64_t>(
+            ev.push_string_heap("check failed: expected a truthy value, got " + seen));
+        auto eidx = primitives_detail::push_error_cause(ev.error_values_, make_string(sid));
         return make_error(eidx);
     });
 
@@ -1255,13 +1265,30 @@ void RegSplitParts::register_error_primitives(PrimRegistrar add, Evaluator& ev) 
         if (types::is_int(a[0]) && types::is_int(a[1])) {
             if (types::as_int(a[0]) == types::as_int(a[1]))
                 return make_int(1);
-            auto eidx = primitives_detail::push_error_cause(ev.error_values_, a[0]);
+            // #5235: name the check and both values, not a bare <error>.
+            const std::string detail =
+                "check= failed: expected " +
+                format_value(a[1], ev.string_heap_, ev.pairs_, 0, &ev.primitives_,
+                             ev.keyword_table(), ev.vector_heap_, ev.symbol_table_) +
+                ", got " +
+                format_value(a[0], ev.string_heap_, ev.pairs_, 0, &ev.primitives_,
+                             ev.keyword_table(), ev.vector_heap_, ev.symbol_table_);
+            auto sid = static_cast<std::uint64_t>(ev.push_string_heap(detail));
+            auto eidx = primitives_detail::push_error_cause(ev.error_values_, make_string(sid));
             return make_error(eidx);
         }
         if (types::is_float(a[0]) && types::is_float(a[1])) {
             if (types::as_float(a[0]) == types::as_float(a[1]))
                 return make_int(1);
-            auto eidx = primitives_detail::push_error_cause(ev.error_values_, a[0]);
+            const std::string detail =
+                "check= failed: expected " +
+                format_value(a[1], ev.string_heap_, ev.pairs_, 0, &ev.primitives_,
+                             ev.keyword_table(), ev.vector_heap_, ev.symbol_table_) +
+                ", got " +
+                format_value(a[0], ev.string_heap_, ev.pairs_, 0, &ev.primitives_,
+                             ev.keyword_table(), ev.vector_heap_, ev.symbol_table_);
+            auto sid = static_cast<std::uint64_t>(ev.push_string_heap(detail));
+            auto eidx = primitives_detail::push_error_cause(ev.error_values_, make_string(sid));
             return make_error(eidx);
         }
         if (types::is_string(a[0]) && types::is_string(a[1])) {
@@ -1270,7 +1297,15 @@ void RegSplitParts::register_error_primitives(PrimRegistrar add, Evaluator& ev) 
             if (i0 < ev.string_heap_.size() && i1 < ev.string_heap_.size() &&
                 ev.string_at(i0) == ev.string_at(i1))
                 return make_int(1);
-            auto eidx = primitives_detail::push_error_cause(ev.error_values_, a[0]);
+            const std::string detail =
+                "check= failed: expected " +
+                format_value(a[1], ev.string_heap_, ev.pairs_, 0, &ev.primitives_,
+                             ev.keyword_table(), ev.vector_heap_, ev.symbol_table_) +
+                ", got " +
+                format_value(a[0], ev.string_heap_, ev.pairs_, 0, &ev.primitives_,
+                             ev.keyword_table(), ev.vector_heap_, ev.symbol_table_);
+            auto sid = static_cast<std::uint64_t>(ev.push_string_heap(detail));
+            auto eidx = primitives_detail::push_error_cause(ev.error_values_, make_string(sid));
             return make_error(eidx);
         }
         return make_bool(false);

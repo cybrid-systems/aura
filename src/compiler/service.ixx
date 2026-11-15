@@ -143,13 +143,29 @@ extern "C" void aura_jit_set_linear_env_none(void);
 extern "C" void aura_jit_tier_self_cell_swap_4682(std::int64_t* idx, std::int64_t* word) noexcept;
 extern "C" void aura_jit_suppress_runtime_reset_this_thread(int enable) noexcept;
 
-[[nodiscard]] static aura::diag::Diagnostic hygiene_expand_deny_diag_4078() {
+[[nodiscard]] static aura::diag::Diagnostic
+hygiene_expand_deny_diag_4078(const aura::ast::FlatAST* flat = nullptr) {
     // Issue #4876: the sentinel code is not a user-facing explanation.
     std::string reason = aura::compiler::security::macro_limit_user_reason(
         aura_macro_hygiene_last_limit_reason_string(), "hygiene-pass-limit");
     const auto kind = reason.starts_with("effect-denied:") ? aura::diag::ErrorKind::TypeError
                                                            : aura::diag::ErrorKind::InternalError;
-    return aura::diag::Diagnostic{kind, std::move(reason)};
+    // #5235: the refusal is a source-level diagnostic — point it at the macro
+    // definition that triggered the expand gate instead of a bare message.
+    aura::diag::SourceLocation loc{};
+    std::uint32_t node_id = ~0u;
+    if (flat != nullptr) {
+        for (aura::ast::NodeId id = 0; id < flat->size(); ++id) {
+            const auto& node = flat->get(id);
+            if (node.tag != aura::ast::NodeTag::MacroDef || node.line == 0)
+                continue;
+            loc = aura::diag::SourceLocation{node.line, node.col == 0 ? 1u : node.col,
+                                             aura::diag::source_file_for_flat(flat)};
+            node_id = static_cast<std::uint32_t>(id);
+            break;
+        }
+    }
+    return aura::diag::Diagnostic{kind, std::move(reason), loc, node_id};
 }
 
 // ── Issue #4711: eval-mutex (M1) release across a blocking wait ───────
@@ -3779,7 +3795,7 @@ public:
         // eval the refused tree. The flat was rolled back in place; the
         // agent-visible reason is the existing hygiene string.
         if (aura_hygiene_expand_deny_blocks_eval())
-            return std::unexpected(hygiene_expand_deny_diag_4078());
+            return std::unexpected(hygiene_expand_deny_diag_4078(flat_ptr));
 
         // Pre-execute top-level require/import/use calls to fill ir_cache_
         // so the remaining expression can go through the IR path without fallback.
@@ -4461,7 +4477,7 @@ public:
                 // Issue #4078: a refused static expansion must not be evaluated.
                 // The mixed legacy arm keeps its historical walker consult.
                 if (!has_legacy_macro && aura_hygiene_expand_deny_blocks_eval())
-                    return std::unexpected(hygiene_expand_deny_diag_4078());
+                    return std::unexpected(hygiene_expand_deny_diag_4078(flat_ptr));
             }
             return evaluator_.eval_flat(*flat_ptr, *pool_ptr, macro_root, evaluator_.top_env());
         }
@@ -4470,7 +4486,7 @@ public:
         auto expanded_root = aura::compiler::macro_expand_all(*flat_ptr, *pool_ptr, flat_ptr->root);
         // Issue #4078: do not validate, typecheck, or lower a refused expand.
         if (aura_hygiene_expand_deny_blocks_eval())
-            return std::unexpected(hygiene_expand_deny_diag_4078());
+            return std::unexpected(hygiene_expand_deny_diag_4078(flat_ptr));
 
         // Pre-execute top-level require/import/use calls to fill ir_cache_
         // so cached define functions are available during lowering.
@@ -6249,7 +6265,7 @@ public:
         auto expanded = aura::compiler::macro_expand_all(flat, pool, flat.root);
         // Issue #4078: do not cache or lower a refused half-expand.
         if (aura_hygiene_expand_deny_blocks_eval())
-            return std::unexpected(hygiene_expand_deny_diag_4078());
+            return std::unexpected(hygiene_expand_deny_diag_4078(&flat));
 
         // Walk top-level defines. Issue #132: extracted to
         // aura::compiler.find_top_level_defines (was the

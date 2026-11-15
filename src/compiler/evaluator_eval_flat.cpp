@@ -3388,7 +3388,7 @@ namespace {
 // deny (#4149) and a later macro-free eval must not see #4078 armed.
 // Soft/Off and a live grant return nullopt and keep the existing arm.
 [[nodiscard]] static std::optional<Diagnostic>
-legacy_eval_macro_self_evo_deny(bool stdlib_macro = false) {
+legacy_eval_macro_self_evo_deny(bool stdlib_macro = false, aura::diag::SourceLocation loc = {}) {
     // Issue #5195: a macro defined by a lib/std module is shipped with the
     // runtime — expanding it is not code self-evolution, so the user-macro
     // MacroSelfEvo grant does not apply. User-defined macros keep the gate.
@@ -3404,7 +3404,7 @@ legacy_eval_macro_self_evo_deny(bool stdlib_macro = false) {
     // Issue #4876: actionable text on the error object itself (a try/catch
     // around eval sees it too), not the bare sentinel code.
     return Diagnostic{ErrorKind::TypeError,
-                      std::string(aura::compiler::security::kMacroSelfEvoDenyMessage)};
+                      std::string(aura::compiler::security::kMacroSelfEvoDenyMessage), loc};
 }
 
 // Issue #4876: a hygiene limit Diagnostic. The capability deny is a policy
@@ -10439,7 +10439,10 @@ Evaluator::eval_flat_on_macro_hygienic(EvalFlatCursor& cur, const aura::ast::Nod
                 // missing grant still denies; only the
                 // expansion work is reused.
                 if (aura::core::sandbox::is_sandbox_active()) {
-                    if (auto denied = legacy_eval_macro_self_evo_deny(md.stdlib_module))
+                    if (auto denied = legacy_eval_macro_self_evo_deny(
+                            md.stdlib_module,
+                            aura::diag::SourceLocation{v.line == 0 ? 1u : v.line,
+                                                       v.col == 0 ? 1u : v.col, diag_fid_4916(f)}))
                         return FlatStep::ret(std::unexpected(*denied));
                 }
                 auto memo_result = eval_flat(*f, *p, memo_hit, eval_env);
@@ -10647,7 +10650,10 @@ Evaluator::eval_flat_on_macro_preserved(EvalFlatCursor& cur, const aura::ast::No
         // Issue #4390: no template eval and no
         // data_to_flat without MacroSelfEvo. #5195: stdlib macros are
         // runtime-shipped and keep working under the production preset.
-        if (auto denied = legacy_eval_macro_self_evo_deny(md.stdlib_module))
+        if (auto denied = legacy_eval_macro_self_evo_deny(
+                md.stdlib_module,
+                aura::diag::SourceLocation{v.line == 0 ? 1u : v.line, v.col == 0 ? 1u : v.col,
+                                           diag_fid_4916(f)}))
             return FlatStep::ret(std::unexpected(*denied));
         if (is_rest) {
             // Rest params on preserved
@@ -10872,7 +10878,10 @@ Evaluator::eval_flat_on_macro_legacy(EvalFlatCursor& cur, const aura::ast::NodeV
     // before the template runs, so a source-named
     // binding in the template is not evaluated.
     // Issue #5195: stdlib macros are exempt (runtime-shipped body).
-    if (auto denied = legacy_eval_macro_self_evo_deny(md.stdlib_module))
+    if (auto denied = legacy_eval_macro_self_evo_deny(
+            md.stdlib_module,
+            aura::diag::SourceLocation{v.line == 0 ? 1u : v.line, v.col == 0 ? 1u : v.col,
+                                       diag_fid_4916(f)}))
         return FlatStep::ret(std::unexpected(*denied));
     // Convert AST args to data (NOT evaluate — macros receive syntax)
     // Bind regular params first (all but the last)
