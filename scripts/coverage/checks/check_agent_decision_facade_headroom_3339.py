@@ -92,7 +92,15 @@ def _block(src: str, query: str) -> str:
         if i < 0:
             break
         ends: list[int] = []
-        for tok in ("return query_hash_finish", "return make_hash"):
+        # Issue #5244: the handler may end through the shared emitter
+        # (primitives_detail::StatsKvTable::finish / stats_hash_from_pairs)
+        # instead of an open-coded query_hash_finish.
+        for tok in (
+            "return query_hash_finish",
+            "return make_hash",
+            "return insert_kv.finish()",
+            "return stats_hash_from_pairs(",
+        ):
             j = src.find(tok, i + 20)
             if j > i:
                 ends.append(j)
@@ -105,7 +113,12 @@ def _block(src: str, query: str) -> str:
             end = len(src)
         candidates.append(src[i:end])
         # Backward window: shared named-lambda body registered after builder.
-        for tok in ("return query_hash_finish", "return make_hash"):
+        for tok in (
+            "return query_hash_finish",
+            "return make_hash",
+            "return insert_kv.finish()",
+            "return stats_hash_from_pairs(",
+        ):
             j = src.rfind(tok, max(0, i - 30000), i)
             if j <= 0:
                 continue
@@ -212,15 +225,20 @@ def main() -> int:
             fails.append(f"AC1: {query} planned {planned} < actual {actual} + {HEADROOM} headroom")
         must("query_hash_capacity_for", f"AC1 {query} capacity helper", block)
         if query in ("query:arena-moving-densify-health", "query:capability-effect-stats"):
-            # Issues #4140/#4141: densify + capability-effect probe via
-            # bounded local insert_kv lambdas that stamp overflowed on a
-            # full table (same hash-overflow contract into
-            # query_hash_finish).
-            must("bool overflowed = false", f"AC1 {query} overflowed flag", block)
-            must("overflowed = true", f"AC1 {query} bounded insert", block)
+            # Issues #4140/#4141 + #5244: densify + capability-effect need a
+            # bounded probe whose miss stamps overflow (hash-overflow contract)
+            # instead of returning void for capacity. Since #5244 that probe is
+            # primitives_detail::StatsKvTable (one copy); the handler must route
+            # its keys through it, or keep the local probe + overflowed flag.
+            routed = "primitives_detail::StatsKvTable" in block or (
+                "bool overflowed = false" in block and "overflowed = true" in block
+            )
+            if not routed:
+                fails.append(f"AC1 {query} bounded probe / overflow routing")
         else:
             must("insert_kv_checked", f"AC1 {query} checked insert", block)
-        must("query_hash_finish", f"AC1 {query} finish", block)
+        if "query_hash_finish" not in block and ".finish()" not in block:
+            fails.append(f"AC1 {query} finish")
         if query == "query:evolution-audit-decision":
             evo_planned = planned
             evo_actual = actual
