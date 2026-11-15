@@ -314,7 +314,7 @@ int run_test_mailbox_starvation_scope_throttle_3775() {
         CHECK(!rej_b.has_value() || rej_b->find("mailbox-hold-slo") == std::string::npos,
               "3938: B named live input is not mailbox-hold-slo");
         apply_dev_audit_defaults();
-        ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
+        setenv("AURA_SANDBOX", "off", 1);
         const auto in_soft = make_security_schedule_input_live(/*sandbox=*/0, /*prod=*/false,
                                                                /*soft=*/true, "tenant-b-3938");
         CHECK(!admit_security_schedule(in_soft).has_value(),
@@ -325,7 +325,7 @@ int run_test_mailbox_starvation_scope_throttle_3775() {
         CHECK(prim.find("Issue #3938") != std::string::npos, "3938: parallel-intend cites #3938");
         CHECK(read_file("tests/orch/test_issue_3938.cpp").empty(), "3938: no test_issue_3938.cpp");
         g_mf_mailbox_stats.mailbox_under_boundary_wait_us_p99.store(0, std::memory_order_relaxed);
-        ::aura::config::test_unsetenv("AURA_SANDBOX");
+        unsetenv("AURA_SANDBOX");
         apply_dev_audit_defaults();
         reset_all();
     }
@@ -342,15 +342,15 @@ int run_test_mailbox_bp_admit() {
     (void)cs;
 
     // Sanity: production default is mild threshold (#2535); env overrides.
-    ::aura::config::test_unsetenv("AURA_ORCH_BP_ADMIT_THRESHOLD");
+    unsetenv("AURA_ORCH_BP_ADMIT_THRESHOLD");
     CHECK(resolve_mailbox_bp_admit_threshold() == aura::orch::kMailboxBpAdmitThresholdDefault,
           "AC0: default threshold = kMailboxBpAdmitThresholdDefault (#2535)");
     CHECK(aura::orch::kMailboxBpAdmitThresholdDefault == 32, "AC0: default == 32");
-    ::aura::config::test_setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "5", 1);
+    setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "5", 1);
     CHECK(resolve_mailbox_bp_admit_threshold() == 5,
           "AC0: env override AURA_ORCH_BP_ADMIT_THRESHOLD=5 parsed");
-    ::aura::config::test_setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "0",
-                                1); // opt-out for remaining AC blocks
+    setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "0",
+           1); // opt-out for remaining AC blocks
 
     // ── AC1 + AC2: high-water fill → BP → spawn soft-reject + counters
     {
@@ -384,7 +384,7 @@ int run_test_mailbox_bp_admit() {
 
         // 2) Set threshold to a value that the bp_recent count
         //    exceeds, then try to spawn_agent_with_mailbox.
-        ::aura::config::test_setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "1", 1);
+        setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "1", 1);
         const auto spawn_bp_reject_before =
             g_orch_module_stats.spawn_bp_admit_reject_total.load(std::memory_order_relaxed);
         const auto spawn_failures_before =
@@ -469,7 +469,7 @@ int run_test_mailbox_bp_admit() {
         SchedRunner runner(sched);
 
         // Set threshold very high so no BP can possibly reject.
-        ::aura::config::test_setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "1000000", 1);
+        setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "1000000", 1);
 
         const auto spawn_failures_before =
             g_orch_module_stats.spawn_failures.load(std::memory_order_relaxed);

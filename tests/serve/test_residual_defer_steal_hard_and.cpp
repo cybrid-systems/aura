@@ -622,7 +622,7 @@ static void ac2853_6_phase5_dtor_force_fail_hold_slo() {
           "AC5b: rollback counter bumped");
 
     cs.evaluator().set_compiler_metrics(nullptr);
-    ::aura::config::test_unsetenv("AURA_MUTATION_HOLD_SLO_US");
+    unsetenv("AURA_MUTATION_HOLD_SLO_US");
 }
 
 // ── Issue #2890: cross-fiber steal residual for PanicCheckpoint + GC defer ──

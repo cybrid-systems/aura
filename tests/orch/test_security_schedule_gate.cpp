@@ -1153,7 +1153,7 @@ int run_test_security_schedule_gate() {
         using aura::serve::Scheduler;
         CHECK(kScheduleGateAtSpawnIssue == 3777, "3777: issue stamp");
         aura::compiler::typed_audit::apply_production_audit_defaults();
-        ::aura::config::test_unsetenv("AURA_DENY_STORM_THRESHOLD");
+        unsetenv("AURA_DENY_STORM_THRESHOLD");
         aura::orch::reset_capability_deny_storm_window_for_test();
         const auto prev_thr =
             g_capability_deny_storm_threshold().exchange(1, std::memory_order_relaxed);
@@ -1247,7 +1247,7 @@ int run_test_security_schedule_gate() {
         // succeeds there), then flip to production so the fiber body belt
         // rejects with TryAcquire before the security-schedule observe
         // branch, while the spawn preflight itself still admits.
-        ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
+        setenv("AURA_SANDBOX", "off", 1);
         apply_dev_audit_defaults();
         CompilerService cs;
         auto& ev = cs.evaluator();
@@ -1276,8 +1276,8 @@ int run_test_security_schedule_gate() {
 
         // ── Production: reject at body entry, row survives is_done ──
         arm_body_reject_4300();
-        ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
-        ::aura::config::test_unsetenv("AURA_DENY_STORM_THRESHOLD");
+        setenv("AURA_SANDBOX", "restricted", 1);
+        unsetenv("AURA_DENY_STORM_THRESHOLD");
         apply_production_audit_defaults();
         (void)cs.eval(R"((orch:scope-spawn "rej-4300" (lambda () 1)))");
         auto* scope_4300 = aura::orch::find_agent_scope(static_cast<void*>(&ev));
@@ -1347,7 +1347,7 @@ int run_test_security_schedule_gate() {
         (void)cs.eval(R"((orch:agent-join "ok-4300" :timeout-ms 2000))");
 
         // ── Soft / Off: same belt reject, no lifecycle intern ──
-        ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
+        setenv("AURA_SANDBOX", "off", 1);
         apply_dev_audit_defaults();
         arm_body_reject_4300();
         (void)cs.eval(R"((orch:scope-spawn "rej-4300-soft" (lambda () 1)))");
@@ -1387,9 +1387,9 @@ int run_test_security_schedule_gate() {
         ev.reset_mutation_quota_used();
         aura::core::resource_quota::reset_process_resource_quota_for_test();
         if (prev_sb_4300_s.empty())
-            ::aura::config::test_unsetenv("AURA_SANDBOX");
+            unsetenv("AURA_SANDBOX");
         else
-            ::aura::config::test_setenv("AURA_SANDBOX", prev_sb_4300_s.c_str(), 1);
+            setenv("AURA_SANDBOX", prev_sb_4300_s.c_str(), 1);
         apply_dev_audit_defaults();
     }
 
@@ -1413,7 +1413,7 @@ int run_test_security_schedule_gate() {
 
         const char* prev_sb = std::getenv("AURA_SANDBOX");
         std::string prev_sb_s = prev_sb ? prev_sb : "";
-        ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
+        setenv("AURA_SANDBOX", "restricted", 1);
         aura::compiler::typed_audit::apply_production_audit_defaults();
         set_mode(SandboxMode::Strict);
         std::filesystem::create_directories("build/test-wal-3932");
