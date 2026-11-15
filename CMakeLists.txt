@@ -142,6 +142,7 @@ set(AURA_EVALUATOR_SOURCE_FILES
 set(AURA_SERVICE_SOURCE_FILES
     src/compiler/service_dirty.cpp
     src/compiler/service_eval_ir.cpp
+    src/compiler/service_exec_jit.cpp
     src/compiler/service_jit.cpp
     src/compiler/service_snapshot.cpp
 )
