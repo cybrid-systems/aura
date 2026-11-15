@@ -1163,9 +1163,7 @@ void RegSplitParts::register_load_primitive(PrimRegistrar add, Evaluator& ev, Ma
             !ev.has_capability(aura::compiler::security::kCapIo) &&
             !ev.has_capability(aura::compiler::security::kCapWildcard)) {
             ev.bump_capability_denial();
-            return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                        "capability denied: io-read required for load",
-                                        ev.primitive_error_counter_ptr());
+            return ev.make_refusal_error("capability denied: io-read required for load");
         }
         if (a.empty() || !is_string(a[0]))
             return make_void();

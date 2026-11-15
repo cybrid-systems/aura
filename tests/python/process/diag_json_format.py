@@ -55,25 +55,32 @@ class DiagJson(unittest.TestCase):
     def test_refusal_code_is_effect_denied(self) -> None:
         # Issue #5241: the JSON code and the human prefix come from the
         # structured kind. Before, a denied set-car! printed "effect-denied"
-        # on the text face while this JSON carried code TypeError.
+        # on the text face while this JSON carried code TypeError. Every
+        # refusal family creates its kind now, not just the mutate gate.
+        cases = {
+            "mutate": "(set-car! (cons 1 2) 9)\n",
+            "write-file": '(write-file "x.txt" "y")\n',
+            "exec": '(require "std/process" all:)\n(shell "echo hi")\n',
+        }
         env = dict(os.environ)
         for k in ("AURA_SANDBOX", "AURA_PRESET", "AURA_GRANT"):
             env.pop(k, None)
-        with tempfile.TemporaryDirectory() as d:
-            p = Path(d) / "d.aura"
-            p.write_text("(set-car! (cons 1 2) 9)\n")
-            r = subprocess.run(
-                [str(AURA_BIN), "--error-format=json", str(p)],
-                cwd=d,
-                capture_output=True,
-                text=True,
-                env=env,
-                timeout=120,
-            )
-        self.assertNotEqual(r.returncode, 0)
-        obj = last_json(r.stderr)
-        self.assertEqual(obj["code"], "EffectDenied")
-        self.assertIn("effect-denied:", obj["message"])
+        for name, src in cases.items():
+            with self.subTest(family=name), tempfile.TemporaryDirectory() as d:
+                p = Path(d) / "d.aura"
+                p.write_text(src)
+                r = subprocess.run(
+                    [str(AURA_BIN), "--error-format=json", str(p)],
+                    cwd=d,
+                    capture_output=True,
+                    text=True,
+                    env=env,
+                    timeout=120,
+                )
+                self.assertNotEqual(r.returncode, 0)
+                obj = last_json(r.stderr)
+                self.assertEqual(obj["code"], "EffectDenied", r.stderr)
+                self.assertIn("denied:", obj["message"])
 
     def test_serve_error_uses_the_same_code_and_span(self) -> None:
         env = dict(os.environ)

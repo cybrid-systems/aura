@@ -135,8 +135,7 @@ void RegSplitParts::register_char_core_primitives(PrimRegistrar add, Evaluator& 
             ev.has_capability(aura::compiler::security::kCapWildcard))
             return make_void();
         ev.bump_capability_denial();
-        return make_primitive_error(ev.string_heap_, ev.error_values_, msg,
-                                    ev.primitive_error_counter_ptr());
+        return ev.make_refusal_error(std::string(msg));
     };
 
     // Issue #4472: not a blanket is_int. Characters stay fixnums (#4129),

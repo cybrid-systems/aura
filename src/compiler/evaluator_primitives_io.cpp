@@ -864,8 +864,7 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             ev.has_capability(aura::compiler::security::kCapWildcard))
             return make_void();
         ev.bump_capability_denial();
-        return make_primitive_error(ev.string_heap_, ev.error_values_, msg,
-                                    ev.primitive_error_counter_ptr());
+        return ev.make_refusal_error(std::string(msg));
     };
 
     // ── Environment + HTTP primitives ────────────────────────
@@ -1602,8 +1601,7 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
                 // require_effect already bumps capability_denial_count_ on deny.
                 if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
                     m->cap_denial_total.fetch_add(1, std::memory_order_relaxed);
-                return make_primitive_error(ev.string_heap_, ev.error_values_, msg,
-                                            ev.primitive_error_counter_ptr());
+                return ev.make_refusal_error(std::string(msg));
             }
         }
         if (!ev.sandbox_mode() || ev.has_capability(cap) ||
@@ -1613,8 +1611,7 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
         ev.bump_capability_denial();
         if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
             m->cap_denial_total.fetch_add(1, std::memory_order_relaxed);
-        return make_primitive_error(ev.string_heap_, ev.error_values_, msg,
-                                    ev.primitive_error_counter_ptr());
+        return ev.make_refusal_error(std::string(msg));
     };
 
     ev.defer_std_host_prim("sys-open", [&ev, deny_sys](std::span<const EvalValue> a) -> EvalValue {

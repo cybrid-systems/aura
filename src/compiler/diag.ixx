@@ -370,17 +370,12 @@ export struct Diagnostic {
     }
 
     // Format as human-readable error string (single line)
-    // Issue #4909: the kind a reader sees. A refusal raised through the
-    // generic primitive-error path still arrives as TypeError; it is a
-    // sandbox decision, not a type error.
-    ErrorKind display_kind() const {
-        if (kind == ErrorKind::TypeError &&
-            (message.starts_with("effect-denied:") || message.starts_with("capability denied:")))
-            return ErrorKind::EffectDenied;
-        if (kind == ErrorKind::TypeError && message.starts_with("naked mutate: "))
-            return ErrorKind::MutationRefused;
-        return kind;
-    }
+    // Issue #4909 / #5241: the kind a reader sees is the kind the producer
+    // set; a sandbox refusal is built as EffectDenied, not TypeError.
+    // Issue #5241: the kind is set where the error is created (an error
+    // value carries it, a refusal Diagnostic is built with it). This path
+    // no longer re-derives a refusal from the message prefix.
+    ErrorKind display_kind() const { return kind; }
 
     // Issue #5241: the "kind: message" head, shared by the located
     // diagnostic line and the bare display/write error line so one error
