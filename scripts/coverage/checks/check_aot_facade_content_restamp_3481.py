@@ -46,7 +46,7 @@ def main() -> int:
         if n in hay:
             fails.append(f"{label}: forbidden {n!r}")
 
-    ixx = _read("src/compiler/service.ixx")
+    ixx = _read("src/compiler/service.ixx") + _read("src/compiler/service_relower.cpp")
     dirty = _read("src/compiler/service_dirty.cpp")
     hur = _read("src/compiler/hot_update_registry.cpp")
     mangle = _read("src/compiler/aot_mangle.h")
@@ -95,7 +95,7 @@ def main() -> int:
 
     rb_win = check(
         "AC2 relower",
-        brace_body(ixx, "bool relower_define_blocks(const std::string& name, std::string_view source,"),
+        brace_body(ixx, "bool CompilerService::relower_define_blocks("),
         fails,
         "relower_define_blocks body",
     )

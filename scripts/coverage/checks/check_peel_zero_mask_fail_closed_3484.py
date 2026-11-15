@@ -68,7 +68,7 @@ def main() -> int:
         must("production_defaults_active()", "AC1 ++ok behind production gate", pre)
         must("if (!production_zero)", "AC1 production does not ++ok skip", pre)
 
-    rb = ixx.find("bool relower_define_blocks(")
+    rb = ixx.find("bool CompilerService::relower_define_blocks(")
     rb_win = ixx[rb : rb + 22000] if rb >= 0 else ""
     must("Issue #3484", "AC2 relower cite", rb_win)
     must("ack_cache_entry_fences_live_", "AC2 peel ack stays", rb_win)
