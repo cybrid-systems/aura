@@ -574,6 +574,9 @@ static std::string build_lazy_oneshot_std_prelude(const std::string& source) {
 
 // Issue #4497: defined in evaluator_primitives_runtime.cpp.
 extern "C" std::uint64_t aura_displayed_error_count() noexcept;
+// Issue #5241: kind (diag::ErrorKind ordinal) of the last displayed error;
+// 255 when the display path recorded none.
+extern "C" std::uint8_t aura_displayed_error_kind() noexcept;
 // #5066: cap concurrent --load fiber bodies. 0 keeps them unlimited.
 extern "C" void aura_set_cli_fiber_body_limit(int n) noexcept;
 
@@ -4574,7 +4577,15 @@ static int run_oneshot_or_file(int argc, char** argv) {
     // Issue #4497: an error consumed by display/write also fails the run.
     if (err)
         return g_run_exit_code;
-    return aura_displayed_error_count() > 0 ? 1 : 0;
+    if (aura_displayed_error_count() > 0) {
+        // Issue #5241: the display path records the structured kind, so a
+        // denial keeps the #5240 static bucket instead of collapsing to 1.
+        const auto k = aura_displayed_error_kind();
+        if (k != 255)
+            return exit_code_for_kind(static_cast<aura::diag::ErrorKind>(k));
+        return 1;
+    }
+    return 0;
 }
 
 
@@ -5399,7 +5410,8 @@ static int run_cli_jit(int argc, char** argv) {
     auto result = cs.exec_jit(input);
     if (!result) {
         std::println(std::cerr, "error: {}", result.error().format());
-        return 1;
+        // Issue #5241: same #5240 bucket as the eval faces.
+        return exit_code_for_kind(result.error().kind);
     }
     if (!is_void(*result))
         std::println("{}", fmt_val(*result, cs));
@@ -5407,7 +5419,15 @@ static int run_cli_jit(int argc, char** argv) {
     // the run, like the eval path's #4497 rule. `(car 5)` after the
     // non-pair deopt lands on aura_display_value's error arm, which
     // bumps the same counter the tree walker uses.
-    return aura_displayed_error_count() > 0 ? 1 : 0;
+    // Issue #5241: use the kind that display path recorded, so a refusal
+    // keeps the #5240 static bucket.
+    if (aura_displayed_error_count() > 0) {
+        const auto k = aura_displayed_error_kind();
+        if (k != 255)
+            return exit_code_for_kind(static_cast<aura::diag::ErrorKind>(k));
+        return 1;
+    }
+    return 0;
 #else
     std::println(std::cerr, "JIT not available — rebuild with LLVM");
     return 1;

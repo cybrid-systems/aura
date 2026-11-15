@@ -1054,9 +1054,7 @@ void RegSplitParts::register_workspace_delete_primitives(
             if (ev.sandbox_mode() && !ev.has_capability(aura::compiler::security::kCapWorkspace) &&
                 !ev.has_capability(aura::compiler::security::kCapWildcard)) {
                 ev.bump_capability_denial();
-                return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                            "capability denied: workspace required",
-                                            ev.primitive_error_counter_ptr());
+                return ev.make_refusal_error("capability denied: workspace required");
             }
             auto* wt = static_cast<WorkspaceTree*>(ev.workspace_tree_);
             auto idx = static_cast<std::uint32_t>(as_int(a[0]));

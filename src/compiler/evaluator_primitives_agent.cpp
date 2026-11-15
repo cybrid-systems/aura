@@ -739,9 +739,7 @@ void register_auto_evolve_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                         !ev.has_capability(aura::compiler::security::kCapSelfEvo) &&
                         !ev.has_capability(aura::compiler::security::kCapWildcard)) {
                         ev.bump_capability_denial();
-                        return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                                    "capability denied: self-evo required",
-                                                    ev.primitive_error_counter_ptr());
+                        return ev.make_refusal_error("capability denied: self-evo required");
                     }
                     return fn(a);
                 }});
@@ -1079,9 +1077,7 @@ void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
                         !ev.has_capability(aura::compiler::security::kCapSynthesize) &&
                         !ev.has_capability(aura::compiler::security::kCapWildcard)) {
                         ev.bump_capability_denial();
-                        return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                                    "capability denied: synthesize required",
-                                                    ev.primitive_error_counter_ptr());
+                        return ev.make_refusal_error("capability denied: synthesize required");
                     }
                     return fn(a);
                 }});
@@ -2177,9 +2173,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                         !ev.has_capability(aura::compiler::security::kCapStrategy) &&
                         !ev.has_capability(aura::compiler::security::kCapWildcard)) {
                         ev.bump_capability_denial();
-                        return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                                    "capability denied: strategy required",
-                                                    ev.primitive_error_counter_ptr());
+                        return ev.make_refusal_error("capability denied: strategy required");
                     }
                     return fn(a);
                 }});

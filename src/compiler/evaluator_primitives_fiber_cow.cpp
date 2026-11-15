@@ -405,10 +405,8 @@ void RegSplitParts::register_fiber_overlay_primitives(
             ev.has_capability(aura::compiler::security::kCapWildcard))
             return std::nullopt;
         ev.bump_capability_denial();
-        return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                    std::string("capability denied: ") + std::string(what) +
-                                        " required",
-                                    ev.primitive_error_counter_ptr());
+        return ev.make_refusal_error(std::string("capability denied: ") + std::string(what) +
+                                     " required");
     };
 
     ev.primitives().add_hidden(

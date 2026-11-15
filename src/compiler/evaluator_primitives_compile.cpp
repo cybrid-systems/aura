@@ -2248,9 +2248,7 @@ void CompilePrims::register_compile_p22(PrimRegistrar add, Evaluator& ev) {
                 m->capability_compile_denials.fetch_add(1, std::memory_order_relaxed);
                 m->cap_denial_total.fetch_add(1, std::memory_order_relaxed);
             }
-            return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                        "capability denied: kCapWildcard required",
-                                        ev.primitive_error_counter_ptr());
+            return ev.make_refusal_error("capability denied: kCapWildcard required");
         }
         if (a.empty())
             return make_bool(false);
@@ -2526,9 +2524,7 @@ void CompilePrims::register_compile_p26(PrimRegistrar add, Evaluator& ev) {
                 m->capability_compile_denials.fetch_add(1, std::memory_order_relaxed);
                 m->cap_denial_total.fetch_add(1, std::memory_order_relaxed);
             }
-            return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                        "capability denied: compile-dirty required",
-                                        ev.primitive_error_counter_ptr());
+            return ev.make_refusal_error("capability denied: compile-dirty required");
         }
         if (a.size() < 3 || !is_string(a[0]) || !is_int(a[1]) || !is_int(a[2])) {
             return make_bool(false);
@@ -2571,9 +2567,7 @@ void CompilePrims::register_compile_p26(PrimRegistrar add, Evaluator& ev) {
                 m->capability_compile_denials.fetch_add(1, std::memory_order_relaxed);
                 m->cap_denial_total.fetch_add(1, std::memory_order_relaxed);
             }
-            return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                        "capability denied: compile-dirty required",
-                                        ev.primitive_error_counter_ptr());
+            return ev.make_refusal_error("capability denied: compile-dirty required");
         }
         if (a.size() < 3 || !is_string(a[0]) || !is_int(a[1]) || !is_int(a[2])) {
             return make_bool(false);
@@ -2642,9 +2636,7 @@ void RegSplitParts::register_compile_instruction_dirty_primitives(PrimRegistrar 
                 m->capability_compile_denials.fetch_add(1, std::memory_order_relaxed);
                 m->cap_denial_total.fetch_add(1, std::memory_order_relaxed);
             }
-            return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                        "capability denied: kCapWildcard required",
-                                        ev.primitive_error_counter_ptr());
+            return ev.make_refusal_error("capability denied: kCapWildcard required");
         }
         if (a.size() < 4 || !is_string(a[0]) || !is_int(a[1]) || !is_int(a[2]) || !is_int(a[3]))
             return make_bool(false);
@@ -2677,9 +2669,7 @@ void RegSplitParts::register_compile_instruction_dirty_primitives(PrimRegistrar 
                 m->capability_compile_denials.fetch_add(1, std::memory_order_relaxed);
                 m->cap_denial_total.fetch_add(1, std::memory_order_relaxed);
             }
-            return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                        "capability denied: kCapWildcard required",
-                                        ev.primitive_error_counter_ptr());
+            return ev.make_refusal_error("capability denied: kCapWildcard required");
         }
         if (a.size() < 4 || !is_string(a[0]) || !is_int(a[1]) || !is_int(a[2]) || !is_int(a[3]))
             return make_bool(false);
@@ -3359,9 +3349,7 @@ void CompilePrims::register_compile_p32(PrimRegistrar add, Evaluator& ev) {
                 m->capability_compile_denials.fetch_add(1, std::memory_order_relaxed);
                 m->cap_denial_total.fetch_add(1, std::memory_order_relaxed);
             }
-            return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                        "capability denied: kCapWildcard required",
-                                        ev.primitive_error_counter_ptr());
+            return ev.make_refusal_error("capability denied: kCapWildcard required");
         }
         auto* ws = CompilePrims::pick_macro_flat(ev);
         if (!ws)
@@ -3686,9 +3674,7 @@ void CompilePrims::register_compile_p37(PrimRegistrar add, Evaluator& ev) {
             ev.bump_capability_denial();
             if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
                 m->capability_compile_denials.fetch_add(1, std::memory_order_relaxed);
-            return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                        "capability denied: compile-deopt required",
-                                        ev.primitive_error_counter_ptr());
+            return ev.make_refusal_error("capability denied: compile-deopt required");
         }
         if (a.empty())
             return make_bool(false);

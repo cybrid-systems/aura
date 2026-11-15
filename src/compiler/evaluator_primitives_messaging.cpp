@@ -1953,9 +1953,7 @@ void RegSplitParts::register_messaging_fiber_spawn_primitive(PrimRegistrar add, 
         if (ev.sandbox_mode() && !ev.has_capability(aura::compiler::security::kCapFiber) &&
             !ev.has_capability(aura::compiler::security::kCapWildcard)) {
             ev.bump_capability_denial();
-            return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                        "capability denied: fiber required",
-                                        ev.primitive_error_counter_ptr());
+            return ev.make_refusal_error("capability denied: fiber required");
         }
         auto cid = as_closure_id(a[0]);
         auto result_ptr = std::make_shared<std::optional<EvalValue>>();
@@ -2241,9 +2239,7 @@ void RegSplitParts::register_messaging_fiber_lifecycle_primitives(PrimRegistrar 
         if (ev.sandbox_mode() && !ev.has_capability(aura::compiler::security::kCapFiber) &&
             !ev.has_capability(aura::compiler::security::kCapWildcard)) {
             ev.bump_capability_denial();
-            return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                        "capability denied: fiber required",
-                                        ev.primitive_error_counter_ptr());
+            return ev.make_refusal_error("capability denied: fiber required");
         }
         const auto fid = static_cast<int64_t>(as_int(a[0]));
         if (fid == 0)

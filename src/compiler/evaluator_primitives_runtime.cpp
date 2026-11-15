@@ -83,6 +83,9 @@ namespace {
     // Issue #4497: errors consumed by display/write outside try. The file
     // runner (main.cpp) reads this to exit 1.
     std::atomic<std::uint64_t> g_displayed_errors{0};
+    // Issue #5241: kind of the last displayed error (255 = none), so the
+    // run's exit code uses the structured kind instead of a fixed 1.
+    std::atomic<std::uint8_t> g_displayed_error_kind{255};
 
     // Returns false when the cause string is another principal's slot.
     // IsolationDeny is already recorded; the caller must not print the
@@ -112,6 +115,8 @@ namespace {
         // located diagnostic face (type error: car: not a pair, not the
         // bare cause), read from the structured kind of the error value.
         const aura::diag::Diagnostic d{ev.error_value_kind(v), std::move(msg)};
+        g_displayed_error_kind.store(static_cast<std::uint8_t>(d.display_kind()),
+                                     std::memory_order_relaxed);
         std::fflush(stdout);
         std::print(stderr, "error: {}{}\n", where, d.format_head());
         std::fflush(stderr);
@@ -1478,4 +1483,9 @@ void RegSplitParts::install_jit_error_hooks(Evaluator& ev) {
 
 extern "C" std::uint64_t aura_displayed_error_count() noexcept {
     return aura::compiler::primitives_detail::g_displayed_errors.load(std::memory_order_relaxed);
+}
+
+extern "C" std::uint8_t aura_displayed_error_kind() noexcept {
+    return aura::compiler::primitives_detail::g_displayed_error_kind.load(
+        std::memory_order_relaxed);
 }

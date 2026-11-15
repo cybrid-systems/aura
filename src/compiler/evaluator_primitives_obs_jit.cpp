@@ -243,9 +243,7 @@ void ObservabilityPrims::register_jit_p1(PrimRegistrar add, Evaluator& ev) {
                 m->capability_exception_control_denials.fetch_add(1, std::memory_order_relaxed);
                 m->cap_denial_total.fetch_add(1, std::memory_order_relaxed);
             }
-            return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                        "capability denied: exception-control required",
-                                        ev.primitive_error_counter_ptr());
+            return ev.make_refusal_error("capability denied: exception-control required");
         }
         aura_exception_clear_all();
         return make_void();
