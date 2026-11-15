@@ -14,6 +14,8 @@
 ; the active name (the latest successful register! or swap!).
 ; (hot-strategy:heal!) rolls back that name. (hot-strategy:heal! name)
 ; rolls back one name and leaves every other rule where it is.
+; A heal that changes the running body bumps the version and stores that
+; body (#5298). A second heal of the same body leaves both alone.
 ;
 ; Form order (#2769): export before require — *hs-version* / *hs-name*
 ; free-vars. Host tolerates either order (#2766); export-first is canonical.
@@ -35,10 +37,12 @@
 
 ; ── Process-local strategy registry. One record per name (#5288). ──
 ; *hs-name* is the active name. *hs-rules* maps a name to
-; (body snap rollback-body). body is the last successful register/swap.
-; snap is that name's checkpoint. rollback-body is what heal rebinds
-; when other names are also registered, so a workspace restore cannot
-; rewind them.
+; (body snap rollback-body). body is the last successful register/swap,
+; or after heal! the expression now running (#5298). snap is that name's
+; checkpoint. rollback-body is the expression that was running before the
+; latest swap. Heal rebinds it when other names are registered, so a
+; workspace restore cannot rewind them. After a successful heal it matches
+; body.
 (define *hs-version* 0)
 (define *hs-name* "")
 (define *hs-rules* (hash))
@@ -58,6 +62,56 @@
 
 (define (hs-rule-count) (length (hash-keys *hs-rules*)))
 
+; Workspace unparse is `(define <name> <expr>)`, or a begin of those.
+; <expr> is the body actually running. A register! string may never have
+; been installed, so heal must not record that string in its place.
+(define (hs-define-body form name)
+  (if (not (pair? form))
+    ""
+    (let ((h (car form)))
+      (if (and (symbol? h) (string=? (symbol->string h) "begin"))
+        (let ((rest (cdr form))
+              (found ""))
+          (while (lambda () (and (pair? rest) (string=? found "")))
+            (lambda ()
+              (set! found (hs-define-body (car rest) name))
+              (set! rest (cdr rest))))
+          found)
+        (if (and (symbol? h)
+                 (string=? (symbol->string h) "define")
+                 (pair? (cdr form))
+                 (symbol? (car (cdr form)))
+                 (string=? (symbol->string (car (cdr form))) name)
+                 (pair? (cdr (cdr form))))
+          (let ((printed (try (datum->string (car (cdr (cdr form))))
+                              (catch (e) ""))))
+            (if (string? printed) printed ""))
+          "")))))
+
+(define (hs-live-body name)
+  (let ((src (try (current-source :workspace) (catch (e) ""))))
+    (if (not (string? src))
+      ""
+      (let ((form (try (read-from-string src) (catch (e) #f))))
+        (if form (hs-define-body form name) "")))))
+
+(define (hs-prior-body name)
+  (let ((live (hs-live-body name)))
+    (if (string=? live "") (hs-body name) live)))
+
+; A second heal of the same body returns #t and does not bump.
+(define (hs-note-healed! name body)
+  (if (or (not (string? body)) (string=? body ""))
+    #t
+    (let ((prev (hs-body name))
+          (snap (hs-snap name)))
+      (if (string=? body prev)
+        #t
+        (begin
+          (set! *hs-version* (+ *hs-version* 1))
+          (hash-set! *hs-rules* name (list body snap body))
+          #t)))))
+
 (define (hot-strategy:version) *hs-version*)
 (define (hot-strategy:last-good-body . rest) (hs-body (hs-pick-name rest)))
 (define (hot-strategy:last-good-snap . rest) (hs-snap (hs-pick-name rest)))
@@ -67,7 +121,7 @@
 (define (hot-strategy:aot?) #f)
 
 (define (hot-strategy:help)
-  "Pure-Aura hot strategy: register! / swap! / heal! / snapshot!. Each name keeps its own last-good; (heal! name) rolls back that name only. For AOT .so reload use std/hot-update.")
+  "Pure-Aura hot strategy: register! / swap! / heal! / snapshot!. Each name keeps its own last-good; a heal that changes the running body records it and bumps version. (heal! name) rolls back that name only. For AOT .so reload use std/hot-update.")
 
 ; (hot-strategy:snapshot! tag) → snapshot-id (int)
 (define (hot-strategy:snapshot! tag)
@@ -89,8 +143,10 @@
   ; Issue #4275: mutate:rebind returns #f on reject (no throw). eval-current
   ; errors must fail the swap - do not catch them as success. Only promote
   ; last-good / version when rebind is true AND eval-current does not raise.
+  ; prior is read before the rebind: it is the expression heal puts back.
   (let ((pre (hot-strategy:snapshot! (string-append "hs-pre-" name)))
-        (sum (if (string? summary) summary "hot-strategy:swap")))
+        (sum (if (string? summary) summary "hot-strategy:swap"))
+        (prior (hs-prior-body name)))
     (let ((ok (try
                 (let ((rebound (mutate :rebind name body sum)))
                   ; Only exact #t is success — reject may be #f or an error
@@ -103,9 +159,7 @@
           (begin
             (set! *hs-name* name)
             (set! *hs-version* (+ *hs-version* 1))
-            (let ((prev (hs-body name)))
-              (hash-set! *hs-rules* name
-                         (list body pre (if (string=? prev "") "" prev))))
+            (hash-set! *hs-rules* name (list body pre prior))
             (list #t *hs-version* pre))
           (list #f *hs-version* pre)))))
 
@@ -120,11 +174,13 @@
     (try
       (let ((rebound (mutate :rebind name rollback "hot-strategy:heal")))
         (if (equal? rebound #t)
-          (begin (try (eval-current) (catch (e) #t)) #t)
+          (begin
+            (try (eval-current) (catch (e) #t))
+            (hs-note-healed! name rollback))
           #f))
       (catch (e) #f))))
 
-(define (hs-heal-snapshot name body snap)
+(define (hs-heal-snapshot name rollback snap)
   (let ((restored
          (if (>= snap 0)
            (try (mutate :restore snap) (catch (e) #f))
@@ -132,14 +188,16 @@
     (if restored
       (begin
         (try (eval-current) (catch (e) #f))
-        #t)
-      (hs-heal-rebind name body))))
+        (hs-note-healed! name rollback))
+      ; The checkpoint missed. Rebind the pre-swap expression, not the
+      ; withdrawn body that swap! stored as last-good.
+      (hs-heal-rebind name rollback))))
 
 (define (hs-heal-one name)
   (if (or (not (string? name)) (string=? name ""))
     #f
     (if (<= (hs-rule-count) 1)
-      (hs-heal-snapshot name (hs-body name) (hs-snap name))
+      (hs-heal-snapshot name (hs-rollback name) (hs-snap name))
       (hs-heal-rebind name (hs-rollback name)))))
 
 (define (hot-strategy:heal! . rest)
