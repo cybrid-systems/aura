@@ -429,8 +429,15 @@ export inline std::string closest_match_pure(std::string_view name,
     std::string best;
     std::size_t best_dist = max_dist + 1;
     for (auto& c : candidates) {
+        // Issue #5235: a fixed distance of 3 suggested tau for baz and e for
+        // r. Require a short name, a short name-shaped candidate, and a
+        // distance proportional to the longer spelling.
+        if (name.size() < 3 || c.size() < 3)
+            continue;
+        const std::size_t longest = std::max(name.size(), c.size());
+        const std::size_t allowed = longest <= 4 ? 1 : longest / 3;
         auto d = edit_distance_pure(name, c);
-        if (d < best_dist) {
+        if (d <= allowed && d < best_dist) {
             best_dist = d;
             best = c;
         }

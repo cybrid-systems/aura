@@ -12,6 +12,7 @@ PROCESS_THEME = "diag-ir"
 PROCESS_TIER = "fast"
 PROCESS_TIMEOUT = 180
 PARTS = (
+    "diag_5235",
     "diag_define_value_error",
     "diag_first_error",
     "diag_ir_body_loc",
@@ -115,6 +116,36 @@ CASES = (
         4909,
         "test_each_line_once",
         "diag_walker_depth.WalkerDepth.test_each_line_once",
+    ),
+    (
+        5235,
+        "test_if_requires_branches",
+        "diag_5235.Diag5235.test_if_requires_branches",
+    ),
+    (
+        5235,
+        "test_define_missing_name_has_location",
+        "diag_5235.Diag5235.test_define_missing_name_has_location",
+    ),
+    (
+        5235,
+        "test_short_name_gets_no_noise_suggestion",
+        "diag_5235.Diag5235.test_short_name_gets_no_noise_suggestion",
+    ),
+    (
+        5235,
+        "test_memq_keeps_its_useful_hint",
+        "diag_5235.Diag5235.test_memq_keeps_its_useful_hint",
+    ),
+    (
+        5235,
+        "test_jit_reads_file_argument",
+        "diag_5235.Diag5235.test_jit_reads_file_argument",
+    ),
+    (
+        5235,
+        "test_ir_error_exits_nonzero_without_pipeline_trace",
+        "diag_5235.Diag5235.test_ir_error_exits_nonzero_without_pipeline_trace",
     ),
 )
 

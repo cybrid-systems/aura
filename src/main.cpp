@@ -4552,7 +4552,9 @@ static int run_cli_ir(int argc, char** argv) {
     }
     if (!is_void(*result))
         std::println("{}", fmt_val(*result, cs));
-    return 0;
+    // Issue #5235: an error consumed by display fails the IR run, matching
+    // the file and --jit faces.
+    return aura_displayed_error_count() > 0 ? 1 : 0;
 }
 
 static int run_cli_inspect_state(int argc, char** argv) {
@@ -5161,7 +5163,12 @@ static int run_cli_jit(int argc, char** argv) {
     aura::compiler::CompilerService cs;
     std::string input;
     if (argc > 2) {
-        input = argv[2];
+        // Issue #5235: a positional that names a file is read as a file,
+        // the same rule --typecheck and --ir already follow.
+        const CliToolProgram5171 prog = cli_tool_program_5171(argv[2]);
+        if (prog.missing)
+            return cli_tool_missing_5171(prog);
+        input = prog.text;
     } else {
         std::getline(std::cin, input);
     }

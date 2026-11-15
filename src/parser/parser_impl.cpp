@@ -807,7 +807,22 @@ bool consume_malformed_token(ParserState& s) {
 NodeId parse_if(ParserState& s) {
     auto tok = s.lex.consume(); // 'if'
     auto c = parse_expr(s);
+    // Issue #5235: (if) and (if cond) used to evaluate to 0. Require a
+    // condition and a then branch; the else branch stays optional.
+    if (c == aura::ast::NULL_NODE || s.lex.peek().kind == TokenKind::RParen) {
+        s.defer("(if cond then [else]) requires a condition and a then branch");
+        if (s.lex.peek().kind == TokenKind::RParen)
+            s.lex.consume();
+        return aura::ast::NULL_NODE;
+    }
     auto t = parse_expr(s);
+    // The else branch is optional, so a ')' here is the legal two-arm form.
+    if (t == aura::ast::NULL_NODE) {
+        s.defer("(if cond then [else]) requires a condition and a then branch");
+        if (s.lex.peek().kind == TokenKind::RParen)
+            s.lex.consume();
+        return aura::ast::NULL_NODE;
+    }
     auto e = parse_expr(s);
     // Issue #5051: a malformed operand leaves the reader on the malformed
     // token. Fail the form here instead of walking into the extra-argument
@@ -1089,6 +1104,9 @@ NodeId parse_define(ParserState& s) {
     }
     // Normal: (define name value)
     if (n.kind != TokenKind::Identifier) {
+        // Issue #5235: (define) used to fall through to the reader's
+        // location-less "expected expression" error.
+        s.defer("(define name value) or (define (name params...) body...) requires a name");
         skip_rparen(s);
         return NULL_NODE;
     }
