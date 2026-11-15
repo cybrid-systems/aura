@@ -7,6 +7,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -41,6 +42,12 @@ def serve_async(lines: list[str]) -> tuple[subprocess.CompletedProcess[str], lis
     )
     replies = [json.loads(ln) for ln in p.stdout.splitlines() if ln.strip()]
     return p, replies
+
+
+def run_file(args: list[str], cwd: str | None = None) -> subprocess.CompletedProcess[str]:
+    env = dict(os.environ)
+    env["AURA_SANDBOX"] = "off"
+    return subprocess.run([str(AURA_BIN), *args], cwd=cwd, capture_output=True, text=True, env=env, timeout=120)
 
 
 class Diag5234(unittest.TestCase):
@@ -82,6 +89,36 @@ class Diag5234(unittest.TestCase):
         self.assertEqual(replies[0]["status"], "error")
         self.assertNotIn("unbound variable", replies[0]["msg"])
         self.assertIn("hash-ref: key", p.stderr)
+
+    def test_serve_matrix_matches_file_failure(self) -> None:
+        cases = [
+            "(display (car 5))",
+            '(error "x")',
+            "(/ 1 0)",
+            "(car 1)",
+            "(cdr 1)",
+            "(vector-ref (vector 1 2) 5)",
+            '(hash-ref (make-hash) "k")',
+            '(string-ref "a" 5)',
+            '(+ 1 "x")',
+            "(undefined-xyz)",
+            "(raise 1)",
+            '(error "a\tb")',
+        ]
+        with tempfile.TemporaryDirectory() as d:
+            for src in cases:
+                path = Path(d) / "p.aura"
+                path.write_text(src + "\n")
+                f = run_file([str(path)], cwd=d)
+                self.assertNotEqual(f.returncode, 0, src)
+                s, replies = serve([src])
+                self.assertTrue(replies, src + " :: " + s.stderr)
+                self.assertEqual(replies[-1]["status"], "error", src + " :: " + s.stdout)
+        # One async session handles the whole matrix (one ~3s EOF shutdown,
+        # not one process per case).
+        a, areplies = serve_async(cases)
+        self.assertEqual(len(areplies), len(cases), a.stdout + a.stderr)
+        self.assertEqual([r["status"] for r in areplies], ["error"] * len(cases), a.stdout)
 
     def test_repl_records_uncaught_error_value_as_error(self) -> None:
         env = dict(os.environ)
