@@ -17,16 +17,6 @@
     },
     {
       "ac": "AC1",
-      "path": "src/core/sandbox.ixx",
-      "contains": [
-        "#include \"core/sandbox.hh\"",
-        "using ::aura::core::sandbox::set_mode",
-        "using ::aura::core::sandbox::g_sandbox_mode_atomic",
-        "Do NOT reintroduce a second set_mode"
-      ]
-    },
-    {
-      "ac": "AC1",
       "path": "src/compiler/evaluator_security.cpp",
       "contains": [
         "aura::core::sandbox::set_mode",
