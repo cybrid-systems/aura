@@ -2351,7 +2351,9 @@ int main() {
 
         // ── 1b. Issue #4909: a refused heap-mutate admit is labelled and hinted ──
         {
-            const auto d = Diagnostic(ErrorKind::TypeError,
+            // #5241: the producer now carries MutationRefused; the display
+            // path no longer recovers the label from the message text.
+            const auto d = Diagnostic(ErrorKind::MutationRefused,
                                       "naked mutate: set-car! requires MutationBoundaryGuard "
                                       "(AdmissionRejected: densify-throttle)");
             const auto f = d.format();
@@ -2364,7 +2366,7 @@ int main() {
                 std::println(std::cerr, "TS FAIL: #4909 naked mutate label/hint, got: {}", f);
                 ++ts_failed;
             }
-            const auto g = Diagnostic(ErrorKind::TypeError,
+            const auto g = Diagnostic(ErrorKind::MutationRefused,
                                       "naked mutate: vector-set! requires MutationBoundaryGuard "
                                       "(AdmissionRejected: concurrency-health:hold-slo)")
                                .format();
