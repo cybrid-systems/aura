@@ -1206,7 +1206,7 @@ MessagingChannelCodec RegSplitParts::messaging_channel_codec(Evaluator& ev) {
                     codec_inflight_roots::CreationGuard guard;
                     const EvalValue text_value = make_string(
                         static_cast<std::uint64_t>(ev.string_heap_.mint(std::move(text))));
-                    codec_inflight_roots::push(frame.frame_id, text_value.val);
+                    codec_inflight_roots::push(frame.id(), text_value.val);
                     return text_value;
                 }
                 case 'L': {
@@ -1219,7 +1219,7 @@ MessagingChannelCodec RegSplitParts::messaging_channel_codec(Evaluator& ev) {
                     for (auto it = elems.rbegin(); it != elems.rend(); ++it) {
                         codec_inflight_roots::CreationGuard guard;
                         acc = cons(*it, acc);
-                        codec_inflight_roots::push(frame.frame_id, acc.val);
+                        codec_inflight_roots::push(frame.id(), acc.val);
                     }
                     return acc;
                 }
@@ -1232,21 +1232,21 @@ MessagingChannelCodec RegSplitParts::messaging_channel_codec(Evaluator& ev) {
                     for (auto it = elems.rbegin(); it != elems.rend(); ++it) {
                         codec_inflight_roots::CreationGuard guard;
                         acc = cons(*it, acc);
-                        codec_inflight_roots::push(frame.frame_id, acc.val);
+                        codec_inflight_roots::push(frame.id(), acc.val);
                     }
                     if (!l2v)
                         return acc;
                     codec_inflight_roots::CreationGuard guard;
                     const EvalValue vec = (*l2v)({acc});
-                    codec_inflight_roots::push(frame.frame_id, vec.val);
+                    codec_inflight_roots::push(frame.id(), vec.val);
                     return vec;
                 }
                 case 'H': {
                     const auto n = static_cast<std::size_t>(get_u64());
                     codec_inflight_roots::CreationGuard guard;
                     EvalValue h = mkhash ? (*mkhash)({}) : make_void();
-                    codec_inflight_roots::push(frame.frame_id, h.val);
-                    codec_inflight_roots::push_hash_slot(frame.frame_id, as_hash_idx(h));
+                    codec_inflight_roots::push(frame.id(), h.val);
+                    codec_inflight_roots::push_hash_slot(frame.id(), as_hash_idx(h));
                     for (std::size_t i = 0; i < n && pos < in.size(); ++i) {
                         EvalValue k = self(self);
                         EvalValue v = self(self);
@@ -1264,7 +1264,7 @@ MessagingChannelCodec RegSplitParts::messaging_channel_codec(Evaluator& ev) {
             // so every value the decode built (inner hashes included) stays
             // rooted past the return; the frame covers the decode itself.
             const EvalValue result = dec(dec);
-            codec_inflight_roots::publish_frame(frame.frame_id);
+            codec_inflight_roots::publish_frame(frame.id());
             return result;
         }
     };
