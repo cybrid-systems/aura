@@ -4,13 +4,20 @@
   "checks": [
     {
       "ac": "AC1-chunk-split-helper",
-      "path": "src/serve/serve_async.h",
+      "path": "src/compiler/form_split.hh",
       "contains": [
         "split_top_level_forms",
-        "eval_top_level_forms",
         "struct FormSplit",
         "unclosed '(' (missing ')')",
         "unexpected ')'"
+      ]
+    },
+    {
+      "ac": "AC1-serve-uses-shared-splitter",
+      "path": "src/serve/serve_async.h",
+      "contains": [
+        "eval_top_level_forms",
+        "split_top_level_forms"
       ]
     },
     {
