@@ -404,7 +404,8 @@ public:
         last_src_name_ = *name;
         decisions_.push_back({*name, after, decision});
         if (pipe_mode_) {
-            std::string rec = "(hash \"status\" \"ok\" \"value\" \"\" \"type\" \"void\" \"wrote\" () \"focus\" ";
+            std::string rec =
+                "(hash \"status\" \"ok\" \"value\" \"\" \"type\" \"void\" \"wrote\" () \"focus\" ";
             rec += quote_name_(*name);
             rec += " \"decision\" \"";
             rec += decision;
@@ -434,14 +435,16 @@ public:
         } catch (...) {
         }
         auto it = worldline_.find(*name);
-        if (step < 0 || it == worldline_.end() || static_cast<std::size_t>(step) >= it->second.size()) {
+        if (step < 0 || it == worldline_.end() ||
+            static_cast<std::size_t>(step) >= it->second.size()) {
             std::fprintf(stdout, "no-step\n");
             std::fflush(stdout);
             return;
         }
         const std::string& src = it->second[static_cast<std::size_t>(step)];
         if (pipe_mode_) {
-            std::string rec = "(hash \"status\" \"ok\" \"value\" \"\" \"type\" \"void\" \"wrote\" () \"focus\" ";
+            std::string rec =
+                "(hash \"status\" \"ok\" \"value\" \"\" \"type\" \"void\" \"wrote\" () \"focus\" ";
             rec += quote_name_(*name);
             rec += " \"source\" \"";
             rec += repl_record_escape(src);
@@ -573,21 +576,21 @@ public:
         std::string shown;
         bool ok = false;
         {
-        SigGuard guard(fuel_);
-        if (in_workspace_(name))
-            err = eval_quiet_("(mutate :rebind " + quote_(name) + " " + quote_(def->second.value) +
-                                  " \"repl :propose\")",
-                              &shown);
-        if (err.empty())
-            err = eval_quiet_(def->second.src);
-        ok = err.empty();
-        if (ok && !gate_.empty()) {
-            std::string gv;
-            auto gerr = eval_quiet_(gate_, &gv);
-            ok = gerr.empty() && gv != "#f";
-            if (!ok && !gerr.empty())
-                err = gerr;
-        }
+            SigGuard guard(fuel_);
+            if (in_workspace_(name))
+                err = eval_quiet_("(mutate :rebind " + quote_(name) + " " +
+                                      quote_(def->second.value) + " \"repl :propose\")",
+                                  &shown);
+            if (err.empty())
+                err = eval_quiet_(def->second.src);
+            ok = err.empty();
+            if (ok && !gate_.empty()) {
+                std::string gv;
+                auto gerr = eval_quiet_(gate_, &gv);
+                ok = gerr.empty() && gv != "#f";
+                if (!ok && !gerr.empty())
+                    err = gerr;
+            }
         }
         std::signal(SIGINT, prev_int);
         if (!ok) {
@@ -606,7 +609,8 @@ public:
         focus_steps_[name] += 1;
         decisions_.push_back({name, after, ok ? "KEEP" : "ROLLBACK"});
         if (pipe_mode_) {
-            std::string rec = "(hash \"status\" \"ok\" \"value\" \"\" \"type\" \"void\" \"wrote\" (";
+            std::string rec =
+                "(hash \"status\" \"ok\" \"value\" \"\" \"type\" \"void\" \"wrote\" (";
             rec += quote_name_(name);
             rec += ") \"focus\" ";
             rec += quote_name_(name);
@@ -671,8 +675,8 @@ public:
         if (in_workspace_(name)) {
             std::string shown;
             const auto err = eval_quiet_("(mutate :rebind " + quote_(name) + " " +
-                                            quote_(def->second.value) + " \"repl :undo\")",
-                                        &shown);
+                                             quote_(def->second.value) + " \"repl :undo\")",
+                                         &shown);
             if (!err.empty())
                 return err;
             if (shown == "#t" || shown.find("effect-denied") == std::string::npos)
@@ -710,10 +714,9 @@ public:
         };
         if (word.starts_with(":")) {
             static constexpr std::string_view kCommands[] = {
-                ":load",  ":reload", ":ws",      ":worldline", ":history", ":snapshot",
-                ":restore", ":help",  ":type",   ":doc",       ":src",     ":propose",
-                ":gate",  ":fuel",    ":context", ":ask",      ":focus",   ":undo",
-                ":redo",  ":at"};
+                ":load",    ":reload", ":ws",    ":worldline", ":history", ":snapshot", ":restore",
+                ":help",    ":type",   ":doc",   ":src",       ":propose", ":gate",     ":fuel",
+                ":context", ":ask",    ":focus", ":undo",      ":redo",    ":at"};
             for (const auto cmd : kCommands)
                 emit(std::string(cmd), word);
             return out;
@@ -924,14 +927,14 @@ public:
         std::string t = tr.output.substr(tag.size(), end - tag.size());
         // A lone unresolved type variable (__tNNN) is not a type the user can
         // use; inside a compound type it is an ordinary polymorphic variable.
-        const bool bare_var = t.starts_with("__t") && t.find_first_of(" ()[]->") == std::string::npos;
+        const bool bare_var =
+            t.starts_with("__t") && t.find_first_of(" ()[]->") == std::string::npos;
         if (t.empty() || bare_var)
             return "unknown";
         return t;
     }
 
-    template <class R>
-    void print_record_(const std::string& code, const R& r) {
+    template <class R> void print_record_(const std::string& code, const R& r) {
         std::string wrote = "(";
         for (const auto& n : repl_defined_names(code)) {
             if (wrote.size() > 1)
@@ -957,28 +960,34 @@ public:
             }
         } else {
             const auto& v = *r;
+            // #5234: an uncaught error value is a failure, not a value. The
+            // record used to say status ok value "car: not a pair" and the
+            // editor overlay printed it as a result.
+            const bool err_value =
+                aura::compiler::types::is_error(v) && !aura::compiler::types::is_string(v);
             // A top-level define answers the driver with void: the per-form
             // face hands back the bound cell value, which is not the form's.
-            const bool statement = !repl_defined_names(code).empty() &&
-                                   !(aura::compiler::types::is_error(v) &&
-                                     !aura::compiler::types::is_string(v));
-            std::string val;
-            if (statement || aura::compiler::types::is_void(v))
-                val.clear();
-            else if (aura::compiler::types::is_error(v) &&
-                     !aura::compiler::types::is_string(v))
-                val = cs_.evaluator().soft_error_message(v);
-            else
-                val = aura::compiler::format_value(
-                    v, cs_.evaluator().primitives().string_heap(), cs_.evaluator().pairs(), 0,
-                    &cs_.evaluator().primitives(), cs_.evaluator().keyword_table());
-            const std::string ty =
-                (statement || aura::compiler::types::is_void(v)) ? "void" : type_of_(code);
-            rec = "(hash \"status\" \"ok\" \"value\" \"";
-            rec += repl_record_escape(val);
-            rec += "\" \"type\" \"";
-            rec += repl_record_escape(ty);
-            rec += '"';
+            const bool statement = !repl_defined_names(code).empty() && !err_value;
+            if (err_value) {
+                rec = "(hash \"status\" \"error\" \"message\" \"";
+                rec += repl_record_escape(cs_.evaluator().soft_error_message(v));
+                rec += '"';
+            } else {
+                std::string val;
+                if (statement || aura::compiler::types::is_void(v))
+                    val.clear();
+                else
+                    val = aura::compiler::format_value(
+                        v, cs_.evaluator().primitives().string_heap(), cs_.evaluator().pairs(), 0,
+                        &cs_.evaluator().primitives(), cs_.evaluator().keyword_table());
+                const std::string ty =
+                    (statement || aura::compiler::types::is_void(v)) ? "void" : type_of_(code);
+                rec = "(hash \"status\" \"ok\" \"value\" \"";
+                rec += repl_record_escape(val);
+                rec += "\" \"type\" \"";
+                rec += repl_record_escape(ty);
+                rec += '"';
+            }
         }
         rec += " \"wrote\" ";
         rec += wrote;
@@ -1020,8 +1029,7 @@ public:
             // printed a bare `<error>` and swallowed its cause. The file
             // faces already read the cause through soft_error_message.
             std::string val;
-            if (aura::compiler::types::is_error(*r) &&
-                !aura::compiler::types::is_string(*r))
+            if (aura::compiler::types::is_error(*r) && !aura::compiler::types::is_string(*r))
                 val = cs_.evaluator().soft_error_message(*r);
             else
                 val = aura::compiler::format_value(
@@ -1031,8 +1039,7 @@ public:
             // in the OCaml shape: "- : Int = 3".
             const auto names = repl_defined_names(line);
             if (!names.empty() &&
-                !(aura::compiler::types::is_error(*r) &&
-                  !aura::compiler::types::is_string(*r))) {
+                !(aura::compiler::types::is_error(*r) && !aura::compiler::types::is_string(*r))) {
                 // A define answers with its name, not the bound cell value.
                 const std::string ty = type_of_(names.front());
                 if (ty == "unknown")
@@ -1783,7 +1790,8 @@ private:
                 const auto slot = prims.slot_for_name(arg);
                 if (slot < prims.slot_count()) {
                     const auto arity = prims.meta_for_slot(slot).arity;
-                    std::printf("- : %s/%s\n", arg.c_str(), arity == 255 ? "*" : std::to_string(arity).c_str());
+                    std::printf("- : %s/%s\n", arg.c_str(),
+                                arity == 255 ? "*" : std::to_string(arity).c_str());
                 } else {
                     std::fprintf(stdout, "- : %s\n", type_of_(arg).c_str());
                 }
@@ -1830,24 +1838,24 @@ private:
     aura::compiler::CompilerService& cs_;
     CompletionCallback completion_;
     std::string history_path_;
-    bool pipe_mode_ = false; // Issue #5043: pipe answers with a record
-    std::string prompt_buf_; // Issue #5048: linenoise keeps the prompt pointer
-    std::optional<std::string> focus_;            // Issue #5048
+    bool pipe_mode_ = false;           // Issue #5043: pipe answers with a record
+    std::string prompt_buf_;           // Issue #5048: linenoise keeps the prompt pointer
+    std::optional<std::string> focus_; // Issue #5048
     // Issue #5047: per-name worldline; index 0 is the source when it entered
     // focus, each decision (KEEP, ROLLBACK, undo, redo) appends one step.
     std::map<std::string, std::vector<std::string>> worldline_;
     std::map<std::string, std::size_t> wl_pos_;
-    std::map<std::string, int> focus_steps_; // Issue #5048: steps shown in the prompt
-    std::string last_error_;                               // Issue #5045
+    std::map<std::string, int> focus_steps_;            // Issue #5048: steps shown in the prompt
+    std::string last_error_;                            // Issue #5045
     std::vector<std::array<std::string, 3>> decisions_; // {name, source, decision}
-    std::optional<std::string> last_src_name_;             // Issue #5045
-    std::string gate_;                            // Issue #5042
-    long fuel_ = 100000;                          // Issue #5042
-    std::unordered_map<std::string, std::string> hint_cache_; // Issue #5038
-    std::set<std::string> required_mods_; // Issue #5040
+    std::optional<std::string> last_src_name_;          // Issue #5045
+    std::string gate_;                                  // Issue #5042
+    long fuel_ = 100000;                                // Issue #5042
+    std::unordered_map<std::string, std::string> hint_cache_;                // Issue #5038
+    std::set<std::string> required_mods_;                                    // Issue #5040
     std::unordered_map<std::string, std::vector<std::string>> export_cache_; // Issue #5040
-    std::string exports_key_;                  // Issue #5040
-    std::vector<std::string> exports_cache_;   // Issue #5040
+    std::string exports_key_;                                                // Issue #5040
+    std::vector<std::string> exports_cache_;                                 // Issue #5040
     static inline Repl* g_repl_ = nullptr;
 };
 
