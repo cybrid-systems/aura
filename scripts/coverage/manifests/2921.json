@@ -41,10 +41,11 @@
     },
     {
       "ac": "AC5",
-      "path": "build.py",
-      "contains_any": [
-        "current-source-roundtrip-2921",
-        "current_source_roundtrip_2921"
+      "path": "scripts/coverage/run_checks.py",
+      "contains": [
+        "_run_manifests",
+        "runner.py",
+        "--all"
       ]
     },
     {

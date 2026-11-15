@@ -20,11 +20,11 @@
     },
     {
       "ac": "AC3",
-      "path": "build.py",
+      "path": "scripts/coverage/run_checks.py",
       "contains": [
-        "def cmd_side_effect_security():",
+        "check_side_effect_security.py",
         "--strict",
-        "or cmd_side_effect_security()"
+        "_run_manifests"
       ]
     },
     {

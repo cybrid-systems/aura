@@ -36,7 +36,6 @@ def main() -> int:
     agent = _read("src/compiler/evaluator_primitives_agent.cpp")
     fiber = _read("src/serve/fiber.h")
     test = _read("tests/orch/test_join_drain_reclaim.cpp")
-    build = _read("build.py")
 
     must("Issue #2924" in spawn, "AC1: agent_spawn cites #2924")
     must("wait_reclaimed_body" in spawn, "AC1: wait_reclaimed_body")
@@ -64,8 +63,12 @@ def main() -> int:
 
     must("2924" in test and "wait_reclaimed_body" in test, "AC6: test extended")
     must("#2924 AC1" in test, "AC6: AC1 in test")
+    # Issue #5246: wired through the shared coverage runner — run_checks.py
+    # globs scripts/coverage/checks/check_*.py, replacing the deleted build.py
+    # `or cmd_*_coverage()` wrapper.
     must(
-        "wait-reclaimed-2924" in build or "wait_reclaimed_2924" in build,
+        (ROOT / "scripts" / "coverage" / "checks" / "check_wait_reclaimed_2924.py").is_file()
+        and "discover_checks" in _read("scripts/coverage/run_checks.py"),
         "AC6: build.py",
     )
     must(not (ROOT / "tests/orch/test_issue_2924.cpp").is_file(), "AC6: no invent")

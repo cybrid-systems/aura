@@ -43,6 +43,61 @@ CHECKS_DIR = Path(__file__).resolve().parent / "checks"
 SCRIPTS_DIR = ROOT / "scripts"
 WRAPPER = Path(__file__).resolve().parent / "check_wrapper.py"
 
+# Per-check argv, so the parallel runner keeps the exact strictness the
+# pre-#5246 build.py `or cmd_*_coverage()` chain applied. Checks listed here
+# used to be invoked with these flags from build.py; the runner is now the
+# single owner of check invocation (Issue #5246).
+CHECK_ARGS: dict[str, tuple[str, ...]] = {
+    "check_cascade_rearm_reconsult_3611.py": ("--strict",),
+    "check_chaos_guard_hold_smoke_3620.py": ("--strict",),
+    "check_closure_calls_hotpath_3626.py": ("--strict",),
+    "check_closure_dispatch_entry_3635.py": ("--strict",),
+    "check_dual_graph_parity_cone_3615.py": ("--strict",),
+    "check_expand_checkpoint_local_rollback_3608.py": ("--strict",),
+    "check_facade_owner_scope_clock_skip_3605.py": ("--strict",),
+    "check_ffi_apply_densify_refuse_3602.py": ("--strict",),
+    "check_join_reclaim_retry_3595.py": ("--strict",),
+    "check_lockless_hygiene_se_3601.py": ("--strict",),
+    "check_macro_boundary_backstop_3637.py": ("--strict",),
+    "check_mailbox_holder_send_lock_order_3613.py": ("--strict",),
+    "check_moving_cover_reconciliation_3633.py": ("--strict",),
+    "check_moving_untracked_split_3600.py": ("--strict",),
+    "check_mutation_boundary_ssot_3384.py": ("--strict",),
+    "check_mutation_guard_coverage.py": (
+        "--quiet",
+        "--strict",
+    ),
+    "check_nested_qq_depth_3606.py": ("--strict",),
+    "check_occurrence_drain_order_4250.py": ("--strict",),
+    "check_occurrence_recover_regate_3623.py": ("--strict",),
+    "check_orch_mvp_scope.py": (
+        "--quiet",
+        "--strict",
+    ),
+    "check_outermost_persist_order_3614.py": ("--strict",),
+    "check_pack_pipeline_strict_3627.py": ("--strict",),
+    "check_panic_aba_gc_defer_drain_3604.py": ("--strict",),
+    "check_query_index_telemetry_3638.py": ("--strict",),
+    "check_query_stable_hard_reject_torn_latch_3386.py": ("--strict",),
+    "check_real_quiet_live_tc_3610.py": ("--strict",),
+    "check_reclaimed_batch_join_3631.py": ("--strict",),
+    "check_recover_solve_status_4170.py": ("--strict",),
+    "check_reexpand_tenant_principal_3609.py": ("--strict",),
+    "check_region_storm_attribution_3636.py": ("--strict",),
+    "check_remount_densify_pairing_strip_3612.py": ("--strict",),
+    "check_remount_reason_domain_3607.py": ("--strict",),
+    "check_render_fast_audit_3625.py": ("--strict",),
+    "check_side_effect_security.py": ("--strict",),
+    "check_source_to_ir_strict_coverage.py": ("--strict",),
+    "check_steal_identity_proof_3621.py": ("--strict",),
+    "check_steal_safety_lifetime_proof_latch_3385.py": ("--strict",),
+    "check_type_dynamic_production_3622.py": ("--strict",),
+    "check_type_export_face_3624.py": ("--strict",),
+    "check_undeclared_mt_autodetect_3630.py": ("--strict",),
+    "check_wal_window_miss_catalog_3603.py": ("--strict",),
+}
+
+
 # Touching these paths forces a full check run under --changed
 # (same policy as scripts/coverage/runner.py manifests).
 ALWAYS_ALL_PREFIXES = (
@@ -243,7 +298,7 @@ def run_one(script: Path, *, no_cascade: bool) -> tuple[str, int, float, str]:
     t0 = time.perf_counter()
     try:
         r = subprocess.run(
-            [sys.executable, str(WRAPPER), str(script)],
+            [sys.executable, str(WRAPPER), str(script), *CHECK_ARGS.get(script.name, ())],
             cwd=ROOT,
             env=env,
             capture_output=True,

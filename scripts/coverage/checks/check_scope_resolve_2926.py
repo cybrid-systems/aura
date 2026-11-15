@@ -36,7 +36,6 @@ def main() -> int:
     spawn_h = _read("src/orch/agent_spawn.h")
     agent = _read("src/compiler/evaluator_primitives_agent.cpp")
     test = _read("tests/orch/test_orch_scope.cpp")
-    build = _read("build.py")
 
     must("Issue #2926" in scope_h, "AC1: agent_scope cites #2926")
     must("find(std::string_view" in scope_h or "find(std::string_view name" in scope_h, "AC1: find API")
@@ -55,7 +54,14 @@ def main() -> int:
 
     must("2926" in test and "scope-resolve" in test, "AC6: test extended")
     must("#2926 AC1" in test or "2926 AC1" in test, "AC6: AC1 in test")
-    must("scope-resolve-2926" in build or "scope_resolve_2926" in build, "AC6: build.py")
+    # Issue #5246: wired through the shared coverage runner — run_checks.py
+    # globs scripts/coverage/checks/check_*.py, replacing the deleted build.py
+    # `or cmd_*_coverage()` wrapper.
+    must(
+        (ROOT / "scripts" / "coverage" / "checks" / "check_scope_resolve_2926.py").is_file()
+        and "discover_checks" in _read("scripts/coverage/run_checks.py"),
+        "AC6: build.py",
+    )
     must(not (ROOT / "tests/orch/test_issue_2926.cpp").is_file(), "AC6: no invent")
     docs = ROOT / "docs" / "design"
     if docs.is_dir():

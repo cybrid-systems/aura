@@ -76,9 +76,12 @@ def main() -> int:
     must("Type" in suite or "define-type" in suite, "AC5: suite covers types")
     must("lambda" in suite and "Linear" in suite, "AC5: lambda + Linear")
 
-    build = _read("build.py")
+    # Issue #5246: wired through the shared coverage runner — run_checks.py
+    # globs scripts/coverage/checks/check_*.py, replacing the deleted build.py
+    # `or cmd_*_coverage()` wrapper.
     must(
-        "current-source-unparse-2919" in build or "current_source_unparse_2919" in build,
+        (ROOT / "scripts" / "coverage" / "checks" / "check_current_source_unparse_2919.py").is_file()
+        and "discover_checks" in _read("scripts/coverage/run_checks.py"),
         "AC5: build.py gate",
     )
 

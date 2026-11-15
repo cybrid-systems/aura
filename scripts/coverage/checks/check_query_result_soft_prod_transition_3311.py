@@ -43,7 +43,6 @@ def main() -> int:
     epoch = _read("src/core/workspace_epoch.hh")
     qw = _read("src/compiler/evaluator_primitives_query_workspace.cpp")
     test = _read("tests/compiler/test_query_result_full_provenance.cpp")
-    build = _read("build.py")
 
     # AC1/AC3: distinct markers (clang-format tolerant on the `= N` split).
     must(
@@ -109,8 +108,12 @@ def main() -> int:
     )
 
     # Gate wiring.
+    # Issue #5246: wired through the shared coverage runner — run_checks.py
+    # globs scripts/coverage/checks/check_*.py, replacing the deleted build.py
+    # `or cmd_*_coverage()` wrapper.
     must(
-        "check_query_result_soft_prod_transition_3311" in build,
+        (ROOT / "scripts" / "coverage" / "checks" / "check_query_result_soft_prod_transition_3311.py").is_file()
+        and "discover_checks" in _read("scripts/coverage/run_checks.py"),
         "gate: build.py wires the linter",
     )
 

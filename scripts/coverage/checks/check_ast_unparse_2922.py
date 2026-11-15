@@ -81,8 +81,14 @@ def main() -> int:
     cmake = _read("CMakeLists.txt")
     must("test_ast_unparse" in cmake, "AC5: cmake")
 
-    build = _read("build.py")
-    must("ast-unparse-2922" in build or "ast_unparse_2922" in build, "AC5: build.py")
+    # Issue #5246: wired through the shared coverage runner — run_checks.py
+    # globs scripts/coverage/checks/check_*.py, replacing the deleted build.py
+    # `or cmd_*_coverage()` wrapper.
+    must(
+        (ROOT / "scripts" / "coverage" / "checks" / "check_ast_unparse_2922.py").is_file()
+        and "discover_checks" in _read("scripts/coverage/run_checks.py"),
+        "AC5: build.py",
+    )
 
     doc = _read("docs/stdlib/ast-unparse.md")
     must("2922" in doc and "unparse_to_string" in doc, "AC5: docs")
