@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.2.4
+
+Patch release on the 0.2 channel. It fixes a channel payload lifetime bug that could hand a fiber receiver an empty hash or a corrupt list, a GC reclaim-window regression that made hash allocation much slower after list-building fibers, and a set of stdlib, evo, and capability fixes. No new public surface. The API is still not stable.
+
+- Channels (#5294): a hash or list payload decoded by `channel:recv` is built in a C++ frame — `(hash)` mints the table, each string and cons mints a value — so between the mint and the attach the only reference is a local `EvalValue`. Both reclaims walked VM roots and could free the table the receiver was still filling: the caller read an **empty** hash, another table's contents, or a list whose `car` was not a pair. In-flight decode values and the hash slots their payload names are now registered process-wide; a mark's collect cannot run between a mint and its push; a slot minted after the mark read its root limit is skipped by the release; and the fiber body-exit and automatic TW/IR sweeps defer while a decode is in flight.
+- GC (#5292): a fiber that built a list stood the file-heap sweep down and reset the mint counter, so its exit mark saw a tiny live set and left the trigger at 128. The freed pair high-water stayed on the free list and every later main-thread allocation re-scanned it: one list fiber made hash allocation about 8x slower, eight about 55x. The dead slots the mark still walks now join the reclaim basis, so the window leaves the floor without raising the ceiling past the reachable set.
+- Capability (#5289): `--preset dev`'s soft session grant is retained across `evo:trial` and child rebinds. Each rebind advanced the mutation epoch and after three cycles the K=16 retain window dropped `io-read`, so `getenv` and `llm:chat` failed with "capability denied". A one-shot grant still expires, and an explicit revoke still drops the bits.
+- Stdlib: `prop:check-proposal` refuses a proposal body that `set!`s, evals, loads, or `mutate:rebind`s a protected name (#5291); evo RNG streams diffuse each coordinate before combining, so adjacent slots and generations no longer draw an arithmetic progression (#5290); `heal!` keeps a last-good body, snapshot, and rollback per registered strategy instead of sharing one (#5288); malformed `search:init` bounds are rejected with the dimension and value named (#5286); `llm:chat` counts success, fail, rate-limited, and no-key outcomes in `llm:call-stats` (#5293) and names `--grant net` / `--grant network` when the sandbox has no `http-post` (#5287); `(gc-module "json.aura")` resolves a bare module basename through the loader cache.
+- Tests and CI (#5224–#5232, #5247): the theme suites run through `std/test` with case metadata, `tests/run.py` answers `home` and `cover`, the gate rejects newly added issue-numbered test files, 204 C++ tests without an enabled target are recorded with a reason, and the changed-lines tidy gate and new-file classifier work in container checkouts.
+- README: the first screen is a real `aura-perf` + MiniMax live-tuning run.
+- Install and smoke coverage is unchanged: Ubuntu 24.04, Ubuntu 26.10, Debian 12, Rocky Linux 9, and openEuler 24.03 LTS SP4, on x86_64 and arm64.
+
+Not in this version:
+
+- macOS, Windows, and other Linux distributions.
+- `aura::eval` ships in the build tree only.
+
 ## 0.2.3
 
 Patch release on the 0.2 channel. It fixes the orchestration/channel flake that failed `ci/suite`, the HTTP client's response body, and a set of long-running `--serve-async` regressions; the build is faster. No new public surface. The API is still not stable.
