@@ -77,3 +77,54 @@
 (let ((ok (llm:parse-response "{\"choices\":[{\"message\":{\"content\":\"(seq ok)\"}}]}")))
   (check (hash-ref ok "ok"))
   (check (equal? (hash-ref ok "content") "(seq ok)")))
+
+; Issue #5293: no-key and rate-limited exits increment call-stats.
+; A set LLM_API_KEY would leave this process, so those two cases run
+; only when it is unset. Transport failure and a parsed reply are the
+; process check, which clears the env. Parsing a fixture is not a call.
+(test-file "llm_safety.aura")
+
+(test-case "no-key bumps no-key" (hash "issue" 5293 "tags" (list "llm"))
+  (let ((key (try (getenv "LLM_API_KEY") (catch (e) #f))))
+    (if (and (string? key) (> (string-length key) 0))
+      #t
+      (begin
+        (llm:call-stats-reset!)
+        (llm:rate-limit-set! 0)
+        (let ((raw (aura-llm-call "{\"model\":\"x\",\"messages\":[]}"))
+              (r (llm:chat "sys" "ping" (hash "max_tokens" 8) 2)))
+          (check= "" raw)
+          (check (not (hash-ref r "ok" #t)))
+          (check= "empty" (hash-ref r "error" "")))
+        (check= 2 (hash-ref (llm:call-stats) "no-key" 0))
+        (check= 0 (hash-ref (llm:call-stats) "fail" 0))
+        (check= 0 (hash-ref (llm:call-stats) "rate-limited" 0))
+        (check= 0 (hash-ref (llm:call-stats) "success" 0))))))
+
+(test-case "rate-limited bumps rate-limited" (hash "issue" 5293 "tags" (list "llm"))
+  (let ((key (try (getenv "LLM_API_KEY") (catch (e) #f))))
+    (if (and (string? key) (> (string-length key) 0))
+      #t
+      (begin
+        (llm:call-stats-reset!)
+        (llm:rate-limit-set! 1)
+        (let ((r1 (llm:chat "sys" "ping" (hash "max_tokens" 8) 2))
+              (r2 (llm:chat "sys" "ping" (hash "max_tokens" 8) 2)))
+          (check= "empty" (hash-ref r1 "error" ""))
+          (check= "rate-limited" (hash-ref r2 "error" ""))
+          (check= 0 (llm:rate-limit-remaining)))
+        (check= 1 (hash-ref (llm:call-stats) "no-key" 0))
+        (check= 1 (hash-ref (llm:call-stats) "rate-limited" 0))
+        (check= 0 (hash-ref (llm:call-stats) "fail" 0))
+        (check= 0 (hash-ref (llm:call-stats) "success" 0))
+        (llm:rate-limit-set! 0)))))
+
+(test-case "parse-ok is not a completed call" (hash "issue" 5293 "tags" (list "llm"))
+  (llm:call-stats-reset!)
+  (let ((r (llm:parse-response "{\"choices\":[{\"message\":{\"content\":\"42\"}}]}")))
+    (check (hash-ref r "ok" #f))
+    (check= "42" (hash-ref r "content" "")))
+  (check= 0 (hash-ref (llm:call-stats) "success" 0))
+  (check (> (hash-ref (llm:call-stats) "parse-ok" 0) 0)))
+
+(test-finish)
