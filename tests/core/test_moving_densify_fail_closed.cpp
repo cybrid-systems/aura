@@ -3407,11 +3407,12 @@ static void ac3443_5_exempt_taxonomy_unchanged() {
 static void ac3443_6_source_cite_no_invent() {
     std::println("\n--- #3443 AC6: source-cite + no invent ---");
     const auto dc = read_file("src/core/densify_consistency_report.h");
-    const auto build = read_file("build.py");
     CHECK(dc.find("kFfiJitLivePtrInventoryIssue = 3443") != std::string::npos,
           "3443 AC6: stamp in densify_consistency_report.h");
-    CHECK(build.find("check_ffi_jit_live_ptr_inventory_3443") != std::string::npos,
-          "3443 AC6: build.py wires linter");
+    // #5246 folded the per-linter gate chain into the coverage runner; the
+    // wiring fact is now "the check exists under scripts/coverage/checks".
+    CHECK(!read_file("scripts/coverage/checks/check_ffi_jit_live_ptr_inventory_3443.py").empty(),
+          "3443 AC6: linter present in coverage checks");
     CHECK(read_file("docs/design/3443-ffi-jit-live-ptr.md").empty(),
           "3443 AC6: no docs/design/3443-* per #1655");
     CHECK(read_file("tests/core/test_issue_3443.cpp").empty(),
