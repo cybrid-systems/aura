@@ -1,7 +1,7 @@
 # Legacy test inventory
 
 **Issue:** [#1957](https://github.com/cybrid-systems/aura/issues/1957)
-**Generated:** 2026-11-15 by `scripts/tools/inventory_legacy_tests.py`
+**Generated:** 2026-11-16 by `scripts/tools/inventory_legacy_tests.py`
 **Status:** generated inventory, not the how-to-add-a-test policy. Policy is tests/HOMES.md. Re-run this script after consolidations.
 
 ## Purpose
@@ -38,11 +38,11 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 96 | 96 | P0 — well-contained, batch drivers already exist |
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 282 | 282 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 112 | 112 | P1 — domain suite already collapses many obs gates |
-| `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 30 | 30 | P1 — small, already partially batched |
+| `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 31 | 31 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 62 | 62 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 88 | 88 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 56 | 56 | P2 — small-medium; soa_batch precedent |
-| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 132 | 132 | P2 — often thin schema probes; collapse into obs matrix |
+| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 131 | 131 | P2 — often thin schema probes; collapse into obs matrix |
 | `uncategorized` | Uncategorized / mixed | 0 | 0 | 67 | 67 | P3 — review case-by-case |
 
 ## Patterns, harness usage, coupling
@@ -1664,13 +1664,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_workspace_swap_guard.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_workspace_swap_guard.cpp — Issue #1717: synthesize:optimize swap-guard test.
 - `tests/serve/test_yield_while_mutation_held.cpp` (—) [domain_suite, theme_serve] — AC1: Under live outermost Guard, yield() / yield(reason) do not
 
-### `linear_ownership` — Linear ownership / borrow / consume (30)
+### `linear_ownership` — Linear ownership / borrow / consume (31)
 
 **Target:** tests/compiler/test_linear_ownership_batch.cpp (R1 src/-aligned)
 
 **Priority:** P1 — small, already partially batched
 
-#### domain/ (30)
+#### domain/ (31)
 
 - `tests/core/test_capability_single_use_consume.cpp` (—) [large, domain_suite, theme_core] — tests/core/test_capability_single_use_consume.cpp
 - `tests/compiler/test_commit_readiness_score.cpp` (—) [large, domain_suite, theme_compiler] — AC1: Clean SOLVED + linear + blame + !trunc → bp=10000, ok, allow
@@ -1695,6 +1695,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_linear_state_stamp_apply.cpp` (—) [domain_suite, theme_compiler] — AC1: mangle_aot_name stamps _lN when linear_state != 0 (host tracks)
 - `tests/compiler/test_linear_synth_violation.cpp` (—) [domain_suite, theme_compiler] — AC1: Double-move / can_move fail path is first-class (note_linear_synth
 - `tests/compiler/test_linear_three_layer_wire.cpp` (—) [domain_suite, theme_compiler] — AC1: Boundary exit cites force_linear_rollback (unified linear deny)
+- `tests/compiler/test_named_closure_stable_id_at_create.cpp` (—) [large, domain_suite, theme_compiler] — AC1: Every named closure after create/set_name has stable_func_id != 0
 - `tests/core/test_pcv_unique_hotpath.cpp` (—) [domain_suite, theme_core] — AC1: cow_set unique → in-place (no new storage, use_count stays 1)
 - `tests/compiler/test_prim_registrar_ref.cpp` (—) [small, domain_suite, theme_compiler] — AC1: an owning std::function outlives the function_ref parameter and receives the name
 - `tests/compiler/test_remount_force_deopt.cpp` (—) [large, domain_suite, theme_compiler] — Issue #2894 — remount fail reason code (EnvGen / DensifyCell /
@@ -1936,13 +1937,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_value_tag_hot_path.cpp` (—) [domain_suite, theme_compiler] — AC1: Pure is_* (is_fixnum_hot / is_int) match classify; single low2 path
 - `tests/compiler/test_workspace_delete_child.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_workspace_delete_child.cpp — Issue #1770: WorkspaceTree delete_child test.
 
-### `observability` — Observability / metrics / query:*-stats (132)
+### `observability` — Observability / metrics / query:*-stats (131)
 
 **Target:** tests/compiler/test_obs_schema_matrix.cpp + tests/compiler/obs_schema_cases.hpp
 
 **Priority:** P2 — often thin schema probes; collapse into obs matrix
 
-#### domain/ (132)
+#### domain/ (131)
 
 - `tests/compiler/test_adaptive_reverify_limit.cpp` (—) [domain_suite, theme_compiler] — Issue #2939 — dep-closure reverify (BFS over var_to_constraints_) to
 - `tests/compiler/test_adt_exhaustiveness_production_hard.cpp` (—) [domain_suite, theme_compiler] — test_adt_exhaustiveness_production_hard.cpp -- source-cite AC for Issue #3559
@@ -2011,7 +2012,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_mutation_aot_unit_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — test_mutation_aot_unit_batch.cpp — consolidated mutation-theme drivers
 - `tests/compiler/test_mutation_contention.cpp` (—) [domain_suite, theme_compiler] — Issue #2040 — high-concurrency observability for Guard hold +
 - `tests/serve/test_mutation_hold_time.cpp` (—) [domain_suite, theme_serve] — test_mutation_hold_time.cpp — Issue #1375:
-- `tests/compiler/test_named_closure_stable_id_at_create.cpp` (—) [large, domain_suite, theme_compiler] — AC1: Every named closure after create/set_name has stable_func_id != 0
 - `tests/reflect/test_obs_json_to_json_a1.cpp` (—) [small, domain_suite, theme_reflect] — Wave A1: snapshot_to_json / fn_metrics_to_json via reflect to_json.
 - `tests/compiler/test_obs_metrics_smoke_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — test_obs_metrics_smoke_batch.cpp — consolidated observability schema smokes
 - `tests/compiler/test_obs_schema_matrix.cpp` (—) [domain_suite, theme_compiler] — test_obs_schema_matrix.cpp — Domain suite: observability + production schemas
