@@ -86,6 +86,7 @@ IEX = ROOT / "src" / "compiler" / "ir_executor.ixx"
 IEI = ROOT / "src" / "compiler" / "ir_executor_impl.cpp"
 JA = ROOT / "src" / "compiler" / "jit_assumptions.hh"
 SV = ROOT / "src" / "compiler" / "service.ixx"
+SV_JIT = ROOT / "src" / "compiler" / "service_exec_jit.cpp"
 TST = ROOT / "tests" / "compiler" / "test_mutate_type_gate.cpp"
 PYT = ROOT / "tests" / "python" / "test_regression.py"
 BUILD = ROOT / "build.py"
@@ -118,7 +119,7 @@ def main() -> int:
     iex = IEX.read_text()
     iei = IEI.read_text()
     ja = JA.read_text()
-    sv = SV.read_text()
+    sv = SV.read_text() + SV_JIT.read_text()
     tst = TST.read_text()
     pyt = PYT.read_text()
     build = BUILD.read_text()

@@ -74,6 +74,7 @@ RT = ROOT / "src" / "compiler" / "aura_jit_runtime.cpp"
 JA = ROOT / "src" / "compiler" / "jit_assumptions.hh"
 EV = ROOT / "src" / "compiler" / "evaluator.ixx"
 SV = ROOT / "src" / "compiler" / "service.ixx"
+SV_JIT = ROOT / "src" / "compiler" / "service_exec_jit.cpp"
 BR = ROOT / "src" / "compiler" / "aura_jit_bridge.cpp"
 SPH = ROOT / "src" / "compiler" / "shape_profiler.h"
 SPC = ROOT / "src" / "compiler" / "shape_profiler.cpp"
@@ -122,7 +123,7 @@ def main() -> int:
     rt = RT.read_text()
     ja = JA.read_text()
     ev = EV.read_text()
-    sv = SV.read_text()
+    sv = SV.read_text() + SV_JIT.read_text()
     br = BR.read_text()
     sph = SPH.read_text()
     spc = SPC.read_text()
