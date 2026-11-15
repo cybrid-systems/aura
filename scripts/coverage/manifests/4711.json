@@ -61,7 +61,7 @@
     },
     {
       "ac": "AC5",
-      "path": "build.py",
+      "path": "tools/build/core.py",
       "contains": [
         "-Wno-error=tsan"
       ]
