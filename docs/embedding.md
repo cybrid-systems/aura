@@ -152,7 +152,7 @@ through its `char**` out-parameter, even when it fails:
 | Shape | When |
 | --- | --- |
 | `{"status":"ok","value":"3","type":"int"}` | evaluated; `value` is the printed last form |
-| `{"status":"error","message":"...","line":3,"column":9,"kind":"UnboundVariable"}` | parse / type / eval diagnostic |
+| `{"status":"error","message":"...","code":"UnboundVariable","span":{"start":{"line":3,"column":9},"end":{"line":3,"column":9}},"hint":"...","line":3,"column":9,"kind":"UnboundVariable"}` | parse / type / eval diagnostic; see `docs/diagnostics.md` for the shared schema (1-based lines, UTF-8 byte columns) |
 | `{"status":"error","message":"...","kind":"error-value"}` | the form produced an Aura error *value* (a refused mutate, a bad `car`) |
 | `{"status":"error","message":"cannot read file: ...","kind":"io-error"}` | `aura_eval_file` could not read the path |
 
