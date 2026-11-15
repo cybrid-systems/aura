@@ -52,11 +52,35 @@ namespace detail {
                 out.append(std::to_string(v));
         }
 
+        // Issue #5295 / #4468: shortest spelling that reads back as the
+        // same double. ".0" is only for a token with no exponent and no
+        // fraction. "1e-04" is already a legal literal; "1e-04.0" is two
+        // literals and the re-parsed workspace is a different program.
+        // Keep in lockstep with format_float_shortest (compiler header;
+        // this core module cannot include it).
         void append_float(double v) {
-            auto s = std::to_string(v);
-            if (s.find('.') == std::string::npos)
-                s += ".0";
-            out.append(s);
+            if (v != v) {
+                out.append("nan");
+                return;
+            }
+            std::array<char, 64> buf;
+            const auto [ptr, ec] = std::to_chars(buf.data(), buf.data() + buf.size(), v);
+            if (ec != std::errc{}) {
+                auto s = std::to_string(v);
+                if (s.find('.') == std::string::npos && s.find('e') == std::string::npos &&
+                    s.find('E') == std::string::npos)
+                    s += ".0";
+                out.append(s);
+                return;
+            }
+            std::string text(buf.data(), static_cast<std::size_t>(ptr - buf.data()));
+            const bool special =
+                text.find("inf") != std::string::npos || text.find("INF") != std::string::npos ||
+                text.find("nan") != std::string::npos || text.find("NAN") != std::string::npos;
+            if (!special && text.find('.') == std::string::npos &&
+                text.find('e') == std::string::npos && text.find('E') == std::string::npos)
+                text += ".0";
+            out.append(text);
         }
 
         void indent(int level) {

@@ -47,6 +47,66 @@
     #t
     (begin (display "FAIL-2921 snapshot id\n") (set! ok #f)))
 
+; Issue #5295: a scientific float must unparse as one reader-legal literal.
+; 0.0001 was printed "1e-04.0", which the reader splits into 1e-04 and 0.0,
+; so (<= 0.0 0.0001) came back #f and (list 1.0 0.0001) gained an element.
+(define (bad-sci-5295? s)
+  (or (not (string? s))
+      (not (= (string-index s "e-04.0" 0) -1))
+      (not (= (string-index s "e-4.0" 0) -1))
+      (not (= (string-index s "e-05.0" 0) -1))
+      (not (= (string-index s "e-5.0" 0) -1))
+      (not (= (string-index s "e+20.0" 0) -1))
+      (not (= (string-index s "e20.0" 0) -1))
+      (not (= (string-index s "E-04.0" 0) -1))
+      (not (= (string-index s "E+20.0" 0) -1))))
+
+(set-code "(define (f5295 x) (<= x 0.0001))")
+(eval-current)
+(if (f5295 0.0)
+    #t
+    (begin (display "FAIL-5295 small-before\n") (set! ok #f)))
+(define src-5295-small (current-source :workspace))
+(if (bad-sci-5295? src-5295-small)
+    (begin (display src-5295-small) (newline)
+           (display "FAIL-5295 small-spelling\n") (set! ok #f))
+    #t)
+(set-code src-5295-small)
+(eval-current)
+(if (f5295 0.0)
+    #t
+    (begin (display "FAIL-5295 small-after\n") (set! ok #f)))
+(if (equal? src-5295-small (current-source :workspace))
+    #t
+    (begin (display "FAIL-5295 small-stable\n") (set! ok #f)))
+
+(set-code "(define xs5295 (list 1.0 0.0001))")
+(eval-current)
+(define src-5295-list (current-source :workspace))
+(if (bad-sci-5295? src-5295-list)
+    (begin (display src-5295-list) (newline)
+           (display "FAIL-5295 list-spelling\n") (set! ok #f))
+    #t)
+(set-code src-5295-list)
+(eval-current)
+(if (= (length xs5295) 2)
+    #t
+    (begin (display "FAIL-5295 list-len\n") (set! ok #f)))
+
+(set-code "(define (big5295) 1e20)")
+(eval-current)
+(define big-before-5295 (big5295))
+(define src-5295-big (current-source :workspace))
+(if (bad-sci-5295? src-5295-big)
+    (begin (display src-5295-big) (newline)
+           (display "FAIL-5295 large-spelling\n") (set! ok #f))
+    #t)
+(set-code src-5295-big)
+(eval-current)
+(if (and (= (big5295) big-before-5295) (= (big5295) 1e20))
+    #t
+    (begin (display "FAIL-5295 large-after\n") (set! ok #f)))
+
 (if ok
     (begin (display "OK-2921 current-source-roundtrip") (newline))
     (begin (display "FAIL-2921") (newline) (unbound-2921-force-fail)))

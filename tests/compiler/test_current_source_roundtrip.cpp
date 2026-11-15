@@ -161,18 +161,34 @@ static bool has_empty_export(std::string_view s) {
     return s.find("(export)") != std::string::npos;
 }
 
+// Issue #5295: "1e-04.0" is two tokens. An exponent token must not
+// carry a trailing ".0" (the dot of "1.0e-4" sits before the exponent).
+static bool has_scientific_dot0(std::string_view s) {
+    for (std::size_t i = 0; i < s.size(); ++i) {
+        if (s[i] != 'e' && s[i] != 'E')
+            continue;
+        std::size_t j = i + 1;
+        while (j < s.size() && s[j] != ' ' && s[j] != ')' && s[j] != '(' && s[j] != '\n' &&
+               s[j] != '"')
+            ++j;
+        if (s.substr(i, j - i).find(".0") != std::string_view::npos)
+            return true;
+    }
+    return false;
+}
+
 static bool roundtrip_ok(CompilerService& cs, std::string_view src) {
     if (!set_code(cs, src))
         return false;
     auto out1 = workspace_source(cs);
     if (out1.empty())
         return false;
-    if (has_angle_digit_fallback(out1))
+    if (has_angle_digit_fallback(out1) || has_scientific_dot0(out1))
         return false;
     if (!set_code(cs, out1))
         return false;
     auto out2 = workspace_source(cs);
-    return out2 == out1 && !has_angle_digit_fallback(out2);
+    return out2 == out1 && !has_angle_digit_fallback(out2) && !has_scientific_dot0(out2);
 }
 
 // ── Table: no-mutate roundtrip (cases 4–9) ──
@@ -218,6 +234,11 @@ static constexpr RoundtripCase kRoundtripNoMutate[] = {
     {"(mut-borrow x)", "mut-borrow"},
     {"(drop x)", "drop"},
     {"(begin (: x Int 1) (cast x : Int) (Linear x))", "compound typed+linear"},
+    // Issue #5295: shortest scientific spelling must stay one literal.
+    {"0.0001", "sci small (#5295)"},
+    {"1e20", "sci large (#5295)"},
+    {"(<= 0.0 0.0001)", "sci compare (#5295)"},
+    {"(list 1.0 0.0001)", "sci list (#5295)"},
 };
 
 static void ac_dual_workspace() {

@@ -17,6 +17,7 @@
 #include <print>
 #include <string>
 #include <string_view>
+#include <vector>
 
 import std;
 import aura.core.ast;
@@ -49,6 +50,32 @@ static bool has_angle_digit_fallback(std::string_view s) {
             return true;
     }
     return false;
+}
+
+// Issue #5295: "1e-04.0" is two tokens. The suffix sits after the exponent.
+static bool has_scientific_dot0(std::string_view s) {
+    for (std::size_t i = 0; i < s.size(); ++i) {
+        if (s[i] != 'e' && s[i] != 'E')
+            continue;
+        std::size_t j = i + 1;
+        while (j < s.size() && s[j] != ' ' && s[j] != ')' && s[j] != '(' && s[j] != '\n' &&
+               s[j] != '"')
+            ++j;
+        if (s.substr(i, j - i).find(".0") != std::string_view::npos)
+            return true;
+    }
+    return false;
+}
+
+static std::vector<double> float_literals(const FlatAST& flat) {
+    std::vector<double> out;
+    for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+        if (flat.is_free_slot(id))
+            continue;
+        if (flat.tag(id) == aura::ast::NodeTag::LiteralFloat)
+            out.push_back(flat.get(id).float_value);
+    }
+    return out;
 }
 
 static std::string read_file(const char* path) {
@@ -229,6 +256,41 @@ int run_test_ast_unparse() {
               "AC8: build.py coverage cmd");
         auto doc = read_file("docs/stdlib/ast-unparse.md");
         CHECK(!doc.empty() && doc.find("2922") != std::string::npos, "AC8: docs");
+    }
+
+    // ── AC9: scientific float is one reader-legal literal (#5295) ──
+    {
+        std::println("\n--- AC9: scientific float round-trip (#5295) ---");
+        const char* exact[] = {"1.0", "0.0", "1.5"};
+        for (const char* src : exact) {
+            FlatAST flat;
+            StringPool pool;
+            CHECK(parse_ok(src, flat, pool), std::format("AC9: parse {}", src));
+            auto out = unparse_to_string(flat, pool, flat.root, {});
+            CHECK(out == src, std::format("AC9: {} unparses as itself, got {}", src, out));
+            CHECK(!has_scientific_dot0(out), std::format("AC9: {} has no sci .0", src));
+        }
+        const char* sci[] = {"0.0001", "0.00001", "1e20", "(<= 0.0 0.0001)", "(list 1.0 0.0001)"};
+        for (const char* src : sci) {
+            FlatAST flat;
+            StringPool pool;
+            CHECK(parse_ok(src, flat, pool), std::format("AC9: parse {}", src));
+            auto before = float_literals(flat);
+            auto out = unparse_to_string(flat, pool, flat.root, {});
+            CHECK(!out.empty() && !has_scientific_dot0(out),
+                  std::format("AC9: legal spelling for {} -> {}", src, out));
+            FlatAST again;
+            StringPool pool2;
+            CHECK(parse_ok(out, again, pool2), std::format("AC9: reparse {}", out));
+            auto after = float_literals(again);
+            CHECK(after.size() == before.size(),
+                  std::format("AC9: float count stable for {} ({} -> {})", src, before.size(),
+                              after.size()));
+            bool same = after.size() == before.size();
+            for (std::size_t i = 0; same && i < before.size(); ++i)
+                same = after[i] == before[i];
+            CHECK(same, std::format("AC9: same floats after round-trip of {}", src));
+        }
     }
 
     std::println("\n=== Summary: {} passed, {} failed ===", g_passed, g_failed);
