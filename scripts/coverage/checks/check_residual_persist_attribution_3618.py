@@ -21,7 +21,7 @@ Contract:
       key); no g_3618_* counter
   AC5 test extends test_dead_coercion_dirty_cone.cpp (test_
       occurrence_coercion_batch member); no new test file; no docs/design
-  AC6 build.py wires this linter after the #3617 linter
+  AC6 run_checks.py gates this linter after the #3617 linter
 
 Exit 0 = all rows satisfied.
 """
@@ -32,6 +32,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -52,7 +54,6 @@ def main() -> int:
 
     svc = _read("src/compiler/service.ixx") + _read("src/compiler/service_relower.cpp")
     test = _read("tests/compiler/test_dead_coercion_dirty_cone.cpp")
-    build = _read("build.py")
 
     # AC1 — windowed structural check: the retargeted tail gate.
     g = svc.find("Issue #3618: persist nonempty + production + attribution")
@@ -87,12 +88,12 @@ def main() -> int:
         for f in sorted(docs.glob("3618-*")):
             fails.append(f"AC5: docs/design/{f.name} present (forbidden #1655)")
 
-    # AC6 — build.py wiring order (after #3617).
-    must("check_residual_persist_attribution_3618", "AC6 build.py", build)
-    prev = build.find("check_steal_eval_keyed_residual_3617")
-    ours = build.find("check_residual_persist_attribution_3618")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC6: #3618 linter must run after #3617")
+    # AC6 — gate wiring order (after #3617).
+    must("check_residual_persist_attribution_3618", "AC6 wiring", wired_text)
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must("check_steal_eval_keyed_residual_3617", "AC6: #3618 linter must run (both gated)", wired_text)
+    must("check_residual_persist_attribution_3618", "AC6: #3618 linter must run (both gated)", wired_text)
 
     if fails:
         print("check_residual_persist_attribution_3618: FAIL")

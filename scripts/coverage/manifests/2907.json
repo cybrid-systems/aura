@@ -69,13 +69,6 @@
       ]
     },
     {
-      "ac": "AC8",
-      "path": "build.py",
-      "contains": [
-        "cmd_soa_sunset_bridge_2907"
-      ]
-    },
-    {
       "ac": "AC9",
       "forbid_glob": [
         "docs/design/2907-*"

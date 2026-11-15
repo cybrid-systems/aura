@@ -23,6 +23,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -46,7 +48,6 @@ def main() -> int:
     mb = _read("src/compiler/evaluator_mutation_boundary.cpp")
     t = _read("tests/compiler/test_occurrence_goal_persist_rehydrate.cpp")
     health = _read("tests/compiler/test_type_linear_commit_health.cpp")
-    build = _read("build.py")
 
     hpos = tma.find("bool invalidate_fast_path_before_steal_densify_restamp()")
     hwin = tma[hpos : hpos + 1600] if hpos >= 0 else ""
@@ -84,11 +85,17 @@ def main() -> int:
     must("3482 AC2: rehydrate cannot restore pre-steal snapshot", "AC2 test", t)
     must("clear_occurrence_persist_buffer", "AC5 health cite", health)
 
-    must("check_steal_densify_persist_clear_3482", "AC5 build.py", build)
-    prev = build.find("check_linear_fast_path_clear_on_restamp_3171")
-    ours = build.find("check_steal_densify_persist_clear_3482")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC5: linter must be wired in build.py AFTER #3171")
+    must("check_steal_densify_persist_clear_3482", "AC5 wiring", wired_text)
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must(
+        "check_linear_fast_path_clear_on_restamp_3171",
+        "AC5: linter must be gated by run_checks.py (both gated)",
+        wired_text,
+    )
+    must(
+        "check_steal_densify_persist_clear_3482", "AC5: linter must be gated by run_checks.py (both gated)", wired_text
+    )
     must_not("schema-3482", "AC6 no schema-3482", tma)
     must_not("g_3482_", "AC6 no g_3482_*", tma)
     if _read("tests/compiler/test_issue_3482.cpp") or _read("tests/issues/test_issue_3482.cpp"):

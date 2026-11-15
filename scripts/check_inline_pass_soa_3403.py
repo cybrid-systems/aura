@@ -31,6 +31,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -53,7 +55,6 @@ def main() -> int:
     pass_impls = _read("src/compiler/pass_impls.ixx")
     soa_view = _read("src/compiler/soa_view.ixx")
     service = _read("src/compiler/service.ixx")
-    build = _read("build.py")
     _strip_comments_and_strings(pass_impls)
     sv_stripped = _strip_comments_and_strings(soa_view)
 
@@ -134,8 +135,8 @@ def main() -> int:
     # AC6: source-cite #3403 + build.py registration; no design docs.
     if "#3403" not in pass_impls and "#3403" not in soa_view:
         fails.append("AC6: source-cite #3403 missing from pass_impls.ixx / soa_view.ixx")
-    if "check_inline_pass_soa_3403" not in build:
-        fails.append("AC6: build.py does not register check_inline_pass_soa_3403")
+    if "check_inline_pass_soa_3403" not in wired_text:
+        fails.append("AC6: run_checks.py does not register check_inline_pass_soa_3403")
 
     # Issue #3454 AC2: InlinePass SoA remains the production dispatch
     # target; dual-emit abort unchanged. ProductionPureWrapPass now

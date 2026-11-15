@@ -24,6 +24,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -43,7 +45,6 @@ def main() -> int:
     impl = _read("src/compiler/type_checker_impl.cpp")
     qs = _read("src/compiler/evaluator_primitives_query_type_stats.cpp")
     t = _read("tests/compiler/test_occurrence_goal_persist_rehydrate.cpp")
-    build = _read("build.py")
 
     # AC1 — hold helper + abort sites + rehydrate consult.
     must("kNestedAbortAuthorityFaceIssue", "AC1", aud)
@@ -73,7 +74,7 @@ def main() -> int:
     must("ac3193_1_prod_hold_blocks_rehydrate", "AC4", t)
     must("ac3193_4_source_and_linter", "AC4", t)
     must("schema-3193", "AC4 schema", qs)
-    must("check_nested_abort_authority_face_3193", "AC4 build.py", build)
+    must("check_nested_abort_authority_face_3193", "AC4 wiring", wired_text)
     must("Issue #3030", "AC4 sibling proof-clear", aud)
     must("dual_clear_coercion_state_on_abort", "AC4 sibling 3116", mb)
     must("clear_type_linear_commit_proof_on_abort", "AC4 sibling 3030", mb)

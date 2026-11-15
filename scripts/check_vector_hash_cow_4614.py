@@ -45,6 +45,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 VEC = ROOT / "src" / "compiler" / "evaluator_primitives_vector.cpp"
 PAIR = ROOT / "src" / "compiler" / "evaluator_primitives_pair.cpp"
 LIST = ROOT / "lib" / "std" / "list.aura"
@@ -102,7 +104,6 @@ def main() -> int:
     idx = read(INDEX)
     tst = read(TEST)
     suite = read(SUITE)
-    build = read(BUILD)
     allow = read(ALLOW)
 
     # AC1 -- native vector-copy
@@ -190,7 +191,7 @@ def main() -> int:
     )
 
     # AC9 -- wiring
-    must("check_vector_hash_cow_4614.py" in build, "AC9: build.py runs the linter")
+    must("check_vector_hash_cow_4614.py" in wired_text, "AC9: build.py runs the linter")
     must("check_vector_hash_cow_4614.py" in allow, "AC9: scripts/coverage/root_check_allowlist.txt lists the linter")
 
     # AC10 -- house rules

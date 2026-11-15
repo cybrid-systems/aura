@@ -28,7 +28,7 @@ Gate rows:
       (linter is offline; no g_3290_*).
   G6  test ACs in src-aligned suite (#81967); no test_issue_3290.cpp;
       no docs/design/ (#1655).
-  G7  build.py wires this linter.
+  G7  run_checks.py gates this linter.
 
 Exit 0 = all rows satisfied.
 """
@@ -40,6 +40,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 failures: list[str] = []
 
@@ -87,7 +89,6 @@ def main() -> int:
     ss = _read("src/serve/steal_safety.cpp")
     fc = _read("src/serve/fiber.cpp")
     test = _read("tests/serve/test_steal_complete_restamp_txn.cpp")
-    build = _read("build.py")
     lint3072 = _read("scripts/coverage/checks/check_steal_enqueue_sole_gate_3072.py")
 
     # ── G1: resume path enters the invariant check before swapcontext ──
@@ -167,8 +168,8 @@ def main() -> int:
     must(not _read("tests/serve/test_issue_3290.cpp"), "G6: no tests/serve/test_issue_3290.cpp per #81967")
     must(not _read("tests/issues/test_issue_3290.cpp"), "G6: no tests/issues/test_issue_3290.cpp per #81967")
 
-    # ── G7: build.py wiring + #3072 lineage preserved ──
-    must("check_steal_invariant_call_site_coverage_3290" in build, "G7: build.py wires linter")
+    # ── G7: gate wiring + #3072 lineage preserved ──
+    must("check_steal_invariant_call_site_coverage_3290" in wired_text, "G7: run_checks.py gates linter")
     must("Issue #3072" in lint3072, "G7: #3072 sole-enqueue linter preserved")
 
     docs = ROOT / "docs" / "design"

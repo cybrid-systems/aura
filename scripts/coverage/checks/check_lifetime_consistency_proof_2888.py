@@ -30,6 +30,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from query_prims_sources import read_query_prims  # Issue #2914
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 FILES = [
     "src/core/lifetime_consistency_proof.hh",
@@ -60,7 +62,6 @@ def main() -> int:
     fiber = _read("src/compiler/evaluator_fiber_mutation.cpp")
     query = read_query_prims()
     test = _read("tests/compiler/test_densify_ownership_scan_fail_gate.cpp")
-    build = _read("build.py")
 
     # ── AC1: struct + pure aggregation + stamp/poll helpers ──
     must("struct LifetimeConsistencyProof", "AC1", header)
@@ -107,7 +108,7 @@ def main() -> int:
     must("schema-2711", "AC4", query)
     must("schema-2697", "AC4", query)
 
-    # ── AC5: source-cite + tests in src/-aligned suite + build.py gate ──
+    # ── AC5: source-cite + tests in src/-aligned suite + coverage runner ──
     for rel in FILES:
         content = read_query_prims() if "evaluator_primitives_query" in rel else _read(rel)
         if not content:
@@ -122,7 +123,7 @@ def main() -> int:
     must("ac2888_3_quiet_path_zero_cost", "AC5", test)
     must("ac2888_4_query_additive", "AC5", test)
     must("ac2888_5_source_and_linter", "AC5", test)
-    must("check_lifetime_consistency_proof_2888", "AC5", build)
+    must("check_lifetime_consistency_proof_2888", "AC5", wired_text)
     # No docs/design per #1655.
     design_docs = sorted((ROOT / "docs" / "design").glob("2888-*")) if (ROOT / "docs" / "design").is_dir() else []
     if design_docs:

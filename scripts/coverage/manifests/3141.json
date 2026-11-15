@@ -58,13 +58,6 @@
       ]
     },
     {
-      "ac": "Build-3141",
-      "path": "build.py",
-      "contains": [
-        "check_wildcard_grant_effect_fence.py"
-      ]
-    },
-    {
       "ac": "AC4",
       "path": "tests/compiler/test_capability_high_risk_promote.cpp",
       "contains": [

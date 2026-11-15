@@ -23,6 +23,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
 
 SEC = "src/compiler/evaluator_security.cpp"
 POSTURE = "src/compiler/evaluator_primitives_security.cpp"
@@ -143,7 +146,7 @@ def _rows(sec: str, test: str, build: str, allow: str) -> list[str]:
 def _self_test() -> int:
     sec = _read(SEC)
     test = _read(TEST)
-    build = _read(BUILD)
+    build = wired_text
     allow = _read(ALLOW)
     bad = _rows(sec, test, build, allow)
     if bad:
@@ -168,7 +171,7 @@ def main() -> int:
     args = ap.parse_args()
     if args.self_test:
         return _self_test()
-    rows = _rows(_read(SEC), _read(TEST), _read(BUILD), _read(ALLOW))
+    rows = _rows(_read(SEC), _read(TEST), wired_text, _read(ALLOW))
     if rows:
         for r in rows:
             print(f"FAIL {LINTER}: {r}")

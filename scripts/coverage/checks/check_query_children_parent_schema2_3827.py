@@ -22,6 +22,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -39,7 +41,6 @@ def main() -> int:
     qws = _read("src/compiler/evaluator_primitives_query_workspace.cpp")
     hh = _read("src/core/workspace_epoch.hh")
     t = _read("tests/compiler/test_query_result_full_provenance.cpp")
-    build = _read("build.py")
 
     must("Issue #3827", "AC1 cite", qws)
     must("kQueryChildrenParentSchema2ExportIssue = 3827", "AC1 stamp", hh)
@@ -73,7 +74,7 @@ def main() -> int:
     must("test_ac3827_1_production_children_v2_schema2", "AC4 AC1 test", t)
     must("test_ac3827_4_soft_and_source", "AC4 Soft test", t)
     must("Soft children is NOT a hash", "AC4 Soft oracle", t)
-    must("check_query_children_parent_schema2_3827", "AC4 build.py", build)
+    must("check_query_children_parent_schema2_3827", "AC4 wiring", wired_text)
 
     if (ROOT / "tests" / "compiler" / "test_issue_3827.cpp").is_file():
         fails.append("AC4: test_issue_3827.cpp present (forbidden invent)")

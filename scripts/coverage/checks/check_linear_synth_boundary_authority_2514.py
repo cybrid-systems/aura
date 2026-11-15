@@ -17,6 +17,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -43,7 +45,6 @@ def main() -> int:
     mut = _read("src/compiler/evaluator_primitives_mutate.cpp")
     test = _read("tests/compiler/test_linear_synth_boundary_authority.cpp")
     cmake = _read("CMakeLists.txt")
-    build = _read("build.py")
 
     # AC1
     must("Issue #2514", "AC1", etc)
@@ -81,8 +82,8 @@ def main() -> int:
     must("Issue #2514", "AC5", emb)
     must("ac5_decision_table", "AC5", test)
     must("test_linear_synth_boundary_authority", "AC5", cmake)
-    must("check_linear_synth_boundary_authority_2514", "AC5", build)
-    must("cmd_linear_synth_boundary_authority_coverage", "AC5", build)
+    must("check_linear_synth_boundary_authority_2514", "AC5", wired_text)
+    must("check_linear_synth_boundary_authority_2514.py", "AC5", wired_text)
 
     # Phase-1 retained
     must("note_linear_synth_violation", "retain", tci)

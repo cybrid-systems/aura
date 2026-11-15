@@ -22,6 +22,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -39,7 +41,6 @@ def main() -> int:
     flat = _read("src/compiler/evaluator_eval_flat.cpp")
     ev = _read("src/compiler/evaluator.ixx")
     test = _read("tests/compiler/test_apply_closure_envframe_soa.cpp")
-    build = _read("build.py")
 
     must("kApplyClosureTlsCacheIssue = 3832", "AC1 stamp", flat)
     must("Issue #3832", "AC1 cite", flat)
@@ -69,7 +70,7 @@ def main() -> int:
     must("3832 AC3", "AC3 microbench", test)
     must("3832 AC2", "AC3 tombstone", test)
     must("ac3832_tls_cache_happy_path", "AC3 runner", test)
-    must("check_apply_closure_tls_cache_3832", "AC3 build.py", build)
+    must("check_apply_closure_tls_cache_3832", "AC3 wiring", wired_text)
 
     if "schema-3832" in flat or "schema-3832" in ev:
         fails.append("AC3: new schema-3832 query key")

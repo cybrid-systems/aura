@@ -22,7 +22,7 @@ Contract (one row per AC):
   AC6 tests/compiler/test_epoch_invariant_walk.cpp extended with
      #2668 AC1-AC6 source-cite block (per #81967 — no new issue-suffix
      file).
-  AC7 build.py wires check_2668_coverage into the gate after
+  AC7 run_checks.py gates check_2668_coverage into the gate after
      check_2667_coverage.
   AC8 cross-check: check_epoch_invariant_periodic_coverage + check_stamp_
      resolve_coverage still green (no regression on #2640 / #2366).
@@ -37,6 +37,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -56,7 +58,6 @@ def main() -> int:
     br = _read("src/compiler/aura_jit_bridge.cpp")
     obs = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
     test = _read("tests/compiler/test_epoch_invariant_walk.cpp")
-    build = _read("build.py")
 
     # AC1 — event-driven walk wired on both bump sites
     must("aura_event_driven_epoch_invariant_walk_if_due", "AC1", br)
@@ -97,8 +98,8 @@ def main() -> int:
     must("ac2668_3_build_linter_wired", "AC6", test)
     must("Issue #2668", "AC6", test)
 
-    # AC7 — build.py wires the linter
-    must("check_2668_coverage", "AC7", build)
+    # AC7 — run_checks.py gates the linter
+    must("check_2668_coverage", "AC7", wired_text)
 
     # Cross-check: check_epoch_invariant_periodic_coverage still green
     r1 = subprocess.run(

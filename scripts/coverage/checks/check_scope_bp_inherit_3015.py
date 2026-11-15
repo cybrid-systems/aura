@@ -23,6 +23,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -42,7 +44,6 @@ def main() -> int:
     agent = _read("src/compiler/evaluator_primitives_agent.cpp")
     readme = _read("src/orch/README.md")
     test = _read("tests/orch/test_per_scope_bp_admit.cpp")
-    build = _read("build.py")
 
     # ── AC1: documented inherit ────────────────────────────────────
     must("Issue #3015", "AC1", spawn)
@@ -78,7 +79,7 @@ def main() -> int:
 
     # ── AC5: tests + no invent + no docs/design/ ───────────────────
     must("#3015 AC1", "AC5", test)
-    must("check_scope_bp_inherit_3015", "AC5", build)
+    must("check_scope_bp_inherit_3015", "AC5", wired_text)
     for rel in (
         "tests/orch/test_issue_3015.cpp",
         "tests/compiler/test_issue_3015.cpp",

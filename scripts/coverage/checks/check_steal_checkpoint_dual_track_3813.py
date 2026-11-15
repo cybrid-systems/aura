@@ -7,6 +7,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -30,7 +32,6 @@ def main() -> int:
     fib = _read("src/compiler/evaluator_fiber_mutation.cpp")
     stub = _read("src/compiler/aura_jit_bridge_stub.cpp")
     test = _read("tests/compiler/test_aot_bridge_checkpoint_version_steal.cpp")
-    build = _read("build.py")
 
     # AC1: probe does not conflate C-bridge with table
     must("Issue #3813", "AC1 probe cite", br)
@@ -81,7 +82,7 @@ def main() -> int:
     if "aura_aot_probe_checkpoint_version(0, table_epoch + 99)" in test:
         fails.append("AC4: conflated 2-arg table_epoch+99 oracle still present")
 
-    must("check_steal_checkpoint_dual_track_3813", "AC4 build", build)
+    must("check_steal_checkpoint_dual_track_3813", "AC4 build", wired_text)
     if (ROOT / "tests" / "compiler" / "test_issue_3813.cpp").is_file():
         fails.append("AC4: invent test_issue_3813.cpp present")
     if (ROOT / "docs" / "design" / "3813-steal-checkpoint-dual-track.md").is_file():

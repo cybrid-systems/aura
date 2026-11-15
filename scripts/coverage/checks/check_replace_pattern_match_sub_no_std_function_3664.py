@@ -23,6 +23,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -43,7 +45,6 @@ def main() -> int:
 
     flat = _read("src/compiler/evaluator_eval_flat.cpp")
     test = _read("tests/compiler/test_atomic_batch_replace_pattern_sibling.cpp")
-    build = _read("build.py")
     mut = _read("src/compiler/evaluator_primitives_mutate.cpp")
     pw = _read("scripts/coverage/checks/check_pure_wrap_no_std_function_3042.py")
     qh = _read("src/compiler/evaluator_primitives_query.cpp")
@@ -74,12 +75,20 @@ def main() -> int:
     must("(+ ... ...)", "AC4 wildcard", test)
     must("(lambda () ...)", "AC4 nested", test)
     must("3664 AC4: wildcard batch #t", "AC4 test", test)
-    must("check_linear_move_elision_abort_live_3663", "AC4 prev linter", build)
-    must("check_replace_pattern_match_sub_no_std_function_3664", "AC4 build.py", build)
-    prev = build.find("check_linear_move_elision_abort_live_3663")
-    ours = build.find("check_replace_pattern_match_sub_no_std_function_3664")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC4: linter must be wired in build.py AFTER #3663")
+    must("check_linear_move_elision_abort_live_3663", "AC4 prev linter", wired_text)
+    must("check_replace_pattern_match_sub_no_std_function_3664", "AC4 wiring", wired_text)
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must(
+        "check_linear_move_elision_abort_live_3663",
+        "AC4: linter must be gated by run_checks.py (both gated)",
+        wired_text,
+    )
+    must(
+        "check_replace_pattern_match_sub_no_std_function_3664",
+        "AC4: linter must be gated by run_checks.py (both gated)",
+        wired_text,
+    )
     if _read("tests/compiler/test_issue_3664.cpp") or _read("tests/issues/test_issue_3664.cpp"):
         fails.append("AC4: test_issue_3664.cpp present")
     if (ROOT / "docs" / "design").is_dir():

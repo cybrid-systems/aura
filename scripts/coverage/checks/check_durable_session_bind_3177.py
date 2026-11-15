@@ -36,6 +36,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 # Files in scope for #3177 (production durable high-risk session_bound force).
 SCOPE_FILES = [
@@ -71,7 +73,6 @@ def main() -> int:
     ixx = _read("src/compiler/evaluator.ixx")
     posture = _read("src/compiler/evaluator_primitives_security.cpp")
     _read("tests/core/test_capability_single_use_consume.cpp")
-    build = _read("build.py")
 
     # ── AC1: production durable high-risk stamps session_bound=true ─────
     # evaluator_security.cpp must:
@@ -156,9 +157,9 @@ def main() -> int:
     # nested-function structure issues (#3144 AC4/AC5 helper definitions
     # are at the wrong scope — file doesn't compile on origin/main). The
     # #3177 ACs are covered by the linter self-cite + capability_model.hh
-    # source-cite + posture prim key surface. build.py wires the new
+    # source-cite + posture prim key surface. run_checks.py gates the new
     # linter.
-    must("check_durable_session_bind_3177", "AC5", build)
+    must("check_durable_session_bind_3177", "AC5", wired_text)
 
     # Forbidden: new tests/issues/test_issue_3177.cpp (per #81934 / #81967).
     for rel in (

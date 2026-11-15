@@ -35,7 +35,7 @@ Gate rows:
   G6  test ACs in tests/compiler/test_cascade_decision_residual_atomic.cpp
       (#3135 suite home, #81967) exercising concurrent re-arm → no clean
       partial on the lagging caller.
-  G7  build.py wires this linter.
+  G7  run_checks.py gates this linter.
   G8  no docs/design/3283-* (per #1655), no tests/issue*/test_issue_3283.cpp
       (per #81967).
 
@@ -51,6 +51,8 @@ _sys.path.insert(0, str(_Path(__file__).resolve().parents[1]))
 from service_source import service_source  # #5242: interface + implementation units
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 failures: list[str] = []
 
@@ -75,7 +77,6 @@ def main() -> int:
     print("=== #3283 deferred-hybrid re-arm lag linter ===")
     svc = service_source()
     test = read("tests/compiler/test_cascade_decision_residual_atomic.cpp")
-    build = read("build.py")
 
     must("Issue #3283" in svc, "G1: service.ixx cites Issue #3283")
     must("deferred_hybrid_gen_" in svc, "G1: deferred_hybrid_gen_ member present")
@@ -116,8 +117,8 @@ def main() -> int:
     must("ac3283" in test or "3283" in test, "G6: test cites Issue #3283")
     must("concurrent" in test or "rearm" in test or "re-arm" in test, "G6: concurrent re-arm exercise present")
 
-    # G7: build.py wiring
-    must("check_deferred_rearm_lag_3283.py" in build, "G7: build.py wires linter")
+    # G7: gate wiring
+    must("check_deferred_rearm_lag_3283.py" in wired_text, "G7: run_checks.py gates linter")
 
     # G8: no docs/design / no tests/issue
     docs_ok = True

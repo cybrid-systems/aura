@@ -26,6 +26,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from service_source import service_source  # #5242: interface + implementation units
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -44,7 +46,6 @@ def main() -> int:
     cpp = _read("src/compiler/shape_profiler.cpp")
     svc = service_source()
     test = _read("tests/compiler/test_shape_profiler_concurrency.cpp")
-    build = _read("build.py")
     l3270 = _read("scripts/coverage/checks/check_primid_drift_3270.py")
 
     must("kShapeDirtyHookNoStdFunctionIssue = 3271", "AC1 stamp", hh)
@@ -76,11 +77,15 @@ def main() -> int:
     must("ac3271_2_fire_after_unlock", "AC5 test AC2", test)
     must("ac3271_3_unset_zero_extra", "AC5 test AC3", test)
     must("ac3271_5_source_and_linter", "AC5 test AC5", test)
-    must("check_shape_dirty_hook_no_std_function_3271", "AC5 build.py", build)
-    prev = build.find("check_primid_drift_3270")
-    ours = build.find("check_shape_dirty_hook_no_std_function_3271")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC5: linter must be wired in build.py AFTER #3270")
+    must("check_shape_dirty_hook_no_std_function_3271", "AC5 wiring", wired_text)
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must("check_primid_drift_3270", "AC5: linter must be gated by run_checks.py (both gated)", wired_text)
+    must(
+        "check_shape_dirty_hook_no_std_function_3271",
+        "AC5: linter must be gated by run_checks.py (both gated)",
+        wired_text,
+    )
     must("3271", "AC5 extend 3270 linter", l3270)
     if (ROOT / "tests" / "issues" / "test_issue_3271.cpp").is_file():
         fails.append("AC5: forbidden tests/issues/test_issue_3271.cpp per #81967")

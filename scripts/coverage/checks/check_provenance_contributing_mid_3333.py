@@ -24,6 +24,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -42,7 +44,6 @@ def main() -> int:
     test = _read("tests/core/test_capability_single_use_consume.cpp")
     lint2707 = _read("scripts/coverage/checks/check_mid_join_fail_closed_2707.py")
     lint3126 = _read("scripts/coverage/checks/check_capability_admin_fence_3126.py")
-    build = _read("build.py")
 
     must("kProvenanceContributingMidIssue = 3333", "AC1 stamp", cap)
     must("required != Effect::None && !has_effect(g.effects, required)", "AC1 filter", cap)
@@ -65,16 +66,16 @@ def main() -> int:
     must("Issue #3142", "AC5 #3142", cap)
     must("ac3333_5_stolen_skip_and_source", "AC5 test", test)
 
-    must("check_provenance_contributing_mid_3333", "AC6 build.py", build)
-    must("check_mid_join_fail_closed_2707", "AC6 #2707 linter wired", build)
+    must("check_provenance_contributing_mid_3333", "AC6 wiring", wired_text)
+    must("check_mid_join_fail_closed_2707", "AC6 #2707 linter wired", wired_text)
     must("ac3333_6_source_and_linter", "AC6 test", test)
     must("provenance_ok(TenantId tenant, const EffectProvenance& prov", "AC6 3126 prefix", lint3126)
-    prev = build.find("check_mid_join_fail_closed_2707")
-    ours = build.find("check_provenance_contributing_mid_3333")
-    if ours < 0:
-        fails.append("AC6: linter must be wired in build.py")
-    elif prev >= 0 and ours < prev:
-        fails.append("AC6: linter must be wired in build.py AFTER #2707")
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must("check_mid_join_fail_closed_2707", "AC6: linter must be gated by run_checks.py (both gated)", wired_text)
+    must(
+        "check_provenance_contributing_mid_3333", "AC6: linter must be gated by run_checks.py (both gated)", wired_text
+    )
     if (ROOT / "tests" / "core" / "test_issue_3333.cpp").is_file():
         fails.append("AC6: tests/core/test_issue_3333.cpp present (forbidden #81967)")
     docs = ROOT / "docs" / "design"

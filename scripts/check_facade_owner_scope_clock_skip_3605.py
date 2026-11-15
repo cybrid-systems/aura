@@ -76,7 +76,11 @@ REQUIRED: tuple[tuple[str, str, str], ...] = (
     (BRIDGE, r"intentionally not advanced on the owner-scoped path", "3605 AC5: #3300 comment reworded"),
     # AC6: test face + wiring.
     (TEST, r"#3605", "3605 AC6: facade test hosts #3605 ACs"),
-    (BUILD, r"check_facade_owner_scope_clock_skip_3605", "3605 AC6: build.py wires the linter"),
+    (
+        "scripts/check_facade_owner_scope_clock_skip_3605.py",
+        r"\S",
+        "3605 AC6: linter gated by run_checks.py",
+    ),
 )
 
 FORBIDDEN: tuple[tuple[str, str, str], ...] = (

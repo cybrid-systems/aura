@@ -20,6 +20,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -38,7 +40,6 @@ def main() -> int:
 
     me = _read("src/compiler/macro_expansion.cpp")
     test = _read("tests/compiler/test_clone_walk_gensym_ceiling.cpp")
-    build = _read("build.py")
 
     must("Issue #3816", "AC1", me)
     params = me.find("std::vector<aura::ast::SymId> param_syms;")
@@ -70,7 +71,7 @@ def main() -> int:
     if docs.is_dir():
         for f in sorted(docs.glob("3816-*")):
             fails.append(f"AC3: docs/design/{f.name} present (forbidden per #1655)")
-    must("check_clone_walk_rename_deny_abort_3816", "AC3", build)
+    must("check_clone_walk_rename_deny_abort_3816", "AC3", wired_text)
 
     # AC4: Soft/Off gate via production_surface (Off → false)
     must("production_surface && inner_expand_production_limit_deny()", "AC4", win)

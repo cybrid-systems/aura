@@ -24,6 +24,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -45,7 +47,6 @@ def main() -> int:
     mbc = _read("src/compiler/evaluator_mutation_boundary.cpp")
     facade = _read("tests/compiler/test_engine_metrics_facade.cpp")
     sched = _read("tests/orch/test_security_schedule_gate.cpp")
-    build = _read("build.py")
 
     must("kSecurityScheduleMetricsHashOverflowIssue = 3244", "AC1 stamp", gate)
     must("metrics-hash-overflow-breach", "AC1 posture key", prim)
@@ -65,7 +66,7 @@ def main() -> int:
     must("hash-overflow", "AC3 query sentinel", ev)
     must("overflow=1", "AC3 #3018 retained", facade)
 
-    must("check_metrics_hash_overflow_posture_3244", "AC5 build.py", build)
+    must("check_metrics_hash_overflow_posture_3244", "AC5 wiring", wired_text)
     must("ac3244_1_prod", "AC5 facade test", facade)
     must("3244 AC1", "AC5 schedule test", sched)
     if _read("tests/compiler/test_issue_3244.cpp") or _read("tests/orch/test_issue_3244.cpp"):

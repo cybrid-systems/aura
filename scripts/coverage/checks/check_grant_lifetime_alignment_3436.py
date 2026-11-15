@@ -34,6 +34,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -57,7 +59,6 @@ def main() -> int:
     sec = _read("src/compiler/evaluator_security.cpp")
     ixx = _read("src/compiler/evaluator.ixx")
     fixture = _read("tests/core/test_capability_single_use_consume.cpp")
-    build = _read("build.py")
 
     def span(start_marker: str, end_marker: str, label: str) -> str:
         i = sec.find(start_marker)
@@ -135,7 +136,7 @@ def main() -> int:
     must("ac3436_1_string_path_forced_single_use", "AC6", fixture)
     must("Issue #3436", "AC6", fixture)
     must("void grant_capability(std::string cap, bool single_use, bool session_bound,", "AC6-ixx", ixx)
-    must("check_grant_lifetime_alignment_3436.py", "AC6-build", build)
+    must("check_grant_lifetime_alignment_3436.py", "AC6-build", wired_text)
     issue_test = ROOT / "tests" / "core" / "test_issue_3436.cpp"
     if issue_test.exists():
         fails.append("AC6: tests/core/test_issue_3436.cpp must not exist")

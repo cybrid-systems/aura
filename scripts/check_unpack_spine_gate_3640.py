@@ -11,7 +11,7 @@ Contract (one row per AC):
   AC3  ACs live in tests/compiler/test_require_effect_auto_isolation.cpp
        (3640 markers: deny / source-cite / allow / Soft v1)
   AC4  no tests/**/test_issue_3640.cpp; no docs/design/3640-*
-  AC5  build.py wires check_unpack_spine_gate_3640 + root allowlist
+  AC5  run_checks.py wires check_unpack_spine_gate_3640 + root allowlist
 
 Exit 0 = all rows satisfied.
 """
@@ -22,6 +22,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -39,7 +41,6 @@ def main() -> int:
     mut = _read("src/compiler/evaluator_primitives_mutate.cpp")
     test = _read("tests/compiler/test_require_effect_auto_isolation.cpp")
     hygiene = _read("tests/compiler/test_hygiene_mutate_closed_loop.cpp")
-    build = _read("build.py")
     allow = _read("scripts/coverage/root_check_allowlist.txt")
 
     # ── AC1: gate single spine ───────────────────────────────────────────
@@ -75,7 +76,7 @@ def main() -> int:
     ):
         fails.append("AC2: resolve_mutate_node_arg unpack removed (#3415 regression)")
     must("auto walk_v2", "AC2 v2 spine walker present", mut)
-    must("check_unpack_stable_ref_arg_v2_3396", "AC2 #3396 linter still wired", build)
+    must("check_unpack_stable_ref_arg_v2_3396", "AC2 #3396 linter still wired", wired_text)
 
     # ── AC3: test markers (source-cite in auto_isolation, runtime in
     # the hygiene closed-loop binary) ────────────────────────────────────
@@ -94,7 +95,7 @@ def main() -> int:
             fails.append(f"AC4: docs/design/{f.name} present (forbidden #1655)")
 
     # ── AC5: wiring ──────────────────────────────────────────────────────
-    must("check_unpack_spine_gate_3640", "AC5 build.py wiring", build)
+    must("check_unpack_spine_gate_3640", "AC5 run_checks.py wiring", wired_text)
     must("check_unpack_spine_gate_3640.py", "AC5 root allowlist entry", allow)
 
     if fails:

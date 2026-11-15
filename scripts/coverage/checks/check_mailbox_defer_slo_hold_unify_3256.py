@@ -36,6 +36,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -52,7 +54,6 @@ def main() -> int:
 
     mb = _read("src/serve/multi_fiber_mailbox.h")
     t = _read("tests/serve/test_mailbox_recv_mutation_boundary.cpp")
-    build = _read("build.py")
     hold = _read("src/compiler/mutation_hold_budget.h")
 
     fn = mb.find("inline void maybe_mailbox_defer_slo_hold_cancel() noexcept {")
@@ -90,11 +91,17 @@ def main() -> int:
     must("ac3256_4_soft_observe_only", "AC4 test", t)
 
     must("ac3256_5_source_and_linter", "AC5 test", t)
-    must("check_mailbox_defer_slo_hold_unify_3256", "AC5 build.py", build)
-    nfe = build.find("check_dual_dep_graph_soft_parity_partial_3255")
-    ours = build.find("check_mailbox_defer_slo_hold_unify_3256")
-    if nfe < 0 or ours < 0 or ours < nfe:
-        fails.append("AC5: linter must be wired in build.py AFTER #3255")
+    must("check_mailbox_defer_slo_hold_unify_3256", "AC5 wiring", wired_text)
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must(
+        "check_dual_dep_graph_soft_parity_partial_3255",
+        "AC5: linter must be gated by run_checks.py (both gated)",
+        wired_text,
+    )
+    must(
+        "check_mailbox_defer_slo_hold_unify_3256", "AC5: linter must be gated by run_checks.py (both gated)", wired_text
+    )
     if "schema-3256" in mb or "query:mailbox-defer-slo-3256" in mb:
         fails.append("AC5: new public query key (reuse existing counters)")
 

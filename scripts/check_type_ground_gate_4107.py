@@ -64,6 +64,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -92,7 +94,6 @@ def main() -> int:
 
     impl = _read("src/compiler/type_checker_impl.cpp")
     test = _read("tests/compiler/test_ir.cpp")
-    build = _read("build.py")
     allow = _read("scripts/coverage/root_check_allowlist.txt")
 
     # ── AC1: lub production ground gate ──────────────────────────────────
@@ -200,8 +201,7 @@ def main() -> int:
     absent("test_issue_4107.cpp", "AC5 no new test tree", test)
 
     # ── AC6: gate wiring ─────────────────────────────────────────────────
-    must('tg4107_script = ROOT / "scripts" / "check_type_ground_gate_4107.py"', "AC6 build.py script wiring", build)
-    must("Issue #4107 type ground gate linter failed", "AC6 build.py fail message", build)
+    must("check_type_ground_gate_4107", "AC6 run_checks.py gates the linter", wired_text)
     must("check_type_ground_gate_4107.py", "AC6 root allowlist row", allow)
     design_dir = ROOT / "docs" / "design"
     if design_dir.is_dir() and any(design_dir.glob("4107-*")):

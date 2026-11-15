@@ -22,6 +22,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -49,7 +51,6 @@ def main() -> int:
     emb = _read("src/compiler/evaluator_mutation_boundary.cpp")
     mhb = _read("src/compiler/mutation_hold_budget.h")
     t = _read("tests/serve/test_mailbox_hold_starvation_hard.cpp")
-    build = _read("build.py")
 
     must("Issue #3826", "AC1 fiber cite", fc)
     must("steal_safety_production_residual_zero_v_read", "AC1 sticky arm", fc)
@@ -88,7 +89,7 @@ def main() -> int:
     must("ac3826_3_soft_and_source", "AC4 AC3 test", t)
     must("Never mid-mutation steal Ok", "AC4 steal Ok guard", t)
     must("mutation_hold_defer_active()==0 after body exit", "AC4 defer AC", t)
-    must("check_edge_free_latch_gate_3826", "AC4 build.py", build)
+    must("check_edge_free_latch_gate_3826", "AC4 wiring", wired_text)
 
     if (ROOT / "tests" / "serve" / "test_issue_3826.cpp").is_file():
         fails.append("AC4: test_issue_3826.cpp present (forbidden invent)")

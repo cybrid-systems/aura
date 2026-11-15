@@ -25,9 +25,12 @@ Exit 0 = all rows satisfied.
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -89,7 +92,6 @@ def main() -> int:
     prov = _read("src/core/provenance_tracker.hh")
     test_req = _read("tests/compiler/test_require_effect_auto_isolation.cpp")
     test_iso = _read("tests/core/test_tenant_isolation_enforcement.cpp")
-    build = _read("build.py")
     q = _read("src/compiler/evaluator_primitives_query.cpp")
     qws = _read("src/compiler/evaluator_primitives_query_workspace.cpp")
     posture = _read("src/compiler/evaluator_primitives_security.cpp")
@@ -169,7 +171,7 @@ def main() -> int:
     must("Issue #3415", "AC6 auto-isolation", test_req)
     must("ac3415", "AC6 tenant-isolation", test_iso)
     must("Issue #3415", "AC6 tenant-isolation", test_iso)
-    must("check_bare_nodeid_foreign_stamp_3415", "AC6 build", build)
+    must("check_bare_nodeid_foreign_stamp_3415", "AC6 build", wired_text)
     if "schema-3415" in mut or "schema-3415" in q or "schema-3415" in qws or "schema-3415" in posture:
         fails.append("AC6: new schema-3415 query key (forbidden)")
     if (ROOT / "tests" / "issues" / "test_issue_3415.cpp").is_file():

@@ -21,6 +21,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from query_prims_sources import read_query_prims  # Issue #2914
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -46,7 +48,6 @@ def main() -> int:
     efm = _read("src/compiler/evaluator_fiber_mutation.cpp")
     q = read_query_prims()
     t = _read("tests/compiler/test_occurrence_goal_persist_rehydrate.cpp")
-    build = _read("build.py")
 
     # AC1
     must("#2910", "AC1", impl)
@@ -78,8 +79,8 @@ def main() -> int:
     must_key("occurrence-persist-production-always-on-success", "AC5", q)
     must("schema-2896", "AC5", q)
     must("schema-2608", "AC5", q)
-    must("check_occurrence_persist_production_2910", "AC5", build)
-    must("cmd_occurrence_persist_production_2910", "AC5", build)
+    must("check_occurrence_persist_production_2910", "AC5", wired_text)
+    must("check_occurrence_persist_production_2910.py", "AC5", wired_text)
 
     # AC6
     must("decision table", "AC6", impl)

@@ -44,7 +44,7 @@ Contract (one row per AC):
   AC5  runtime ACs dispatched in both suites (fiber_cow ac4165_1..5 +
        tenant ac4165_agent_fiber_isolation); no tests/**/test_issue_4165.cpp;
        no docs/design/4165-*
-  AC6  build.py wiring + root_check_allowlist.txt entry
+  AC6  run_checks.py wiring + root_check_allowlist.txt entry
 
 Exit 0 = all rows satisfied.
 """
@@ -59,6 +59,8 @@ from source_window import body_between  # noqa: E402
 from source_window import check as _structural  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -91,7 +93,6 @@ def main() -> int:
     epoch = _read("src/core/workspace_epoch.hh")
     cow_test = _read("tests/serve/test_stable_ref_provenance_fiber_cow.cpp")
     tenant_test = _read("tests/core/test_tenant_isolation_enforcement.cpp")
-    build = _read("build.py")
     allow = _read("scripts/coverage/root_check_allowlist.txt")
 
     # ── AC1: Agent-scoped resolution + stamp-path routing ────────────────
@@ -168,7 +169,7 @@ def main() -> int:
         fails.append("AC5: no docs/design/4165-*")
 
     # ── AC6: build.py + allowlist wiring ─────────────────────────────────
-    must("check_agent_fiber_isolation_4165.py", "AC6 build.py wires the linter", build)
+    must("check_agent_fiber_isolation_4165.py", "AC6 run_checks.py wires the linter", wired_text)
     must("check_agent_fiber_isolation_4165.py", "AC6 root allowlist entry", allow)
 
     if fails:

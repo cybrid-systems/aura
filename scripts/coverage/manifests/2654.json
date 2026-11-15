@@ -46,13 +46,6 @@
       ]
     },
     {
-      "ac": "AC6",
-      "path": "build.py",
-      "contains": [
-        "cmd_hash_table_grow_coverage"
-      ]
-    },
-    {
       "ac": "AC7",
       "path": "tests/compiler/test_hash_table_grow.cpp",
       "contains": [

@@ -26,6 +26,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -46,7 +48,6 @@ def main() -> int:
     slo = _read("src/core/wal_append_fail_slo.h")
     test = _read("tests/orch/test_security_schedule_gate.cpp")
     readme = _read("src/orch/README.md")
-    build = _read("build.py")
 
     # AC1
     must("kSecurityScheduleWalAppendFailIssue = 3211", "AC1 stamp", gate)
@@ -82,7 +83,7 @@ def main() -> int:
     must("3211 AC5", "AC5 test", test)
 
     # AC6
-    must("check_wal_append_fail_schedule_3211", "AC6 build", build)
+    must("check_wal_append_fail_schedule_3211", "AC6 build", wired_text)
     must("wal-append-fail-breach", "AC6 README", readme)
     must("Issue #3211", "AC6 SLO cite", slo)
     must("3211 AC6", "AC6 test", test)

@@ -11,7 +11,7 @@ Contract:
   AC2 CliBodyLockJoinGuard unlocks owns_lock around wait
   AC3 stdin + degrade join paths use the guard
   AC4 suite tests/suite/nested_fiber_join_2869.aura
-  AC5 linter wired in build.py; no docs/design/*
+  AC5 linter gated by run_checks.py; no docs/design/*
 
 Exit 0 = all rows satisfied.
 """
@@ -22,6 +22,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -40,7 +42,6 @@ def main() -> int:
 
     msg = _read("src/compiler/evaluator_primitives_messaging.cpp")
     suite = _read("tests/suite/nested_fiber_join_2869.aura")
-    build = _read("build.py")
 
     # AC1 — TLS body lock for nested join unlock
     must("#2869", "AC1", msg)
@@ -67,7 +68,7 @@ def main() -> int:
     must("OK-2869", "AC4", suite)
 
     # AC5 — wire + no docs
-    must("check_nested_fiber_join_2869", "AC5", build)
+    must("check_nested_fiber_join_2869", "AC5", wired_text)
     if (ROOT / "tests" / "compiler" / "test_issue_2869.cpp").is_file():
         fails.append("AC5: tests/compiler/test_issue_2869.cpp present (forbidden per #81967)")
     docs_dir = ROOT / "docs" / "design"

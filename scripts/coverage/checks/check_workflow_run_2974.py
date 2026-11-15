@@ -25,6 +25,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -51,7 +53,6 @@ def main() -> int:
     q = _read("src/compiler/evaluator_primitives_agent.cpp")
     readme = _read("src/orch/README.md")
     t = _read("tests/orch/test_failure_policy_bridge.cpp")
-    build = _read("build.py")
 
     # AC1 — ordered stages + stop_on_batch_fail.
     must("Issue #2974", "AC1", hdr)
@@ -108,7 +109,7 @@ def main() -> int:
     must("ac2974_4_defaults_unchanged", "AC6", t)
     must("ac2974_5_additive_metrics", "AC6", t)
     must("ac2974_6_tests_linter_mvp", "AC6", t)
-    must("check_workflow_run_2974", "AC6", build)
+    must("check_workflow_run_2974", "AC6", wired_text)
     must("2974", "AC6", readme)
     must("orch:run-workflow", "AC6", readme)
     if (ROOT / "tests" / "orch" / "test_issue_2974.cpp").is_file():

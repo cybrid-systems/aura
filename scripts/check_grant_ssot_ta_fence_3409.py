@@ -21,6 +21,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def main() -> int:
@@ -30,7 +32,6 @@ def main() -> int:
     eval_src = (ROOT / "src" / "compiler" / "evaluator_security.cpp").read_text()
     sd = (ROOT / "src" / "compiler" / "security_defaults.hh").read_text()
     test = (ROOT / "tests" / "core" / "test_tenant_isolation_enforcement.cpp").read_text()
-    build = (ROOT / "build.py").read_text()
 
     # AC1 — TA fence lives in grant_locked.
     if "grant-ssot-needs-tenant-admin" not in cap:
@@ -93,9 +94,9 @@ def main() -> int:
         )
 
     # AC7 — build.py coverage gate registration.
-    if "check_grant_ssot_ta_fence_3409" not in build:
+    if "check_grant_ssot_ta_fence_3409" not in wired_text:
         fails.append(
-            "AC7: build.py does not register check_grant_ssot_ta_fence_3409 (linter not wired into the coverage gate)"
+            "AC7: run_checks.py does not register check_grant_ssot_ta_fence_3409 (linter not wired into the coverage gate)"
         )
 
     if fails:

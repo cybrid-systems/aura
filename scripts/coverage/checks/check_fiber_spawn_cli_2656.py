@@ -5,7 +5,7 @@ Contract:
   AC1 positive thread-fallback fiber ids (not -1)
   AC2 fiber:spawn-backend registered
   AC3 denseness contract doc docs/stdlib/fiber-spawn.md
-  AC4 unit test + cmake + build.py gate
+  AC4 unit test + cmake + coverage runner
   AC5 #2685 binding discipline doc + dual-define distinct-id unit AC
 
 Exit 0 = all rows satisfied.
@@ -17,6 +17,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -38,7 +40,6 @@ def main() -> int:
     doc = _read("docs/stdlib/fiber-spawn.md")
     test = _read("tests/compiler/test_fiber_spawn_cli.cpp")
     cmake = _read("CMakeLists.txt")
-    build = _read("build.py")
 
     must("#2656" in msg, "AC1: messaging cites #2656")
     must("0x4000" in msg or "positive" in msg.lower(), "AC1: positive thread ids")
@@ -53,8 +54,8 @@ def main() -> int:
     must("sequential" in doc.lower() or "yield" in doc.lower(), "AC3: sequential-yield note")
 
     must("test_fiber_spawn_cli" in cmake, "AC4: cmake")
-    must("check_fiber_spawn_cli_2656" in build, "AC4: linter")
-    must("cmd_fiber_spawn_cli_coverage" in build, "AC4: coverage cmd")
+    must("check_fiber_spawn_cli_2656" in wired_text, "AC4: linter")
+    must("check_fiber_spawn_cli_2656" in wired_text, "AC4: coverage cmd")
     must("AC1" in test and "AC2" in test and "#2656" in test, "AC4: unit ACs")
 
     # Issue #2685: binding discipline + dual-define distinct ids

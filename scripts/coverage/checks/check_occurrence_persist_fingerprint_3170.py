@@ -185,13 +185,8 @@ INFRA_REQUIRED: tuple[tuple[str, str, str], ...] = (
     ),
     # Build.py wiring.
     (
-        "build.py",
-        r"cmd_occurrence_persist_fingerprint_3170",
-        "build: cmd_occurrence_persist_fingerprint_3170 dispatcher",
-    ),
-    (
-        "build.py",
-        r"check_occurrence_persist_fingerprint_3170",
+        "scripts/coverage/checks/check_occurrence_persist_fingerprint_3170.py",
+        r"\S",
         "build: linter path wired",
     ),
 )

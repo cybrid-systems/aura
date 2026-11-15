@@ -35,6 +35,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 HOT_UPDATE_CPP = ROOT / "src" / "compiler" / "hot_update_registry.cpp"
 HOT_UPDATE_HH = ROOT / "src" / "compiler" / "hot_update_registry.hh"
 BUILD = ROOT / "build.py"
@@ -165,12 +168,11 @@ def main() -> int:
             if f"{ac_fn}()" not in test_text:
                 failures.append(f"AC6: main() does not call {ac_fn}()")
 
-    # AC6: build.py wiring.
-    build_text = _read("build.py")
-    if "check_storm_clear_drive_body_coverage" not in build_text:
-        failures.append("AC6: build.py does not reference check_storm_clear_drive_body_coverage linter")
-    if "cmd_storm_clear_drive_body_coverage" not in build_text:
-        failures.append("AC6: build.py missing cmd_storm_clear_drive_body_coverage function")
+    # AC6: gate wiring.
+    if "check_storm_clear_drive_body_coverage" not in wired_text:
+        failures.append("AC6: run_checks.py does not discover check_storm_clear_drive_body_coverage linter")
+    if "check_storm_clear_drive_body_coverage" not in wired_text:
+        failures.append("AC6: run_checks.py missing storm_clear_drive_body_coverage function")
 
     if failures:
         for f in failures:

@@ -33,6 +33,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 PRIM = ROOT / "src" / "compiler" / "evaluator_primitives_mutation.cpp"
 TST = ROOT / "tests" / "core" / "test_tenant_isolation_enforcement.cpp"
 NODEID_LINT = ROOT / "scripts" / "coverage" / "checks" / "check_side_effect_node_id_mandate_2942.py"
@@ -51,7 +54,6 @@ def main() -> int:
     prim = PRIM.read_text() if PRIM.exists() else ""
     tst = TST.read_text() if TST.exists() else ""
     nodeid_lint = NODEID_LINT.read_text() if NODEID_LINT.exists() else ""
-    build = (ROOT / "build.py").read_text()
     ok = True
 
     def report(name: str, good: bool, msg: str) -> None:
@@ -109,7 +111,7 @@ def main() -> int:
     report("AC5", good, "runtime ACs live in test_tenant_isolation_enforcement; no issue-file/doc")
 
     good = (
-        "check_rollback_effect_gate_3722.py" in build
+        "check_rollback_effect_gate_3722.py" in wired_text
         and 'insert_kv("rollback-gate' not in prim
         and "query:rollback-gate" not in prim
     )

@@ -43,10 +43,9 @@
     },
     {
       "ac": "AC4-wiring",
-      "path": "build.py",
-      "contains": [
+      "wired": [
         "check_reload_recovery_state_headroom_3846",
-        "Issue #3846"
+        "check_reload_recovery_state_headroom_3846.py"
       ]
     },
     {

@@ -88,10 +88,7 @@
     },
     {
       "ac": "Build-3140",
-      "path": "build.py",
-      "contains": [
-        "check_castop_typed_meta_phase_c_3140.py"
-      ]
+      "wired": "check_castop_typed_meta_phase_c_3140.py"
     }
   ]
 }

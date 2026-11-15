@@ -21,6 +21,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from query_prims_sources import read_query_prims  # Issue #2914
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -42,7 +44,6 @@ def main() -> int:
     ctxm = _read("src/compiler/castop_typed_meta.h")
     q = read_query_prims()
     test = _read("tests/compiler/test_dead_coercion_layered.cpp")
-    build = _read("build.py")
 
     # AC1: evidence != 0 → ast-elided++ and meta stamp
     must("g_dead_coercion_ast_elided_total", "AC1", cixx)
@@ -71,7 +72,7 @@ def main() -> int:
     must("#2611", "AC5", cixx)
     must("#2611", "AC5", opasses)
     must("#2624", "AC5", ctxm)  # type_id + narrow_evidence downflow phase A lives in castop_typed_meta.h
-    must("check_dead_coercion_layered_evidence_2645", "AC5", build)
+    must("check_dead_coercion_layered_evidence_2645", "AC5", wired_text)
 
     # AC6: no docs/design — verify no docs/design/2645-* file exists
     design_dir = ROOT / "docs" / "design"

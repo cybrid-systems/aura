@@ -29,7 +29,7 @@ Gate rows:
   G5  test AC in src-aligned suite (#81967): mailbox starvation suite
       ac3289_1; no tests/issue*/test_issue_3289.cpp.
   G6  no docs/design/ (#1655).
-  G7  build.py wires this linter.
+  G7  run_checks.py gates this linter.
 
 Exit 0 = all rows satisfied.
 """
@@ -38,6 +38,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 failures: list[str] = []
 
@@ -62,7 +64,6 @@ def main() -> int:
     mfh = read("src/serve/multi_fiber_mailbox.h")
     read("src/serve/fiber.cpp")
     t_mbox = read("tests/serve/test_mailbox_hold_starvation_hard.cpp")
-    build = read("build.py")
 
     # ── G1: armed-branch re-poll cites #3289 ──
     must("Issue #3289" in mfh, "G1: multi_fiber_mailbox.h cites Issue #3289")
@@ -105,8 +106,8 @@ def main() -> int:
     else:
         must(True, "G6: no docs/design/3289-* per #1655")
 
-    # ── G7: build.py wiring ──
-    must("check_under_boundary_hold_progress_3289" in build, "G7: build.py wires linter")
+    # ── G7: gate wiring ──
+    must("check_under_boundary_hold_progress_3289" in wired_text, "G7: run_checks.py gates linter")
 
     if failures:
         print(f"\n#3289 linter: {len(failures)} gate(s) FAILED")

@@ -31,6 +31,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
 
 ARENA = "src/core/arena.ixx"
 PASS = "src/compiler/root_remap_pass.ixx"
@@ -213,7 +216,7 @@ def main() -> int:
         _read(PASS),
         _read(PROBE),
         _read(LP),
-        _read(BUILD),
+        wired_text,
         _read(CORE_TEST),
         _read(HEALTH_TEST),
     )

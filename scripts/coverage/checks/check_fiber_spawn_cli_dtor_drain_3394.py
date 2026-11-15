@@ -155,7 +155,7 @@ def main() -> int:
     must(
         (ROOT / "scripts" / "coverage" / "checks" / "check_fiber_spawn_cli_dtor_drain_3394.py").is_file()
         and "discover_checks" in _read("scripts/coverage/run_checks.py"),
-        "gate: build.py wires the linter",
+        "gate: run_checks.py gates the linter",
     )
 
     if fails:

@@ -32,6 +32,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -58,7 +60,6 @@ def main() -> int:
     svc = _read("src/compiler/service_dirty.cpp")
     hur = _read("src/compiler/hot_update_registry.cpp")
     t = _read("tests/compiler/test_compiler_hot_update_facade.cpp")
-    build = _read("build.py")
 
     hpos = ixx.find("void stamp_eval_core_joint_after_production_facade_")
     # Issue #4109: the stamp function grew (capture ride-up at the dual-epoch
@@ -118,7 +119,7 @@ def main() -> int:
         fails.append("AC4: new query:* name (reuse existing epochs)")
 
     must("ac3219_eval_core_joint_after_production_facade", "AC5 test fn", t)
-    must("check_eval_core_joint_after_production_facade_3219", "AC5 build.py", build)
+    must("check_eval_core_joint_after_production_facade_3219", "AC5 wiring", wired_text)
     if (ROOT / "tests" / "compiler" / "test_issue_3219.cpp").is_file():
         fails.append("AC5: tests/compiler/test_issue_3219.cpp present (forbidden #81967)")
     if (ROOT / "tests" / "issues" / "test_issue_3219.cpp").is_file():

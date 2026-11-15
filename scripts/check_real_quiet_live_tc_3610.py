@@ -18,6 +18,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
 
 TMA = "src/compiler/typed_mutation_audit.h"
 TEST = "tests/compiler/test_commit_readiness_score.cpp"
@@ -48,7 +51,6 @@ def main() -> int:
 
     tma = _read(TMA)
     test = _read(TEST)
-    build = _read(BUILD)
 
     # AC1
     must("Issue #3610", "AC1 header cite", tma)
@@ -74,7 +76,7 @@ def main() -> int:
     must("3610 AC5: drain + green stamp restores live-TC depth==0 allow", "AC5 test row", test)
 
     # AC6
-    must("check_real_quiet_live_tc_3610", "AC6 build wiring", build)
+    must("check_real_quiet_live_tc_3610", "AC6 build wiring", wired_text)
     must("g_linear_fast_path_elide_blocked_production_total", "AC6 counter reuse", tma)
     if (ROOT / "tests" / "compiler" / "test_issue_3610.cpp").is_file():
         fails.append("AC6: test_issue_3610.cpp present (forbidden per #81934/#81967)")

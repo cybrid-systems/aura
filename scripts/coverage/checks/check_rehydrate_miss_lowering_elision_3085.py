@@ -26,6 +26,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from query_prims_sources import read_query_prims
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -53,7 +55,6 @@ def main() -> int:
     persist = _read("tests/compiler/test_occurrence_goal_persist_rehydrate.cpp")
     esc = _read("tests/compiler/test_escape_move_elision_gate.cpp")
     q = read_query_prims()
-    build = _read("build.py")
 
     must("kLinearFastPathRehydrateGenElisionIssue = 3085", "AC1 stamp", tma)
     must("linear_fast_path_rehydrate_gen_blocks_elision", "AC1 helper", tma)
@@ -86,7 +87,7 @@ def main() -> int:
     must("schema-3063", "AC5 lineage 3063", q)
     must("ac3085_5_schema_and_linter", "AC5 test", persist)
     must("ac3085_hermetic_lowering_block", "AC5 escape", esc)
-    must("check_rehydrate_miss_lowering_elision_3085", "AC5 build.py", build)
+    must("check_rehydrate_miss_lowering_elision_3085", "AC5 wiring", wired_text)
     must("Issue #3085", "AC5 gate header", gate)
     if (ROOT / "tests" / "compiler" / "test_issue_3085.cpp").is_file():
         fails.append("AC5: test_issue_3085.cpp present (forbidden #81967)")

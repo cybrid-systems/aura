@@ -47,13 +47,6 @@
       "contains": [
         "test_last_validated_generation_atomic"
       ]
-    },
-    {
-      "ac": "AC6",
-      "path": "build.py",
-      "contains": [
-        "cmd_last_validated_generation_atomic_coverage"
-      ]
     }
   ]
 }

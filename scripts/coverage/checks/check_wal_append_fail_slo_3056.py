@@ -21,6 +21,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -42,7 +44,6 @@ def main() -> int:
     evsec = _read("src/compiler/evaluator_security.cpp")
     test = _read("tests/compiler/test_security_event_wal_replay.cpp")
     trail = _read("tests/compiler/test_security_posture_trail.cpp")
-    build = _read("build.py")
 
     must("kWalAppendFailSloIssue = 3056", "AC1 stamp", slo)
     must("note_wal_append_fail", "AC1 note", slo)
@@ -69,7 +70,7 @@ def main() -> int:
     must("note_wal_append_fail", "AC5 se feed", se)
     must("3056 AC5", "AC5 test", test)
 
-    must("check_wal_append_fail_slo_3056", "AC6 build", build)
+    must("check_wal_append_fail_slo_3056", "AC6 build", wired_text)
     must("3056 AC6", "AC6 test", test)
     must("schema-3056", "AC6 trail", trail)
     if _read("docs/design/3056-wal-append-fail-slo.md"):

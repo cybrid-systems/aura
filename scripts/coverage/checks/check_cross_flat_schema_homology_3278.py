@@ -34,7 +34,7 @@ Gate rows:
       (source-cite for the #390 path that feeds the homology check).
   G7  test ACs in tests/compiler/test_macro_cross_flat_hygiene.cpp
       (the #2235 suite home — issue AC6: extend existing suite).
-  G8  build.py wires this linter.
+  G8  run_checks.py gates this linter.
   G9  no docs/design/3278-* (per #1655), no tests/issue*/test_issue_3278.cpp
       (per #81967 — src-aligned suites only).
 """
@@ -43,6 +43,8 @@ import pathlib
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 failures: list[str] = []
 
@@ -67,7 +69,6 @@ def main() -> int:
     print("=== #3278 cross-flat schema_cache homology linter ===")
     macro = read("src/compiler/macro_expansion.cpp")
     test = read("tests/compiler/test_macro_cross_flat_hygiene.cpp")
-    build = read("build.py")
 
     must("#3278" in macro, "G1: macro_expansion.cpp cites Issue #3278")
     must(
@@ -96,8 +97,8 @@ def main() -> int:
     must("ac3278_drift_fail_closed" in test, "G7c: test AC10 present")
     must("ac3278_source_cite" in test, "G7d: test AC11 present")
     must(
-        "check_cross_flat_schema_homology_3278.py" in build,
-        "G8: build.py wires linter",
+        "check_cross_flat_schema_homology_3278.py" in wired_text,
+        "G8: run_checks.py gates linter",
     )
     must(
         not any(p.name.startswith("3278-") for p in (ROOT / "docs/design").glob("3278-*"))

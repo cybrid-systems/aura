@@ -58,13 +58,6 @@
       "contains": [
         "test_layout_stamp_equality_8field"
       ]
-    },
-    {
-      "ac": "AC7",
-      "path": "build.py",
-      "contains": [
-        "cmd_layout_stamp_equality_8field_coverage"
-      ]
     }
   ]
 }

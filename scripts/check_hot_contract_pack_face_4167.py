@@ -35,6 +35,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -58,7 +60,6 @@ def main() -> int:
     val = _read("src/compiler/value.ixx")
     soa = _read("src/compiler/ir_soa.ixx")
     fixture = _read("tests/compiler/test_pack_pipeline_strict.cpp")
-    build = _read("build.py")
     allow = _read("scripts/coverage/root_check_allowlist.txt")
 
     # AC1: the production face defaults ON.
@@ -124,7 +125,7 @@ def main() -> int:
     must("void ac4167_pack_face_default()", "AC5 fixture AC fn", fixture)
     must("ac4167_pack_face_default();", "AC5 fixture main call", fixture)
     must("4167 AC3: option defaults ON", "AC5 fixture AC label", fixture)
-    must("check_hot_contract_pack_face_4167", "AC5 build.py wiring", build)
+    must("check_hot_contract_pack_face_4167", "AC5 run_checks.py wiring", wired_text)
     must("check_hot_contract_pack_face_4167.py", "AC5 allowlist entry", allow)
     if _read("docs/design/4167-production-pack-face-default.md"):
         fails.append("AC5: docs/design/4167-* exists")

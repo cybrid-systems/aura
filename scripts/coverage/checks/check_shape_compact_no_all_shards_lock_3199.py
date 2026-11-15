@@ -24,6 +24,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -60,7 +62,6 @@ def main() -> int:
     cpp = _read("src/compiler/shape_profiler.cpp")
     conc = _read("tests/compiler/test_shape_profiler_concurrency.cpp")
     iso = _read("tests/compiler/test_shape_compact_storm_isolation.cpp")
-    build = _read("build.py")
     shard_lint = _read("scripts/coverage/checks/check_shape_profiler_shard_2937.py")
 
     must("kShapeCompactNoAllShardsLockIssue = 3199", "AC1 stamp", hh)
@@ -98,7 +99,7 @@ def main() -> int:
     must("kShapeCompactShardConeLockIssue = 3628", "AC1(#3628) header stamp", hh)
     must("ac3628_shard_cone_lock_set", "AC1(#3628) isolation-suite test", iso)
     must("kShapeCompactShardConeLockIssue", "AC1(#3628) test uses stamp", iso)
-    must("check_shape_compact_no_all_shards_lock_3199", "AC5 build.py", build)
+    must("check_shape_compact_no_all_shards_lock_3199", "AC5 wiring", wired_text)
     must("#3199", "AC5 2937 linter lineage", shard_lint)
 
     if "g_3199_" in hh or "g_3199_" in cpp:

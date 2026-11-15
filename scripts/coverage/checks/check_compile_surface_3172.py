@@ -25,6 +25,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from query_prims_sources import read_query_prims
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 ADD_RE = re.compile(r'add\(\s*"([^"]+)"')
 SUNK = (
@@ -69,7 +71,6 @@ def main() -> int:
     ctor = _read("src/compiler/evaluator_ctor.cpp")
     guard = _read("tests/compiler/test_compile_primitive_guard.cpp")
     cap = _read("tests/compiler/test_capability_gating.cpp")
-    build = _read("build.py")
     q = read_query_prims()
 
     public = [n for n in ADD_RE.findall(compile_cpp) if n.startswith("compile:")]
@@ -97,8 +98,8 @@ def main() -> int:
         fails.append("AC4: new top-level query key (forbidden)")
     must("3172: snapshot public", "AC5 test", guard)
     must("sunk compile: dirty names", "AC5 cap", cap)
-    must("check_compile_surface_3172", "AC6 build", build)
-    must("cmd_compile_surface_3172", "AC6 cmd", build)
+    must("check_compile_surface_3172", "AC6 build", wired_text)
+    must("check_compile_surface_3172.py", "AC6 cmd", wired_text)
     if (ROOT / "tests" / "compiler" / "test_issue_3172.cpp").is_file():
         fails.append("AC6: test_issue_3172.cpp present (forbidden #81967)")
     docs = ROOT / "docs" / "design"

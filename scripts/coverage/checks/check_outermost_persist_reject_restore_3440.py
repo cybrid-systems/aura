@@ -25,6 +25,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -46,7 +48,6 @@ def main() -> int:
     t_rehy = _read("tests/compiler/test_occurrence_goal_persist_rehydrate.cpp")
     t_light = _read("tests/compiler/test_type_linear_lightweight_abort_clear.cpp")
     t_cone = _read("tests/compiler/test_partial_cone_commit_gate.cpp")
-    build = _read("build.py")
 
     must("kOutermostPersistRejectRestoreIssue = 3440", "AC1 stamp", tma)
     must("note_outermost_persist_reject_needs_restore", "AC1 note", tma)
@@ -84,7 +85,7 @@ def main() -> int:
     must("AuditStrategy::Full", "AC4 Full", note_body)
     must("3440 AC4", "AC4 test", t_abort)
 
-    must("check_outermost_persist_reject_restore_3440", "AC5 build.py", build)
+    must("check_outermost_persist_reject_restore_3440", "AC5 wiring", wired_text)
     must("3440 AC5", "AC5 test", t_abort)
     must("Issue #3440", "AC5 rehydrate", t_rehy)
     must("Issue #3440", "AC5 lightweight", t_light)

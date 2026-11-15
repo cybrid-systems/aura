@@ -19,6 +19,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -44,7 +46,6 @@ def main() -> int:
     q = _read("src/compiler/evaluator_primitives_agent.cpp")
     readme = _read("src/orch/README.md")
     t = _read("tests/orch/test_failure_policy_bridge.cpp")
-    build = _read("build.py")
 
     # AC1 — prim + mapping helpers
     must("kWorkflowComposeAuraIssue", "AC1", hdr)
@@ -79,7 +80,7 @@ def main() -> int:
     must("ac2843_3_schema_and_soft", "AC5", t)
     must("ac2843_4_project_kwargs_for_prims", "AC5", t)
     must("ac2843_5_source_linter_mvp", "AC5", t)
-    must("check_workflow_compose_aura_2843", "AC5", build)
+    must("check_workflow_compose_aura_2843", "AC5", wired_text)
     must("orch:compose-workflow", "AC5", readme)
     must("2843", "AC5", readme)
     if (ROOT / "tests" / "orch" / "test_issue_2843.cpp").is_file():

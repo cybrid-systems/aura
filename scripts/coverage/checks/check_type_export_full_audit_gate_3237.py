@@ -32,6 +32,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -56,7 +58,6 @@ def main() -> int:
     q = _read("src/compiler/evaluator_primitives_query.cpp") + _read(
         "src/compiler/evaluator_primitives_query_type_stats.cpp"
     )
-    build = _read("build.py")
 
     must("kTypeExportFullAuditGateIssue = 3237", "AC1 stamp", ixx)
     must("type_export_residual_faces_clear", "AC1 helper", aud)
@@ -88,7 +89,7 @@ def main() -> int:
     if "g_3237_" in ev or "g_3237_" in aud:
         fails.append("AC3: new g_3237_* counter")
 
-    must("check_type_export_full_audit_gate_3237", "AC4 build.py", build)
+    must("check_type_export_full_audit_gate_3237", "AC4 wiring", wired_text)
     must("ac3237_4_source_linter", "AC4 test", t)
     must("Issue #3237", "AC4 prim", prim)
     must("Issue #3237", "AC4 typecheck", tc)

@@ -19,6 +19,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -41,7 +43,6 @@ def main() -> int:
 
     ast = _read("src/core/ast.ixx")
     test = _read("tests/core/test_summary_flags_guard.cpp")
-    build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
     # Locate summary_flags_ declaration region
@@ -72,8 +73,8 @@ def main() -> int:
     must("2415 AC3", "AC3", test)
 
     must("2415 AC4", "AC4", test)
-    must("check_summary_flags_guard_2415", "gate", build)
-    must("cmd_summary_flags_guard_coverage", "gate", build)
+    must("check_summary_flags_guard_2415", "gate", wired_text)
+    must("check_summary_flags_guard_2415.py", "gate", wired_text)
     must("test_summary_flags_guard", "gate", cmake)
 
     if fails:

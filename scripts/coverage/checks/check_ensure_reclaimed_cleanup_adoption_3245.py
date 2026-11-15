@@ -24,6 +24,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -40,7 +42,6 @@ def main() -> int:
 
     spawn = _read("src/orch/agent_spawn.h")
     test = _read("tests/orch/test_join_drain_reclaim.cpp")
-    build = _read("build.py")
     prim = _read("src/compiler/evaluator_primitives_agent.cpp")
 
     must("kEnsureReclaimedCleanupAdoptionIssue = 3245", "AC5 stamp", spawn)
@@ -54,7 +55,7 @@ def main() -> int:
     must("reclaimed-pending", "AC4 pending find", test)
     must("#2661 no early free", "AC3 #2661", test)
     must("MUST call this", "AC5 contract", spawn)
-    must("check_ensure_reclaimed_cleanup_adoption_3245", "AC5 build.py", build)
+    must("check_ensure_reclaimed_cleanup_adoption_3245", "AC5 wiring", wired_text)
     if "query:ensure-reclaimed" in prim or "query:host-forget-pending" in prim:
         fails.append("AC5: new query:* (reuse query:orch-module-stats)")
     if _read("tests/orch/test_issue_3245.cpp"):

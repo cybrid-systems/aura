@@ -23,6 +23,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -41,7 +43,6 @@ def main() -> int:
     tcas = _read("tests/compiler/test_dirty_propagation_cascade.cpp")
     tsoa = _read("tests/compiler/test_hot_pass_dirty_soa.cpp")
     tskip = _read("tests/compiler/test_cascade_skip_metrics.cpp")
-    build = _read("build.py")
     q = _read("src/compiler/evaluator_primitives_query.cpp") + _read(
         "src/compiler/evaluator_primitives_query_type_stats.cpp"
     )
@@ -69,12 +70,12 @@ def main() -> int:
     if "g_3417_" in dirty:
         fails.append("AC4: new g_3417_* counter (forbidden)")
 
-    must("check_cascade_skip_subtree_full_cone_3417", "AC5 build.py", build)
-    must("check_residual_castop_readiness_undermark_3347", "AC5 after #3347", build)
-    i3347 = build.find("check_residual_castop_readiness_undermark_3347")
-    i3417 = build.find("check_cascade_skip_subtree_full_cone_3417")
-    if i3347 < 0 or i3417 < 0 or i3417 < i3347:
-        fails.append("AC5: #3417 linter must run after #3347")
+    must("check_cascade_skip_subtree_full_cone_3417", "AC5 wiring", wired_text)
+    must("check_residual_castop_readiness_undermark_3347", "AC5 after #3347", wired_text)
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must("check_residual_castop_readiness_undermark_3347", "AC5: #3417 linter must run (both gated)", wired_text)
+    must("check_cascade_skip_subtree_full_cone_3417", "AC5: #3417 linter must run (both gated)", wired_text)
     must("3417", "AC5 hot-pass suite", tsoa)
     must("3417", "AC5 skip-metrics suite", tskip)
     if (ROOT / "tests" / "compiler" / "test_issue_3417.cpp").is_file():

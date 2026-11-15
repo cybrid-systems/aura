@@ -32,6 +32,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -50,7 +52,6 @@ def main() -> int:
     scope = _read("src/orch/agent_scope.h")
     prim = _read("src/compiler/evaluator_primitives_agent.cpp")
     t = _read("tests/orch/test_join_drain_reclaim.cpp")
-    build = _read("build.py")
     readme = _read("src/orch/README.md")
 
     must("kReclaimedPendingLifecycleIssue = 3220", "AC1 constant", spawn)
@@ -71,7 +72,7 @@ def main() -> int:
 
     must("3220 AC1: directory lifecycle=reclaimed-pending", "AC4 test AC1", t)
     must("3220 AC2: Soft directory lifecycle empty", "AC4 test AC2", t)
-    must("check_reclaimed_pending_lifecycle_3220", "AC4 build.py", build)
+    must("check_reclaimed_pending_lifecycle_3220", "AC4 wiring", wired_text)
     must("lifecycle=reclaimed-pending", "AC4 README", readme)
     if "query:reclaimed-pending" in prim or "query:host-forget" in prim:
         fails.append("AC4: new query:* name (reuse query:orch-module-stats)")

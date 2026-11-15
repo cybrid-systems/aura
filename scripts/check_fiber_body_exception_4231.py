@@ -68,6 +68,8 @@ from source_window import body_between  # noqa: E402
 from source_window import check as _structural  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -185,11 +187,10 @@ def main() -> int:
         fails.append(f"AC4: no docs/design/4231-* allowed (found {bad})")
 
     # ── AC5: wiring ────────────────────────────────────────────────
-    build_py = _read("build.py")
     must(
-        'fbb4231_script = ROOT / "scripts" / "check_fiber_body_exception_4231.py"',
-        "AC5: build.py wires this linter",
-        build_py,
+        "check_fiber_body_exception_4231",
+        "AC5: run_checks.py gates this linter",
+        wired_text,
     )
     allowlist = _read("scripts/coverage/root_check_allowlist.txt")
     must("check_fiber_body_exception_4231.py", "AC5: allowlist entry", allowlist)

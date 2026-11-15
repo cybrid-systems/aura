@@ -70,10 +70,7 @@
     },
     {
       "ac": "AC7",
-      "path": "build.py",
-      "contains": [
-        "check_atomic_batch_allow_macro_3213"
-      ]
+      "wired": "check_atomic_batch_allow_macro_3213"
     },
     {
       "ac": "AC8",

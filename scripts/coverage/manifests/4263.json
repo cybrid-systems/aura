@@ -35,10 +35,9 @@
     },
     {
       "ac": "AC3-wiring",
-      "path": "build.py",
-      "contains": [
+      "wired": [
         "check_ir_soa_column_slab_upstream_4263",
-        "Issue #4263"
+        "check_ir_soa_column_slab_upstream_4263.py"
       ]
     },
     {

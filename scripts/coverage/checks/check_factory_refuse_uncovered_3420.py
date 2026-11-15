@@ -25,6 +25,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -43,7 +45,6 @@ def main() -> int:
     lp = _read("src/core/lifetime_pin.hh")
     fail_closed = _read("tests/core/test_moving_densify_fail_closed.cpp")
     cover = _read("tests/core/test_arena_required_cover_no_value_only.cpp")
-    build = _read("build.py")
     svc = _read("src/compiler/service.ixx")
     mut = _read("src/compiler/evaluator_primitives_mutate.cpp")
     zc = _read("src/core/zero_copy_output.hh")
@@ -89,12 +90,12 @@ def main() -> int:
     if "schema-3420" in arena or "schema-3420" in lp:
         fails.append("AC6: new schema-3420 query key")
 
-    must("check_factory_refuse_uncovered_3420", "AC7 build.py", build)
+    must("check_factory_refuse_uncovered_3420", "AC7 wiring", wired_text)
     must("ac3420_factory_refuse_surface", "AC7 required-cover suite", cover)
-    prev = build.find("check_factory_default_cover_3326")
-    ours = build.find("check_factory_refuse_uncovered_3420")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC7: #3420 linter must run after #3326")
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must("check_factory_default_cover_3326", "AC7: #3420 linter must run (both gated)", wired_text)
+    must("check_factory_refuse_uncovered_3420", "AC7: #3420 linter must run (both gated)", wired_text)
     if (ROOT / "tests" / "issues" / "test_issue_3420.cpp").is_file():
         fails.append("AC7: forbidden tests/issues/test_issue_3420.cpp per #81967")
     if (ROOT / "tests" / "core" / "test_issue_3420.cpp").is_file():

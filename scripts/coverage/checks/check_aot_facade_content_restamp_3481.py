@@ -33,6 +33,8 @@ from service_source import service_source  # #5242: interface + implementation u
 from source_window import brace_body, check  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -58,7 +60,6 @@ def main() -> int:
     pure = _read("src/compiler/ir_cache_pure.ixx")
     bnd = _read("src/compiler/evaluator_mutation_boundary.cpp")
     t = _read("tests/compiler/test_cache_stamp_restamp_contract.cpp")
-    build = _read("build.py")
 
     lu_win = check("AC1 lookup", brace_body(ixx, "int lookup_define_v2("), fails, "lookup_define_v2 body")
     must("Issue #3481", "AC1 lookup cite", lu_win)
@@ -151,11 +152,15 @@ def main() -> int:
     must("coverage-only", "AC6 BoundaryExit", bnd)
     must("last_reemit_success_region_mask", "AC6 coverage mask", hur)
     must("Issue #3481", "AC6 pure cite", pure)
-    must("check_aot_facade_content_restamp_3481", "AC6 build.py", build)
-    prev = build.find("check_abort_restore_stale_map_stamp_3324")
-    ours = build.find("check_aot_facade_content_restamp_3481")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC6: linter must be wired in build.py AFTER #3324")
+    must("check_aot_facade_content_restamp_3481", "AC6 wiring", wired_text)
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must(
+        "check_abort_restore_stale_map_stamp_3324",
+        "AC6: linter must be gated by run_checks.py (both gated)",
+        wired_text,
+    )
+    must("check_aot_facade_content_restamp_3481", "AC6: linter must be gated by run_checks.py (both gated)", wired_text)
     must_not("schema-3481", "AC6 no schema-3481", ixx)
     must_not("g_3481_", "AC6 no g_3481_*", ixx)
     must_not("query:content-stored", "AC6 no new query key", ixx)

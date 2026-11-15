@@ -17,6 +17,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -35,7 +37,6 @@ def main() -> int:
 
     hh = _read("src/core/gc_hooks.h")
     test = _read("tests/core/test_gc_defer_arm_fetch_or.cpp")
-    build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
     must("Issue #2428", "AC1", hh)
@@ -64,8 +65,8 @@ def main() -> int:
     must("first-arm metric +1 under concurrent race", "AC3", test)
 
     must("2428 AC4", "AC4", test)
-    must("check_gc_defer_arm_fetch_or_2428", "gate", build)
-    must("cmd_gc_defer_arm_fetch_or_coverage", "gate", build)
+    must("check_gc_defer_arm_fetch_or_2428", "gate", wired_text)
+    must("check_gc_defer_arm_fetch_or_2428.py", "gate", wired_text)
     must("test_gc_defer_arm_fetch_or", "gate", cmake)
 
     if fails:

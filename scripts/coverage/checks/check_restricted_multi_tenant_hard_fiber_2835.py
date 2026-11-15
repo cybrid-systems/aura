@@ -18,6 +18,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -38,7 +40,6 @@ def main() -> int:
     obs = _read("src/compiler/evaluator_primitives_security.cpp")
     jit = _read("src/compiler/evaluator_primitives_obs_jit.cpp")
     test = _read("tests/compiler/test_hard_fiber_restricted.cpp")
-    build = _read("build.py")
 
     # AC1 — multi_tenant arms hard; no force Strict for multi alone
     must("Issue #2835", "AC1", sec)
@@ -79,7 +80,7 @@ def main() -> int:
     must("ac2835", "AC6", test)
     must("2835", "AC6", test)
     must("AURA_MULTI_TENANT", "AC6", test)
-    must("check_restricted_multi_tenant_hard_fiber_2835", "AC6", build)
+    must("check_restricted_multi_tenant_hard_fiber_2835", "AC6", wired_text)
     if not (ROOT / "tests" / "compiler" / "test_hard_fiber_restricted.cpp").is_file():
         fails.append("AC6: missing test_hard_fiber_restricted.cpp")
     if (ROOT / "tests" / "compiler" / "test_issue_2835.cpp").is_file():

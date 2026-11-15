@@ -39,6 +39,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -57,7 +59,6 @@ def main() -> int:
     prim = _read("src/compiler/evaluator_primitives_agent.cpp")
     hook = _read("src/compiler/evaluator_fiber_mutation.cpp")
     test = _read("tests/compiler/test_tenant_scope_fiber_mandate.cpp")
-    build = _read("build.py")
 
     # AC1: production spawn resolves tenant + stamps the fiber.
     must("Issue #3434", "AC1 stamp", spawn)
@@ -96,7 +97,7 @@ def main() -> int:
 
     # AC6: extend test_tenant_scope_fiber_mandate; linter wired; no invent.
     must("ac3434_6_source_and_linter", "AC6 test", test)
-    must("check_tenant_spawn_mandate_3434", "AC6 build.py", build)
+    must("check_tenant_spawn_mandate_3434", "AC6 wiring", wired_text)
     must("spec.tenant_id = tenant_id != 0 ? tenant_id : ev.capability_tenant_id()", "AC6 prim wiring", prim)
     if (ROOT / "tests" / "compiler" / "test_issue_3434.cpp").is_file():
         fails.append("AC6: test_issue_3434.cpp present (forbidden #81967)")

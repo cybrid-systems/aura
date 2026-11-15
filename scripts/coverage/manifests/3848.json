@@ -39,10 +39,9 @@
     },
     {
       "ac": "AC3-wiring",
-      "path": "build.py",
-      "contains": [
+      "wired": [
         "check_densify_refuse_zero_move_3848",
-        "Issue #3848"
+        "check_densify_refuse_zero_move_3848.py"
       ]
     },
     {

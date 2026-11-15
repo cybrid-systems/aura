@@ -26,6 +26,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -43,7 +45,6 @@ def main() -> int:
     ss = _read("src/serve/steal_safety.cpp")
     t = _read("tests/serve/test_is_stealable_snapshot_gate.cpp")
     inv = _read("tests/serve/test_steal_snapshot_hard_invariant.cpp")
-    build = _read("build.py")
 
     win_at = ss.find("evaluate_residual_hard_and_bits(Fiber* stolen")
     win = ss[win_at : win_at + 2500] if win_at >= 0 else ""
@@ -63,11 +64,15 @@ def main() -> int:
     must("ac3659_4_soft_unchanged", "AC4 test", t)
     must("Soft: skip entirely (no loads)", "AC4 Lifetime Soft skip", ss)
 
-    must("check_boundary_safe_uses_snap_3659", "AC5 build.py", build)
-    prev = build.find("check_type_dirty_txn_before_cascade_3658")
-    ours = build.find("check_boundary_safe_uses_snap_3659")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC5: linter must be wired in build.py AFTER #3658")
+    must("check_boundary_safe_uses_snap_3659", "AC5 wiring", wired_text)
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must(
+        "check_type_dirty_txn_before_cascade_3658",
+        "AC5: linter must be gated by run_checks.py (both gated)",
+        wired_text,
+    )
+    must("check_boundary_safe_uses_snap_3659", "AC5: linter must be gated by run_checks.py (both gated)", wired_text)
     must("ac3621_1_depth_victim_storage_identity", "AC5 #3621 stays", inv)
     if _read("tests/serve/test_issue_3659.cpp"):
         fails.append("AC5: test_issue_3659.cpp present")

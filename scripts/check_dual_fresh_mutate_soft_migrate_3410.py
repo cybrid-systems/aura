@@ -26,6 +26,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def main() -> int:
@@ -35,7 +37,6 @@ def main() -> int:
     hot = (ROOT / "src" / "compiler" / "hot_update_registry.cpp").read_text()
     obs = (ROOT / "src" / "compiler" / "observability_metrics.h").read_text()
     test = (ROOT / "tests" / "compiler" / "test_cross_cow_soft_migrate.cpp").read_text()
-    build = (ROOT / "build.py").read_text()
 
     # AC1 — production probe between within-cap check and restamp.
     # `production_defaults_active()` is referenced multiple times in the file
@@ -111,10 +112,10 @@ def main() -> int:
         fails.append("AC7: test_cross_cow_soft_migrate.cpp missing AC8 for #3410 (build wiring + no new metric)")
 
     # AC7 — build.py wiring.
-    if "cmd_dual_fresh_mutate_soft_migrate_3410_coverage" not in build:
-        fails.append("AC7: build.py does not register cmd_dual_fresh_mutate_soft_migrate_3410_coverage")
-    if "check_dual_fresh_mutate_soft_migrate_3410" not in build:
-        fails.append("AC7: build.py does not register check_dual_fresh_mutate_soft_migrate_3410 linter script")
+    if "check_dual_fresh_mutate_soft_migrate_3410" not in wired_text:
+        fails.append("AC7: run_checks.py does not gate check_dual_fresh_mutate_soft_migrate_3410")
+    if "check_dual_fresh_mutate_soft_migrate_3410" not in wired_text:
+        fails.append("AC7: run_checks.py does not register check_dual_fresh_mutate_soft_migrate_3410 linter script")
 
     if fails:
         for f in fails:

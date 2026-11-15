@@ -24,7 +24,7 @@ Gate rows:
   G6  Soft/Off observe-only contract (never revoke solely due to sweep).
   G7  test ACs in tests/core/test_capability_single_use_consume.cpp
       (the #3142 suite home, #81967).
-  G8  build.py wires this linter.
+  G8  run_checks.py gates this linter.
   G9  no docs/design/3279-* (per #1655), no tests/issue*/test_issue_3279.cpp
       (per #81967).
 
@@ -35,6 +35,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 failures: list[str] = []
 
@@ -60,7 +62,6 @@ def main() -> int:
     cap = read("src/core/capability_model.hh")
     boundary = read("src/compiler/evaluator_mutation_boundary.cpp")
     test = read("tests/core/test_capability_single_use_consume.cpp")
-    build = read("build.py")
 
     must(
         "count_session_bound_orphans_locked" in cap and "by_tenant" in cap,
@@ -97,8 +98,8 @@ def main() -> int:
     ):
         must(name in test, f"G7: test {name} present")
     must(
-        "check_session_bound_orphan_sweep_3279.py" in build,
-        "G8: build.py wires linter",
+        "check_session_bound_orphan_sweep_3279.py" in wired_text,
+        "G8: run_checks.py gates linter",
     )
     must(
         not any(p.name.startswith("3279-") for p in (ROOT / "docs/design").glob("3279-*"))

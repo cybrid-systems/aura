@@ -29,7 +29,7 @@ ACs:
        per-merge history walk is superseded (merge lock scope).
   AC4  the design marker (kShapeHotReadNoFlushIssue) lives in the header,
        test_shape drives the four runtime ACs, and the linter is wired in
-       build.py + scripts/coverage/root_check_allowlist.txt.
+       run_checks.py + scripts/coverage/root_check_allowlist.txt.
   AC5  no new query key and no stray ship files (no
        tests/**/test_issue_4090.cpp, no docs/design/4090-*).
 """
@@ -40,6 +40,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 CPP = ROOT / "src" / "compiler" / "shape_profiler.cpp"
 HPP = ROOT / "src" / "compiler" / "shape_profiler.h"
 TST = ROOT / "tests" / "compiler" / "test_shape.cpp"
@@ -60,7 +63,6 @@ def main() -> int:
     cpp = CPP.read_text() if CPP.exists() else ""
     hpp = HPP.read_text() if HPP.exists() else ""
     tst = TST.read_text() if TST.exists() else ""
-    build = BUILD.read_text() if BUILD.exists() else ""
     allow = ALLOWLIST.read_text() if ALLOWLIST.exists() else ""
     ok = True
 
@@ -124,7 +126,7 @@ def main() -> int:
         and "#4090 AC2" in tst
         and "#4090 AC3" in tst
         and "#4090 AC4" in tst
-        and "check_shape_hotpath_4090.py" in build
+        and "check_shape_hotpath_4090.py" in wired_text
         and "check_shape_hotpath_4090.py" in allow,
         "header issue constant, test_shape ACs 1-4, build.py + allowlist wiring",
     )

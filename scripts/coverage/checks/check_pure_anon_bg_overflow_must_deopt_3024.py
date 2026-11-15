@@ -21,6 +21,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -43,7 +45,6 @@ def main() -> int:
     evq = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
     met = _read("src/compiler/observability_metrics.h")
     test = _read("tests/compiler/test_anonymous_residual_stable_id_policy.cpp")
-    build = _read("build.py")
 
     # AC1
     must("Issue #3024", "AC1", rt)
@@ -77,8 +78,8 @@ def main() -> int:
     # AC5
     must("aura_pure_anon_bg_overflow_must_deopt_total_v_read", "AC5 shared", sh)
     must("aura_pure_anon_bg_overflow_must_deopt_total_v_read", "AC5 stub", stub)
-    must("check_pure_anon_bg_overflow_must_deopt_3024", "AC5 build", build)
-    must("cmd_pure_anon_bg_overflow_must_deopt_3024", "AC5 build cmd", build)
+    must("check_pure_anon_bg_overflow_must_deopt_3024", "AC5 build", wired_text)
+    must("check_pure_anon_bg_overflow_must_deopt_3024.py", "AC5 build cmd", wired_text)
     if "AgentRegistry" in rt[rt.find("Issue #3024") : rt.find("Issue #3024") + 2500]:
         fails.append("AC5: must not introduce AgentRegistry")
     if "second closure table" in rt.lower() and "not a second" not in rt:

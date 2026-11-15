@@ -23,6 +23,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -46,7 +48,6 @@ def main() -> int:
     rt = _read("src/compiler/aura_jit_runtime.cpp")
     test = _read("tests/compiler/test_jit_macro_deopt_hygiene.cpp")
     preserve = _read("tests/compiler/test_jit_macro_introduced_preserve.cpp")
-    build = _read("build.py")
 
     must("aura_macro_hygiene_production_fail_closed", "AC1 helper def", rt)
     must("Issue #3475", "AC1 runtime cite", rt)
@@ -92,11 +93,14 @@ def main() -> int:
     must("ac3475_production_macro_refuse_native", "AC6 test fn", test)
     must("Issue #2022", "AC5 preserve suite", preserve)
 
-    must("check_macro_introduced_native_fail_closed_3475", "AC6 build.py", build)
-    prev = build.find("check_ir_jit_macro_marker_enforcement_2764")
-    ours = build.find("check_macro_introduced_native_fail_closed_3475")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC6: linter must be wired in build.py AFTER #2764")
+    must("check_macro_introduced_native_fail_closed_3475", "AC6 wiring", wired_text)
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must(
+        "check_macro_introduced_native_fail_closed_3475",
+        "AC6: linter must be gated by run_checks.py (both gated)",
+        wired_text,
+    )
 
     if (ROOT / "tests" / "compiler" / "test_issue_3475.cpp").is_file():
         fails.append("AC6: test_issue_3475.cpp present (forbidden #81967)")

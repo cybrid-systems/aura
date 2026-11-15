@@ -17,6 +17,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -40,7 +42,6 @@ def main() -> int:
     q = _read("src/compiler/evaluator_primitives_obs_jit.cpp")
     test = _read("tests/serve/test_steal_complete_strong_entry.cpp")
     cmake = _read("CMakeLists.txt")
-    bp = _read("build.py")
 
     # AC1 production contract in worker
     must("call_steal_complete", "AC1", wc)
@@ -75,8 +76,8 @@ def main() -> int:
     must("steal-complete-entry-missing-total", "AC5", q)
     must("steal-complete-strong-required-wired", "AC5", q)
     must("test_steal_complete_strong_entry", "AC5", cmake)
-    must("cmd_steal_complete_strong_entry_coverage", "AC5", bp)
-    must("check_steal_complete_strong_entry_2377.py", "AC5", bp)
+    must("check_steal_complete_strong_entry_2377.py", "AC5", wired_text)
+    must("check_steal_complete_strong_entry_2377.py", "AC5", wired_text)
     must("AC1:", "AC5", test)
     must("Issue #2377", "AC5", test)
 

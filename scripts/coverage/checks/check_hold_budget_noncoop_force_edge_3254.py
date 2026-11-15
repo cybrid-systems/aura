@@ -25,6 +25,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -44,7 +46,6 @@ def main() -> int:
     efm = _read("src/compiler/evaluator_fiber_mutation.cpp")
     mhb = _read("src/compiler/mutation_hold_budget.h")
     t = _read("tests/serve/test_hold_budget_synthetic_yield_injection.cpp")
-    build = _read("build.py")
 
     poll_pos = fc.find("aura_hold_budget_poll_inbody_window(void) noexcept")
     poll_win = fc[poll_pos : poll_pos + 8000] if poll_pos >= 0 else ""
@@ -73,7 +74,7 @@ def main() -> int:
         fails.append("AC4: new g_3254_* counter (reuse existing)")
 
     must("run_test_hold_budget_noncoop_force_edge", "AC5", t)
-    must("check_hold_budget_noncoop_force_edge_3254", "AC6 build.py", build)
+    must("check_hold_budget_noncoop_force_edge_3254", "AC6 wiring", wired_text)
 
     if (ROOT / "tests" / "issues" / "test_issue_3254.cpp").is_file():
         fails.append("AC5: forbidden tests/issues/test_issue_3254.cpp per #81967")

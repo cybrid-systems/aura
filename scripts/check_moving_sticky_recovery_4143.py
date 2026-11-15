@@ -49,6 +49,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 MUT = ROOT / "src" / "compiler" / "evaluator_mutation_boundary.cpp"
 ARENA = ROOT / "src" / "core" / "arena.ixx"
 HEALTH = ROOT / "src" / "core" / "moving_densify_health.hh"
@@ -135,7 +138,6 @@ def main() -> int:
     arena = ARENA.read_text() if ARENA.exists() else ""
     HEALTH.read_text() if HEALTH.exists() else ""
     tst = TST.read_text() if TST.exists() else ""
-    build = (ROOT / "build.py").read_text()
     allow = (ROOT / "scripts" / "coverage" / "root_check_allowlist.txt").read_text()
     ok = True
 
@@ -230,7 +232,7 @@ def main() -> int:
         and tst.count("ac4143_1_deny_recover_never_drops_sticky();") == 1
         and not (ROOT / "tests" / "core" / "test_issue_4143.cpp").exists()
         and no_doc
-        and "check_moving_sticky_recovery_4143.py" in build
+        and "check_moving_sticky_recovery_4143.py" in wired_text
         and "check_moving_sticky_recovery_4143.py" in allow
     )
     report("AC5", good, "tests cite #4143 and are dispatched; no issue-file/doc; build.py + allowlist wired")

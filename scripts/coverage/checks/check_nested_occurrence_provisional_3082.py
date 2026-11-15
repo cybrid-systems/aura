@@ -25,6 +25,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from query_prims_sources import read_query_prims  # Issue #2914
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -52,7 +54,6 @@ def main() -> int:
     ixx = _read("src/compiler/type_checker.ixx")
     q = read_query_prims()
     test = _read("tests/compiler/test_occurrence_goal_persist_rehydrate.cpp")
-    build = _read("build.py")
 
     must("kNestedOccurrenceProvisionalIssue = 3082", "AC1 stamp", tma)
     must("Issue #3082", "AC1 dtor", mb)
@@ -105,7 +106,7 @@ def main() -> int:
     must("ac3082_6_schema_and_linter", "AC5 schema test", test)
     must_key("schema-3082", "AC5 schema", q)
     must_key("nested-occurrence-provisional-wired", "AC5 wired", q)
-    must("check_nested_occurrence_provisional_3082", "AC5 build.py", build)
+    must("check_nested_occurrence_provisional_3082", "AC5 wiring", wired_text)
     must("linear_fast_path_ok", "AC5 #2964 lineage", tma)
     if (ROOT / "tests" / "compiler" / "test_issue_3082.cpp").is_file():
         fails.append("AC5: test_issue_3082.cpp present (forbidden #81967)")

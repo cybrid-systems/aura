@@ -22,6 +22,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -39,7 +41,6 @@ def main() -> int:
     efm = _read("src/compiler/evaluator_fiber_mutation.cpp")
     emb = _read("src/compiler/evaluator_mutation_boundary.cpp")
     t = _read("tests/serve/test_hold_budget_synthetic_yield_injection.cpp")
-    build = _read("build.py")
 
     fn = efm.find("aura_evaluator_try_hold_budget_fail_closed_at_safepoint() noexcept")
     if fn < 0:
@@ -74,7 +75,7 @@ def main() -> int:
     must("3825 AC2: Soft does not force-fail", "AC4 Soft test", t)
     must("3825 AC3: Steal Ok — process held clear after unlock", "AC4 steal test", t)
     must("run_test_hold_budget_safepoint_force_release_3825", "AC4 runner", t)
-    must("check_hold_budget_safepoint_force_release_3825", "AC4 build.py", build)
+    must("check_hold_budget_safepoint_force_release_3825", "AC4 wiring", wired_text)
 
     if (ROOT / "tests" / "serve" / "test_issue_3825.cpp").is_file():
         fails.append("AC4: test_issue_3825.cpp present (forbidden invent)")

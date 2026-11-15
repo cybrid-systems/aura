@@ -26,6 +26,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -42,7 +44,6 @@ def _rows(must, must_count, must_before) -> list[str]:
     rq = _read("src/core/resource_quota.hh")
     mandate = _read("tests/compiler/test_tenant_scope_fiber_mandate.cpp")
     iso = _read("tests/core/test_tenant_isolation_enforcement.cpp")
-    build = _read("build.py")
 
     # AC1/AC2: both boundary mirror sites derive the tenant and pass it.
     must_count("const auto qtid = ev.capability_tenant_id() != 0", "AC1 derivation x2", mb, 2)
@@ -74,7 +75,7 @@ def _rows(must, must_count, must_before) -> list[str]:
         fails.append("AC5: test_issue_3668.cpp present (forbidden per #81934)")
     if _read("docs/design/3668-quota-tenant-keying.md"):
         fails.append("AC5: docs/design/ exists — forbidden per #1655")
-    must("check_quota_tenant_keying_3668", "AC5 build.py", build)
+    must("check_quota_tenant_keying_3668", "AC5 run_checks.py", wired_text)
     return fails
 
 

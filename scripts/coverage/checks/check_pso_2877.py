@@ -5,7 +5,7 @@ Contract:
   AC1 swarm.aura: configurable w/c1/c2; pso default pop 16
   AC2 pso.aura: init/init-hash/step/best/population/defaults/help
   AC3 docs/stdlib/pso.md when-to-use + suite pso_2877.aura
-  AC4 linter wired in build.py
+  AC4 linter gated by run_checks.py
   AC5 no docs/design/2877-* / no test_issue_2877.cpp
 
 Exit 0 = all rows satisfied.
@@ -17,6 +17,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -37,7 +39,6 @@ def main() -> int:
     pso = _read("lib/std/pso.aura")
     docs = _read("docs/stdlib/pso.md")
     suite = _read("tests/suite/pso_2877.aura")
-    build = _read("build.py")
     _read("docs/stdlib/swarm.md")
 
     # AC1
@@ -70,7 +71,7 @@ def main() -> int:
     must("deterministic", "AC3", suite)
 
     # AC4
-    must("check_pso_2877", "AC4", build)
+    must("check_pso_2877", "AC4", wired_text)
 
     # AC5
     if (ROOT / "tests" / "compiler" / "test_issue_2877.cpp").is_file():

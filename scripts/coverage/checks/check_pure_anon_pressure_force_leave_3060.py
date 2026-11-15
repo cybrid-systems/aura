@@ -18,6 +18,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -35,7 +37,6 @@ def main() -> int:
     rt = _read("src/compiler/aura_jit_runtime.cpp")
     steal = _read("src/compiler/evaluator_fiber_mutation.cpp")
     test = _read("tests/compiler/test_anonymous_residual_stable_id_policy.cpp")
-    build = _read("build.py")
     obs = _read("src/compiler/evaluator_primitives_obs_jit.cpp")
 
     # AC1
@@ -86,8 +87,8 @@ def main() -> int:
     # AC5 — no new query keys
     if "schema-3060" in obs:
         fails.append("AC5: new schema-3060 query key (forbidden)")
-    must("check_pure_anon_pressure_force_leave_3060", "AC5 build", build)
-    must("cmd_pure_anon_pressure_force_leave_3060", "AC5 cmd", build)
+    must("check_pure_anon_pressure_force_leave_3060", "AC5 build", wired_text)
+    must("check_pure_anon_pressure_force_leave_3060.py", "AC5 cmd", wired_text)
     must("ac3060_5_source_and_linter", "AC5 test", test)
     cite = rt.find("Issue #3060")
     if cite >= 0 and "AgentRegistry" in rt[cite : cite + 2500]:

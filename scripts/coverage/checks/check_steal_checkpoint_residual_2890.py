@@ -24,6 +24,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 FILES = [
     "src/core/gc_hooks.h",
@@ -53,7 +55,6 @@ def main() -> int:
     obs = _read("src/compiler/evaluator_primitives_obs_jit.cpp")
     obs_eval = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
     test = _read("tests/serve/test_residual_defer_steal_hard_and.cpp")
-    build = _read("build.py")
 
     # ── AC1: prev-host force-clear on steal-complete ──
     must("Issue #2890", "AC1", rt)
@@ -84,7 +85,7 @@ def main() -> int:
     must("schema-2710", "AC4", obs)
     must("residual-defer-after-exit-total", "AC4", obs_eval)
 
-    # ── AC5: source-cite + suite + build.py gate ──
+    # ── AC5: source-cite + suite + coverage runner ──
     for rel in FILES:
         content = _read(rel)
         if not content:
@@ -97,7 +98,7 @@ def main() -> int:
     must("ac2890_3_no_double_clear", "AC5", test)
     must("ac2890_4_query_and_surface", "AC5", test)
     must("ac2890_5_linter_and_no_design", "AC5", test)
-    must("check_steal_checkpoint_residual_2890", "AC5", build)
+    must("check_steal_checkpoint_residual_2890", "AC5", wired_text)
     design_docs = sorted((ROOT / "docs" / "design").glob("2890-*")) if (ROOT / "docs" / "design").is_dir() else []
     if design_docs:
         fails.append(f"AC5: docs/design/2890-* present ({[p.name for p in design_docs]})")

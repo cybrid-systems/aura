@@ -51,6 +51,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -97,7 +99,6 @@ def main() -> int:
     fail_closed = _read("tests/core/test_moving_densify_fail_closed.cpp")
     cover = _read("tests/core/test_arena_required_cover_no_value_only.cpp")
     gate = _read("tests/core/test_general_object_pin_coverage_gate.cpp")
-    build = _read("build.py")
 
     must("kDensifyTrackedAllocateCoverIssue = 3214", "AC1 arena stamp", arena)
     must("kDensifyTrackedAllocateCoverIssue = 3214", "AC1 lifetime_pin stamp", lp)
@@ -161,7 +162,7 @@ def main() -> int:
     must("ac3214_3_soft_nonsmall_zero_cost", "AC3 fail_closed Soft", fail_closed)
     must("ac3214_nonsmall_allocate_notes_cover", "AC3 required-cover suite", cover)
     must("ac3214_coverage_gate_cite", "AC3 coverage-gate", gate)
-    must("check_production_all_densify_allocate_cover_3214", "AC3 build.py", build)
+    must("check_production_all_densify_allocate_cover_3214", "AC3 wiring", wired_text)
 
     if "g_moving_pin_registry_3214" in arena or "class DensifyPinRegistry" in arena:
         fails.append("AC4: second pin registry introduced")

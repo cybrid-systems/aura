@@ -6,7 +6,7 @@ Contract:
   AC2 grant_fiber_id when fiber override / prov set
   AC3 epoch fence denies MacroSelfEvo expand
   AC4 hard fiber isolation denies fiber mismatch
-  AC5 Source-cite + CMake + build.py gate
+  AC5 Source-cite + CMake + coverage runner
 
 Exit 0 = all rows satisfied.
 """
@@ -17,6 +17,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -37,7 +39,6 @@ def main() -> int:
     sec = _read("src/compiler/evaluator_primitives_security.cpp")
     test = _read("tests/compiler/test_grant_macro_self_evo_stamp.cpp")
     cmake = _read("CMakeLists.txt")
-    build = _read("build.py")
 
     # AC1 grant_macro_self_evo stamps
     must("Issue #2386", "AC1", cap)
@@ -65,8 +66,8 @@ def main() -> int:
 
     # AC5 registration
     must("test_grant_macro_self_evo_stamp", "AC5", cmake)
-    must("check_grant_macro_self_evo_stamp_2386", "AC5", build)
-    must("cmd_grant_macro_self_evo_stamp_coverage", "AC5", build)
+    must("check_grant_macro_self_evo_stamp_2386", "AC5", wired_text)
+    must("check_grant_macro_self_evo_stamp_2386.py", "AC5", wired_text)
     must("ac5_source_and_gate", "AC5", test)
     must("Issue #2386", "AC5", test)
 

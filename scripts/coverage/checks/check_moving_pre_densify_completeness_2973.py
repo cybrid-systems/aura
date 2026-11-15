@@ -21,6 +21,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 FILES = [
     "src/core/arena.ixx",
@@ -50,7 +52,6 @@ def main() -> int:
     obs = _read("src/compiler/evaluator_primitives_obs_jit.cpp")
     mb = _read("src/compiler/evaluator_mutation_boundary.cpp")
     test = _read("tests/core/test_moving_densify_fail_closed.cpp")
-    build = _read("build.py")
 
     must("Issue #2973", "AC1 arena", arena)
     must("count_pre_densify_untracked_external_roots_", "AC1 helper", arena)
@@ -89,8 +90,8 @@ def main() -> int:
             fails.append(f"AC6: {rel} does not cite 2973")
     must("ac2973_1_hard_blocks_before_move", "AC6", test)
     must("ac2973_6_linter_and_no_design", "AC6", test)
-    must("check_moving_pre_densify_completeness_2973", "AC6 build", build)
-    must("cmd_moving_pre_densify_completeness_2973", "AC6 build cmd", build)
+    must("check_moving_pre_densify_completeness_2973", "AC6 build", wired_text)
+    must("check_moving_pre_densify_completeness_2973.py", "AC6 build cmd", wired_text)
     design_docs = sorted((ROOT / "docs" / "design").glob("2973-*")) if (ROOT / "docs" / "design").is_dir() else []
     if design_docs:
         fails.append(f"AC6: docs/design/2973-* present ({[p.name for p in design_docs]})")

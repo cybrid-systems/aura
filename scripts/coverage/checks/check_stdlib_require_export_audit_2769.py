@@ -13,7 +13,7 @@ Contract (one row per AC):
   AC3 host #2766 canary still present (shared free-var residual)
   AC4 form-order lint: no require-before-export left in lib/std
       (canonical export-first; --fix can reorder)
-  AC5 this linter wired in build.py + authoring note; no docs/design/*
+  AC5 this linter gated by run_checks.py + authoring note; no docs/design/*
 
 Usage:
   python3 scripts/coverage/checks/check_stdlib_require_export_audit_2769.py
@@ -32,6 +32,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 STD = ROOT / "lib" / "std"
 
 # Denseness-critical modules that must stay green on stdin (P0 multi-agent /
@@ -289,7 +292,7 @@ def main(argv: list[str] | None = None) -> int:
     must("#2766", "AC3", loader)
     must("set_pool", "AC3", loader)
     must("ac2766_1_require_before_export_private_cell", "AC3", t)
-    must("check_module_require_export_order_2766", "AC3", _read("build.py"))
+    must("check_module_require_export_order_2766", "AC3", wired_text)
 
     # ── AC4 form-order lint: zero require-before-export in lib/std ──
     req_first = [r for r in rows if r.order == "require-first"]
@@ -320,8 +323,7 @@ def main(argv: list[str] | None = None) -> int:
             fails.append(f"AC4: denseness module {key} order={info.order}")
 
     # ── AC5 linter wire + authoring note + no docs/design ──
-    build = _read("build.py")
-    must("check_stdlib_require_export_audit_2769", "AC5", build)
+    must("check_stdlib_require_export_audit_2769", "AC5", wired_text)
     index = _read("lib/std/INDEX.aura")
     must("#2769", "AC5", index)
     must("#2766", "AC5", index)

@@ -39,6 +39,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -61,7 +63,6 @@ def main() -> int:
     emb = _read("src/compiler/evaluator_mutation_boundary.cpp")
     sc = _read("src/serve/steal_safety.cpp")
     t = _read("tests/serve/test_steal_complete_restamp_txn.cpp")
-    build = _read("build.py")
 
     # AC1 — Fiber stores durable evaluator_id + accessors; strong def returns it.
     must("evaluator_id_", "AC1", fh)
@@ -90,7 +91,7 @@ def main() -> int:
     must("#2727", "AC4", fc)
     must("#2721", "AC4", sc)  # lineage
 
-    # AC5 — source-cite + test extension per #81967 + build.py wires + no docs.
+    # AC5 — source-cite + test extension per #81967 + run_checks.py gates + no docs.
     must("ac2727_1_evaluator_id_set_on_guard_enter", "AC5", t)
     must("ac2727_2_evaluator_id_cleared_on_guard_exit", "AC5", t)
     must("ac2727_3_soft_and_production_identical", "AC5", t)
@@ -99,7 +100,7 @@ def main() -> int:
     # #81967: NO new test file — extend the existing one.
     if (ROOT / "tests" / "serve" / "test_issue_2727.cpp").is_file():
         fails.append("AC5: tests/serve/test_issue_2727.cpp present (forbidden per #81967)")
-    must("check_fiber_evaluator_id_2727", "AC5", build)
+    must("check_fiber_evaluator_id_2727", "AC5", wired_text)
     docs_dir = ROOT / "docs" / "design"
     if docs_dir.is_dir():
         for f in sorted(docs_dir.glob("2727-*")):

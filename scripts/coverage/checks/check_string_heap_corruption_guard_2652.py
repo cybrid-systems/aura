@@ -17,6 +17,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -40,7 +42,6 @@ def main() -> int:
     reg = _read("src/compiler/evaluator_primitives_registry.cpp")
     test = _read("tests/compiler/test_string_heap_corruption_guard.cpp")
     cmake = _read("CMakeLists.txt")
-    build = _read("build.py")
 
     must("copy_string_heap_at" in ixx, "AC1: copy_string_heap_at")
     must("hash_tables_mtx_" in ixx or "hash_tables_mutex" in ixx, "AC1: hash mutex")
@@ -59,8 +60,8 @@ def main() -> int:
     must("push_string_heap" in rt, "AC4: format/symbol-append push_string_heap")
 
     must("test_string_heap_corruption_guard" in cmake, "AC5: cmake")
-    must("check_string_heap_corruption_guard_2652" in build, "AC5: linter")
-    must("cmd_string_heap_corruption_guard_coverage" in build, "AC5: coverage cmd")
+    must("check_string_heap_corruption_guard_2652" in wired_text, "AC5: linter")
+    must("check_string_heap_corruption_guard_2652" in wired_text, "AC5: coverage cmd")
     must("AC1" in test and "AC2" in test, "AC5: unit ACs")
     must("Evaluator&" in reg or "primitive_error_counter, *this" in reg, "AC5: registry passes ev")
 

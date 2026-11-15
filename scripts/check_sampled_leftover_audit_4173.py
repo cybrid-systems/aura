@@ -24,6 +24,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
 
 HDR = "src/compiler/typed_mutation_audit.h"
 TEST = "tests/compiler/test_typed_mutation_audit_decision.cpp"
@@ -114,7 +117,7 @@ def _rows(hdr: str, test: str, build: str, allow: str) -> list[str]:
 def _self_test() -> int:
     hdr = _read(HDR)
     test_ok = _read(TEST)
-    build_ok = _read(BUILD)
+    build_ok = wired_text
     allow_ok = _read(ALLOW)
     bad = _rows(hdr, test_ok, build_ok, allow_ok)
     if bad:
@@ -145,7 +148,7 @@ def main() -> int:
     args = ap.parse_args()
     if args.self_test:
         return _self_test()
-    rows = _rows(_read(HDR), _read(TEST), _read(BUILD), _read(ALLOW))
+    rows = _rows(_read(HDR), _read(TEST), wired_text, _read(ALLOW))
     if rows:
         for r in rows:
             print(f"FAIL {LINTER}: {r}")

@@ -29,6 +29,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -70,7 +72,6 @@ def main() -> int:
     dce = _read("src/compiler/pass_impls.ixx")
     svc = _read("src/compiler/service.ixx")
     test = _read("tests/compiler/test_batch_dirty_discipline.cpp")
-    build = _read("build.py")
 
     # ── AC1: production batch-only + residual smoke wire ──
     must("#2936", "AC1", soa)
@@ -145,8 +146,8 @@ def main() -> int:
     must("ac2936_4_obs_schema", "AC6", test)
     must("ac2936_5_soft_residual_still_works", "AC6", test)
     must("ac2936_6_linter_and_no_design", "AC6", test)
-    must("check_batch_dirty_production_multi_only_2936", "AC6", build)
-    must("cmd_batch_dirty_production_multi_only_2936", "AC6", build)
+    must("check_batch_dirty_production_multi_only_2936", "AC6", wired_text)
+    must("check_batch_dirty_production_multi_only_2936.py", "AC6", wired_text)
     docs = ROOT / "docs" / "design"
     if docs.is_dir():
         for f in sorted(docs.glob("2936-*")):

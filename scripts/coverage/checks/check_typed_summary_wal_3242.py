@@ -19,6 +19,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -39,7 +41,6 @@ def main() -> int:
     sec = _read("src/compiler/evaluator_primitives_security.cpp")
     unify = _read("tests/compiler/test_security_audit_unify.cpp")
     facade = _read("tests/compiler/test_engine_metrics_facade.cpp")
-    build = _read("build.py")
 
     must("kTypedSummaryWalIssue = 3242", "AC1 stamp header", header)
     must("kTypedSummaryWalMagic", "AC1 sidecar magic", wal)
@@ -73,7 +74,7 @@ def main() -> int:
 
     must("ac3242_1_wal_hit", "AC5 AC1 test", unify)
     must("schema-3242", "AC5 facade", facade)
-    must("check_typed_summary_wal_3242", "AC5 build.py", build)
+    must("check_typed_summary_wal_3242", "AC5 wiring", wired_text)
     if (ROOT / "tests" / "core" / "test_issue_3242.cpp").is_file():
         fails.append("AC5: tests/core/test_issue_3242.cpp present (forbidden #81967)")
     if (ROOT / "tests" / "issues" / "test_issue_3242.cpp").is_file():

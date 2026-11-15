@@ -21,6 +21,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
 
 MX = "src/compiler/macro_expansion.cpp"
 AST = "src/core/ast.ixx"
@@ -55,7 +58,6 @@ def main() -> int:
     ast = _read(AST)
     fib = _read(FIB)
     test = _read(TEST)
-    build = _read(BUILD)
 
     # AC1
     must("Issue #3608", "AC1 macro_expansion", mx)
@@ -85,7 +87,7 @@ def main() -> int:
     must("ac3608_5_soft_half_write_preserved", "AC5 test row", test)
 
     # AC6
-    must("check_expand_checkpoint_local_rollback_3608", "AC6 build wiring", build)
+    must("check_expand_checkpoint_local_rollback_3608", "AC6 build wiring", wired_text)
     must("ac3608_6_source_and_linter", "AC6 test row", test)
     if (ROOT / "tests" / "compiler" / "test_issue_3608.cpp").is_file():
         fails.append("AC6: test_issue_3608.cpp present (forbidden per #81934/#81967)")

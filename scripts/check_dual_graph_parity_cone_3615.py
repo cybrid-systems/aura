@@ -21,6 +21,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
 
 SVC = "src/compiler/service.ixx"
 SVC_RELOWER = "src/compiler/service_relower.cpp"
@@ -164,7 +167,7 @@ def main() -> int:
         return 0
 
     svc = _read(SVC) + _read(SVC_RELOWER)
-    fails = _rows(svc, _read(HEALTH), _read(BUILD), _read(QUERY), _read(OBS), _read(ALLOW))
+    fails = _rows(svc, _read(HEALTH), wired_text, _read(QUERY), _read(OBS), _read(ALLOW))
     if fails:
         for f in fails:
             print(f"FAIL {f}")

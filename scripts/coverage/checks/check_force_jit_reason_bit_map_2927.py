@@ -22,6 +22,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -45,7 +47,6 @@ def main() -> int:
     snap = _read("src/compiler/aura_snapshot_abi.hh")
     mut = _read("src/compiler/evaluator_primitives_mutate.cpp")
     test = _read("tests/compiler/test_reload_recovery_query.cpp")
-    build = _read("build.py")
 
     # AC1 — stable reason→bit SSOT
     must("aot_reload_fail_to_force_jit_mask", "AC1", bridge_h)
@@ -101,7 +102,7 @@ def main() -> int:
     must("ac2927_3_soft_success_no_mask_change", "AC5", test)
     must("ac2927_4_query_keys", "AC5", test)
     must("ac2927_5_source_and_linter", "AC5", test)
-    must("check_force_jit_reason_bit_map_2927", "AC5", build)
+    must("check_force_jit_reason_bit_map_2927", "AC5", wired_text)
     must("ac2845_2_force_jit_mask_in_proof", "AC5 #2845 preserved", test)
     if (ROOT / "tests" / "compiler" / "test_issue_2927.cpp").is_file():
         fails.append("AC5: test_issue_2927.cpp present (forbidden per #81967)")

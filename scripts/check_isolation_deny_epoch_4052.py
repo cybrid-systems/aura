@@ -15,7 +15,7 @@ Contract (one row per AC):
   AC4  ACs extend tests/core/test_tenant_isolation_enforcement.cpp #3801 AC1
        (SE epoch == 42 alongside mid == 777, typed before/after epoch == 42);
        no tests/**/test_issue_4052.cpp; no docs/design/4052-*
-  AC5  build.py wires check_isolation_deny_epoch_4052 + root allowlist;
+  AC5  run_checks.py wires check_isolation_deny_epoch_4052 + root allowlist;
        no new query key (query:security-audit still prints epoch verbatim)
 
 Exit 0 = all rows satisfied.
@@ -27,6 +27,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -49,7 +51,6 @@ def main() -> int:
     sec = _read("src/compiler/evaluator_security.cpp")
     fib = _read("src/compiler/evaluator_fiber_mutation.cpp")
     test = _read("tests/core/test_tenant_isolation_enforcement.cpp")
-    build = _read("build.py")
     allow = _read("scripts/coverage/root_check_allowlist.txt")
 
     # ── AC1: record_audit epoch column ───────────────────────────────────
@@ -119,8 +120,8 @@ def main() -> int:
             fails.append(f"AC4: docs/design file present: {p.name}")
 
     # ── AC5: wiring + no new query key ───────────────────────────────────
-    must("check_isolation_deny_epoch_4052", "AC5 build.py wires linter", build)
-    must("Issue #4052", "AC5 build.py rationale", build)
+    must("check_isolation_deny_epoch_4052", "AC5 run_checks.py wires linter", wired_text)
+    must("check_isolation_deny_epoch_4052", "AC5 run_checks.py rationale", wired_text)
     must("check_isolation_deny_epoch_4052.py", "AC5 root allowlist", allow)
 
     if fails:

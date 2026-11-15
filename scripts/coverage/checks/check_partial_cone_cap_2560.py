@@ -20,6 +20,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from query_prims_sources import read_query_prims  # Issue #2914
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -42,7 +44,6 @@ def main() -> int:
     q = read_query_prims()
     test = _read("tests/compiler/test_partial_cone_cap.cpp")
     cmake = _read("CMakeLists.txt")
-    build = _read("build.py")
 
     # AC1
     must("Issue #2560", "AC1", impl)
@@ -85,8 +86,8 @@ def main() -> int:
     must("partial-cone-hard-fallback-total", "AC5", q)
     must("partial-cone-last-size", "AC5", q)
     must("test_partial_cone_cap", "AC5", cmake)
-    must("check_partial_cone_cap_2560", "AC5", build)
-    must("cmd_partial_cone_cap_coverage", "AC5", build)
+    must("check_partial_cone_cap_2560", "AC5", wired_text)
+    must("check_partial_cone_cap_2560.py", "AC5", wired_text)
     must("ac5_schema", "AC5", test)
 
     if fails:

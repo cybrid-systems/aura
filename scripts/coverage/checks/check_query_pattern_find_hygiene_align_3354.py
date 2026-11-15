@@ -24,6 +24,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -42,7 +44,6 @@ def main() -> int:
     matcher = _read("src/compiler/query_matcher.ixx")
     mut = _read("src/compiler/evaluator_primitives_mutate.cpp")
     t = _read("tests/compiler/test_query_pattern_default_hygiene.cpp")
-    build = _read("build.py")
 
     # AC1 — production skip + shared helper.
     must("query_hygiene_allow_macro", "AC1 helper", qws)
@@ -73,12 +74,20 @@ def main() -> int:
     must("ac3354_1_production_find_skip", "AC4 AC1 test", t)
 
     # AC5 — linter after #3344; no invent.
-    must("check_query_pattern_find_hygiene_align_3354", "AC5 build.py", build)
+    must("check_query_pattern_find_hygiene_align_3354", "AC5 wiring", wired_text)
     must("ac3354_5_source_and_linter", "AC5 test", t)
-    prev = build.find("check_mutate_hygiene_continuous_gate_3344")
-    ours = build.find("check_query_pattern_find_hygiene_align_3354")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC5: linter must be wired in build.py AFTER #3344")
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must(
+        "check_mutate_hygiene_continuous_gate_3344",
+        "AC5: linter must be gated by run_checks.py (both gated)",
+        wired_text,
+    )
+    must(
+        "check_query_pattern_find_hygiene_align_3354",
+        "AC5: linter must be gated by run_checks.py (both gated)",
+        wired_text,
+    )
     if "schema-3354" in qws or "schema-3354" in matcher:
         fails.append("AC5: new schema-3354 query key")
     if "g_3354_" in qws or "g_3354_" in matcher:

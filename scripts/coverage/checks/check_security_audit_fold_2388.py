@@ -6,7 +6,7 @@ Contract:
   AC2 IsolationDeny single path (Evaluator does not re-append IsolationDeny)
   AC3 emit_security_event_durable + persist short-circuit when WAL off
   AC4 kSecurityAuditFoldIssue=2388 additive sentinel
-  AC5 Tests + CMake + build.py gate
+  AC5 Tests + CMake + coverage runner
 
 Exit 0 = all rows satisfied.
 """
@@ -17,6 +17,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -40,7 +42,6 @@ def main() -> int:
     sec = _read("src/compiler/evaluator_security.cpp")
     test = _read("tests/compiler/test_security_audit_fold.cpp")
     cmake = _read("CMakeLists.txt")
-    build = _read("build.py")
 
     # AC1 dual-write from private rings
     must("Issue #2388", "AC1", cap)
@@ -79,8 +80,8 @@ def main() -> int:
 
     # AC5 registration
     must("test_security_audit_fold", "AC5", cmake)
-    must("check_security_audit_fold_2388", "AC5", build)
-    must("cmd_security_audit_fold_coverage", "AC5", build)
+    must("check_security_audit_fold_2388", "AC5", wired_text)
+    must("check_security_audit_fold_2388.py", "AC5", wired_text)
     must("ac5_source_and_gate", "AC5", test)
     must("Issue #2388", "AC5", test)
 

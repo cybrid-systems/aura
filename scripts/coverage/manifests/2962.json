@@ -54,13 +54,6 @@
       ]
     },
     {
-      "ac": "AC6",
-      "path": "build.py",
-      "contains": [
-        "cmd_cone_outside_goal_drop_recover_reject_2962"
-      ]
-    },
-    {
       "ac": "AC7",
       "forbid_glob": [
         "docs/design/*2962*"

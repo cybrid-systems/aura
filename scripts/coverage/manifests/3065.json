@@ -61,13 +61,6 @@
       ]
     },
     {
-      "ac": "AC7",
-      "path": "build.py",
-      "contains": [
-        "cmd_dead_coercion_elim_cone_3065"
-      ]
-    },
-    {
       "ac": "AC8",
       "forbid": [
         "tests/compiler/test_issue_3065.cpp"

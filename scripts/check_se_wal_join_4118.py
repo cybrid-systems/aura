@@ -44,6 +44,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 SE_HH = ROOT / "src" / "core" / "security_event.hh"
 SE_WAL_HH = ROOT / "src" / "core" / "security_event_wal.hh"
 PRIM = ROOT / "src" / "compiler" / "evaluator_primitives_security.cpp"
@@ -64,7 +67,6 @@ def main() -> int:
     wal = SE_WAL_HH.read_text() if SE_WAL_HH.exists() else ""
     prim = PRIM.read_text() if PRIM.exists() else ""
     tst = TST.read_text() if TST.exists() else ""
-    build = (ROOT / "build.py").read_text()
     allow = (ROOT / "scripts" / "coverage" / "root_check_allowlist.txt").read_text()
     ok = True
 
@@ -156,7 +158,7 @@ def main() -> int:
         and 'query:security-audit\\" 10 42 0 0 4118001' in tst
         and no_test_file
         and no_doc
-        and "check_se_wal_join_4118.py" in build
+        and "check_se_wal_join_4118.py" in wired_text
         and "check_se_wal_join_4118.py" in allow
     )
     report(

@@ -49,6 +49,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 ARENA = ROOT / "src" / "core" / "arena.ixx"
 TST = ROOT / "tests" / "core" / "test_moving_densify_fail_closed.cpp"
 
@@ -68,7 +71,6 @@ def main() -> int:
     arena_raw = ARENA.read_text() if ARENA.exists() else ""
     arena = _strip_comments(arena_raw)
     tst = TST.read_text() if TST.exists() else ""
-    build = (ROOT / "build.py").read_text()
     allow = (ROOT / "scripts" / "coverage" / "root_check_allowlist.txt").read_text()
     ok = True
 
@@ -193,8 +195,8 @@ def main() -> int:
     )
     report(
         "AC4.wiring",
-        "check_soft_autowire_unreachable_4145.py" in build and "check_soft_autowire_unreachable_4145.py" in allow,
-        "build.py wires this linter; root_check_allowlist.txt lists it",
+        "check_soft_autowire_unreachable_4145.py" in wired_text and "check_soft_autowire_unreachable_4145.py" in allow,
+        "run_checks.py wires this linter; root_check_allowlist.txt lists it",
     )
 
     print(f"check_soft_autowire_unreachable_4145: {'OK' if ok else 'FAILED'}")

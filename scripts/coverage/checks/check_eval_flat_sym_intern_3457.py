@@ -22,6 +22,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -48,7 +50,6 @@ def main() -> int:
     t3401 = _read("tests/core/test_arena_required_cover_no_value_only.cpp")
     tir = _read("tests/compiler/test_ir.cpp")
     l3401 = _read("scripts/check_eval_flat_hot_path_3401.py")
-    build = _read("build.py")
     stripped = _strip(flat)
 
     must("kEvalFlatSymInternIssue = 3457", "AC1 stamp", ev)
@@ -91,7 +92,7 @@ def main() -> int:
     must("string_intern_by_sym_.lookup(v.sym_id, cached)", "AC1 extend 3401 test", t3401)
     must("test_literal_string_sym_intern", "AC1 eval_flat fixture", tir)
     must("check_eval_flat_hot_path_3401", "AC1 reuse 3401 linter", l3401)
-    must("check_eval_flat_sym_intern_3457", "AC5 build.py", build)
+    must("check_eval_flat_sym_intern_3457", "AC5 wiring", wired_text)
     if "schema-3457" in ev or "schema-3457" in flat:
         fails.append("AC5: new schema-3457 query key")
     if (ROOT / "tests" / "core" / "test_issue_3457.cpp").is_file():

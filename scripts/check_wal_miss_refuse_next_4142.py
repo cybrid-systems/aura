@@ -56,6 +56,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 TMH = ROOT / "src" / "compiler" / "typed_mutation_audit.h"
 PRIM = ROOT / "src" / "compiler" / "evaluator_primitives_security.cpp"
 WAL_HH = ROOT / "src" / "core" / "security_event_wal.hh"
@@ -87,7 +90,6 @@ def main() -> int:
     prim = PRIM.read_text()
     wal = WAL_HH.read_text()
     tst = TST.read_text()
-    build = BUILD.read_text()
     allow = ALLOW.read_text()
 
     # ── AC1: fold contract in typed_mutation_audit.h ────────────────
@@ -149,7 +151,7 @@ def main() -> int:
         "AC4: no tests/**/test_issue_4142.cpp (per #81934)",
     )
     must(not glob.glob(str(ROOT / "docs" / "design" / "4142-*")), "AC4: no docs/design/4142-* (per #1655)")
-    must("check_wal_miss_refuse_next_4142.py" in build, "AC4: build.py registers the linter")
+    must("check_wal_miss_refuse_next_4142.py" in wired_text, "AC4: run_checks.py registers the linter")
     must("check_wal_miss_refuse_next_4142.py" in allow, "AC4: root_check_allowlist.txt lists the linter")
 
     # ── AC5: fail-closed refuse preserved (#3838) ───────────────────

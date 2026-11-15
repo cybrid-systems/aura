@@ -27,7 +27,7 @@ ACs:
   AC4  tests/compiler/test_fiber_spawn_cli.cpp hosts the runtime doors
        (#4131 AC9..AC12 + spawn/TERM helpers); no tests/**/test_issue_4131.cpp
        (per #81934); no docs/design/4131-* (per #1655).
-  AC5  build.py wires scripts/check_oneshot_sigterm_4131.py and
+  AC5  run_checks.py wires scripts/check_oneshot_sigterm_4131.py and
        scripts/coverage/root_check_allowlist.txt lists it.
 
 Exit 0 = all rows satisfied. Exit 1 = missing gate or contract row.
@@ -39,6 +39,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 MAIN = ROOT / "src" / "main.cpp"
 TST = ROOT / "tests" / "compiler" / "test_fiber_spawn_cli.cpp"
 
@@ -46,7 +49,6 @@ TST = ROOT / "tests" / "compiler" / "test_fiber_spawn_cli.cpp"
 def main() -> int:
     main_src = MAIN.read_text() if MAIN.exists() else ""
     tst = TST.read_text() if TST.exists() else ""
-    build = (ROOT / "build.py").read_text()
     allow = (ROOT / "scripts" / "coverage" / "root_check_allowlist.txt").read_text()
     ok = True
 
@@ -103,8 +105,8 @@ def main() -> int:
         "runtime ACs hosted in test_fiber_spawn_cli.cpp; no test_issue_4131.cpp; no docs/design/4131-*",
     )
 
-    good = "check_oneshot_sigterm_4131.py" in build and "check_oneshot_sigterm_4131.py" in allow
-    report("AC5", good, "build.py wires the linter; scripts/coverage/root_check_allowlist.txt lists it")
+    good = "check_oneshot_sigterm_4131.py" in wired_text and "check_oneshot_sigterm_4131.py" in allow
+    report("AC5", good, "run_checks.py wires the linter; scripts/coverage/root_check_allowlist.txt lists it")
 
     print(f"check_oneshot_sigterm_4131: {'OK' if ok else 'FAILED'}")
     return 0 if ok else 1

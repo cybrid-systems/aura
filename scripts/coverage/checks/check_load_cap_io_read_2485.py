@@ -17,6 +17,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -35,7 +37,6 @@ def main() -> int:
 
     src = _read("src/compiler/evaluator_primitives_eval.cpp")
     test = _read("tests/compiler/test_load_cap_io_read.cpp")
-    build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
     idx = src.find('add("load"')
@@ -59,8 +60,8 @@ def main() -> int:
     must("test_load_cap_io_read", "AC4", test)
     must("kCapIoRead", "AC4", test)
 
-    must("check_load_cap_io_read_2485", "gate", build)
-    must("cmd_load_cap_io_read_coverage", "gate", build)
+    must("check_load_cap_io_read_2485", "gate", wired_text)
+    must("check_load_cap_io_read_2485.py", "gate", wired_text)
     must("test_load_cap_io_read", "gate", cmake)
     must("2485 AC5", "gate", test)
 

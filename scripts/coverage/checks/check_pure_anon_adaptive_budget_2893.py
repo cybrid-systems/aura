@@ -29,6 +29,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -51,7 +53,6 @@ def main() -> int:
     sh = _read("src/compiler/runtime_shared.h")
     stub = _read("src/compiler/aura_jit_bridge_stub.cpp")
     test = _read("tests/compiler/test_anonymous_residual_stable_id_policy.cpp")
-    build = _read("build.py")
 
     # AC1 — adaptive budget: pressure state + ceiling + walk-outcome feed.
     must("Issue #2893", "AC1", rt)
@@ -100,7 +101,7 @@ def main() -> int:
         "ac2893_5_source_and_linter",
     ):
         must(fn, "AC5", test)
-    must("check_pure_anon_adaptive_budget_2893.py", "AC5", build)
+    must("check_pure_anon_adaptive_budget_2893.py", "AC5", wired_text)
     if _read("tests/issues/test_issue_2893.cpp"):
         fails.append("AC5: no tests/issues/test_issue_2893.cpp (per #81967)")
     if _read("docs/design/2893-pure-anon-adaptive-budget.md"):

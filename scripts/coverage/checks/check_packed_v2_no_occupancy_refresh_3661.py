@@ -23,6 +23,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -43,7 +45,6 @@ def main() -> int:
     t = _read("tests/serve/test_stable_ref_provenance_fiber_cow.cpp")
     hyg = _read("tests/compiler/test_hygiene_mutate_closed_loop.cpp")
     ten = _read("tests/compiler/test_stable_ref_tenant_mandate.cpp")
-    build = _read("build.py")
 
     # Issue #5033: the resolver moved into RegSplitParts::mutate_resolve_node_arg;
     # the local lambda is a thin delegation. Anchor on the helper definition.
@@ -86,11 +87,17 @@ def main() -> int:
     must("test_ac3661_5_suites_and_linter", "AC5 test", t)
     must("ac3661_hygiene_source_cite", "AC5 hygiene", hyg)
     must("3661", "AC5 tenant", ten)
-    must("check_packed_v2_no_occupancy_refresh_3661", "AC5 build.py", build)
-    prev = build.find("check_query_result_per_match_fresh_3660")
-    ours = build.find("check_packed_v2_no_occupancy_refresh_3661")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC5: linter must be wired in build.py AFTER #3660")
+    must("check_packed_v2_no_occupancy_refresh_3661", "AC5 wiring", wired_text)
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must(
+        "check_query_result_per_match_fresh_3660", "AC5: linter must be gated by run_checks.py (both gated)", wired_text
+    )
+    must(
+        "check_packed_v2_no_occupancy_refresh_3661",
+        "AC5: linter must be gated by run_checks.py (both gated)",
+        wired_text,
+    )
     must("Issue #3661", "AC5 refresh_if_stale cite", stab)
     must("raw node-id rejected under production", "AC5 #3395", mwin)
     must("walk_v2", "AC5 #3396", mut)

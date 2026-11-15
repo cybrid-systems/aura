@@ -27,6 +27,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
 
 APPLY = "src/compiler/evaluator_eval_flat.cpp"
 JIT = "src/compiler/aura_jit_runtime.cpp"
@@ -145,7 +148,7 @@ def _rows(apply: str, jit: str, mutate: str, steal: str, test: str, build: str, 
         fails.append(f"AC4: forbidden issue test {stale.name}")
 
     # AC5 — build.py registration + allowlist append.
-    must("check_apply_densify_inflight_4125.py", "AC5 build.py registration", build)
+    must("check_apply_densify_inflight_4125.py", "AC5 build.py registration", wired_text)
     must(LINTER, "AC5 allowlist append", allow)
 
     return fails
@@ -161,7 +164,7 @@ def main() -> int:
     mutate = _read(MUTATE)
     steal = _read(STEAL)
     test = _read(TEST)
-    build = _read(BUILD)
+    build = wired_text
     allow = _read(ALLOWLIST)
     if args.self_test:
         broken = apply.replace(

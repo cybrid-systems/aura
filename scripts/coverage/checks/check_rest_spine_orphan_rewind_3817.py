@@ -20,6 +20,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -39,7 +41,6 @@ def main() -> int:
     eef = _read("src/compiler/evaluator_eval_flat.cpp")
     mx = _read("src/compiler/macro_expansion.cpp")
     test = _read("tests/compiler/test_rest_param_hygiene_eval_flat.cpp")
-    build = _read("build.py")
 
     must("Issue #3817", "AC1", eef)
     must("rest_spine_ckpt", "AC1", eef)
@@ -63,7 +64,7 @@ def main() -> int:
     if docs.is_dir():
         for f in sorted(docs.glob("3817-*")):
             fails.append(f"AC3: docs/design/{f.name} present (forbidden per #1655)")
-    must("check_rest_spine_orphan_rewind_3817", "AC3", build)
+    must("check_rest_spine_orphan_rewind_3817", "AC3", wired_text)
 
     must("is_sandbox_active()", "AC4", eef[eef.find("Issue #3817: production rewind") :][:600])
     must("production_surface", "AC4", mx)

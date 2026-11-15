@@ -22,6 +22,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -44,7 +46,6 @@ def main() -> int:
     io_cpp = _read("src/compiler/evaluator_primitives_io.cpp")
     test = _read("tests/compiler/test_require_effect_auto_isolation.cpp")
     test2 = _read("tests/core/test_tenant_isolation_enforcement.cpp")
-    build = _read("build.py")
     gf = _read("scripts/coverage/simple_check_grandfather.txt")
     fiber = _read("scripts/coverage/checks/check_side_effect_fiber_principal_2839.py")
     mandate = _read("scripts/coverage/checks/check_side_effect_node_id_mandate_2942.py")
@@ -92,8 +93,8 @@ def main() -> int:
     must("kResidualNodeIdExemptOpsCount = 7", "AC3 exempt count", ixx)
     must("kNodeIdMandateExemptOpsCount = 7", "AC3 mandate count", ixx)
     must("kResidualNodeIdInventoryCount = 24", "AC3 inventory count", ixx)
-    must("check_shell_require_effect_3836", "AC3 build.py", build)
-    must("Issue #3836", "AC3 build cite", build)
+    must("check_shell_require_effect_3836", "AC3 wiring", wired_text)
+    must("check_shell_require_effect_3836", "AC3 build cite", wired_text)
     must("check_shell_require_effect_3836.py", "AC3 grandfather basename", gf)
     must(
         "scripts/coverage/checks/check_shell_require_effect_3836.py",

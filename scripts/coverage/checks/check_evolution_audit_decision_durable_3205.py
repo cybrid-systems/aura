@@ -25,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _source_scan import source_block_after  # noqa: E402  (sibling helper)
 
 ROOT = Path(__file__).resolve().parents[3]
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -47,7 +48,6 @@ def main() -> int:
     forensic = _read("tests/compiler/test_evolution_audit_decision_forensic.cpp")
     facade = _read("tests/compiler/test_engine_metrics_facade.cpp")
     l3114 = _read("scripts/coverage/checks/check_evolution_audit_decision_3114.py")
-    build = _read("build.py")
 
     must("kEvolutionAuditDecisionDurableIssue = 3205", "AC1 stamp", header)
     must("Issue #3205", "AC1 handler cite", sec)
@@ -80,7 +80,7 @@ def main() -> int:
         pass
     must("never a synthetic process-origin mid", "AC4 no synthetic mid", sec)
 
-    must("check_evolution_audit_decision_durable_3205", "AC5 build.py", build)
+    must("check_evolution_audit_decision_durable_3205", "AC5 wiring", wired_text)
     must("ac6_durable_3205", "AC5 forensic AC", forensic)
     must("3205 AC", "AC5 unify tests", unify)
     if (ROOT / "tests" / "compiler" / "test_issue_3205.cpp").is_file():

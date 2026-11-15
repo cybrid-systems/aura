@@ -56,6 +56,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 DIRTY = ROOT / "src" / "compiler" / "dirty_propagation.ixx"
 SVC = ROOT / "src" / "compiler" / "service.ixx"
 TST = ROOT / "tests" / "compiler" / "test_shape_storm_partial_relower.cpp"
@@ -82,7 +85,6 @@ def main() -> int:
     dirty = DIRTY.read_text()
     svc = SVC.read_text() + SVC.parent.joinpath("service_relower.cpp").read_text()
     tst = TST.read_text()
-    build = BUILD.read_text()
     allow = ALLOW.read_text()
 
     # ── AC1: the consult flip branch fail-closes on empty OR stale ──
@@ -210,7 +212,7 @@ def main() -> int:
         "AC4: no tests/**/test_issue_4157.cpp (per #81934)",
     )
     must(not glob.glob(str(ROOT / "docs" / "design" / "4157-*")), "AC4: no docs/design/4157-* (per #1655)")
-    must("check_shape_flip_persist_fresh_4157" in build, "AC4: build.py registers the linter")
+    must("check_shape_flip_persist_fresh_4157" in wired_text, "AC4: run_checks.py registers the linter")
     must(
         "check_shape_flip_persist_fresh_4157.py" in allow,
         "AC4: root_check_allowlist.txt lists the linter",

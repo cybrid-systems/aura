@@ -28,6 +28,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 # AC1: unified parse arm — three spellings in one condition, any wrap.
 RE_PARSE_ARM = re.compile(
@@ -67,7 +69,6 @@ def main() -> int:
     qws = _read("src/compiler/evaluator_primitives_query_workspace.cpp")
     test = _read("tests/compiler/test_replace_pattern_allow_macro_unify.cpp")
     cmake = _read("CMakeLists.txt")
-    build = _read("build.py")
 
     if not mut:
         fails.append("mutate.cpp: unreadable")
@@ -90,7 +91,7 @@ def main() -> int:
     must("[:allow-macro? [#t]]", "AC4 usage string", mut)
     must_not('":allow-macro-introduced?"', "AC4 no invented key", mut)
     must("test_replace_pattern_allow_macro_unify", "AC4 test registered", cmake)
-    must("check_replace_pattern_kw_unify_3793.py", "AC4 linter wired", build)
+    must("check_replace_pattern_kw_unify_3793.py", "AC4 linter wired", wired_text)
 
     # Test pins its own ACs.
     must("AC1", "test AC1", test)

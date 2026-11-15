@@ -35,10 +35,9 @@
     },
     {
       "ac": "AC3-wiring",
-      "path": "build.py",
-      "contains": [
+      "wired": [
         "check_grant_epoch_no_phantom_3844",
-        "Issue #3844"
+        "check_grant_epoch_no_phantom_3844.py"
       ]
     },
     {

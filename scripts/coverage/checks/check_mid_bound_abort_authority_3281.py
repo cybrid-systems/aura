@@ -26,7 +26,7 @@ Gate rows:
   G6  mismatch counter observable (g_mid_abort_authority_mismatch_total).
   G7  test ACs in tests/compiler/test_coercion_map_abort_rewind.cpp
       (#3102 suite home, #81967).
-  G8  build.py wires this linter.
+  G8  run_checks.py gates this linter.
   G9  no docs/design/3281-* (per #1655), no tests/issue*/test_issue_3281.cpp
       (per #81967).
 
@@ -37,6 +37,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 failures: list[str] = []
 
@@ -63,7 +65,6 @@ def main() -> int:
     boundary = read("src/compiler/evaluator_mutation_boundary.cpp")
     tci = read("src/compiler/type_checker_impl.cpp")
     test = read("tests/compiler/test_coercion_map_abort_rewind.cpp")
-    build = read("build.py")
 
     must("#3281" in typed, "G1: typed_mutation_audit.h cites Issue #3281")
     must(
@@ -110,8 +111,8 @@ def main() -> int:
     )
     must("test_ac3281_mid_bound_abort_authority" in test, "G7: test AC present")
     must(
-        "check_mid_bound_abort_authority_3281.py" in build,
-        "G8: build.py wires linter",
+        "check_mid_bound_abort_authority_3281.py" in wired_text,
+        "G8: run_checks.py gates linter",
     )
     must(
         not any(p.name.startswith("3281-") for p in (ROOT / "docs/design").glob("3281-*"))

@@ -18,6 +18,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -41,7 +43,6 @@ def main() -> int:
     obs = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
     stamp = _read("scripts/coverage/checks/check_stamp_resolve_coverage.py")
     test = _read("tests/compiler/test_stable_ref_export_validate.cpp")
-    build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
     # AC1
@@ -79,8 +80,8 @@ def main() -> int:
 
     # AC5
     must("2404 AC5", "AC5", test)
-    must("check_stable_ref_export_2404", "AC5", build)
-    must("cmd_stable_ref_export_coverage", "AC5", build)
+    must("check_stable_ref_export_2404", "AC5", wired_text)
+    must("check_stable_ref_export_2404.py", "AC5", wired_text)
     must("test_stable_ref_export_validate", "AC5", cmake)
 
     # stamp-resolve --strict must pass

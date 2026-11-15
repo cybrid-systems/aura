@@ -33,6 +33,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
 
 BRIDGE = "src/compiler/aura_jit_bridge.cpp"
 TEST = "tests/compiler/test_jit_aot_hot_update_unit_batch.cpp"
@@ -141,7 +144,7 @@ def _rows(bridge: str, test: str, build: str, allow: str) -> list[str]:
         fails.append(f"AC4: forbidden issue test {stale.name}")
 
     # AC5 — build.py registration + allowlist append.
-    must("check_jit_reemit_install_4126.py", "AC5 build.py registration", build)
+    must("check_jit_reemit_install_4126.py", "AC5 build.py registration", wired_text)
     must(LINTER, "AC5 allowlist append", allow)
 
     return fails
@@ -154,7 +157,7 @@ def main() -> int:
     args = ap.parse_args()
     bridge = _read(BRIDGE)
     test = _read(TEST)
-    build = _read(BUILD)
+    build = wired_text
     allow = _read(ALLOWLIST)
     if args.self_test:
         broken = bridge.replace("if (sid != 0 && installed)", "if (sid != 0)")

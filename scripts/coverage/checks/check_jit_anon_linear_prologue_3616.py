@@ -16,7 +16,7 @@ Contract:
   AC3 Soft/Off zero prologue calls (hard_typed_entry gates can_linear)
   AC4 named epoch arm probe unchanged; #3419 typed-entry gate unchanged;
       no new query key / counter
-  AC5 build.py wires this linter (after #3419); test extends
+  AC5 run_checks.py gates this linter (after #3419); test extends
       persist-rehydrate; no invented test file; no docs/design
 
 Exit 0 = all rows satisfied.
@@ -28,6 +28,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -44,7 +46,6 @@ def main() -> int:
 
     jit = _read("src/compiler/aura_jit.cpp")
     occ = _read("tests/compiler/test_occurrence_goal_persist_rehydrate.cpp")
-    build = _read("build.py")
 
     arm = jit.find("Issue #3616: same probe the named epoch arm emits")
     arm_win = jit[arm : arm + 700] if arm >= 0 else ""
@@ -69,11 +70,11 @@ def main() -> int:
         fails.append("AC4: new g_3616_* counter (forbidden)")
 
     must("ac3616_anon_linear_prologue_enforce", "AC5 persist-rehydrate", occ)
-    must("check_jit_anon_linear_prologue_3616", "AC5 build.py", build)
-    prev = build.find("check_jit_typed_entry_every_function_3419")
-    ours = build.find("check_jit_anon_linear_prologue_3616")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC5: #3616 linter must run after #3419")
+    must("check_jit_anon_linear_prologue_3616", "AC5 wiring", wired_text)
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must("check_jit_typed_entry_every_function_3419", "AC5: #3616 linter must run (both gated)", wired_text)
+    must("check_jit_anon_linear_prologue_3616", "AC5: #3616 linter must run (both gated)", wired_text)
     if (ROOT / "tests" / "compiler" / "test_issue_3616.cpp").is_file():
         fails.append("AC5: tests/compiler/test_issue_3616.cpp present (forbidden)")
     if (ROOT / "tests" / "issues" / "test_issue_3616.cpp").is_file():

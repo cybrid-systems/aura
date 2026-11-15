@@ -26,7 +26,7 @@ Gate rows:
   G5  test ACs in test_batch_dirty_discipline (#81967): ac4168_1..ac4168_4
       present and dispatched in run_test_batch_dirty_discipline.
   G6  no test_issue_4168.cpp; no docs/design/4168-* (#1655/#81967).
-  G7  build.py wires this linter; scripts/coverage/root_check_allowlist.txt
+  G7  run_checks.py wires this linter; scripts/coverage/root_check_allowlist.txt
       carries the filename.
 
 Exit 0 = all rows satisfied.
@@ -39,6 +39,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 failures: list[str] = []
 
@@ -60,7 +62,6 @@ def main() -> int:
     soa = _read("src/compiler/ir_soa.ixx")
     obs = _read("src/compiler/evaluator_primitives_obs_jit.cpp")
     test = _read("tests/compiler/test_batch_dirty_discipline.cpp")
-    build = _read("build.py")
     allow = _read("scripts/coverage/root_check_allowlist.txt")
 
     print("Issue #4168 — Soft dirty/batch-only honesty (pretend amortized)")
@@ -142,7 +143,7 @@ def main() -> int:
     )
     must(not list((ROOT / "docs/design").glob("4168-*")), "G6: no docs/design/4168-*")
     # G7: build.py + allowlist.
-    must("check_ir_dirty_soft_pretend_amortized_4168" in build, "G7: build.py wires linter")
+    must("check_ir_dirty_soft_pretend_amortized_4168" in wired_text, "G7: run_checks.py wires linter")
     must(
         "check_ir_dirty_soft_pretend_amortized_4168.py" in allow,
         "G7: allowlist row",

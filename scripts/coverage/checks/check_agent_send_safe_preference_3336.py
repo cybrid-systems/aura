@@ -25,6 +25,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 SRC = ROOT / "src"
 CALL_RE = re.compile(r"(?<![\w])agent_send\s*\(")
 OK_TAG = "orch-raw-send-ok"
@@ -74,7 +77,6 @@ def main() -> int:
     test = _read("tests/orch/test_orch_obs_facade.cpp")
     lint3013 = _read("scripts/coverage/checks/check_agent_send_handoff_required_3013.py")
     lint3212 = _read("scripts/coverage/checks/check_mailbox_handoff_dual_track_3212.py")
-    build = _read("build.py")
 
     fails.extend(_scan_production_agent_send())
     must("kAgentSendSafePreferenceIssue = 3336", "AC1 stamp", spawn)
@@ -107,18 +109,16 @@ def main() -> int:
     must("Issue #3013", "AC4 #3013 linter retained", lint3013)
     must("Issue #3212", "AC4 #3212 linter retained", lint3212)
 
-    must("check_agent_send_safe_preference_3336", "AC5 build.py", build)
-    must("check_agent_send_handoff_required_3013", "AC5 #3013 wired", build)
-    must("check_mailbox_handoff_dual_track_3212", "AC5 #3212 wired", build)
+    must("check_agent_send_safe_preference_3336", "AC5 wiring", wired_text)
+    must("check_agent_send_handoff_required_3013", "AC5 #3013 wired", wired_text)
+    must("check_mailbox_handoff_dual_track_3212", "AC5 #3212 wired", wired_text)
     must("ac3336_5_source_and_linter", "AC5 test", test)
     must("schema-3336", "AC5 schema", prim)
     must("agent-send-raw-held-ref-total", "AC5 stats key", prim)
-    prev = build.find("check_mailbox_handoff_dual_track_3212")
-    ours = build.find("check_agent_send_safe_preference_3336")
-    if ours < 0:
-        fails.append("AC5: linter must be wired in build.py")
-    elif prev >= 0 and ours < prev:
-        fails.append("AC5: linter must be wired in build.py AFTER #3212")
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must("check_mailbox_handoff_dual_track_3212", "AC5: linter must be gated by run_checks.py (both gated)", wired_text)
+    must("check_agent_send_safe_preference_3336", "AC5: linter must be gated by run_checks.py (both gated)", wired_text)
     if (ROOT / "tests" / "orch" / "test_issue_3336.cpp").is_file():
         fails.append("AC5: tests/orch/test_issue_3336.cpp present (forbidden #81967)")
     docs = ROOT / "docs" / "design"

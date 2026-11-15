@@ -29,6 +29,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from query_prims_sources import read_query_prims  # Issue #2914
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -54,7 +56,6 @@ def main() -> int:
     emb = _read("src/compiler/evaluator_mutation_boundary.cpp")
     q = read_query_prims()
     t = _read("tests/serve/test_mailbox_hold_starvation_hard.cpp")
-    build = _read("build.py")
 
     # AC1 — mask-first + unequal-key overlap reject.
     must("Issue #2761", "AC1", mhb)
@@ -129,7 +130,7 @@ def main() -> int:
     must("ac2761_5_additive_observability", "AC6", t)
     must("ac2761_6_source_and_linter", "AC6", t)
     must("ac2760_1_impact_mask_concurrent_admit", "AC6 #2760 preserved", t)
-    must("check_region_mask_overlap_admit_2761", "AC6", build)
+    must("check_region_mask_overlap_admit_2761", "AC6", wired_text)
     if (ROOT / "tests" / "serve" / "test_issue_2761.cpp").is_file():
         fails.append("AC6: tests/serve/test_issue_2761.cpp present (forbidden per #81967)")
     docs_dir = ROOT / "docs" / "design"

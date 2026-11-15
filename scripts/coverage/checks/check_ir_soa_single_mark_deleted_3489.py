@@ -22,6 +22,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -46,7 +48,6 @@ def main() -> int:
     t = _read("tests/compiler/test_batch_dirty_discipline.cpp")
     fixture = _read("tests/compiler/compile_fail_mark_block_dirty_3489.cpp")
     l3355 = _read("scripts/coverage/checks/check_ir_soa_single_mark_production_ban_3355.py")
-    build = _read("build.py")
 
     must("kIrSoaSingleMarkDeletedIssue = 3489", "AC1 stamp", soa)
     must("void mark_block_dirty(std::uint32_t block_id) = delete", "AC1 = delete", soa)
@@ -83,11 +84,15 @@ def main() -> int:
     must("ac3489_1_production_symbol_deleted", "AC4 AC1 test", t)
     must("ac3489_2_batch_one_ensure", "AC4 AC2 test", t)
     must("SINGLE_MARK_RE", "AC4 #3355 grep kept", l3355)
-    must("check_ir_soa_single_mark_deleted_3489", "AC4 build.py", build)
-    prev = build.find("check_ir_soa_single_mark_production_ban_3355")
-    ours = build.find("check_ir_soa_single_mark_deleted_3489")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC4: linter must be wired in build.py AFTER #3355")
+    must("check_ir_soa_single_mark_deleted_3489", "AC4 wiring", wired_text)
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must(
+        "check_ir_soa_single_mark_production_ban_3355",
+        "AC4: linter must be gated by run_checks.py (both gated)",
+        wired_text,
+    )
+    must("check_ir_soa_single_mark_deleted_3489", "AC4: linter must be gated by run_checks.py (both gated)", wired_text)
 
     empty = bwin.find("if (block_ids.empty())")
     eret = bwin.find("return", empty) if empty >= 0 else -1

@@ -21,6 +21,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -42,7 +44,6 @@ def main() -> int:
     evq = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
     named = _read("tests/compiler/test_named_closure_stable_id_at_create.cpp")
     rec = _read("tests/compiler/test_reload_recovery_query.cpp")
-    build = _read("build.py")
 
     # AC1
     must("Issue #3025", "AC1", br)
@@ -74,8 +75,8 @@ def main() -> int:
     must("3025 AC4", "AC4 test", named)
 
     # AC5
-    must("check_reemit_owner_required_prod_multi_3025", "AC5 build", build)
-    must("cmd_reemit_owner_required_prod_multi_3025", "AC5 build cmd", build)
+    must("check_reemit_owner_required_prod_multi_3025", "AC5 build", wired_text)
+    must("check_reemit_owner_required_prod_multi_3025.py", "AC5 build cmd", wired_text)
     must("ac3025_1_prod_multi_no_owner_rejects", "AC5 AC1 test", named)
     if "AgentRegistry" in br[br.find("Issue #3025") : br.find("Issue #3025") + 2500]:
         fails.append("AC5: must not introduce AgentRegistry")

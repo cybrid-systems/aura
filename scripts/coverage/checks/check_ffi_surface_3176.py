@@ -23,6 +23,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from query_prims_sources import read_query_prims
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 DEFERRED = (
     "c-load",
@@ -57,7 +59,6 @@ def main() -> int:
     ffi = _read("lib/std/ffi.aura")
     idx = _read("lib/std/INDEX.aura")
     t = _read("tests/compiler/test_require_effect_live_mid.cpp")
-    build = _read("build.py")
     q = read_query_prims()
 
     must("Issue #3176", "AC1 cite", ctor)
@@ -84,8 +85,8 @@ def main() -> int:
     must('ensure_std_host_prims("std/ffi")', "AC5 install", t)
     must("sandbox without ffi grant refuses std/ffi", "AC5 deny", t)
 
-    must("check_ffi_surface_3176", "AC6 build", build)
-    must("cmd_ffi_surface_3176", "AC6 cmd", build)
+    must("check_ffi_surface_3176", "AC6 build", wired_text)
+    must("check_ffi_surface_3176.py", "AC6 cmd", wired_text)
     if (ROOT / "tests" / "compiler" / "test_issue_3176.cpp").is_file():
         fails.append("AC6: test_issue_3176.cpp present (forbidden #81967)")
     docs = ROOT / "docs" / "design"

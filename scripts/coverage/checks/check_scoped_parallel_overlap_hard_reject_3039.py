@@ -25,6 +25,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from query_prims_sources import read_query_prims  # Issue #2914
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -52,7 +54,6 @@ def main() -> int:
     q = read_query_prims() + qws
     t = _read("tests/compiler/test_workspace_region_concurrency.cpp")
     lint2990 = _read("scripts/coverage/manifests/2990.json")
-    build = _read("build.py")
 
     must("kWorkspaceScopedParallelOverlapHardIssue = 3039", "AC1", hh)
     must("Issue #3039", "AC1 policy", hh)
@@ -79,7 +80,7 @@ def main() -> int:
 
     must("ac3039_5_linter_and_suite", "AC5", t)
     must("ac2990_3_overlap_fallback", "AC5 #2990 kept", t)
-    must("check_scoped_parallel_overlap_hard_reject_3039", "AC6", build)
+    must("check_scoped_parallel_overlap_hard_reject_3039", "AC6", wired_text)
     must("3039", "AC6 2990 linter", lint2990)
     if (ROOT / "tests" / "compiler" / "test_issue_3039.cpp").is_file():
         fails.append("AC5: test_issue_3039.cpp present (forbidden #81967)")

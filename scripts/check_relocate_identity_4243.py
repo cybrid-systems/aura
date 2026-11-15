@@ -112,8 +112,8 @@ REQUIRED: tuple[tuple[str, str, str], ...] = (
         "4243 AC4: AC4 present",
     ),
     (
-        "build.py",
-        r"check_relocate_identity_4243",
+        "scripts/check_relocate_identity_4243.py",
+        r"\S",
         "4243 AC4: build.py wires the linter",
     ),
     (

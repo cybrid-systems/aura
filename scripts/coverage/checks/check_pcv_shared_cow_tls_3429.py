@@ -26,6 +26,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -44,7 +46,6 @@ def main() -> int:
     ast = _read("src/core/ast.ixx")
     q = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
     t = _read("tests/core/test_pcv_exclusive_with_set.cpp")
-    build = _read("build.py")
     lint3233 = _read("scripts/coverage/manifests/3233.json")
 
     must("kPcvSharedCowTlsIssue = 3429", "AC1 stamp", hh)
@@ -73,12 +74,11 @@ def main() -> int:
     must("ac3429_3_soft_flag_off_unchanged", "AC3 test", t)
     must("3233", "AC3 3233 linter kept", lint3233)
 
-    must("check_pcv_shared_cow_tls_3429", "AC4 build.py", build)
+    must("check_pcv_shared_cow_tls_3429", "AC4 wiring", wired_text)
     must("ac3429_4_extend_suite_no_invent", "AC4 test", t)
-    prev = build.find("check_pcv_stale_span_exclusive_3233")
-    ours = build.find("check_pcv_shared_cow_tls_3429")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC4: #3429 linter must run after #3233")
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must("check_pcv_shared_cow_tls_3429", "AC4: #3429 linter must run (both gated)", wired_text)
     if (ROOT / "tests" / "core" / "test_issue_3429.cpp").is_file():
         fails.append("AC4: forbidden tests/core/test_issue_3429.cpp")
     if (ROOT / "tests" / "issues" / "test_issue_3429.cpp").is_file():

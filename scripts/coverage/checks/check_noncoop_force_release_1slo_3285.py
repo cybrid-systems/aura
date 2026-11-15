@@ -24,7 +24,7 @@ Gate rows:
       forced_fail_closed_total / inbody_window_exceeded_total).
   G7  test ACs in tests/serve/test_hold_budget_synthetic_yield_injection.cpp
       (#3133/#3254 suite home, #81967) citing #3285.
-  G8  build.py wires this linter.
+  G8  run_checks.py gates this linter.
   G9  no docs/design/3285-* (per #1655), no tests/issue*/test_issue_3285.cpp
       (per #81967).
 
@@ -35,6 +35,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 failures: list[str] = []
 
@@ -60,7 +62,6 @@ def main() -> int:
     fc = read("src/serve/fiber.cpp")
     mh = read("src/compiler/mutation_hold_budget.h")
     test = read("tests/serve/test_hold_budget_synthetic_yield_injection.cpp")
-    build = read("build.py")
 
     pos = fc.find("aura_hold_budget_poll_inbody_window(void) noexcept")
     must(pos != -1, "G0: poll definition present")
@@ -86,7 +87,7 @@ def main() -> int:
         "run_test_hold_budget_1slo_inject_3285" in test and "Issue #3285" in test,
         "G7: test ACs in #3133/#3254 suite home cite #3285",
     )
-    must("check_noncoop_force_release_1slo_3285.py" in build, "G8: build.py wires linter")
+    must("check_noncoop_force_release_1slo_3285.py" in wired_text, "G8: run_checks.py gates linter")
 
     docs_ok = True
     if (ROOT / "docs/design").exists():

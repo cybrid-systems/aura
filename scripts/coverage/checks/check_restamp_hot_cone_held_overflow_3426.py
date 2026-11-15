@@ -24,6 +24,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -44,7 +46,6 @@ def main() -> int:
     fiber = _read("src/compiler/evaluator_fiber_mutation.cpp")
     epoch = _read("src/core/workspace_epoch.hh")
     t = _read("tests/compiler/test_restamp_budget_hard_gate.cpp")
-    build = _read("build.py")
 
     must("kRestampHotConeHeldOverflowIssue = 3426", "AC1 stamp", restamp)
     must("kRestampHotConeHeldCap = 64", "AC1 cap", restamp)
@@ -73,11 +74,11 @@ def main() -> int:
     must("Issue #3426", "AC4 fiber cite", fiber)
     must("test_3426_ac4_non_regress", "AC4 test", t)
 
-    must("check_restamp_hot_cone_held_overflow_3426", "AC5 build.py", build)
-    prev = build.find("check_restamp_hot_cone_agent_held_3327")
-    ours = build.find("check_restamp_hot_cone_held_overflow_3426")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC5: #3426 linter must run after #3327")
+    must("check_restamp_hot_cone_held_overflow_3426", "AC5 wiring", wired_text)
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must("check_restamp_hot_cone_agent_held_3327", "AC5: #3426 linter must run (both gated)", wired_text)
+    must("check_restamp_hot_cone_held_overflow_3426", "AC5: #3426 linter must run (both gated)", wired_text)
     if "g_3426_" in restamp or "g_3426_" in sec or "g_3426_" in impl:
         fails.append("AC5: new g_3426_* counter")
     if 'add("query:' in impl and "3426" in impl:

@@ -23,6 +23,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -41,7 +43,6 @@ def main() -> int:
     hh = _read("src/core/cpp26_contract_stats.h")
     q = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
     test = _read("tests/compiler/test_hot_contract_placement.cpp")
-    build = _read("build.py")
     lint3106 = _read("scripts/coverage/checks/check_hot_contract_harden_3106.py")
 
     start = soa.find("IRInstructionView view_at(")
@@ -65,17 +66,17 @@ def main() -> int:
     must("3106 AC1", "AC3 3106", test)
     must("3043 AC1", "AC3 3043", test)
     must("AURA_HOT_CHECK_CONSTEXPR", "AC3 constexpr kept", soa)
-    must("check_hot_contract_harden_3106", "AC3 3106 linter still wired", build)
+    must("check_hot_contract_harden_3106", "AC3 3106 linter still wired", wired_text)
     must("3106", "AC3 3106 linter not deleted", lint3106)
     if "view_at body contains AURA_HOT_CHECK" in lint3106:
         fails.append("AC3: do not weaken check_hot_contract_harden_3106.py")
 
-    must("check_hot_contract_view_at_harden_3428", "AC4 build.py", build)
+    must("check_hot_contract_view_at_harden_3428", "AC4 wiring", wired_text)
     must("3428 AC4", "AC4 test", test)
-    prev = build.find("check_hot_contract_harden_3106")
-    ours = build.find("check_hot_contract_view_at_harden_3428")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC4: #3428 linter must run after #3106")
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must("check_hot_contract_harden_3106", "AC4: #3428 linter must run (both gated)", wired_text)
+    must("check_hot_contract_view_at_harden_3428", "AC4: #3428 linter must run (both gated)", wired_text)
     if (ROOT / "tests" / "compiler" / "test_issue_3428.cpp").is_file():
         fails.append("AC4: forbidden tests/compiler/test_issue_3428.cpp")
     if (ROOT / "tests" / "issues" / "test_issue_3428.cpp").is_file():

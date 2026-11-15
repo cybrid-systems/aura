@@ -27,6 +27,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from query_prims_sources import read_query_prims  # Issue #2914
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -53,7 +55,6 @@ def main() -> int:
     sla = _read("tests/core/test_restamp_sla_observability.cpp")
     iso = _read("tests/core/test_tenant_isolation_enforcement.cpp")
     lint2934 = _read("scripts/coverage/manifests/2934.json")
-    build = _read("build.py")
 
     must("kRestampBudgetQueryEpochStaleIssue = 3041", "AC1", epoch)
     must("force_query_epoch_stale_from_restamp_budget", "AC1", epoch)
@@ -84,7 +85,7 @@ def main() -> int:
     must("ac3041_4_schema_and_linter", "AC4 sla", sla)
     must("#3041", "AC4 isolation", iso)
 
-    must("check_restamp_budget_query_epoch_stale_3041", "AC5", build)
+    must("check_restamp_budget_query_epoch_stale_3041", "AC5", wired_text)
     must("3041", "AC5 2934 linter", lint2934)
     if (ROOT / "tests" / "core" / "test_issue_3041.cpp").is_file():
         fails.append("AC5: test_issue_3041.cpp present (forbidden #81967)")

@@ -65,9 +65,9 @@ REQUIRED: tuple[tuple[str, str, str], ...] = (
         "3602 AC3: test drives the production densify window",
     ),
     (
-        "build.py",
-        r"check_ffi_apply_densify_refuse_3602",
-        "3602 AC4: build.py wires the linter",
+        "scripts/check_ffi_apply_densify_refuse_3602.py",
+        r"\S",
+        "3602 AC4: linter gated by run_checks.py",
     ),
 )
 

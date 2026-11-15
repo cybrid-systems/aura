@@ -16,6 +16,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -41,7 +43,6 @@ def main() -> int:
     impl = _read("src/core/ast_impl.cpp")
     ast_src = ast + "\n" + impl
     test = _read("tests/core/test_dirty_column_lock.cpp")
-    build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
     must("Issue #2423", "AC1", ast)
@@ -61,8 +62,8 @@ def main() -> int:
     must("2423 AC3", "AC3", test)
 
     must("2423 AC4", "AC4", test)
-    must("check_dirty_column_lock_2423", "gate", build)
-    must("cmd_dirty_column_lock_coverage", "gate", build)
+    must("check_dirty_column_lock_2423", "gate", wired_text)
+    must("check_dirty_column_lock_2423.py", "gate", wired_text)
     must("test_dirty_column_lock", "gate", cmake)
 
     if fails:

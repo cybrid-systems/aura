@@ -24,6 +24,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -37,7 +39,6 @@ def _rows(must, must_not) -> list[str]:
     spawn = _read("src/orch/agent_spawn.h")
     bare_test = _read("tests/orch/test_bare_bp_resolve.cpp")
     admit_test = _read("tests/orch/test_mailbox_bp_admit.cpp")
-    build = _read("build.py")
 
     # AC1: resolver takes the spawn-tenant ladder result.
     must("resolve_bare_bp_scope_id(std::string_view explicit_id,", "AC1 resolver signature", spawn)
@@ -57,7 +58,7 @@ def _rows(must, must_not) -> list[str]:
         fails.append("AC5: test_issue_3672.cpp present (forbidden per #81934)")
     if _read("docs/design/3672-bp-scope-tenant.md"):
         fails.append("AC5: docs/design/ exists — forbidden per #1655")
-    must("check_bp_scope_tenant_3672", "AC5 build.py", build)
+    must("check_bp_scope_tenant_3672", "AC5 run_checks.py", wired_text)
     return fails
 
 

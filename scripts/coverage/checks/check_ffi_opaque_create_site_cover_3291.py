@@ -27,7 +27,7 @@ Gate rows:
       g_3291_* counters).
   G6  test ACs in test_moving_densify_fail_closed.cpp (#81967); no
       test_issue_3291.cpp; no docs/design/ (#1655).
-  G7  build.py wires this linter; #3274 linter preserved.
+  G7  run_checks.py gates this linter; #3274 linter preserved.
 
 Exit 0 = all rows satisfied.
 """
@@ -39,6 +39,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 failures: list[str] = []
 
@@ -91,7 +93,6 @@ def main() -> int:
     ffi = _read("src/compiler/ffi_primitives_impl.cpp")
     ev = _read("src/compiler/evaluator_eval_flat.cpp")
     test = _read("tests/core/test_moving_densify_fail_closed.cpp")
-    build = _read("build.py")
     lint3274 = _read("scripts/coverage/checks/check_ffi_opaque_densify_cover_3274.py")
 
     # ── G1: every opaque push site classified ──
@@ -155,8 +156,8 @@ def main() -> int:
     must(not _read("tests/core/test_issue_3291.cpp"), "G6: no tests/core/test_issue_3291.cpp per #81967")
     must(not _read("tests/issues/test_issue_3291.cpp"), "G6: no tests/issues/test_issue_3291.cpp per #81967")
 
-    # ── G7: build.py wiring + #3274 preserved ──
-    must("check_ffi_opaque_create_site_cover_3291" in build, "G7: build.py wires linter")
+    # ── G7: gate wiring + #3274 preserved ──
+    must("check_ffi_opaque_create_site_cover_3291" in wired_text, "G7: run_checks.py gates linter")
     must("Issue #3274" in lint3274, "G7: #3274 linter preserved")
 
     docs = ROOT / "docs" / "design"

@@ -25,6 +25,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -44,7 +46,6 @@ def main() -> int:
     ev = _read("src/compiler/evaluator_security.cpp")
     sec = _read("src/compiler/evaluator_primitives_security.cpp")
     test = _read("tests/compiler/test_security_posture_trail.cpp")
-    build = _read("build.py")
     lint3056 = _read("scripts/coverage/checks/check_wal_append_fail_slo_3056.py")
 
     # ── AC1: Soft/Off zero cost + helper + ring ──────────────────────────
@@ -144,9 +145,9 @@ def main() -> int:
         "issue-3056",
     ):
         must(old_key, f"AC5 old key preserved: {old_key}", sec)
-    # Linter wired in build.py
-    must("check_wal_append_fail_closed_3109", "AC5 build.py wiring", build)
-    must("Issue #3109", "AC5 linter error message", build)
+    # Linter gated by run_checks.py
+    must("check_wal_append_fail_closed_3109", "AC5 gate wiring", wired_text)
+    must("check_wal_append_fail_closed_3109", "AC5 linter error message", wired_text)
     # No invent
     if (ROOT / "tests" / "compiler" / "test_issue_3109.cpp").is_file():
         fails.append("AC5: test_issue_3109.cpp present (forbidden #81967)")
@@ -156,8 +157,8 @@ def main() -> int:
     if docs.is_dir():
         for f in sorted(docs.glob("3109-*")):
             fails.append(f"AC5: docs/design/{f.name} present (forbidden #1655)")
-    # #3056 lineage preserved in build.py wiring context
-    must("check_wal_append_fail_slo_3056", "AC5 3056 linter lineage", build)
+    # #3056 lineage preserved in gate wiring context
+    must("check_wal_append_fail_slo_3056", "AC5 3056 linter lineage", wired_text)
     must("3056", "AC5 3056 lineage in 3056 linter", lint3056)
     must("3109 AC5", "AC5 test marker", test)
 

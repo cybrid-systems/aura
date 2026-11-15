@@ -9,7 +9,7 @@ Contract:
   AC3 Cross-tenant / repeat-call → exactly one IsolationDeny SE per call
   AC4 Off sandbox + tenant=0 → permissive
   AC5 Existing prims that only call require_effect gain isolation
-  AC6 Source-cite + tests + CMake + build.py gate + this linter present
+  AC6 Source-cite + tests + CMake + coverage runner + this linter present
 
 Exit 0 = all rows satisfied.
 """
@@ -20,6 +20,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -81,7 +83,6 @@ def main() -> int:
     sec = _read("src/compiler/evaluator_security.cpp")
     test = _read("tests/compiler/test_require_effect_auto_isolation.cpp")
     cmake = _read("CMakeLists.txt")
-    build = _read("build.py")
 
     # Locate require_effect body.
     # Issue #5190: a fixed 4500-char budget truncated this window once the
@@ -133,8 +134,8 @@ def main() -> int:
     must("Issue #2490", "AC6", sec)
     must("test_require_effect_auto_isolation", "AC6", cmake)
     must("tests/compiler/test_require_effect_auto_isolation.cpp", "AC6", cmake)  # batch member source (S5)
-    must("check_require_effect_auto_isolation_2490", "AC6", build)
-    must("cmd_require_effect_auto_isolation_2490_coverage", "AC6", build)
+    must("check_require_effect_auto_isolation_2490", "AC6", wired_text)
+    must("check_require_effect_auto_isolation_2490.py", "AC6", wired_text)
 
     if fails:
         for f in fails:

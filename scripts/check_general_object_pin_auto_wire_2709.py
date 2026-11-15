@@ -32,6 +32,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -152,7 +154,6 @@ def main() -> int:
 
     lp = _read("src/core/lifetime_pin.hh")  # SSOT (module re-exports only)
     _read("CMakeLists.txt")
-    build = _read("build.py")
     test = _read("tests/core/test_general_object_pin_coverage_gate.cpp")
     obs = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
 
@@ -194,8 +195,8 @@ def main() -> int:
     must("issue-2709", "AC5", obs)
 
     # AC6 — source-cite + linter + no docs/design/.
-    must("check_general_object_pin_auto_wire_2709", "AC6", build)
-    must("cmd_general_object_pin_auto_wire_2709_coverage", "AC6", build)
+    must("check_general_object_pin_auto_wire_2709", "AC6", wired_text)
+    must("check_general_object_pin_auto_wire_2709", "AC6", wired_text)
     must("ac2709_1_default_on_helper", "AC6", test)
     must("ac2709_2_linter_catches_missing_wire", "AC6", test)
     must("ac2709_3_soft_zero_cost", "AC6", test)

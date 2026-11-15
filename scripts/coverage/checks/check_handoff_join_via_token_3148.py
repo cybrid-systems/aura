@@ -48,6 +48,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -66,7 +68,6 @@ def main() -> int:
     scope = _read("src/orch/agent_scope.h")
     prim = _read("src/compiler/evaluator_primitives_agent.cpp")
     test = _read("tests/orch/test_join_drain_reclaim.cpp")
-    build = _read("build.py")
     _read("src/orch/orch.h")
 
     # ── AC1: no process-global AgentRegistry / global_agent_registry
@@ -265,8 +266,8 @@ def main() -> int:
     )
     must(
         "check_handoff_join_via_token_3148",
-        "AC8 build.py wires #3148 linter",
-        build,
+        "AC8 run_checks.py gates #3148 linter",
+        wired_text,
     )
     # Workflow residual stays advisory — no cross_scope_directory on
     # the join path. #3148 does not introduce a second orch model.

@@ -63,6 +63,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -84,7 +86,6 @@ def main() -> int:
     arena = _read("src/core/arena.ixx")
     apply_src = _read("src/compiler/evaluator_eval_flat.cpp")
     test_src = _read("tests/core/test_moving_densify_fail_closed.cpp")
-    build_py = _read("build.py")
     allowlist = _read("scripts/coverage/root_check_allowlist.txt")
 
     # ── AC1: quarantine (try_allocate never returns a tombstone-keyed slot).
@@ -218,7 +219,7 @@ def main() -> int:
         fails.append("AC4: docs/design/4242-* must not exist")
 
     # ── AC5: gate wiring.
-    must("check_remap_tombstone_quarantine_4242.py", "AC5 build.py wiring", build_py)
+    must("check_remap_tombstone_quarantine_4242.py", "AC5 build.py wiring", wired_text)
     must("check_remap_tombstone_quarantine_4242.py", "AC5 allowlist entry", allowlist)
 
     if fails:

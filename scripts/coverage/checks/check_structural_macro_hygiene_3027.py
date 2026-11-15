@@ -22,6 +22,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -93,7 +95,6 @@ def main() -> int:
     mut = _read("src/compiler/evaluator_primitives_mutate.cpp")
     flat = _read("src/compiler/evaluator_eval_flat.cpp")
     test = _read("tests/compiler/test_hygiene_mutate_closed_loop.cpp")
-    build = _read("build.py")
 
     # AC1 public gates
     must("Issue #3027", "AC1 helper", mut)
@@ -150,8 +151,8 @@ def main() -> int:
         fails.append("AC4: new top-level query key (forbidden)")
 
     # AC5 wiring
-    must("check_structural_macro_hygiene_3027", "AC5 build", build)
-    must("cmd_structural_macro_hygiene_3027", "AC5 build cmd", build)
+    must("check_structural_macro_hygiene_3027", "AC5 build", wired_text)
+    must("check_structural_macro_hygiene_3027.py", "AC5 build cmd", wired_text)
     must("ac3027_5_source_and_linter", "AC5 test fn", test)
     cite = mut.find("Issue #3027")
     if cite >= 0 and "AgentRegistry" in mut[cite : cite + 2500]:

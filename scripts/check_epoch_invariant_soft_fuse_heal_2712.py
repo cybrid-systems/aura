@@ -31,6 +31,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -73,7 +75,6 @@ def main() -> int:
     _read("src/compiler/aura_jit_bridge_stub.cpp")
     q = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
     t = _read("tests/compiler/test_epoch_invariant_walk.cpp")
-    build = _read("build.py")
 
     # AC1 — production + Soft + consec >= K → heal body runs.
     must("Issue #2712", "AC1", br)
@@ -113,7 +114,7 @@ def main() -> int:
     must("ac2712_4_reemit_owner_tls", "AC6", t)
     must("ac2712_5_query_keys_added", "AC6", t)
     must("ac2712_6_source_and_linter", "AC6", t)
-    must("check_epoch_invariant_soft_fuse_heal_2712", "AC6", build)
+    must("check_epoch_invariant_soft_fuse_heal_2712", "AC6", wired_text)
     if _read("docs/design/2712-soft-fuse-heal.md"):
         fails.append("AC6: docs/design/2712-* exists (forbidden per #1655)")
 

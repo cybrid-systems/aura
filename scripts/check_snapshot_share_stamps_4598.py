@@ -56,6 +56,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -84,7 +86,6 @@ def main() -> int:
     obs = _read("src/compiler/evaluator_primitives_query_obs_mid.cpp")
     sym_test = _read("tests/core/test_summary_recompute_sym.cpp")
     round_test = _read("tests/compiler/test_current_source_roundtrip.cpp")
-    build_py = _read("build.py")
     allowlist = _read("scripts/coverage/root_check_allowlist.txt")
 
     # AC1 light per-define change attribution
@@ -200,7 +201,7 @@ def main() -> int:
     must_not("auto node = f.get(id);", "AC10", prim_eval)
 
     # AC11 wiring + allowlist
-    must("check_snapshot_share_stamps_4598.py", "AC11", build_py)
+    must("check_snapshot_share_stamps_4598.py", "AC11", wired_text)
     must("check_snapshot_share_stamps_4598.py", "AC11", allowlist)
 
     if fails:

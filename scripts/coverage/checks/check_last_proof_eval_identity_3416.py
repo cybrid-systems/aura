@@ -18,9 +18,12 @@ Exit 0 = all rows satisfied.
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -45,7 +48,6 @@ def main() -> int:
     tsteal = _read("tests/compiler/test_post_steal_linear_revalidate.cpp")
     tloop = _read("tests/compiler/test_linear_provenance_steal_gc_closed_loop.cpp")
     tdens = _read("tests/serve/test_steal_densify_linear_type_hard_and.cpp")
-    build = _read("build.py")
 
     must("kLastProofEvalIdentityIssue = 3416", "AC1 stamp", tma)
     must("g_last_proof_stamper_eval", "AC1 gauge", tma)
@@ -99,7 +101,7 @@ def main() -> int:
     must("3416", "AC6 post-steal", tsteal)
     must("3416", "AC6 steal-gc", tloop)
     must("3416", "AC6 steal-densify", tdens)
-    must("check_last_proof_eval_identity_3416", "AC6 build", build)
+    must("check_last_proof_eval_identity_3416", "AC6 build", wired_text)
     if (ROOT / "tests" / "compiler" / "test_issue_3416.cpp").is_file():
         fails.append("AC6: tests/compiler/test_issue_3416.cpp present (forbidden)")
     if (ROOT / "tests" / "issues" / "test_issue_3416.cpp").is_file():

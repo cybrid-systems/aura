@@ -5,7 +5,7 @@ AC:
   1. prim_heap_quota.hh + Evaluator allow/set APIs present
   2. High-freq constructors participate (list/map/append, json, string, vector)
   3. Agent surfaces: resource:quota-set pairs|strings|vectors + stats
-  4. Docs + suite + build.py wiring
+  4. Docs + suite + gate wiring
   5. list-ref path does not call prim_heap_quota_allow (no single-fiber hit)
 """
 
@@ -15,6 +15,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -90,8 +92,7 @@ def main() -> int:
     must("2916" in suite and "resource:quota-set" in suite, "AC4: suite")
     must("query:prim-heap-quota-stats" in suite, "AC4: suite stats")
 
-    build = _read("build.py")
-    must("prim_heap_quota_2916" in build or "prim-heap-quota-2916" in build, "AC4: build.py gate")
+    must("check_prim_heap_quota_2916" in wired_text, "AC4: coverage runner")
 
     if fails:
         for f in fails:

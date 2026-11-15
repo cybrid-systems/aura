@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _source_scan import source_block_after  # noqa: E402  (sibling helper)
 
 ROOT = Path(__file__).resolve().parents[3]
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -41,7 +42,6 @@ def main() -> int:
     bnd = _read("src/compiler/evaluator_mutation_boundary.cpp")
     stub = _read("src/compiler/aura_jit_bridge_stub.cpp")
     test = _read("tests/compiler/test_reload_recovery_query.cpp")
-    build = _read("build.py")
 
     # AC1
     must("Issue #3026", "AC1", hh)
@@ -104,8 +104,8 @@ def main() -> int:
     # light-linked binary (weak-in-earlier-.so wins the global symbol scope).
     if "aura_hot_update_observe_residual_force_stale" in stub:
         fails.append("AC5: registry observe stub shadowing is back in aura_jit_bridge_stub.cpp (#3607 removed it)")
-    must("check_residual_force_agent_actionable_3026", "AC5 build", build)
-    must("cmd_residual_force_agent_actionable_3026", "AC5 build cmd", build)
+    must("check_residual_force_agent_actionable_3026", "AC5 build", wired_text)
+    must("check_residual_force_agent_actionable_3026.py", "AC5 build cmd", wired_text)
     must("ac3026_5_source_and_linter", "AC5 test fn", test)
     cite = hh.find("Issue #3026")
     if cite >= 0 and "AgentRegistry" in hh[cite : cite + 2500]:

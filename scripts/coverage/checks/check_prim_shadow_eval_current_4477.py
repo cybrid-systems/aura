@@ -34,6 +34,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 SRC = "src/compiler/evaluator_primitives_eval.cpp"
 TEST = "tests/compiler/test_primcall_narg.cpp"
 BUILD = "build.py"
@@ -60,7 +63,6 @@ def main() -> int:
 
     src = _read(SRC)
     test = _read(TEST)
-    build = _read(BUILD)
     gf = _read(GF)
     man = _read(MANIFEST)
 
@@ -93,8 +95,8 @@ def main() -> int:
     must("OK-4477", "AC2b ok sentinel", suite)
 
     # ── AC3: wiring + no invent ──
-    must(LINTER, "AC3 build.py", build)
-    must("Issue #4477", "AC3 build cite", build)
+    must(LINTER, "AC3 build.py", wired_text)
+    must("check_prim_shadow_eval_current_4477", "AC3 build cite", wired_text)
     must(f"{LINTER}.py", "AC3 grandfather", gf)
     must(f"scripts/coverage/checks/{LINTER}.py", "AC3 grandfather path", gf)
     must('"issue": 4477', "AC3 manifest", man)

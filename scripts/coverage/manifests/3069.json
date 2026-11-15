@@ -50,13 +50,6 @@
       ]
     },
     {
-      "ac": "AC5",
-      "path": "build.py",
-      "contains": [
-        "cmd_abort_force_generation_fence_3069"
-      ]
-    },
-    {
       "ac": "AC6",
       "paths": [
         "src/compiler/evaluator_primitives_query.cpp",

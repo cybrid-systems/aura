@@ -28,6 +28,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -47,7 +49,6 @@ def main() -> int:
     obs = _read("src/compiler/evaluator_primitives_obs_jit.cpp")
     batch = _read("tests/compiler/test_linear_batch.cpp")
     steal = _read("tests/compiler/test_linear_provenance_steal_gc_closed_loop.cpp")
-    build = _read("build.py")
     l3261 = _read("scripts/coverage/checks/check_flush_mutation_boundary_toctou_3261.py")
 
     pos = gc.find("void Evaluator::probe_linear_ownership_at_gc_safepoint()")
@@ -106,12 +107,16 @@ def main() -> int:
     must("ac3262_4_quiet_probe_zero_extra", "AC4 test", steal)
 
     must("ac3262_5_source_and_linter", "AC5 test", steal)
-    must("check_gc_safepoint_restamp_lock_3262", "AC5 build.py", build)
+    must("check_gc_safepoint_restamp_lock_3262", "AC5 wiring", wired_text)
     must("Issue #3262", "AC5 evaluator.ixx", ixx)
-    prev = build.find("check_flush_mutation_boundary_toctou_3261")
-    ours = build.find("check_gc_safepoint_restamp_lock_3262")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC5: linter must be wired in build.py AFTER #3261")
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must(
+        "check_flush_mutation_boundary_toctou_3261",
+        "AC5: linter must be gated by run_checks.py (both gated)",
+        wired_text,
+    )
+    must("check_gc_safepoint_restamp_lock_3262", "AC5: linter must be gated by run_checks.py (both gated)", wired_text)
     must("3262", "AC5 extend 3261 linter", l3261)
     if (ROOT / "tests" / "issues" / "test_issue_3262.cpp").is_file():
         fails.append("AC5: forbidden tests/issues/test_issue_3262.cpp per #81967")

@@ -16,6 +16,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -45,7 +47,6 @@ def main() -> int:
 
     ast = _read("src/core/ast.ixx")
     test = _read("tests/core/test_stringpool_bytes_total_lock.cpp")
-    build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
     must("Issue #2408", "AC1", ast)
@@ -63,8 +64,8 @@ def main() -> int:
     must("buf_fragmentation", "AC4", ast)
     must("2408 AC4", "AC4", test)
 
-    must("check_stringpool_bytes_total_lock_2408", "AC5", build)
-    must("cmd_stringpool_bytes_total_lock_coverage", "AC5", build)
+    must("check_stringpool_bytes_total_lock_2408", "AC5", wired_text)
+    must("check_stringpool_bytes_total_lock_2408.py", "AC5", wired_text)
     must("test_stringpool_bytes_total_lock", "AC5", cmake)
 
     if fails:

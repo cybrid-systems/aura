@@ -43,6 +43,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 # Assignment of a steal result. Covers try_steal() and Chase-Lev steal().
 _STEAL_ASSIGN = re.compile(
@@ -215,7 +217,6 @@ def main() -> int:
     hdr = _read("src/serve/steal_safety.h")
     qjit = _read("src/compiler/evaluator_primitives_obs_jit.cpp")
     test = _read("tests/serve/test_steal_complete_restamp_txn.cpp")
-    build = _read("build.py")
     lint2844 = _read("scripts/coverage/checks/check_steal_sole_enqueue_gate_2844.py")
 
     # AC1 — scanner rejects a naked steal→push (synthetic) and scans all src/.
@@ -313,7 +314,7 @@ def main() -> int:
     must("ac3072_5_source_and_linter", "AC5", test)
     must("ac2844_1_sole_enqueue_gate", "AC5 #2844 preserved", test)
     must("ac2929_1_invariant_table_and_counters", "AC5 #2929 preserved", test)
-    must("check_steal_enqueue_sole_gate_3072", "AC5", build)
+    must("check_steal_enqueue_sole_gate_3072", "AC5", wired_text)
     if (ROOT / "tests" / "serve" / "test_issue_3072.cpp").is_file():
         fails.append("AC5: tests/serve/test_issue_3072.cpp present (forbidden invent)")
 

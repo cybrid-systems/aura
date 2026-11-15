@@ -29,6 +29,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -47,7 +49,6 @@ def main() -> int:
     sec_cap = _read("src/compiler/security_capabilities.h")
     _read("src/compiler/security_defaults.hh")
     test = _read("tests/core/test_capability_single_use_consume.cpp")
-    build = _read("build.py")
     manifest = _read("scripts/coverage/manifests/3144.json")
 
     # ── AC1: Production + kCapWildcard (no explicit TenantAdmin) → strip ─
@@ -94,8 +95,8 @@ def main() -> int:
     must("ac3144_4_additive_counter_and_source_cite", "AC5 AC4 test function", test)
     must("Issue #3144", "AC5 #3144 cite in test", test)
 
-    # AC5: build.py wires linter
-    must("check_wildcard_effects_for_fence.py", "AC5 build.py wires linter", build)
+    # AC5: run_checks.py gates linter
+    must("check_wildcard_effects_for_fence.py", "AC5 run_checks.py gates linter", wired_text)
 
     # AC5: manifest exists and contains #3144
     if "3144" not in manifest:

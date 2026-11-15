@@ -23,6 +23,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -45,7 +47,6 @@ def main() -> int:
     jit = _read("src/compiler/evaluator_primitives_obs_jit.cpp")
     test = _read("tests/compiler/test_hard_fiber_restricted.cpp")
     test_su = _read("tests/core/test_capability_single_use_consume.cpp")
-    build = _read("build.py")
 
     # ── AC1: multi OR strict arms hard ──
     must("Issue #2943", "AC1", sec)
@@ -101,7 +102,7 @@ def main() -> int:
     # ── AC6: tests + linter + no invent/design ──
     must("2943", "AC6", test)
     must("ac2943", "AC6", test)
-    must("check_production_hard_fiber_default_2943", "AC6", build)
+    must("check_production_hard_fiber_default_2943", "AC6", wired_text)
     # Optional cross-cite in single_use lineage suite
     if "2943" not in test_su and "2943" not in test:
         fails.append("AC6: no 2943 tests in hard_fiber_restricted lineage")

@@ -24,6 +24,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from query_prims_sources import read_query_prims  # Issue #2914
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -51,7 +53,6 @@ def main() -> int:
     ixx = _read("src/compiler/type_checker.ixx")
     q = read_query_prims()
     test = _read("tests/compiler/test_occurrence_goal_persist_rehydrate.cpp")
-    build = _read("build.py")
 
     must("kOccurrencePersistAuditAtomicIssue = 3004", "AC1", tma)
     must("grant_type_export_authority", "AC1", mb)
@@ -89,7 +90,7 @@ def main() -> int:
     must("ac3004_4_schema_and_lineage", "AC4", test)
 
     must("ac3004_5_source_and_linter", "AC5", test)
-    must("check_occurrence_persist_audit_atomic_3004", "AC5", build)
+    must("check_occurrence_persist_audit_atomic_3004", "AC5", wired_text)
     must("in-flight", "AC5 query", _read("src/compiler/evaluator_primitives_eval.cpp"))
     if (ROOT / "tests" / "compiler" / "test_issue_3004.cpp").is_file():
         fails.append("AC5: test_issue_3004.cpp present (forbidden #81967)")

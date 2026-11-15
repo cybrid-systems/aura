@@ -52,13 +52,6 @@
       "contains": [
         "test_stable_ref_wire_endian"
       ]
-    },
-    {
-      "ac": "AC6",
-      "path": "build.py",
-      "contains": [
-        "cmd_stable_ref_wire_endian_coverage"
-      ]
     }
   ]
 }

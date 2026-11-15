@@ -27,7 +27,7 @@ Gate rows:
       (AC3: Soft / no :durable zero disk I/O).
   G7  test ACs in tests/compiler/test_evolution_audit_decision_forensic.cpp
       (#3152 suite home, #81967) citing #3284.
-  G8  build.py wires this linter.
+  G8  run_checks.py gates this linter.
   G9  no docs/design/3284-* (per #1655), no tests/issue*/test_issue_3284.cpp
       (per #81967).
 
@@ -38,6 +38,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 failures: list[str] = []
 
@@ -62,7 +64,6 @@ def main() -> int:
     print("=== #3284 evolution-audit-decision SE match discipline linter ===")
     src = read("src/compiler/evaluator_primitives_security.cpp")
     test = read("tests/compiler/test_evolution_audit_decision_forensic.cpp")
-    build = read("build.py")
 
     must("Issue #3284" in src, "G1: evaluator_primitives_security.cpp cites Issue #3284")
     must(
@@ -94,7 +95,7 @@ def main() -> int:
         "ac8_3284_se_mid_miss" in test and "Issue #3284" in test,
         "G7: test ACs in test_evolution_audit_decision_forensic.cpp cite #3284",
     )
-    must("check_evolution_audit_se_mid_miss_3284.py" in build, "G8: build.py wires linter")
+    must("check_evolution_audit_se_mid_miss_3284.py" in wired_text, "G8: run_checks.py gates linter")
 
     docs_ok = True
     if (ROOT / "docs/design").exists():

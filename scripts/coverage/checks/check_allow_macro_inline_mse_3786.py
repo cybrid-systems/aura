@@ -13,6 +13,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -29,7 +31,6 @@ def main() -> int:
 
     cpp = _read("src/compiler/evaluator_primitives_compile.cpp")
     test = _read("tests/compiler/test_hygiene_mutate_closed_loop.cpp")
-    build = _read("build.py")
     gf = _read("scripts/coverage/simple_check_grandfather.txt")
 
     must("Issue #3786", "AC1 cite", cpp)
@@ -58,7 +59,7 @@ def main() -> int:
     ):
         must(name, f"AC4 {name}", test)
 
-    must("check_allow_macro_inline_mse_3786", "AC4 build.py", build)
+    must("check_allow_macro_inline_mse_3786", "AC4 wiring", wired_text)
     must("check_allow_macro_inline_mse_3786.py", "AC4 grandfather", gf)
 
     if _read("tests/compiler/test_issue_3786.cpp"):

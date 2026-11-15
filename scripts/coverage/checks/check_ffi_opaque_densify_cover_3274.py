@@ -18,7 +18,7 @@ closes the triad for this allocate class:
   AC5  FFI create sites wired (opaque-struct-copy, ffi-return-external);
        libc-heap / external-native-addr keep EXEMPT (true non-arena);
        no test_issue_3274.cpp (#81967); no docs/design/ (#1655);
-       build.py wires linter
+       run_checks.py gates linter
 
 Exit 0 = all rows satisfied.
 """
@@ -29,6 +29,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -48,7 +50,6 @@ def main() -> int:
     ffi = _read("src/compiler/ffi_primitives_impl.cpp")
     ev = _read("src/compiler/evaluator_eval_flat.cpp")
     test = _read("tests/core/test_moving_densify_fail_closed.cpp")
-    build = _read("build.py")
 
     must("note_ffi_opaque_alias_densify_cover", "AC1/AC2 helper", arena)
     must("kFfiOpaqueDensifyAliasCoverIssue = 3274", "AC4 stamp", dc)
@@ -65,7 +66,7 @@ def main() -> int:
     must("note_ffi_opaque_alias_densify_cover", "AC5 eval wire", ev)
     must('note_ffi_opaque_create_exempt("libc-heap")', "AC5 libc exempt", ffi)
     must('note_ffi_opaque_create_exempt("external-native-addr")', "AC5 native exempt", ffi)
-    must("check_ffi_opaque_densify_cover_3274", "AC5 build.py", build)
+    must("check_ffi_opaque_densify_cover_3274", "AC5 wiring", wired_text)
     if "query:ffi-opaque-cover" in arena or "query:opaque-densify" in arena:
         fails.append("AC4: new query:* (reuse existing surfaces)")
     if "class FfiOpaquePinRegistry" in arena or "g_ffi_opaque_registry_3274" in arena:

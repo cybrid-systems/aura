@@ -24,6 +24,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -44,7 +46,6 @@ def main() -> int:
     ss = _read("src/serve/steal_safety.cpp")
     hdr = _read("src/serve/steal_safety.h")
     test = _read("tests/serve/test_steal_complete_restamp_txn.cpp")
-    build = _read("build.py")
 
     # AC1 — sole transaction gate
     must("steal_safety_transaction(stolen)", "AC1", worker)
@@ -84,7 +85,7 @@ def main() -> int:
     must("ac2844_2_no_soft_enqueue_after_sample", "AC5", test)
     must("ac2844_3_counters_preserved", "AC5", test)
     must("ac2844_4_source_and_linter", "AC5", test)
-    must("check_steal_sole_enqueue_gate_2844", "AC5", build)
+    must("check_steal_sole_enqueue_gate_2844", "AC5", wired_text)
     # Prior surfaces preserved
     must("ac2752_1_try_steal_from_only_transaction", "AC5 #2752 preserved", test)
     must("ac2699_1_unified_entry_exists", "AC5 #2699 preserved", test)

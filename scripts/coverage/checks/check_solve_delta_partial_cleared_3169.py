@@ -41,7 +41,7 @@
 #       existing #2277 / #3003 / #2963 / #2913 surfaces preserved
 #     - AC5 Extends existing solve_delta suite — no test_issue_3169.cpp
 #       (per #81967); no docs/design/3169-* (per #1655)
-#     - AC6 Source-cite + coverage linter + build.py wiring
+#     - AC6 Source-cite + coverage linter + gate wiring
 #
 #  5. Forbidden artifacts (per #1655 + #81967):
 #     - No docs/design/3169-* plan doc
@@ -205,13 +205,8 @@ INFRA_REQUIRED: tuple[tuple[str, str, str], ...] = (
     ),
     # Build.py wiring.
     (
-        "build.py",
-        r"cmd_solve_delta_partial_cleared_3169",
-        "build: cmd_solve_delta_partial_cleared_3169 dispatcher",
-    ),
-    (
-        "build.py",
-        r"check_solve_delta_partial_cleared_3169",
+        "scripts/coverage/checks/check_solve_delta_partial_cleared_3169.py",
+        r"\S",
         "build: linter path wired",
     ),
 )

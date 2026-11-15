@@ -26,6 +26,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -44,7 +46,6 @@ def main() -> int:
     hdr = _read("src/compiler/runtime_shared.h")
     test = _read("tests/compiler/test_jit_macro_introduced_preserve.cpp")
     arena = _read("tests/core/test_arena_lifecycle.cpp")
-    build = _read("build.py")
     l3264 = _read("scripts/coverage/checks/check_cascade_dep_graph_atomic_3264.py")
 
     must("Issue #3265", "AC1 cite", rt)
@@ -84,11 +85,11 @@ def main() -> int:
 
     must("ac3265_5_source_and_linter", "AC5 test", test)
     must("3265", "AC5 arena family", arena)
-    must("check_jit_fn_marker_atomic_3265", "AC5 build.py", build)
-    prev = build.find("check_cascade_dep_graph_atomic_3264")
-    ours = build.find("check_jit_fn_marker_atomic_3265")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC5: linter must be wired in build.py AFTER #3264")
+    must("check_jit_fn_marker_atomic_3265", "AC5 wiring", wired_text)
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must("check_cascade_dep_graph_atomic_3264", "AC5: linter must be gated by run_checks.py (both gated)", wired_text)
+    must("check_jit_fn_marker_atomic_3265", "AC5: linter must be gated by run_checks.py (both gated)", wired_text)
     must("3265", "AC5 extend 3264 linter", l3264)
     if (ROOT / "tests" / "issues" / "test_issue_3265.cpp").is_file():
         fails.append("AC5: forbidden tests/issues/test_issue_3265.cpp per #81967")

@@ -37,6 +37,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -61,7 +63,6 @@ def main() -> int:
     fails: list[str] = []
 
     tci = _read("src/compiler/type_checker_impl.cpp")
-    build = _read("build.py")
 
     # AC1: synthesize_flat Set case walks RHS + unifies + reports ground.
     synth_pos = tci.find("TypeId InferenceEngine::synthesize_flat(")
@@ -167,7 +168,7 @@ def main() -> int:
         fails.append("AC4: tests/compiler/test_synthesize_set_walks_rhs.cpp missing (source-cite test not created)")
 
     # AC5: build.py registration.
-    if "check_synthesize_set_walks_rhs_3407" not in build:
+    if "check_synthesize_set_walks_rhs_3407" not in wired_text:
         fails.append(
             "AC5: build.py does not register "
             "check_synthesize_set_walks_rhs_3407 (linter not wired into "

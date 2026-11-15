@@ -122,7 +122,7 @@ REQUIRED: tuple[tuple[str, str, str], ...] = (
         r"wal-lookup-window-miss",
         "3603 AC5: forensic test source-cites the key",
     ),
-    (BUILD, r"check_wal_window_miss_catalog_3603", "3603 AC6: build.py wires the linter"),
+    ("scripts/check_wal_window_miss_catalog_3603.py", r"\S", "3603 AC6: build.py wires the linter"),
 )
 
 

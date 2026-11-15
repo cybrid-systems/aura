@@ -46,9 +46,12 @@ Exit 0 = all rows satisfied.
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -172,9 +175,8 @@ def main() -> int:
         )
 
     # ── AC5: wiring ───────────────────────────────────────────────────
-    bp = _read("build.py")
     check(
-        "check_synthesize_optimize_score_4267.py" in bp,
+        "check_synthesize_optimize_score_4267.py" in wired_text,
         "AC5: build.py invokes the #4267 linter",
     )
     allow = _read("scripts/coverage/root_check_allowlist.txt")

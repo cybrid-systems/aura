@@ -58,6 +58,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 SERVE = ROOT / "src" / "serve" / "serve_async.cpp"
 TST = ROOT / "tests" / "serve" / "test_concurrent.cpp"
 
@@ -79,7 +82,6 @@ def _capture_region(text: str) -> str:
 def main() -> int:
     serve = SERVE.read_text() if SERVE.exists() else ""
     tst = TST.read_text() if TST.exists() else ""
-    build = (ROOT / "build.py").read_text()
     allow = (ROOT / "scripts" / "coverage" / "root_check_allowlist.txt").read_text()
     ok = True
 
@@ -126,7 +128,7 @@ def main() -> int:
         "AC5 test-door-and-wiring",
         "#4229" in tst
         and "test_issue_4229_capture_honesty" in tst
-        and "check_serve_async_capture_honesty_4229.py" in build
+        and "check_serve_async_capture_honesty_4229.py" in wired_text
         and "check_serve_async_capture_honesty_4229.py" in allow
         and no_issue_file
         and no_docs,

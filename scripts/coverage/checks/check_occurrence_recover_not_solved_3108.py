@@ -29,6 +29,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -45,7 +47,6 @@ def main() -> int:
 
     h = _read("src/compiler/typed_mutation_audit.h")
     test = _read("tests/compiler/test_solve_delta_unresolved_export.cpp")
-    build = _read("build.py")
 
     # ── AC1: post-recover re-gate wired (single check, both blocks bump) ──
     must("kOccurrenceRecoverNotSolvedIssue = 3108", "AC1 issue stamp", h)
@@ -123,9 +124,9 @@ def main() -> int:
     must("ac3108_3_soft_observe_only", "AC5 AC3 test function", test)
     must("ac3108_4_additive_counter_only", "AC5 AC4 test function", test)
     must("ac3108_5_source_and_linter", "AC5 AC5 test function", test)
-    # Linter wired in build.py
-    must("check_occurrence_recover_not_solved_3108", "AC5 build.py wiring", build)
-    must("Issue #3108", "AC5 linter error message", build)
+    # Linter gated by run_checks.py
+    must("check_occurrence_recover_not_solved_3108", "AC5 gate wiring", wired_text)
+    must("check_occurrence_recover_not_solved_3108", "AC5 linter error message", wired_text)
     # No invent
     if (ROOT / "tests" / "compiler" / "test_issue_3108.cpp").is_file():
         fails.append("AC5: test_issue_3108.cpp present (forbidden #81967)")

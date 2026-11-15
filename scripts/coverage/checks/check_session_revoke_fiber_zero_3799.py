@@ -20,6 +20,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -39,7 +41,6 @@ def main() -> int:
     steal = _read("src/compiler/evaluator_fiber_mutation.cpp")
     eval_ixx = _read("src/compiler/evaluator.ixx")
     test = _read("tests/core/test_capability_single_use_consume.cpp")
-    build = _read("build.py")
 
     must("kCapabilitySessionRevokeFiberZeroIssue = 3799", "AC2 stamp", cap)
     must("Issue #3799", "AC2 cap cite", cap)
@@ -76,7 +77,7 @@ def main() -> int:
     must("ac3799_2_fiber_zero_fail_closed_under_mt", "AC4 AC2 test", test)
     must("ac3799_3_soft_zero_cost_retained", "AC4 AC3 test", test)
     must("ac3799_4_source_cite_and_linter", "AC4 AC4 test", test)
-    must("check_session_revoke_fiber_zero_3799", "AC4 build.py", build)
+    must("check_session_revoke_fiber_zero_3799", "AC4 wiring", wired_text)
     if (ROOT / "tests" / "core" / "test_issue_3799.cpp").is_file():
         fails.append("AC4: tests/core/test_issue_3799.cpp present (forbidden #81967)")
     if _read("docs/design/3799-session-revoke-fiber-zero.md"):

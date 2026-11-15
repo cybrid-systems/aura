@@ -33,7 +33,7 @@ Gate rows:
   G5  test ACs in src-aligned suite homes (#81967): residual-zero suite
       AC14 + txn suite ac3288_1/ac3288_2; no tests/issue*/test_issue_3288.cpp.
   G6  no docs/design/3288-* (per #1655).
-  G7  build.py wires this linter.
+  G7  run_checks.py gates this linter.
 
 Exit 0 = all rows satisfied.
 """
@@ -42,6 +42,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 failures: list[str] = []
 
@@ -69,7 +71,6 @@ def main() -> int:
     qts = read("src/compiler/evaluator_primitives_query_type_stats.cpp")
     t_zero = read("tests/serve/test_steal_safety_production_residual_zero.cpp")
     read("tests/serve/test_steal_complete_restamp_txn.cpp")
-    build = read("build.py")
 
     # ── G1: Ok-path sticky consult before ticket stamp, latch-gated ──
     must("Issue #3288" in sc, "G1: steal_safety.cpp cites Issue #3288")
@@ -144,8 +145,8 @@ def main() -> int:
     else:
         must(True, "G6: no docs/design/3288-* per #1655")
 
-    # ── G7: build.py wiring ──
-    must("check_production_residual_sticky_continuous_3288" in build, "G7: build.py wires linter")
+    # ── G7: gate wiring ──
+    must("check_production_residual_sticky_continuous_3288" in wired_text, "G7: run_checks.py gates linter")
 
     if failures:
         print(f"\n#3288 linter: {len(failures)} gate(s) FAILED")

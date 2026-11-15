@@ -25,6 +25,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -40,7 +42,6 @@ def _rows(must, must_not) -> list[str]:
     prim = _read("src/compiler/evaluator_primitives_agent.cpp")
     facade_test = _read("tests/orch/test_orch_obs_facade.cpp")
     recv_test = _read("tests/serve/test_mailbox_recv_mutation_boundary.cpp")
-    build = _read("build.py")
 
     # AC1: mailbox surfaces the Guard-live reject per recv.
     must("bool* rejected_boundary = nullptr)", "AC1 recv out-flag param", mailbox)
@@ -70,7 +71,7 @@ def _rows(must, must_not) -> list[str]:
         fails.append("AC5: test_issue_3673.cpp present (forbidden per #81934)")
     if _read("docs/design/3673-recv-under-boundary.md"):
         fails.append("AC5: docs/design/ exists — forbidden per #1655")
-    must("check_recv_under_boundary_3673", "AC5 build.py", build)
+    must("check_recv_under_boundary_3673", "AC5 run_checks.py", wired_text)
     return fails
 
 

@@ -26,6 +26,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 FILES = [
     "src/core/arena.ixx",
@@ -58,7 +60,6 @@ def main() -> int:
     mb = _read("src/compiler/evaluator_mutation_boundary.cpp")
     obs = _read("src/compiler/evaluator_primitives_obs_jit.cpp")
     test = _read("tests/core/test_moving_densify_fail_closed.cpp")
-    build = _read("build.py")
 
     # ── AC1: densify entry auto-register walk ──
     must("Issue #2889", "AC1", mb)
@@ -94,7 +95,7 @@ def main() -> int:
     must("schema-2619", "AC4", obs)
     must("schema-2495", "AC4", obs)
 
-    # ── AC5: source-cite + src/-aligned suite + build.py gate ──
+    # ── AC5: source-cite + src/-aligned suite + coverage runner ──
     for rel in FILES:
         content = _read(rel)
         if not content:
@@ -107,7 +108,7 @@ def main() -> int:
     must("ac2889_3_fail_closed_preserved", "AC5", test)
     must("ac2889_4_query_keys", "AC5", test)
     must("ac2889_5_linter_and_no_design", "AC5", test)
-    must("check_moving_known_roots_auto_register_2889", "AC5", build)
+    must("check_moving_known_roots_auto_register_2889", "AC5", wired_text)
     design_docs = sorted((ROOT / "docs" / "design").glob("2889-*")) if (ROOT / "docs" / "design").is_dir() else []
     if design_docs:
         fails.append(f"AC5: docs/design/2889-* present ({[p.name for p in design_docs]})")

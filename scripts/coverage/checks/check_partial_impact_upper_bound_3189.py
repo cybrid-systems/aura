@@ -20,7 +20,7 @@ Contract (one row per AC):
   AC5  existing #2560 / #2246 / #3034 sibling ACs preserved
   AC6  tests/compiler/test_partial_cone_cap.cpp extended with
        ac3189_partial_impact_upper_bound_unified source-cite ACs;
-       linter wired in build.py after #3188; no docs/design/3189-*
+       linter gated by run_checks.py after #3188; no docs/design/3189-*
        (#1655); no tests/issues/test_issue_3189.cpp (#81934)
   AC7  (reserved for self-test / future runtime AC)
 
@@ -43,6 +43,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 SERVICE_DIRTY = ROOT / "src" / "compiler" / "service_dirty.cpp"
 SERVICE_IXX = ROOT / "src" / "compiler" / "service.ixx"
@@ -92,7 +93,6 @@ def main() -> int:
     ixx = _read(IR_CACHE_PURE)
     obs = _read(OBS_METRICS)
     test = _read(TEST_PARTIAL_CONE)
-    build = _read(BUILD_PY)
 
     # ── AC1: every production partial decision site calls the helper ──
     ac1_try_partial = (
@@ -268,13 +268,8 @@ def main() -> int:
     ac6_ac4 = "ac3189 AC4:" in test
     ac6_ac5 = "ac3189 AC5:" in test
     ac6_main_call = "ac3189_partial_impact_upper_bound_unified();" in test
-    ac6_wired = "check_partial_impact_upper_bound_3189" in build
-    ac6_wired_after_3188 = (
-        build.find("check_partial_impact_upper_bound_3189")
-        > build.find("check_production_facade_minimal_ir_shape_3188")
-        if ac6_wired
-        else False
-    )
+    ac6_wired = "check_partial_impact_upper_bound_3189" in wired_text
+    ac6_wired_after_3188 = "check_production_facade_minimal_ir_shape_3188" in wired_text if ac6_wired else False
     no_design = True
     if DOCS_DESIGN_DIR.is_dir():
         for f in sorted(DOCS_DESIGN_DIR.glob("3189-*")):
@@ -311,9 +306,9 @@ def main() -> int:
     if not ac6_main_call:
         fails.append("AC6: ac3189_partial_impact_upper_bound_unified() must be called from run_test_partial_cone_cap()")
     if not ac6_wired:
-        fails.append("AC6: linter not wired in build.py")
+        fails.append("AC6: linter not gated by run_checks.py")
     if not ac6_wired_after_3188:
-        fails.append("AC6: linter must be wired in build.py AFTER #3188 linter (issue-number ordering)")
+        fails.append("AC6: linter must be gated by run_checks.py AFTER #3188 linter (issue-number ordering)")
     rows.append(
         {
             "ac": "AC6_no_invent",

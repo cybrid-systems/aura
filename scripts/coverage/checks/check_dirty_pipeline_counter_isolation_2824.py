@@ -16,6 +16,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -36,7 +38,6 @@ def main() -> int:
     stats = _read("src/compiler/jit_typed_mutation_stats.h")
     obs = _read("src/compiler/evaluator_primitives_obs_jit.cpp")
     test = _read("tests/compiler/test_dirty_pipeline_counter_isolation.cpp")
-    build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
     # Prefer definition (after template requires), include preceding #2824 doc.
@@ -76,7 +77,7 @@ def main() -> int:
     must("test_dirty_pipeline_counter_isolation", "AC3", cmake)
 
     # AC4
-    must("check_dirty_pipeline_counter_isolation_2824", "AC4", build)
+    must("check_dirty_pipeline_counter_isolation_2824", "AC4", wired_text)
     must("schema-2824", "AC4", obs)
     must("pipeline-dirty-counter-concurrent-contamination-total", "AC4", obs)
     docs = ROOT / "docs" / "design"

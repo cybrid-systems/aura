@@ -19,6 +19,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -44,7 +46,6 @@ def main() -> int:
     gendocs = _read("scripts/tools/gen_docs.py")
     test = _read("tests/compiler/test_hygiene_mutate_closed_loop.cpp")
     batch = _read("tests/compiler/test_mutate_batch.cpp")
-    build = _read("build.py")
     l3191 = _read("scripts/coverage/manifests/3191.json")
 
     # AC1
@@ -80,7 +81,7 @@ def main() -> int:
     must_not('add_mutate("mutate:sv-', "AC5 no sv add_mutate", mut)
 
     # AC6
-    must("check_sv_eda_surface_retired_3239", "AC6 build.py", build)
+    must("check_sv_eda_surface_retired_3239", "AC6 wiring", wired_text)
     must("3239 AC6", "AC6 test", test)
     if (ROOT / "tests" / "compiler" / "test_issue_3239.cpp").is_file():
         fails.append("AC6: test_issue_3239.cpp present (forbidden #81967)")

@@ -15,7 +15,7 @@ Contract (one row per AC):
   AC2 Phase 0 prologue before letrec cell pre-allocate / lambda install
   AC3 Phase 3 skips already-run prologue forms
   AC4 ac2766_* tests in test_module_require_freevar.cpp
-  AC5 this linter wired in build.py; no docs/design/*
+  AC5 this linter gated by run_checks.py; no docs/design/*
 
 Exit 0 = all rows satisfied.
 """
@@ -26,6 +26,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -45,7 +47,6 @@ def main() -> int:
     efl = _read("src/compiler/evaluator_eval_flat.cpp")
     loader = _read("src/compiler/evaluator_module_loader.cpp")
     t = _read("tests/compiler/test_module_require_freevar.cpp")
-    build = _read("build.py")
 
     # AC1 — prologue skip.
     must("#2766", "AC1", efl)
@@ -79,7 +80,7 @@ def main() -> int:
     must("orch:spawn", "AC4", t)
 
     # AC5 — linter wire + no docs.
-    must("check_module_require_export_order_2766", "AC5", build)
+    must("check_module_require_export_order_2766", "AC5", wired_text)
     if (ROOT / "tests" / "compiler" / "test_issue_2766.cpp").is_file():
         fails.append("AC5: tests/compiler/test_issue_2766.cpp present (forbidden per #81967)")
     docs_dir = ROOT / "docs" / "design"

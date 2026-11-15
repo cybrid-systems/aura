@@ -7,7 +7,7 @@ Contract (one row per AC):
   AC3  Debug/Enforce still contract_assert
   AC4  Soft-observe RECORD is sampled (no per-call atomic RMW)
   AC5  query:cpp26-contracts-stats exposes hot-contract-false + schema-3043
-  AC6  this linter wired in build.py; no test_issue_3043.cpp; no docs/design/
+  AC6  this linter gated by run_checks.py; no test_issue_3043.cpp; no docs/design/
 
 Exit 0 = all rows satisfied.
 """
@@ -18,6 +18,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -36,7 +38,6 @@ def main() -> int:
     q = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
     test = _read("tests/compiler/test_hot_contract_placement.cpp")
     unify = _read("tests/compiler/test_hot_contract_unify.cpp")
-    build = _read("build.py")
     lint2435 = _read("scripts/coverage/checks/check_hot_contract_placement_2435.py")
 
     # ── AC1: production default still OFF ──
@@ -80,7 +81,7 @@ def main() -> int:
     must("hot-contract-false-total", "AC5 unify", unify)
 
     # ── AC6: wired + no invent / no design ──
-    must("check_hot_contract_soft_observe_3043", "AC6", build)
+    must("check_hot_contract_soft_observe_3043", "AC6", wired_text)
     must("3043", "AC6 2435 lineage", lint2435)
     if (ROOT / "tests" / "compiler" / "test_issue_3043.cpp").is_file():
         fails.append("AC6: test_issue_3043.cpp present (forbidden #81967)")

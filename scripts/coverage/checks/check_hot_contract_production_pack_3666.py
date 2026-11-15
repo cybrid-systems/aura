@@ -23,6 +23,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -47,7 +49,6 @@ def main() -> int:
     place = _read("tests/compiler/test_hot_contract_placement.cpp")
     pack = _read("tests/compiler/test_pack_pipeline_strict.cpp")
     unify = _read("tests/compiler/test_hot_contract_unify.cpp")
-    build = _read("build.py")
     q = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
 
     must("kHotContractProductionPackIssue = 3666", "AC1 stamp", hh)
@@ -89,12 +90,18 @@ def main() -> int:
     must("3666 AC4: apply_production arms", "AC4 test", place)
     must("3666 AC4: pack stays armed after note(false)", "AC4 pack test", pack)
 
-    must("check_insert_remove_child_locked_dense_splice_3665", "AC5 prev linter", build)
-    must("check_hot_contract_production_pack_3666", "AC5 build.py", build)
-    prev = build.find("check_insert_remove_child_locked_dense_splice_3665")
-    ours = build.find("check_hot_contract_production_pack_3666")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC5: linter must be wired in build.py AFTER #3665")
+    must("check_insert_remove_child_locked_dense_splice_3665", "AC5 prev linter", wired_text)
+    must("check_hot_contract_production_pack_3666", "AC5 wiring", wired_text)
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must(
+        "check_insert_remove_child_locked_dense_splice_3665",
+        "AC5: linter must be gated by run_checks.py (both gated)",
+        wired_text,
+    )
+    must(
+        "check_hot_contract_production_pack_3666", "AC5: linter must be gated by run_checks.py (both gated)", wired_text
+    )
     must_not("schema-3666", "AC5 no new query key", q + hh)
     must_not("g_hotpath_3666", "AC5 no new series", hh)
     must("hot-contract-harden-trap-total", "AC5 reuse trap-total", q)

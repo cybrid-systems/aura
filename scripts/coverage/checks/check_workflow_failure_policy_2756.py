@@ -22,6 +22,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -47,7 +49,6 @@ def main() -> int:
     q = _read("src/compiler/evaluator_primitives_agent.cpp")
     readme = _read("src/orch/README.md")
     t = _read("tests/orch/test_failure_policy_bridge.cpp")
-    build = _read("build.py")
 
     # AC1 — composition helper.
     must("Issue #2756", "AC1", hdr)
@@ -96,7 +97,7 @@ def main() -> int:
     must("2756", "AC5", readme)
     must("WorkflowFailurePolicy", "AC5", readme)
     must("compose_workflow_policy", "AC5", readme)
-    must("check_workflow_failure_policy_2756", "AC5", build)
+    must("check_workflow_failure_policy_2756", "AC5", wired_text)
     docs_dir = ROOT / "docs" / "design"
     if docs_dir.is_dir():
         for f in sorted(docs_dir.glob("2756-*")):

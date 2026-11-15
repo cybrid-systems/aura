@@ -23,6 +23,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -41,7 +43,6 @@ def main() -> int:
     hdr = _read("src/compiler/type_checker.ixx")
     test = _read("tests/compiler/test_bidirectional_match_check.cpp")
     lint3330 = _read("scripts/coverage/checks/check_bidirectional_uncovered_no_dynamic_3330.py")
-    build = _read("build.py")
 
     must("kBidirectionalEmptyTypeAnnotationNoDynamicIssue = 3830", "AC1 stamp", hdr)
     must("Issue #3830", "AC1 cite", impl)
@@ -72,7 +73,7 @@ def main() -> int:
     must("kBidirectionalUncoveredNoDynamicIssue = 3330", "AC3 3330 stamp", hdr)
     must("note_uncovered_bidirectional_tag", "AC3 3330 default kept", impl)
     must("3830 AC3", "AC3 test", test)
-    must("check_empty_type_annotation_no_dynamic_3830", "AC3 build.py", build)
+    must("check_empty_type_annotation_no_dynamic_3830", "AC3 wiring", wired_text)
     must("3330", "AC3 3330 linter kept", lint3330)
     if "schema-3830" in impl or "schema-3830" in hdr:
         fails.append("AC3: new schema-3830 query key")

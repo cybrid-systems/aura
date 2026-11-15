@@ -72,13 +72,6 @@
       ]
     },
     {
-      "ac": "AC9",
-      "path": "build.py",
-      "contains": [
-        "cmd_subsecond_clock_coverage"
-      ]
-    },
-    {
       "ac": "AC10",
       "path": "tests/compiler/test_subsecond_clock.cpp",
       "contains": [

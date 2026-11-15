@@ -23,6 +23,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -41,7 +43,6 @@ def main() -> int:
     spawn = _read("src/orch/agent_spawn.h")
     agent = _read("src/compiler/evaluator_primitives_agent.cpp")
     test = _read("tests/orch/test_orch_obs_facade.cpp")
-    build = _read("build.py")
 
     # AC1
     must("Issue #3212", "AC1 mailbox cite", mb)
@@ -89,7 +90,7 @@ def main() -> int:
     must("3212 AC5", "AC5 test", test)
 
     # AC6
-    must("check_mailbox_handoff_dual_track_3212", "AC6 build", build)
+    must("check_mailbox_handoff_dual_track_3212", "AC6 build", wired_text)
     must("3212 AC6", "AC6 test", test)
     if _read("docs/design/3212-mailbox-handoff-dual-track.md"):
         fails.append("AC6: docs/design/3212-* present (forbidden per #1655)")

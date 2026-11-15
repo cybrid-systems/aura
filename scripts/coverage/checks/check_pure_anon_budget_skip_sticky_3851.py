@@ -25,6 +25,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 RT = "src/compiler/aura_jit_runtime.cpp"
 TEST = "tests/compiler/test_anonymous_residual_stable_id_policy.cpp"
 BUILD = "build.py"
@@ -52,7 +55,6 @@ def main() -> int:
 
     rt = _read(RT)
     test = _read(TEST)
-    build = _read(BUILD)
     gf = _read(GF)
     man = _read(MANIFEST)
 
@@ -104,18 +106,18 @@ def main() -> int:
     must("ac3851_3_soft_migrate_epoch0_and_post_fresh", "AC4 test AC3", test)
     must("ac3851_4_source_and_linter", "AC4 test AC4", test)
 
-    must(LINTER, "AC4 build registration", build)
-    must("Issue #3851", "AC4 build cite", build)
+    must(LINTER, "AC4 build registration", wired_text)
+    must("check_pure_anon_budget_skip_sticky_3851", "AC4 wired_text cite", wired_text)
     must(f"{LINTER}.py", "AC4 grandfather basename", gf)
     must(f"scripts/coverage/checks/{LINTER}.py", "AC4 grandfather path", gf)
     must('"issue": 3851', "AC4 manifest issue", man)
     if not (ROOT / MANIFEST).is_file():
         fails.append(f"AC4: {MANIFEST} missing")
 
-    prev = build.find(PREV)
-    ours = build.find(LINTER)
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC4: linter must be wired in build.py AFTER #3478")
+    # Ordering was a property of the deleted cmd_lint chain (#5246); both
+    # checks are gated by run_checks.py discovery now.
+    must(PREV, "AC4: #3478 still gated", wired_text)
+    must(LINTER, "AC4: #3478 gated", wired_text)
 
     must_not("schema-3851", "AC4 no query key", rt)
     must_not("g_3851_", "AC4 no g_3851_* production", rt)

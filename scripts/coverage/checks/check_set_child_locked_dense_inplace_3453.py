@@ -21,6 +21,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -38,7 +40,6 @@ def main() -> int:
     ast = _read("src/core/ast.ixx")
     t = _read("tests/core/test_arena_required_cover_no_value_only.cpp")
     l3402 = _read("scripts/check_dense_children_columns_3402.py")
-    build = _read("build.py")
 
     set_idx = ast.find("void set_child_locked(")
     swin = ast[set_idx : set_idx + 3600] if set_idx >= 0 else ""
@@ -77,8 +78,8 @@ def main() -> int:
         fails.append("AC4: new schema-3453 query key")
     must("kSetChildLockedDenseInplaceIssue = 3453", "AC4 stamp", ast)
 
-    must("check_set_child_locked_dense_inplace_3453", "AC5 build.py", build)
-    must("check_dense_children_columns_3402", "AC5 #3402 retained", build)
+    must("check_set_child_locked_dense_inplace_3453", "AC5 wiring", wired_text)
+    must("check_dense_children_columns_3402", "AC5 #3402 retained", wired_text)
     if (ROOT / "tests" / "core" / "test_issue_3453.cpp").is_file():
         fails.append("AC5: forbidden tests/core/test_issue_3453.cpp")
     if (ROOT / "tests" / "compiler" / "test_issue_3453.cpp").is_file():

@@ -17,6 +17,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -42,7 +44,6 @@ def main() -> int:
     low = _read("src/compiler/lowering_impl.cpp")
     jit = _read("src/compiler/aura_jit.cpp")
     test = _read("tests/compiler/test_list_end_of_list_void.cpp")
-    build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
     eidx = lst.find("bool is_end_of_list")
@@ -80,8 +81,8 @@ def main() -> int:
     must_not("CreateOr", "AC4", jbody)
 
     must("2482 AC1", "AC5", test)
-    must("check_list_end_of_list_void_2482", "gate", build)
-    must("cmd_list_end_of_list_void_coverage", "gate", build)
+    must("check_list_end_of_list_void_2482", "gate", wired_text)
+    must("check_list_end_of_list_void_2482.py", "gate", wired_text)
     must("test_list_end_of_list_void", "gate", cmake)
     must("2482 AC5", "gate", test)
 

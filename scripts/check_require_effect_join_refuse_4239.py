@@ -51,6 +51,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -87,7 +89,6 @@ def main() -> int:
 
     sec_src = _read("src/compiler/evaluator_security.cpp")
     test_src = _read("tests/compiler/test_require_effect_live_mid.cpp")
-    build_src = _read("build.py")
     allow_src = _read("scripts/coverage/root_check_allowlist.txt")
 
     # ── AC1: hard face absolute refuse, no resurrection ──
@@ -173,7 +174,7 @@ def main() -> int:
         fails.append(f"AC3: forbidden docs/design file {design[0]}")
 
     # ── AC4: wiring ──
-    must("check_require_effect_join_refuse_4239", "AC4", build_src)
+    must("check_require_effect_join_refuse_4239", "AC4", wired_text)
     must("check_require_effect_join_refuse_4239.py", "AC4", allow_src)
 
     if fails:

@@ -65,6 +65,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 FLAT = ROOT / "src" / "compiler" / "evaluator_eval_flat.cpp"
 ENV = ROOT / "src" / "compiler" / "evaluator_env.cpp"
 TST = ROOT / "tests" / "compiler" / "test_env_lookup_soa_shadow_reverse.cpp"
@@ -94,7 +97,6 @@ def main() -> int:
     flat = FLAT.read_text()
     env = ENV.read_text()
     tst = TST.read_text()
-    build = BUILD.read_text()
     allow = ALLOW.read_text()
 
     # ── AC1: registration kept verbatim; fix documented lookup-side ─
@@ -161,7 +163,7 @@ def main() -> int:
     must(not glob.glob(str(ROOT / "docs" / "design" / "4595-*")), "AC3: no docs/design/4595-* (per #1655)")
 
     # ── AC4: wiring ─────────────────────────────────────────────────
-    must("check_top_letrec_no_selfcopy_frame_4595.py" in build, "AC4: build.py registers the linter")
+    must("check_top_letrec_no_selfcopy_frame_4595.py" in wired_text, "AC4: run_checks.py registers the linter")
     must("check_top_letrec_no_selfcopy_frame_4595.py" in allow, "AC4: root_check_allowlist.txt lists the linter")
 
     if failures:

@@ -37,6 +37,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -146,8 +148,8 @@ def main() -> int:
     # Coverage wiring.
     must(
         "check_steal_safety_production_residual_zero_3134",
-        "AC6 build.py wiring",
-        _read("build.py") + _read("pyproject.toml"),
+        "AC6 gate wiring",
+        wired_text + _read("pyproject.toml"),
     )
 
     # Issue #3860: densify-busy composition SSOT (Option B — extend #3134,

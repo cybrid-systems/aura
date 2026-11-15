@@ -24,6 +24,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -53,7 +55,6 @@ def main() -> int:
     cap = _read("tests/core/test_stable_ref_tenant_capture.cpp")
     batch = _read("tests/compiler/test_stable_ref_provenance_batch.cpp")
     qrp = _read("tests/compiler/test_query_result_full_provenance.cpp")
-    build = _read("build.py")
     q = _read("src/compiler/evaluator_primitives_query.cpp") + _read(
         "src/compiler/evaluator_primitives_query_type_stats.cpp"
     )
@@ -98,7 +99,7 @@ def main() -> int:
     if "g_3230_" in restamp:
         fails.append("AC5: new g_3230_* counter")
 
-    must("check_query_stable_restamp_lag_hard_reject_3230", "AC6 build.py", build)
+    must("check_query_stable_restamp_lag_hard_reject_3230", "AC6 wiring", wired_text)
     must("3230", "AC6 provenance batch", batch)
     must("3230", "AC6 query-result", qrp)
     must("kQueryStableRestampLagHardRejectIssue", "AC6 ast export", astx)

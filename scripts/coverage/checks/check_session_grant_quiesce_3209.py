@@ -22,6 +22,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -42,7 +44,6 @@ def main() -> int:
     fiber_h = _read("src/serve/fiber.h")
     fiber_c = _read("src/serve/fiber.cpp")
     test = _read("tests/core/test_capability_single_use_consume.cpp")
-    build = _read("build.py")
 
     must("kCapabilitySessionQuiesceIssue = 3209", "AC5 stamp", cap)
     must("mark_session_bound_stolen_for_mid_locked", "AC1 for-mid stolen", cap)
@@ -75,7 +76,7 @@ def main() -> int:
     must("ac3209_4_composed_chaos", "AC5 composed chaos", test)
     must("ac3209_5_soft_zero_cost_and_source", "AC5 Soft + linter", test)
     must("single-use-consumed", "AC2 stolen consume reason", test)
-    must("check_session_grant_quiesce_3209", "AC5 build.py", build)
+    must("check_session_grant_quiesce_3209", "AC5 wiring", wired_text)
 
     if (ROOT / "tests" / "core" / "test_issue_3209.cpp").is_file():
         fails.append("AC5: tests/core/test_issue_3209.cpp")

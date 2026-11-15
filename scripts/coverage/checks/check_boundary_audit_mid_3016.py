@@ -20,6 +20,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -41,7 +43,6 @@ def main() -> int:
     mut = _read("src/compiler/evaluator_primitives_mutate.cpp")
     obs = _read("src/compiler/evaluator_primitives_obs_jit.cpp")
     test = _read("tests/compiler/test_audit_mutation_id_unify.cpp")
-    build = _read("build.py")
 
     must("Issue #3016", "AC1", mb)
     must("cp.audit_mid", "AC1", mb)
@@ -68,7 +69,7 @@ def main() -> int:
     must("#3016 AC5: trail mid == resolve", "AC5", test)
     must("schema-3016", "AC5", obs)
     must("boundary-audit-mid-wired", "AC5", obs)
-    must("check_boundary_audit_mid_3016", "AC5", build)
+    must("check_boundary_audit_mid_3016", "AC5", wired_text)
     must("last_proof_mid", "AC5", _read("src/compiler/type_linear_commit_health.hh"))
     for rel in (
         "tests/compiler/test_issue_3016.cpp",

@@ -31,6 +31,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 ARENA = ROOT / "src" / "core" / "arena.ixx"
 DC = ROOT / "src" / "core" / "densify_consistency_report.h"
 APPLY = ROOT / "src" / "compiler" / "evaluator_eval_flat.cpp"
@@ -44,7 +47,6 @@ def main() -> int:
     dc = DC.read_text() if DC.exists() else ""
     apply_src = APPLY.read_text() if APPLY.exists() else ""
     tst = TST.read_text() if TST.exists() else ""
-    build = BUILD.read_text() if BUILD.exists() else ""
     allow = ALLOWLIST.read_text() if ALLOWLIST.exists() else ""
     ok = True
 
@@ -117,8 +119,8 @@ def main() -> int:
     report("AC4", good, "test defines and dispatches ac3857_1..5")
 
     # AC5: gate wiring — build.py runs the linter and the allowlist lists it.
-    wired = "check_temp_canary_moving_gate_3857.py" in build and ("check_temp_canary_moving_gate_3857.py" in allow)
-    report("AC5", wired, "build.py + root_check_allowlist.txt wired")
+    wired = "check_temp_canary_moving_gate_3857.py" in wired_text and ("check_temp_canary_moving_gate_3857.py" in allow)
+    report("AC5", wired, "run_checks.py + root_check_allowlist.txt wired")
 
     return 0 if ok else 1
 

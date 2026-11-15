@@ -17,6 +17,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -37,7 +39,6 @@ def main() -> int:
     qj = _read("src/compiler/evaluator_primitives_obs_jit.cpp")
     t = _read("tests/compiler/test_escape_move_elision_gate.cpp")
     th = _read("tests/compiler/test_type_linear_commit_health.cpp")
-    build = _read("build.py")
 
     # AC1
     must("Issue #3030", "AC1", aud)
@@ -68,8 +69,8 @@ def main() -> int:
     must("ac3030_health_schema", "AC4 health test", th)
 
     # AC5
-    must("check_type_linear_proof_clear_on_abort_3030", "AC5 build", build)
-    must("cmd_type_linear_proof_clear_on_abort_3030", "AC5 cmd", build)
+    must("check_type_linear_proof_clear_on_abort_3030", "AC5 build", wired_text)
+    must("check_type_linear_proof_clear_on_abort_3030.py", "AC5 cmd", wired_text)
     must("ac3030_6_linter_no_design", "AC5", t)
     if (ROOT / "tests" / "compiler" / "test_issue_3030.cpp").is_file():
         fails.append("AC5: test_issue_3030.cpp present (forbidden per #81967)")

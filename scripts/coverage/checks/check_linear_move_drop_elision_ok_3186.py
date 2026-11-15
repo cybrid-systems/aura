@@ -47,7 +47,7 @@ Contract (one row per AC):
        the result with the existing epoch check (`any_unsafe`) — JIT
        deopts on either epoch-stale OR readiness-blocked
   AC7  test_occurrence_goal_persist_rehydrate.cpp extended with
-       ac3186_1-5 source-cite ACs; linter wired in build.py after
+       ac3186_1-5 source-cite ACs; linter gated by run_checks.py after
        #3185; no docs/design/3186-* (#1655); no
        tests/issues/test_issue_3186.cpp (#81934)
 
@@ -70,6 +70,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 BRIDGE_H = ROOT / "src" / "compiler" / "aura_jit_bridge.h"
 BRIDGE_CPP = ROOT / "src" / "compiler" / "aura_jit_bridge.cpp"
@@ -117,7 +118,6 @@ def main() -> int:
     jit = _read(AURA_JIT_CPP)
     _read(TYPED_AUDIT_H)
     test = _read(TEST_OCCUR)
-    build = _read(BUILD_PY)
 
     # ── AC1: bridge.h declares aura_jit_linear_move_drop_elision_ok ──
     ac1_decl = "int aura_jit_linear_move_drop_elision_ok(void);" in h
@@ -312,9 +312,10 @@ def main() -> int:
     ac7_ac4 = "ac3186 AC4:" in test
     ac7_ac5 = "ac3186 AC5:" in test
     ac7_main_call = "ac3186_jit_linear_move_drop_elision_probe();" in test
-    ac7_wired = "check_linear_move_drop_elision_ok_3186" in build
+    ac7_wired = "check_linear_move_drop_elision_ok_3186" in wired_text
     ac7_wired_after_3185 = (
-        build.find("check_linear_move_drop_elision_ok_3186") > build.find("check_densify_entry_lcp_consult_3185")
+        wired_text.find("check_linear_move_drop_elision_ok_3186")
+        > wired_text.find("check_densify_entry_lcp_consult_3185")
         if ac7_wired
         else False
     )
@@ -355,9 +356,9 @@ def main() -> int:
     if not ac7_main_call:
         fails.append("AC7: ac3186_jit_linear_move_drop_elision_probe() must be called from main()")
     if not ac7_wired:
-        fails.append("AC7: linter not wired in build.py")
+        fails.append("AC7: linter not gated by run_checks.py")
     if not ac7_wired_after_3185:
-        fails.append("AC7: linter must be wired in build.py AFTER #3185 linter (issue-number ordering)")
+        fails.append("AC7: linter must be gated by run_checks.py AFTER #3185 linter (issue-number ordering)")
     rows.append(
         {
             "ac": "AC7_no_invent",

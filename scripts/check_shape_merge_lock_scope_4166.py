@@ -38,6 +38,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 CPP = ROOT / "src" / "compiler" / "shape_profiler.cpp"
 HPP = ROOT / "src" / "compiler" / "shape_profiler.h"
 TST = ROOT / "tests" / "compiler" / "test_shape_profiler_concurrency.cpp"
@@ -83,7 +86,6 @@ def main() -> int:
     cpp = CPP.read_text() if CPP.exists() else ""
     hpp = HPP.read_text() if HPP.exists() else ""
     tst = TST.read_text() if TST.exists() else ""
-    build = BUILD.read_text() if BUILD.exists() else ""
     allow = ALLOWLIST.read_text() if ALLOWLIST.exists() else ""
     cpp_code = strip_line_comments(cpp)
     ok = True
@@ -153,9 +155,9 @@ def main() -> int:
     stray_doc = list(ROOT.glob("docs/design/4166-*"))
     report(
         "AC5 wiring + no stray files",
-        "check_shape_merge_lock_scope_4166.py" in build
+        "check_shape_merge_lock_scope_4166.py" in wired_text
         and "check_shape_merge_lock_scope_4166.py" in allow
-        and "check_shape_hotpath_4090.py" in build
+        and "check_shape_hotpath_4090.py" in wired_text
         and not stray_test
         and not stray_doc
         and "schema-4166" not in (cpp + hpp),

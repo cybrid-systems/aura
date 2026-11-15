@@ -18,6 +18,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -102,7 +104,6 @@ def main() -> int:
     obs = _read("src/compiler/observability_metrics.h")
     fields = _read("src/compiler/compiler_metrics_fields.inc")
     test = _read("tests/compiler/test_partial_cone_commit_gate.cpp")
-    build = _read("build.py")
 
     # AC1+AC2: wiring present
     must("Issue #2646: cone-truncate must drop goals/memo", "AC1", impl)
@@ -164,7 +165,7 @@ def main() -> int:
     must("occurrence_cone_outside_memo_dropped_total", "AC5", fields)
     must("#2646", "AC5", test)
     must("ac2646_outside_cone_invalidate_source_cite", "AC5", test)
-    must("check_occurrence_cone_outside_invalidate_2646", "AC5", build)
+    must("check_occurrence_cone_outside_invalidate_2646", "AC5", wired_text)
 
     # AC6: no docs/design — verify no docs/design/2646-* file exists
     design_dir = ROOT / "docs" / "design"

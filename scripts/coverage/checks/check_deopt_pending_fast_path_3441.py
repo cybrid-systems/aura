@@ -22,6 +22,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def main() -> int:
@@ -33,7 +35,6 @@ def main() -> int:
 
     rt = (ROOT / "src" / "compiler" / "aura_jit_runtime.cpp").read_text()
     test = (ROOT / "tests" / "compiler" / "test_aot_incremental_reemit.cpp").read_text()
-    build = (ROOT / "build.py").read_text()
     obs = (ROOT / "src" / "compiler" / "observability_metrics.h").read_text()
 
     must("Issue #3441", "AC1 marker", rt)
@@ -64,7 +65,7 @@ def main() -> int:
         fails.append("AC4: must not force-bump g_aot_table_epoch on owner-scoped path")
     must("3441 AC4", "AC4 test", test)
 
-    must("check_deopt_pending_fast_path_3441", "AC5 build.py", build)
+    must("check_deopt_pending_fast_path_3441", "AC5 wiring", wired_text)
     must("3441 AC5", "AC5 test", test)
     if "3441_inv" in obs or "closure_call_fast_deopt" in obs:
         fails.append("AC5: new #3441 metric field forbidden")

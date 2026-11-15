@@ -33,6 +33,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 PRIM = ROOT / "src" / "compiler" / "evaluator_primitives_ast.cpp"
 SEC = ROOT / "src" / "compiler" / "evaluator_security.cpp"
 IXX = ROOT / "src" / "compiler" / "evaluator.ixx"
@@ -54,7 +57,6 @@ def main() -> int:
     sec = SEC.read_text() if SEC.exists() else ""
     ixx = IXX.read_text() if IXX.exists() else ""
     tst = TST.read_text() if TST.exists() else ""
-    build = (ROOT / "build.py").read_text()
     allow = (ROOT / "scripts" / "coverage" / "root_check_allowlist.txt").read_text()
     ok = True
 
@@ -106,7 +108,7 @@ def main() -> int:
         and "#3772 AC5" in tst
         and not (ROOT / "tests" / "core" / "test_issue_3772.cpp").exists()
         and not (ROOT / "docs" / "design" / "3772-ast-ref-stamp.md").exists()
-        and "check_ast_ref_stamp_3772.py" in build
+        and "check_ast_ref_stamp_3772.py" in wired_text
         and "check_ast_ref_stamp_3772.py" in allow
     )
     report("AC5", good, "tests cite #3772; no issue-file/doc; build.py + allowlist wired")

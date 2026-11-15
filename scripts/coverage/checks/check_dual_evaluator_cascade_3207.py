@@ -22,6 +22,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -40,7 +42,6 @@ def main() -> int:
     eval_sec = _read("src/compiler/evaluator_security.cpp")
     fiber = _read("src/compiler/evaluator_fiber_mutation.cpp")
     test = _read("tests/core/test_capability_single_use_consume.cpp")
-    build = _read("build.py")
 
     must("kCapabilityDualEvaluatorCascadeIssue = 3207", "AC5 stamp", cap)
     must("revoke_session_grants_for_locked", "AC1 locked cascade", cap)
@@ -84,7 +85,7 @@ def main() -> int:
     must("ac3207_4_source_cite_and_linter", "AC5 source-cite test", test)
     must("Issue #3207", "AC5 test cite", test)
     must("std::thread", "AC5 concurrent threads", test)
-    must("check_dual_evaluator_cascade_3207", "AC5 build.py wires linter", build)
+    must("check_dual_evaluator_cascade_3207", "AC5 run_checks.py gates linter", wired_text)
 
     if (ROOT / "tests" / "core" / "test_issue_3207.cpp").is_file():
         fails.append("AC5: tests/core/test_issue_3207.cpp")

@@ -27,6 +27,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -50,7 +52,6 @@ def main() -> int:
     mb = _read("src/serve/multi_fiber_mailbox.h")
     emb = _read("src/compiler/evaluator_mutation_boundary.cpp")
     t = _read("tests/serve/test_mailbox_hold_starvation_hard.cpp")
-    build = _read("build.py")
 
     chk = mhb.find("inline MutationHoldBudgetCheck mutation_hold_budget_check()")
     cwin = mhb[chk : chk + 1800] if chk >= 0 else ""
@@ -81,11 +82,14 @@ def main() -> int:
     must("3485 AC4: p99==0 + short hold is not over-budget", "AC4 quiet", t)
     must("ac3485_1_p99_hot_held_over_budget", "AC5 fn", t)
 
-    must("check_mailbox_hold_budget_p99_union_3485", "AC6 build.py", build)
-    prev = build.find("check_mailbox_hold_slo_ssot_soak_3002")
-    ours = build.find("check_mailbox_hold_budget_p99_union_3485")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC6: linter must be wired in build.py AFTER #3002")
+    must("check_mailbox_hold_budget_p99_union_3485", "AC6 wiring", wired_text)
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must(
+        "check_mailbox_hold_budget_p99_union_3485",
+        "AC6: linter must be gated by run_checks.py (both gated)",
+        wired_text,
+    )
 
     must_not("schema-3485", "AC3 no schema-3485", mhb + emb)
     must_not("g_3485_", "AC3 no g_3485_*", mhb + fc)

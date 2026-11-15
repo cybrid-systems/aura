@@ -23,6 +23,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 EV = "src/compiler/evaluator.ixx"
 EV_PURE = "src/compiler/evaluator_pure.ixx"
 TEST = "tests/compiler/test_primitives_hotpath_registry_slo.cpp"
@@ -47,7 +50,6 @@ def main() -> int:
     ev = _read(EV)
     pure = _read(EV_PURE)
     test = _read(TEST)
-    build = _read(BUILD)
     gf = _read(GF)
     man = _read(MANIFEST)
 
@@ -85,8 +87,8 @@ def main() -> int:
     must("4261 AC1", "AC4 test", test)
     must("4261 AC2", "AC4 test Soft", test)
     must("4261 AC3", "AC4 microbench", test)
-    must(LINTER, "AC4 build", build)
-    must("Issue #4261", "AC4 build cite", build)
+    must(LINTER, "AC4 build", wired_text)
+    must("check_primfn_no_std_function_4261", "AC4 build cite", wired_text)
     must(LINTER + ".py", "AC4 gf", gf)
     must('"issue": 4261', "AC4 manifest", man)
 

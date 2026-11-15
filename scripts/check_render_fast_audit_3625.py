@@ -24,6 +24,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
 
 MB = "src/compiler/evaluator_mutation_boundary.cpp"
 TEST = "tests/compiler/test_typed_mutation_audit_decision.cpp"
@@ -175,7 +178,7 @@ def main() -> int:
     args = ap.parse_args()
     if args.self_test:
         return _self_test()
-    rows = _rows(_read(MB), _read(TEST), _read(BUILD))
+    rows = _rows(_read(MB), _read(TEST), wired_text)
     if rows:
         for r in rows:
             print(f"FAIL {LINTER}: {r}")

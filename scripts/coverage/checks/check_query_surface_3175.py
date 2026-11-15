@@ -34,6 +34,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from query_prims_sources import read_query_prims
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 ADD_RE = re.compile(r'add\(\s*"([^"]+)"')
 DISPATCH_HIDDEN_RE = re.compile(r'add_hidden\(\s*"([^"]+)"')
@@ -107,7 +109,6 @@ def main() -> int:
     obs_mid = _read("src/compiler/evaluator_primitives_query_obs_mid.cpp")
     audit = _read("tests/compiler/test_query_namespace_audit.cpp")
     hyg = _read("tests/compiler/test_query_pattern_default_hygiene.cpp")
-    build = _read("build.py")
     q = read_query_prims()
 
     # #4088: count DISTINCT names — the ceiling guards the public query
@@ -148,8 +149,8 @@ def main() -> int:
         fails.append("AC4: new top-level query key (forbidden)")
     must("3175: query:templates sunk", "AC5 audit", audit)
     must('(query :by-marker \\"MacroIntroduced\\")', "AC5 hygiene", hyg)
-    must("check_query_surface_3175", "AC6 build", build)
-    must("cmd_query_surface_3175", "AC6 cmd", build)
+    must("check_query_surface_3175", "AC6 build", wired_text)
+    must("check_query_surface_3175.py", "AC6 cmd", wired_text)
     if (ROOT / "tests" / "compiler" / "test_issue_3175.cpp").is_file():
         fails.append("AC6: test_issue_3175.cpp present (forbidden #81967)")
     docs = ROOT / "docs" / "design"

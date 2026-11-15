@@ -30,7 +30,7 @@ Contract (one row per AC):
   AC6 Unit + source-cite coverage; extend existing
      tests/compiler/test_partial_cone_commit_gate.cpp (no new
      test_issue_N.cpp per #81967). Coverage linter wired into
-     build.py gate.
+     coverage runner.
 
 Exit 0 = all rows satisfied.
 """
@@ -45,6 +45,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from query_prims_sources import read_query_prims  # Issue #2914
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -70,7 +72,6 @@ def main() -> int:
     tma = _read("src/compiler/typed_mutation_audit.h")
     q = read_query_prims()
     t = _read("tests/compiler/test_partial_cone_commit_gate.cpp")
-    build = _read("build.py")
 
     # AC1 — file-scope atomics + force_reason code
     must("Issue #2704", "AC1", tma)
@@ -114,7 +115,7 @@ def main() -> int:
     must("ac2704_4_query_keys_added", "AC6", t)
     must("ac2704_5_source_and_linter", "AC6", t)
     must("ac2704_6_no_docs_design", "AC6", t)
-    must("check_occurrence_empty_after_fence_2704", "AC6", build)
+    must("check_occurrence_empty_after_fence_2704", "AC6", wired_text)
 
     # No docs/design/2704-* on disk
     docs_dir = ROOT / "docs" / "design"

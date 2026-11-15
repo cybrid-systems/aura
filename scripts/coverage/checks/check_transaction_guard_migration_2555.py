@@ -6,7 +6,7 @@ Contract:
   AC2 Agent body + set-body use TransactionGuard / host factories
   AC3 Reject/metrics fields present; no default-ctor scaffold acquire
   AC4 recover_panic + PanicRecovered path cited
-  AC5 test + cmake + build.py gate + self-test
+  AC5 test + cmake + coverage runner + self-test
 
 Exit 0 = all rows satisfied.
 """
@@ -17,6 +17,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -44,7 +46,6 @@ def main() -> int:
     ixx = _read("src/compiler/evaluator.ixx")
     test = _read("tests/core/test_transaction_guard.cpp")
     cmake = _read("CMakeLists.txt")
-    build = _read("build.py")
 
     # AC1
     must("Issue #2555", "AC1", tg)
@@ -87,8 +88,8 @@ def main() -> int:
     must("ac4_panic_recover", "AC5", test)
     must("ac5_live_and_schema", "AC5", test)
     must("test_transaction_guard", "AC5", cmake)
-    must("check_transaction_guard_migration_2555", "AC5", build)
-    must("cmd_transaction_guard_migration_coverage", "AC5", build)
+    must("check_transaction_guard_migration_2555", "AC5", wired_text)
+    must("check_transaction_guard_migration_2555.py", "AC5", wired_text)
 
     if fails:
         for f in fails:

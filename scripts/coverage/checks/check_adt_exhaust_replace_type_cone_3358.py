@@ -22,6 +22,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -53,7 +55,6 @@ def main() -> int:
     q = _read("src/compiler/evaluator_primitives_query.cpp") + _read(
         "src/compiler/evaluator_primitives_query_type_stats.cpp"
     )
-    build = _read("build.py")
 
     must("kAdtExhaustReplaceTypeConeIssue = 3358", "AC1 stamp", ixx)
     must("force_enclosing_match_parent_into_cone", "AC1 helper", ixx)
@@ -85,12 +86,15 @@ def main() -> int:
     if "g_3358_" in impl or "g_3358_" in etc or "g_3358_" in dp:
         fails.append("AC3: new g_3358_* counter")
 
-    must("check_adt_exhaust_replace_type_cone_3358", "AC4 build.py", build)
+    must("check_adt_exhaust_replace_type_cone_3358", "AC4 wiring", wired_text)
     must("ac3358_4_source_linter", "AC4 test", goal)
-    prev = build.find("check_adt_exhaust_outermost_recheck_3317")
-    ours = build.find("check_adt_exhaust_replace_type_cone_3358")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC4: linter must be wired in build.py AFTER #3317")
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must(
+        "check_adt_exhaust_replace_type_cone_3358",
+        "AC4: linter must be gated by run_checks.py (both gated)",
+        wired_text,
+    )
     if (ROOT / "tests" / "compiler" / "test_issue_3358.cpp").is_file():
         fails.append("AC4: tests/compiler/test_issue_3358.cpp")
     if (ROOT / "tests" / "issues" / "test_issue_3358.cpp").is_file():

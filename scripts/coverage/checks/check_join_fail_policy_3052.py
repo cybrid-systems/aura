@@ -20,6 +20,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -40,7 +42,6 @@ def main() -> int:
     t_pol = _read("tests/orch/test_agent_failure_policy.cpp")
     t_br = _read("tests/orch/test_failure_policy_bridge.cpp")
     readme = _read("src/orch/README.md")
-    build = _read("build.py")
 
     must("Issue #3052", "AC1", scope)
     must("apply_on_join_fail_unlocked_", "AC1", scope)
@@ -61,7 +62,7 @@ def main() -> int:
     must("#3052 AC3", "AC5", t_pol)
     must("schema-3052", "AC5", agent)
     must("3052", "AC5", readme)
-    must("check_join_fail_policy_3052", "AC5", build)
+    must("check_join_fail_policy_3052", "AC5", wired_text)
     if _read("tests/orch/test_issue_3052.cpp") or _read("tests/compiler/test_issue_3052.cpp"):
         fails.append("AC5: test_issue_3052.cpp exists — forbidden per #81967")
     if _read("docs/design/3052-on-join-fail.md"):

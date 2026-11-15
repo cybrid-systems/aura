@@ -51,6 +51,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 LIST_CPP = ROOT / "src" / "compiler" / "evaluator_primitives_list.cpp"
 MAIN_CPP = ROOT / "src" / "main.cpp"
 SMOKE = ROOT / "scripts" / "check_oneshot_filter_4228.py"
@@ -146,11 +149,10 @@ def main() -> int:
     if not BUILD.is_file():
         print(f"FAIL missing {BUILD}")
         return 1
-    build = BUILD.read_text(encoding="utf-8")
     check(
         "AC4 build.py registers linter",
-        "check_filter_prim_infer_standard.py" in build,
-        "build.py static-checks chain runs scripts/check_filter_prim_infer_standard.py",
+        "check_filter_prim_infer_standard.py" in wired_text,
+        "run_checks.py static-checks chain runs scripts/check_filter_prim_infer_standard.py",
     )
     if not ALLOWLIST.is_file():
         print(f"FAIL missing {ALLOWLIST}")

@@ -42,6 +42,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 PRIM = ROOT / "src" / "compiler" / "evaluator_primitives_security.cpp"
 TST = ROOT / "tests" / "core" / "test_audit_replay_join.cpp"
 
@@ -49,7 +52,6 @@ TST = ROOT / "tests" / "core" / "test_audit_replay_join.cpp"
 def main() -> int:
     prim = PRIM.read_text() if PRIM.exists() else ""
     tst = TST.read_text() if TST.exists() else ""
-    build = (ROOT / "build.py").read_text()
     allow = (ROOT / "scripts" / "coverage" / "root_check_allowlist.txt").read_text()
     ok = True
 
@@ -133,7 +135,7 @@ def main() -> int:
         and "query:capability-effect-stats\\" in tst.replace("\\\\", "\\")
         and no_test_file
         and no_doc
-        and "check_replay_mid_last_stamped_4120.py" in build
+        and "check_replay_mid_last_stamped_4120.py" in wired_text
         and "check_replay_mid_last_stamped_4120.py" in allow
     )
     report(

@@ -6,7 +6,7 @@ Validates that the existing chaos binary
 (tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp) already covers all
 6 production ACs per #2352 / #2380 / #2513 / #2554, and prevents regression
 on the long-soak / silent-corruption / hard-fail counters / Soft mode /
-build.py wiring / reproducible seed.
+gate wiring / reproducible seed.
 
 Contract:
   AC1 Dedicated soak target (extension of existing chaos binary) with
@@ -44,6 +44,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -168,7 +170,7 @@ def main() -> int:
     must("cmd_chaos_pr_hard_fail_gate", "AC5", build)
     # #2352 chaos-soak lineage: the substring wrapper was dropped by the
     # coverage restructure (e2575acad) — its contract now lives in the
-    # manifest; pin the manifest instead of the removed build.py wiring.
+    # manifest; pin the manifest instead of the removed gate wiring.
     if not (ROOT / "scripts" / "coverage" / "manifests" / "2352.json").is_file():
         fails.append("AC5: #2352 chaos soak lineage manifest missing")
     must("cmd_production_concurrency", "AC5", build)
@@ -177,7 +179,7 @@ def main() -> int:
     must("chaos_pr_hard_fail", "AC5", build)
     # Nightly / deploy: production-concurrency gate.
     must("nightly", "AC5", build)
-    # build.py wires chaos binary via add_test or similar.
+    # run_checks.py gates chaos binary via add_test or similar.
     must("test_chaos_mutate_steal_gc_mailbox", "AC5", build)
 
     # ============================================================
@@ -202,7 +204,7 @@ def main() -> int:
     # ============================================================
     # Self-coverage + build.py wire-up
     # ============================================================
-    must("check_chaos_soak_2679", "self", build)
+    must("check_chaos_soak_2679", "self", wired_text)
     must("#2679", "self", chaos)
 
     if fails:

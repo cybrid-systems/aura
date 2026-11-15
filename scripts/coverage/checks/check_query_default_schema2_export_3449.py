@@ -21,6 +21,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -44,7 +46,6 @@ def main() -> int:
     mut = _read("src/compiler/evaluator_primitives_mutate.cpp")
     t = _read("tests/compiler/test_query_result_full_provenance.cpp")
     ep = _read("tests/compiler/test_query_epoch_contract.cpp")
-    build = _read("build.py")
 
     must("kQueryDefaultSchema2ExportIssue", "AC1 stamp", hh)
     must("Issue #3449", "AC1 helper cite", qws)
@@ -69,15 +70,15 @@ def main() -> int:
     must("test_3449_ac4_prod_keyword_false_not_escape", "AC4 test", t)
     must(":as-query-result #f", "AC4 keyword-false test", t)
 
-    must("check_query_default_schema2_export_3449", "AC5 build.py", build)
-    must("check_query_default_stamped_3395", "AC5 #3395 retained", build)
+    must("check_query_default_schema2_export_3449", "AC5 wiring", wired_text)
+    must("check_query_default_stamped_3395", "AC5 #3395 retained", wired_text)
     must("kQueryDefaultSchema2ExportIssue", "AC5 epoch suite", ep)
     must("Issue #3424", "AC5 #3424 retained", mut)
     must("Issue #3425", "AC5 #3425 retained", mut)
-    prev = build.find("check_query_default_stamped_3395")
-    ours = build.find("check_query_default_schema2_export_3449")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC5: #3449 linter must be wired after #3395")
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must("check_query_default_stamped_3395", "AC5: #3449 linter must be wired (both gated)", wired_text)
+    must("check_query_default_schema2_export_3449", "AC5: #3449 linter must be wired (both gated)", wired_text)
     if (ROOT / "tests" / "compiler" / "test_issue_3449.cpp").is_file():
         fails.append("AC5: forbidden tests/compiler/test_issue_3449.cpp")
     if (ROOT / "tests" / "issues" / "test_issue_3449.cpp").is_file():

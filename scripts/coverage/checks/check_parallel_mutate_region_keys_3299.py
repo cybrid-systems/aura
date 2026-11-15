@@ -27,6 +27,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -43,7 +45,6 @@ def main() -> int:
 
     test = _read("tests/orch/test_parallel_intend_pure_contract.cpp")
     md = _read("src/orch/README.md")
-    build = _read("build.py")
 
     # AC2/AC3/AC4: real mutate soak (mutate :set-body thunks, not pure lambdas)
     must("mutate:set-body", "AC2 mutate soak", test)
@@ -66,7 +67,7 @@ def main() -> int:
     must("AURA_PARALLEL_REQUIRE_REGION_KEYS=1", "AC6 README env", md)
 
     # build.py must wire this linter
-    must("check_parallel_mutate_region_keys_3299", "AC6 build.py", build)
+    must("check_parallel_mutate_region_keys_3299", "AC6 wiring", wired_text)
 
     if (ROOT / "tests" / "orch" / "test_issue_3299.cpp").is_file():
         fails.append("AC6: tests/orch/test_issue_3299.cpp present (forbidden #81967)")

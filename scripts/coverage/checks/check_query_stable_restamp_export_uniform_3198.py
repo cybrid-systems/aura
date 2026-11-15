@@ -27,6 +27,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -56,7 +58,6 @@ def main() -> int:
     t = _read("tests/compiler/test_hygiene_mutate_closed_loop.cpp")
     batch = _read("tests/compiler/test_stable_ref_provenance_batch.cpp")
     qrp = _read("tests/compiler/test_query_result_full_provenance.cpp")
-    build = _read("build.py")
 
     # AC1 stamp + uniform gate
     must("kQueryStableRestampExportUniformIssue = 3198", "AC1 stamp", restamp)
@@ -117,7 +118,7 @@ def main() -> int:
 
     # AC5
     must("ac3198_4_source_and_linter", "AC5 test", t)
-    must("check_query_stable_restamp_export_uniform_3198", "AC5 build.py", build)
+    must("check_query_stable_restamp_export_uniform_3198", "AC5 wiring", wired_text)
     must("3198", "AC5 query-result provenance", qrp)
     must(
         "Issue #3198",

@@ -26,6 +26,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -44,7 +46,6 @@ def main(m):  # noqa: F811
     pol = _read("src/compiler/castop_density_policy.hh")
     low = _read("src/compiler/lowering_impl.cpp")
     test = _read("tests/compiler/test_castop_density_hard.cpp")
-    build = _read("build.py")
     manifest = _read("scripts/coverage/manifests/3140.json")
 
     # ── AC1: Production + missing/aging meta → deopt + counter bump ─────
@@ -91,7 +92,7 @@ def main(m):  # noqa: F811
     must("ac3140_5_additive_counter_and_source_cite", "AC5 test function (AC4 verify)", test)
 
     # ── AC5: source-cite + extend test_castop_density_hard.cpp + no docs ──
-    must("check_castop_typed_meta_phase_c_3140.py", "AC5 build.py wires linter", build)
+    must("check_castop_typed_meta_phase_c_3140.py", "AC5 run_checks.py gates linter", wired_text)
     if "check_castop_typed_meta_phase_c_3140.py" not in manifest:
         fails.append("AC5: manifest 3140.json missing check_castop_typed_meta_phase_c_3140.py")
     must("ac3140_5_additive_counter_and_source_cite", "AC5 test function", test)

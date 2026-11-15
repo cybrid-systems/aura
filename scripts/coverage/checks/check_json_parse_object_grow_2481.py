@@ -17,6 +17,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -35,7 +37,6 @@ def main() -> int:
 
     js = _read("src/compiler/evaluator_primitives_json.cpp")
     test = _read("tests/compiler/test_json_parse_object_grow.cpp")
-    build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
     pidx = js.find("EvalValue JsonParser::parse_object")
@@ -56,8 +57,8 @@ def main() -> int:
 
     must("json_object_key_hash", "AC4", js)
 
-    must("check_json_parse_object_grow_2481", "gate", build)
-    must("cmd_json_parse_object_grow_coverage", "gate", build)
+    must("check_json_parse_object_grow_2481", "gate", wired_text)
+    must("check_json_parse_object_grow_2481.py", "gate", wired_text)
     must("test_json_parse_object_grow", "gate", cmake)
     must("2481 AC5", "gate", test)
 

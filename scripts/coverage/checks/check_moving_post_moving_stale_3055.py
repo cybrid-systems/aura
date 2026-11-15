@@ -21,6 +21,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -42,7 +44,6 @@ def main() -> int:
     health = _read("src/compiler/evaluator_primitives_obs_jit.cpp")
     test = _read("tests/core/test_moving_densify_fail_closed.cpp")
     gate = _read("tests/core/test_general_object_pin_coverage_gate.cpp")
-    build = _read("build.py")
 
     must("kMovingPostMovingStaleIssue = 3055", "AC1 stamp", dc)
     must("note_post_moving_live_ptr_canary", "AC1 canary", arena)
@@ -71,7 +72,7 @@ def main() -> int:
     must("ac3055_6_source_cite_no_invent", "AC6 test", test)
     must("schema-3055", "AC6 health", health)
     must("3055", "AC6 gate", gate)
-    must("check_moving_post_moving_stale_3055", "AC6 build", build)
+    must("check_moving_post_moving_stale_3055", "AC6 build", wired_text)
     if _read("docs/design/3055-post-moving-stale.md"):
         fails.append("AC6: docs/design/3055-* present")
     if _read("tests/core/test_issue_3055.cpp"):

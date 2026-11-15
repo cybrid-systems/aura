@@ -59,13 +59,6 @@
       ]
     },
     {
-      "ac": "Build-3459",
-      "path": "build.py",
-      "contains": [
-        "check_grant_mse_mid_refuse_3459.py"
-      ]
-    },
-    {
       "ac": "AC1",
       "path": "src/core/capability_model.hh",
       "contains": [

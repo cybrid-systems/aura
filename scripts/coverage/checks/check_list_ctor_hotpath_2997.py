@@ -7,7 +7,7 @@ AC:
   3. Unlimited / known-small bypass of full allow(); fail-closed when limited
   4. lock-hold-ns + samples + soft-hit + recommend on query:prim-heap-quota-stats
   5. list-ref / member / math never call allow
-  6. Docs (stdlib only) + existing tests + build.py wiring
+  6. Docs (stdlib only) + existing tests + gate wiring
 """
 
 from __future__ import annotations
@@ -16,6 +16,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -100,8 +102,7 @@ def main() -> int:
     must("recommend" in suite, "AC6: suite recommend")
     must("soft-hit-total" in suite, "AC6: suite soft-hit")
 
-    build = _read("build.py")
-    must("list_ctor_hotpath_2997" in build or "list-ctor-hotpath-2997" in build, "AC6: build.py gate")
+    must("check_list_ctor_hotpath_2997" in wired_text, "AC6: coverage runner")
 
     if fails:
         for f in fails:

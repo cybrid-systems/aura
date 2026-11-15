@@ -22,6 +22,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -40,7 +42,6 @@ def main() -> int:
     ast = _read("src/core/ast.ixx")
     qws = _read("src/compiler/evaluator_primitives_query_workspace.cpp")
     t = _read("tests/core/test_pcv_exclusive_with_set.cpp")
-    build = _read("build.py")
 
     must("kPcvDenseColumnarFingerprintIssue = 3829", "AC1 stamp", hh)
     must("Issue #3829: dense columnar span with across-Guard fingerprint", "AC1 dense ctor", hh)
@@ -68,7 +69,7 @@ def main() -> int:
     must("children_safe_view", "AC3 PCV path", ast)
     must("ac3829_3_pcv_path_unchanged", "AC3 test", t)
     must("Issue #3829", "AC3 pin_query_children cite", qws)
-    must("check_dense_columnar_fingerprint_3829", "AC3 build.py", build)
+    must("check_dense_columnar_fingerprint_3829", "AC3 wiring", wired_text)
     must("kPcvSpanStaleAcrossGuardIssue = 3167", "AC3 #3167 lineage", hh)
     must("kPcvSpanQueryRefreshIssue = 3328", "AC3 #3328 lineage", hh)
 

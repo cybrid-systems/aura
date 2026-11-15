@@ -17,6 +17,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -37,7 +39,6 @@ def main() -> int:
     ir = _read("src/compiler/ir.ixx")
     obs = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
     test = _read("tests/compiler/test_linear_ownership_refcount_inc.cpp")
-    build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
     # AC1
@@ -73,7 +74,7 @@ def main() -> int:
     must("test_linear_ownership_refcount_inc", "AC3", cmake)
 
     # AC4
-    must("check_linear_ownership_refcount_inc_2829", "AC4", build)
+    must("check_linear_ownership_refcount_inc_2829", "AC4", wired_text)
     must("schema-2829", "AC4", obs)
     must("linear-ownership-refcount-inc-false-positive-total", "AC4", obs)
     docs = ROOT / "docs" / "design"

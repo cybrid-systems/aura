@@ -24,6 +24,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -45,7 +47,6 @@ def main() -> int:
     tc = _read("src/compiler/evaluator_typecheck.cpp")
     mb = _read("src/compiler/evaluator_mutation_boundary.cpp")
     t = _read("tests/compiler/test_solve_delta_unresolved_export.cpp")
-    build = _read("build.py")
 
     must("type_export_outermost_success_face_", "AC1 Evaluator flag", ev)
     must("!type_export_outermost_success_face_", "AC1 helper refuse", ev)
@@ -80,7 +81,7 @@ def main() -> int:
     must("Issue #3294", "AC5 audit cite", aud)
     must("Issue #3294", "AC5 prim cite", prim)
     must("no outermost success face", "AC5 annotate gate", prim)
-    must("check_type_export_outermost_face_3294", "AC5 build.py", build)
+    must("check_type_export_outermost_face_3294", "AC5 wiring", wired_text)
     must("ac3294_5_source_and_linter", "AC5 test", t)
 
     if "g_3294_" in ev or "g_3294_" in aud:

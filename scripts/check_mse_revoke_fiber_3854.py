@@ -19,7 +19,7 @@ ACs:
   AC3  tests/core/test_capability_single_use_consume.cpp extends the #2944
        suite with ac3854_* ACs asserting SE fiber joins via ring_lookup_reason;
        no test_issue_3854.cpp; no docs/design/3854-*.
-  AC4  build.py wires this linter and scripts/coverage/root_check_allowlist.txt
+  AC4  run_checks.py wires this linter and scripts/coverage/root_check_allowlist.txt
        lists it.
 """
 
@@ -29,6 +29,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 CORE = ROOT / "src" / "core" / "capability_model.hh"
 TST = ROOT / "tests" / "core" / "test_capability_single_use_consume.cpp"
 BUILD = ROOT / "build.py"
@@ -38,7 +41,6 @@ ALLOWLIST = ROOT / "scripts" / "coverage" / "root_check_allowlist.txt"
 def main() -> int:
     core = CORE.read_text() if CORE.exists() else ""
     tst = TST.read_text() if TST.exists() else ""
-    build = BUILD.read_text() if BUILD.exists() else ""
     allow = ALLOWLIST.read_text() if ALLOWLIST.exists() else ""
     ok = True
 
@@ -76,8 +78,8 @@ def main() -> int:
     report("AC3", good and no_stray, "suite asserts SE fiber joins; no stray files")
 
     # AC4: gate wiring — build.py runs the linter and the allowlist lists it.
-    wired = "check_mse_revoke_fiber_3854.py" in build and "check_mse_revoke_fiber_3854.py" in allow
-    report("AC4", wired, "build.py + root_check_allowlist.txt wired")
+    wired = "check_mse_revoke_fiber_3854.py" in wired_text and "check_mse_revoke_fiber_3854.py" in allow
+    report("AC4", wired, "run_checks.py + root_check_allowlist.txt wired")
 
     return 0 if ok else 1
 

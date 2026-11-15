@@ -20,6 +20,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -43,7 +45,6 @@ def main() -> int:
     dual = _read("tests/compiler/test_ir_soa_dual_emit_batch.cpp")
     ban = _read("tests/compiler/test_soa_ban_residual_aos_bridge.cpp")
     cmake = _read("CMakeLists.txt")
-    build = _read("build.py")
 
     # AC1 — production smoke residual hard-assert
     must("#2618", "AC1", soa)
@@ -80,13 +81,13 @@ def main() -> int:
 
     # Gate / cmake / build wiring
     must("test_soa_residual_production_smoke", "gate", cmake)
-    must("check_soa_residual_production_smoke_2618", "gate", build)
-    must("cmd_soa_residual_production_smoke_coverage", "gate", build)
+    must("check_soa_residual_production_smoke_2618", "gate", wired_text)
+    must("check_soa_residual_production_smoke_2618.py", "gate", wired_text)
     must("soa_residual_production_smoke_wired", "gate", soa)
     must("soa-residual-production-smoke-wired", "gate", q)
 
     # Grep: production TUs still limited (retain #2520 ban surface)
-    must("check_soa_ban_residual_aos_bridge_2520", "retain", build)
+    must("check_soa_ban_residual_aos_bridge_2520", "retain", wired_text)
 
     for rel in (
         "docs/design/soa_residual_production_smoke_2618.md",

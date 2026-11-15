@@ -60,14 +60,6 @@
       ]
     },
     {
-      "ac": "AC6",
-      "path": "build.py",
-      "contains": [
-        "check_hold_budget_forced_unlock_3035",
-        "check_hold_budget_inbody_window_3071"
-      ]
-    },
-    {
       "ac": "AC7",
       "path": "tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp",
       "contains": [

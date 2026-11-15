@@ -28,6 +28,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -46,7 +48,6 @@ def main() -> int:
     prim = _read("src/compiler/evaluator_primitives_agent.cpp")
     test_bp = _read("tests/orch/test_mailbox_bp_admit.cpp")
     lint3127 = _read("scripts/coverage/checks/check_mailbox_bp_overflow_3127.py")
-    build = _read("build.py")
 
     must("kMailboxBpScopeOverflowCohortIssue = 3804", "AC1 stamp", spawn)
     must("named_scope_bp_on_overflow_cohort", "AC1 helper", spawn)
@@ -91,7 +92,7 @@ def main() -> int:
     must("ac3804_2_distinct_deny_detail", "AC2 deny-detail test", test_bp)
     must("ac3804_2_scope_local_reject_untouched", "AC2 scope reject untouched", test_bp)
 
-    must("check_mailbox_bp_overflow_cohort_3804", "AC5 build.py", build)
+    must("check_mailbox_bp_overflow_cohort_3804", "AC5 wiring", wired_text)
     must("Issue #3804", "AC5 #3127 linter cites residual", lint3127)
     must("ac3804_5_no_invent", "AC5 no invent", test_bp)
     if (ROOT / "tests" / "orch" / "test_issue_3804.cpp").is_file():
@@ -101,12 +102,14 @@ def main() -> int:
         for f in sorted(docs.glob("3804-*")):
             fails.append(f"AC5: docs/design/{f.name} present (forbidden #1655)")
 
-    prev = build.find("check_agent_scope_region_key_isolation_3803")
-    ours = build.find("check_mailbox_bp_overflow_cohort_3804")
-    if ours < 0:
-        fails.append("AC5: linter must be wired in build.py")
-    elif prev >= 0 and ours < prev:
-        fails.append("AC5: linter must be wired in build.py AFTER #3803")
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must(
+        "check_agent_scope_region_key_isolation_3803",
+        "AC5: linter must be gated by run_checks.py (both gated)",
+        wired_text,
+    )
+    must("check_mailbox_bp_overflow_cohort_3804", "AC5: linter must be gated by run_checks.py (both gated)", wired_text)
 
     if fails:
         for f in fails:

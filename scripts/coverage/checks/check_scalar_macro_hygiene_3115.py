@@ -23,6 +23,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -48,7 +50,6 @@ def main() -> int:
     mut = _read("src/compiler/evaluator_primitives_mutate.cpp")
     flat = _read("src/compiler/evaluator_eval_flat.cpp")
     test = _read("tests/compiler/test_hygiene_mutate_closed_loop.cpp")
-    build = _read("build.py")
 
     rt = _prim_win(mut, "mutate:replace-type", 10000)
     rv = _prim_win(mut, "mutate:replace-value", 12000)
@@ -70,7 +71,7 @@ def main() -> int:
     must("3115 AC2: marker preserved", "AC3 test marker preserved", test)
 
     must("3115 AC4", "AC4 test", test)
-    must("check_scalar_macro_hygiene_3115", "AC4 build.py", build)
+    must("check_scalar_macro_hygiene_3115", "AC4 wiring", wired_text)
 
     must("Issue #3115", "AC5 lockless cite", flat)
     must("cannot replace-value MacroIntroduced", "AC5 lockless reject", flat)

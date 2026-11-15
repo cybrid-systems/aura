@@ -20,6 +20,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -49,7 +51,6 @@ def main() -> int:
     hot = _read("tests/compiler/test_compiler_hot_update_facade.cpp")
     mutate = _read("src/compiler/evaluator_primitives_mutate.cpp")
     q = _read("src/compiler/evaluator_primitives_query_reflect.cpp")
-    build = _read("build.py")
 
     fn = tma.find("rebind_linear_proof_after_root_migration() noexcept")
     if fn < 0:
@@ -92,14 +93,13 @@ def main() -> int:
     must_not("schema-3448", "AC4 no new query key", mutate)
     must_not("schema-3448", "AC4 no schema in query", q)
     must_not("g_3448_", "AC4 no new metric", tma)
-    must("check_linear_zero_root_green_face_drop_3448", "AC4 build.py", build)
+    must("check_linear_zero_root_green_face_drop_3448", "AC4 wiring", wired_text)
     must("kLinearZeroRootGreenFaceDropIssue", "AC4 steal lineage", steal)
     must("Issue #3448", "AC4 gc window", gcwin)
     must("kLinearZeroRootGreenFaceDropIssue", "AC4 hot-update", hot)
-    prev = build.find("check_linear_post_migration_proof_rebind_3227")
-    ours = build.find("check_linear_zero_root_green_face_drop_3448")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC4: #3448 linter must run after #3227")
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must("check_linear_zero_root_green_face_drop_3448", "AC4: #3448 linter must run (both gated)", wired_text)
     if (ROOT / "tests" / "compiler" / "test_issue_3448.cpp").is_file():
         fails.append("AC4: forbidden tests/compiler/test_issue_3448.cpp")
     if (ROOT / "tests" / "issues" / "test_issue_3448.cpp").is_file():

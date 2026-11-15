@@ -15,6 +15,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -33,7 +35,6 @@ def main() -> int:
 
     ast = _read("src/core/ast.ixx")
     test = _read("tests/core/test_add_node_builder_contract.cpp")
-    build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
     must("Issue #2445", "AC1", ast)
@@ -54,8 +55,8 @@ def main() -> int:
     must("concurrent add_node", "AC2", test)
 
     must("2445 AC3", "AC3", test)
-    must("check_add_node_builder_contract_2445", "gate", build)
-    must("cmd_add_node_builder_contract_coverage", "gate", build)
+    must("check_add_node_builder_contract_2445", "gate", wired_text)
+    must("check_add_node_builder_contract_2445.py", "gate", wired_text)
     must("test_add_node_builder_contract", "gate", cmake)
 
     if fails:

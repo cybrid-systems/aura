@@ -22,6 +22,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -42,7 +44,6 @@ def main() -> int:
     cmap = _read("src/compiler/coercion_map.ixx")
     snap = _read("src/compiler/evaluator_primitives_query_reflect.cpp")
     test = _read("tests/compiler/test_coercion_map_abort_rewind.cpp")
-    build = _read("build.py")
 
     must("dual_clear_coercion_state_on_abort", "AC1 decl", ev)
     must("take_coercions()", "AC1 take last_coercions_", bound)
@@ -60,7 +61,7 @@ def main() -> int:
     must("observe counter only", "AC3 Soft comment", bound)
 
     must("3116", "AC4 extend rewind suite", test)
-    must("check_coercion_abort_dual_clear_3116", "AC4 build.py", build)
+    must("check_coercion_abort_dual_clear_3116", "AC4 wiring", wired_text)
 
     must("coercion-abort-dual-clear-total", "AC5 snapshot key", snap)
     must("schema-3116", "AC5 schema", snap)

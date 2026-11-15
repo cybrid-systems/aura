@@ -18,6 +18,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -42,7 +44,6 @@ def main() -> int:
     lf = _read("src/core/envframe_lifetime.ixx")
     test = _read("tests/compiler/test_envframe_ownership_steal_densify.cpp")
     cmake = _read("CMakeLists.txt")
-    build = _read("build.py")
 
     # AC1 live set
     must("register_live_env_frame_ref", "AC1", eval_ixx)
@@ -81,8 +82,8 @@ def main() -> int:
     must("envframe-ownership-protocol-densify-wired", "AC5", q)
     must("should_block_compact_for_guards", "AC5", lf)
     must("test_envframe_ownership_steal_densify", "AC5", cmake)
-    must("check_envframe_ownership_steal_densify_2362", "AC5", build)
-    must("cmd_envframe_ownership_steal_densify_coverage", "AC5", build)
+    must("check_envframe_ownership_steal_densify_2362", "AC5", wired_text)
+    must("check_envframe_ownership_steal_densify_2362.py", "AC5", wired_text)
     must("ac5_query_and_surface", "AC5", test)
 
     # Must not leave densify scan as empty no-op stub

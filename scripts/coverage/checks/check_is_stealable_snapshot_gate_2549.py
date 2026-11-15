@@ -6,7 +6,7 @@ Contract:
   AC2 production try_steal_from uses is_stealable(snap); defer uses candidate
   AC3 fiber_steal_priority uses is_steal_candidate (not bare is_stealable)
   AC4 no residual bare is_stealable() enqueue dual-check in production serve/
-  AC5 test + cmake + build.py gate wired; fiber.h documents contract
+  AC5 test + cmake + coverage runner wired; fiber.h documents contract
 
 Exit 0 = all rows satisfied.
 """
@@ -18,6 +18,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -43,7 +45,6 @@ def main() -> int:
     wh = _read("src/serve/worker.h")
     test = _read("tests/serve/test_is_stealable_snapshot_gate.cpp")
     cmake = _read("CMakeLists.txt")
-    build = _read("build.py")
 
     # AC1: API split
     must("Issue #2549", "AC1", fh)
@@ -92,8 +93,8 @@ def main() -> int:
     must("ac1_held_or_unsafe_mb_not_stealable", "AC5", test)
     must("ac3_production_call_sites", "AC5", test)
     must("test_is_stealable_snapshot_gate", "AC5", cmake)
-    must("check_is_stealable_snapshot_gate_2549", "AC5", build)
-    must("cmd_is_stealable_snapshot_gate_coverage", "AC5", build)
+    must("check_is_stealable_snapshot_gate_2549", "AC5", wired_text)
+    must("check_is_stealable_snapshot_gate_2549.py", "AC5", wired_text)
 
     if fails:
         for f in fails:

@@ -23,6 +23,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
 
 EFL = "src/compiler/evaluator_eval_flat.cpp"
 MX = "src/compiler/macro_expansion.cpp"
@@ -59,7 +62,6 @@ def main() -> int:
     mixx = _read(MIXX)
     choke_test = _read(CHOKE_TEST)
     prin_test = _read(PRIN_TEST)
-    build = _read(BUILD)
 
     # AC1
     must("Issue #3609", "AC1 evaluator_eval_flat", efl)
@@ -88,7 +90,7 @@ def main() -> int:
     must("wildcard_ok=*/false", "AC5 wildcard false", efl)
 
     # AC6
-    must("check_reexpand_tenant_principal_3609", "AC6 build wiring", build)
+    must("check_reexpand_tenant_principal_3609", "AC6 build wiring", wired_text)
     must("3609: post_mutation_macro_reexpand uses the live principal", "AC6 principal test row", prin_test)
     must("3609: choke resolves the live Evaluator principal", "AC6 choke test row", choke_test)
     if (ROOT / "tests" / "compiler" / "test_issue_3609.cpp").is_file():

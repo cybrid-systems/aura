@@ -21,6 +21,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from query_prims_sources import read_query_prims  # Issue #2914
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -64,7 +66,6 @@ def main() -> int:
     q = read_query_prims()
     obs = _read("src/compiler/evaluator_primitives_obs_jit.cpp")
     test = _read("tests/compiler/test_shape_compact_storm_isolation.cpp")
-    build = _read("build.py")
 
     # AC1
     must("#2908", "AC1", hh)
@@ -108,8 +109,8 @@ def main() -> int:
     must("schema-2908", "AC5", q)
     must("schema-2908", "AC5", obs)
     must("compact-no-global-bump-wired", "AC5", q)
-    must("check_shape_compact_no_global_bump_2908", "AC5", build)
-    must("cmd_shape_compact_no_global_bump_2908", "AC5", build)
+    must("check_shape_compact_no_global_bump_2908", "AC5", wired_text)
+    must("check_shape_compact_no_global_bump_2908.py", "AC5", wired_text)
     must("#2908", "AC5", test)
 
     docs = ROOT / "docs" / "design"

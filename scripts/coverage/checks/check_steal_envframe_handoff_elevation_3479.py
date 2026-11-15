@@ -30,6 +30,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _source_scan import source_block_after  # noqa: E402  (sibling helper)
 
 ROOT = Path(__file__).resolve().parents[3]
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -50,7 +51,6 @@ def main() -> int:
 
     fm = _read("src/compiler/evaluator_fiber_mutation.cpp")
     test = _read("tests/serve/test_fiber_migration_refresh.cpp")
-    build = _read("build.py")
 
     start = fm.find("std::size_t Evaluator::refresh_stale_frames_after_steal")
     if start < 0:
@@ -93,11 +93,15 @@ def main() -> int:
     must_not("schema-3479", "AC4 no query key", fm)
     must_not("g_3479_", "AC4 no g_3479_*", fm)
 
-    must("check_steal_envframe_handoff_elevation_3479", "AC5 build.py", build)
-    prev = build.find("check_export_held_handoff_coverage")
-    ours = build.find("check_steal_envframe_handoff_elevation_3479")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC5: linter must be wired in build.py AFTER #2632")
+    must("check_steal_envframe_handoff_elevation_3479", "AC5 wiring", wired_text)
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must("check_export_held_handoff_coverage", "AC5: linter must be gated by run_checks.py (both gated)", wired_text)
+    must(
+        "check_steal_envframe_handoff_elevation_3479",
+        "AC5: linter must be gated by run_checks.py (both gated)",
+        wired_text,
+    )
 
     if (ROOT / "tests" / "compiler" / "test_issue_3479.cpp").is_file():
         fails.append("AC5: test_issue_3479.cpp present (forbidden #81967)")

@@ -25,7 +25,7 @@ Contract (one row per AC):
        ACs live in tests/orch/test_agent_ask_typed_corr.cpp (4049 markers);
        no tests/**/test_issue_4049.cpp; no docs/design/4049-*
   AC7  no AgentRegistry, no new query key; one pending-ask map
-  AC8  build.py wires check_agent_reply_payload_4049 + root allowlist
+  AC8  run_checks.py wires check_agent_reply_payload_4049 + root allowlist
 
 Exit 0 = all rows satisfied.
 """
@@ -36,6 +36,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -59,7 +61,6 @@ def main() -> int:
     table = _read("src/compiler/agent_name_table.h")
     scope = _read("src/orch/agent_scope.h")
     test = _read("tests/orch/test_agent_ask_typed_corr.cpp")
-    build = _read("build.py")
     allow = _read("scripts/coverage/root_check_allowlist.txt")
 
     # ── AC1: reply prim recognizes StableNodeRef, zero-cost scalars ──────
@@ -126,7 +127,7 @@ def main() -> int:
     forbid("query:agent-reply", "AC7 no new query key", prim)
 
     # ── AC8: build.py wiring + root allowlist ─────────────────────────────
-    must("check_agent_reply_payload_4049", "AC8 build.py wires linter", build)
+    must("check_agent_reply_payload_4049", "AC8 run_checks.py wires linter", wired_text)
     must("check_agent_reply_payload_4049.py", "AC8 root allowlist", allow)
 
     if fails:

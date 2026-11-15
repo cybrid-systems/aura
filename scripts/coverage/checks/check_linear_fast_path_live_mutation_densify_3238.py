@@ -22,6 +22,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -41,7 +43,6 @@ def main() -> int:
     efm = _read("src/compiler/evaluator_fiber_mutation.cpp")
     t = _read("tests/compiler/test_escape_move_elision_gate.cpp")
     q = _read("src/compiler/evaluator_primitives_obs_jit.cpp")
-    build = _read("build.py")
 
     must("kLinearFastPathLiveMutationDensifyIssue = 3238", "AC1 stamp", aud)
     must("note_densify_entry_under_live_mutation", "AC1 helper", aud)
@@ -72,7 +73,7 @@ def main() -> int:
     if "g_3238_" in aud:
         fails.append("AC3: new g_3238_* counter")
 
-    must("check_linear_fast_path_live_mutation_densify_3238", "AC4 build.py", build)
+    must("check_linear_fast_path_live_mutation_densify_3238", "AC4 wiring", wired_text)
     must("ac3238_4_source_linter", "AC4 test", t)
     must("Issue #3238", "AC4 try_skip resample", aud)
     if (ROOT / "tests" / "compiler" / "test_issue_3238.cpp").is_file():

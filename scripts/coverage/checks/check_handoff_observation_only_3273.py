@@ -21,7 +21,7 @@ Contract (one row per AC):
        is not a fourth plane; no plane merge
   AC5  no AgentRegistry / global map; stash stays g_handoff_token_stash;
        no new query:*; no test_issue_3273.cpp (#81967); no docs/design/
-       (#1655); build.py wires linter
+       (#1655); run_checks.py gates linter
 
 Exit 0 = all rows satisfied.
 """
@@ -32,6 +32,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -49,7 +51,6 @@ def main() -> int:
     spawn = _read("src/orch/agent_spawn.h")
     prim = _read("src/compiler/evaluator_primitives_agent.cpp")
     test = _read("tests/orch/test_join_drain_reclaim.cpp")
-    build = _read("build.py")
     scopeh = _read("src/orch/agent_scope.h")
 
     must("kHandoffObservationOnlyIssue = 3273", "AC5 stamp", spawn)
@@ -66,7 +67,7 @@ def main() -> int:
     must("3273 AC3", "AC3 test", test)
     must("3273 AC5", "AC5 test", test)
     must("importer drop keeps source mailbox", "AC2 no-detach", test)
-    must("check_handoff_observation_only_3273", "AC5 build.py", build)
+    must("check_handoff_observation_only_3273", "AC5 wiring", wired_text)
     if "query:handoff-observation" in prim or "query:ownership" in prim:
         fails.append("AC3: new query:* (reuse query:orch-module-stats)")
     if "release_source_reservation" in spawn or "detach_source_mailbox" in spawn:

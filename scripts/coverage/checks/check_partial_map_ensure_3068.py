@@ -24,6 +24,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from query_prims_sources import read_query_prims
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -45,7 +47,6 @@ def main() -> int:
     batch = _read("tests/compiler/test_incremental_relower_batch.cpp")
     rec = _read("tests/compiler/test_source_to_ir_desync_recovery.cpp")
     skip = _read("tests/compiler/test_cascade_relower_silent_skip.cpp")
-    build = _read("build.py")
 
     # AC1
     must("Issue #3068", "AC1 service", svc)
@@ -82,8 +83,8 @@ def main() -> int:
     must("ac3068_relower_recovers_or_full", "AC4 recover suite", rec)
     must("inject_source_to_ir_map_drop_instr_loc_for_test", "AC4 recover AC2", rec)
     must("Issue #3068", "AC4 cascade skip", skip)
-    must("check_partial_map_ensure_3068", "AC4 build", build)
-    must("cmd_partial_map_ensure_3068", "AC4 cmd", build)
+    must("check_partial_map_ensure_3068", "AC4 build", wired_text)
+    must("check_partial_map_ensure_3068.py", "AC4 cmd", wired_text)
     if (ROOT / "tests" / "compiler" / "test_issue_3068.cpp").is_file():
         fails.append("AC4: test_issue_3068.cpp present (forbidden #81967)")
     docs = ROOT / "docs" / "design"

@@ -17,7 +17,7 @@ Contract:
   AC4 outermost mid-exit (#2944) + steal resume (#3048/#3320) callers
       of the same SSOT untouched
   AC5 tests/core/test_capability_single_use_consume.cpp extends
-      ac3458_*; build.py wires the linter; no docs/design/, no
+      ac3458_*; run_checks.py gates the linter; no docs/design/, no
       tests/issues/
 
 Exit 0 = all rows satisfied.
@@ -29,6 +29,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -82,8 +84,7 @@ def main() -> int:
     must("ac3458_2_epoch_bump_keys_enter_mid", "AC5 AC2 test", test)
     must("ac3458_3_source_cite_ssot_callers_intact", "AC5 source-cite test", test)
 
-    build = _read("build.py")
-    must("check_tenant_scope_release_key_3458", "AC5 build.py wires linter", build)
+    must("check_tenant_scope_release_key_3458", "AC5 run_checks.py gates linter", wired_text)
     docs = ROOT / "docs" / "design"
     if docs.is_dir():
         for f in sorted(docs.glob("3458-*")):

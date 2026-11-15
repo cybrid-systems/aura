@@ -22,6 +22,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -46,7 +48,6 @@ def main() -> int:
     rab = _read("src/serve/runtime_production_abi.cpp")
     occ = _read("tests/compiler/test_occurrence_goal_persist_rehydrate.cpp")
     steal = _read("tests/serve/test_steal_complete_strong_entry.cpp")
-    build = _read("build.py")
 
     must("kJitTypedEntryEveryFunctionIssue = 3419", "AC1 stamp", tma)
     must("hard_typed_entry", "AC1 production gate", jit)
@@ -86,11 +87,11 @@ def main() -> int:
 
     must("ac3419_jit_typed_entry_every_function", "AC5 persist-rehydrate", occ)
     must("3419 AC2: fail bit 8", "AC5 steal suite", steal)
-    must("check_jit_typed_entry_every_function_3419", "AC5 build.py", build)
-    prev = build.find("check_production_weak_abi_commit_readiness_3343")
-    ours = build.find("check_jit_typed_entry_every_function_3419")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC5: #3419 linter must run after #3343")
+    must("check_jit_typed_entry_every_function_3419", "AC5 wiring", wired_text)
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must("check_production_weak_abi_commit_readiness_3343", "AC5: #3419 linter must run (both gated)", wired_text)
+    must("check_jit_typed_entry_every_function_3419", "AC5: #3419 linter must run (both gated)", wired_text)
     if (ROOT / "tests" / "compiler" / "test_issue_3419.cpp").is_file():
         fails.append("AC5: tests/compiler/test_issue_3419.cpp present (forbidden)")
     if (ROOT / "tests" / "issues" / "test_issue_3419.cpp").is_file():

@@ -30,6 +30,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -50,7 +52,6 @@ def main() -> int:
     lowering = _read("src/compiler/lowering_impl.cpp")
     tc = _read("src/compiler/type_checker_impl.cpp")
     evp = _read("src/compiler/evaluator_primitives_pair.cpp")
-    build = _read("build.py")
 
     # AC1 — ir.ixx SSOT: enum + kPrimNames + size assert.
     must("StringGt", "AC1 enum", ir)
@@ -98,7 +99,7 @@ def main() -> int:
     must("#4175", "AC6 cite", evp)
 
     # Gate wiring — build.py row + allowlist row.
-    must("check_r7rs_string_compare_4175", "wiring build.py", build)
+    must("check_r7rs_string_compare_4175", "wiring run_checks.py", wired_text)
     allow = _read("scripts/coverage/root_check_allowlist.txt")
     if "check_r7rs_string_compare_4175.py" not in allow:
         fails.append("wiring allowlist: check_r7rs_string_compare_4175.py not listed")

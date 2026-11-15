@@ -31,6 +31,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
 
 SRC = "src/compiler/pipeline_policy.hh"
 SOFT = "tests/compiler/test_tree_walker_fallback_strict.cpp"
@@ -238,7 +241,7 @@ def main() -> int:
     args = ap.parse_args()
     if args.self_test:
         return _self_test()
-    rows = _rows(_read(SRC), _read(SOFT), _read(PACK), _read(CMAKE), _read(BUILD), _read(OBS))
+    rows = _rows(_read(SRC), _read(SOFT), _read(PACK), _read(CMAKE), wired_text, _read(OBS))
     if rows:
         for r in rows:
             print(f"FAIL {LINTER}: {r}")

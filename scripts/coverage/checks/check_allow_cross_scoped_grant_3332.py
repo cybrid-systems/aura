@@ -25,6 +25,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -43,7 +45,6 @@ def main() -> int:
     sec = _read("src/compiler/evaluator_security.cpp")
     test_iso = _read("tests/core/test_tenant_isolation_enforcement.cpp")
     lint3010 = _read("scripts/coverage/checks/check_allow_cross_tenant_admin_3010.py")
-    build = _read("build.py")
 
     must("kAllowCrossScopedGrantIssue = 3332", "AC1 stamp", iso)
     must("Issue #3010", "AC1 #3010 write gate", iso)
@@ -71,14 +72,12 @@ def main() -> int:
     must("Issue #3010", "AC5 #3010 linter retained", lint3010)
 
     must("3332 AC6: A without grant still denies", "AC6 dual-eval", test_iso)
-    must("check_allow_cross_scoped_grant_3332", "AC6 build.py", build)
-    must("check_allow_cross_tenant_admin_3010", "AC6 #3010 linter still wired", build)
-    prev = build.find("check_allow_cross_tenant_admin_3010")
-    ours = build.find("check_allow_cross_scoped_grant_3332")
-    if ours < 0:
-        fails.append("AC6: linter must be wired in build.py")
-    elif prev >= 0 and ours < prev:
-        fails.append("AC6: linter must be wired in build.py AFTER #3010")
+    must("check_allow_cross_scoped_grant_3332", "AC6 wiring", wired_text)
+    must("check_allow_cross_tenant_admin_3010", "AC6 #3010 linter still wired", wired_text)
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must("check_allow_cross_tenant_admin_3010", "AC6: linter must be gated by run_checks.py (both gated)", wired_text)
+    must("check_allow_cross_scoped_grant_3332", "AC6: linter must be gated by run_checks.py (both gated)", wired_text)
     if (ROOT / "tests" / "core" / "test_issue_3332.cpp").is_file():
         fails.append("AC6: tests/core/test_issue_3332.cpp present (forbidden #81967)")
     docs = ROOT / "docs" / "design"

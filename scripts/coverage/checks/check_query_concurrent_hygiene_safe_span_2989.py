@@ -23,6 +23,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from query_prims_sources import read_query_prims  # Issue #2914
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -50,7 +52,6 @@ def main() -> int:
     q = read_query_prims()
     t = _read("tests/compiler/test_query_pattern_default_hygiene.cpp")
     t2525 = _read("tests/compiler/test_query_hygiene_default.cpp")
-    build = _read("build.py")
 
     # AC1 — production query prims default SafePCVSpan.
     must("#2989", "AC1", qws)
@@ -93,7 +94,7 @@ def main() -> int:
     must("mutate:rebind", "AC5 concurrent mutate", t)
 
     # AC6 — linter wired; no invented tests / design docs.
-    must("check_query_concurrent_hygiene_safe_span_2989", "AC6", build)
+    must("check_query_concurrent_hygiene_safe_span_2989", "AC6", wired_text)
     if (ROOT / "tests" / "compiler" / "test_issue_2989.cpp").is_file():
         fails.append("AC6: tests/compiler/test_issue_2989.cpp present (forbidden per #81967)")
     if (ROOT / "tests" / "test_edsl_query_concurrent_hygiene_safe_span.cpp").is_file():

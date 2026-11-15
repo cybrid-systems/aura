@@ -19,6 +19,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -45,7 +47,6 @@ def main() -> int:
     q = _read("src/compiler/evaluator_primitives_agent.cpp")
     t = _read("tests/orch/test_agent_scope.cpp")
     readme = _read("src/orch/README.md")
-    build = _read("build.py")
 
     # AC1 — default SingleOwner.
     must("kAgentScopeConcurrencyIssue = 2976", "AC1", scope)
@@ -80,7 +81,7 @@ def main() -> int:
     must("ac2976_4_soft_unit_zero_lock", "AC5", t)
     must("ac2976_5_source_linter", "AC5", t)
     must("ac2976_6_mvp", "AC5", t)
-    must("check_agent_scope_concurrency_2976", "AC5", build)
+    must("check_agent_scope_concurrency_2976", "AC5", wired_text)
     must("2976", "AC5", readme)
     must("MutexGuarded", "AC5", readme)
     must_key("schema-2976", "AC5", q)

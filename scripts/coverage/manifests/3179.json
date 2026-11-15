@@ -85,10 +85,7 @@
     },
     {
       "ac": "build_py_wire",
-      "path": "build.py",
-      "contains": [
-        "check_per_scope_bp_admit_3179"
-      ]
+      "wired": "check_per_scope_bp_admit_3179"
     }
   ]
 }

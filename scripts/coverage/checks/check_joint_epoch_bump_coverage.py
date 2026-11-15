@@ -27,7 +27,7 @@ Contract (one row per AC):
      (additive — no regression).
   AC6 tests/compiler/test_epoch_invariant_walk.cpp extended with
      #2693 AC1-AC6 source-cite block (per #81967 — no new issue-suffix
-     file); coverage linter + build.py gate wire-in; no `docs/design/`.
+     file); coverage linter + coverage runner wire-in; no `docs/design/`.
 
 Exit 0 = all rows satisfied.
 """
@@ -40,6 +40,8 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 # Production bridge TU / stub / header that legitimately bumps the
 # joint epoch domains. Anything under src/ NOT in this allow-list MUST
@@ -195,7 +197,6 @@ def main() -> int:
     brs = _read("src/compiler/aura_jit_bridge_stub.cpp")
     obs = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
     test = _read("tests/compiler/test_epoch_invariant_walk.cpp")
-    build = _read("build.py")
 
     # AC1 — file-scope atomics + K knob in production bridge TU
     must("g_consecutive_dirty_count{0}", "AC1", br)
@@ -286,9 +287,9 @@ def main() -> int:
         for f in sorted(design_dir.glob("2693-*")):
             fails.append(f"AC6: docs/design/{f.name} present on disk (forbidden per #1655)")
 
-    # AC7 — build.py wires the linter
-    must("check_joint_epoch_bump_coverage", "AC7", build)
-    must("joint epoch bump coverage linter", "AC7", build)
+    # AC7 — run_checks.py gates the linter
+    must("check_joint_epoch_bump_coverage", "AC7", wired_text)
+    must("check_joint_epoch_bump_coverage", "AC7", wired_text)
     # Prior #2668/#2640/#2366 linters are run independently by the gate
     # parallel runner (no nested cascade re-exec).
 

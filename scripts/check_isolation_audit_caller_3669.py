@@ -24,6 +24,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -37,7 +39,6 @@ def _rows(must, must_count, must_before) -> list[str]:
     iso = _read("src/core/workspace_isolation.hh")
     sec = _read("src/compiler/evaluator_security.cpp")
     test = _read("tests/core/test_tenant_isolation_enforcement.cpp")
-    build = _read("build.py")
 
     # AC1: caller-keyed audit row + dedicated layout-only reason.
     must("void record_audit(TenantId caller, TenantId target, TenantId ref_tenant, bool denied", "AC1 signature", iso)
@@ -73,7 +74,7 @@ def _rows(must, must_count, must_before) -> list[str]:
         fails.append("AC5: test_issue_3669.cpp present (forbidden per #81934)")
     if _read("docs/design/3669-isolation-audit-caller.md"):
         fails.append("AC5: docs/design/ exists — forbidden per #1655")
-    must("check_isolation_audit_caller_3669", "AC5 build.py", build)
+    must("check_isolation_audit_caller_3669", "AC5 run_checks.py", wired_text)
     return fails
 
 

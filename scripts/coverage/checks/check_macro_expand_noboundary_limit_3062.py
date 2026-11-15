@@ -20,6 +20,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -38,7 +40,6 @@ def main() -> int:
     fib = _read("src/compiler/evaluator_fiber_mutation.cpp")
     br = _read("src/compiler/aura_jit_bridge.h")
     lim_t = _read("tests/compiler/test_macro_hygiene_limits.cpp")
-    build = _read("build.py")
 
     bpos = mx.find("Issue #2023: body of macro_expand_all")
     if bpos < 0:
@@ -96,8 +97,8 @@ def main() -> int:
     must("3062 AC4", "AC4 test", lim_t)
 
     # AC5 wiring
-    must("check_macro_expand_noboundary_limit_3062", "AC5 build", build)
-    must("cmd_macro_expand_noboundary_limit_3062", "AC5 cmd", build)
+    must("check_macro_expand_noboundary_limit_3062", "AC5 build", wired_text)
+    must("check_macro_expand_noboundary_limit_3062.py", "AC5 cmd", wired_text)
     must("3062 AC5", "AC5 test", lim_t)
     if (ROOT / "tests" / "compiler" / "test_issue_3062.cpp").is_file():
         fails.append("AC5: test_issue_3062.cpp present (forbidden per #81967)")

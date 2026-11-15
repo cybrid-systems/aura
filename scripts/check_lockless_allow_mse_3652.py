@@ -34,6 +34,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
 
 EFL = "src/compiler/evaluator_eval_flat.cpp"
 MUT = "src/compiler/evaluator_primitives_mutate.cpp"
@@ -146,7 +149,7 @@ def _rows(efl: str, mut: str, cpp: str, test: str, build: str, allow: str) -> li
     ):
         must(ac, "AC7 test present", test)
     must("ac3652_1_batch_allow_denied_without_mse();", "AC7 runner wired", test)
-    must("check_lockless_allow_mse_3652", "AC7 build.py registration", build)
+    must("check_lockless_allow_mse_3652", "AC7 build.py registration", wired_text)
     must("check_lockless_allow_mse_3652.py", "AC7 allowlist entry", allow)
     for stale in ROOT.glob("docs/design/*3652*"):
         fails.append(f"AC7: forbidden design doc {stale.name}")
@@ -165,7 +168,7 @@ def main() -> int:
     mut = _read(MUT)
     cpp = _read(CPP)
     test = _read(TEST)
-    build = _read(BUILD)
+    build = wired_text
     allow = _read(ALLOWLIST)
     if args.self_test:
         broken = efl.replace("Issue #3652", "Issue #redacted")

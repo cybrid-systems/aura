@@ -20,6 +20,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -40,7 +42,6 @@ def main() -> int:
     sec = _read("src/compiler/evaluator_primitives_security.cpp")
     test = _read("tests/compiler/test_audit_mid_fallback_slo.cpp")
     unify = _read("tests/compiler/test_audit_mutation_id_unify.cpp")
-    build = _read("build.py")
     linter_2635 = _read("scripts/coverage/checks/check_mid_fallback_hard_deny_2635.py")
 
     # AC1 — absolute refuse under production/Full
@@ -72,12 +73,12 @@ def main() -> int:
     must("issue-2836", "AC5", sec)
     must("zero-tolerance-wired", "AC5", sec)
     must("schema-2594", "AC5", sec)
-    must("check_mid_fallback_hard_deny_2635", "AC5", build)
+    must("check_mid_fallback_hard_deny_2635", "AC5", wired_text)
     must("check_mid_fallback_hard_deny_2635", "AC5", linter_2635)
 
     # AC6 — test extension + linter wire; no invent file; no design docs
     must("2836", "AC6", test)
-    must("check_mid_fallback_zero_tolerance_2836", "AC6", build)
+    must("check_mid_fallback_zero_tolerance_2836", "AC6", wired_text)
     must("apply_dev_audit_defaults", "AC6", unify)  # Soft AC4 fix under Full default
     if (ROOT / "tests" / "compiler" / "test_issue_2836.cpp").is_file():
         fails.append("AC6: test_issue_2836.cpp present (forbidden per #81967)")

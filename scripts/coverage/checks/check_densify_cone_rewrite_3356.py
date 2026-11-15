@@ -28,6 +28,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -65,7 +67,6 @@ def main() -> int:
     arena = _read("src/core/arena.ixx")
     pin = _read("src/core/lifetime_pin.hh")
     t = _read("tests/core/test_moving_densify_fail_closed.cpp")
-    build = _read("build.py")
     body = _notify_body(svc)
 
     # AC1 — cone-limited rewrite on densify success.
@@ -97,12 +98,12 @@ def main() -> int:
     must("ac3356_4_existing_suite", "AC4 test", t)
 
     # AC5 — linter after #3350; no invent.
-    must("check_densify_cone_rewrite_3356", "AC5 build.py", build)
+    must("check_densify_cone_rewrite_3356", "AC5 wiring", wired_text)
     must("ac3356_5_source_and_linter", "AC5 test", t)
-    prev = build.find("check_linear_root_moving_remap_3350")
-    ours = build.find("check_densify_cone_rewrite_3356")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC5: linter must be wired in build.py AFTER #3350")
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must("check_linear_root_moving_remap_3350", "AC5: linter must be gated by run_checks.py (both gated)", wired_text)
+    must("check_densify_cone_rewrite_3356", "AC5: linter must be gated by run_checks.py (both gated)", wired_text)
     if "schema-3356" in hh or "schema-3356" in svc:
         fails.append("AC5: new schema-3356 query key")
     if "g_3356_" in hh or "g_3356_" in svc or "g_3356_" in arena:

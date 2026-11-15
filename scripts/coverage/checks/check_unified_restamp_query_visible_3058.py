@@ -21,6 +21,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -45,7 +47,6 @@ def main() -> int:
     review = _read("src/compiler/evaluator_primitives_stdlib_review.cpp")
     q = _read("src/compiler/evaluator_primitives_query.cpp")
     test = _read("tests/core/test_restamp_sla_observability.cpp")
-    build = _read("build.py")
 
     must("kUnifiedRestampQueryVisibleIssue = 3058", "AC1 stamp", restamp)
     must("kUnifiedRestampQueryVisibleIssue", "AC1 ast export", ast)
@@ -83,7 +84,7 @@ def main() -> int:
     must("ac3058_4_additive_schema", "AC4 test", test)
 
     must("ac3058_5_canary_linter", "AC5 test", test)
-    must("check_unified_restamp_query_visible_3058", "AC5 build", build)
+    must("check_unified_restamp_query_visible_3058", "AC5 build", wired_text)
     if _read("tests/core/test_issue_3058.cpp"):
         fails.append("AC5: test_issue_3058.cpp present")
     if _read("docs/design/3058-unified-restamp-query.md"):

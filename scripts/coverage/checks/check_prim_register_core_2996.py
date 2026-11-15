@@ -19,6 +19,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 CORE = [
     "evaluator_primitives_list.cpp",
@@ -143,8 +145,7 @@ def main() -> int:
     must("2996", "AC5", contract)
     must("evaluator_primitives_list.cpp", "AC5", contract)
 
-    build = _read("build.py")
-    must("check_prim_register_core_2996", "AC5", build)
+    must("check_prim_register_core_2996", "AC5", wired_text)
 
     smoke = _read("tests/compiler/test_obs_metrics_smoke_batch.cpp")
     must("ac2996", "AC6", smoke)

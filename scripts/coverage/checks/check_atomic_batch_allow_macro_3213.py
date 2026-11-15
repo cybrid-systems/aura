@@ -25,6 +25,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 GATED = (
     "replace_value",
@@ -68,7 +70,6 @@ def main() -> int:
     mut = _read("src/compiler/evaluator_primitives_mutate.cpp")
     hdr = _read("src/compiler/evaluator.ixx")
     test = _read("tests/compiler/test_hygiene_mutate_closed_loop.cpp")
-    build = _read("build.py")
 
     # AC1 — shared parse on every lockless MacroIntroduced gate.
     must("Issue #3213", "AC1 eval_flat cite", flat)
@@ -126,7 +127,7 @@ def main() -> int:
     must("ac3213_4_surgical_sibling_denied", "AC6 AC4 fn", test)
     must("ac3213_5_soft_non_macro_zero_extra", "AC6 AC5 fn", test)
     must("ac3213_6_linter_no_docs", "AC6 AC6 fn", test)
-    must("check_atomic_batch_allow_macro_3213", "AC6 build.py", build)
+    must("check_atomic_batch_allow_macro_3213", "AC6 wiring", wired_text)
     if (ROOT / "tests" / "compiler" / "test_issue_3213.cpp").is_file():
         fails.append("AC6: tests/compiler/test_issue_3213.cpp present (forbidden #81967)")
     if (ROOT / "tests" / "issues" / "test_issue_3213.cpp").is_file():

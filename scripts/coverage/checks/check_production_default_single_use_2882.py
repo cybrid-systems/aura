@@ -28,6 +28,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 # Files in scope for #2882 (production-default single-use override).
 SCOPE_FILES = [
@@ -187,9 +189,9 @@ def main() -> int:
     must("#2882", "AC6", ixx)  # lineage cite
     must("2882", "AC6", test_su)  # tests cite #2882
     must("build", "AC6", build)
-    # build.py wires this linter.
-    if "check_production_default_single_use_2882" not in build:
-        fails.append("AC6: build.py does not wire #2882 linter")
+    # run_checks.py gates this linter.
+    if "check_production_default_single_use_2882" not in wired_text:
+        fails.append("AC6: run_checks.py does not discover #2882 linter")
     # No new test_issue_2882.cpp (per #81967).
     if (ROOT / "tests" / "core" / "test_issue_2882.cpp").is_file():
         fails.append("AC6: test_issue_2882.cpp present (forbidden per #81967)")

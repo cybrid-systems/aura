@@ -21,6 +21,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -39,7 +41,6 @@ def main() -> int:
 
     ast = _read("src/core/ast.ixx")
     test = _read("tests/core/test_get_nodeview_snapshot.cpp")
-    build = _read("build.py")
     cmake = _read("CMakeLists.txt")
     allow = _read("scripts/coverage/root_check_allowlist.txt")
 
@@ -81,7 +82,7 @@ def main() -> int:
     must("tests/core/test_get_nodeview_snapshot.cpp", "AC4", cmake)
 
     # ── AC5: gate wiring ──────────────────────────────────────────────
-    must("check_flatast_seqlock_get_3868", "AC5", build)
+    must("check_flatast_seqlock_get_3868", "AC5", wired_text)
     must("check_flatast_seqlock_get_3868.py", "AC5", allow)
 
     if fails:

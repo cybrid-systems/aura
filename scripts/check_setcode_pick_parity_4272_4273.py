@@ -31,6 +31,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def check(cond: bool, msg: str) -> None:
@@ -78,10 +80,9 @@ def main() -> None:
     eix = (ROOT / "src/compiler/evaluator.ixx").read_text(encoding="utf-8")
     check("soft_error_message" in eix, "AC4: Evaluator::soft_error_message")
 
-    build = (ROOT / "build.py").read_text(encoding="utf-8")
     check(
-        "check_setcode_pick_parity_4272_4273" in build,
-        "AC5: build.py wires check_setcode_pick_parity_4272_4273.py",
+        "check_setcode_pick_parity_4272_4273" in wired_text,
+        "AC5: run_checks.py wires check_setcode_pick_parity_4272_4273.py",
     )
     allow = (ROOT / "scripts/coverage/root_check_allowlist.txt").read_text(encoding="utf-8")
     check(

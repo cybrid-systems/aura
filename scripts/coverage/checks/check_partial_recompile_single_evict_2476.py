@@ -17,6 +17,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -39,7 +41,6 @@ def main() -> int:
 
     jit = _read("src/compiler/aura_jit.cpp")
     test = _read("tests/compiler/test_partial_recompile_single_evict.cpp")
-    build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
     idx = jit.find("bool AuraJIT::partial_recompile")
@@ -61,8 +62,8 @@ def main() -> int:
     must_not("invalidate(name);\n    invalidate_prefix(name)", "AC4", body)
     must("Issue #2476", "AC4", jit)
 
-    must("check_partial_recompile_single_evict_2476", "gate", build)
-    must("cmd_partial_recompile_single_evict_coverage", "gate", build)
+    must("check_partial_recompile_single_evict_2476", "gate", wired_text)
+    must("check_partial_recompile_single_evict_2476.py", "gate", wired_text)
     must("test_partial_recompile_single_evict", "gate", cmake)
     must("2476 AC5", "gate", test)
 

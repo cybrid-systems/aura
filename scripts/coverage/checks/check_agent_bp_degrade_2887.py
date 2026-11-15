@@ -22,6 +22,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 SCOPE_FILES = [
     "src/orch/agent_spawn.h",
@@ -50,7 +52,6 @@ def main() -> int:
     scope = _read("src/orch/agent_scope.h")
     prims = _read("src/compiler/evaluator_primitives_agent.cpp")
     test = _read("tests/orch/test_agent_failure_policy.cpp")
-    build = _read("build.py")
     mvp = _read("scripts/coverage/checks/check_orch_mvp_scope.py")
 
     # ── AC1: default ReportOnly + Throttle enum + stall unchanged ──
@@ -101,7 +102,7 @@ def main() -> int:
             continue
         if re.search(r"\b(global_agent_registry|AgentRegistry)\b", line):
             fails.append(f"AC4: forbidden global registry identifier at agent_scope.h:{i}")
-    must("check_orch_mvp_scope", "AC4", build)
+    must("check_orch_mvp_scope", "AC4", wired_text)
     if not mvp:
         fails.append("AC4: missing check_orch_mvp_scope.py")
     must("global_agent_registry", "AC4", mvp)  # reintroduction-guard pattern list
@@ -130,8 +131,8 @@ def main() -> int:
     must("#2887", "AC6", test)
     must("on_backpressure", "AC6", test)
     must("AgentFailureAction::Throttle", "AC6", test)
-    if "check_agent_bp_degrade_2887" not in build:
-        fails.append("AC6: build.py does not wire #2887 linter")
+    if "check_agent_bp_degrade_2887" not in wired_text:
+        fails.append("AC6: run_checks.py does not discover #2887 linter")
     if (ROOT / "tests" / "core" / "test_issue_2887.cpp").is_file():
         fails.append("AC6: test_issue_2887.cpp present (forbidden per #81967)")
     if (ROOT / "tests" / "orch" / "test_issue_2887.cpp").is_file():

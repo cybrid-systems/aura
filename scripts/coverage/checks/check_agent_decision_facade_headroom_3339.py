@@ -60,6 +60,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 HEADROOM = 8
 INSERT_RE = re.compile(r'insert_kv(?:_str)?\(\s*"([^"]+)"')
 PLANNED_RE = re.compile(r"constexpr std::size_t (\w+PlannedKeys)\s*=\s*(\d+)")
@@ -163,7 +166,6 @@ def main() -> int:
     obsjit = _read("src/compiler/evaluator_primitives_obs_jit.cpp")
     test = _read("tests/compiler/test_engine_metrics_facade.cpp")
     lint3020 = _read("scripts/coverage/checks/check_query_hash_overflow_3020.py")
-    build = _read("build.py")
 
     must("kAgentDecisionFacadeHeadroom = 8", "AC1 headroom constant", ev)
     must("kAgentDecisionFacadeHeadroomIssue = 3339", "AC1 stamp", ev)
@@ -271,18 +273,20 @@ def main() -> int:
         )
     must("ac3339_3_plus20", "AC3 test cite", test)
 
-    must("check_query_hash_overflow_3020", "AC4 #3020 linter retained", build)
+    must("check_query_hash_overflow_3020", "AC4 #3020 linter retained", wired_text)
     must("Issue #3020", "AC4 #3020 linter body", lint3020)
     must("engine:metrics", "AC4 facade unchanged", test)
     must("ac3339_4_soft", "AC4 Soft test", test)
 
-    must("check_agent_decision_facade_headroom_3339", "AC5 build.py", build)
-    prev = build.find("check_query_hash_overflow_3020")
-    ours = build.find("check_agent_decision_facade_headroom_3339")
-    if ours < 0:
-        fails.append("AC5: linter must be wired in build.py")
-    elif prev >= 0 and ours < prev:
-        fails.append("AC5: linter must be wired in build.py AFTER #3020")
+    must("check_agent_decision_facade_headroom_3339", "AC5 wiring", wired_text)
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must("check_query_hash_overflow_3020", "AC5: linter must be gated by run_checks.py (both gated)", wired_text)
+    must(
+        "check_agent_decision_facade_headroom_3339",
+        "AC5: linter must be gated by run_checks.py (both gated)",
+        wired_text,
+    )
     must("ac3339_5_no_invent", "AC5 test", test)
     if (ROOT / "tests" / "compiler" / "test_issue_3339.cpp").is_file():
         fails.append("AC5: tests/compiler/test_issue_3339.cpp present (forbidden #81967)")

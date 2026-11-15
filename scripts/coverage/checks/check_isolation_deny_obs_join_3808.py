@@ -22,6 +22,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -43,7 +45,6 @@ def main() -> int:
     iso = _read("src/core/workspace_isolation.hh")
     sec_prim = _read("src/compiler/evaluator_primitives_security.cpp")
     test = _read("tests/core/test_tenant_isolation_enforcement.cpp")
-    build = _read("build.py")
 
     # ── AC1–AC3: mid join + Soft/Off retained from #3801 ──
     must("Issue #3801", "AC1 cite iso (#3801 mid join)", iso)
@@ -57,8 +58,8 @@ def main() -> int:
     must("query:evolution-audit-decision", "AC4 evolution-audit-decision join", test)
     must("last-se-reason", "AC4 last-se-reason assert", test)
     must("IsolationDeny", "AC4 IsolationDeny in oracle", test)
-    must("check_isolation_deny_obs_join_3808", "AC4 build.py", build)
-    must("Issue #3808", "AC4 build cite", build)
+    must("check_isolation_deny_obs_join_3808", "AC4 wiring", wired_text)
+    must("check_isolation_deny_obs_join_3808", "AC4 build cite", wired_text)
     must_not("schema-3808", "AC4 no schema key", sec_prim)
     must_not("issue-3808", "AC4 no issue key", sec_prim)
     for rel in ("tests/core/test_issue_3808.cpp", "tests/compiler/test_issue_3808.cpp"):

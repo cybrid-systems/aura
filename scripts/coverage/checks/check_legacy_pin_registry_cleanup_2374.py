@@ -17,6 +17,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -41,7 +43,6 @@ def main() -> int:
     pin = _read("src/core/lifetime_pin.hh")  # SSOT
     pin_mod = _read("src/core/lifetime_pin.ixx")
     test = _read("tests/core/test_moving_compact.cpp")
-    bp = _read("build.py")
 
     # AC1: densify no longer walks legacy registry
     must("invalidate_pins_not_in_new_addrs", "AC1", arena)
@@ -70,8 +71,8 @@ def main() -> int:
     must("Issue #2374", "AC3", test)
 
     # AC4: gate + source cites
-    must("cmd_legacy_pin_registry_cleanup_coverage", "AC4", bp)
-    must("check_legacy_pin_registry_cleanup_2374.py", "AC4", bp)
+    must("check_legacy_pin_registry_cleanup_2374.py", "AC4", wired_text)
+    must("check_legacy_pin_registry_cleanup_2374.py", "AC4", wired_text)
     must("Issue #2374", "AC4", test)
 
     if fails:

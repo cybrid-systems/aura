@@ -22,6 +22,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -42,7 +44,6 @@ def main() -> int:
     flat = _read("src/compiler/evaluator_eval_flat.cpp")
     obs = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
     test = _read("tests/core/test_general_object_pin.cpp")
-    build = _read("build.py")
 
     # ── AC1: inventory ──
     must("kFfiOpaquePinOrRemapIssue", "AC1 stamp", lp)
@@ -75,8 +76,8 @@ def main() -> int:
     must("ac3022_ffi_handoff_inventory", "AC4 inventory test", test)
     must("ac3022_ffi_owned_blocks_reclaim", "AC4 canary test", test)
     must("ac3022_pin_required_and_soak", "AC4 soak test", test)
-    must("check_ffi_opaque_pin_or_remap_3022", "AC4 build", build)
-    must("cmd_ffi_opaque_pin_or_remap_3022", "AC4 build cmd", build)
+    must("check_ffi_opaque_pin_or_remap_3022", "AC4 build", wired_text)
+    must("check_ffi_opaque_pin_or_remap_3022.py", "AC4 build cmd", wired_text)
     for rel in (
         "tests/compiler/test_issue_3022.cpp",
         "tests/core/test_issue_3022.cpp",

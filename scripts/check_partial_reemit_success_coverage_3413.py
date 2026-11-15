@@ -33,6 +33,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def main() -> int:
@@ -41,7 +43,6 @@ def main() -> int:
     hot = (ROOT / "src" / "compiler" / "hot_update_registry.cpp").read_text()
     obs = (ROOT / "src" / "compiler" / "observability_metrics.h").read_text()
     test = (ROOT / "tests" / "compiler" / "test_aot_incremental_reemit.cpp").read_text()
-    build = (ROOT / "build.py").read_text()
 
     # AC1 — decide_and_reemit skips the fallback demoted stamp.
     # Pipeline count∩emit / demoted stamp is the #3445 residual (do
@@ -110,10 +111,10 @@ def main() -> int:
     if "3413 AC7: build.py wiring" not in test:
         fails.append("AC7: test_aot_incremental_reemit.cpp missing 3413 AC7 marker")
 
-    if "cmd_partial_reemit_success_coverage_3413_coverage" not in build:
-        fails.append("AC7: build.py does not register cmd_partial_reemit_success_coverage_3413_coverage")
-    if "check_partial_reemit_success_coverage_3413" not in build:
-        fails.append("AC7: build.py does not register check_partial_reemit_success_coverage_3413 linter script")
+    if "check_partial_reemit_success_coverage_3413" not in wired_text:
+        fails.append("AC7: run_checks.py does not register cmd_partial_reemit_success_coverage_3413_coverage")
+    if "check_partial_reemit_success_coverage_3413" not in wired_text:
+        fails.append("AC7: run_checks.py does not register check_partial_reemit_success_coverage_3413 linter script")
 
     if fails:
         for f in fails:

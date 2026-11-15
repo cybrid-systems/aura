@@ -18,6 +18,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -67,7 +69,6 @@ def main() -> int:
 
     ast = _read("src/core/ast.ixx")
     test = _read("tests/core/test_structural_metadata_lock_order.cpp")
-    build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
     must("Issue #2418", "AC1", ast)
@@ -93,8 +94,8 @@ def main() -> int:
     else:
         print("=== #2418 AC3 audit: no metadata→structural nest found in src/ ===")
 
-    must("check_structural_metadata_lock_order_2418", "gate", build)
-    must("cmd_structural_metadata_lock_order_coverage", "gate", build)
+    must("check_structural_metadata_lock_order_2418", "gate", wired_text)
+    must("check_structural_metadata_lock_order_2418.py", "gate", wired_text)
     must("test_structural_metadata_lock_order", "gate", cmake)
 
     if fails:

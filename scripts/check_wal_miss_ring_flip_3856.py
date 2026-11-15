@@ -26,6 +26,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 SEC = ROOT / "src" / "compiler" / "evaluator_security.cpp"
 TST = ROOT / "tests" / "compiler" / "test_mutation_audit_wal.cpp"
 BUILD = ROOT / "build.py"
@@ -35,7 +38,6 @@ ALLOWLIST = ROOT / "scripts" / "coverage" / "root_check_allowlist.txt"
 def main() -> int:
     sec = SEC.read_text() if SEC.exists() else ""
     tst = TST.read_text() if TST.exists() else ""
-    build = BUILD.read_text() if BUILD.exists() else ""
     allow = ALLOWLIST.read_text() if ALLOWLIST.exists() else ""
     ok = True
 
@@ -71,8 +73,8 @@ def main() -> int:
     report("AC3", no_stray, "no test_issue_3856.cpp / docs-design strays")
 
     # AC4: gate wiring — build.py runs the linter and the allowlist lists it.
-    wired = "check_wal_miss_ring_flip_3856.py" in build and ("check_wal_miss_ring_flip_3856.py" in allow)
-    report("AC4", wired, "build.py + root_check_allowlist.txt wired")
+    wired = "check_wal_miss_ring_flip_3856.py" in wired_text and ("check_wal_miss_ring_flip_3856.py" in allow)
+    report("AC4", wired, "run_checks.py + root_check_allowlist.txt wired")
 
     return 0 if ok else 1
 

@@ -4,7 +4,7 @@
 Contract:
   AC1 SoA size mismatch (sym_id_ / int_val_ / …) recorded as violation
   AC2 Happy-path healthy FlatAST remains zero SoA violations
-  AC3 Source-cite + tests + CMake + build.py gate
+  AC3 Source-cite + tests + CMake + coverage runner
   AC4 No hard-abort on size check path
 
 Exit 0 = all rows satisfied.
@@ -20,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _source_scan import source_block_after  # noqa: E402  (sibling helper)
 
 ROOT = Path(__file__).resolve().parents[3]
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -40,7 +41,6 @@ def main() -> int:
     ixx = _read("src/core/ast.ixx")
     test = _read("tests/core/test_validate_post_restore_soa.cpp")
     cmake = _read("CMakeLists.txt")
-    build = _read("build.py")
 
     # AC1 cross-check present
     must("Issue #2391", "AC1", impl)
@@ -59,8 +59,8 @@ def main() -> int:
     # AC3 registration
     must("2391", "AC3", ixx)
     must("test_validate_post_restore_soa", "AC3", cmake)
-    must("check_validate_post_restore_soa_2391", "AC3", build)
-    must("cmd_validate_post_restore_soa_coverage", "AC3", build)
+    must("check_validate_post_restore_soa_2391", "AC3", wired_text)
+    must("check_validate_post_restore_soa_2391.py", "AC3", wired_text)
     must("ac3_source_and_gate", "AC3", test)
     must("Issue #2391", "AC3", test)
 

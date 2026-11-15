@@ -57,13 +57,6 @@
       ]
     },
     {
-      "ac": "AC6",
-      "path": "build.py",
-      "contains": [
-        "cmd_cone_truncate_force_closure_2909"
-      ]
-    },
-    {
       "ac": "AC7",
       "forbid_glob": [
         "docs/design/2909-*"

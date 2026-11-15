@@ -26,6 +26,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -100,7 +102,6 @@ def main() -> int:
     impl = _read("src/compiler/type_checker_impl.cpp")
     ta = _read("tests/compiler/test_bidirectional_annotation.cpp")
     tir = _read("tests/compiler/test_ir.cpp")
-    build = _read("build.py")
     lint3202 = _read("scripts/coverage/checks/check_production_strict_ground_unify_3202.py")
 
     must("kProductionDefaultsForceStrictUnifyIssue = 3430", "AC1 stamp", tix)
@@ -175,7 +176,7 @@ def main() -> int:
     must("Issue #117", "AC4 #117 cite", impl)
     must("ac3430_4_dynamic_and_linear", "AC4 live test_ir", tir)
 
-    must("check_production_defaults_force_strict_unify_3430", "AC5 build.py", build)
+    must("check_production_defaults_force_strict_unify_3430", "AC5 wiring", wired_text)
 
     # Issue #3592: effective Strict unify joins the production bootstrap gate.
     gate = _read("tests/serve/chaos_soak_production_gate.cpp")
@@ -191,10 +192,10 @@ def main() -> int:
         fails.append("AC3592: schema-3592 present (forbidden new query key)")
     must("ac3430_5_no_docs", "AC5 test", ta)
     must("3202", "AC5 3202 linter kept", lint3202)
-    prev = build.find("check_production_strict_ground_unify_3202")
-    ours = build.find("check_production_defaults_force_strict_unify_3430")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC5: #3430 linter must run after #3202")
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must("check_production_strict_ground_unify_3202", "AC5: #3430 linter must run (both gated)", wired_text)
+    must("check_production_defaults_force_strict_unify_3430", "AC5: #3430 linter must run (both gated)", wired_text)
     if "schema-3430" in tix or "schema-3430" in impl:
         fails.append("AC5: new schema-3430 query key")
     if "g_3430_" in tix or "g_3430_" in impl:

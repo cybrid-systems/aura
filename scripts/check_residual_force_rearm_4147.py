@@ -58,6 +58,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 CPP = ROOT / "src" / "compiler" / "hot_update_registry.cpp"
 TST3096 = ROOT / "tests" / "compiler" / "test_issue_3096.cpp"
 TSTREC = ROOT / "tests" / "compiler" / "test_reload_recovery_query.cpp"
@@ -78,7 +81,6 @@ def main() -> int:
     cpp = _strip_comments(cpp_raw)
     tst3096 = TST3096.read_text() if TST3096.exists() else ""
     tstrec = TSTREC.read_text() if TSTREC.exists() else ""
-    build = (ROOT / "build.py").read_text()
     allow = (ROOT / "scripts" / "coverage" / "root_check_allowlist.txt").read_text()
     ok = True
 
@@ -204,8 +206,8 @@ def main() -> int:
     # AC6 — wiring.
     report(
         "AC6.wiring",
-        "check_residual_force_rearm_4147.py" in build and "check_residual_force_rearm_4147.py" in allow,
-        "build.py wires this linter; root_check_allowlist.txt lists it",
+        "check_residual_force_rearm_4147.py" in wired_text and "check_residual_force_rearm_4147.py" in allow,
+        "run_checks.py wires this linter; root_check_allowlist.txt lists it",
     )
 
     print(f"check_residual_force_rearm_4147: {'OK' if ok else 'FAILED'}")

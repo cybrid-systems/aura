@@ -28,7 +28,7 @@ Gate rows:
   G5  test ACs in tests/compiler/test_query_result_full_provenance.cpp
       (#3103/#3137/#3231 suite home, #81967) citing #3286: production bare
       list is a hash (schema-2 auto-upgrade) + Soft bare list unchanged.
-  G6  build.py wires this linter.
+  G6  run_checks.py gates this linter.
   G7  no docs/design/3286-* (per #1655), no tests/issue*/test_issue_3286.cpp
       (per #81967).
 
@@ -39,6 +39,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 failures: list[str] = []
 
@@ -63,7 +65,6 @@ def main() -> int:
     print("=== #3286 production QueryResult schema-2 linter ===")
     src = read("src/compiler/evaluator_primitives_query_workspace.cpp")
     test = read("tests/compiler/test_query_result_full_provenance.cpp")
-    build = read("build.py")
 
     must("Issue #3286" in src, "G1: evaluator_primitives_query_workspace.cpp cites Issue #3286")
     must(
@@ -85,7 +86,7 @@ def main() -> int:
         and "Issue #3286" in src,
         "G5: test ACs in #3103/#3137/#3231 suite home cite #3286",
     )
-    must("check_production_query_result_schema2_3286.py" in build, "G6: build.py wires linter")
+    must("check_production_query_result_schema2_3286.py" in wired_text, "G6: run_checks.py gates linter")
 
     docs_ok = True
     if (ROOT / "docs/design").exists():

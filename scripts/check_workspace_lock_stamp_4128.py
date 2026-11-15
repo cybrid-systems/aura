@@ -41,6 +41,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 IXX = ROOT / "src" / "compiler" / "evaluator.ixx"
 JIT = ROOT / "src" / "compiler" / "aura_jit_runtime.cpp"
 TST = ROOT / "tests" / "serve" / "test_fiber_concurrent_unit_batch.cpp"
@@ -68,7 +71,6 @@ def main() -> int:
     ixx = IXX.read_text() if IXX.exists() else ""
     jit = JIT.read_text() if JIT.exists() else ""
     tst = TST.read_text() if TST.exists() else ""
-    build = (ROOT / "build.py").read_text()
     allow = (ROOT / "scripts" / "coverage" / "root_check_allowlist.txt").read_text()
     ok = True
 
@@ -130,7 +132,7 @@ def main() -> int:
         and "run_4128_serve_define_call_alive_smoke" in tst
         and not (ROOT / "tests" / "serve" / "test_issue_4128.cpp").exists()
         and no_doc
-        and "check_workspace_lock_stamp_4128.py" in build
+        and "check_workspace_lock_stamp_4128.py" in wired_text
         and "check_workspace_lock_stamp_4128.py" in allow
     )
     report("AC5", good, "tests cite #4128; no issue-file/doc; build.py + allowlist wired")

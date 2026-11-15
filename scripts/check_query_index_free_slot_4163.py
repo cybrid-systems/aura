@@ -46,6 +46,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 QIDX = ROOT / "src" / "compiler" / "evaluator_query_index.cpp"
 QWS = ROOT / "src" / "compiler" / "evaluator_primitives_query_workspace.cpp"
 TST = ROOT / "tests" / "compiler" / "test_query_index_composite.cpp"
@@ -72,7 +75,6 @@ def main() -> int:
     qidx = QIDX.read_text() if QIDX.exists() else ""
     qws = QWS.read_text() if QWS.exists() else ""
     tst = TST.read_text() if TST.exists() else ""
-    build = BUILD.read_text() if BUILD.exists() else ""
     allow = ALLOW.read_text() if ALLOW.exists() else ""
 
     must(bool(qidx), "evaluator_query_index TU readable")
@@ -149,7 +151,7 @@ def main() -> int:
     )
     stray = [p.name for p in (ROOT / "docs" / "design").glob("4163-*")] if (ROOT / "docs/design").exists() else []
     must(not stray, "AC4: no docs/design/4163-* markdown")
-    must("check_query_index_free_slot_4163.py" in build, "AC4: build.py registers the linter")
+    must("check_query_index_free_slot_4163.py" in wired_text, "AC4: run_checks.py registers the linter")
     must("check_query_index_free_slot_4163.py" in allow, "AC4: root_check_allowlist.txt lists the linter")
 
     failed = [label for ok, label in checks if not ok]

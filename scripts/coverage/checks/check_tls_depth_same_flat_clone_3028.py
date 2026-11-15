@@ -21,6 +21,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -39,7 +41,6 @@ def main() -> int:
     ixx = _read("src/compiler/macro_expansion.ixx")
     q = _read("src/compiler/evaluator_primitives_query_obs_mid.cpp")
     test = _read("tests/compiler/test_concurrent_clone_hygiene_depth.cpp")
-    build = _read("build.py")
     bridge = _read("src/compiler/aura_jit_bridge.h")
 
     # AC1 explicit depth authority
@@ -74,8 +75,8 @@ def main() -> int:
     must("3028 AC4", "AC4 test", test)
 
     # AC5 wiring
-    must("check_tls_depth_same_flat_clone_3028", "AC5 build", build)
-    must("cmd_tls_depth_same_flat_clone_3028", "AC5 build cmd", build)
+    must("check_tls_depth_same_flat_clone_3028", "AC5 build", wired_text)
+    must("check_tls_depth_same_flat_clone_3028.py", "AC5 build cmd", wired_text)
     must("ac2806", "AC5 preserve 2806", test)
     cite = me.find("Issue #3028")
     if cite >= 0 and "AgentRegistry" in me[cite : cite + 2500]:

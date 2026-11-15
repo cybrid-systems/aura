@@ -24,6 +24,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -52,7 +54,6 @@ def main() -> int:
     proof = _read("src/core/envframe_lifetime.ixx")
     scan_t = _read("tests/compiler/test_scan_skip_freed_closures.cpp")
     trunc_t = _read("tests/compiler/test_envframe_truncate_epoch.cpp")
-    build = _read("build.py")
 
     # ── AC1: named protocol ──
     must("Issue #3021", "AC1", ev)
@@ -86,8 +87,8 @@ def main() -> int:
     must("ac3021_envframe_apply_protocol", "AC4 truncate suite", trunc_t)
     must("AC3021: steal×compact FiberSteal Guard", "AC4 steal", trunc_t)
     must("AC3021: steal×compact CompactSweep Guard", "AC4 compact", trunc_t)
-    must("check_envframe_closure_apply_protocol_3021", "AC4 build", build)
-    must("cmd_envframe_closure_apply_protocol_3021", "AC4 build cmd", build)
+    must("check_envframe_closure_apply_protocol_3021", "AC4 build", wired_text)
+    must("check_envframe_closure_apply_protocol_3021.py", "AC4 build cmd", wired_text)
     for rel in (
         "tests/compiler/test_issue_3021.cpp",
         "tests/core/test_issue_3021.cpp",

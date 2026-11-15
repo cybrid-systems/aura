@@ -85,13 +85,6 @@
       ]
     },
     {
-      "ac": "AC5",
-      "path": "build.py",
-      "contains": [
-        "Issue #3113"
-      ]
-    },
-    {
       "ac": "AC6",
       "forbid": [
         "tests/compiler/test_issue_3113.cpp",

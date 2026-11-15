@@ -16,6 +16,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -39,7 +41,6 @@ def main() -> int:
     h = _read("src/compiler/typed_mutation_audit.h")
     obs = _read("src/compiler/evaluator_primitives_obs_jit.cpp")
     test = _read("tests/compiler/test_audit_trail_lockfree.cpp")
-    build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
     def_pos = h.find("inline void capture_audit_event_forced")
@@ -81,7 +82,7 @@ def main() -> int:
     must("test_audit_trail_lockfree", "AC3", cmake)
 
     # AC4
-    must("check_audit_trail_lockfree_2819", "AC4", build)
+    must("check_audit_trail_lockfree_2819", "AC4", wired_text)
     docs = ROOT / "docs" / "design"
     if docs.is_dir():
         for f in sorted(docs.glob("2819-*")):

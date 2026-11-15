@@ -21,6 +21,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -42,7 +44,6 @@ def main() -> int:
     impl = _read("src/compiler/type_checker_impl.cpp")
     test_health = _read("tests/compiler/test_type_linear_commit_health.cpp")
     test_heavy = _read("tests/compiler/test_typesystem_solve_delta_occurrence_priority_heavy_mutate.cpp")
-    build = _read("build.py")
     emb = _read("src/compiler/evaluator_mutation_boundary.cpp")
 
     start = impl.find("SolveResult ConstraintSystem::solve_delta(")
@@ -88,11 +89,14 @@ def main() -> int:
     must_not("schema-3477", "AC4 no query key", impl)
     must_not("g_3477_", "AC4 no g_3477_*", impl)
 
-    must("check_solve_delta_dirty_skip_residual_3477", "AC6 build.py", build)
-    prev = build.find("check_residual_drain_outermost_stamp_3190")
-    ours = build.find("check_solve_delta_dirty_skip_residual_3477")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC6: linter must be wired in build.py AFTER #3190")
+    must("check_solve_delta_dirty_skip_residual_3477", "AC6 wiring", wired_text)
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must(
+        "check_solve_delta_dirty_skip_residual_3477",
+        "AC6: linter must be gated by run_checks.py (both gated)",
+        wired_text,
+    )
 
     if (ROOT / "tests" / "compiler" / "test_issue_3477.cpp").is_file():
         fails.append("AC5: test_issue_3477.cpp present (forbidden #81967)")

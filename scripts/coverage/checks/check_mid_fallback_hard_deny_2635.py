@@ -22,6 +22,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -41,7 +43,6 @@ def main() -> int:
     tma = _read("src/compiler/typed_mutation_audit.h")
     slo = _read("src/compiler/audit_mid_fallback_slo.h")
     test = _read("tests/compiler/test_audit_mid_fallback_slo.cpp")
-    build = _read("build.py")
     linter_2493 = _read("scripts/coverage/manifests/2493.json")
     linter_2594 = _read("scripts/coverage/manifests/2594.json")
 
@@ -67,7 +68,7 @@ def main() -> int:
     # AC5: existing #2493 / #2594 coverage manifests still present
     must("2493", "AC5", linter_2493)
     must("2594", "AC5", linter_2594)
-    must("check_mid_fallback_hard_deny_2635", "AC5", build)
+    must("check_mid_fallback_hard_deny_2635", "AC5", wired_text)
     must("#2635", "AC5", test)
 
     # AC6: resolve surface unchanged; Soft next_audit still called

@@ -20,6 +20,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -40,7 +42,6 @@ def main() -> int:
 
     ixx = _read("src/core/arena.ixx")
     test = _read("tests/serve/test_gc_compact_sweep_batch.cpp")
-    build = _read("build.py")
     gf = _read("scripts/coverage/simple_check_grandfather.txt")
 
     rel = ixx.find("// ── Relocate (freelist protocol) ──")
@@ -93,7 +94,7 @@ def main() -> int:
     must("3810 AC2", "AC2 this-window bump marker", test)
 
     # Wire
-    must("check_soft_gen_bump_this_window_3810.py", "build wire", build)
+    must("check_soft_gen_bump_this_window_3810.py", "build wire", wired_text)
     must("check_soft_gen_bump_this_window_3810.py", "grandfather", gf)
 
     if fails:

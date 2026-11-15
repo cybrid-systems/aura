@@ -21,6 +21,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -38,7 +40,6 @@ def main() -> int:
     impl = _read("src/compiler/ir_executor_impl.cpp")
     test = _read("tests/compiler/test_dispatch_required_effects.cpp")
     gf = _read("scripts/coverage/simple_check_grandfather.txt")
-    build = _read("build.py")
 
     call = impl.find("case IROpcode::Call")
     if call < 0:
@@ -79,7 +80,7 @@ def main() -> int:
     must("vector-set!", "AC2 mutate-class Call", test)
 
     must("check_call_ownerless_fail_closed_3834.py", "AC4 grandfather", gf)
-    must("check_call_ownerless_fail_closed_3834", "AC4 build wiring", build)
+    must("check_call_ownerless_fail_closed_3834", "AC4 build wiring", wired_text)
 
     if fails:
         for f in fails:

@@ -21,6 +21,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -45,7 +47,6 @@ def main() -> int:
     test = _read("tests/compiler/test_must_deopt_before_next_call.cpp") + _read(
         "tests/compiler/test_closure_call_must_deopt_toctou.cpp"
     )
-    build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
     g = rt.find('extern "C" int aura_get_closure_must_deopt_before_next_call')
@@ -90,8 +91,8 @@ def main() -> int:
     must("aura_get_closure_must_deopt_before_next_call", "AC3 getter used", test)
 
     must("aura_get_closure_must_deopt_before_next_call", "AC4 stub", stub)
-    must("check_must_deopt_getter_sticky_3247", "AC5 build.py", build)
-    must("cmd_must_deopt_getter_sticky_3247_coverage", "AC5 cmd", build)
+    must("check_must_deopt_getter_sticky_3247", "AC5 wiring", wired_text)
+    must("check_must_deopt_getter_sticky_3247.py", "AC5 cmd", wired_text)
     must("test_must_deopt_before_next_call", "AC5 cmake", cmake)
     if _read("tests/compiler/test_issue_3247.cpp") or _read("tests/issues/test_issue_3247.cpp"):
         fails.append("AC5: test_issue_3247.cpp present (forbidden #81967)")

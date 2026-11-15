@@ -19,6 +19,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -38,7 +40,6 @@ def main() -> int:
     hdr = _read("src/serve/steal_safety.h")
     mut = _read("src/compiler/evaluator_primitives_obs_jit.cpp")
     t = _read("tests/serve/test_steal_complete_restamp_txn.cpp")
-    build = _read("build.py")
 
     # AC1
     must("Issue #2954", "AC1", fh)
@@ -74,7 +75,7 @@ def main() -> int:
     must("ac2954_1_no_process_wide_mutex", "AC5", t)
     must("ac2954_2_concurrent_multi_victim", "AC5", t)
     must("ac2954_3_rearm_still_reject_hard", "AC5", t)
-    must("check_steal_decision_per_fiber_2954", "AC5", build)
+    must("check_steal_decision_per_fiber_2954", "AC5", wired_text)
     if (ROOT / "tests" / "serve" / "test_issue_2954.cpp").is_file():
         fails.append("AC6: test_issue_2954.cpp present (forbidden #81967)")
     docs = ROOT / "docs" / "design"

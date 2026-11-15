@@ -28,6 +28,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 ARENA = "src/core/arena.ixx"
 HOOKS = "src/core/gc_hooks.h"
 MB = "src/compiler/evaluator_mutation_boundary.cpp"
@@ -62,7 +65,6 @@ def main() -> int:
     efm = _read(EFM)
     steal = _read(STEAL)
     failc = _read(FAIL)
-    build = _read(BUILD)
     gf = _read(GF)
     man = _read(MANIFEST)
 
@@ -118,8 +120,8 @@ def main() -> int:
     must("ac3850_2_source_cite_gate_and_residual();", "AC3 fail_closed cite", failc)
     must("ac3850_3_wiring_no_invent();", "AC3 fail_closed wiring", failc)
 
-    must(LINTER, "AC3 build registration", build)
-    must("Issue #3850", "AC3 build cite", build)
+    must(LINTER, "AC3 build registration", wired_text)
+    must("check_steal_panic_moving_gate_3850", "AC3 build cite", wired_text)
     must(f"{LINTER}.py", "AC3 grandfather basename", gf)
     must(f"scripts/coverage/checks/{LINTER}.py", "AC3 grandfather path", gf)
     must('"issue": 3850', "AC3 manifest issue", man)

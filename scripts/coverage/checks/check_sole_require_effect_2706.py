@@ -34,6 +34,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 # Production TUs that must not call Evaluator::check_and_record_effect.
 PROD_GLOBS = [
@@ -153,7 +155,6 @@ def main() -> int:
     side = _read("src/compiler/security_side_effect.hh")
     q = _read("src/compiler/evaluator_primitives_obs_jit.cpp")
     test = _read("tests/compiler/test_require_effect_auto_isolation.cpp")
-    build = _read("build.py")
     io_cpp = _read("src/compiler/evaluator_primitives_io.cpp")
     sec_prim = _read("src/compiler/evaluator_primitives_security.cpp")
     mut = _read("src/compiler/evaluator_primitives_mutate.cpp")
@@ -236,7 +237,7 @@ def main() -> int:
     must("#2706", "AC6", side)
     must("#2706", "AC6", q)
     must("#2706", "AC6", test)
-    must("check_sole_require_effect_2706", "AC6", build)
+    must("check_sole_require_effect_2706", "AC6", wired_text)
     for rel in (
         "docs/design/sole_require_effect_2706.md",
         "docs/sole_require_effect_2706.md",

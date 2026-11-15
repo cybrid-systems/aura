@@ -25,6 +25,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -47,7 +49,6 @@ def main() -> int:
     sec = _read("src/compiler/evaluator_security.cpp")
     cap = _read("tests/core/test_stable_ref_tenant_capture.cpp")
     t = _read("tests/compiler/test_hygiene_mutate_closed_loop.cpp")
-    build = _read("build.py")
     l3000 = _read("scripts/coverage/manifests/3000.json")
     l3230 = _read("scripts/coverage/checks/check_query_stable_restamp_lag_hard_reject_3230.py")
 
@@ -88,11 +89,11 @@ def main() -> int:
     must("Issue #3259", "AC5 nested cite", nwin)
     must("Issue #3312", "AC5 nested thin hot-cone", nwin)
     must("ac3259_5_source_and_linter", "AC5 tenant-capture", cap)
-    must("check_restamp_hot_cone_budget_3259", "AC5 build.py", build)
-    prev = build.find("check_abort_force_lookup_reject_3258")
-    ours = build.find("check_restamp_hot_cone_budget_3259")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC5: linter must be wired in build.py AFTER #3258")
+    must("check_restamp_hot_cone_budget_3259", "AC5 wiring", wired_text)
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must("check_abort_force_lookup_reject_3258", "AC5: linter must be gated by run_checks.py (both gated)", wired_text)
+    must("check_restamp_hot_cone_budget_3259", "AC5: linter must be gated by run_checks.py (both gated)", wired_text)
     must("3259", "AC5 extend 3000 linter", l3000)
     must("3259", "AC5 extend 3230 linter", l3230)
 

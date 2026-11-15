@@ -18,6 +18,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from query_prims_sources import read_query_prims  # Issue #2914
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -43,7 +45,6 @@ def main() -> int:
     tma = _read("src/compiler/typed_mutation_audit.h")
     q = read_query_prims()
     t = _read("tests/compiler/test_occurrence_goal_persist_rehydrate.cpp")
-    build = _read("build.py")
 
     must("2896", "AC1", impl)
     must("AuditStrategy::Full", "AC1", impl)
@@ -62,8 +63,8 @@ def main() -> int:
     must("ac2896_4_goal_truth_after_rehydrate", "AC5", t)
     must("ac2896_5_query_and_source", "AC5", t)
 
-    # Wire into build.py gate if pattern exists for 2608
-    if "check_occurrence_goal_persist_rehydrate_2608" in build:
+    # Wire into coverage runner if pattern exists for 2608
+    if "check_occurrence_goal_persist_rehydrate_2608" in wired_text:
         # Prefer additive mention of 2896 script when build lists checks
         pass  # optional — do not fail if not yet listed
 

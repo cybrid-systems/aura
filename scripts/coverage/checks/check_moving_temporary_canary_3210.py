@@ -16,7 +16,7 @@ Contract (one row per AC):
   AC4  apply_closure notes cl_copy.flat / cl_copy.pool (not rehash-stable
        slots). Stay on LifetimePin SSOT + existing canary list.
   AC5  Stamp kMovingTemporaryCanaryIssue=3210 at densify_consistency_report.h
-       END; extend test_moving_densify_fail_closed; linter wired in build.py.
+       END; extend test_moving_densify_fail_closed; linter gated by run_checks.py.
        No docs/design/3210-* (#1655); no test_issue_3210.cpp (#81967).
 
 Exit 0 = all rows satisfied.
@@ -28,6 +28,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -48,7 +50,6 @@ def main() -> int:
     apply = _read("src/compiler/evaluator_eval_flat.cpp")
     dc = _read("src/core/densify_consistency_report.h")
     test = _read("tests/core/test_moving_densify_fail_closed.cpp")
-    build = _read("build.py")
 
     # ── AC1: inventory + drain sites ──
     must("TemporaryMovingLivePtrCanary", "AC1 RAII", arena)
@@ -93,7 +94,7 @@ def main() -> int:
     fr_pos = dc.find("force_reason_to_string")
     if stamp_pos == -1 or fr_pos == -1 or stamp_pos < fr_pos:
         fails.append("AC5: stamp must be appended at densify_consistency_report.h end")
-    must("check_moving_temporary_canary_3210", "AC5 build", build)
+    must("check_moving_temporary_canary_3210", "AC5 build", wired_text)
     must("ac3210_6_source_cite_no_invent", "AC5 source-cite test", test)
     if _read("docs/design/3210-temporary-canary.md"):
         fails.append("AC5: docs/design/3210-* present (forbidden per #1655)")

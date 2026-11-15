@@ -30,6 +30,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -51,7 +53,6 @@ def main() -> int:
     eval_sec = _read("src/compiler/evaluator_security.cpp")
     q = _read("src/compiler/evaluator_primitives_obs_jit.cpp")
     test = _read("tests/core/test_tenant_isolation_enforcement.cpp")
-    build = _read("build.py")
 
     # AC1 — hard-close armed + maybe_stamp refuses + evaluator_miss bump.
     must("kHardCaptureTenantIssue", "AC1", prov)
@@ -150,7 +151,7 @@ def main() -> int:
     must("#2705", "AC6", q)
     must("#2705", "AC6", test)
     must("hard_capture_tenant", "AC6", test)
-    must("check_hard_capture_tenant_2705", "AC6", build)
+    must("check_hard_capture_tenant_2705", "AC6", wired_text)
     for rel in (
         "docs/design/hard_capture_tenant_2705.md",
         "docs/hard_capture_tenant_2705.md",

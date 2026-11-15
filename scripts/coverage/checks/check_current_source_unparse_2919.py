@@ -6,7 +6,7 @@ AC:
   2. Lambda dotted rest (int_value / HasLambdaDotted)
   3. String escapes for newline/tab/quote/backslash
   4. No P0 tag left only in default <N> path (arms present)
-  5. Suite + build.py wiring
+  5. Suite + gate wiring
 
 Issue #2922: unparse lives in src/core/ast_unparse.ixx; current-source is
 a thin wrapper that calls unparse_to_string.
@@ -82,7 +82,7 @@ def main() -> int:
     must(
         (ROOT / "scripts" / "coverage" / "checks" / "check_current_source_unparse_2919.py").is_file()
         and "discover_checks" in _read("scripts/coverage/run_checks.py"),
-        "AC5: build.py gate",
+        "AC5: coverage runner",
     )
 
     if fails:

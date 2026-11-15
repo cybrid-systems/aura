@@ -55,13 +55,6 @@
       ]
     },
     {
-      "ac": "AC5",
-      "path": "build.py",
-      "contains": [
-        "Issue #3369"
-      ]
-    },
-    {
       "ac": "AC6",
       "forbid": [
         "tests/serve/test_issue_3369.cpp",

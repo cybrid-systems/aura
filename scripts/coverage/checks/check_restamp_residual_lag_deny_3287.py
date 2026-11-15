@@ -30,7 +30,7 @@ Gate rows:
       g_unified_restamp_torn_visible_total (no new key).
   G5  test ACs in tests/core/test_stable_ref_tenant_capture.cpp (#3259 suite
       home, #81967) citing #3287.
-  G6  build.py wires this linter.
+  G6  run_checks.py gates this linter.
   G7  no docs/design/3287-* (per #1655), no tests/issue*/test_issue_3287.cpp
       (per #81967).
 
@@ -41,6 +41,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 failures: list[str] = []
 
@@ -66,7 +68,6 @@ def main() -> int:
     q = read("src/compiler/evaluator_primitives_query.cpp")
     fm = read("src/compiler/evaluator_fiber_mutation.cpp")
     test = read("tests/core/test_stable_ref_tenant_capture.cpp")
-    build = read("build.py")
 
     qpos = q.find('add("query:stable-ref-provenance"')
     if qpos == -1:
@@ -91,7 +92,7 @@ def main() -> int:
         "ac3287_1_residual_lag_deny_surface" in test and "Issue #3287" in test,
         "G5: test ACs in #3259 suite home cite #3287",
     )
-    must("check_restamp_residual_lag_deny_3287.py" in build, "G6: build.py wires linter")
+    must("check_restamp_residual_lag_deny_3287.py" in wired_text, "G6: run_checks.py gates linter")
 
     docs_ok = True
     if (ROOT / "docs/design").exists():

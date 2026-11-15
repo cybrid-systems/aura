@@ -31,6 +31,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from query_prims_sources import read_query_prims  # Issue #2914
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -52,7 +54,6 @@ def main() -> int:
     mb = _read("src/compiler/evaluator_mutation_boundary.cpp")
     q = read_query_prims()
     test = _read("tests/compiler/test_dead_coercion_layered.cpp")
-    build = _read("build.py")
     dce = _read("src/compiler/dce_elided_deopt_meta.h")
 
     # AC1: new counter present + bumped at both elision sites (>= 2)
@@ -95,7 +96,7 @@ def main() -> int:
     # AC6: test file + build.py wired
     must("run_2674_layered_coherence", "AC6", test)
     must("ac2674_linter_and_build_py", "AC6", test)
-    must("check_layered_evidence_coherence_2674", "AC6", build)
+    must("check_layered_evidence_coherence_2674", "AC6", wired_text)
     must("#2674", "AC6", cixx)  # source-cite in production
 
     # Source-cite lineage to #2645 / #2611 / #2624 (additive, not replacement)

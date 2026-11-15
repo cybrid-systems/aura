@@ -18,6 +18,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -41,7 +43,6 @@ def main() -> int:
     t_bp = _read("tests/orch/test_per_scope_bp_admit.cpp")
     t_q = _read("tests/serve/test_spawn_quota_no_leak.cpp")
     t_ss = _read("tests/orch/test_security_schedule_gate.cpp")
-    build = _read("build.py")
 
     must("kAgentDenyClassIssue = 3251", "AC1 stamp", spawn)
     must("classify_agent_deny", "AC1 classify", spawn)
@@ -68,7 +69,7 @@ def main() -> int:
     must("3251", "AC5 BP test", t_bp)
     must("3251", "AC5 quota test", t_q)
     must("3251", "AC5 schedule test", t_ss)
-    must("check_agent_deny_class_3251", "AC5 build.py", build)
+    must("check_agent_deny_class_3251", "AC5 wiring", wired_text)
 
     if "AgentRegistry" in spawn[spawn.find("Issue #3251") : spawn.find("Issue #3251") + 1600]:
         fails.append("AC5: must not introduce AgentRegistry")

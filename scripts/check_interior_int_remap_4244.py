@@ -48,7 +48,7 @@ Contract (one row per AC):
   AC4  runtime ACs dispatched in tests/core/test_moving_densify_fail_closed.cpp
        (ac4244_1..ac4244_3 in run_test_moving_densify_fail_closed before the
        Results line); no tests/**/test_issue_4244.cpp
-  AC5  build.py wiring + scripts/coverage/root_check_allowlist.txt entry
+  AC5  run_checks.py wiring + scripts/coverage/root_check_allowlist.txt entry
 
 Exit 0 = all rows satisfied.
 """
@@ -59,6 +59,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -167,8 +169,7 @@ def main() -> int:
     must("#4244 AC3", "AC4 AC3 body", test)
 
     # AC5: build.py wiring + root allowlist entry.
-    build = _read("build.py")
-    must("check_interior_int_remap_4244.py", "AC5 build.py wiring", build)
+    must("check_interior_int_remap_4244.py", "AC5 run_checks.py wiring", wired_text)
     allow = _read("scripts/coverage/root_check_allowlist.txt")
     must("check_interior_int_remap_4244.py", "AC5 allowlist entry", allow)
 

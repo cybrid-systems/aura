@@ -27,6 +27,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -51,7 +53,6 @@ def main() -> int:
     sec = _read("src/compiler/evaluator_primitives_security.cpp")
     test = _read("tests/core/test_restamp_sla_observability.cpp")
     cmake = _read("CMakeLists.txt")
-    build = _read("build.py")
 
     # AC1 — query surface reports restamp-us / nodes / policy / breach.
     must("stable-ref-sv-scale-schema-2528", "AC1", sec)
@@ -110,7 +111,7 @@ def main() -> int:
     must("AC6", "AC6", test)
     must("additive schema", "AC6", test)
     must("tests/core/test_restamp_sla_observability.cpp", "AC6", cmake)  # batch member source (S5)
-    must("check_restamp_sla_observability_2528", "AC6", build)
+    must("check_restamp_sla_observability_2528", "AC6", wired_text)
 
     if fails:
         print("check_restamp_sla_observability_2528: FAIL")

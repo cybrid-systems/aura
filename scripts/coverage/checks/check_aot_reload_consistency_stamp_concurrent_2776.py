@@ -21,6 +21,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -40,7 +42,6 @@ def main() -> int:
     thin = _read("src/compiler/aot_reload_consistency_proof.h")
     bridge = _read("src/compiler/aura_jit_bridge.cpp")
     test = _read("tests/compiler/test_reload_recovery_query.cpp")
-    build = _read("build.py")
 
     # AC1 — fetch_add stamp_epoch; ban lost-update RMW
     must("#2776", "AC1", thin)
@@ -89,7 +90,7 @@ def main() -> int:
     must("ac2776_2_concurrent_stamp_monotonic", "AC4", test)
     must("ac2776_3_reader_no_tear", "AC4", test)
     must("ac2776_4_source_cite_linter", "AC4", test)
-    must("check_aot_reload_consistency_stamp_concurrent_2776", "AC4", build)
+    must("check_aot_reload_consistency_stamp_concurrent_2776", "AC4", wired_text)
     must("#2776", "AC4", bridge)
     docs = ROOT / "docs" / "design"
     if docs.is_dir():

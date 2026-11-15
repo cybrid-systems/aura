@@ -19,6 +19,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -37,7 +39,6 @@ def main() -> int:
 
     src = _read("src/compiler/evaluator_primitives_memory.cpp")
     test = _read("tests/compiler/test_gc_heap_cells_clear.cpp")
-    build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
     # Issue #4816: the destructive clear moved from the gc-heap fallback
@@ -65,8 +66,8 @@ def main() -> int:
     must("error_values_.clear()", "AC3", body)
 
     must("2486 AC1", "AC4", test)
-    must("check_gc_heap_cells_clear_2486", "gate", build)
-    must("cmd_gc_heap_cells_clear_coverage", "gate", build)
+    must("check_gc_heap_cells_clear_2486", "gate", wired_text)
+    must("check_gc_heap_cells_clear_2486.py", "gate", wired_text)
     must("test_gc_heap_cells_clear", "gate", cmake)
     must("2486 AC4", "gate", test)
 

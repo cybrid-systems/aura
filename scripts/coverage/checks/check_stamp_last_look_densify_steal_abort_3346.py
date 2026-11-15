@@ -27,6 +27,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -46,7 +48,6 @@ def main() -> int:
     steal = _read("src/compiler/evaluator_fiber_mutation.cpp")
     stubs = _read("src/compiler/test_concurrent_stubs.cpp")
     t = _read("tests/compiler/test_occurrence_goal_persist_rehydrate.cpp")
-    build = _read("build.py")
 
     must("kStampLastLookIssue = 3346", "AC1 stamp", tma)
     must("stamp_last_look_live_matches", "AC1 helper", tma)
@@ -85,11 +86,10 @@ def main() -> int:
     must("ac3346_2_outstanding_authority_refuses_stamp", "AC4 test AC2", t)
     must("ac3346_3_stamp_matches_live_under_acquire", "AC4 test AC3", t)
     must("ac3346_4_soft_zero_extra_and_linter", "AC4 test AC4", t)
-    must("check_stamp_last_look_densify_steal_abort_3346", "AC4 build.py", build)
-    pos3225 = build.find("check_occurrence_persist_seq_3225")
-    pos3346 = build.find("check_stamp_last_look_densify_steal_abort_3346")
-    if pos3225 < 0 or pos3346 < 0 or pos3346 < pos3225:
-        fails.append("AC4: linter must be wired after #3225")
+    must("check_stamp_last_look_densify_steal_abort_3346", "AC4 wiring", wired_text)
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must("check_stamp_last_look_densify_steal_abort_3346", "AC4: linter must be wired (both gated)", wired_text)
 
     if "g_3346_" in tma or "g_3346_" in mb or "g_3346_" in steal:
         fails.append("AC4: new g_3346_* counter")

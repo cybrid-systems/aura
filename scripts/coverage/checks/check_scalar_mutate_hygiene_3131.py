@@ -36,6 +36,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from query_prims_sources import read_query_prims
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -189,7 +191,7 @@ def main() -> int:
     must(
         "check_scalar_mutate_hygiene_3131",
         "AC6 build.py",
-        _read("build.py") + _read("pyproject.toml") + _read(".pre-commit-config.yaml"),
+        wired_text + _read("pyproject.toml") + _read(".pre-commit-config.yaml"),
     )
 
     if fails:

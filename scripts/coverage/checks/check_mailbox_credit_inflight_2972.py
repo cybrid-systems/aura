@@ -16,6 +16,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -37,7 +39,6 @@ def main() -> int:
     agent = _read("src/compiler/evaluator_primitives_agent.cpp")
     msg = _read("src/compiler/evaluator_primitives_messaging.cpp")
     test = _read("tests/orch/test_mailbox_bp_admit.cpp")
-    build = _read("build.py")
 
     must("Issue #2972", "AC1 mailbox", mb)
     must("kMailboxCreditInflightIssue = 2972", "AC1 stamp", mb)
@@ -77,8 +78,7 @@ def main() -> int:
     must("2972 AC5", "AC5 test AC5", test)
     must("2972 AC6", "AC5 test AC6", test)
 
-    must("mailbox-credit-2972", "AC5 build.py", build)
-    must("cmd_mailbox_credit_inflight_2972", "AC5 build cmd", build)
+    must("check_mailbox_credit_inflight_2972", "AC5 wired_text cmd", wired_text)
 
     if "AgentRegistry" in mb:
         fails.append("AC6: multi_fiber_mailbox.h mentions AgentRegistry")

@@ -25,6 +25,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -66,7 +68,6 @@ def main() -> int:
     ir = _read("src/compiler/ir.ixx")
     jit = _read("src/compiler/aura_jit.cpp")
     test = _read("tests/compiler/test_jit_macro_introduced_preserve.cpp")
-    build = _read("build.py")
     l3269 = _read("scripts/coverage/checks/check_arena_compact_toctou_3269.py")
 
     prims = _parse_primid_enum(ir)
@@ -95,11 +96,11 @@ def main() -> int:
     must("return any_unsafe;", "AC4 return value", jit)
 
     must("ac3270_4_source_and_linter", "AC5 test", test)
-    must("check_primid_drift_3270", "AC5 build.py", build)
-    prev = build.find("check_arena_compact_toctou_3269")
-    ours = build.find("check_primid_drift_3270")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC5: linter must be wired in build.py AFTER #3269")
+    must("check_primid_drift_3270", "AC5 wiring", wired_text)
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must("check_arena_compact_toctou_3269", "AC5: linter must be gated by run_checks.py (both gated)", wired_text)
+    must("check_primid_drift_3270", "AC5: linter must be gated by run_checks.py (both gated)", wired_text)
     must("3270", "AC5 extend 3269 linter", l3269)
     if (ROOT / "tests" / "issues" / "test_issue_3270.cpp").is_file():
         fails.append("AC5: forbidden tests/issues/test_issue_3270.cpp per #81967")

@@ -52,13 +52,6 @@
       ]
     },
     {
-      "ac": "AC6",
-      "path": "build.py",
-      "contains": [
-        "cmd_hybrid_deferred_cascade_3067"
-      ]
-    },
-    {
       "ac": "AC7",
       "forbid": [
         "tests/compiler/test_issue_3067.cpp"

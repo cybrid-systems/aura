@@ -34,6 +34,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -55,7 +57,6 @@ def main() -> int:
 
     arena = _read("src/core/arena.ixx")
     health = _read("src/core/moving_densify_health.hh")
-    build = _read("build.py")
     arena_stripped = _strip_comments_and_strings(arena)
 
     # AC1: maybe_auto_compact_on_alloc has the source-cite anchor + the
@@ -172,8 +173,8 @@ def main() -> int:
     # AC7: source-cite #3404 + build.py registration; no design docs.
     if "#3404" not in arena and "#3404" not in health:
         fails.append("AC7: source-cite #3404 missing from arena.ixx / moving_densify_health.hh")
-    if "check_arena_auto_arm_soft_fallback_3404" not in build:
-        fails.append("AC7: build.py does not register check_arena_auto_arm_soft_fallback_3404")
+    if "check_arena_auto_arm_soft_fallback_3404" not in wired_text:
+        fails.append("AC7: run_checks.py does not register check_arena_auto_arm_soft_fallback_3404")
 
     if fails:
         for f in fails:

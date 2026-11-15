@@ -66,6 +66,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -100,7 +102,6 @@ def main() -> int:
     epoch_test = _read("tests/compiler/test_query_epoch_contract.cpp")
     cow_test = _read("tests/serve/test_stable_ref_provenance_fiber_cow.cpp")
     hyg_test = _read("tests/compiler/test_hygiene_mutate_closed_loop.cpp")
-    build = _read("build.py")
     allow = _read("scripts/coverage/root_check_allowlist.txt")
 
     # ── AC1: stable-ref production resolve + soft mint retained ──────────
@@ -208,7 +209,7 @@ def main() -> int:
     # ── AC7: shared helper + wiring + runtime ACs + no invented files ────
     must("unpack_query_stable_ref_v2", "AC7 shared helper present", dec)
     must("Issue #4106", "AC7 helper cites the issue", dec)
-    must("check_query_bare_nodeid_4106", "AC7 build.py wires the linter", build)
+    must("check_query_bare_nodeid_4106", "AC7 run_checks.py wires the linter", wired_text)
     must("check_query_bare_nodeid_4106.py", "AC7 root allowlist carries the linter", allow)
     must("#4106: query:macro-introduced never a bare int list", "AC7 epoch-suite AC present", epoch_test)
     for fn in (

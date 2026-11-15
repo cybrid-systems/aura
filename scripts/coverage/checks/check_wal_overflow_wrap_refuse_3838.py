@@ -29,6 +29,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 SEW = "src/core/security_event_wal.hh"
 PRIM = "src/compiler/evaluator_primitives_security.cpp"
@@ -57,7 +59,6 @@ def main() -> int:
     sew = _read(SEW)
     prim = _read(PRIM)
     test = _read(TEST)
-    build = _read(BUILD)
     gf = _read(GF)
 
     # AC1 — refuse-on-wrap in push.
@@ -115,8 +116,8 @@ def main() -> int:
     must("#3838 AC1/AC2/AC3/AC4", "AC4 test block", test)
     must("wal_overflow_ring_wrap_refuse_total", "AC4 test uses refuse accessor", test)
     must("overflow_wrap_evicted", "AC4 test asserts wrap-evicted face", test)
-    must(LINTER, "AC4 build registration", build)
-    must("Issue #3838", "AC4 build cite", build)
+    must(LINTER, "AC4 build registration", wired_text)
+    must("check_wal_overflow_wrap_refuse_3838", "AC4 build cite", wired_text)
     must("check_wal_overflow_wrap_refuse_3838.py", "AC4 grandfather basename", gf)
     must(
         "scripts/coverage/checks/check_wal_overflow_wrap_refuse_3838.py",
@@ -124,7 +125,7 @@ def main() -> int:
         gf,
     )
     # Lineage: #3806 still wired.
-    must("check_wal_overflow_wrap_3806", "AC4 #3806 linter still wired", build)
+    must("check_wal_overflow_wrap_3806", "AC4 #3806 linter still wired", wired_text)
     for rel in (
         "tests/compiler/test_issue_3838.cpp",
         "tests/core/test_issue_3838.cpp",

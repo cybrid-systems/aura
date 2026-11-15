@@ -25,6 +25,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -45,7 +47,6 @@ def main() -> int:
     t = _read("tests/core/test_pcv_unique_hotpath.cpp")
     tls = _read("tests/core/test_pcv_tls_scratch.cpp")
     bench = _read("tests/bench/cycle221_pcv_bench.cpp")
-    build = _read("build.py")
     lint3429 = _read("scripts/coverage/checks/check_pcv_shared_cow_tls_3429.py")
 
     must("kPcvUniqueZeroAtomicIssue = 3491", "AC1 stamp", hh)
@@ -85,7 +86,7 @@ def main() -> int:
     must("kids.cow_set(i, new_child);", "AC5 cow_set after move", ast)
     must("children_[id] = std::move(kids);", "AC5 move back", ast)
     must("3491 AC2", "AC2 test", t)
-    must("check_pcv_shared_cow_tls_3429", "AC2 3429 linter kept", build)
+    must("check_pcv_shared_cow_tls_3429", "AC2 3429 linter kept", wired_text)
     must("3429", "AC2 3429 linter body", lint3429)
 
     must("cow_set_total", "AC3 cow_set_total", hh)
@@ -96,13 +97,13 @@ def main() -> int:
     must("unique_inplace_total", "AC3 unique_hotpath still asserts", t)
     must("tls_scratch_hit_total", "AC3 tls_scratch still asserts", tls)
 
-    must("check_pcv_unique_zero_atomic_3491", "AC4 build.py", build)
+    must("check_pcv_unique_zero_atomic_3491", "AC4 wiring", wired_text)
     must("3491 AC4", "AC4 test", t)
     must("cycle221_pcv_bench", "AC4 bench stays", bench)
-    prev = build.find("check_pcv_shared_cow_tls_3429")
-    ours = build.find("check_pcv_unique_zero_atomic_3491")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC4: linter must be wired in build.py AFTER #3429")
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must("check_pcv_shared_cow_tls_3429", "AC4: linter must be gated by run_checks.py (both gated)", wired_text)
+    must("check_pcv_unique_zero_atomic_3491", "AC4: linter must be gated by run_checks.py (both gated)", wired_text)
     if (ROOT / "tests" / "core" / "test_issue_3491.cpp").is_file():
         fails.append("AC4: tests/core/test_issue_3491.cpp present")
     if (ROOT / "tests" / "issues" / "test_issue_3491.cpp").is_file():

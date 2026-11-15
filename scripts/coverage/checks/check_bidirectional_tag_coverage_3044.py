@@ -7,7 +7,7 @@ Contract (one row per AC):
   AC3  Covered path zero extra cost (gate only in synthesize_flat default)
   AC4  schema-3044 + extend test_bidirectional_match_check
   AC5  source cites type_checker_impl dispatch + NodeTag; no docs/design/
-  AC6  this linter wired in build.py; no test_issue_3044.cpp
+  AC6  this linter gated by run_checks.py; no test_issue_3044.cpp
 
 Exit 0 = all rows satisfied.
 """
@@ -19,6 +19,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -77,7 +79,6 @@ def main() -> int:
     ev = _read("src/compiler/evaluator_typecheck.cpp")
     prim = _read("src/compiler/evaluator_primitives_compile.cpp")
     test = _read("tests/compiler/test_bidirectional_match_check.cpp")
-    build = _read("build.py")
 
     tags = _enum_tags(ast)
     cases = _switch_cases(impl)
@@ -125,8 +126,8 @@ def main() -> int:
     must("3330 AC1", "AC5 3330 test", test)
 
     # ── AC6 ──
-    must("check_bidirectional_tag_coverage_3044", "AC6", build)
-    must("check_bidirectional_uncovered_no_dynamic_3330", "AC6 3330", build)
+    must("check_bidirectional_tag_coverage_3044", "AC6", wired_text)
+    must("check_bidirectional_uncovered_no_dynamic_3330", "AC6 3330", wired_text)
     if (ROOT / "tests" / "compiler" / "test_issue_3044.cpp").is_file():
         fails.append("AC6: test_issue_3044.cpp present (forbidden #81967)")
     docs = ROOT / "docs" / "design"

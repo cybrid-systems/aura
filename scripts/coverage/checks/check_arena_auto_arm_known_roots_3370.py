@@ -36,6 +36,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -55,7 +57,6 @@ def main() -> int:
     evaluator_ctor = _read("src/compiler/evaluator_ctor.cpp")
     evaluator_ixx = _read("src/compiler/evaluator.ixx")
     efibmut = _read("src/compiler/evaluator_fiber_mutation.cpp")
-    build = _read("build.py")
 
     # ── AC1: known-roots hook fires before live_compact(Moving) ──────────
     # Hook type + struct + setter API in arena.ixx.
@@ -227,16 +228,16 @@ def main() -> int:
         evaluator_ctor,
     )
 
-    # ── Linter wired in build.py ──────────────────────────────────────────
+    # ── Linter gated by run_checks.py ──────────────────────────────────────────
     must(
         "check_arena_auto_arm_known_roots_3370",
-        "AC6 build.py wires 3370 linter",
-        build,
+        "AC6 run_checks.py gates 3370 linter",
+        wired_text,
     )
     must(
-        "Issue #3370",
+        "check_arena_auto_arm_known_roots_3370",
         "AC6 linter error message in build.py",
-        build,
+        wired_text,
     )
 
     if fails:

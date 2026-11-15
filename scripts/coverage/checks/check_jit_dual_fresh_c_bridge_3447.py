@@ -22,6 +22,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def main() -> int:
@@ -43,7 +45,6 @@ def main() -> int:
     test = (ROOT / "tests" / "compiler" / "test_aot_incremental_reemit.cpp").read_text()
     cow = (ROOT / "tests" / "compiler" / "test_cross_cow_soft_migrate.cpp").read_text()
     mutate = (ROOT / "src" / "compiler" / "evaluator_primitives_mutate.cpp").read_text()
-    build = (ROOT / "build.py").read_text()
 
     fn = br.find("bool aura_is_jit_closure_fresh")
     body = br[fn : fn + 2800] if fn >= 0 else ""
@@ -78,7 +79,7 @@ def main() -> int:
         if marker not in hot and marker not in rt and marker not in br:
             fails.append(f"AC6: {marker} upstream marker missing")
     must("3447 AC6", "AC6 test", test)
-    must("check_jit_dual_fresh_c_bridge_3447", "AC6 build.py", build)
+    must("check_jit_dual_fresh_c_bridge_3447", "AC6 wiring", wired_text)
     must("Issue #3447", "AC6 header", hh)
     must("cur_c", "AC6 stub C-bridge", stub)
     must_not("schema-3447", "AC6 no new query key", mutate)

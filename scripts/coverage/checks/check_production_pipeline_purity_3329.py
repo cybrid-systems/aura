@@ -24,6 +24,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -45,7 +47,6 @@ def main() -> int:
     svc = _read("src/compiler/service.ixx")
     t = _read("tests/compiler/test_hot_pass_hard_dod.cpp")
     tc = _read("tests/compiler/test_concept_constraints.cpp")
-    build = _read("build.py")
 
     must("kPassPurityGateIssue = 3329", "AC1 stamp", cc)
     must("ProductionPipelinePass", "AC1 concept", cc)
@@ -67,20 +68,17 @@ def main() -> int:
 
     must("Issue #3329", "AC4 cc cite", cc)
     must("Issue #3329", "AC4 core cite", core)
-    must("check_production_pipeline_purity_3329", "AC4 build.py", build)
+    must("check_production_pipeline_purity_3329", "AC4 wiring", wired_text)
     must("kPassConceptCount = 17", "AC4 concept count", cc)
     must("3329 AC4: no invent", "AC4 test", t)
 
     must("no extra atomics", "AC5 zero extra", core)
     must("Concepts erase", "AC5 erase", cc)
-    must("check_hot_pass_hard_dod_2434", "AC4 2434 lineage", build)
-    fn = build.find("def cmd_hot_pass_hard_dod_coverage")
-    ours_in_fn = build.find("check_production_pipeline_purity_3329", fn if fn >= 0 else 0)
-    prev_in_fn = build.find("check_hot_pass_hard_dod_2434", fn if fn >= 0 else 0)
-    if fn < 0 or ours_in_fn < 0:
-        fails.append("AC4: linter must be wired in cmd_hot_pass_hard_dod_coverage")
-    elif prev_in_fn >= 0 and ours_in_fn < prev_in_fn:
-        fails.append("AC4: linter must be wired in cmd_hot_pass_hard_dod_coverage AFTER #2434")
+    # The cmd_hot_pass_hard_dod_coverage batch is gone (#5246); both checks are
+    # gated by run_checks.py discovery.
+    if "check_production_pipeline_purity_3329" not in wired_text:
+        fails.append("AC4: run_checks.py does not gate check_production_pipeline_purity_3329")
+    # #2434's linter was folded into its manifest with the chain (#5246).
 
     if "g_3329_" in cc or "g_3329_" in core:
         fails.append("AC5: new g_3329_* counter")

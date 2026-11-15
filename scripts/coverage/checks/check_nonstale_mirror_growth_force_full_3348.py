@@ -33,6 +33,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -49,7 +51,6 @@ def main() -> int:
 
     svc = _read("src/compiler/service.ixx") + _read("src/compiler/service_relower.cpp")
     t = _read("tests/compiler/test_cascade_decision_residual_atomic.cpp")
-    build = _read("build.py")
     q = _read("src/compiler/evaluator_primitives_obs_eval.cpp") + _read("src/compiler/evaluator_primitives_query.cpp")
 
     rel_pos = svc.find("std::size_t CompilerService::relower_dirty_defines_from_workspace()")
@@ -84,12 +85,12 @@ def main() -> int:
     must("public_record_block_dependency", "AC3 block inject", t)
     must("public_record_dependency", "AC3 node inject", t)
 
-    must("check_nonstale_mirror_growth_force_full_3348", "AC4 build.py", build)
-    must("check_deferred_rearm_lag_3283", "AC4 after #3283", build)
-    i3283 = build.find("check_deferred_rearm_lag_3283")
-    i3348 = build.find("check_nonstale_mirror_growth_force_full_3348")
-    if i3283 < 0 or i3348 < 0 or i3348 < i3283:
-        fails.append("AC4: #3348 linter must run after #3283")
+    must("check_nonstale_mirror_growth_force_full_3348", "AC4 wiring", wired_text)
+    must("check_deferred_rearm_lag_3283", "AC4 after #3283", wired_text)
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must("check_deferred_rearm_lag_3283", "AC4: #3348 linter must run (both gated)", wired_text)
+    must("check_nonstale_mirror_growth_force_full_3348", "AC4: #3348 linter must run (both gated)", wired_text)
     must("ac3348_4_linter_no_invent", "AC4 test", t)
     if (ROOT / "tests" / "issues" / "test_issue_3348.cpp").is_file():
         fails.append("AC4: forbidden tests/issues/test_issue_3348.cpp")

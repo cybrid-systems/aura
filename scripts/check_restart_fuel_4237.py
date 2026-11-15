@@ -41,7 +41,7 @@ Contract (one row per AC):
   AC4  runtime ACs dispatched in test_failure_policy_bridge.cpp
        (ac4237_1..5); no tests/**/test_issue_4237.cpp;
        no docs/design/4237-*
-  AC5  build.py wiring + root_check_allowlist.txt entry
+  AC5  run_checks.py wiring + root_check_allowlist.txt entry
 
 Exit 0 = all rows satisfied.
 """
@@ -52,6 +52,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -74,7 +76,6 @@ def main() -> int:
     scope_hdr = _read("src/orch/agent_scope.h")
     prim = _read("src/compiler/evaluator_primitives_agent.cpp")
     bridge = _read("tests/orch/test_failure_policy_bridge.cpp")
-    build = _read("build.py")
     allow = _read("scripts/coverage/root_check_allowlist.txt")
 
     # ── AC1: compose derives the fuel face in BOTH overloads ────────────
@@ -133,7 +134,7 @@ def main() -> int:
         fails.append("AC4: no docs/design/4237-*")
 
     # ── AC5: build.py + allowlist wiring ────────────────────────────────
-    must("check_restart_fuel_4237.py", "AC5 build.py wires the linter", build)
+    must("check_restart_fuel_4237.py", "AC5 run_checks.py wires the linter", wired_text)
     must("check_restart_fuel_4237.py", "AC5 root allowlist entry", allow)
 
     if fails:

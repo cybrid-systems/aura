@@ -16,6 +16,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -36,7 +38,6 @@ def main() -> int:
     low = _read("src/compiler/lowering.ixx")
     obs = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
     test = _read("tests/compiler/test_emit_soa_source_marker_propagation.cpp")
-    build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
     # AC1
@@ -73,7 +74,7 @@ def main() -> int:
     must("test_emit_soa_source_marker_propagation", "AC3", cmake)
 
     # AC4
-    must("check_emit_soa_source_marker_propagation_2825", "AC4", build)
+    must("check_emit_soa_source_marker_propagation_2825", "AC4", wired_text)
     must("schema-2825", "AC4", obs)
     must("lowering-soa-source-marker-stamped-total", "AC4", obs)
     docs = ROOT / "docs" / "design"

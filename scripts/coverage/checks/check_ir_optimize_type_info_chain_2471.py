@@ -17,6 +17,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -39,7 +41,6 @@ def main() -> int:
 
     ir = _read("src/compiler/ir.ixx")
     test = _read("tests/compiler/test_ir_optimize_type_info_chain.cpp")
-    build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
     # Locate optimize_type_info chain walk body
@@ -61,8 +62,8 @@ def main() -> int:
     must("Issue #2471", "AC4", ir)
     must("2471 AC4", "AC4", test)
 
-    must("check_ir_optimize_type_info_chain_2471", "gate", build)
-    must("cmd_ir_optimize_type_info_chain_coverage", "gate", build)
+    must("check_ir_optimize_type_info_chain_2471", "gate", wired_text)
+    must("check_ir_optimize_type_info_chain_2471.py", "gate", wired_text)
     must("test_ir_optimize_type_info_chain", "gate", cmake)
     must("2471 AC5", "gate", test)
 

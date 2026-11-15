@@ -21,6 +21,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -43,7 +45,6 @@ def main() -> int:
     col = _read("tests/compiler/test_dead_coercion_columnar.cpp")
     batch = _read("tests/compiler/test_batch_dirty_cascade.cpp")
     inc = _read("tests/compiler/test_incremental_type_batch.cpp")
-    build = _read("build.py")
     q = _read("src/compiler/evaluator_primitives_query.cpp") + _read(
         "src/compiler/evaluator_primitives_query_type_stats.cpp"
     )
@@ -76,7 +77,7 @@ def main() -> int:
     if "g_3228_" in dirty:
         fails.append("AC3: new g_3228_* counter")
 
-    must("check_residual_castop_undermark_cone_3228", "AC4 build.py", build)
+    must("check_residual_castop_undermark_cone_3228", "AC4 wiring", wired_text)
     must("3228", "AC4 columnar", col)
     must("3228", "AC4 cascade", batch)
     must("3228", "AC4 incremental_type", inc)

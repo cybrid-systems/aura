@@ -42,7 +42,7 @@ Contract (one row per AC):
   AC4  dirty-subtree production face resolves the root (#3395 stale-ref
        gate), takes workspace shared_lock, walks children_columnar; Soft
        keeps the historical walk; the override order precondition holds
-  AC5  build.py wires check_query_bare_nodeid_4088 + root allowlist; the
+  AC5  run_checks.py wires check_query_bare_nodeid_4088 + root allowlist; the
        runtime ACs live in test_query_result_full_provenance.cpp; no
        tests/**/test_issue_4088.cpp; no docs/design/4088-*
 
@@ -55,6 +55,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -85,7 +87,6 @@ def main() -> int:
     qreg = _read("src/compiler/evaluator_primitives_registry.cpp")
     qold = _read("src/compiler/evaluator_primitives_query.cpp")
     test = _read("tests/compiler/test_query_result_full_provenance.cpp")
-    build = _read("build.py")
     allow = _read("scripts/coverage/root_check_allowlist.txt")
 
     # ── AC1: the five list exits finish via end_query_epoch_maybe_result ─
@@ -155,7 +156,7 @@ def main() -> int:
         )
 
     # ── AC5: wiring + test extension + no invented files ─────────────────
-    must("check_query_bare_nodeid_4088", "AC5 build.py wires the linter", build)
+    must("check_query_bare_nodeid_4088", "AC5 run_checks.py wires the linter", wired_text)
     must("check_query_bare_nodeid_4088.py", "AC5 root allowlist carries the linter", allow)
     must("test_ac4088_1_prod_list_exits_schema2", "AC5 runtime AC1 present", test)
     must("test_ac4088_2_prod_dirty_subtree_stale_ref", "AC5 runtime AC2 present", test)

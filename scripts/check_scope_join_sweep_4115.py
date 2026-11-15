@@ -42,6 +42,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _strip_cpp_comments(src: str) -> str:
@@ -82,7 +84,6 @@ def main() -> int:
     spawn = _strip_cpp_comments(_read("src/orch/agent_spawn.h"))
     join_test = _read("tests/orch/test_join_drain_reclaim.cpp")
     scope_test = _read("tests/orch/test_orch_scope.cpp")
-    build_src = _read("build.py")
     allow_src = _read("scripts/coverage/root_check_allowlist.txt")
 
     # -- AC1: join_all end-of-join sweep --
@@ -152,7 +153,7 @@ def main() -> int:
         fails.append("AC5: no new query key (query:4115 must not exist)")
     if "class AgentRegistry" in scope:
         fails.append("AC5: no process-global AgentRegistry")
-    if "check_scope_join_sweep_4115" not in build_src:
+    if "check_scope_join_sweep_4115" not in wired_text:
         fails.append("AC5: linter must be registered in build.py")
     if "check_scope_join_sweep_4115.py" not in allow_src:
         fails.append("AC5: linter must be on the root check allowlist")

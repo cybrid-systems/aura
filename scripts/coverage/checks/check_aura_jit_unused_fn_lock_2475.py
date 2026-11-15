@@ -17,6 +17,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -39,7 +41,6 @@ def main() -> int:
 
     jit = _read("src/compiler/aura_jit.cpp")
     test = _read("tests/compiler/test_aura_jit_unused_fn_lock.cpp")
-    build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
     idx = jit.find("ScalarFn compile(const FlatFunction")
@@ -64,8 +65,8 @@ def main() -> int:
     must("Issue #2475", "AC4", jit)
     must("2475 AC4", "AC4", test)
 
-    must("check_aura_jit_unused_fn_lock_2475", "gate", build)
-    must("cmd_aura_jit_unused_fn_lock_coverage", "gate", build)
+    must("check_aura_jit_unused_fn_lock_2475", "gate", wired_text)
+    must("check_aura_jit_unused_fn_lock_2475.py", "gate", wired_text)
     must("test_aura_jit_unused_fn_lock", "gate", cmake)
     must("2475 AC5", "gate", test)
 

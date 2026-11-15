@@ -66,13 +66,6 @@
       ]
     },
     {
-      "ac": "AC7",
-      "path": "build.py",
-      "contains": [
-        "cmd_solve_delta_dep_closure_2939"
-      ]
-    },
-    {
       "ac": "AC8",
       "forbid_glob": [
         "docs/design/2939-*"

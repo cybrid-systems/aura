@@ -24,6 +24,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from query_prims_sources import read_query_prims
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -43,7 +45,6 @@ def main() -> int:
     bound = _read("src/compiler/evaluator_mutation_boundary.cpp")
     pure = _read("src/compiler/ir_cache_pure.ixx")
     t = _read("tests/compiler/test_mutation_rollback_coverage.cpp")
-    build = _read("build.py")
     q = read_query_prims() + _read("src/compiler/evaluator_primitives_obs_eval.cpp")
 
     must("begin_abort_ir_cache_force_fence", "AC1 begin", svc)
@@ -64,7 +65,7 @@ def main() -> int:
     must("3117 AC3", "AC3 store test", t)
 
     must("3117", "AC4 extend suite", t)
-    must("check_abort_restore_ir_map_fence_3117", "AC4 build.py", build)
+    must("check_abort_restore_ir_map_fence_3117", "AC4 wiring", wired_text)
     if "schema-3117" in q:
         fails.append("AC4: new query key schema-3117 (forbidden)")
     if (ROOT / "tests" / "compiler" / "test_issue_3117.cpp").is_file():

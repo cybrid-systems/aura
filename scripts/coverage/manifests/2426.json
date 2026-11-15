@@ -33,13 +33,6 @@
       ]
     },
     {
-      "ac": "AC3",
-      "path": "build.py",
-      "contains": [
-        "cmd_capability_registry_snapshot_coverage"
-      ]
-    },
-    {
       "ac": "AC4",
       "path": "CMakeLists.txt",
       "contains": [

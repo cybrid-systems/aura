@@ -16,6 +16,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -41,7 +43,6 @@ def main() -> int:
     impl = _read("src/core/ast_impl.cpp")
     restamp_src = ast + "\n" + impl
     test = _read("tests/core/test_restamp_lazy_align_atomic.cpp")
-    build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
     must("Issue #2421", "AC1", restamp_src)
@@ -59,8 +60,8 @@ def main() -> int:
     must("2421 AC3", "AC3", test)
 
     must("2421 AC4", "AC4", test)
-    must("check_restamp_lazy_align_atomic_2421", "gate", build)
-    must("cmd_restamp_lazy_align_atomic_coverage", "gate", build)
+    must("check_restamp_lazy_align_atomic_2421", "gate", wired_text)
+    must("check_restamp_lazy_align_atomic_2421.py", "gate", wired_text)
     must("test_restamp_lazy_align_atomic", "gate", cmake)
 
     if fails:

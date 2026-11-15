@@ -21,6 +21,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -38,7 +40,6 @@ def main() -> int:
     hh = _read("src/core/cpp26_contract_stats.h")
     q = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
     test = _read("tests/compiler/test_hot_contract_placement.cpp")
-    build = _read("build.py")
     lint3106 = _read("scripts/coverage/checks/check_hot_contract_harden_3106.py")
 
     must("Issue #3313", "AC1 header", hh)
@@ -60,13 +61,17 @@ def main() -> int:
     must("record_hotpath_invariant_hit_sampled", "AC3 sampled RECORD", hh)
     must("3313 AC3", "AC3 test", test)
 
-    must("check_hot_contract_production_harden_3313", "AC4 build.py", build)
+    must("check_hot_contract_production_harden_3313", "AC4 wiring", wired_text)
     must("3313 AC4", "AC4 test", test)
     must("3313", "AC4 3106 lineage", lint3106)
-    prev = build.find("check_hot_contract_harden_3106")
-    ours = build.find("check_hot_contract_production_harden_3313")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC4: linter must be wired in build.py AFTER #3106")
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must("check_hot_contract_harden_3106", "AC4: linter must be gated by run_checks.py (both gated)", wired_text)
+    must(
+        "check_hot_contract_production_harden_3313",
+        "AC4: linter must be gated by run_checks.py (both gated)",
+        wired_text,
+    )
     if "schema-3313" not in q:
         fails.append("AC4: additive schema-3313 missing")
     if (ROOT / "tests" / "compiler" / "test_issue_3313.cpp").is_file():

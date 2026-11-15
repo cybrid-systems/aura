@@ -24,6 +24,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -70,7 +72,6 @@ def main() -> int:
     disp = _read("src/compiler/mutate_dispatch.hh")
     scaf = _read("src/compiler/prim_registrar_scaffold.hh")
     t = _read("tests/compiler/test_mutation_guard_try_acquire_unit.cpp")
-    build = _read("build.py")
 
     # AC1
     must("requires_mutation_guard", "AC1 PrimMeta", ixx)
@@ -113,7 +114,7 @@ def main() -> int:
     must("ac3197_4_soft_observe", "AC4 test", t)
 
     # AC5 / AC6
-    must("check_naked_mutate_prim_meta_3197", "AC5 build.py", build)
+    must("check_naked_mutate_prim_meta_3197", "AC5 wiring", wired_text)
     must("ac3197_5_source_and_linter", "AC5 test", t)
     if "naked-mutate-prim-meta" in mut or "g_3197_" in mut or "g_3197_" in disp:
         fails.append("AC5: new public query key / g_3197_* counter")

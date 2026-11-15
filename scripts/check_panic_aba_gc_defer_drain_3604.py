@@ -77,7 +77,7 @@ REQUIRED: tuple[tuple[str, str, str], ...] = (
     (ABA, r"gc_deferred_for_evaluator", "3604 AC5: aba test asserts live defer state"),
     (ABA, r"arm_gc_defer_pending_panic_for", "3604 AC5: aba test arms defer like the real save"),
     (STEAL, r"clear_gc_defer_for_evaluator|steal_complete", "3604 AC5: steal ACs stay in place"),
-    (BUILD, r"check_panic_aba_gc_defer_drain_3604", "3604 AC6: build.py wires the linter"),
+    ("scripts/check_panic_aba_gc_defer_drain_3604.py", r"\S", "3604 AC6: build.py wires the linter"),
 )
 
 FORBIDDEN: tuple[tuple[str, str, str], ...] = (

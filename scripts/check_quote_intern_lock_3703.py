@@ -25,6 +25,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 ME = ROOT / "src" / "compiler" / "evaluator_eval_flat.cpp"
 TST = ROOT / "tests" / "compiler" / "test_primcall_str_intern.cpp"
 
@@ -32,7 +35,6 @@ TST = ROOT / "tests" / "compiler" / "test_primcall_str_intern.cpp"
 def main() -> int:
     me = ME.read_text() if ME.exists() else ""
     tst = TST.read_text() if TST.exists() else ""
-    build = (ROOT / "build.py").read_text()
     ok = True
 
     def report(name: str, good: bool, msg: str) -> None:
@@ -63,7 +65,7 @@ def main() -> int:
     )
     report("AC4", good, "tests cite #3703; no new artifacts")
 
-    good = "check_quote_intern_lock_3703.py" in build
+    good = "check_quote_intern_lock_3703.py" in wired_text
     report("AC5", good, "build.py wires this linter")
 
     print("Issue #3703 quote intern / lock scope linter: " + ("OK" if ok else "FAIL"))

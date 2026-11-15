@@ -7,6 +7,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -30,7 +32,6 @@ def main() -> int:
     rt = _read("src/compiler/aura_jit_runtime.cpp")
     br = _read("src/compiler/aura_jit_bridge.cpp")
     test = _read("tests/compiler/test_remount_force_deopt.cpp")
-    build = _read("build.py")
 
     must("Issue #3812", "AC1 registry", reg)
     must("soft_global", "AC1 storm conjunct", reg)
@@ -62,7 +63,7 @@ def main() -> int:
     must("ac3812_2", "AC4 tests", test)
     must("ac3812_3", "AC4 tests", test)
     must("ac3812_4", "AC4 tests", test)
-    must("check_soft_global_critical_remount_3812", "AC4 build", build)
+    must("check_soft_global_critical_remount_3812", "AC4 build", wired_text)
     if (ROOT / "tests" / "issues" / "test_issue_3812.cpp").is_file():
         fails.append("AC4: invent test present")
     if (ROOT / "tests" / "compiler" / "test_issue_3812.cpp").is_file():

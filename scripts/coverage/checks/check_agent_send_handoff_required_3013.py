@@ -27,6 +27,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -45,7 +47,6 @@ def main() -> int:
     mb = _read("src/serve/multi_fiber_mailbox.h")
     agent = _read("src/compiler/evaluator_primitives_agent.cpp")
     test = _read("tests/orch/test_orch_obs_facade.cpp")
-    build = _read("build.py")
 
     # ── AC1: agent_send returns HandoffRequired before push ────────
     must("Issue #3013", "AC1", spawn)
@@ -87,7 +88,7 @@ def main() -> int:
 
     # ── AC6: tests + no invent + no docs/design/ ──────────────────
     must("#3013 AC1", "AC6", test)
-    must("check_agent_send_handoff_required_3013", "AC6", build)
+    must("check_agent_send_handoff_required_3013", "AC6", wired_text)
     for rel in (
         "tests/orch/test_issue_3013.cpp",
         "tests/compiler/test_issue_3013.cpp",

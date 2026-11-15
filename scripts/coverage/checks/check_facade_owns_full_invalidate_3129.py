@@ -110,7 +110,7 @@ def main() -> int:
 
     # AC5 — bridge audit linter still clean.
     _read("build.py")
-    # check_dual_track_facade_3112.py must exist + be wired in build.py.
+    # check_dual_track_facade_3112.py must exist + be gated by run_checks.py.
     linter = _read("scripts/check_dual_track_facade_3112.py")
     if not linter:
         fails.append("AC5: scripts/check_dual_track_facade_3112.py missing")

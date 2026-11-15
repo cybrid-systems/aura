@@ -28,6 +28,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 ARM = ROOT / "src" / "compiler" / "evaluator_primitives_security.cpp"
 CORE = ROOT / "src" / "core" / "capability_model.hh"
 SEC = ROOT / "src" / "compiler" / "evaluator_security.cpp"
@@ -39,7 +42,6 @@ def main() -> int:
     core = CORE.read_text() if CORE.exists() else ""
     sec = SEC.read_text() if SEC.exists() else ""
     tst = TST.read_text() if TST.exists() else ""
-    build = (ROOT / "build.py").read_text()
     ok = True
 
     def report(name: str, good: bool, msg: str) -> None:
@@ -81,7 +83,7 @@ def main() -> int:
     )
     report("AC4", good, "tests cite #3721 (retain + bound-mid-force); no new artifacts")
 
-    good = "check_mse_session_bound_3721.py" in build
+    good = "check_mse_session_bound_3721.py" in wired_text
     report("AC5", good, "build.py wires this linter")
 
     print("Issue #3721 MSE session-bound linter: " + ("OK" if ok else "FAIL"))

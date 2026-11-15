@@ -24,6 +24,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -45,7 +47,6 @@ def main() -> int:
     guard_lint = _read("scripts/coverage/checks/check_mutation_guard_coverage.py")
     t = _read("tests/compiler/test_mutation_guard_try_acquire_unit.cpp")
     t1964 = _read("tests/python/process/test_arch_simplify.py")
-    build = _read("build.py")
 
     must("mutate_dispatch_try_acquire", "AC1", hh)
     must("kMutateDispatchSoleGuardIssue = 3074", "AC1", hh)
@@ -146,7 +147,7 @@ def main() -> int:
 
     must("ac3074_1_structural_routes_dispatch", "AC5", t)
     must("mutate_dispatch_note(MutateKind::SetBody", "AC5 1964", t1964)
-    must("check_mutate_dispatch_sole_guard_3074", "AC5", build)
+    must("check_mutate_dispatch_sole_guard_3074", "AC5", wired_text)
     if (ROOT / "tests" / "compiler" / "test_issue_3074.cpp").is_file():
         fails.append("AC5: tests/compiler/test_issue_3074.cpp present (forbidden invent)")
 

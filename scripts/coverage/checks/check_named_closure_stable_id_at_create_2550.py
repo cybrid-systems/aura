@@ -6,7 +6,7 @@ Contract:
   AC2 no residual lookup-only stamp line on named set_name
   AC3 getter + residual force helpers declared; backfill remains safety net
   AC4 schema-2550 + wired key on query surface
-  AC5 test + cmake + build.py gate
+  AC5 test + cmake + coverage runner
 
 Exit 0 = all rows satisfied.
 """
@@ -17,6 +17,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -42,7 +44,6 @@ def main() -> int:
     q = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
     test = _read("tests/compiler/test_named_closure_stable_id_at_create.cpp")
     cmake = _read("CMakeLists.txt")
-    build = _read("build.py")
 
     # AC1
     must("Issue #2550", "AC1", rt)
@@ -69,8 +70,8 @@ def main() -> int:
     must("ac1_named_create_nonzero", "AC5", test)
     must("ac2_reemit_no_backfill_growth", "AC5", test)
     must("test_named_closure_stable_id_at_create", "AC5", cmake)
-    must("check_named_closure_stable_id_at_create_2550", "AC5", build)
-    must("cmd_named_closure_stable_id_at_create_coverage", "AC5", build)
+    must("check_named_closure_stable_id_at_create_2550", "AC5", wired_text)
+    must("check_named_closure_stable_id_at_create_2550.py", "AC5", wired_text)
 
     if fails:
         for f in fails:

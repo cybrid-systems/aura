@@ -19,7 +19,7 @@
 #        reclaimed_abandon_total / cleanup-pending. No
 #        test_issue_3463.cpp (per #81967). No docs/design/3463-*
 #        (per #1655). No process-global AgentRegistry (issue non-goal).
-#   AC5  build.py wires the linter; linter lives under
+#   AC5  run_checks.py gates the linter; linter lives under
 #        scripts/coverage/checks/ (pre-push regression-guard location).
 #   AC6  C++ hosts holding AgentScope::handles_mut() are unchanged
 #        (ensure_reclaimed_cleanup / wait_reclaimed_body still handle-based).
@@ -43,6 +43,9 @@ import sys
 import tempfile
 from collections.abc import Sequence
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -99,11 +102,6 @@ TEST_REQUIRED: tuple[str, ...] = (
     # AC4 no-invent (#81967 + #1655).
     "3463 AC4: no test_issue_3463.cpp per #81967",
     "3463 AC4: no docs/design/3463-* per #1655",
-)
-
-BUILD_REQUIRED: tuple[str, ...] = (
-    "check_agent_wait_reclaimed_scope_resolve_3463",
-    "Issue #3463 wait-reclaimed scope-resolve linter failed",
 )
 
 
@@ -179,7 +177,10 @@ def run_checks() -> list[str]:
     problems += check_file(SCOPE, SCOPE_REQUIRED)
     problems += check_file(SPAWN, (), SPAWN_FORBIDDEN)
     problems += check_file(TEST_JOIN_DRAIN, TEST_REQUIRED)
-    problems += check_file(BUILD_PY, BUILD_REQUIRED)
+    # Gate wiring (#5246): the linter is gated when run_checks.py discovers
+    # it, not by a pattern in build.py's deleted cmd_lint chain.
+    if "check_agent_wait_reclaimed_scope_resolve_3463" not in wired_text:
+        problems.append("build.py: linter not gated by run_checks.py")
     # AC4: tests live in src-aligned suites — no test_issue_3463.cpp.
     for stray in ("tests/orch/test_issue_3463.cpp", "tests/issues/test_issue_3463.cpp"):
         if (REPO_ROOT / stray).exists():

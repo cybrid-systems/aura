@@ -27,6 +27,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -48,7 +50,6 @@ def main() -> int:
     wal = _read("src/core/mutation_audit_wal.hh")
     test = _read("tests/compiler/test_effect_epoch_mutation_unify.cpp")
     lint3296 = _read("scripts/coverage/checks/check_require_effect_mid_ssot_3296.py")
-    build = _read("build.py")
 
     emit_pos = sec.find("bool Evaluator::emit_mutation_audit")
     if emit_pos < 0:
@@ -106,16 +107,14 @@ def main() -> int:
     must("last_type_linear_commit_proof_stamp_v_read()", "AC5 TypedMid mid fill", emit_body)
     must("mutation-audit-epoch-mutation-wired", "AC5 wired key", prim)
 
-    must("check_mutation_audit_epoch_3335", "AC6 build.py", build)
-    must("check_require_effect_mid_ssot_3296", "AC6 #3296 linter wired", build)
+    must("check_mutation_audit_epoch_3335", "AC6 wiring", wired_text)
+    must("check_require_effect_mid_ssot_3296", "AC6 #3296 linter wired", wired_text)
     must("ac3335_6_source_and_linter", "AC6 test", test)
     must("Issue #3296", "AC6 3296 linter retained", lint3296)
-    prev = build.find("check_require_effect_mid_ssot_3296")
-    ours = build.find("check_mutation_audit_epoch_3335")
-    if ours < 0:
-        fails.append("AC6: linter must be wired in build.py")
-    elif prev >= 0 and ours < prev:
-        fails.append("AC6: linter must be wired in build.py AFTER #3296")
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must("check_require_effect_mid_ssot_3296", "AC6: linter must be gated by run_checks.py (both gated)", wired_text)
+    must("check_mutation_audit_epoch_3335", "AC6: linter must be gated by run_checks.py (both gated)", wired_text)
     if (ROOT / "tests" / "compiler" / "test_issue_3335.cpp").is_file():
         fails.append("AC6: tests/compiler/test_issue_3335.cpp present (forbidden #81967)")
     docs = ROOT / "docs" / "design"

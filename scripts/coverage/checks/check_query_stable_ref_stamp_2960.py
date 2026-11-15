@@ -20,6 +20,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -46,7 +48,6 @@ def main() -> int:
     fiber = _read("src/compiler/evaluator_fiber_mutation.cpp")
     test = _read("tests/core/test_tenant_isolation_enforcement.cpp")
     test_cap = _read("tests/core/test_stable_ref_tenant_capture.cpp")
-    build = _read("build.py")
 
     # AC1 — layout-only FlatAST + Evaluator stamp authority on query paths.
     must("Issue #2960", "AC1", ast)
@@ -104,7 +105,7 @@ def main() -> int:
     must("kQueryStableRefStampIssue", "AC5 test", test)
     must("#2960", "AC5 capture", test_cap)
     must("stamp_query_stable_ref_export", "AC5 capture", test_cap)
-    must("check_query_stable_ref_stamp_2960", "AC5", build)
+    must("check_query_stable_ref_stamp_2960", "AC5", wired_text)
     if (ROOT / "tests" / "core" / "test_issue_2960.cpp").is_file():
         fails.append("AC5: test_issue_2960.cpp present (forbidden #81967)")
     docs = ROOT / "docs" / "design"

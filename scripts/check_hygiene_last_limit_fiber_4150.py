@@ -51,6 +51,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 MCX = ROOT / "src" / "compiler" / "macro_expansion.cpp"
 QOM = ROOT / "src" / "compiler" / "evaluator_primitives_query_obs_mid.cpp"
 TST = ROOT / "tests" / "compiler" / "test_hygiene_mutate_closed_loop.cpp"
@@ -161,7 +164,7 @@ def main() -> int:
         fails.append("AC6: tests/compiler/test_issue_4150.cpp must not exist (#81934)")
     if any((ROOT / "docs" / "design").glob("4150-*")):
         fails.append("AC6: docs/design/4150-* must not exist (#1655)")
-    if "check_hygiene_last_limit_fiber_4150" not in BUILD.read_text():
+    if "check_hygiene_last_limit_fiber_4150" not in wired_text:
         fails.append("AC6: build.py does not wire check_hygiene_last_limit_fiber_4150.py")
     if "check_hygiene_last_limit_fiber_4150.py" not in ALLOW.read_text():
         fails.append("AC6: scripts/coverage/root_check_allowlist.txt does not list the linter")

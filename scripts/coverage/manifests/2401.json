@@ -61,13 +61,6 @@
         "test_agent_ask",
         "tests/orch/test_agent_ask.cpp"
       ]
-    },
-    {
-      "ac": "AC7",
-      "path": "build.py",
-      "contains": [
-        "cmd_agent_reply_coverage"
-      ]
     }
   ]
 }

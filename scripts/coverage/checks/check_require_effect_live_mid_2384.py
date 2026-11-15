@@ -6,7 +6,7 @@ Contract:
   AC2 Bound mid match allows under live epoch
   AC3 Off sandbox allows; SecurityEvent mid non-zero
   AC4 SecurityEvent mutation_id != 0 on require_effect path
-  AC5 Source-cite + CMake + build.py gate
+  AC5 Source-cite + CMake + coverage runner
 
 Exit 0 = all rows satisfied.
 """
@@ -17,6 +17,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -41,7 +43,6 @@ def main() -> int:
     ixx = _read("src/compiler/evaluator.ixx")
     test = _read("tests/compiler/test_require_effect_live_mid.cpp")
     cmake = _read("CMakeLists.txt")
-    build = _read("build.py")
 
     # Locate require_effect body. Issue #3143 added a large doc-block to
     # require_effect, so the previous 1500-char window was too small
@@ -74,8 +75,8 @@ def main() -> int:
     # AC5 registration
     must("Issue #2384", "AC5", ixx)
     must("test_require_effect_live_mid", "AC5", cmake)
-    must("check_require_effect_live_mid_2384", "AC5", build)
-    must("cmd_require_effect_live_mid_coverage", "AC5", build)
+    must("check_require_effect_live_mid_2384", "AC5", wired_text)
+    must("check_require_effect_live_mid_2384.py", "AC5", wired_text)
     must("ac5_source_and_gate", "AC5", test)
     must("Issue #2384", "AC5", test)
 

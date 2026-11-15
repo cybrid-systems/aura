@@ -23,6 +23,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -40,7 +42,6 @@ def main() -> int:
     flat = _read("src/compiler/evaluator_eval_flat.cpp")
     ev = _read("src/compiler/evaluator.ixx")
     survive = _read("tests/compiler/test_setcode_rebind_survive.cpp")
-    build = _read("build.py")
 
     must("kApplyClosureDensifyHardRefuseIssue = 3421", "AC1 stamp", flat)
     must("production_apply_closure_densify_hard_refuse", "AC1 helper", flat)
@@ -108,11 +109,11 @@ def main() -> int:
 
     must("ac5_3421_production_hard_refuse", "AC5 test", survive)
     must("ProdDensifyWindowGuard", "AC5 inject guard", survive)
-    must("check_apply_closure_densify_hard_refuse_3421", "AC5 build.py", build)
-    prev = build.find("check_factory_refuse_uncovered_3420")
-    ours = build.find("check_apply_closure_densify_hard_refuse_3421")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC5: #3421 linter must run after #3420")
+    must("check_apply_closure_densify_hard_refuse_3421", "AC5 wiring", wired_text)
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must("check_factory_refuse_uncovered_3420", "AC5: #3421 linter must run (both gated)", wired_text)
+    must("check_apply_closure_densify_hard_refuse_3421", "AC5: #3421 linter must run (both gated)", wired_text)
     if (ROOT / "tests" / "issues" / "test_issue_3421.cpp").is_file():
         fails.append("AC5: forbidden tests/issues/test_issue_3421.cpp per #81967")
     if (ROOT / "tests" / "compiler" / "test_issue_3421.cpp").is_file():

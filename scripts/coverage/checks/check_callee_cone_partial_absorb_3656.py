@@ -28,6 +28,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -52,7 +54,6 @@ def main() -> int:
     prop = _read("src/compiler/dirty_propagation.ixx")
     cas = _read("tests/compiler/test_partial_relower_cascade.cpp")
     thr = _read("tests/compiler/test_dep_graph_partial_relower_threshold.cpp")
-    build = _read("build.py")
     q = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
 
     pre_at = dirty.find("CompilerService::precompute_callee_cascade_for_partial")
@@ -87,12 +88,16 @@ def main() -> int:
     must("return 0;", "AC4 Soft return 0", pre)
     must("ac3656_4_soft_zero_extra", "AC4 cascade test", cas)
 
-    must("check_outermost_persist_audit_order_3653", "AC5 prev linter", build)
-    must("check_callee_cone_partial_absorb_3656", "AC5 build.py", build)
-    prev = build.find("check_outermost_persist_audit_order_3653")
-    ours = build.find("check_callee_cone_partial_absorb_3656")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC5: linter must be wired in build.py AFTER #3653")
+    must("check_outermost_persist_audit_order_3653", "AC5 prev linter", wired_text)
+    must("check_callee_cone_partial_absorb_3656", "AC5 wiring", wired_text)
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must(
+        "check_outermost_persist_audit_order_3653",
+        "AC5: linter must be gated by run_checks.py (both gated)",
+        wired_text,
+    )
+    must("check_callee_cone_partial_absorb_3656", "AC5: linter must be gated by run_checks.py (both gated)", wired_text)
     must("ac3656_threshold_source_cite", "AC5 threshold suite", thr)
     must("query:incremental-relower-stats", "AC5 query retained", q)
     must_not("schema-3656", "AC5 no new query key", q)

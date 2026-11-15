@@ -25,7 +25,7 @@ Contract (one row per AC):
      test_residual_defer_steal_hard_and, test_steal_safety_ticket) extended
      per #81967 with ac2699_1..6 source-cite + runtime hard-path block.
      Source-cite verifies the unified transaction is wired in worker.cpp
-     + build.py wires the linter.
+     + run_checks.py gates the linter.
   AC6 No docs/design/ per #1655 (aura philosophy: agent-developed repo,
      not human docs; design rationale lives in commit message + close
      comment).
@@ -40,6 +40,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -62,7 +64,6 @@ def main() -> int:
     fiber = _read("src/serve/fiber.cpp")
     gc_hooks = _read("src/core/gc_hooks.h")
     cmake = _read("CMakeLists.txt")
-    build = _read("build.py")
     test = _read("tests/serve/test_steal_complete_restamp_txn.cpp")
 
     # AC1 — unified entry + all 7 steps in order
@@ -91,8 +92,8 @@ def main() -> int:
     must("call_steal_complete_now_uses_unified_transaction", "AC2 marker", worker)
     # CMakeLists registers the new TU
     must("steal_safety.cpp", "AC2", cmake)
-    # build.py wires the linter
-    must("check_steal_safety_transaction_2699", "AC2", build)
+    # run_checks.py gates the linter
+    must("check_steal_safety_transaction_2699", "AC2", wired_text)
 
     # AC3 — soft / sandbox metric-only (flags live in fiber.cpp)
     must("steal_snapshot_soft_production_locked", "AC3", fiber)

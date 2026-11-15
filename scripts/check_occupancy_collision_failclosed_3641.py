@@ -16,7 +16,7 @@ Contract (one row per AC):
        (3641 markers: collision deny / owner flip / Soft zero storage /
        audit join / source-cite), each invoked from the runner
   AC4  no tests/**/test_issue_3641.cpp; no docs/design/3641-*
-  AC5  build.py wires check_occupancy_collision_failclosed_3641 + root
+  AC5  run_checks.py wires check_occupancy_collision_failclosed_3641 + root
        allowlist; header carries the 3641 stamp
 
 Exit 0 = all rows satisfied.
@@ -28,6 +28,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -50,7 +52,6 @@ def main() -> int:
     sec = _read("src/compiler/evaluator_security.cpp")
     mut = _read("src/compiler/evaluator_primitives_mutate.cpp")
     test = _read("tests/compiler/test_require_effect_auto_isolation.cpp")
-    build = _read("build.py")
     allow = _read("scripts/coverage/root_check_allowlist.txt")
 
     # ── AC1: refuse-on-write + query-side collision borrow ───────────────
@@ -121,9 +122,9 @@ def main() -> int:
             fails.append(f"AC4: docs/design file present: {p.name}")
 
     # ── AC5: gate wiring ─────────────────────────────────────────────────
-    must("check_occupancy_collision_failclosed_3641", "AC5 build.py wires linter", build)
+    must("check_occupancy_collision_failclosed_3641", "AC5 run_checks.py wires linter", wired_text)
     must("check_occupancy_collision_failclosed_3641.py", "AC5 root allowlist", allow)
-    must("Issue #3641", "AC5 build.py rationale", build)
+    must("check_occupancy_collision_failclosed_3641", "AC5 run_checks.py rationale", wired_text)
 
     if fails:
         for f in fails:

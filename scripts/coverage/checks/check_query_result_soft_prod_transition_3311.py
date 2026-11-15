@@ -114,7 +114,7 @@ def main() -> int:
     must(
         (ROOT / "scripts" / "coverage" / "checks" / "check_query_result_soft_prod_transition_3311.py").is_file()
         and "discover_checks" in _read("scripts/coverage/run_checks.py"),
-        "gate: build.py wires the linter",
+        "gate: run_checks.py gates the linter",
     )
 
     if fails:

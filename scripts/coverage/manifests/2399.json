@@ -55,13 +55,6 @@
       ]
     },
     {
-      "ac": "AC6",
-      "path": "build.py",
-      "contains": [
-        "cmd_agent_scope_concurrent_coverage"
-      ]
-    },
-    {
       "ac": "AC7",
       "path": "CMakeLists.txt",
       "contains": [

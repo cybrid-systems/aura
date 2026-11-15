@@ -17,6 +17,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -37,7 +39,6 @@ def main() -> int:
     met = _read("src/compiler/observability_metrics.h")
     ixx = _read("src/compiler/evaluator.ixx")
     test = _read("tests/compiler/test_gc_closures_mtx_flush_sweep.cpp")
-    build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
     fidx = gc.find("void Evaluator::flush_gc_roots")
@@ -75,8 +76,8 @@ def main() -> int:
     must("2473 AC4", "AC4", test)
     must("#2473", "AC4", ixx)
 
-    must("check_gc_closures_mtx_flush_sweep_2473", "gate", build)
-    must("cmd_gc_closures_mtx_flush_sweep_coverage", "gate", build)
+    must("check_gc_closures_mtx_flush_sweep_2473", "gate", wired_text)
+    must("check_gc_closures_mtx_flush_sweep_2473.py", "gate", wired_text)
     must("test_gc_closures_mtx_flush_sweep", "gate", cmake)
     must("2473 AC5", "gate", test)
 

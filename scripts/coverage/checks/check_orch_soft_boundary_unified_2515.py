@@ -32,6 +32,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -54,7 +56,6 @@ def main() -> int:
     t2115 = _read("tests/serve/test_depth_safe_mutation_boundary_steal.cpp")
     t2118 = _read("tests/serve/test_orch_agent_mutation_boundary.cpp")
     cmake = _read("CMakeLists.txt")
-    build = _read("build.py")
 
     # AC1 — orch_soft_boundary_enter publishes held=true mirror.
     must("orch_soft_boundary_enter", "AC1", efm)
@@ -103,7 +104,7 @@ def main() -> int:
     must("AC5", "AC5", test)
     must("zero cost", "AC5", test)
     must("tests/serve/test_orch_soft_boundary_unified.cpp", "AC5", cmake)  # batch member source (S5)
-    must("check_orch_soft_boundary_unified_2515", "AC5", build)
+    must("check_orch_soft_boundary_unified_2515", "AC5", wired_text)
 
     if fails:
         print("check_orch_soft_boundary_unified_2515: FAIL")

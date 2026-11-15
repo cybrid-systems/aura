@@ -62,6 +62,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 SCHED = ROOT / "src" / "serve" / "scheduler.cpp"
 FIBER_CPP = ROOT / "src" / "serve" / "fiber.cpp"
 MESSAGING = ROOT / "src" / "compiler" / "evaluator_primitives_messaging.cpp"
@@ -81,7 +84,6 @@ def main() -> int:
     fiber = FIBER_CPP.read_text() if FIBER_CPP.exists() else ""
     messaging = MESSAGING.read_text() if MESSAGING.exists() else ""
     tst = TST.read_text() if TST.exists() else ""
-    build = (ROOT / "build.py").read_text()
     allow = (ROOT / "scripts" / "coverage" / "root_check_allowlist.txt").read_text()
     ok = True
 
@@ -125,7 +127,7 @@ def main() -> int:
         and "test_issue_4230_add_joiner_done_face" in tst
         and "test_issue_4230_sequential_join_oneshots" in tst
         and "test_issue_4230_source_cite" in tst
-        and "check_fiber_join_done_face_4230.py" in build
+        and "check_fiber_join_done_face_4230.py" in wired_text
         and "check_fiber_join_done_face_4230.py" in allow
         and no_issue_file
         and no_docs,

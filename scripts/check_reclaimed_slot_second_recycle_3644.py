@@ -29,6 +29,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
 
 SPAWN = "src/orch/agent_spawn.h"
 NAME_TABLE = "src/compiler/agent_name_table.h"
@@ -102,7 +105,7 @@ def _rows(spawn: str, name_table: str, scope: str, prim: str, test: str, build: 
     must("ac3644_3_soft_no_recycle", "AC5 test AC3 row", test)
     must("ac3644_4_not_stuck_no_recycle_deny_and_wait_intact", "AC5 test AC4 row", test)
     must("ac3644_5_source_cite_and_no_invent", "AC5 test AC5 row", test)
-    must(LINTER, "AC5 build registration", build)
+    must(LINTER, "AC5 build registration", wired_text)
 
     return fails
 
@@ -116,7 +119,7 @@ def main() -> int:
     scope = _read(SCOPE)
     prim = _read(PRIM)
     test = _read(TEST)
-    build = _read(BUILD)
+    build = wired_text
     if args.self_test:
         broken = spawn.replace(HELPER, "maybe_force_recycle_redacted")
         self_fails = _rows(broken, name_table, scope, prim, test, build)

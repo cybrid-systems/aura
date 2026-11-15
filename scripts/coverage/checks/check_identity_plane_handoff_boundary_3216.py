@@ -30,6 +30,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -52,7 +54,6 @@ def main() -> int:
     join_t = _read("tests/orch/test_join_drain_reclaim.cpp")
     orch_t = _read("tests/orch/test_orch_scope.cpp")
     scope_t = _read("tests/orch/test_agent_scope.cpp")
-    build = _read("build.py")
 
     # ── AC1: document three planes + HandoffToken observe-only
     must("kIdentityPlaneHandoffBoundaryIssue = 3216", "AC1 issue constant", spawn)
@@ -119,7 +120,7 @@ def main() -> int:
     must("ac3216_scope: miss identity-plane=scope-handle", "AC4 scope-resolve", orch_t)
     must("ac3216_dir: identity-plane=directory", "AC4 directory", orch_t)
     must("ac3216_handoff_directory_hard_deny", "AC4 HardDeny + handoff", scope_t)
-    must("check_identity_plane_handoff_boundary_3216", "AC4 build.py wire", build)
+    must("check_identity_plane_handoff_boundary_3216", "AC4 wiring wire", wired_text)
     if (ROOT / "tests" / "orch" / "test_issue_3216.cpp").is_file():
         fails.append("AC4: tests/orch/test_issue_3216.cpp present (forbidden #81967)")
     if (ROOT / "tests" / "issues" / "test_issue_3216.cpp").is_file():

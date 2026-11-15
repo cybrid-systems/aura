@@ -23,6 +23,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -41,7 +43,6 @@ def main() -> int:
     qws = _read("src/compiler/evaluator_primitives_query_workspace.cpp")
     dec = _read("src/compiler/query_result_decode.hh")
     t = _read("tests/compiler/test_query_result_full_provenance.cpp")
-    build = _read("build.py")
 
     must("kQueryResultHashResolveIssue = 3424", "AC1 stamp", dec)
     must("resolve_query_result_match", "AC1 shared helper", dec)
@@ -77,11 +78,11 @@ def main() -> int:
     must("walk_v2", "AC4 #3396", mut)
     must("as_query_result = true; // auto-upgrade", "AC4 #3286", qws)
 
-    must("check_query_result_hash_resolve_3424", "AC5 build.py", build)
-    prev = build.find("check_structural_mutate_resolve_helper_3399")
-    ours = build.find("check_query_result_hash_resolve_3424")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC5: #3424 linter must run after #3399")
+    must("check_query_result_hash_resolve_3424", "AC5 wiring", wired_text)
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must("check_structural_mutate_resolve_helper_3399", "AC5: #3424 linter must run (both gated)", wired_text)
+    must("check_query_result_hash_resolve_3424", "AC5: #3424 linter must run (both gated)", wired_text)
     if (ROOT / "tests" / "issues" / "test_issue_3424.cpp").is_file():
         fails.append("AC5: forbidden tests/issues/test_issue_3424.cpp")
     if (ROOT / "tests" / "compiler" / "test_issue_3424.cpp").is_file():

@@ -23,6 +23,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -46,7 +48,6 @@ def main() -> int:
     obs = _read("src/compiler/observability_metrics.h")
     qeval = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
     test = _read("tests/compiler/test_envframe_epoch_batch.cpp")
-    build = _read("build.py")
 
     # AC1 — fail-closed + counters
     must("is_bridge_stale", "AC1", env)
@@ -120,7 +121,7 @@ def main() -> int:
     # AC6 — tests + linter
     must("2930", "AC6", test)
     must("ac2930", "AC6", test)
-    must("check_bridge_epoch_zero_stale_2930", "AC6", build)
+    must("check_bridge_epoch_zero_stale_2930", "AC6", wired_text)
     must("Issue #2930", "AC6 ixx", ixx)
     if (ROOT / "tests" / "compiler" / "test_issue_2930.cpp").is_file():
         fails.append("AC6: test_issue_2930.cpp present (forbidden per #81967)")

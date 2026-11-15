@@ -20,6 +20,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -57,7 +59,6 @@ def main() -> int:
     cap = _read("src/core/capability_model.hh")
     q = _read("src/compiler/evaluator_primitives_security.cpp")
     test = _read("tests/compiler/test_require_effect_live_mid.cpp")
-    build = _read("build.py")
 
     # AC1/AC2 — fail-closed mid join in provenance_ok.
     must("capability_mid_join_zero_deny_total", "AC1", cap)
@@ -107,7 +108,7 @@ def main() -> int:
     # AC6 — tests + linter + no design docs.
     must("#2707", "AC6", test)
     must("mid_join_zero_deny", "AC6", test + cap)
-    must("check_mid_join_fail_closed_2707", "AC6", build)
+    must("check_mid_join_fail_closed_2707", "AC6", wired_text)
     for rel in (
         "docs/design/mid_join_fail_closed_2707.md",
         "docs/mid_join_fail_closed_2707.md",

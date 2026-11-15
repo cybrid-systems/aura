@@ -9,7 +9,7 @@ Contract:
   AC1 std/orch.aura export before require + #2768/#2766 notes
   AC2 ac2768_* spawn/ask/list/epoch + lifecycle tests present
   AC3 host fix cited (#2766) in eval_flat / module loader
-  AC4 this linter wired in build.py; no docs/design/2768-*
+  AC4 this linter gated by run_checks.py; no docs/design/2768-*
 
 Exit 0 = all rows satisfied.
 """
@@ -20,6 +20,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -40,7 +42,6 @@ def main() -> int:
     t = _read("tests/compiler/test_module_require_freevar.cpp")
     efl = _read("src/compiler/evaluator_eval_flat.cpp")
     loader = _read("src/compiler/evaluator_module_loader.cpp")
-    build = _read("build.py")
 
     # AC1 — export-first stdlib form + notes.
     must("#2768", "AC1", orch)
@@ -85,7 +86,7 @@ def main() -> int:
     must("set_pool", "AC3", loader)
 
     # AC4 — linter wire.
-    must("check_orchestrator_agent_stdin_2768", "AC4", build)
+    must("check_orchestrator_agent_stdin_2768", "AC4", wired_text)
     if (ROOT / "docs" / "design").is_dir():
         for f in sorted((ROOT / "docs" / "design").glob("2768-*")):
             fails.append(f"AC4: docs/design/{f.name} present (forbidden per #1655)")

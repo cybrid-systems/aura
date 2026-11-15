@@ -7,6 +7,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -27,7 +29,6 @@ def main() -> int:
 
     rt = _read("src/compiler/aura_jit_runtime.cpp")
     test = _read("tests/compiler/test_remount_force_deopt.cpp")
-    build = _read("build.py")
 
     fn = rt.find("aura_sync_remount_covered_named_live_closures")
     win = rt[fn : fn + 2000] if fn != -1 else ""  # normalized text; ordering preserved
@@ -45,9 +46,13 @@ def main() -> int:
     must("ac3785_1", "AC4 tests", test)
     must("ac3785_2", "AC4 tests", test)
     must("ac3785_3", "AC4 tests", test)
-    must("check_sync_remount_storm_gate_3785", "AC4 build", build)
-    if build.find("check_sync_remount_storm_gate_3785") <= build.find("check_anon_peer_empty_name_soft_stale_3784"):
-        fails.append("AC4: linter must be after #3784")
+    must("check_sync_remount_storm_gate_3785", "AC4 build", wired_text)
+    # Sequence positions were a property of the deleted cmd_lint chain
+    # (#5246); the checks below are gated by run_checks.py discovery.
+    must(
+        "check_anon_peer_empty_name_soft_stale_3784", "AC wiring check_anon_peer_empty_name_soft_stale_3784", wired_text
+    )
+    must("check_sync_remount_storm_gate_3785", "AC wiring check_anon_peer_empty_name_soft_stale_3784", wired_text)
     if (ROOT / "tests" / "issues" / "test_issue_3785.cpp").is_file():
         fails.append("AC4: invent test present")
 

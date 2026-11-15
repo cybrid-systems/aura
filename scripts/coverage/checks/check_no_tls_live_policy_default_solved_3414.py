@@ -29,6 +29,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -47,7 +49,6 @@ def main() -> int:
     t3379 = _read("tests/compiler/test_typed_audit_commit_readiness_live_policy.cpp")
     t3305 = _read("tests/compiler/test_ir_typed_entry_proof_authority.cpp")
     t2553 = _read("tests/compiler/test_commit_readiness_score.cpp")
-    build = _read("build.py")
 
     must("kNoTlsLivePolicyDefaultSolvedIssue = 3414", "AC1 stamp", tma)
     lp = tma.find("inline CommitReadinessInput commit_readiness_live_policy() noexcept {")
@@ -102,11 +103,19 @@ def main() -> int:
     must("ac3414_no_tls_default_solved_refused", "AC5 score test", t2553)
     must("kNoTlsLivePolicyDefaultSolvedIssue = 3414", "AC5 3379 suite", t3379)
     must("kTypeLinearProofOutcomeStamped", "AC5 3305 suite", t3305)
-    must("check_no_tls_live_policy_default_solved_3414", "AC5 build.py", build)
-    prev = build.find("check_ir_typed_entry_commit_readiness_3224")
-    ours = build.find("check_no_tls_live_policy_default_solved_3414")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC5: linter must be wired in build.py AFTER #3224")
+    must("check_no_tls_live_policy_default_solved_3414", "AC5 wiring", wired_text)
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must(
+        "check_ir_typed_entry_commit_readiness_3224",
+        "AC5: linter must be gated by run_checks.py (both gated)",
+        wired_text,
+    )
+    must(
+        "check_no_tls_live_policy_default_solved_3414",
+        "AC5: linter must be gated by run_checks.py (both gated)",
+        wired_text,
+    )
     if (ROOT / "tests" / "compiler" / "test_issue_3414.cpp").is_file():
         fails.append("AC5: tests/compiler/test_issue_3414.cpp")
     if (ROOT / "tests" / "issues" / "test_issue_3414.cpp").is_file():

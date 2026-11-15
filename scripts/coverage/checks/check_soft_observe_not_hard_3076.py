@@ -26,6 +26,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -50,7 +52,6 @@ def main() -> int:
     qmid = _read("src/compiler/evaluator_primitives_query_obs_mid.cpp")
     capq = _read("src/compiler/evaluator_primitives_security.cpp")
     test = _read("tests/compiler/test_hygiene_mutate_closed_loop.cpp")
-    build = _read("build.py")
 
     must("kSoftObserveNotHardGuaranteeIssue = 3076", "AC1 stamp", audit)
     must("should_hard_reject_soft_sibling", "AC1 helper", audit)
@@ -92,7 +93,7 @@ def main() -> int:
     must("Issue #3076", "AC4 provenance comment", prov)
     must("ac3076_4_schema_and_linter", "AC4 test", test)
 
-    must("check_soft_observe_not_hard_3076", "AC5 build.py", build)
+    must("check_soft_observe_not_hard_3076", "AC5 wiring", wired_text)
     must("Issue #3076", "AC5 hygiene Hard cite", mut)
     must("Issue #3076", "AC5 isolation Soft cite", capm)
 

@@ -15,6 +15,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -37,7 +39,6 @@ def main() -> int:
 
     src = _read("src/compiler/evaluator_primitives_eval.cpp")
     test = _read("tests/compiler/test_eval_current_no_auto_fix.cpp")
-    build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
     # Scope to eval-current registration body (through eval-current-output)
@@ -62,8 +63,8 @@ def main() -> int:
     must_not("dup2(null_fd", "AC2", body)
 
     must("2484 AC1", "gate", test)
-    must("check_eval_current_no_auto_fix_2484", "gate", build)
-    must("cmd_eval_current_no_auto_fix_coverage", "gate", build)
+    must("check_eval_current_no_auto_fix_2484", "gate", wired_text)
+    must("check_eval_current_no_auto_fix_2484.py", "gate", wired_text)
     must("test_eval_current_no_auto_fix", "gate", cmake)
     must("2484 AC4", "gate", test)
 

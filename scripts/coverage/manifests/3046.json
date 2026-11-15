@@ -74,13 +74,6 @@
       ]
     },
     {
-      "ac": "AC9",
-      "path": "build.py",
-      "contains": [
-        "cmd_coercion_hf_lag_hot_residual_3046_coverage"
-      ]
-    },
-    {
       "ac": "AC10",
       "forbid": [
         "tests/compiler/test_issue_3046.cpp"

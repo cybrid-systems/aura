@@ -23,6 +23,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -46,7 +48,6 @@ def main() -> int:
     test = _read("tests/compiler/test_escape_move_elision_gate.cpp")
     jit = _read("src/compiler/aura_jit.cpp")
     ir = _read("src/compiler/ir_executor_impl.cpp")
-    build = _read("build.py")
     mut = _read("src/compiler/evaluator_primitives_mutate.cpp")
     qh = _read("src/compiler/evaluator_primitives_query.cpp")
     obs = _read("src/compiler/evaluator_primitives_observability.cpp")
@@ -113,12 +114,16 @@ def main() -> int:
     )
     must("ac3663_4_drop_and_executor_unchanged", "AC4 test", test)
 
-    must("check_is_coercible_dynamic_prod_3662", "AC5 prev linter", build)
-    must("check_linear_move_elision_abort_live_3663", "AC5 build.py", build)
-    prev = build.find("check_is_coercible_dynamic_prod_3662")
-    ours = build.find("check_linear_move_elision_abort_live_3663")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC5: linter must be wired in build.py AFTER #3662")
+    must("check_is_coercible_dynamic_prod_3662", "AC5 prev linter", wired_text)
+    must("check_linear_move_elision_abort_live_3663", "AC5 wiring", wired_text)
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must("check_is_coercible_dynamic_prod_3662", "AC5: linter must be gated by run_checks.py (both gated)", wired_text)
+    must(
+        "check_linear_move_elision_abort_live_3663",
+        "AC5: linter must be gated by run_checks.py (both gated)",
+        wired_text,
+    )
     must("ac3663_5_suite_linter_no_invent", "AC5 test", test)
     must("query:type-linear-commit-health", "AC5 commit-health key", qh + obs)
     must("query:type-linear-evolution-snapshot", "AC5 evolution-snapshot key", qh + obs)

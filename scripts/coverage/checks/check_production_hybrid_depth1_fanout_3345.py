@@ -26,6 +26,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -52,7 +54,6 @@ def main() -> int:
     ixx = _read("src/compiler/service.ixx")
     hur = _read("src/compiler/hot_update_registry.cpp")
     test = _read("tests/compiler/test_compiler_hot_update_facade.cpp")
-    build = _read("build.py")
 
     must("mark_direct_hybrid_dependents_body_dirty_", "AC1 decl", ixx)
     must("void CompilerService::mark_direct_hybrid_dependents_body_dirty_", "AC1 def", svc)
@@ -87,12 +88,20 @@ def main() -> int:
     must("stamp_eval_core_joint_after_production_facade_(name)", "AC4 #3219", svc)
     must("Issue #3188 AC1: residual of #3150", "AC4 #3188", svc)
     must("notify_dirty_define(name)", "AC4 #3150", hur)
-    must("check_production_hybrid_depth1_fanout_3345", "AC5 build.py", build)
+    must("check_production_hybrid_depth1_fanout_3345", "AC5 wiring", wired_text)
     must("ac3345_production_hybrid_depth1_fanout", "AC5 test", test)
-    prev = build.find("check_eval_core_joint_after_production_facade_3219")
-    ours = build.find("check_production_hybrid_depth1_fanout_3345")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC5: linter must be wired in build.py AFTER #3219")
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must(
+        "check_eval_core_joint_after_production_facade_3219",
+        "AC5: linter must be gated by run_checks.py (both gated)",
+        wired_text,
+    )
+    must(
+        "check_production_hybrid_depth1_fanout_3345",
+        "AC5: linter must be gated by run_checks.py (both gated)",
+        wired_text,
+    )
     if "schema-3345" in svc or "schema-3345" in ixx:
         fails.append("AC5: new schema-3345 query key")
     if "g_3345_" in svc or "g_3345_" in ixx:

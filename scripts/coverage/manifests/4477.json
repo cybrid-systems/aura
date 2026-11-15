@@ -40,10 +40,9 @@
     },
     {
       "ac": "AC3-wiring",
-      "path": "build.py",
-      "contains": [
+      "wired": [
         "check_prim_shadow_eval_current_4477",
-        "Issue #4477"
+        "check_prim_shadow_eval_current_4477.py"
       ]
     },
     {

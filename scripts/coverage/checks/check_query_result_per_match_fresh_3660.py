@@ -23,6 +23,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -41,7 +43,6 @@ def main() -> int:
     qws = _read("src/compiler/evaluator_primitives_query_workspace.cpp")
     t = _read("tests/compiler/test_query_result_full_provenance.cpp")
     hh = _read("src/core/workspace_epoch.hh")
-    build = _read("build.py")
 
     fn = dec.find("query_result_is_fresh_with_refs")
     win = dec[fn : fn + 3500] if fn >= 0 else ""
@@ -75,11 +76,13 @@ def main() -> int:
     if empty_at < 0 or (gap_at >= 0 and empty_at > gap_at):
         fails.append("AC5: empty matches must return Fresh before epoch/gap checks")
     must("test_ac3660_5_soft_empty_fresh_and_linter", "AC5 test", t)
-    must("check_query_result_per_match_fresh_3660", "AC5 build.py", build)
-    prev = build.find("check_boundary_safe_uses_snap_3659")
-    ours = build.find("check_query_result_per_match_fresh_3660")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC5: linter must be wired in build.py AFTER #3659")
+    must("check_query_result_per_match_fresh_3660", "AC5 wiring", wired_text)
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must("check_boundary_safe_uses_snap_3659", "AC5: linter must be gated by run_checks.py (both gated)", wired_text)
+    must(
+        "check_query_result_per_match_fresh_3660", "AC5: linter must be gated by run_checks.py (both gated)", wired_text
+    )
     must("query:query-epoch-stats", "AC5 epoch stats key", qws)
     if _read("tests/compiler/test_issue_3660.cpp"):
         fails.append("AC5: test_issue_3660.cpp present")

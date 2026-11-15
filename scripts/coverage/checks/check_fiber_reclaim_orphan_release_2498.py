@@ -33,6 +33,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -55,7 +57,6 @@ def main() -> int:
     _read("src/compiler/evaluator_primitives_obs_jit.cpp")
     test = _read("tests/serve/test_fiber_reclaim_orphan_release.cpp")
     cmake = _read("CMakeLists.txt")
-    build = _read("build.py")
 
     # AC1 — Fiber::join Reclaimed path precedes release_orphan_roots().
     # At least 4 Reclaimed sites in fiber.cpp; each must be preceded by
@@ -105,7 +106,7 @@ def main() -> int:
     must("Issue #2498", "AC5", test)
     must("AC5", "AC5", test)
     must("tests/serve/test_fiber_reclaim_orphan_release.cpp", "AC5", cmake)  # batch member source (S5)
-    must("check_fiber_reclaim_orphan_release_2498", "AC5", build)
+    must("check_fiber_reclaim_orphan_release_2498", "AC5", wired_text)
 
     # Optional: query surface exposure (the accessor is registered as a
     # static method on Fiber; the obs partition typically reads via a

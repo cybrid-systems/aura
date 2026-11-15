@@ -23,6 +23,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -45,7 +47,6 @@ def main() -> int:
     unify = _read("tests/compiler/test_security_audit_unify.cpp")
     lint3205 = _read("scripts/coverage/checks/check_evolution_audit_decision_durable_3205.py")
     lint3109 = _read("scripts/coverage/checks/check_wal_append_fail_closed_3109.py")
-    build = _read("build.py")
 
     must("kWalMidLookupWindowIssue = 3338", "AC1 stamp", slo)
     must("wal_mid_lookup_segments", "AC1 helper", slo)
@@ -78,18 +79,20 @@ def main() -> int:
     must("find_recent_by_mutation_id", "AC4 #3205 API", se_wal)
     must("3338 AC4", "AC4 test", replay)
 
-    must("check_wal_mid_lookup_window_3338", "AC5 build.py", build)
-    must("check_evolution_audit_decision_durable_3205", "AC5 #3205 wired", build)
+    must("check_wal_mid_lookup_window_3338", "AC5 wiring", wired_text)
+    must("check_evolution_audit_decision_durable_3205", "AC5 #3205 wired", wired_text)
     must("Issue #3205", "AC5 #3205 linter retained", lint3205)
     must("Issue #3109", "AC5 #3109 linter retained", lint3109)
     must("ac3338_5_no_invent", "AC5 test", replay)
     must("schema-3338", "AC5 unify", unify)
-    prev = build.find("check_evolution_audit_decision_durable_3205")
-    ours = build.find("check_wal_mid_lookup_window_3338")
-    if ours < 0:
-        fails.append("AC5: linter must be wired in build.py")
-    elif prev >= 0 and ours < prev:
-        fails.append("AC5: linter must be wired in build.py AFTER #3205")
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must(
+        "check_evolution_audit_decision_durable_3205",
+        "AC5: linter must be gated by run_checks.py (both gated)",
+        wired_text,
+    )
+    must("check_wal_mid_lookup_window_3338", "AC5: linter must be gated by run_checks.py (both gated)", wired_text)
     if (ROOT / "tests" / "compiler" / "test_issue_3338.cpp").is_file():
         fails.append("AC5: tests/compiler/test_issue_3338.cpp present (forbidden #81967)")
     docs = ROOT / "docs" / "design"

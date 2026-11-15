@@ -23,6 +23,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -46,7 +48,6 @@ def main() -> int:
     col = _read("tests/compiler/test_dead_coercion_columnar.cpp")
     batch = _read("tests/compiler/test_batch_dirty_cascade.cpp")
     inc = _read("tests/compiler/test_incremental_type_batch.cpp")
-    build = _read("build.py")
     q = _read("src/compiler/evaluator_primitives_query.cpp") + _read(
         "src/compiler/evaluator_primitives_query_type_stats.cpp"
     )
@@ -91,13 +92,13 @@ def main() -> int:
 
     must("if (!residual_castop_persist_active())", "AC4 persist gate", dirty)
     must("aura_force_residual_castop_undermark_into_cone", "AC4 light-link stub", stubs)
-    must("check_residual_castop_readiness_undermark_3347", "AC4 build.py", build)
-    must("check_residual_castop_undermark_cone_3228", "AC4 after #3228", build)
+    must("check_residual_castop_readiness_undermark_3347", "AC4 wiring", wired_text)
+    must("check_residual_castop_undermark_cone_3228", "AC4 after #3228", wired_text)
     # #3347 gate must appear after #3228 in build.py.
-    i3228 = build.find("check_residual_castop_undermark_cone_3228")
-    i3347 = build.find("check_residual_castop_readiness_undermark_3347")
-    if i3228 < 0 or i3347 < 0 or i3347 < i3228:
-        fails.append("AC4: #3347 linter must run after #3228")
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must("check_residual_castop_undermark_cone_3228", "AC4: #3347 linter must run (both gated)", wired_text)
+    must("check_residual_castop_readiness_undermark_3347", "AC4: #3347 linter must run (both gated)", wired_text)
     must("3347", "AC4 columnar", col)
     must("3347", "AC4 cascade", batch)
     must("3347", "AC4 incremental_type", inc)

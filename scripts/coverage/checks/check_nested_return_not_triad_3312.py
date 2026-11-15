@@ -24,6 +24,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -44,7 +46,6 @@ def main() -> int:
     met = _read("src/compiler/observability_metrics.h")
     hyg = _read("tests/compiler/test_hygiene_mutate_closed_loop.cpp")
     batch = _read("tests/compiler/test_mutation_boundary_batch.cpp")
-    build = _read("build.py")
     l3196 = _read("scripts/coverage/checks/check_nested_guard_authority_gap_3196.py")
 
     must("Issue #3312", "AC1 boundary", mb)
@@ -76,12 +77,12 @@ def main() -> int:
     must("nested_authority_gap_last_window_ns", "AC5 window", met)
     must("nested_authority_gap_open_ns", "AC5 open stamp", ast)
     must("ac3312_5_source_and_linter", "AC5 hygiene source", hyg)
-    must("check_nested_return_not_triad_3312", "AC5 build.py", build)
+    must("check_nested_return_not_triad_3312", "AC5 wiring", wired_text)
     must("run_3196_nested_authority_gap", "AC5 batch", batch)
-    prev = build.find("check_nested_guard_authority_gap_3196")
-    ours = build.find("check_nested_return_not_triad_3312")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC5: linter must be wired in build.py AFTER #3196")
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must("check_nested_guard_authority_gap_3196", "AC5: linter must be gated by run_checks.py (both gated)", wired_text)
+    must("check_nested_return_not_triad_3312", "AC5: linter must be gated by run_checks.py (both gated)", wired_text)
     if "schema-3312" in hyg or "schema-3312" in met:
         fails.append("AC5: new schema-3312 query key (SlimSurface)")
     if "g_3312_" in mb or "g_3312_" in met or "g_3312_" in ast:

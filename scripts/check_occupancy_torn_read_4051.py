@@ -16,7 +16,7 @@ Contract (one row per AC):
        (4051 markers: torn-read deny / occupant preserved / stable reads /
        Soft skip / source-cite), dispatched from the batch runner
   AC4  no tests/**/test_issue_4051.cpp; no docs/design/4051-*
-  AC5  build.py wires check_occupancy_torn_read_4051 + root allowlist
+  AC5  run_checks.py wires check_occupancy_torn_read_4051 + root allowlist
 
 Exit 0 = all rows satisfied.
 """
@@ -27,6 +27,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -49,7 +51,6 @@ def main() -> int:
     sec = _read("src/compiler/evaluator_security.cpp")
     test = _read("tests/compiler/test_require_effect_auto_isolation.cpp")
     batch = _read("tests/compiler/test_security_capability_batch.cpp")
-    build = _read("build.py")
     allow = _read("scripts/coverage/root_check_allowlist.txt")
 
     # ── AC1: third read state in the header ──────────────────────────────
@@ -113,8 +114,8 @@ def main() -> int:
             fails.append(f"AC4: docs/design file present: {p.name}")
 
     # ── AC5: gate wiring ─────────────────────────────────────────────────
-    must("check_occupancy_torn_read_4051", "AC5 build.py wires linter", build)
-    must("Issue #4051", "AC5 build.py rationale", build)
+    must("check_occupancy_torn_read_4051", "AC5 run_checks.py wires linter", wired_text)
+    must("check_occupancy_torn_read_4051", "AC5 run_checks.py rationale", wired_text)
     must("check_occupancy_torn_read_4051.py", "AC5 root allowlist", allow)
 
     if fails:

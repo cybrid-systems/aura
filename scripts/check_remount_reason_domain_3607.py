@@ -22,6 +22,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
 
 RT = "src/compiler/aura_jit_runtime.cpp"
 REG = "src/compiler/hot_update_registry.cpp"
@@ -56,7 +59,6 @@ def main() -> int:
     reg = _read(REG)
     hh = _read(HH)
     test = _read(TEST)
-    build = _read(BUILD)
 
     # AC1
     must("Issue #3607", "AC1 runtime", rt)
@@ -94,7 +96,7 @@ def main() -> int:
     must("ac3607_5_idle_zero_extra", "AC5 test row", test)
 
     # AC6
-    must("check_remount_reason_domain_3607", "AC6 build wiring", build)
+    must("check_remount_reason_domain_3607", "AC6 build wiring", wired_text)
     must("ac3607_6_source_and_linter", "AC6 test row", test)
     if (ROOT / "tests" / "compiler" / "test_issue_3607.cpp").is_file():
         fails.append("AC6: test_issue_3607.cpp present (forbidden per #81934/#81967)")

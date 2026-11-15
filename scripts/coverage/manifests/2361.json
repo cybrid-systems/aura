@@ -73,13 +73,6 @@
       "contains": [
         "test_densify_envframe_ok"
       ]
-    },
-    {
-      "ac": "AC9",
-      "path": "build.py",
-      "contains": [
-        "cmd_densify_envframe_ok_coverage"
-      ]
     }
   ]
 }

@@ -23,6 +23,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -45,7 +47,6 @@ def main() -> int:
     br = _read("src/compiler/aura_jit_bridge.cpp")
     steal = _read("src/compiler/evaluator_fiber_mutation.cpp")
     test = _read("tests/compiler/test_anonymous_residual_stable_id_policy.cpp")
-    build = _read("build.py")
 
     start = rt.find("void aura_sync_remount_pure_anon_live_closures")
     end = rt.find("Issue #2950: enqueue budget-exhausted pure-anon after table unlock")
@@ -93,11 +94,19 @@ def main() -> int:
     must_not("schema-3478", "AC6 no query key", rt)
     must_not("g_3478_", "AC6 no g_3478_*", rt)
 
-    must("check_pure_anon_budget_skip_must_deopt_3478", "AC6 build.py", build)
-    prev = build.find("check_pure_anon_overflow_dispatch_race_3323")
-    ours = build.find("check_pure_anon_budget_skip_must_deopt_3478")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC6: linter must be wired in build.py AFTER #3323")
+    must("check_pure_anon_budget_skip_must_deopt_3478", "AC6 wiring", wired_text)
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must(
+        "check_pure_anon_overflow_dispatch_race_3323",
+        "AC6: linter must be gated by run_checks.py (both gated)",
+        wired_text,
+    )
+    must(
+        "check_pure_anon_budget_skip_must_deopt_3478",
+        "AC6: linter must be gated by run_checks.py (both gated)",
+        wired_text,
+    )
 
     if (ROOT / "tests" / "compiler" / "test_issue_3478.cpp").is_file():
         fails.append("AC6: test_issue_3478.cpp present (forbidden #81967)")

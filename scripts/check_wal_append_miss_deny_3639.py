@@ -34,6 +34,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -51,7 +53,6 @@ def main() -> int:
     ev = _read("src/compiler/evaluator_security.cpp")
     slo = _read("src/core/wal_append_fail_slo.h")
     test = _read("tests/compiler/test_security_posture_trail.cpp")
-    build = _read("build.py")
     lint3109 = _read("scripts/coverage/checks/check_wal_append_fail_closed_3109.py")
     lint3302 = _read("scripts/coverage/checks/check_wal_fail_closed_force_wal_3302.py")
 
@@ -102,7 +103,7 @@ def main() -> int:
 
     # ── AC5: #3211 next-outermost gate intact ───────────────────────────
     must("hard-denies the *next* outermost mutate", "AC5 header contract", slo)
-    must("check_wal_append_fail_schedule_3211", "AC5 3211 linter wired", build)
+    must("check_wal_append_fail_schedule_3211", "AC5 3211 linter wired", wired_text)
     sched = _read("tests/orch/test_security_schedule_gate.cpp")
     if not sched:
         fails.append("AC5: tests/orch/test_security_schedule_gate.cpp missing")
@@ -114,7 +115,7 @@ def main() -> int:
     must("mutation_wal_append_miss", "AC6 3302 linter carries 3639 rows", lint3302)
     must("wal_append_missed", "AC6 3109 linter miss-flag row", lint3109)
     must("wal_append_missed", "AC6 3302 linter miss-flag row", lint3302)
-    must("check_wal_append_miss_deny_3639", "AC6 build.py wiring", build)
+    must("check_wal_append_miss_deny_3639", "AC6 run_checks.py wiring", wired_text)
     if (ROOT / "tests" / "compiler" / "test_issue_3639.cpp").is_file():
         fails.append("AC6: test_issue_3639.cpp present (forbidden #81967)")
     if (ROOT / "tests" / "core" / "test_issue_3639.cpp").is_file():

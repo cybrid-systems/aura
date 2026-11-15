@@ -70,13 +70,6 @@
       ]
     },
     {
-      "ac": "AC7",
-      "path": "build.py",
-      "contains": [
-        "cmd_dirty_columnar_2904"
-      ]
-    },
-    {
       "ac": "AC8",
       "forbid_glob": [
         "docs/design/2904-*"

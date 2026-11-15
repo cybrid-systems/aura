@@ -23,6 +23,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -42,7 +44,6 @@ def main() -> int:
     ls = _read("src/core/layout_stamp.hh")
     pcv = _read("src/core/persistent_child_vector.hh")
     test = _read("tests/compiler/test_ir_soa_layout_stamp.cpp")
-    build = _read("build.py")
     lint3292 = _read("scripts/coverage/checks/check_pcv_hotpath_metrics_layout_3292.py")
 
     # ── AC1: IR SoA dirty/column + additional hot structs ──
@@ -89,13 +90,13 @@ def main() -> int:
     must("3314 AC3", "AC3 test", test)
 
     # ── AC4: existing suite + linter after #3292; no invent / docs ──
-    must("check_append_only_layout_stamps_3314", "AC4 build.py", build)
+    must("check_append_only_layout_stamps_3314", "AC4 wiring", wired_text)
     must("3314 AC1", "AC4 test AC1", test)
     must("3314 AC4", "AC4 test", test)
-    prev = build.find("check_pcv_hotpath_metrics_layout_3292")
-    ours = build.find("check_append_only_layout_stamps_3314")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC4: linter must be wired in build.py AFTER #3292")
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must("check_pcv_hotpath_metrics_layout_3292", "AC4: linter must be gated by run_checks.py (both gated)", wired_text)
+    must("check_append_only_layout_stamps_3314", "AC4: linter must be gated by run_checks.py (both gated)", wired_text)
     if (ROOT / "tests" / "compiler" / "test_issue_3314.cpp").is_file():
         fails.append("AC4: forbidden tests/compiler/test_issue_3314.cpp per #81967")
     if (ROOT / "tests" / "core" / "test_issue_3314.cpp").is_file():

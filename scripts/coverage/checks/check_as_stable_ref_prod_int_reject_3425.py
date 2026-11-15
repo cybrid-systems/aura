@@ -26,6 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _source_scan import source_block_after  # noqa: E402  (sibling helper)
 
 ROOT = Path(__file__).resolve().parents[3]
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -42,7 +43,6 @@ def main() -> int:
 
     mut = _read("src/compiler/evaluator_primitives_mutate.cpp")
     t = _read("tests/serve/test_stable_ref_provenance_fiber_cow.cpp")
-    build = _read("build.py")
 
     start = mut.find('add_hidden(\n        "query:as-stable-ref"')
     win = source_block_after(mut, start) if start >= 0 else ""
@@ -73,11 +73,11 @@ def main() -> int:
     must("ac3425_1_source_cite", "AC5 test", t)
     must("ac3425_2_production_int_reject_v2_and_hash", "AC5 AC2 test", t)
     must("ac3425_3_soft_int_v1_unchanged", "AC5 AC3 test", t)
-    must("check_as_stable_ref_prod_int_reject_3425", "AC5 build.py", build)
-    prev = build.find("check_as_stable_ref_v2_3398")
-    ours = build.find("check_as_stable_ref_prod_int_reject_3425")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC5: #3425 linter must run after #3398")
+    must("check_as_stable_ref_prod_int_reject_3425", "AC5 wiring", wired_text)
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must("check_as_stable_ref_v2_3398", "AC5: #3425 linter must run (both gated)", wired_text)
+    must("check_as_stable_ref_prod_int_reject_3425", "AC5: #3425 linter must run (both gated)", wired_text)
     if (ROOT / "tests" / "issues" / "test_issue_3425.cpp").is_file():
         fails.append("AC5: forbidden tests/issues/test_issue_3425.cpp")
     if (ROOT / "tests" / "compiler" / "test_issue_3425.cpp").is_file():

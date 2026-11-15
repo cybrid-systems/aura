@@ -19,6 +19,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -43,7 +45,6 @@ def main() -> int:
     mut = _read("src/compiler/evaluator_primitives_mutate.cpp")
     test = _read("tests/compiler/test_linear_force_unified.cpp")
     cmake = _read("CMakeLists.txt")
-    build = _read("build.py")
 
     # AC1
     must("force_linear_rollback", "AC1", eixx)
@@ -88,8 +89,8 @@ def main() -> int:
     must("schema-2545", "AC6", mut)
     must("schema-2514", "AC6", q)  # lineage retained
     must("test_linear_force_unified", "AC6", cmake)
-    must("check_linear_force_unified_2545", "AC6", build)
-    must("cmd_linear_force_unified_coverage", "AC6", build)
+    must("check_linear_force_unified_2545", "AC6", wired_text)
+    must("check_linear_force_unified_2545.py", "AC6", wired_text)
     must("ac6_source_and_schema", "AC6", test)
 
     # Phase-1 retained

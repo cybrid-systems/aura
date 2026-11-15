@@ -22,6 +22,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -44,7 +46,6 @@ def main() -> int:
     test = _read("tests/core/test_moving_densify_fail_closed.cpp")
     pin = _read("tests/core/test_general_object_pin.cpp")
     gate = _read("tests/core/test_general_object_pin_coverage_gate.cpp")
-    build = _read("build.py")
 
     must("kFfiOpaquePinOrRemapResidualIssue = 3057", "AC1 stamp", lp)
     must("for (void*& op : opaque_heap_)", "AC1 walk", mb)
@@ -67,7 +68,7 @@ def main() -> int:
     must("ac3057_ffi_opaque_slot_cover", "AC5 pin suite", pin)
     must("ac3057_coverage_gate_cite", "AC5 gate", gate)
     must("schema-3057", "AC5 schema", obs)
-    must("check_ffi_opaque_pin_or_remap_3057", "AC5 build", build)
+    must("check_ffi_opaque_pin_or_remap_3057", "AC5 build", wired_text)
     if _read("docs/design/3057-ffi-opaque-slot.md"):
         fails.append("AC5: docs/design/3057-* present")
     if _read("tests/core/test_issue_3057.cpp"):

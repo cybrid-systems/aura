@@ -18,6 +18,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -40,7 +42,6 @@ def main() -> int:
     readme = _read("src/orch/README.md")
     test_admit = _read("tests/orch/test_per_scope_bp_admit.cpp")
     test_pol = _read("tests/orch/test_agent_failure_policy.cpp")
-    build = _read("build.py")
 
     # AC1
     must("Issue #2948", "AC1", spawn)
@@ -79,7 +80,7 @@ def main() -> int:
     must("schema-2887", "AC5", prim)
 
     # AC6
-    must("check_bp_threshold_ssot_2948", "AC6", build)
+    must("check_bp_threshold_ssot_2948", "AC6", wired_text)
     must("2948", "AC6", test_admit)
     must("2948", "AC6", test_pol)
     if (ROOT / "tests" / "orch" / "test_issue_2948.cpp").is_file():

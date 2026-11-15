@@ -25,10 +25,9 @@
     },
     {
       "ac": "AC3-wiring",
-      "path": "build.py",
-      "contains": [
+      "wired": [
         "check_require_effect_full_hard_mid_3843",
-        "Issue #3843"
+        "check_require_effect_full_hard_mid_3843.py"
       ]
     },
     {

@@ -24,6 +24,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -44,7 +46,6 @@ def main() -> int:
     q = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
     test = _read("tests/compiler/test_hot_pass_hard_dod.cpp")
     soa_test = _read("tests/compiler/test_soa_dirty_aware_pipeline.cpp")
-    build = _read("build.py")
 
     # ── AC1 ──
     must("Issue #3315", "AC1 pipeline cite", core)
@@ -81,13 +82,15 @@ def main() -> int:
     must("setter stays", "AC3 comment", impls)
 
     # ── AC4 ──
-    must("check_production_dirty_soa_no_pred_3315", "AC4 build.py", build)
+    must("check_production_dirty_soa_no_pred_3315", "AC4 wiring", wired_text)
     must("3315 AC4", "AC4 test", test)
     must("Issue #3042", "AC4 3042 lineage", core)
-    prev = build.find("check_pure_wrap_no_std_function_3042")
-    ours = build.find("check_production_dirty_soa_no_pred_3315")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC4: linter must be wired in build.py AFTER #3042")
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must("check_pure_wrap_no_std_function_3042", "AC4: linter must be gated by run_checks.py (both gated)", wired_text)
+    must(
+        "check_production_dirty_soa_no_pred_3315", "AC4: linter must be gated by run_checks.py (both gated)", wired_text
+    )
     if (ROOT / "tests" / "compiler" / "test_issue_3315.cpp").is_file():
         fails.append("AC4: forbidden tests/compiler/test_issue_3315.cpp per #81967")
     if (ROOT / "tests" / "core" / "test_issue_3315.cpp").is_file():

@@ -24,6 +24,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -46,7 +48,6 @@ def main() -> int:
     t = _read("tests/core/test_arena_required_cover_no_value_only.cpp")
     l3402 = _read("scripts/check_dense_children_columns_3402.py")
     l3453 = _read("scripts/coverage/checks/check_set_child_locked_dense_inplace_3453.py")
-    build = _read("build.py")
     qh = _read("src/compiler/evaluator_primitives_query.cpp")
     obs = _read("src/compiler/evaluator_primitives_observability.cpp")
 
@@ -98,12 +99,20 @@ def main() -> int:
     must_not("schema-3665", "AC4 no new query key", ast)
     must("query:type-linear-commit-health", "AC4 commit-health key", qh + obs)
 
-    must("check_replace_pattern_match_sub_no_std_function_3664", "AC5 prev linter", build)
-    must("check_insert_remove_child_locked_dense_splice_3665", "AC5 build.py", build)
-    prev = build.find("check_replace_pattern_match_sub_no_std_function_3664")
-    ours = build.find("check_insert_remove_child_locked_dense_splice_3665")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC5: linter must be wired in build.py AFTER #3664")
+    must("check_replace_pattern_match_sub_no_std_function_3664", "AC5 prev linter", wired_text)
+    must("check_insert_remove_child_locked_dense_splice_3665", "AC5 wiring", wired_text)
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must(
+        "check_replace_pattern_match_sub_no_std_function_3664",
+        "AC5: linter must be gated by run_checks.py (both gated)",
+        wired_text,
+    )
+    must(
+        "check_insert_remove_child_locked_dense_splice_3665",
+        "AC5: linter must be gated by run_checks.py (both gated)",
+        wired_text,
+    )
     must("AC3665", "AC5 #3402 linter extended", l3402)
     must("ac3665_insert_remove_dense_splice", "AC5 #3453 linter extended", l3453)
     if _read("tests/core/test_issue_3665.cpp") or _read("tests/compiler/test_issue_3665.cpp"):

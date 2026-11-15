@@ -24,6 +24,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -42,7 +44,6 @@ def main() -> int:
     agent = _read("src/compiler/evaluator_primitives_agent.cpp")
     scope = _read("src/orch/agent_scope.h")
     test = _read("tests/orch/test_join_drain_reclaim.cpp")
-    build = _read("build.py")
 
     # ── AC1: language helper + prims call it ──────────────────────
     must("Issue #3051", "AC1", spawn)
@@ -98,7 +99,7 @@ def main() -> int:
 
     # ── AC6: tests + no invent + no docs/design/ ───────────────────
     must("#3051 AC1", "AC6", test)
-    must("check_join_auto_wait_reclaimed_3051", "AC6", build)
+    must("check_join_auto_wait_reclaimed_3051", "AC6", wired_text)
     must("#3051", "AC6", spawn)
     for rel in ("tests/orch/test_issue_3051.cpp", "tests/compiler/test_issue_3051.cpp"):
         if _read(rel):

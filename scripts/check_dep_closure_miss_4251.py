@@ -28,6 +28,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -53,7 +55,6 @@ def main() -> int:
     impl = _read("src/compiler/type_checker_impl.cpp")
     ixx = _read("src/compiler/type_checker.ixx")
     t = _read("tests/compiler/test_solve_delta_unresolved_export.cpp")
-    build = _read("build.py")
     allow = _read("scripts/coverage/root_check_allowlist.txt")
 
     start = impl.find("void ConstraintSystem::record_truncated_partial_blame(")
@@ -129,7 +130,7 @@ def main() -> int:
         must(name, f"AC6 {name}", t)
     must("4251 AC1: prod miss latches truncation", "AC6 CHECK row", t)
     must("4251 AC3: pending follows the surviving rep", "AC6 merge CHECK row", t)
-    must("check_dep_closure_miss_4251", "AC6 build.py wiring", build)
+    must("check_dep_closure_miss_4251", "AC6 run_checks.py wiring", wired_text)
     must("check_dep_closure_miss_4251.py", "AC6 allowlist", allow)
 
     if fails:

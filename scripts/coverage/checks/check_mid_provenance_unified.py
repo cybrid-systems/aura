@@ -30,6 +30,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -48,7 +50,6 @@ def main() -> int:
     typed_audit = _read("src/compiler/typed_mutation_audit.h")
     ep = _read("src/compiler/evaluator_primitives_security.cpp")
     test = _read("tests/core/test_audit_replay_join.cpp")
-    build = _read("build.py")
     manifest = _read("scripts/coverage/manifests/3143.json")
 
     # ── AC1: TypedMid first in stamp order ──────────────────────────
@@ -156,8 +157,8 @@ def main() -> int:
     must("ac5_source_cite_no_design", "AC5 AC5 test function", test)
     must("Issue #3143", "AC5 #3143 cite in test", test)
 
-    # AC5: build.py wires linter
-    must("check_mid_provenance_unified.py", "AC5 build.py wires linter", build)
+    # AC5: run_checks.py gates linter
+    must("check_mid_provenance_unified.py", "AC5 run_checks.py gates linter", wired_text)
 
     # AC5: manifest exists and contains #3143
     if "3143" not in manifest:

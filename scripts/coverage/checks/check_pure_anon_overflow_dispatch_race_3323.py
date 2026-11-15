@@ -28,6 +28,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -47,7 +49,6 @@ def main() -> int:
     steal = _read("src/compiler/evaluator_fiber_mutation.cpp")
     hur = _read("src/compiler/hot_update_registry.cpp")
     test = _read("tests/compiler/test_anonymous_residual_stable_id_policy.cpp")
-    build = _read("build.py")
 
     must("Issue #3323", "AC1 cite", rt)
     must("pure_anon_bg_overflow_force_leave_native", "AC1 helper", rt)
@@ -78,7 +79,7 @@ def main() -> int:
     must("aura_sync_remount_named_live_closures", "AC5 named", rt)
     must("aura_sync_remount_anon_captured_live_closures", "AC5 captured", rt)
     must("maybe_storm_clear_health_pass", "AC5 storm-clear", hur)
-    must("check_pure_anon_overflow_dispatch_race_3323", "AC5 build.py", build)
+    must("check_pure_anon_overflow_dispatch_race_3323", "AC5 wiring", wired_text)
     must("ac3323_5_source_and_linter", "AC5 test", test)
     pos = steal.find("aura_evaluator_on_steal_complete")
     if pos != -1:
@@ -87,10 +88,18 @@ def main() -> int:
             fails.append("AC5: steal-complete drains pure-anon (forbidden #2715)")
     else:
         fails.append("AC5: steal-complete site not found")
-    prev = build.find("check_pure_anon_no_boundary_force_leave_3277")
-    ours = build.find("check_pure_anon_overflow_dispatch_race_3323")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC5: linter must be wired in build.py AFTER #3277")
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must(
+        "check_pure_anon_no_boundary_force_leave_3277",
+        "AC5: linter must be gated by run_checks.py (both gated)",
+        wired_text,
+    )
+    must(
+        "check_pure_anon_overflow_dispatch_race_3323",
+        "AC5: linter must be gated by run_checks.py (both gated)",
+        wired_text,
+    )
     if "schema-3323" in rt or "schema-3323" in mb:
         fails.append("AC5: new schema-3323 query key")
     if "g_3323_" in rt or "g_3323_" in mb:

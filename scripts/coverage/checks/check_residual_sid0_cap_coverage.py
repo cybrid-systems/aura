@@ -13,7 +13,7 @@ AC3: Soft / Off + cap=0 → unlimited (env "0"/"off"/"unlimited")
 AC4: Named create path (sid≠0) never hits residual cap
 AC5: Query keys + schema-2638 + wired sentinel; #2605 axes preserved
 AC6: src-aligned soak (no residual growth under normal) + inject-over-cap
-     test + coverage gate (this linter + build.py gate step)
+     test + coverage gate (this linter + coverage runner step)
 
 Default: non-strict (exit 0, prints coverage summary). Use --strict
 to enforce (exit 1 if any AC fails — gate before merge).
@@ -209,7 +209,7 @@ def main() -> int:
         if preserved not in obs_text:
             failures.append(f"AC5: evaluator_primitives_obs_eval.cpp does not preserve {preserved}")
 
-    # AC6: tests + build.py gate
+    # AC6: tests + coverage runner
     test_text = TEST_2605.read_text(encoding="utf-8", errors="replace") if TEST_2605.exists() else ""
     for ac_fn in (
         "ac2638_cap_below_threshold_backfill_works",
@@ -231,9 +231,9 @@ def main() -> int:
 
     build_text = BUILD.read_text(encoding="utf-8", errors="replace") if BUILD.exists() else ""
     if "check_residual_sid0_cap_coverage" not in build_text:
-        failures.append("AC6: build.py does not reference check_residual_sid0_cap_coverage linter")
+        failures.append("AC6: run_checks.py does not discover check_residual_sid0_cap_coverage linter")
     if "cmd_residual_sid0_cap_coverage" not in build_text:
-        failures.append("AC6: build.py missing cmd_residual_sid0_cap_coverage function")
+        failures.append("AC6: run_checks.py missing residual_sid0_cap_coverage function")
 
     if failures:
         for f in failures:

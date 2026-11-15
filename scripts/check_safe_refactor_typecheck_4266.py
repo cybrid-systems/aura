@@ -34,6 +34,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
 
 PRIM = "src/compiler/evaluator_primitives_eval.cpp"
 IXX = "src/compiler/evaluator.ixx"
@@ -99,7 +102,7 @@ def main() -> int:
     stdlib_live = _strip_aura_comments(_read(STDLIB))
     test = _read(TEST)
     runtests = _read(RUNTESTS)
-    build = _read(BUILD)
+    build = wired_text
     allowlist = _read(ALLOWLIST)
 
     # ── AC1: structured status primitive + shared core ──

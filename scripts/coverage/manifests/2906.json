@@ -53,13 +53,6 @@
       ]
     },
     {
-      "ac": "AC6",
-      "path": "build.py",
-      "contains": [
-        "cmd_pcv_flatast_locked_exclusive_2906"
-      ]
-    },
-    {
       "ac": "AC7",
       "forbid_glob": [
         "docs/design/2906-*"

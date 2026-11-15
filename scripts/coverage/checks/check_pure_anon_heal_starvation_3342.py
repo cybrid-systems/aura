@@ -27,6 +27,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -46,7 +48,6 @@ def main() -> int:
     steal = _read("src/compiler/evaluator_fiber_mutation.cpp")
     hur = _read("src/compiler/hot_update_registry.cpp")
     test = _read("tests/compiler/test_anonymous_residual_stable_id_policy.cpp")
-    build = _read("build.py")
     sh = _read("src/compiler/runtime_shared.h")
 
     must("Issue #3342", "AC1 cite", rt)
@@ -87,13 +88,17 @@ def main() -> int:
         if "aura_pure_anon_maybe_heal_starved" in win:
             fails.append("AC4: steal starved-heal")
 
-    must("check_pure_anon_heal_starvation_3342", "AC5 build.py", build)
+    must("check_pure_anon_heal_starvation_3342", "AC5 wiring", wired_text)
     must("ac3342_5_source_and_linter", "AC5 test", test)
     must("aura_pure_anon_maybe_heal_starved", "AC5 shared.h", sh)
-    prev = build.find("check_pure_anon_overflow_dispatch_race_3323")
-    ours = build.find("check_pure_anon_heal_starvation_3342")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC5: linter must be wired in build.py AFTER #3323")
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must(
+        "check_pure_anon_overflow_dispatch_race_3323",
+        "AC5: linter must be gated by run_checks.py (both gated)",
+        wired_text,
+    )
+    must("check_pure_anon_heal_starvation_3342", "AC5: linter must be gated by run_checks.py (both gated)", wired_text)
     if "schema-3342" in rt or "schema-3342" in mb:
         fails.append("AC5: new schema-3342 query key")
     if "g_3342_" in rt or "g_3342_" in mb:

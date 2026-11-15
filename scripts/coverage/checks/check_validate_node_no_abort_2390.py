@@ -6,7 +6,7 @@ Contract:
   AC2 fail_on_error=true → throw std::logic_error
   AC3 fail_on_error=false → return error string
   AC4 no std::abort() on !is_valid in validate_node
-  AC5 tests + CMake + build.py gate
+  AC5 tests + CMake + coverage runner
 
 Exit 0 = all rows satisfied.
 """
@@ -18,6 +18,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -37,7 +39,6 @@ def main() -> int:
     impl = _read("src/core/ast_impl.cpp")
     test = _read("tests/core/test_validate_node_no_abort.cpp")
     cmake = _read("CMakeLists.txt")
-    build = _read("build.py")
 
     # AC1–AC3 behavior
     must("Issue #2390", "AC1", impl)
@@ -76,8 +77,8 @@ def main() -> int:
 
     # AC5 registration
     must("test_validate_node_no_abort", "AC5", cmake)
-    must("check_validate_node_no_abort_2390", "AC5", build)
-    must("cmd_validate_node_no_abort_coverage", "AC5", build)
+    must("check_validate_node_no_abort_2390", "AC5", wired_text)
+    must("check_validate_node_no_abort_2390.py", "AC5", wired_text)
     must("ac5_source_and_gate", "AC5", test)
     must("Issue #2390", "AC5", test)
 

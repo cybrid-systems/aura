@@ -32,7 +32,7 @@
 #     - AC4 #3067 (drain at entry) + #3097 (impact_ub consult + counter)
 #       + #3135 (cascade_decision_mtx_ + defer_lock) preserved
 #     - AC5 Quiet happy path (no concurrent reject) → no extra work
-#     - AC8 source-cite + coverage linter + build.py wiring
+#     - AC8 source-cite + coverage linter + gate wiring
 #
 #  4. Forbidden artifacts (per #1655 + #81967):
 #     - No docs/design/3168-* plan doc
@@ -164,17 +164,7 @@ INFRA_REQUIRED: tuple[tuple[str, str, str], ...] = (
         r"ac3168_5_source_and_linter",
         "test: AC8 source/linter suite",
     ),
-    # Build.py wiring.
-    (
-        "build.py",
-        r"cmd_cascade_rearm_new_edge_only_3168",
-        "build: cmd_cascade_rearm_new_edge_only_3168 dispatcher",
-    ),
-    (
-        "build.py",
-        r"check_cascade_rearm_new_edge_only_3168",
-        "build: linter path wired",
-    ),
+    # Gate wiring is asserted through run_checks.py discovery (#5246).
 )
 
 FORBIDDEN_DOCS: tuple[str, ...] = (

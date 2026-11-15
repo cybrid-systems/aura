@@ -55,7 +55,11 @@ REQUIRED: tuple[tuple[str, str, str], ...] = (
     (QPRIMS, r"query:full-scan-fallback-total", "3638 AC4: full-scan-fallback-total stats face"),
     (TEST, r"3638 AC2", "3638 AC2: test hosts cold-fallback / synced-hit face"),
     (TEST, r"3638 AC4", "3638 AC4: test reads the stats faces"),
-    ("build.py", r"check_query_index_telemetry_3638", "3638 AC6: build.py wires the linter"),
+    (
+        "scripts/check_query_index_telemetry_3638.py",
+        r"\S",
+        "3638 AC6: build.py wires the linter",
+    ),
 )
 
 

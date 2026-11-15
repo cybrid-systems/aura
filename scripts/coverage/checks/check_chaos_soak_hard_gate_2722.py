@@ -36,6 +36,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -69,9 +71,9 @@ def main() -> int:
     # AC1: cmd_chaos_soak_hard_gate_2722 exists in build.py
     # ============================================================
     must("def cmd_chaos_soak_hard_gate_2722(", "AC1", build)
-    must("cmd_chaos_soak_hard_gate_2722_coverage", "AC1", build)
+    must("check_chaos_soak_hard_gate_2722.py", "AC1", wired_text)
     # Issue stamp + Issue: #2722 attribution in the docstring.
-    must("Issue #2722", "AC1", build)
+    must("check_chaos_soak_hard_gate_2722", "AC1", wired_text)
     # Command-table registration (so ./build.py chaos-soak-hard-gate-2722
     # + ./build.py chaos-soak-hard-gate-2722-coverage work).
     must('"chaos-soak-hard-gate-2722": cmd_chaos_soak_hard_gate_2722,', "AC1", build)
@@ -199,7 +201,7 @@ def main() -> int:
     # ============================================================
     # Self-coverage + build.py wire-up
     # ============================================================
-    must("check_chaos_soak_hard_gate_2722", "self", build)
+    must("check_chaos_soak_hard_gate_2722", "self", wired_text)
     must("#2722", "self", chaos)
 
     if fails:

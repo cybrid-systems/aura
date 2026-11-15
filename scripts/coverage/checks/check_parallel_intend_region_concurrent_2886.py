@@ -24,6 +24,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 # Files in scope for #2886.
 SCOPE_FILES = [
@@ -53,7 +55,6 @@ def main() -> int:
     _read("src/orch/agent_spawn.h")
     agent_prim = _read("src/compiler/evaluator_primitives_agent.cpp")
     test_pure = _read("tests/orch/test_parallel_intend_pure_contract.cpp")
-    build = _read("build.py")
 
     # ── AC1: disjoint region_keys → region-concurrent eligibility ──
     must("Issue #2886", "AC1", agent_prim)
@@ -147,8 +148,8 @@ def main() -> int:
     must("issue-2886", "AC6", agent_prim)
     must("parallel-intend-region-concurrent-wired", "AC6", agent_prim)
     must("2886", "AC6", test_pure)
-    if "check_parallel_intend_region_concurrent_2886" not in build:
-        fails.append("AC6: build.py does not wire #2886 linter")
+    if "check_parallel_intend_region_concurrent_2886" not in wired_text:
+        fails.append("AC6: run_checks.py does not discover #2886 linter")
     # No new test_issue_2886.cpp (per #81967).
     for d in ("core", "orch", "compiler"):
         if (ROOT / "tests" / d / "test_issue_2886.cpp").is_file():

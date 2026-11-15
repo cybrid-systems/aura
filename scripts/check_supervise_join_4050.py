@@ -39,7 +39,7 @@ Contract (one row per AC):
        tests/**/test_issue_4050.cpp; no docs/design/4050-*
   AC7  no AgentRegistry, no new query key, no rename of
        query:orch-module-stats; additive issue stamp only.
-  AC8  build.py wires check_supervise_join_4050 + root allowlist row.
+  AC8  run_checks.py wires check_supervise_join_4050 + root allowlist row.
 
 Exit 0 = all rows satisfied.
 """
@@ -50,6 +50,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -73,7 +75,6 @@ def main() -> int:
     scope = _read("src/orch/agent_scope.h")
     test = _read("tests/orch/test_failure_policy_bridge.cpp")
     dispatcher = _read("tests/orch/test_orch_agent_batch.cpp")
-    build = _read("build.py")
     allow = _read("scripts/coverage/root_check_allowlist.txt")
 
     # ── AC1: watch-scope child close on the existing budgets ─────────────
@@ -186,7 +187,7 @@ def main() -> int:
     must("query:orch-module-stats", "AC7 existing stats query key untouched", prim)
 
     # ── AC8: build.py wiring + root allowlist ────────────────────────────
-    must("check_supervise_join_4050", "AC8 build.py wires linter", build)
+    must("check_supervise_join_4050", "AC8 run_checks.py wires linter", wired_text)
     must("check_supervise_join_4050.py", "AC8 root allowlist", allow)
 
     if fails:

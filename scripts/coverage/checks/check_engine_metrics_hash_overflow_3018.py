@@ -23,6 +23,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -40,7 +42,6 @@ def main() -> int:
     obs = _read("src/compiler/evaluator_primitives_obs_jit.cpp")
     test = _read("tests/compiler/test_engine_metrics_facade.cpp")
     suite = _read("tests/suite/engine_metrics.aura")
-    build = _read("build.py")
 
     # ── AC1: fail-soft builder ──
     must("Issue #3018", "AC1", obs)
@@ -84,8 +85,8 @@ def main() -> int:
     must("#3018 AC1: forced undersized :all still returns hash", "AC5", test)
     must("aura_engine_metrics_set_force_hash_cap", "AC5 hook", test)
     must("g_engine_metrics_hash_overflow_total", "AC5 counter", obs)
-    must("check_engine_metrics_hash_overflow_3018", "AC5 build", build)
-    must("cmd_engine_metrics_hash_overflow_3018", "AC5 build cmd", build)
+    must("check_engine_metrics_hash_overflow_3018", "AC5 build", wired_text)
+    must("check_engine_metrics_hash_overflow_3018.py", "AC5 build cmd", wired_text)
     must("aura_add_issue_test(test_engine_metrics_facade)", "AC5 cmake", _read("CMakeLists.txt"))
     for rel in (
         "tests/compiler/test_issue_3018.cpp",

@@ -27,6 +27,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 # Expanded scope beyond #2689 — residual NodeId / side-effect prim files.
 # Issue #2839 (11 files) + Issue #2881 (6 new files) = 17 files total.
@@ -104,7 +106,6 @@ def main() -> int:
     io_cpp = _read("src/compiler/evaluator_primitives_io.cpp")
     test_re = _read("tests/compiler/test_require_effect_auto_isolation.cpp")
     test_ts = _read("tests/compiler/test_tenant_scope_fiber_mandate.cpp")
-    build = _read("build.py")
     linter_2689 = _read("scripts/coverage/checks/check_require_effect_on_ref_2689.py")
 
     # ── #2839 AC1 — require_effect_for_node_id + inventory of NodeId path ──
@@ -173,7 +174,7 @@ def main() -> int:
     must("schema-2839", "AC5", posture)
     must("tenant-scope-mismatch-hard-total", "AC5", posture)
     must("require-effect-for-node-id-wired", "AC5", posture)
-    must("check_side_effect_fiber_principal_2839", "AC5", build)
+    must("check_side_effect_fiber_principal_2839", "AC5", wired_text)
 
     # ── #2839 AC6 — tests + no invent/design ──
     must("2839", "AC6", test_ts)

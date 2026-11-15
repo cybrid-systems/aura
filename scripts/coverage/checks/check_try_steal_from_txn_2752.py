@@ -11,7 +11,7 @@ Contract (one row per AC):
      success path (transaction owns aura_evaluator_on_steal_complete).
   AC3 Existing transaction + residual hard-AND counters remain additive.
   AC4 test_steal_complete_restamp_txn.cpp extended with ac2752_* blocks.
-  AC5 This linter wired in build.py; no docs/design/2752-* per #1655.
+  AC5 This linter gated by run_checks.py; no docs/design/2752-* per #1655.
 
 Exit 0 = all rows satisfied.
 """
@@ -22,6 +22,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -46,7 +48,6 @@ def main() -> int:
     ss = _read("src/serve/steal_safety.cpp")
     hdr = _read("src/serve/steal_safety.h")
     test = _read("tests/serve/test_steal_complete_restamp_txn.cpp")
-    build = _read("build.py")
 
     # AC1 — sole transaction entry on success path
     must("steal_safety_transaction(stolen)", "AC1", worker)
@@ -80,7 +81,7 @@ def main() -> int:
     must("ac2752_4_source_and_linter", "AC4", test)
 
     # AC5 — build.py wire + no docs/design
-    must("check_try_steal_from_txn_2752", "AC5", build)
+    must("check_try_steal_from_txn_2752", "AC5", wired_text)
     docs = ROOT / "docs" / "design"
     if docs.is_dir():
         for f in sorted(docs.glob("2752-*")):

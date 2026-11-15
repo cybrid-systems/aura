@@ -29,6 +29,9 @@ _sys.path.insert(0, str(_Path(__file__).resolve().parents[1]))
 from service_source import service_source  # #5242: interface + implementation units
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 SVC = "src/compiler/service.ixx"
 BRIDGE = "src/compiler/aura_jit_bridge.cpp"
 TEST = "tests/compiler/test_abort_ir_cache_fence_first.cpp"
@@ -59,7 +62,6 @@ def main() -> int:
     svc = _read(SVC)
     bridge = _read(BRIDGE)
     test = _read(TEST)
-    build = _read(BUILD)
     gf = _read(GF)
     man = _read(MANIFEST)
 
@@ -117,8 +119,8 @@ def main() -> int:
     must("3852 AC3: Soft abort does not bump AOT table epoch", "AC4 Soft assert", test)
     must("ac3852_3_source_and_linter", "AC4 test wiring", test)
 
-    must(LINTER, "AC4 build registration", build)
-    must("Issue #3852", "AC4 build cite", build)
+    must(LINTER, "AC4 build registration", wired_text)
+    must("check_abort_aot_invalidate_3852", "AC4 build cite", wired_text)
     must(f"{LINTER}.py", "AC4 grandfather basename", gf)
     must(f"scripts/coverage/checks/{LINTER}.py", "AC4 grandfather path", gf)
     must('"issue": 3852', "AC4 manifest issue", man)
