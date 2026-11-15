@@ -464,10 +464,23 @@
 ; training distribution: 0.5 * sum |p_recent - p_train|. 0 when there is
 ; no baseline or too little recent feedback.
 ;
+; Two-sided Student-t critical values at alpha = 0.05.
+; df = n1 + n2 - 2 for the equal-variance two-sample test.
+(define (select-t-crit-05 df)
+  (cond ((<= df 1) 12.706) ((= df 2) 4.303) ((= df 3) 3.182)
+        ((= df 4) 2.776) ((= df 5) 2.571) ((= df 6) 2.447)
+        ((= df 7) 2.365) ((= df 8) 2.306) ((= df 9) 2.262)
+        ((= df 10) 2.228) ((<= df 12) 2.179) ((<= df 15) 2.131)
+        ((<= df 18) 2.101) ((<= df 20) 2.086) ((<= df 30) 2.042)
+        ((<= df 60) 2.000) (else 1.960)))
+
 ; A second signal covers the case the context mix cannot see: the same
-; bucket changes its reward regime (a season, a peak). It compares the
-; mean of the newest half of the reward window with the older half in
-; units of the window's standard deviation. Both are clipped to [0,1].
+; bucket changes its reward regime (a season, a peak). It is a two-sample
+; t on the newest 5 rewards against the preceding up to 15 (#5299).
+; The standard error is sd * sqrt(1/n1 + 1/n2), so the comparison is
+; scaled by the sample sizes. The score is clipped to [0,1] and crosses
+; the default drift-threshold 0.35 at the two-sided 5% critical value.
+; Feature drift stays a total-variation distance on the same [0,1] scale.
 (define (select-reward-drift s)
   (let* ((rw (hash-ref s "rewards" (quote ())))
          (n (length rw)))
@@ -475,10 +488,20 @@
       (let* ((k (min 5 (quotient n 2)))
              (recent (take rw k))
              (old (take (list-tail rw k) (min 15 (- n k))))
+             (n1 (length recent))
+             (n2 (length old))
              (mr (select-mean recent))
              (mo (select-mean old))
-             (sd (select-sd (append recent old))))
-        (min 1.0 (/ (abs (- mr mo)) (max sd 1e-9)))))))
+             (both (append recent old))
+             (m (select-mean both))
+             (ss (foldl (lambda (a x) (+ a (* (- x m) (- x m)))) 0.0 both))
+             (df (- (+ n1 n2) 2))
+             (v (if (> df 0) (/ ss df) 0.0)))
+        (if (< v 1e-18) 0.0
+          (let* ((se (* (sqrt v) (sqrt (+ (/ 1.0 n1) (/ 1.0 n2)))))
+                 (t (/ (abs (- mr mo)) se))
+                 (scaled (* 0.35 (/ t (select-t-crit-05 df)))))
+            (if (> scaled 1.0) 1.0 scaled)))))))
 
 (define (select-feature-drift s)
   (let* ((recent (hash-ref s "recent" (quote ())))
@@ -571,6 +594,7 @@
    "  (select:offline s matrix)     ; matrix from portfolio:matrix\n"
    "  (select:choose s inst k)      ; -> k member names\n"
    "  (select:feedback! s inst member result)\n"
+   "  (select:drift? s)             ; reward t hits 5% at threshold 0.35\n"
    "  (select:report s)             ; SBS/VBS, gap closure, regret\n"
    "  features-fn!, offline and feedback! update the handle in place and\n"
    "  also return it. choose on an unfitted selector is an error; an empty\n"

@@ -76,11 +76,14 @@ back to the offline ranking.
 forever — the effective window is the decay half-life. `"warm-start" #t`
 lets each member be tried once before exploitation; without it a bandit can
 lock onto the offline favourite and never sample the arm a regime change
-made good. `select:drift?` combines two signals: the total-variation
-distance between the recent bucket mix and the training mix, and a
-reward-window shift (newest half vs older half, in standard deviations).
-A flagged drift decays the old cells twice and doubles the UCB coefficient
-for the next choice.
+made good. `select:drift?` combines two signals, both clipped to [0, 1]: the
+total-variation distance between the recent bucket mix and the training
+mix, and a two-sample t on the reward window (newest 5 versus the
+preceding up to 15). The reward score crosses the default
+`drift-threshold` of 0.35 at the two-sided 5% critical value, so a
+stationary reward stream flags on only a few percent of steps (#5299).
+A lower threshold is a more sensitive test. A flagged drift decays the
+old cells twice and doubles the UCB coefficient for the next choice.
 
 ## Hyper-heuristic
 
@@ -133,9 +136,12 @@ online parameter control.
   reaches 0.017.
 - Non-stationary stream on the same context bucket (member a pays, then b):
   the decayed, warm-started bandit accumulates regret 29 against the fixed
-  SBS's 100 (71 % lower, bar 30 %), plays the new best member from the first
-  step after the drift and in 20 of the next 25 pulls, and `select:drift?`
-  reports the reward shift even though the context mix did not change.
+  SBS's 100 (71 % lower, bar 30 %), and plays the new best member from the
+  first step after the drift and in 20 of the next 25 pulls.
+- Reward drift is a two-sample t (newest 5 vs the preceding up to 15). On
+  an i.i.d. reward stream the default threshold flags fewer than 30 of 200
+  steps. A scripted change from reward 1 to reward 0, with the context
+  bucket held fixed, is flagged. Constant rewards flag 0 steps.
 - The multi-seed gate rejects noise winners (5.0 % at alpha 0.05) and accepts
   a real improvement; `tune:race` finds the best config with fewer
   evaluations than the grid.
