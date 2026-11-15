@@ -3,16 +3,18 @@
 
 module;
 
-#include "aura_jit.h"                      // aura::jit
-#include "aura_jit_bridge.h"               // deopt-pending / AOT table epoch
-#include "runtime_shared.h"                // g_use_arena
-#include "shape.h"                         // shape::
-#include "compiler/type_feedback.h"        // feedback::
-#include "compiler/typed_mutation_audit.h" // typed_audit::
-#include "compiler/value_tags.h"           // kSpecial*, AURA_V_*
-#include "compiler/jit_assumptions.hh"     // jit_assume
-#include "core/workspace_epoch.hh"         // current_mutation_epoch
-#include "lock_order_audit.h"              // lock_order
+#include "aura_jit.h"                        // aura::jit
+#include "aura_jit_bridge.h"                 // deopt-pending / AOT table epoch
+#include "runtime_shared.h"                  // g_use_arena
+#include "shape.h"                           // shape::
+#include "shape_profiler.h"                  // shape dirty-scope constants
+#include "shape_jit_pass_closedloop_stats.h" // shape_jit_pass::
+#include "compiler/type_feedback.h"          // feedback::
+#include "compiler/typed_mutation_audit.h"   // typed_audit::
+#include "compiler/value_tags.h"             // kSpecial*, AURA_V_*
+#include "compiler/jit_assumptions.hh"       // jit_assume
+#include "core/workspace_epoch.hh"           // current_mutation_epoch
+#include "lock_order_audit.h"                // lock_order
 
 module aura.compiler.service;
 
@@ -522,6 +524,140 @@ result_done:
             result_type = types::EvalValue(raw_result);
     }
     return result_type;
+}
+
+void CompilerService::on_shape_deopt_hook(shape::FnKey fn_key, std::uint64_t version,
+                                          std::uint32_t dirty_scope) noexcept {
+    (void)version;
+    if (dirty_scope == 0)
+        return;
+
+    std::string name;
+    for (const auto& [n, _] : ir_cache_v2_) {
+        if (shape::make_fn_key(session_id_, n) == fn_key) {
+            name = n;
+            break;
+        }
+    }
+    if (name.empty()) {
+        std::shared_lock cache_read(jit_cache_mtx_);
+        for (const auto& [n, _] : jit_cache_) {
+            if (shape::make_fn_key(session_id_, n) == fn_key) {
+                name = n;
+                break;
+            }
+        }
+    }
+    if (name.empty()) {
+        std::shared_lock dep_read(dep_graph_mtx_);
+        for (const auto& [n, _] : dep_graph_) {
+            if (shape::make_fn_key(session_id_, n) == fn_key) {
+                name = n;
+                break;
+            }
+        }
+    }
+
+    if (dirty_scope == shape::kShapeDirtyScopeStabilityLoss) {
+        metrics_.shape_changes_observed.fetch_add(1, std::memory_order_relaxed);
+        shape::shape_deopt_storm_count.fetch_add(1, std::memory_order_relaxed);
+        bump_shape_fiber_refresh();
+    }
+
+    // Issue #4510: under production defaults the hook must NOT publish a
+    // process C-bridge or Mutation bump. The historical bare
+    // bump_bridge_epoch() re-pointed g_current_bridge_epoch process-wide
+    // while g_jit_fns kept the pre-hook ScalarFn: closures allocated after
+    // the hook then passed three-key dual-fresh against the stale native
+    // and ran it, and pre-hook peer closures failed dual-fresh (false
+    // deopt). Soft / Off keep the historical dual-epoch bump (zero-cost
+    // path, not this bug).
+    // Split #5242 note: the probe is a hard extern symbol here, so the
+    // historical address != nullptr test tripped -Werror=address once the
+    // body left the interface. The call is the same.
+    const bool production_active = aura_production_defaults_active_probe() != 0;
+
+    // Issue #1521: ArenaCompact — coordinate IR dirty + fiber refresh
+    // without counting as deopt storm / mutation churn.
+    if (dirty_scope == shape::kShapeDirtyScopeArenaCompact) {
+        metrics_.deopt_from_arena_compact_total.fetch_add(1, std::memory_order_relaxed);
+        bump_shape_fiber_refresh();
+        if (!name.empty()) {
+            mark_shape_dirty_for_fn_key(fn_key);
+            if (production_active) {
+                // Issue #4510: owner-scoped demotion for the resolved
+                // define. This arm must not return before the native
+                // drop (it previously returned right after the bare
+                // bump, before jit_.invalidate and any drop).
+                // Issue #4578: name and name# rows go before the drop.
+                // A surviving row is an epoch hit (this arm does not
+                // move the mutation epoch) and try_jit republishes
+                // the dropped ScalarFn. Lock is not held across demote.
+                erase_shape_deopt_bundle_rows_(name);
+                demote_jit_native_owner_scoped_for_shape_deopt_(name);
+                metrics_.jit_hotswap_invalidate_total.fetch_add(1, std::memory_order_relaxed);
+                shape_jit_pass::record_incremental_recompile_hit();
+            } else {
+                // Soft: dual-epoch bump so JIT shape_map guards recheck
+                // (#1496: never advance bridge without defuse). Prefer
+                // mark-dirty over full jit_cache_ erase when possible.
+                bump_bridge_epoch();
+                // Issue #4109: this dual-epoch bump re-definitions nothing —
+                // ride still-valid captures up so the pure-counter advance
+                // does not strand them behind the empty-Env contract.
+                // Issue #4730: bump + ride under one shard barrier.
+                (void)evaluator_.bump_defuse_and_ride_frames();
+                metrics_.dep_graph_defuse_version_bumps.fetch_add(1, std::memory_order_relaxed);
+                metrics_.jit_hotswap_invalidate_total.fetch_add(1, std::memory_order_relaxed);
+                shape_jit_pass::record_incremental_recompile_hit();
+            }
+        }
+        return;
+    }
+
+    if (!name.empty()) {
+        mark_shape_dirty_for_fn_key(fn_key);
+        if (production_active) {
+            // Issue #4510: drop the installed ScalarFn BEFORE the
+            // AuraJIT teardown (#4100 — AuraJIT::invalidate erases
+            // fn_trackers_ but does not clear g_jit_fns), and publish
+            // no process C-bridge / Mutation bump. The bundle erase
+            // (#4578) drops name and name# so a bare-key miss cannot
+            // leave name#pos epoch-fresh; the drop bumps the define
+            // drop generation so a #4388 cache-hit republish refuses.
+            erase_shape_deopt_bundle_rows_(name);
+            demote_jit_native_owner_scoped_for_shape_deopt_(name);
+            {
+                std::unique_lock cache_write(jit_cache_mtx_);
+                jit_.invalidate(name.c_str());
+                jit_.invalidate_prefix(name.c_str());
+                metrics_.jit_hotswap_invalidate_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            shape_jit_pass::record_incremental_recompile_hit();
+            evaluator_.bump_incremental_closure_jit_sync();
+        } else {
+            // Issue #1496: dual-epoch write — bare bump_bridge_epoch here
+            // desynced defuse_version_ when invalidate_function already ran
+            // atomic_bump_epochs_and_stamp_bridge (hard path lockstep fail).
+            bump_bridge_epoch();
+            // Issue #4109: this dual-epoch bump re-definitions nothing —
+            // ride still-valid captures up so the pure-counter advance does
+            // not strand them behind the empty-Env contract. The resync
+            // walk below stays observability-only (#4099 no-wash).
+            // Issue #4730: bump + ride under one shard barrier.
+            (void)evaluator_.bump_defuse_and_ride_frames();
+            metrics_.dep_graph_defuse_version_bumps.fetch_add(1, std::memory_order_relaxed);
+            evaluator_.resync_live_closure_env_versions_on_invalidate();
+            jit_.invalidate(name.c_str());
+            jit_.invalidate_prefix(name.c_str());
+            metrics_.jit_hotswap_invalidate_total.fetch_add(1, std::memory_order_relaxed);
+            shape_jit_pass::record_incremental_recompile_hit();
+            evaluator_.bump_incremental_closure_jit_sync();
+            // Issue #4578: same name / name# walk. The dual-epoch
+            // bump above stays (zero-cost Soft / Off contract).
+            erase_shape_deopt_bundle_rows_(name);
+        }
+    }
 }
 
 } // namespace aura::compiler

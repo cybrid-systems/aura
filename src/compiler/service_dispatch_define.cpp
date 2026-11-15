@@ -267,4 +267,141 @@ CompilerService::dispatch_ir_define_closure(aura::compiler::ClosureId cid,
     return out;
 }
 
+[[nodiscard]] bool CompilerService::define_body_sets_nonlocal_4618(
+    const aura::ast::FlatAST& flat, const aura::ast::StringPool& pool, aura::ast::NodeId root,
+    const std::string& self_name) const {
+    if (root == aura::ast::NULL_NODE || root >= flat.size())
+        return false;
+    std::string self = self_name;
+    auto root_v = flat.get(root);
+    aura::ast::NodeId body = root;
+    if (root_v.tag == aura::ast::NodeTag::Define) {
+        if (root_v.sym_id != aura::ast::INVALID_SYM)
+            self = std::string(pool.resolve(root_v.sym_id));
+        if (root_v.children.empty())
+            return false;
+        body = root_v.child(0);
+    }
+    struct Walk {
+        const aura::ast::FlatAST& f;
+        const aura::ast::StringPool& p;
+        const std::string& self_name;
+        bool hit = false;
+        // Cell bindings: let / letrec / begin-define. Capturing one is a
+        // cell capture, and IR CellSet is a real store.
+        std::vector<std::unordered_set<std::string>> cell_scopes;
+        // Parameters of every lambda on the walk (see store_is_local).
+        std::vector<std::unordered_set<std::string>> param_scopes;
+
+        [[nodiscard]] bool cell_bound(const std::string& nm) const {
+            for (auto it = cell_scopes.rbegin(); it != cell_scopes.rend(); ++it)
+                if (it->count(nm) != 0)
+                    return true;
+            return false;
+        }
+        [[nodiscard]] bool store_is_local(const std::string& nm) const {
+            if (!self_name.empty() && nm == self_name)
+                return true;
+            if (cell_bound(nm))
+                return true;
+            // A parameter of this or any enclosing lambda is a frame
+            // binding, exactly as the #3927 LambdaBodyWalker treats it
+            // (see the header note: the tree walker is weaker there).
+            for (auto it = param_scopes.rbegin(); it != param_scopes.rend(); ++it)
+                if (it->count(nm) != 0)
+                    return true;
+            return false;
+        }
+        void walk(aura::ast::NodeId id) {
+            if (hit || id == aura::ast::NULL_NODE || id >= f.size() || f.is_free_slot(id))
+                return;
+            auto nv = f.get(id);
+            if (nv.tag == aura::ast::NodeTag::Quote)
+                return; // quoted data is not code
+            if (nv.tag == aura::ast::NodeTag::Lambda) {
+                param_scopes.emplace_back();
+                for (auto pid : nv.params) {
+                    auto pn = std::string(p.resolve(pid));
+                    if (!pn.empty())
+                        param_scopes.back().insert(std::move(pn));
+                }
+                for (auto c : nv.children)
+                    walk(c);
+                param_scopes.pop_back();
+                return;
+            }
+            if (nv.tag == aura::ast::NodeTag::Let || nv.tag == aura::ast::NodeTag::LetRec) {
+                const bool rec = nv.tag == aura::ast::NodeTag::LetRec;
+                std::string nm;
+                if (nv.sym_id != aura::ast::INVALID_SYM)
+                    nm = std::string(p.resolve(nv.sym_id));
+                const bool named = !nm.empty();
+                if (rec && named) {
+                    cell_scopes.push_back({});
+                    cell_scopes.back().insert(nm);
+                }
+                if (!nv.children.empty())
+                    walk(nv.child(0));
+                if (!rec && named) {
+                    cell_scopes.push_back({});
+                    cell_scopes.back().insert(nm);
+                }
+                for (std::size_t i = 1; i < nv.children.size(); ++i)
+                    walk(nv.child(i));
+                if (named)
+                    cell_scopes.pop_back();
+                return;
+            }
+            if (nv.tag == aura::ast::NodeTag::Begin) {
+                cell_scopes.push_back({});
+                for (auto c : nv.children) {
+                    if (c >= f.size() || f.is_free_slot(c))
+                        continue;
+                    auto cv = f.get(c);
+                    if (cv.tag != aura::ast::NodeTag::Define || cv.sym_id == aura::ast::INVALID_SYM)
+                        continue;
+                    auto dn = std::string(p.resolve(cv.sym_id));
+                    if (!dn.empty())
+                        cell_scopes.back().insert(std::move(dn));
+                }
+                for (auto c : nv.children)
+                    walk(c);
+                cell_scopes.pop_back();
+                return;
+            }
+            if (nv.tag == aura::ast::NodeTag::Define) {
+                if (nv.sym_id != aura::ast::INVALID_SYM) {
+                    auto dn = std::string(p.resolve(nv.sym_id));
+                    if (!dn.empty()) {
+                        cell_scopes.push_back({});
+                        cell_scopes.back().insert(std::move(dn));
+                        if (!nv.children.empty())
+                            walk(nv.child(0));
+                        cell_scopes.pop_back();
+                        return;
+                    }
+                }
+                if (!nv.children.empty())
+                    walk(nv.child(0));
+                return;
+            }
+            if (nv.tag == aura::ast::NodeTag::Set) {
+                if (nv.sym_id != aura::ast::INVALID_SYM) {
+                    auto nm = std::string(p.resolve(nv.sym_id));
+                    if (!nm.empty() && !store_is_local(nm))
+                        hit = true;
+                }
+                for (auto c : nv.children)
+                    walk(c);
+                return;
+            }
+            for (auto c : nv.children)
+                walk(c);
+        }
+    };
+    Walk w{flat, pool, self};
+    w.walk(body);
+    return w.hit;
+}
+
 } // namespace aura::compiler
