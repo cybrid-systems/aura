@@ -40,6 +40,7 @@
 
 #pragma once
 
+#include "core/runtime_config.hh"
 #include "core/parse_number.hh"                    // #4936 exception-free parse
 #include "core/audit_wal_metrics.h"                // #2076 wal_off posture gauge
 #include "core/capability_model.hh"                // #2534 capability deny storm window
@@ -410,7 +411,7 @@ inline void reset_capability_deny_storm_window_for_test() noexcept {
     g_capability_deny_storm_window_baseline().store(0, std::memory_order_relaxed);
 }
 inline std::uint64_t resolve_capability_deny_storm_threshold() noexcept {
-    const char* env = std::getenv("AURA_DENY_STORM_THRESHOLD");
+    const char* env = ::aura::config::raw(::aura::config::Key::AURA_DENY_STORM_THRESHOLD);
     if (env && *env) {
         if (const auto v = aura::core::parse_leading_int<std::uint64_t>(env))
             return *v;
@@ -513,7 +514,7 @@ inline bool wal_append_fail_would_arm_live(bool production_defaults, bool soft_m
 inline bool wal_enable_failed_would_arm_live(bool production_defaults, bool soft_mode) noexcept {
     if (!production_defaults || soft_mode)
         return false;
-    if (::aura::core::wal_slo::wal_env_flag_truthy("AURA_WAL_APPEND_FAIL_OPEN"))
+    if (::aura::core::wal_slo::wal_env_flag_truthy(::aura::config::Key::AURA_WAL_APPEND_FAIL_OPEN))
         return false;
     return ::aura::core::wal_slo::force_wal_enable_failed() != 0;
 }

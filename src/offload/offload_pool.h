@@ -8,6 +8,7 @@
 #ifndef AURA_OFFLOAD_OFFLOAD_POOL_H
 #define AURA_OFFLOAD_OFFLOAD_POOL_H
 
+#include "core/runtime_config.hh"
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -238,7 +239,7 @@ private:
     bool pick_task_locked(Task& out);
     void finish(const Task& task, Status status, std::string error);
     static std::size_t default_threads();
-    static std::size_t read_env_size(const char* name, std::size_t fallback);
+    static std::size_t read_env_size(::aura::config::Key name, std::size_t fallback);
 
     Config cfg_;
     std::vector<std::jthread> workers_;

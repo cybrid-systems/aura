@@ -1,5 +1,6 @@
 // runtime_production_abi.cpp — Issue #2955 production ABI self-check.
 
+#include "core/runtime_config.hh"
 #include "serve/runtime_production_abi.h"
 #include "serve/steal_safety.h"
 
@@ -17,7 +18,7 @@ namespace aura::serve {
 namespace {
 
     [[nodiscard]] bool sandbox_is_off() noexcept {
-        const char* sb = std::getenv("AURA_SANDBOX");
+        const char* sb = ::aura::config::raw(::aura::config::Key::AURA_SANDBOX);
         return sb != nullptr && sb[0] != '\0' && std::strcmp(sb, "off") == 0;
     }
 

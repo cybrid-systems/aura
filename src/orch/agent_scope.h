@@ -53,6 +53,7 @@
 #ifndef AURA_ORCH_AGENT_SCOPE_H
 #define AURA_ORCH_AGENT_SCOPE_H
 
+#include "core/runtime_config.hh"
 #include "orch/agent_spawn.h"
 
 #include "compiler/typed_mutation_audit.h" // #2946 production_defaults_active
@@ -303,12 +304,12 @@ enum class AgentScopeConcurrentPolicy : std::uint8_t {
 };
 
 [[nodiscard]] inline AgentScopeConcurrentPolicy resolve_agent_scope_concurrent_policy() noexcept {
-    const char* e = std::getenv("AURA_AGENT_SCOPE_CONCURRENT_ABORT");
+    const char* e = ::aura::config::raw(::aura::config::Key::AURA_AGENT_SCOPE_CONCURRENT_ABORT);
     if (e != nullptr && e[0] == '0' && e[1] == '\0')
         return AgentScopeConcurrentPolicy::SoftMetric; // operator opt-out
     if (e != nullptr && e[0] == '1' && e[1] == '\0')
         return AgentScopeConcurrentPolicy::HardAbort; // force abort
-    const char* sb = std::getenv("AURA_SANDBOX");
+    const char* sb = ::aura::config::raw(::aura::config::Key::AURA_SANDBOX);
     const bool dev_off = (sb != nullptr && sb[0] != '\0' && std::string_view(sb) == "off");
     if (dev_off)
         return AgentScopeConcurrentPolicy::SoftMetric;
@@ -327,7 +328,7 @@ enum class AgentScopeConcurrentPolicy : std::uint8_t {
 resolve_on_join_fail(const AgentFailurePolicy* explicit_policy) noexcept {
     if (explicit_policy)
         return explicit_policy->on_join_fail;
-    const char* e = std::getenv("AURA_JOIN_FAIL_ACTION");
+    const char* e = ::aura::config::raw(::aura::config::Key::AURA_JOIN_FAIL_ACTION);
     if (e != nullptr && e[0] != '\0') {
         const std::string_view sv(e);
         if (sv == "report" || sv == "report-only" || sv == "0" || sv == "off")

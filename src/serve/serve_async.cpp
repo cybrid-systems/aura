@@ -1,4 +1,5 @@
 // serve/serve_async.cpp — Async serve mode implementation
+#include "core/runtime_config.hh"
 #include "serve_async.h"
 #include "offload/offload_job.h"
 #include "offload/offload_service.h"
@@ -203,7 +204,7 @@ namespace {
 static long serve_http_timeout_sec(long requested) {
     if (requested >= 1 && requested <= 86400)
         return requested;
-    if (const char* env = ::getenv("AURA_HTTP_TIMEOUT")) {
+    if (const char* env = ::aura::config::raw(::aura::config::Key::AURA_HTTP_TIMEOUT)) {
         char* end = nullptr;
         const long v = ::strtol(env, &end, 10);
         if (end != env && *end == '\0' && v >= 1 && v <= 86400)
@@ -1353,7 +1354,8 @@ void run_serve_async(int num_workers) {
     // #5234: same walker face as a file run (and sync --serve, #5168). The
     // production pack default (Forbidden) turned an ordinary unbound name
     // into "internal error: tree-walker fallback forbidden …".
-    if (const char* strict = std::getenv("AURA_PIPELINE_STRICT"); !(strict && *strict))
+    if (const char* strict = ::aura::config::raw(::aura::config::Key::AURA_PIPELINE_STRICT);
+        !(strict && *strict))
         aura::compiler::set_tree_walker_fallback_policy(
             aura::compiler::TreeWalkerFallbackPolicy::Allow);
     // Issue #4231: serve-async writes protocol status lines to stdout for

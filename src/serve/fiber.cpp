@@ -5,6 +5,7 @@
 // hot-update during stolen-fiber / complex-agent-orchestration paths
 // are deferred. See docs/hot-update.md and #1929 / #1931 / #1947 /
 // #1950 / #1953 / #1954 for the deferred correctness work.
+#include "core/runtime_config.hh"
 #include "fiber.h"
 #include "scheduler.h"
 #include "metrics.h"                          // Issue #2119: adaptive_steal_stats yield/hold
@@ -950,14 +951,14 @@ bool is_steal_snapshot_soft_mode() noexcept {
     // Issue #2372 AC1: under production lock Soft env is ignored.
     if (g_steal_snapshot_soft_production_locked.load(std::memory_order_acquire) != 0)
         return false;
-    const char* v = std::getenv("AURA_STEAL_SNAPSHOT_SOFT");
+    const char* v = ::aura::config::raw(::aura::config::Key::AURA_STEAL_SNAPSHOT_SOFT);
     return v && v[0] == '1';
 }
 
 bool is_steal_snapshot_hard_mode() noexcept {
     if (is_steal_snapshot_soft_mode())
         return false;
-    const char* hard = std::getenv("AURA_STEAL_SNAPSHOT_HARD");
+    const char* hard = ::aura::config::raw(::aura::config::Key::AURA_STEAL_SNAPSHOT_HARD);
     if (hard && hard[0] == '1')
         return true;
     // Production canary (strong probe when audit hooks linked).
@@ -969,7 +970,7 @@ bool is_steal_snapshot_hard_mode() noexcept {
 bool is_steal_snapshot_hard_abort() noexcept {
     if (!is_steal_snapshot_hard_mode())
         return false;
-    const char* v = std::getenv("AURA_STEAL_SNAPSHOT_HARD_ABORT");
+    const char* v = ::aura::config::raw(::aura::config::Key::AURA_STEAL_SNAPSHOT_HARD_ABORT);
     return v && v[0] == '1';
 }
 
@@ -1013,7 +1014,7 @@ bool production_residual_policy_locked() noexcept {
     // sandbox=off always bypasses (matches #2546/#2667/#2756/#2852 lineage).
     if (!aura::compiler::typed_audit::production_defaults_active())
         return false;
-    const char* sandbox = std::getenv("AURA_SANDBOX");
+    const char* sandbox = ::aura::config::raw(::aura::config::Key::AURA_SANDBOX);
     const bool dev_off = sandbox && sandbox[0] != '\0' && std::string_view(sandbox) == "off";
     return !dev_off;
 }
@@ -1291,7 +1292,8 @@ Fiber::Fiber(Func func, size_t stack_size)
     // Guard at the bottom (catches overflow from below).  A failed mprotect
     // used to be ignored: the fiber then ran with no guard and overflow
     // silently rewrote a neighbouring fiber's stack (Issue #5211).
-    const bool injected = std::getenv("AURA_TEST_FIBER_MPROTECT_FAIL") != nullptr;
+    const bool injected =
+        ::aura::config::raw(::aura::config::Key::AURA_TEST_FIBER_MPROTECT_FAIL) != nullptr;
     if (injected || ::mprotect(base, guard_size_, PROT_NONE) != 0) {
         const int err = injected ? ENOMEM : errno;
         ::munmap(base, alloc_size);
@@ -1974,7 +1976,7 @@ namespace {
         // gated hard abort below (AURA_YIELD_HELD_ABORT=1).
         // Optional hard abort for production forensics.
         static const bool abort_on_reject = []() noexcept {
-            const char* e = std::getenv("AURA_YIELD_HELD_ABORT");
+            const char* e = ::aura::config::raw(::aura::config::Key::AURA_YIELD_HELD_ABORT);
             return e != nullptr && e[0] != '\0' && e[0] != '0' && e[0] != 'f' && e[0] != 'F';
         }();
         if (abort_on_reject) {

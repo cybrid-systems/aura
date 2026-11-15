@@ -1,4 +1,5 @@
 // serve/scheduler.cpp — Multi-threaded fiber scheduler
+#include "core/runtime_config.hh"
 #include "scheduler.h"
 #include "gc_coordinator.h"
 #include "aura_platform.h"
@@ -1063,7 +1064,7 @@ std::uint64_t Scheduler::tick_orphan_mutex_acquired_total() const noexcept {
 // reaps (default 50ms). Clamped to [1, 5000] so tests can force fast cadence
 // without spinning and production cannot set multi-minute gaps by accident.
 std::uint64_t Scheduler::orphan_reap_interval_ms() noexcept {
-    const char* e = std::getenv("AURA_ORPHAN_REAP_INTERVAL_MS");
+    const char* e = ::aura::config::raw(::aura::config::Key::AURA_ORPHAN_REAP_INTERVAL_MS);
     if (e == nullptr || e[0] == '\0')
         return 50;
     std::uint64_t v = 0;
@@ -1265,7 +1266,7 @@ void Scheduler::evaluate_start_gate() {
     // start unless production bootstrap is latched or AURA_SANDBOX=off.
     // Armed / single-worker: one probe load, no getenv.
     if (workers_.size() > 1 && aura_production_defaults_active_probe() == 0) {
-        const char* sb = std::getenv("AURA_SANDBOX");
+        const char* sb = ::aura::config::raw(::aura::config::Key::AURA_SANDBOX);
         const bool sandbox_off = sb && *sb && std::strcmp(sb, "off") == 0;
         if (!sandbox_off) {
             std::fprintf(stderr, "FATAL: multi-worker needs production bootstrap "

@@ -21,6 +21,7 @@
 #ifndef AURA_ORCH_AGENT_SPAWN_H
 #define AURA_ORCH_AGENT_SPAWN_H
 
+#include "core/runtime_config.hh"
 #include "core/parse_number.hh" // #4936 exception-free parse
 #include "core/resource_quota.hh"
 #include "core/sandbox.hh"               // Issue #3434/#3494: is_sandbox_active() + MT spawn gate
@@ -324,7 +325,7 @@ inline constexpr int kRestartNSpecBoundaryIssue = 3250;
 // falls back to kMailboxBpAdmitThresholdDefault (32, #2535).
 // Explicit env=0 remains the production opt-out.
 inline std::uint64_t resolve_mailbox_bp_admit_threshold() noexcept {
-    const char* env = std::getenv("AURA_ORCH_BP_ADMIT_THRESHOLD");
+    const char* env = ::aura::config::raw(::aura::config::Key::AURA_ORCH_BP_ADMIT_THRESHOLD);
     if (!env || !*env)
         return kMailboxBpAdmitThresholdDefault;
     try {
@@ -367,7 +368,7 @@ inline constexpr std::string_view kBpScopeProcessBucket = "-";
 // (resolve_bare_bp_scope_id below) need the body visible without
 // pulling in agent_scope.h's 3884-line surface.
 [[nodiscard]] inline bool production_scope_bp_inherit() noexcept {
-    const char* sb = std::getenv("AURA_SANDBOX");
+    const char* sb = ::aura::config::raw(::aura::config::Key::AURA_SANDBOX);
     if (sb != nullptr && sb[0] != '\0' && std::string_view(sb) == "off")
         return false;
     return aura::compiler::typed_audit::production_defaults_active();
@@ -495,13 +496,13 @@ inline constexpr std::uint64_t kMailboxBpWindowMsDefault = kMailboxBpDecayMsDefa
 
 inline std::uint64_t resolve_mailbox_bp_decay_ms() noexcept {
     // Prefer #2398 WINDOW_MS; fall back to #2465 DECAY_MS; else default.
-    const char* window = std::getenv("AURA_ORCH_BP_WINDOW_MS");
+    const char* window = ::aura::config::raw(::aura::config::Key::AURA_ORCH_BP_WINDOW_MS);
     if (window && *window) {
         if (const auto v = aura::core::parse_leading_int<std::uint64_t>(window))
             return *v;
         // unparsable: fall through to DECAY_MS / default
     }
-    const char* env = std::getenv("AURA_ORCH_BP_DECAY_MS");
+    const char* env = ::aura::config::raw(::aura::config::Key::AURA_ORCH_BP_DECAY_MS);
     if (!env || !*env)
         return kMailboxBpWindowMsDefault;
     return aura::core::parse_leading_int<std::uint64_t>(env).value_or(kMailboxBpWindowMsDefault);
@@ -655,7 +656,7 @@ extern "C" int aura_production_defaults_active_probe() noexcept;
 // must surface must-wait-reclaimed after Reclaimed when wait_reclaimed_ms
 // is unset. Soft / sandbox=off: false (zero extra join work).
 [[nodiscard]] inline bool production_reclaimed_must_wait() noexcept {
-    const char* sb = std::getenv("AURA_SANDBOX");
+    const char* sb = ::aura::config::raw(::aura::config::Key::AURA_SANDBOX);
     if (sb && *sb && std::string_view(sb) == "off")
         return false;
     return aura_production_defaults_active_probe() != 0;
@@ -1124,7 +1125,8 @@ struct OrchModuleStats {
 // binaries without the evaluator.
 [[nodiscard]] inline bool resolve_force_safepoint_on_orphan_enabled() noexcept {
     static const bool cached = []() {
-        const char* e = std::getenv("AURA_FORCE_FIBER_SAFEPOINT_ON_ORPHAN");
+        const char* e =
+            ::aura::config::raw(::aura::config::Key::AURA_FORCE_FIBER_SAFEPOINT_ON_ORPHAN);
         if (!e || *e == '\0')
             return true; // default = production (preserve #2533 behavior)
         const std::string s(e);
@@ -2454,7 +2456,7 @@ struct AgentSpec {
 [[nodiscard]] inline std::uint32_t resolve_producer_bp_budget(std::uint32_t spec_budget) noexcept {
     if (spec_budget > 0)
         return spec_budget;
-    const char* env = std::getenv("AURA_ORCH_PRODUCER_BP_BUDGET");
+    const char* env = ::aura::config::raw(::aura::config::Key::AURA_ORCH_PRODUCER_BP_BUDGET);
     if (!env || !*env)
         return 0;
     try {
@@ -2479,7 +2481,7 @@ struct AgentSpec {
         return spec_value;
     if (dev_off)
         return 0;
-    const char* env = std::getenv("AURA_AGENT_MAX_NO_YIELD_MS");
+    const char* env = ::aura::config::raw(::aura::config::Key::AURA_AGENT_MAX_NO_YIELD_MS);
     if (env && env[0] == '0' && env[1] == '\0')
         return 0; // explicit operator opt-out
     return 50;    // production default
@@ -2505,7 +2507,7 @@ struct ParallelIntendForceLockDecision {
 [[nodiscard]] inline int parallel_intend_force_lock_env_pref() noexcept {
     // Cached: env is process-lifetime for this gate. -1 unset, 0 off, 1 on.
     static const int cached = []() noexcept -> int {
-        const char* e = std::getenv("AURA_PARALLEL_INTEND_FORCE_LOCK");
+        const char* e = ::aura::config::raw(::aura::config::Key::AURA_PARALLEL_INTEND_FORCE_LOCK);
         if (e == nullptr || e[0] == '\0')
             return -1;
         if (e[0] == '0' && e[1] == '\0')
@@ -3117,7 +3119,7 @@ inline std::string spawn_tenant_spoof_error(std::uint64_t requested, std::uint64
     // dev_off follows security_defaults.hh convention (AURA_SANDBOX=off).
     // The effective window is what the spawn path installs; default
     // injection (50ms) bumps agent_no_yield_default_applied_total once.
-    const char* sb_e = std::getenv("AURA_SANDBOX");
+    const char* sb_e = ::aura::config::raw(::aura::config::Key::AURA_SANDBOX);
     const bool dev_off_agent = sb_e && *sb_e && std::string_view(sb_e) == "off";
     const auto spec_max_no_yield_ms = spec.max_no_yield_ms;
     const auto effective_max_no_yield_ms =
@@ -3577,7 +3579,7 @@ inline void complete_agent_join_cleanup(AgentHandle& h, serve::JoinResult jr) no
 // reach getenv (zero extra). Default 60s; AURA_RECLAIMED_QUOTA_TIMEOUT_MS
 // overrides (0 = immediately eligible, soak/unit).
 [[nodiscard]] inline std::uint64_t reclaimed_quota_timeout_ms() noexcept {
-    const char* e = std::getenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
+    const char* e = ::aura::config::raw(::aura::config::Key::AURA_RECLAIMED_QUOTA_TIMEOUT_MS);
     if (!e || *e == '\0')
         return kReclaimedQuotaTimeoutMsDefault;
     char* end = nullptr;

@@ -48,6 +48,7 @@
 #ifndef AURA_SERVE_MULTI_FIBER_MAILBOX_H
 #define AURA_SERVE_MULTI_FIBER_MAILBOX_H
 
+#include "core/runtime_config.hh"
 #include "fiber.h"
 #include "steal_safety.h"                          // #2987 mailbox residual hard-AND
 #include "compiler/lock_order_audit.h"             // Issue #2316: lock-order audit
@@ -458,7 +459,7 @@ inline constexpr int kMailboxDeferSloHoldCancelIssue = 2958;
 // and at least one outermost exit was observed. Override ms via
 // AURA_MAILBOX_DEFER_STARVATION_MS (0 disables).
 [[nodiscard]] inline std::uint64_t mailbox_defer_starvation_ms() noexcept {
-    const char* e = std::getenv("AURA_MAILBOX_DEFER_STARVATION_MS");
+    const char* e = ::aura::config::raw(::aura::config::Key::AURA_MAILBOX_DEFER_STARVATION_MS);
     if (e == nullptr || e[0] == '\0')
         return 100;
     std::uint64_t v = 0;
@@ -497,7 +498,7 @@ inline thread_local std::string_view g_mf_mailbox_starve_note_scope{};
 
 [[nodiscard]] inline bool mailbox_starve_scoped_active() noexcept {
     // Inline sandbox=off probe (mailbox_sandbox_explicit_off is defined later).
-    const char* sb = std::getenv("AURA_SANDBOX");
+    const char* sb = ::aura::config::raw(::aura::config::Key::AURA_SANDBOX);
     if (sb && sb[0] == 'o' && sb[1] == 'f' && sb[2] == 'f' && sb[3] == '\0')
         return false;
     return aura_production_defaults_active_probe() != 0;
@@ -1101,7 +1102,7 @@ inline void note_mailbox_outermost_exit_drain() noexcept {
 // starved/force path when depth open).
 [[nodiscard]] inline std::uint64_t mailbox_hold_drain_budget_us() noexcept {
     static const std::uint64_t cached = []() noexcept -> std::uint64_t {
-        const char* e = std::getenv("AURA_MAILBOX_HOLD_DRAIN_BUDGET_US");
+        const char* e = ::aura::config::raw(::aura::config::Key::AURA_MAILBOX_HOLD_DRAIN_BUDGET_US);
         if (e == nullptr || e[0] == '\0')
             return 1000ull;
         std::uint64_t v = 0;
@@ -1182,7 +1183,8 @@ drain_deferred_under_budget(std::uint64_t budget_us = 0, std::string_view scope_
             // AURA_CHAOS_MB_STARVE_MAX=0). Production/Strict still bumps the
             // hard residual face + Agent throttle (#2551).
             // Inline Strict probe — is_mutate_mailbox_strict is defined later.
-            const char* strict_e = std::getenv("AURA_MUTATE_MAILBOX_STRICT");
+            const char* strict_e =
+                ::aura::config::raw(::aura::config::Key::AURA_MUTATE_MAILBOX_STRICT);
             const bool hard_resolve =
                 (strict_e && strict_e[0] == '1') || aura_production_defaults_active_probe() != 0;
             {
@@ -1300,7 +1302,7 @@ inline void clear_recv_boundary_reject_window() noexcept {
 // Soft (default): Policy A soft counter only.
 // Strict: AURA_MUTATE_MAILBOX_STRICT=1 OR production_defaults canary.
 [[nodiscard]] inline bool is_mutate_mailbox_strict() noexcept {
-    const char* e = std::getenv("AURA_MUTATE_MAILBOX_STRICT");
+    const char* e = ::aura::config::raw(::aura::config::Key::AURA_MUTATE_MAILBOX_STRICT);
     if (e && e[0] == '1')
         return true;
     return aura_production_defaults_active_probe() != 0;
@@ -1310,7 +1312,7 @@ inline void clear_recv_boundary_reject_window() noexcept {
 // Explicit AURA_SANDBOX=off stays observe-only. Otherwise production
 // defaults (probe) or MUTATE_MAILBOX_STRICT force hard deny.
 [[nodiscard]] inline bool mailbox_sandbox_explicit_off() noexcept {
-    const char* e = std::getenv("AURA_SANDBOX");
+    const char* e = ::aura::config::raw(::aura::config::Key::AURA_SANDBOX);
     return e && e[0] == 'o' && e[1] == 'f' && e[2] == 'f' && e[3] == '\0';
 }
 [[nodiscard]] inline bool mailbox_residual_hard_enabled() noexcept {
@@ -1465,7 +1467,7 @@ note_mailbox_delivery_safety(Fiber* target, const MutationSafetySnapshot* snap, 
 // Default N=8 rejects in one Guard window → force mark-failed under Strict.
 // Override: AURA_MUTATE_MAILBOX_REJECT_THRESHOLD=<N> (0 disables threshold).
 [[nodiscard]] inline std::uint64_t mutate_mailbox_reject_threshold() noexcept {
-    const char* e = std::getenv("AURA_MUTATE_MAILBOX_REJECT_THRESHOLD");
+    const char* e = ::aura::config::raw(::aura::config::Key::AURA_MUTATE_MAILBOX_REJECT_THRESHOLD);
     if (e == nullptr || e[0] == '\0')
         return 8;
     std::uint64_t v = 0;

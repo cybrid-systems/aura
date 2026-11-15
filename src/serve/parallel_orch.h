@@ -9,6 +9,7 @@
 #ifndef AURA_SERVE_PARALLEL_ORCH_H
 #define AURA_SERVE_PARALLEL_ORCH_H
 
+#include "core/runtime_config.hh"
 #include "fiber.h"
 #include "multi_fiber_mailbox.h"
 #include "scheduler.h"
@@ -187,7 +188,7 @@ count_distinct_nonzero_region_keys(std::span<const TaskSpec> tasks) noexcept {
 // Issue #3243: optional host deny (default off). Read each call — only
 // on the production missing-keys path (Soft never getenv).
 [[nodiscard]] inline bool parallel_require_region_keys_env() noexcept {
-    const char* e = std::getenv("AURA_PARALLEL_REQUIRE_REGION_KEYS");
+    const char* e = ::aura::config::raw(::aura::config::Key::AURA_PARALLEL_REQUIRE_REGION_KEYS);
     if (e == nullptr || e[0] == '\0')
         return false;
     if (e[0] == '0' && e[1] == '\0')
@@ -204,7 +205,7 @@ count_distinct_nonzero_region_keys(std::span<const TaskSpec> tasks) noexcept {
 // Issue #3353: explicit soak/debug escape. Unset is not Off — production
 // mutate missing-keys deny when the env is absent.
 [[nodiscard]] inline bool parallel_require_region_keys_explicit_off() noexcept {
-    const char* e = std::getenv("AURA_PARALLEL_REQUIRE_REGION_KEYS");
+    const char* e = ::aura::config::raw(::aura::config::Key::AURA_PARALLEL_REQUIRE_REGION_KEYS);
     return e != nullptr && e[0] == '0' && e[1] == '\0';
 }
 

@@ -35,6 +35,7 @@
 
 #pragma once
 
+#include "core/runtime_config.hh"
 #include <atomic>
 #include <cstdint>
 // Issue #4159: std::getenv for the AURA_CHAOS_SOAK_HARD_GATE deploy arm
@@ -266,7 +267,7 @@ inline constexpr int kStealSafetyProductionConcurrencyReadyGateIssue = 4159;
 // Soft-green soak can never satisfy the deploy AND.
 [[nodiscard]] inline std::uint32_t
 steal_safety_production_concurrency_ready_gate_v_read() noexcept {
-    const char* soak_env = std::getenv("AURA_CHAOS_SOAK_HARD_GATE");
+    const char* soak_env = ::aura::config::raw(::aura::config::Key::AURA_CHAOS_SOAK_HARD_GATE);
     const bool soak_armed = soak_env != nullptr && soak_env[0] == '1';
     // SSOT poll first: it may clear the sticky bit when residuals recovered
     // (per-query readiness poll — #3162 contract).
