@@ -106,7 +106,8 @@ def main() -> int:
 
     # ── AC2b: the driver-level parity fallback ───────────────────
     svc = ROOT / "src" / "compiler" / "service.ixx"
-    svc_src = svc.read_text() if svc.exists() else ""
+    svc_jit = ROOT / "src" / "compiler" / "service_exec_jit.cpp"
+    svc_src = (svc.read_text() if svc.exists() else "") + (svc_jit.read_text() if svc_jit.exists() else "")
     must("Issue #4606" in svc_src, "AC2: driver TU cites #4606")
     svc_at = svc_src.find("[[nodiscard]] EvalResult exec_jit(")
     must(svc_at >= 0, "AC2: exec_jit entry present")

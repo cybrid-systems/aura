@@ -69,6 +69,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 JA = ROOT / "src" / "compiler" / "jit_assumptions.hh"
 SV = ROOT / "src" / "compiler" / "service.ixx"
+SV_JIT = ROOT / "src" / "compiler" / "service_exec_jit.cpp"
 PYT = ROOT / "tests" / "python" / "test_regression.py"
 BUILD = ROOT / "build.py"
 ALLOW = ROOT / "scripts" / "coverage" / "root_check_allowlist.txt"
@@ -94,7 +95,7 @@ def _between(text: str, start: str, end: str) -> str:
 
 def main() -> int:
     ja = JA.read_text()
-    sv = SV.read_text()
+    sv = SV.read_text() + SV_JIT.read_text()
     pyt = PYT.read_text()
     build = BUILD.read_text()
     allow = ALLOW.read_text()

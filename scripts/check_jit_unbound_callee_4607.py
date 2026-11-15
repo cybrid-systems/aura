@@ -56,6 +56,7 @@ ROOT = Path(__file__).resolve().parent.parent
 LOW = ROOT / "src" / "compiler" / "lowering_impl.cpp"
 LOW_IXX = ROOT / "src" / "compiler" / "lowering.ixx"
 SVC = ROOT / "src" / "compiler" / "service.ixx"
+SVC_JIT = ROOT / "src" / "compiler" / "service_exec_jit.cpp"
 WALK = ROOT / "src" / "compiler" / "evaluator_eval_flat.cpp"
 TST = ROOT / "tests" / "compiler" / "test_jit_unbound_callee.cpp"
 PY = ROOT / "tests" / "python" / "test_regression.py"
@@ -81,7 +82,8 @@ def window(src: str, start: str, size: int) -> tuple[int, str]:
 def main() -> int:
     low = LOW.read_text() if LOW.exists() else ""
     low_ixx = LOW_IXX.read_text() if LOW_IXX.exists() else ""
-    svc = SVC.read_text() if SVC.exists() else ""
+    svcj = SVC_JIT.read_text() if SVC_JIT.exists() else ""
+    svc = (SVC.read_text() if SVC.exists() else "") + svcj
     walk = WALK.read_text() if WALK.exists() else ""
     tst = TST.read_text() if TST.exists() else ""
     py = PY.read_text() if PY.exists() else ""
@@ -117,7 +119,7 @@ def main() -> int:
 
     # ── AC3: exec_jit refuses to compile and takes the walker ─────
     must("Issue #4607" in svc, "AC3: driver TU cites #4607")
-    at, body = window(svc, "[[nodiscard]] EvalResult exec_jit(", 40000)
+    at, body = window(svcj, "[[nodiscard]] EvalResult CompilerService::exec_jit(", 40000)
     must(at >= 0, "AC3: exec_jit entry present")
     if at >= 0:
         refuse = body.find("if (!unbound_globals.empty())")

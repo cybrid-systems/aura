@@ -71,6 +71,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 RT = ROOT / "src" / "compiler" / "aura_jit_runtime.cpp"
 SVC = ROOT / "src" / "compiler" / "service.ixx"
+SVC_JIT = ROOT / "src" / "compiler" / "service_exec_jit.cpp"
 PAIR = ROOT / "src" / "compiler" / "evaluator_primitives_pair.cpp"
 REG = ROOT / "tests" / "python" / "test_regression.py"
 BUILD = ROOT / "build.py"
@@ -219,7 +220,7 @@ def _brace_body(src: str, anchor: str) -> str:
 
 def main() -> int:
     rt = RT.read_text() if RT.exists() else ""
-    svc = SVC.read_text() if SVC.exists() else ""
+    svc = (SVC.read_text() if SVC.exists() else "") + (SVC_JIT.read_text() if SVC_JIT.exists() else "")
     pair = PAIR.read_text() if PAIR.exists() else ""
     reg = REG.read_text() if REG.exists() else ""
     build = BUILD.read_text() if BUILD.exists() else ""
