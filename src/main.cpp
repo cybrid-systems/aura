@@ -177,10 +177,10 @@ static int exit_code_for_kind(aura::diag::ErrorKind k) {
         case K::MutationRefused:
         case K::StaleWorkspace:
             return 4;
-        // TypeError stays in the runtime bucket until #5241 types primitive
-        // errors at creation; a static TypeError is indistinguishable today.
-        // ArityMismatch is call-time (#4467): the program has started, so it
-        // stays in the runtime bucket with TypeError. Unbound stays static.
+        // TypeError and ArityMismatch stay runtime: a call-time operand
+        // mismatch happens after the program started. #5241 types the
+        // producer's kind (division by zero, refusal, module, I/O) where
+        // the error is created, so those buckets are structural.
         default:
             return 1;
     }
@@ -2197,7 +2197,6 @@ static bool serve_reply_error_value(aura::compiler::CompilerService& cs,
     // #5240: carry the producer location the evaluator recorded.
     if (auto loc = cs.evaluator().error_location(v))
         d.location = *loc;
-    d.kind = d.display_kind();
     serve_user_level_walker_policy(d);
     serve_emit_diag(d);
     return true;

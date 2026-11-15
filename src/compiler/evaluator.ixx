@@ -7930,8 +7930,10 @@ public:
     // and never overwritten, so an error that escapes to the top level is
     // located at the failing form instead of the outermost call.
     std::vector<aura::diag::SourceLocation> error_locations_;
-    // Issue #4909: 1 = produced by the program's (error ...) / (raise ...).
-    std::vector<std::uint8_t> user_error_marks_;
+    // Issue #4909 / #5241: the diag::ErrorKind an escaped error value
+    // carries (255 = unrecorded, a plain type mismatch). Parallel to
+    // error_values_ by the same index.
+    std::vector<std::uint8_t> error_kind_marks_;
     std::vector<void*> opaque_heap_; // opaque pointers (indexed by OpaqueRef)
     // Issue #4386: stable copies of opaque_heap_ / modules_ / closure body
     // pointers. Their element addresses are what live_compact rewrites.
@@ -18326,18 +18328,16 @@ public:
             return std::nullopt;
         return loc;
     }
-    // Issue #4909 / #4917: an escaped error value's report kind. The
-    // program's own (error ...) / (raise ...) is "error:", a failed host
-    // I/O op is "io error:". Indexed like error_locations_, same lock.
-    static constexpr std::uint8_t kErrorMarkUser = 1;
-    static constexpr std::uint8_t kErrorMarkIo = 2;
-    // #5241 batch 1: division by zero is its own kind, not TypeError.
-    static constexpr std::uint8_t kErrorMarkDivZero = 3;
-    // #5241 batch 2: refusals carry their kind from creation; no caller
-    // recovers it from the message prefix.
-    static constexpr std::uint8_t kErrorMarkEffectDenied = 4;
-    static constexpr std::uint8_t kErrorMarkMutationRefused = 5;
-    void mark_error_kind(types::EvalValue err, std::uint8_t mark) {
+    // Issue #4909 / #4917 / #5241: an escaped error value's report kind.
+    // The program's own (error ...) / (raise ...) is UserError, a failed
+    // host I/O op is IoError, a refusal is EffectDenied. Indexed like
+    // error_locations_, same lock.
+    //
+    // #5241: the table stores a diag::ErrorKind, not a private mark
+    // numbering. One taxonomy — the same enum the Diagnostic wire type,
+    // the human prefix and the JSON/serve/LSP code all name.
+    static constexpr std::uint8_t kErrorKindUnset = 255;
+    void mark_error_kind(types::EvalValue err, aura::diag::ErrorKind kind) {
         if (!types::is_error(err) || types::is_string(err))
             return;
         const auto idx = types::as_error_idx(err);
@@ -18345,61 +18345,68 @@ public:
             return; // shared overflow / default slot
         const std::scoped_lock<std::mutex> lock(
             ::aura::compiler::primitives_detail::primitive_error_store_mutex());
-        if (user_error_marks_.capacity() <
+        if (error_kind_marks_.capacity() <
             ::aura::compiler::primitives_detail::kPrimitiveErrorStoreReserve)
-            user_error_marks_.reserve(
+            error_kind_marks_.reserve(
                 ::aura::compiler::primitives_detail::kPrimitiveErrorStoreReserve);
-        if (user_error_marks_.size() <= idx)
-            user_error_marks_.resize(idx + 1, 0);
-        user_error_marks_[idx] = mark;
+        if (error_kind_marks_.size() <= idx)
+            error_kind_marks_.resize(idx + 1, kErrorKindUnset);
+        error_kind_marks_[idx] = static_cast<std::uint8_t>(kind);
     }
-    void mark_user_error(types::EvalValue err) { mark_error_kind(err, kErrorMarkUser); }
-    void mark_division_by_zero(types::EvalValue err) { mark_error_kind(err, kErrorMarkDivZero); }
-    void mark_effect_denied(types::EvalValue err) { mark_error_kind(err, kErrorMarkEffectDenied); }
+    void mark_user_error(types::EvalValue err) {
+        mark_error_kind(err, aura::diag::ErrorKind::UserError);
+    }
+    void mark_io_error(types::EvalValue err) {
+        mark_error_kind(err, aura::diag::ErrorKind::IoError);
+    }
+    void mark_module_error(types::EvalValue err) {
+        mark_error_kind(err, aura::diag::ErrorKind::ModuleError);
+    }
+    void mark_division_by_zero(types::EvalValue err) {
+        mark_error_kind(err, aura::diag::ErrorKind::DivisionByZero);
+    }
+    void mark_effect_denied(types::EvalValue err) {
+        mark_error_kind(err, aura::diag::ErrorKind::EffectDenied);
+    }
     void mark_mutation_refused(types::EvalValue err) {
-        mark_error_kind(err, kErrorMarkMutationRefused);
+        mark_error_kind(err, aura::diag::ErrorKind::MutationRefused);
+    }
+    // Issue #5241: one error created with its kind. The label a face
+    // prints is this kind; nothing re-reads the message text.
+    [[nodiscard]] types::EvalValue make_typed_error(std::string_view msg,
+                                                    aura::diag::ErrorKind kind) {
+        auto err = primitives_detail::make_primitive_error(string_heap_, error_values_, msg,
+                                                           primitive_error_counter_ptr());
+        mark_error_kind(err, kind);
+        return err;
     }
     // Issue #5241: build a refusal error value that already carries its
     // kind. Callers pass the Agent-readable reason; the kind never has to
     // be re-derived from that text.
     [[nodiscard]] types::EvalValue make_refusal_error(std::string_view msg) {
-        auto err = primitives_detail::make_primitive_error(string_heap_, error_values_, msg,
-                                                           primitive_error_counter_ptr());
-        mark_effect_denied(err);
-        return err;
+        return make_typed_error(msg, aura::diag::ErrorKind::EffectDenied);
     }
     [[nodiscard]] types::EvalValue make_mutation_refused_error(std::string_view msg) {
-        auto err = primitives_detail::make_primitive_error(string_heap_, error_values_, msg,
-                                                           primitive_error_counter_ptr());
-        mark_mutation_refused(err);
-        return err;
+        return make_typed_error(msg, aura::diag::ErrorKind::MutationRefused);
     }
     [[nodiscard]] std::uint8_t error_mark(types::EvalValue err) const {
         if (!types::is_error(err) || types::is_string(err))
-            return 0;
+            return kErrorKindUnset;
         const auto idx = types::as_error_idx(err);
-        return idx != 0 && idx < user_error_marks_.size() ? user_error_marks_[idx] : 0;
+        return idx != 0 && idx < error_kind_marks_.size() ? error_kind_marks_[idx]
+                                                          : kErrorKindUnset;
     }
     [[nodiscard]] bool is_user_error(types::EvalValue err) const {
-        return error_mark(err) == kErrorMarkUser;
+        return error_value_kind(err) == aura::diag::ErrorKind::UserError;
     }
+    // #5241: the kind a produced error value reports. A producer that
+    // recorded no kind is a type mismatch (car on a non-pair, an operand
+    // of the wrong type) — the historical default, not a guess from text.
     [[nodiscard]] aura::diag::ErrorKind error_value_kind(types::EvalValue err) const {
-        switch (error_mark(err)) {
-            case kErrorMarkUser:
-                return aura::diag::ErrorKind::UserError;
-            case kErrorMarkIo:
-                return aura::diag::ErrorKind::IoError;
-            case kErrorMarkDivZero:
-                return aura::diag::ErrorKind::DivisionByZero;
-            case kErrorMarkEffectDenied:
-                return aura::diag::ErrorKind::EffectDenied;
-            case kErrorMarkMutationRefused:
-                return aura::diag::ErrorKind::MutationRefused;
-            default:
-                // A primitive that is a genuine type mismatch (car on a
-                // non-pair, ...) keeps the default; refusals mark above.
-                return aura::diag::ErrorKind::TypeError;
-        }
+        const auto stored = error_mark(err);
+        if (stored == kErrorKindUnset)
+            return aura::diag::ErrorKind::TypeError;
+        return static_cast<aura::diag::ErrorKind>(stored);
     }
     // Issue #4273: Soft serve must not report status=ok with value <error>
     // (pick-best soft_bad_value / set-code truncated CASE). Surface the
@@ -18439,17 +18446,15 @@ public:
     // Issue #4461: integer `/` by zero. Same error value as modulo, so a
     // literal zero and a zero from a binding agree.
     [[nodiscard]] types::EvalValue make_div_zero_error() {
-        auto err = primitives_detail::make_primitive_error(
-            string_heap_, error_values_, "/: division by zero", &primitive_error_count_);
-        mark_division_by_zero(err);
-        return err;
+        return make_typed_error("/: division by zero", aura::diag::ErrorKind::DivisionByZero);
     }
     // Issue #4463: same error-value shape as division by zero, so try
     // binds the cause string. `cause` is the mismatch detail without
     // the "error: " prefix.
     [[nodiscard]] types::EvalValue make_arith_type_error(std::string_view cause) {
-        return primitives_detail::make_primitive_error(string_heap_, error_values_, cause,
-                                                       &primitive_error_count_);
+        // #5241: arithmetic operand mismatch is a type error by creation,
+        // not by a phrase a face parses later.
+        return make_typed_error(cause, aura::diag::ErrorKind::TypeError);
     }
     // Issue #4855: the error a 2-arg hash-ref raises when the key is absent
     // (the 3-arg form returns the default instead). The JIT's inline
