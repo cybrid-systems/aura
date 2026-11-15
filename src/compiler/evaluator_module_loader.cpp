@@ -516,9 +516,10 @@ types::EvalValue Evaluator::fail_module_load(const std::string& resolved, const 
     arena_group_->reset_module(resolved);
     // First-class error so (require)/(import) can signal failure
     // (void was indistinguishable from empty success in some paths).
-    auto sid = string_heap_.mint(std::string("module-load-failed: ") + resolved + ": " + why);
-    auto eidx = primitives_detail::push_error_cause(error_values_, types::make_string(sid));
-    return types::make_error(eidx);
+    // #5241: a module that could not load is ModuleError at creation, so
+    // serve and the file face name the same category.
+    return make_typed_error(std::string("module-load-failed: ") + resolved + ": " + why,
+                            aura::diag::ErrorKind::ModuleError);
 }
 
 std::optional<std::string> Evaluator::apply_module_export_filter(Env* mod_env) {

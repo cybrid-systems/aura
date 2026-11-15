@@ -258,17 +258,14 @@ void register_module_primitives(PrimRegistrar add, Evaluator& ev) {
         if (is_error(mod_val) && !is_string(mod_val))
             return mod_val;
         if (!is_module(mod_val)) {
-            auto sid = static_cast<std::uint64_t>(
-                ev.push_string_heap(std::string("module-load-failed: ") + path));
-            auto eidx = primitives_detail::push_error_cause(ev.error_values_, make_string(sid));
-            return make_error(eidx);
+            // #5241: a module that did not load is ModuleError at creation.
+            return ev.make_typed_error(std::string("module-load-failed: ") + path,
+                                       aura::diag::ErrorKind::ModuleError);
         }
         auto mod_idx = as_module_idx(mod_val);
         if (mod_idx >= ev.modules_.size()) {
-            auto sid = static_cast<std::uint64_t>(
-                ev.push_string_heap(std::string("module-load-failed: bad index for ") + path));
-            auto eidx = primitives_detail::push_error_cause(ev.error_values_, make_string(sid));
-            return make_error(eidx);
+            return ev.make_typed_error(std::string("module-load-failed: bad index for ") + path,
+                                       aura::diag::ErrorKind::ModuleError);
         }
 
         // Issue #2566: inject into active require target (module env under
