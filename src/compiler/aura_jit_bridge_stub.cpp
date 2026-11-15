@@ -17,6 +17,7 @@
 #include "aura_jit_bridge.h"
 #include "core/atomic_fence_port.h"
 #include "hot_update_registry.hh"
+#include "aura_snapshot_abi.hh" // Issue #5237: snapshot types for the weak stubs
 #include "observability_metrics.h"
 
 extern "C" void* aura_get_aot_metrics(void);
