@@ -141,6 +141,7 @@ set(AURA_EVALUATOR_SOURCE_FILES
 # Wave 5: service implementation partitions (same module: aura.compiler.service).
 set(AURA_SERVICE_SOURCE_FILES
     src/compiler/service_dirty.cpp
+    src/compiler/service_snapshot.cpp
 )
 set(CMAKE_CXX_STANDARD 26)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
