@@ -153,6 +153,62 @@ static std::string json_escape(std::string_view s) {
     return aura::json::escape(s);
 }
 
+// #5240: machine-readable diagnostic (one JSON object, stderr).
+// code is the stable kind_ident (not an enum ordinal); span is 1-based
+// UTF-8 byte columns, end == start until the AST records an end.
+static bool g_diag_json = false;
+
+static bool emit_diag_json(const aura::diag::Diagnostic& d, std::string_view source) {
+    if (!g_diag_json)
+        return false;
+    std::string file;
+    std::string_view text = source;
+    if (d.location.file_id != 0) {
+        if (auto sf = aura::diag::source_file(d.location.file_id)) {
+            file = sf->path;
+            text = sf->content;
+        }
+    } else if (auto sf = aura::diag::source_file(0)) {
+        file = sf->path;
+    }
+    std::string snippet;
+    if (d.location.line > 0) {
+        std::size_t line = 1;
+        std::size_t begin = 0;
+        for (std::size_t i = 0; i < text.size() && line < d.location.line; ++i)
+            if (text[i] == '\n') {
+                ++line;
+                begin = i + 1;
+            }
+        if (line == d.location.line) {
+            auto end = text.find('\n', begin);
+            snippet = std::string(text.substr(
+                begin, end == std::string_view::npos ? std::string_view::npos : end - begin));
+        }
+    }
+    const auto line = d.location.line;
+    const auto column = d.location.column;
+    std::string out = "{\"code\":\"" + aura::json::escape(aura::diag::kind_ident(d.kind)) + "\"";
+    out += ",\"severity\":\"error\"";
+    if (!file.empty())
+        out += ",\"file\":\"" + aura::json::escape(file) + "\"";
+    if (line > 0) {
+        out += ",\"span\":{\"start\":{\"line\":" + std::to_string(line) +
+               ",\"column\":" + std::to_string(column) +
+               "},\"end\":{\"line\":" + std::to_string(line) +
+               ",\"column\":" + std::to_string(column) + "}}";
+    }
+    out += ",\"message\":\"" + aura::json::escape(d.message) + "\"";
+    if (!d.suggestion.empty())
+        out += ",\"hint\":\"" + aura::json::escape(d.suggestion) + "\"";
+    if (!snippet.empty())
+        out += ",\"snippet\":\"" + aura::json::escape(snippet) + "\"";
+    out += "}";
+    std::println(std::cerr, "{}", out);
+    return true;
+}
+
+
 // Issue #147: stringify InvariantStatus enum for JSON output.
 static std::string invariant_status_to_string(aura::ast::InvariantStatus st) {
     switch (st) {
@@ -1130,6 +1186,7 @@ static void print_top_help_4935() {
     std::println("Common options:");
     std::println("  -e, --eval EXPR    evaluate EXPR");
     std::println("  --preset dev|ci|prod, --grant CAPS, --deny CAPS   capabilities");
+    std::println("  --error-format json|text   one JSON diagnostic object (file runs)");
     std::println("  --fmt, --typecheck, --query Q, --inspect           tools");
     std::println("  A tool positional that exists as a file is that file;");
     std::println("  any other positional is source text.");
@@ -3610,6 +3667,12 @@ static OneshotLaunch parse_oneshot_launch(int argc, char** argv) {
     if (argc > 1) {
         for (int i = 1; i < argc; ++i) {
             std::string_view a(argv[i]);
+            if (a == "--error-format" || a.starts_with("--error-format=")) {
+                std::string_view v;
+                if (flag_value_4912(i, a, "--error-format", v))
+                    g_diag_json = (v == "json");
+                continue;
+            }
             if (a == "--quiet") { // Issue #4912
                 quiet_4912 = true;
                 continue;
@@ -4095,7 +4158,8 @@ static void recover_oneshot_eval_error(aura::compiler::CompilerService& cs,
     const bool macro_deny = aura_hygiene_expand_deny_blocks_eval() != 0 ||
                             diag.message.find("macro-self-evo") != std::string::npos;
     if (macro_deny) {
-        std::println(std::cerr, "error: {}", diag.format_with_source(all_input));
+        if (!emit_diag_json(diag, all_input))
+            std::println(std::cerr, "error: {}", diag.format_with_source(all_input));
         err = true;
     }
     const bool parse_fail = diag.kind == aura::diag::ErrorKind::ParseError ||
@@ -4162,7 +4226,8 @@ static void recover_oneshot_eval_error(aura::compiler::CompilerService& cs,
         }
     }
     if (!walker_depth_resume && !parse_fail && !macro_deny && !entry_loc && !stamped_form.valid()) {
-        std::println(std::cerr, "error: {}", diag.format_with_source(all_input));
+        if (!emit_diag_json(diag, all_input))
+            std::println(std::cerr, "error: {}", diag.format_with_source(all_input));
         err = true;
         resume_at = exprs.size();
     }
@@ -4183,7 +4248,8 @@ static void recover_oneshot_eval_error(aura::compiler::CompilerService& cs,
         auto shown = diag;
         if (!shown.location.valid())
             shown.location = stamped_form; // Issue #4909: never unlocated
-        std::println(std::cerr, "error: {}", shown.format_with_source(all_input));
+        if (!emit_diag_json(shown, all_input))
+            std::println(std::cerr, "error: {}", shown.format_with_source(all_input));
         if (resume_at > 0 && resume_at <= exprs.size() &&
             anchors[resume_at - 1].offset != std::string::npos) {
             const auto& a = anchors[resume_at - 1];
@@ -4218,10 +4284,12 @@ static void recover_oneshot_eval_error(aura::compiler::CompilerService& cs,
                         d.location.column += anchors[i].col - 1;
                     d.location.line += anchors[i].line - 1;
                 }
-                std::println(std::cerr, "error: {}", d.format_with_source(all_input));
+                if (!emit_diag_json(d, all_input))
+                    std::println(std::cerr, "error: {}", d.format_with_source(all_input));
                 print_module_backtrace_4916(d.location, anchors[i].line, anchors[i].col, e);
             } else {
-                std::println(std::cerr, "error: {}", r2.error().format_with_source(e));
+                if (!emit_diag_json(r2.error(), e))
+                    std::println(std::cerr, "error: {}", r2.error().format_with_source(e));
             }
             err = true;
             if (stop_first_4909) // Issue #4909: first error stops a file
