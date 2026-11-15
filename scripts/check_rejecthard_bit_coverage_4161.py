@@ -57,6 +57,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 CHAOS = ROOT / "tests" / "serve" / "test_chaos_mutate_steal_gc_mailbox.cpp"
 RESIDUAL = ROOT / "tests" / "serve" / "test_steal_safety_production_residual_zero.cpp"
 SS_H = ROOT / "src" / "serve" / "steal_safety.h"
@@ -175,7 +178,7 @@ def run_rows(texts: dict) -> list[str]:
     must("Count = 7," in ss_h, "AC3b/#4258: still 7 StealInvariant bits (composition-only)")
 
     # ── AC4: wiring + no invent ──
-    must("check_rejecthard_bit_coverage_4161.py" in build, "AC4: build.py runs the linter")
+    must("check_rejecthard_bit_coverage_4161.py" in wired_text, "AC4: run_checks.py gates the linter")
     must("check_rejecthard_bit_coverage_4161.py" in allow, "AC4: root_check_allowlist row present")
     must(
         not glob.glob(str(ROOT / "tests" / "**" / "test_issue_4161.cpp"), recursive=True),

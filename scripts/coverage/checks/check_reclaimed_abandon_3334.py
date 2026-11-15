@@ -23,6 +23,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -41,7 +43,6 @@ def main() -> int:
     prim = _read("src/compiler/evaluator_primitives_agent.cpp")
     test = _read("tests/orch/test_join_drain_reclaim.cpp")
     lint3297 = _read("scripts/coverage/checks/check_reclaimed_dtor_under_account_3297.py")
-    build = _read("build.py")
 
     must("kReclaimedAbandonIssue = 3334", "AC1 stamp", spawn)
     must("reclaimed_abandon_total{0}", "AC1 counter at struct end", spawn)
@@ -68,14 +69,14 @@ def main() -> int:
 
     must("reclaimed-abandon-total", "AC5 stats key", prim)
     must("schema-3334", "AC5 schema on existing query", prim)
-    must("check_reclaimed_abandon_3334", "AC5 build.py", build)
+    must("check_reclaimed_abandon_3334", "AC5 wiring", wired_text)
     must("ac3334_5_source_and_linter", "AC5 test", test)
-    prev = build.find("check_reclaimed_dtor_under_account_3297")
-    ours = build.find("check_reclaimed_abandon_3334")
-    if ours < 0:
-        fails.append("AC5: linter must be wired in build.py")
-    elif prev >= 0 and ours < prev:
-        fails.append("AC5: linter must be wired in build.py AFTER #3297")
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must(
+        "check_reclaimed_dtor_under_account_3297", "AC5: linter must be gated by run_checks.py (both gated)", wired_text
+    )
+    must("check_reclaimed_abandon_3334", "AC5: linter must be gated by run_checks.py (both gated)", wired_text)
     if (ROOT / "tests" / "orch" / "test_issue_3334.cpp").is_file():
         fails.append("AC5: tests/orch/test_issue_3334.cpp present (forbidden #81967)")
     docs = ROOT / "docs" / "design"

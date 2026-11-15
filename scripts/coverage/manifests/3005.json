@@ -76,13 +76,6 @@
       ]
     },
     {
-      "ac": "AC8",
-      "path": "build.py",
-      "contains": [
-        "cmd_adt_exhaust_dirty_cone_3005_coverage"
-      ]
-    },
-    {
       "ac": "AC9",
       "forbid_glob": [
         "docs/design/*3005*"

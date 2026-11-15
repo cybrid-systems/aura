@@ -21,6 +21,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -40,7 +42,6 @@ def main() -> int:
     t = _read("tests/serve/test_steal_complete_restamp_txn.cpp")
     chaos = _read("tests/serve/test_chaos_steal_mutation_gc.cpp")
     q = _read("src/compiler/evaluator_primitives_obs_jit.cpp")
-    build = _read("build.py")
 
     must("Issue #3038", "AC1", cpp)
     must("kStealSafetyResidualRearmResampleIssue = 3038", "AC1", hdr)
@@ -75,7 +76,7 @@ def main() -> int:
     must("ac3038_5_source_chaos_linter", "AC5", t)
     must("ac3038_forced_hook_rearm", "AC5 chaos", chaos)
     must("g_steal_safety_between_clear_and_hard_and_hook", "AC5 chaos hook", chaos)
-    must("check_steal_residual_rearm_resample_3038", "AC5", build)
+    must("check_steal_residual_rearm_resample_3038", "AC5", wired_text)
     if (ROOT / "tests" / "serve" / "test_issue_3038.cpp").is_file():
         fails.append("AC5: test_issue_3038.cpp present (forbidden #81967)")
     docs = ROOT / "docs" / "design"

@@ -37,6 +37,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage"))
 from query_prims_sources import read_query_prims
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -83,7 +85,6 @@ def main() -> int:
     efl = _read("src/core/envframe_lifetime.ixx")
     q = read_query_prims()
     t = _read("tests/compiler/test_densify_ownership_scan_fail_gate.cpp")
-    build = _read("build.py")
 
     # AC1 — proof struct + snapshot function with all 9 fields.
     must("struct EnvFrameLifetimeProof", "AC1", efl)
@@ -134,7 +135,7 @@ def main() -> int:
     must("ac2711_4_read_only_snapshot", "AC6", t)
     must("ac2711_5_query_keys_added", "AC6", t)
     must("ac2711_6_source_and_linter", "AC6", t)
-    must("check_envframe_lifetime_proof_2711", "AC6", build)
+    must("check_envframe_lifetime_proof_2711", "AC6", wired_text)
     if _read("docs/design/2711-envframe-lifetime-proof.md"):
         fails.append("AC6: docs/design/2711-* exists (forbidden per #1655)")
 

@@ -21,6 +21,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -39,7 +41,6 @@ def main() -> int:
     hdr = _read("src/compiler/type_checker.ixx")
     test = _read("tests/compiler/test_bidirectional_match_check.cpp")
     cov = _read("scripts/coverage/checks/check_bidirectional_tag_coverage_3044.py")
-    build = _read("build.py")
 
     start = impl.find("TypeId InferenceEngine::synthesize_flat")
     default = ""
@@ -80,14 +81,16 @@ def main() -> int:
     must("3044 AC3: covered path zero extra stores", "AC3 3044", test)
 
     must("Issue #3330", "AC4 3044 linter", cov)
-    must("check_bidirectional_uncovered_no_dynamic_3330", "AC4 build.py", build)
+    must("check_bidirectional_uncovered_no_dynamic_3330", "AC4 wiring", wired_text)
     must("kBidirectionalUncoveredTagIssue = 3044", "AC4 3044 lineage", hdr)
-    prev = build.find("check_bidirectional_tag_coverage_3044")
-    ours = build.find("check_bidirectional_uncovered_no_dynamic_3330")
-    if ours < 0:
-        fails.append("AC4: linter must be wired in build.py")
-    elif prev >= 0 and ours < prev:
-        fails.append("AC4: linter must be wired in build.py AFTER #3044")
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must("check_bidirectional_tag_coverage_3044", "AC4: linter must be gated by run_checks.py (both gated)", wired_text)
+    must(
+        "check_bidirectional_uncovered_no_dynamic_3330",
+        "AC4: linter must be gated by run_checks.py (both gated)",
+        wired_text,
+    )
 
     if "g_3330_" in impl or "g_3330_" in hdr:
         fails.append("AC4: new g_3330_* counter")

@@ -18,6 +18,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -41,7 +43,6 @@ def main() -> int:
     jit = _read("src/compiler/aura_jit.cpp")
     hdr = _read("src/compiler/aura_jit.h")
     test = _read("tests/compiler/test_emit_object_deprecated.cpp")
-    build = _read("build.py")
     cmake = _read("CMakeLists.txt")
     bridge = _read("src/compiler/aura_jit_bridge.cpp")
     main_cpp = _read("src/main.cpp")
@@ -80,8 +81,8 @@ def main() -> int:
     must_not("jit::emit_object(", "AC4", main_cpp)
     must("emit_native_object", "AC4", bridge)
 
-    must("check_emit_object_deprecated_2477", "gate", build)
-    must("cmd_emit_object_deprecated_coverage", "gate", build)
+    must("check_emit_object_deprecated_2477", "gate", wired_text)
+    must("check_emit_object_deprecated_2477.py", "gate", wired_text)
     must("test_emit_object_deprecated", "gate", cmake)
     must("2477 AC5", "gate", test)
 

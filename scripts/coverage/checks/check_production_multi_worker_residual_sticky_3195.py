@@ -24,6 +24,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -46,7 +48,6 @@ def main() -> int:
     qts = _read("src/compiler/evaluator_primitives_query_type_stats.cpp")
     t_zero = _read("tests/serve/test_steal_safety_production_residual_zero.cpp")
     t_abi = _read("tests/serve/test_steal_complete_strong_entry.cpp")
-    build = _read("build.py")
 
     fn_pos = sc.find("StealSafetyDecision steal_safety_transaction(")
     fn_win = sc[fn_pos : fn_pos + 9000] if fn_pos >= 0 else ""
@@ -88,7 +89,7 @@ def main() -> int:
     must("3195 AC1", "AC5 strong-entry live", t_abi)
     must("schema-3195", "AC5 schema", qts)
     must("issue-3195", "AC5 issue stamp", qts)
-    must("check_production_multi_worker_residual_sticky_3195", "AC6 build.py", build)
+    must("check_production_multi_worker_residual_sticky_3195", "AC6 wiring", wired_text)
 
     if (ROOT / "tests" / "issues" / "test_issue_3195.cpp").is_file():
         fails.append("AC5: forbidden tests/issues/test_issue_3195.cpp per #81967")

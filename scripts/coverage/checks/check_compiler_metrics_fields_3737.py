@@ -5,7 +5,7 @@
        in compiler_metrics_fields.inc (name match)
   AC2  extra FIELD() names that are not struct members fail (except none)
   AC3  append-only — linter diffs; does not rewrite mid-struct order
-  AC4  wired in build.py; no test_issue_3737.cpp; no docs/design/3737-*
+  AC4  gated by run_checks.py; no test_issue_3737.cpp; no docs/design/3737-*
   AC5  query_hash_overflow_total stays off the .inc (process atomic, #3020)
 
 Exit 0 = all rows satisfied.
@@ -18,6 +18,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -76,7 +78,6 @@ def main() -> int:
     hdr = _read("src/compiler/observability_metrics.h")
     inc = _read("src/compiler/compiler_metrics_fields.inc")
     test = _read("tests/compiler/test_engine_metrics_facade.cpp")
-    build = _read("build.py")
     obs = _read("src/compiler/evaluator_primitives_obs_jit.cpp")
 
     atomics = compiler_metrics_scalar_atomics(hdr)
@@ -95,7 +96,7 @@ def main() -> int:
     must("Issue #3737", "AC3 cite", obs)
     must("stable_ref_", "AC3 mutate group", obs)
 
-    must("check_compiler_metrics_fields_3737", "AC4 build", build)
+    must("check_compiler_metrics_fields_3737", "AC4 build", wired_text)
     must("3737 AC", "AC4 test", test)
     if (ROOT / "tests" / "compiler" / "test_issue_3737.cpp").is_file():
         fails.append("AC4: test_issue_3737.cpp present")

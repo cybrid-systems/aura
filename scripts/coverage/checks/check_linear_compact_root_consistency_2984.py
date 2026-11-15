@@ -19,6 +19,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from query_prims_sources import read_query_prims  # Issue #2914
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -38,7 +40,6 @@ def main() -> int:
     svc = _read("src/compiler/service.ixx")
     q = read_query_prims()
     t = _read("tests/compiler/test_type_linear_commit_health.cpp")
-    build = _read("build.py")
 
     must("Issue #2984", "AC1", tma)
     must("note_arena_compact_linear_root_consistency", "AC1", tma)
@@ -67,7 +68,7 @@ def main() -> int:
     must("note_arena_compact_linear_root_consistency", "AC6", gc)
     must("note_arena_compact_linear_root_consistency", "AC6", svc)
     must("ac2984_6_source_and_linter", "AC6", t)
-    must("check_linear_compact_root_consistency_2984", "AC6", build)
+    must("check_linear_compact_root_consistency_2984", "AC6", wired_text)
 
     docs = ROOT / "docs" / "design"
     if docs.is_dir():

@@ -31,7 +31,7 @@ Contract (one row per AC):
        the runtime verify arm (query after a successful agent-body write
        returns schema-2, not restamp-lag; gap false after body return)
        lives in tests/compiler/test_hygiene_mutate_closed_loop.cpp
-  AC4  build.py wires check_authority_gap_lifecycle_4087 + root allowlist;
+  AC4  run_checks.py wires check_authority_gap_lifecycle_4087 + root allowlist;
        source-cite ACs extend tests/serve/test_orch_soft_boundary_unified.cpp
        (#4087 AC16-AC19); no tests/**/test_issue_4087.cpp; no
        docs/design/4087-*
@@ -45,6 +45,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -62,7 +64,6 @@ def main() -> int:
     emb = _read("src/compiler/evaluator_mutation_boundary.cpp")
     test = _read("tests/serve/test_orch_soft_boundary_unified.cpp")
     loop = _read("tests/compiler/test_hygiene_mutate_closed_loop.cpp")
-    build = _read("build.py")
     allow = _read("scripts/coverage/root_check_allowlist.txt")
 
     # ── AC1: nested-exit stamp arm gated production/Full ─────────────────
@@ -108,7 +109,7 @@ def main() -> int:
     must("nested_authority_gap()", "AC3 runtime arm checks the gap face", loop)
 
     # ── AC4: wiring + test extension + no new files ──────────────────────
-    must("check_authority_gap_lifecycle_4087", "AC4 build.py wires the linter", build)
+    must("check_authority_gap_lifecycle_4087", "AC4 run_checks.py wires the linter", wired_text)
     must("check_authority_gap_lifecycle_4087.py", "AC4 root allowlist carries the linter", allow)
     must("--- #4087 AC16", "AC4 AC16 header present", test)
     must("--- #4087 AC17", "AC4 AC17 header present", test)

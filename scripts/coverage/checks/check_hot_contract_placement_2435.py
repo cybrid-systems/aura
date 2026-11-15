@@ -17,6 +17,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -37,7 +39,6 @@ def main() -> int:
     soa = _read("src/compiler/ir_soa.ixx")
     q = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
     test = _read("tests/compiler/test_hot_contract_placement.cpp")
-    build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
     # AC1
@@ -67,8 +68,8 @@ def main() -> int:
     must("hot-contracts-mode", "AC5", q)
     must("hotpath_contracts_2435_active", "AC5", hh)
     must("2435 AC5", "AC5", test)
-    must("check_hot_contract_placement_2435", "gate", build)
-    must("cmd_hot_contract_placement_coverage", "gate", build)
+    must("check_hot_contract_placement_2435", "gate", wired_text)
+    must("check_hot_contract_placement_2435.py", "gate", wired_text)
     must("test_hot_contract_placement", "gate", cmake)
     # Issue #3043 lineage: Soft-observe sits on this placement policy.
     must("3043", "lineage", _read("scripts/coverage/checks/check_hot_contract_soft_observe_3043.py"))

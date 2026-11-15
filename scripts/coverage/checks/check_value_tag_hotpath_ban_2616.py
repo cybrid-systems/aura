@@ -18,6 +18,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 # Production hot TUs — classify_eval_value_tag (non-consteval) forbidden.
 HOT_FILES = [
@@ -65,7 +67,6 @@ def main() -> int:
     obs = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
     test = _read("tests/compiler/test_value_tag_hotpath_ban.cpp")
     cmake = _read("CMakeLists.txt")
-    build = _read("build.py")
 
     # AC1: no classify_eval_value_tag( in hot files (allow consteval + comments already stripped)
     banned = re.compile(r"\bclassify_eval_value_tag\s*\(")
@@ -142,8 +143,8 @@ def main() -> int:
     must("schema-2616", "AC5", obs)
     must("value-tag-hotpath-ban-2616-wired", "AC5", obs)
     must("test_value_tag_hotpath_ban", "AC5", cmake)
-    must("check_value_tag_hotpath_ban_2616", "AC5", build)
-    must("cmd_value_tag_hotpath_ban_coverage", "AC5", build)
+    must("check_value_tag_hotpath_ban_2616", "AC5", wired_text)
+    must("check_value_tag_hotpath_ban_2616.py", "AC5", wired_text)
     must("ac5_source_cite", "AC5", test)
 
     for rel in (

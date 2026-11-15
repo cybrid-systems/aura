@@ -17,7 +17,7 @@ Contract:
       when tid==0 (maybe_stamp early return).
   AC5 Additive observability; #2705 / #2687 / #2056 surfaces preserved;
       no docs/design/* per #1655.
-  AC6 Extend test_tenant_isolation_enforcement; this linter; build.py gate.
+  AC6 Extend test_tenant_isolation_enforcement; this linter; coverage runner.
 
 Exit 0 = all rows satisfied.
 """
@@ -29,6 +29,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -56,7 +58,6 @@ def main() -> int:
     fiber = _read("src/compiler/evaluator_fiber_mutation.cpp")
     agent = _read("src/compiler/evaluator_primitives_agent.cpp")
     test = _read("tests/core/test_tenant_isolation_enforcement.cpp")
-    build = _read("build.py")
 
     # AC1 — sole authority + layout path + global write suppress.
     must("kEvaluatorStampSoleAuthorityIssue", "AC1", prov)
@@ -153,7 +154,7 @@ def main() -> int:
     must("#2759", "AC6", test)
     must("g_isolation_capture_global_write_suppressed_total_atomic", "AC6", test)
     must("make_ref_layout", "AC6", test)
-    must("check_evaluator_stamp_sole_authority_2759", "AC6", build)
+    must("check_evaluator_stamp_sole_authority_2759", "AC6", wired_text)
     for rel in (
         "docs/design/evaluator_stamp_sole_authority_2759.md",
         "docs/evaluator_stamp_sole_authority_2759.md",

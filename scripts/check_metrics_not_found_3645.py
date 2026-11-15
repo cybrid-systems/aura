@@ -24,6 +24,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
 
 OBS = "src/compiler/evaluator_primitives_obs_jit.cpp"
 TEST = "tests/compiler/test_engine_metrics_facade.cpp"
@@ -89,7 +92,7 @@ def _rows(obs: str, test: str, stats_aura: str, build: str) -> list[str]:
             fails.append(f"AC5: {rel} exists")
     if list(Path(ROOT / "docs" / "design").glob("3645*")):
         fails.append("AC5: docs/design/3645-* exists")
-    must(LINTER, "AC5 build registration", build)
+    must(LINTER, "AC5 build registration", wired_text)
 
     return fails
 
@@ -102,7 +105,7 @@ def main() -> int:
     obs = _read(OBS)
     test = _read(TEST)
     stats_aura = _read(STATS_AURA)
-    build = _read(BUILD)
+    build = wired_text
     if args.self_test:
         broken = obs.replace("schema-3531", "schema-redacted")
         self_fails = _rows(broken, test, stats_aura, build)

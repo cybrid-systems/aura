@@ -36,6 +36,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -55,7 +57,6 @@ def main() -> int:
     posture = _read("src/compiler/evaluator_primitives_security.cpp")
     sec_caps = _read("src/compiler/security_capabilities.h")
     test_iso = _read("tests/core/test_tenant_isolation_enforcement.cpp")
-    build = _read("build.py")
 
     # ── AC1: write-fence on foreign-tenant grant/revoke ─────────────
     must("Issue #2969", "AC1", sec)
@@ -117,7 +118,7 @@ def main() -> int:
     must("#2969", "AC6", sec)
     must("#2969", "AC6", test_iso)
     must("schema-2969", "AC6", posture)
-    must("check_capability_write_fence_2969", "AC6", build)  # linter wired
+    must("check_capability_write_fence_2969", "AC6", wired_text)  # linter wired
     for rel in ("tests/core/test_issue_2969.cpp", "tests/compiler/test_issue_2969.cpp"):
         if _read(rel):
             fails.append(f"AC6: {rel} exists — forbidden per #81967")

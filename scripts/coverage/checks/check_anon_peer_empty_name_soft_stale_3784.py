@@ -18,6 +18,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -39,7 +41,6 @@ def main() -> int:
     rt = _read("src/compiler/aura_jit_runtime.cpp")
     br = _read("src/compiler/aura_jit_bridge.cpp")
     test = _read("tests/compiler/test_peer_jit_name_soft_stale.cpp")
-    build = _read("build.py")
 
     must("Issue #3784", "AC1 runtime cite", rt)
     must("aura_aot_slot_is_soft_stale", "AC1 slot consult", rt)
@@ -54,11 +55,15 @@ def main() -> int:
     must("ac3784_1", "AC4 test", test)
     must("ac3784_2", "AC4 test", test)
     must("ac3784_3", "AC4 test", test)
-    must("check_anon_peer_empty_name_soft_stale_3784", "AC4 build wire", build)
-    if build.find("check_anon_peer_empty_name_soft_stale_3784") <= build.find(
-        "check_auto_arm_densify_health_publish_3783"
-    ):
-        fails.append("AC4: linter must be wired AFTER #3783 linter")
+    must("check_anon_peer_empty_name_soft_stale_3784", "AC4 build wire", wired_text)
+    # Sequence positions were a property of the deleted cmd_lint chain
+    # (#5246); the checks below are gated by run_checks.py discovery.
+    must(
+        "check_anon_peer_empty_name_soft_stale_3784", "AC wiring check_anon_peer_empty_name_soft_stale_3784", wired_text
+    )
+    must(
+        "check_auto_arm_densify_health_publish_3783", "AC wiring check_anon_peer_empty_name_soft_stale_3784", wired_text
+    )
     if (ROOT / "tests" / "issues" / "test_issue_3784.cpp").is_file():
         fails.append("AC4: tests/issues/test_issue_3784.cpp present")
     if (ROOT / "tests" / "compiler" / "test_issue_3784.cpp").is_file():

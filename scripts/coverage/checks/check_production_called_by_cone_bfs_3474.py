@@ -24,6 +24,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -54,7 +56,6 @@ def main() -> int:
     ixx = _read("src/compiler/service.ixx") + _read("src/compiler/service_relower.cpp")
     test_facade = _read("tests/compiler/test_compiler_hot_update_facade.cpp")
     test_peel = _read("tests/compiler/test_incremental_facade_dirty_names_snapshot.cpp")
-    build = _read("build.py")
 
     must("mark_called_by_cone_body_dirty_", "AC1 decl", ixx)
     must("void CompilerService::mark_called_by_cone_body_dirty_", "AC1 def", svc)
@@ -118,11 +119,19 @@ def main() -> int:
     must("Issue #3474", "AC5 peel test", test_peel)
     must("std::deque<std::string> bfs", "AC5 peel test FIFO", test_peel)
 
-    must("check_production_called_by_cone_bfs_3474", "AC5 build.py", build)
-    prev = build.find("check_production_hybrid_depth1_fanout_3345")
-    ours = build.find("check_production_called_by_cone_bfs_3474")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC5: linter must be wired in build.py AFTER #3345")
+    must("check_production_called_by_cone_bfs_3474", "AC5 wiring", wired_text)
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must(
+        "check_production_hybrid_depth1_fanout_3345",
+        "AC5: linter must be gated by run_checks.py (both gated)",
+        wired_text,
+    )
+    must(
+        "check_production_called_by_cone_bfs_3474",
+        "AC5: linter must be gated by run_checks.py (both gated)",
+        wired_text,
+    )
 
     must_not("schema-3474", "AC6 no query key", svc + ixx)
     must_not("g_3474_", "AC6 no g_3474_*", svc + ixx)

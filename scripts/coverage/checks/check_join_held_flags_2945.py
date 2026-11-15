@@ -21,6 +21,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -40,7 +42,6 @@ def main() -> int:
     agent = _read("src/compiler/evaluator_primitives_agent.cpp")
     spawn = _read("src/orch/agent_spawn.h")
     test = _read("tests/orch/test_join_drain_reclaim.cpp")
-    build = _read("build.py")
 
     # AC1
     must("reservation-held", "AC1", agent)
@@ -93,7 +94,7 @@ def main() -> int:
     must("2945", "AC6", test)
     must("reservation-held", "AC6", test)
     must("mailbox-held", "AC6", test)
-    must("check_join_held_flags_2945", "AC6", build)
+    must("check_join_held_flags_2945", "AC6", wired_text)
     if (ROOT / "tests" / "orch" / "test_issue_2945.cpp").is_file():
         fails.append("AC6: test_issue_2945.cpp present (forbidden per #81967)")
     docs = ROOT / "docs" / "design"

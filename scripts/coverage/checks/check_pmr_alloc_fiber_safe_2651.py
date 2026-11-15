@@ -5,7 +5,7 @@ Contract:
   AC1 push_string_heap / push_pair hold alloc_storage_lock_
   AC2 string-append / cons lock under multi-fiber
   AC3 ASTArena allocate_raw_impl serializes pmr via alloc_mtx_
-  AC4 unit test + cmake + build.py gate
+  AC4 unit test + cmake + coverage runner
 
 Exit 0 = all rows satisfied.
 """
@@ -16,6 +16,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -37,7 +39,6 @@ def main() -> int:
     listp = _read("src/compiler/evaluator_primitives_list.cpp")
     test = _read("tests/compiler/test_pmr_alloc_fiber_safe.cpp")
     cmake = _read("CMakeLists.txt")
-    build = _read("build.py")
 
     must("#2651" in ixx, "AC1: evaluator.ixx cites #2651")
     must("push_string_heap" in ixx and "alloc_storage_lock_" in ixx, "AC1: push locks")
@@ -64,8 +65,8 @@ def main() -> int:
     must("AC1" in test and "AC4" in test, "AC4: unit test ACs")
     must("push_string_heap" in test, "AC4: test stresses push_string_heap")
     must("test_pmr_alloc_fiber_safe" in cmake, "AC4: cmake registers test")
-    must("check_pmr_alloc_fiber_safe_2651" in build, "AC4: build.py linter")
-    must("cmd_pmr_alloc_fiber_safe_coverage" in build, "AC4: coverage cmd")
+    must("check_pmr_alloc_fiber_safe_2651" in wired_text, "AC4: build.py linter")
+    must("check_pmr_alloc_fiber_safe_2651" in wired_text, "AC4: coverage cmd")
 
     if fails:
         for f in fails:

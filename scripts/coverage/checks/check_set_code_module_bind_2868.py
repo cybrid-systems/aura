@@ -13,7 +13,7 @@ Contract (one row per AC):
   AC2 Define redef SymId path gated to same pool as AST
   AC3 multi-define Phase 1 reuses local string cells only (not lookup_cell_index)
   AC4 suite regression tests/suite/set_code_module_bind_2868.aura
-  AC5 this linter wired in build.py; no docs/design/*
+  AC5 this linter gated by run_checks.py; no docs/design/*
 
 Exit 0 = all rows satisfied.
 """
@@ -24,6 +24,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -44,7 +46,6 @@ def main() -> int:
     env_ixx = _read("src/compiler/evaluator.ixx")
     efl = _read("src/compiler/evaluator_eval_flat.cpp")
     suite = _read("tests/suite/set_code_module_bind_2868.aura")
-    build = _read("build.py")
 
     # AC1 — set_pool re-keys SymIds across pool changes.
     must("#2868", "AC1", env_cpp)
@@ -82,7 +83,7 @@ def main() -> int:
     must("OK-2868", "AC4", suite)
 
     # AC5 — linter wire + no docs.
-    must("check_set_code_module_bind_2868", "AC5", build)
+    must("check_set_code_module_bind_2868", "AC5", wired_text)
     if (ROOT / "tests" / "compiler" / "test_issue_2868.cpp").is_file():
         fails.append("AC5: tests/compiler/test_issue_2868.cpp present (forbidden per #81967)")
     docs_dir = ROOT / "docs" / "design"

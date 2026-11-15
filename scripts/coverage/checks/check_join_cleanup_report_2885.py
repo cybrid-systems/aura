@@ -26,6 +26,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 # Files in scope for #2885.
 SCOPE_FILES = [
@@ -55,7 +57,6 @@ def main() -> int:
     agent_spawn = _read("src/orch/agent_spawn.h")
     posture = _read("src/compiler/evaluator_primitives_agent.cpp")
     test_drain = _read("tests/orch/test_join_drain_reclaim.cpp")
-    build = _read("build.py")
 
     # ── AC1: still-running flag + reclaim timestamp + gauge + body-exit clear ──
     must("still_running_after_reclaim_counted", "AC1", fiber_h)
@@ -158,8 +159,8 @@ def main() -> int:
     must("Issue #2885", "AC6", agent_spawn)
     must("schema-2885", "AC6", posture)
     must("2885", "AC6", test_drain)
-    if "check_join_cleanup_report_2885" not in build:
-        fails.append("AC6: build.py does not wire #2885 linter")
+    if "check_join_cleanup_report_2885" not in wired_text:
+        fails.append("AC6: run_checks.py does not discover #2885 linter")
     # No new test_issue_2885.cpp (per #81967).
     for d in ("core", "orch", "compiler"):
         if (ROOT / "tests" / d / "test_issue_2885.cpp").is_file():

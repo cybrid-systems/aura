@@ -28,6 +28,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -49,7 +51,6 @@ def main() -> int:
     tci = _read("src/compiler/type_checker_impl.cpp")
     cone = _read("tests/compiler/test_type_dirty_cone_dep_graph.cpp")
     ord_ = _read("tests/compiler/test_type_dirty_txn_order.cpp")
-    build = _read("build.py")
     q = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
 
     win_at = dtor.find("must complete this-boundary type dirty txn")
@@ -83,11 +84,17 @@ def main() -> int:
     must("production_defaults_active()", "AC4 Soft skip", win)
     must("ac3658_4_soft_no_force", "AC4 cone suite", cone)
 
-    must("check_type_dirty_txn_before_cascade_3658", "AC5 build.py", build)
-    prev = build.find("check_unslotted_string_edge_parity_3657")
-    ours = build.find("check_type_dirty_txn_before_cascade_3658")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC5: linter must be wired in build.py AFTER #3657")
+    must("check_type_dirty_txn_before_cascade_3658", "AC5 wiring", wired_text)
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must(
+        "check_unslotted_string_edge_parity_3657", "AC5: linter must be gated by run_checks.py (both gated)", wired_text
+    )
+    must(
+        "check_type_dirty_txn_before_cascade_3658",
+        "AC5: linter must be gated by run_checks.py (both gated)",
+        wired_text,
+    )
     if "schema-3658" in q:
         fails.append("AC5: added schema-3658 query key")
     must("query:incremental-relower-stats", "AC5 relower key retained", q)

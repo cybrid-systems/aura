@@ -24,6 +24,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -42,7 +44,6 @@ def main() -> int:
     cap = _read("src/core/capability_model.hh")
     posture = _read("src/compiler/evaluator_primitives_security.cpp")
     test_iso = _read("tests/core/test_tenant_isolation_enforcement.cpp")
-    build = _read("build.py")
 
     # ── AC1: IsolationDeny emit stamps live / override fiber ───────
     must("Issue #3011", "AC1", iso)
@@ -83,7 +84,7 @@ def main() -> int:
     # ── AC5: tests + no invent + no docs/design/ ──────────────────
     must("#3011", "AC5", test_iso)
     must("fiber_id == 42", "AC5", test_iso)
-    must("check_isolation_deny_fiber_3011", "AC5", build)
+    must("check_isolation_deny_fiber_3011", "AC5", wired_text)
     must("#3011", "AC5", iso)
     for rel in ("tests/core/test_issue_3011.cpp", "tests/compiler/test_issue_3011.cpp"):
         if _read(rel):

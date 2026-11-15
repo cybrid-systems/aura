@@ -30,6 +30,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -186,8 +188,7 @@ def main() -> int:
     # Verified by the pre-push gate + build.
 
     # Self-coverage + build.py wire-up.
-    build = _read("build.py")
-    must("check_module_import_contiguity_2678", "self", build)
+    must("check_module_import_contiguity_2678", "self", wired_text)
     must("#2678", "self", eval_b)
     must("#2678", "self", lpin_hh)
 

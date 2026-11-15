@@ -43,6 +43,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage"))
 from query_prims_sources import read_query_prims
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -89,7 +91,6 @@ def main() -> int:
     efm = _read("src/compiler/evaluator_mutation_boundary.cpp")
     q = read_query_prims()
     t = _read("tests/compiler/test_type_linear_commit_health.cpp")
-    build = _read("build.py")
 
     # AC1 — boundary success + reject paths stamp the proof.
     must("Issue #2717", "AC1", tma)
@@ -145,7 +146,7 @@ def main() -> int:
     must("ac2717_4_drift_detection_via_defuse_or_epoch_stamp", "AC6", t)
     must("ac2717_5_additive_no_regression", "AC6", t)
     must("ac2717_6_source_and_linter", "AC6", t)
-    must("check_type_linear_commit_proof_stamp_2717", "AC6", build)
+    must("check_type_linear_commit_proof_stamp_2717", "AC6", wired_text)
     if _read("docs/design/2717-type-linear-commit-proof-stamp.md"):
         fails.append("AC6: docs/design/2717-* exists (forbidden per #1655)")
 

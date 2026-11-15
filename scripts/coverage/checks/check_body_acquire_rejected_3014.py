@@ -26,6 +26,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -43,7 +45,6 @@ def main() -> int:
     spawn = _read("src/orch/agent_spawn.h")
     agent = _read("src/compiler/evaluator_primitives_agent.cpp")
     test = _read("tests/serve/test_fiber_orch_parallel_quota_batch.cpp")
-    build = _read("build.py")
 
     # ── AC1: per-handle reject bit stored from the fiber ───────────
     must("Issue #3014", "AC1", spawn)
@@ -92,7 +93,7 @@ def main() -> int:
     must("#3014 AC1", "AC6", test)
     must("body_acquire_rejected()", "AC6", test)
     must("body-acquire-rejected", "AC6", test)
-    must("check_body_acquire_rejected_3014", "AC6", build)
+    must("check_body_acquire_rejected_3014", "AC6", wired_text)
     for rel in (
         "tests/orch/test_issue_3014.cpp",
         "tests/compiler/test_issue_3014.cpp",

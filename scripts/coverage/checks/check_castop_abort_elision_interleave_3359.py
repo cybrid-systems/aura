@@ -24,6 +24,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -41,7 +43,6 @@ def main() -> int:
     tma = _read("src/compiler/typed_mutation_audit.h")
     cm = _read("src/compiler/coercion_map.ixx")
     test = _read("tests/compiler/test_coercion_map_abort_rewind.cpp")
-    build = _read("build.py")
     q = _read("src/compiler/evaluator_primitives_query.cpp") + _read(
         "src/compiler/evaluator_primitives_query_type_stats.cpp"
     )
@@ -68,12 +69,20 @@ def main() -> int:
     if "g_3359_" in tma or "g_3359_" in cm:
         fails.append("AC3: new g_3359_* counter")
 
-    must("check_castop_abort_elision_interleave_3359", "AC4 build.py", build)
+    must("check_castop_abort_elision_interleave_3359", "AC4 wiring", wired_text)
     must("3359 AC4: linter present", "AC4 test", test)
-    prev = build.find("check_residual_castop_readiness_undermark_3347")
-    ours = build.find("check_castop_abort_elision_interleave_3359")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC4: linter must be wired in build.py AFTER #3347")
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must(
+        "check_residual_castop_readiness_undermark_3347",
+        "AC4: linter must be gated by run_checks.py (both gated)",
+        wired_text,
+    )
+    must(
+        "check_castop_abort_elision_interleave_3359",
+        "AC4: linter must be gated by run_checks.py (both gated)",
+        wired_text,
+    )
     if (ROOT / "tests" / "compiler" / "test_issue_3359.cpp").is_file():
         fails.append("AC4: tests/compiler/test_issue_3359.cpp")
     if (ROOT / "tests" / "issues" / "test_issue_3359.cpp").is_file():

@@ -16,6 +16,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -36,7 +38,6 @@ def main() -> int:
     ixx = _read("src/compiler/macro_expansion.ixx")
     bridge = _read("src/compiler/aura_jit_bridge.h")
     test = _read("tests/compiler/test_unquote_splicing_hygiene.cpp")
-    build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
     # Anchor on the pre_scan handler specifically (multi-line check with
@@ -75,7 +76,7 @@ def main() -> int:
     must("test_unquote_splicing_hygiene", "AC3", cmake)
 
     # AC4
-    must("check_unquote_splicing_hygiene_2807", "AC4", build)
+    must("check_unquote_splicing_hygiene_2807", "AC4", wired_text)
     docs = ROOT / "docs" / "design"
     if docs.is_dir():
         for f in sorted(docs.glob("2807-*")):

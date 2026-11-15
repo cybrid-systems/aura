@@ -19,7 +19,7 @@ Contract (one row per AC):
   AC5 tests/compiler/test_anonymous_residual_stable_id_policy.cpp
      extended with #2666 AC1-AC4 source-cite block (per #81967 — no
      new issue-suffix file).
-  AC6 build.py wires check_2666_coverage into the gate after
+  AC6 run_checks.py gates check_2666_coverage into the gate after
      check_sync_remount_anon_coverage.
   AC7 cross-check: check_sync_remount_anon_coverage still green
      (no regression on #2637 anon walk body / counters).
@@ -34,6 +34,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -53,7 +55,6 @@ def main() -> int:
     rt = _read("src/compiler/aura_jit_runtime.cpp")
     obs = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
     test = _read("tests/compiler/test_anonymous_residual_stable_id_policy.cpp")
-    build = _read("build.py")
 
     # AC1 — production_default_enabled
     must("aura_sync_remount_anon_enabled_default", "AC1", rt)
@@ -82,8 +83,8 @@ def main() -> int:
     must("ac2666_4_query_keys_added", "AC5", test)
     must("Issue #2666", "AC5", test)
 
-    # AC6 — build.py wires the linter
-    must("check_2666_coverage", "AC6", build)
+    # AC6 — run_checks.py gates the linter
+    must("check_2666_coverage", "AC6", wired_text)
 
     # Cross-check: check_sync_remount_anon_coverage still green
     r1 = subprocess.run(

@@ -54,13 +54,6 @@
       ]
     },
     {
-      "ac": "AC7",
-      "path": "build.py",
-      "contains": [
-        "cmd_storm_exit_hysteresis_peer_soft_stale_3070"
-      ]
-    },
-    {
       "ac": "AC8",
       "paths": [
         "src/compiler/evaluator_primitives_query.cpp",

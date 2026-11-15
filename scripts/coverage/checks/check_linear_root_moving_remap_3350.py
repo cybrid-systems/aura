@@ -28,6 +28,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -47,7 +49,6 @@ def main() -> int:
     arena = _read("src/core/arena.ixx")
     test = _read("tests/compiler/test_linear_pin_moving_compact.cpp")
     moving = _read("tests/core/test_moving_compact.cpp")
-    build = _read("build.py")
     q = _read("src/compiler/evaluator_primitives_obs_jit.cpp") + _read("src/compiler/evaluator_primitives_obs_eval.cpp")
 
     must("kLinearRootMovingRemapIssue = 3350", "AC1 stamp", lp)
@@ -80,10 +81,10 @@ def main() -> int:
     if "g_3350_" in lp or "g_3350_" in arena:
         fails.append("AC3: new g_3350_* counter")
 
-    must("check_linear_root_moving_remap_3350", "AC4 build.py", build)
-    must("check_linear_nested_abort_drain_3249", "AC4 after #3249", build)
-    i3249 = build.find("check_linear_nested_abort_drain_3249.py")
-    i3350 = build.find("check_linear_root_moving_remap_3350.py")
+    must("check_linear_root_moving_remap_3350", "AC4 wiring", wired_text)
+    must("check_linear_nested_abort_drain_3249", "AC4 after #3249", wired_text)
+    i3249 = wired_text.find("check_linear_nested_abort_drain_3249.py")
+    i3350 = wired_text.find("check_linear_root_moving_remap_3350.py")
     if i3249 < 0 or i3350 < 0 or i3350 < i3249:
         fails.append("AC4: #3350 linter must run after #3249")
     must("ac3350_4_linter_no_invent", "AC4 test", test)

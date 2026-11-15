@@ -24,6 +24,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -93,7 +95,6 @@ def main() -> int:
 
     loader = _read("src/compiler/evaluator_module_loader.cpp")
     test = _read("tests/compiler/test_module_path_refuse.cpp")
-    build = _read("build.py")
     l3265 = _read("scripts/coverage/checks/check_jit_fn_marker_atomic_3265.py")
 
     pos = loader.find("auto try_load = [](const std::string& full)")
@@ -126,11 +127,11 @@ def main() -> int:
     must("ac3266_4_quiet_refuse_and_load", "AC4 test", test)
 
     must("ac3266_5_source_and_linter", "AC5 test", test)
-    must("check_module_realpath_toctou_3266", "AC5 build.py", build)
-    prev = build.find("check_jit_fn_marker_atomic_3265")
-    ours = build.find("check_module_realpath_toctou_3266")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC5: linter must be wired in build.py AFTER #3265")
+    must("check_module_realpath_toctou_3266", "AC5 wiring", wired_text)
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must("check_jit_fn_marker_atomic_3265", "AC5: linter must be gated by run_checks.py (both gated)", wired_text)
+    must("check_module_realpath_toctou_3266", "AC5: linter must be gated by run_checks.py (both gated)", wired_text)
     must("3266", "AC5 extend 3265 linter", l3265)
     if (ROOT / "tests" / "issues" / "test_issue_3266.cpp").is_file():
         fails.append("AC5: forbidden tests/issues/test_issue_3266.cpp per #81967")

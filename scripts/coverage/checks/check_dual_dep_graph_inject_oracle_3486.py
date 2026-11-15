@@ -24,6 +24,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -45,7 +47,6 @@ def main() -> int:
     ixx = _read("src/compiler/service.ixx") + _read("src/compiler/service_relower.cpp")
     dirty = _read("src/compiler/dirty_propagation.ixx")
     t = _read("tests/compiler/test_dep_graph_hybrid_cascade.cpp")
-    build = _read("build.py")
 
     must("inject_string_only_edge_for_test", "AC1 string inject", ixx)
     must("inject_node_only_edge_for_test", "AC1 node inject", ixx)
@@ -79,11 +80,17 @@ def main() -> int:
     must("ac3187_production_fail_closed_default", "AC5 #3187 stays", t)
     must("ac3165_strict_fail_closed_all_callers", "AC5 #3165 stays", t)
 
-    must("check_dual_dep_graph_inject_oracle_3486", "AC5 build.py", build)
-    prev = build.find("check_dual_dep_graph_soft_parity_partial_3255")
-    ours = build.find("check_dual_dep_graph_inject_oracle_3486")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC6: linter must be wired in build.py AFTER #3255")
+    must("check_dual_dep_graph_inject_oracle_3486", "AC5 wiring", wired_text)
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must(
+        "check_dual_dep_graph_soft_parity_partial_3255",
+        "AC6: linter must be gated by run_checks.py (both gated)",
+        wired_text,
+    )
+    must(
+        "check_dual_dep_graph_inject_oracle_3486", "AC6: linter must be gated by run_checks.py (both gated)", wired_text
+    )
 
     must_not("schema-3486", "AC5 no schema-3486", ixx)
     must_not("g_3486_", "AC5 no g_3486_*", ixx)

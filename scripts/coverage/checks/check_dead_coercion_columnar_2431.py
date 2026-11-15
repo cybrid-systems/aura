@@ -16,6 +16,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -42,7 +44,6 @@ def main() -> int:
     if not pm:
         pm = _read("src/compiler/pass_manager.ixx")
     test = _read("tests/compiler/test_dead_coercion_columnar.cpp")
-    build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
     must("Issue #2431", "AC1", pm)
@@ -61,8 +62,8 @@ def main() -> int:
 
     must("2431 AC4", "AC4", test)
     must("2431 AC5", "AC5", test)
-    must("check_dead_coercion_columnar_2431", "gate", build)
-    must("cmd_dead_coercion_columnar_coverage", "gate", build)
+    must("check_dead_coercion_columnar_2431", "gate", wired_text)
+    must("check_dead_coercion_columnar_2431.py", "gate", wired_text)
     must("test_dead_coercion_columnar", "gate", cmake)
 
     if fails:

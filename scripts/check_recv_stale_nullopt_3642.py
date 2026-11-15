@@ -13,7 +13,7 @@ Contract (one row per AC):
        raw recv nullopt / try_pop false / handle flag); the #3565 AC1
        has_value assertion is updated to the nullopt contract
   AC4  no tests/**/test_issue_3642.cpp; no docs/design/3642-*
-  AC5  build.py wires check_recv_stale_nullopt_3642 + root allowlist
+  AC5  run_checks.py wires check_recv_stale_nullopt_3642 + root allowlist
 
 Exit 0 = all rows satisfied.
 """
@@ -24,6 +24,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -46,7 +48,6 @@ def main() -> int:
     spawn = _read("src/orch/agent_spawn.h")
     prim = _read("src/compiler/evaluator_primitives_agent.cpp")
     test = _read("tests/orch/test_orch_obs_facade.cpp")
-    build = _read("build.py")
     allow = _read("scripts/coverage/root_check_allowlist.txt")
 
     # ── AC1: mailbox consume paths fail closed on stale ──────────────────
@@ -122,7 +123,7 @@ def main() -> int:
             fails.append(f"AC4: docs/design file present: {p.name}")
 
     # ── AC5: gate wiring ─────────────────────────────────────────────────
-    must("check_recv_stale_nullopt_3642", "AC5 build.py wires linter", build)
+    must("check_recv_stale_nullopt_3642", "AC5 run_checks.py wires linter", wired_text)
     must("check_recv_stale_nullopt_3642.py", "AC5 root allowlist", allow)
 
     if fails:

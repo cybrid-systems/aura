@@ -23,6 +23,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -92,7 +94,6 @@ def main() -> int:
     disp = _read("src/compiler/mutate_dispatch.hh")
     bound = _read("src/compiler/evaluator_mutation_boundary.cpp")
     t = _read("tests/compiler/test_mutation_guard_try_acquire_unit.cpp")
-    build = _read("build.py")
 
     must("kAddMutateAcquireBeforeBodyIssue = 3423", "AC1 stamp", disp)
     must("Issue #3423", "AC1 add_mutate cite", mut)
@@ -147,11 +148,11 @@ def main() -> int:
     must("mark_outermost_mutation_failed", "AC4 nested fail", bound)
 
     must("ac3423_1_acquire_before_fn", "AC5 test", t)
-    must("check_add_mutate_acquire_before_body_3423", "AC5 build.py", build)
-    prev = build.find("check_transform_engine_guard_3352")
-    ours = build.find("check_add_mutate_acquire_before_body_3423")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC5: #3423 linter must run after #3352")
+    must("check_add_mutate_acquire_before_body_3423", "AC5 wiring", wired_text)
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must("check_transform_engine_guard_3352", "AC5: #3423 linter must run (both gated)", wired_text)
+    must("check_add_mutate_acquire_before_body_3423", "AC5: #3423 linter must run (both gated)", wired_text)
     if (ROOT / "tests" / "issues" / "test_issue_3423.cpp").is_file():
         fails.append("AC5: forbidden tests/issues/test_issue_3423.cpp")
     if (ROOT / "tests" / "compiler" / "test_issue_3423.cpp").is_file():

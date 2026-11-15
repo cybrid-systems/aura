@@ -32,6 +32,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 SVC = ROOT / "src" / "compiler" / "service.ixx"
 TST = ROOT / "tests" / "compiler" / "test_shape_storm_partial_relower.cpp"
 BUILD = ROOT / "build.py"
@@ -50,7 +53,6 @@ def function_body(src: str, signature: str) -> str:
 def main() -> int:
     svc = SVC.read_text() if SVC.exists() else ""
     tst = TST.read_text() if TST.exists() else ""
-    build = BUILD.read_text() if BUILD.exists() else ""
     allow = ALLOWLIST.read_text() if ALLOWLIST.exists() else ""
     ok = True
 
@@ -98,7 +100,7 @@ def main() -> int:
         "#4091 AC1" in tst
         and "#4091 AC2" in tst
         and "#4091 AC3" in tst
-        and "check_shape_dirty_cone_4091.py" in build
+        and "check_shape_dirty_cone_4091.py" in wired_text
         and "check_shape_dirty_cone_4091.py" in allow,
         "test_shape_storm_partial_relower ACs 1-3, build.py + allowlist wiring",
     )

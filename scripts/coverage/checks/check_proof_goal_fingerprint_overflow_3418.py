@@ -21,6 +21,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -41,7 +43,6 @@ def main() -> int:
     steal = _read("src/compiler/evaluator_fiber_mutation.cpp")
     treh = _read("tests/compiler/test_occurrence_goal_persist_rehydrate.cpp")
     thlth = _read("tests/compiler/test_type_linear_commit_health.cpp")
-    build = _read("build.py")
     q = _read("src/compiler/evaluator_primitives_query.cpp") + _read(
         "src/compiler/evaluator_primitives_query_type_stats.cpp"
     )
@@ -79,12 +80,12 @@ def main() -> int:
     if "g_3418_" in tma or "g_3418_" in emb:
         fails.append("AC4: new g_3418_* counter (forbidden)")
 
-    must("check_proof_goal_fingerprint_overflow_3418", "AC5 build.py", build)
-    must("check_occurrence_persist_fingerprint_3170", "AC5 predecessor #3170", build)
-    i3346 = build.find("check_stamp_last_look_densify_steal_abort_3346")
-    i3418 = build.find("check_proof_goal_fingerprint_overflow_3418")
-    if i3346 < 0 or i3418 < 0 or i3418 < i3346:
-        fails.append("AC5: #3418 linter must run after #3346 fingerprint last-look")
+    must("check_proof_goal_fingerprint_overflow_3418", "AC5 wiring", wired_text)
+    must("check_occurrence_persist_fingerprint_3170", "AC5 predecessor #3170", wired_text)
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must("check_stamp_last_look_densify_steal_abort_3346", "AC5: #3418 linter must run (both gated)", wired_text)
+    must("check_proof_goal_fingerprint_overflow_3418", "AC5: #3418 linter must run (both gated)", wired_text)
     must("3418", "AC5 commit-health suite", thlth)
     must("ac3418_source_and_linter", "AC5 persist-rehydrate linter AC", treh)
     if (ROOT / "tests" / "compiler" / "test_issue_3418.cpp").is_file():

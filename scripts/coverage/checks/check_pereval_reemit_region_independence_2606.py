@@ -6,7 +6,7 @@ Contract:
   AC2 invalidate_for_eval owner filter retained (#2299 parity)
   AC3 nullptr / single-eval soft path (no filter when owner unset)
   AC4 schema-2606 + reemit_cross_eval_candidate_skipped_total query axes
-  AC5 test + cmake + build.py gate + process-global epoch docs
+  AC5 test + cmake + coverage runner + process-global epoch docs
 
 Exit 0 = all rows satisfied.
 """
@@ -20,6 +20,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from query_prims_sources import read_query_prims  # Issue #2914
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -46,7 +48,6 @@ def main() -> int:
     mb = _read("src/compiler/evaluator_mutation_boundary.cpp")
     test = _read("tests/compiler/test_pereval_reemit_region_independence.cpp")
     cmake = _read("CMakeLists.txt")
-    build = _read("build.py")
     q_surface = qq + qe
 
     # AC1 reemit filter + metric
@@ -86,8 +87,8 @@ def main() -> int:
     must("ac3_nullptr_path_no_filter", "AC5", test)
     must("ac4_query_and_single_eval_zero", "AC5", test)
     must("test_pereval_reemit_region_independence", "AC5", cmake)
-    must("check_pereval_reemit_region_independence_2606", "AC5", build)
-    must("cmd_pereval_reemit_region_independence_coverage", "AC5", build)
+    must("check_pereval_reemit_region_independence_2606", "AC5", wired_text)
+    must("check_pereval_reemit_region_independence_2606.py", "AC5", wired_text)
     must("process-global", "AC5", bh + bc)
 
     if fails:

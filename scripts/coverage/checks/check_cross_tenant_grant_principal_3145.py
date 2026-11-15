@@ -38,6 +38,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -57,7 +59,6 @@ def main() -> int:
     sec = _read("src/compiler/evaluator_security.cpp")
     prim = _read("src/compiler/evaluator_primitives_security.cpp")
     test_iso = _read("tests/core/test_tenant_isolation_enforcement.cpp")
-    build = _read("build.py")
 
     # ── AC1: SSOT helper uses effects_for_locked under reg.mtx + accepts
     # caller_principal (TOCTOU closure via locked variant + explicit
@@ -155,8 +156,8 @@ def main() -> int:
 
     # ── AC6: linter wired into build.py; no new posture / query key
     # (issue body explicit).
-    must("check_cross_tenant_grant_principal_3145", "AC6", build)
-    must("Issue #3145", "AC6", build)
+    must("check_cross_tenant_grant_principal_3145", "AC6", wired_text)
+    must("check_cross_tenant_grant_principal_3145", "AC6", wired_text)
     if "schema-3145" in prim:
         fails.append("AC6: schema-3145 leaked into posture — forbidden per issue body")
     if "issue-3145" in prim:

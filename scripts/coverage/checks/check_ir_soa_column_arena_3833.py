@@ -20,6 +20,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -40,7 +42,6 @@ def main() -> int:
 
     soa = _read("src/compiler/ir_soa.ixx")
     test = _read("tests/compiler/test_ir_soa_layout_stamp.cpp")
-    build = _read("build.py")
 
     must("kIrSoaColumnArenaIssue = 3833", "AC1 stamp", soa)
     must("Issue #3833", "AC1 cite", soa)
@@ -63,7 +64,7 @@ def main() -> int:
     must("3833 AC2", "AC3 test AC2", test)
     must("3833 AC3", "AC3 microbench", test)
     must("walk_soa_function_hotpath", "AC3 walk", test)
-    must("check_ir_soa_column_arena_3833", "AC3 build.py", build)
+    must("check_ir_soa_column_arena_3833", "AC3 wiring", wired_text)
 
     if (ROOT / "tests" / "compiler" / "test_issue_3833.cpp").is_file():
         fails.append("AC3: forbidden tests/compiler/test_issue_3833.cpp")

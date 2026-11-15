@@ -78,6 +78,11 @@ def main(argv: list[str] | None = None) -> int:
     if not target.is_file():
         print(f"FAIL: check not found: {target}", file=sys.stderr)
         return 1
+    # Sibling helpers (_wiring, _source_scan) live next to the checks; run_path
+    # does not add the script directory to sys.path (Issue #5246).
+    for extra in (Path(__file__).resolve().parent / "checks", Path(__file__).resolve().parent):
+        if str(extra) not in sys.path:
+            sys.path.insert(0, str(extra))
     _install_cascade_guard()
     # Make the target appear as __main__ with its own argv.
     sys.argv = [str(target), *args[1:]]

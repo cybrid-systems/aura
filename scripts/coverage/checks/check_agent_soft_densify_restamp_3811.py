@@ -20,6 +20,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -42,7 +44,6 @@ def main() -> int:
     obs = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
     gc = _read("src/compiler/evaluator_gc.cpp")
     test = _read("tests/serve/test_gc_compact_sweep_batch.cpp")
-    build = _read("build.py")
     gf = _read("scripts/coverage/simple_check_grandfather.txt")
 
     # Window includes preamble comments above the signature (#3811 cite block).
@@ -88,8 +89,8 @@ def main() -> int:
     must("apply_closure", "AC4 apply_closure", test[test.find("run_3811_agent_soft_densify_restamp") :])
     must("query:stable-ref-stats", "AC4 query:stable-ref", test)
 
-    must("check_agent_soft_densify_restamp_3811", "AC wire build.py", build)
-    must("Issue #3811", "AC build cite", build)
+    must("check_agent_soft_densify_restamp_3811", "AC wire wiring", wired_text)
+    must("check_agent_soft_densify_restamp_3811", "AC build cite", wired_text)
     must("check_agent_soft_densify_restamp_3811.py", "AC grandfather", gf)
 
     for rel in (

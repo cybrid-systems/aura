@@ -28,6 +28,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -48,7 +50,6 @@ def main() -> int:
     ag = _read("src/compiler/evaluator_primitives_agent.cpp")
     rd = _read("src/orch/README.md")
     test = _read("tests/orch/test_parallel_intend_pure_contract.cpp")
-    build = _read("build.py")
     linter = _read("scripts/coverage/checks/check_pure_parallel_isolation_wording.py")
 
     # AC1
@@ -91,8 +92,8 @@ def main() -> int:
     must("workspace_generation", "AC6", rd)
     must("total_mutations", "AC6", rd)
 
-    # AC7 (build.py wiring)
-    must("check_pure_probe_hardening_2634", "AC7", build)
+    # AC7 (gate wiring)
+    must("check_pure_probe_hardening_2634", "AC7", wired_text)
 
     # cross-check: pure-parallel wording gate (--self-test) must still be green
     r = subprocess.run(

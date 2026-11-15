@@ -24,6 +24,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from query_prims_sources import read_query_prims  # Issue #2914
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -50,7 +52,6 @@ def main() -> int:
     tc = _read("src/compiler/evaluator_typecheck.cpp")
     q = read_query_prims()
     t = _read("tests/compiler/test_solve_delta_unresolved_export.cpp")
-    build = _read("build.py")
 
     must("kDeltaTimeoutFailClosedIssue = 3003", "AC1", ixx)
     must("!forced_timeout_this_call_", "AC1 wrapper", impl)
@@ -73,7 +74,7 @@ def main() -> int:
     must("ac3003_4_schema_and_lineage", "AC4", t)
 
     must("ac3003_5_source_and_linter", "AC5", t)
-    must("check_solve_delta_timeout_fail_closed_3003", "AC5", build)
+    must("check_solve_delta_timeout_fail_closed_3003", "AC5", wired_text)
     if (ROOT / "tests" / "compiler" / "test_issue_3003.cpp").is_file():
         fails.append("AC5: test_issue_3003.cpp present (forbidden #81967)")
     docs = ROOT / "docs" / "design"

@@ -4,7 +4,7 @@
 Contract:
   AC1 All three has_* take their respective mutexes
   AC2 Concurrent set+has stress test surface
-  AC3 Semantics + CMake + build.py gate
+  AC3 Semantics + CMake + coverage runner
 
 Exit 0 = all rows satisfied.
 """
@@ -16,6 +16,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -51,7 +53,6 @@ def main() -> int:
     arena = _read("src/core/arena.ixx")
     test = _read("tests/core/test_has_on_compact_hook_lock.cpp")
     cmake = _read("CMakeLists.txt")
-    build = _read("build.py")
 
     # AC1
     must("Issue #2383", "AC1", arena)
@@ -79,8 +80,8 @@ def main() -> int:
     # AC3
     must("ac3_semantics", "AC3", test)
     must("test_has_on_compact_hook_lock", "AC3", cmake)
-    must("check_has_on_compact_hook_lock_2383", "AC3", build)
-    must("cmd_has_on_compact_hook_lock_coverage", "AC3", build)
+    must("check_has_on_compact_hook_lock_2383", "AC3", wired_text)
+    must("check_has_on_compact_hook_lock_2383.py", "AC3", wired_text)
     must("Issue #2383", "AC3", test)
 
     if fails:

@@ -26,6 +26,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 SOA = "src/compiler/ir_soa.ixx"
 TEST = "tests/compiler/test_ir_soa_layout_stamp.cpp"
 BUILD = "build.py"
@@ -58,7 +61,6 @@ def main() -> int:
     soa = _read(SOA)
     soa_code = _strip_comments(soa)
     test = _read(TEST)
-    build = _read(BUILD)
     gf = _read(GF)
     man = _read(MANIFEST)
 
@@ -113,8 +115,8 @@ def main() -> int:
     must("no process-wide column_slab_mu()", "AC3 test no global mu", test)
     must("uses_arena_resource()", "AC3 post-bind arena", test)
 
-    must(LINTER, "AC3 build registration", build)
-    must("Issue #3853", "AC3 build cite", build)
+    must(LINTER, "AC3 build registration", wired_text)
+    must("check_ir_soa_column_slab_shard_3853", "AC3 build cite", wired_text)
     must(f"{LINTER}.py", "AC3 grandfather basename", gf)
     must(f"scripts/coverage/checks/{LINTER}.py", "AC3 grandfather path", gf)
     must('"issue": 3853', "AC3 manifest issue", man)

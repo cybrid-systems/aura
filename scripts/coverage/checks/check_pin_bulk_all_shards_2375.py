@@ -23,6 +23,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -62,7 +64,6 @@ def main() -> int:
     pin = _read("src/core/lifetime_pin.hh")  # SSOT bodies
     pin_mod = _read("src/core/lifetime_pin.ixx")  # re-export surface
     test = _read("tests/core/test_moving_compact.cpp")
-    bp = _read("build.py")
     mb = _read("src/compiler/evaluator_mutation_boundary.cpp")
     fm = _read("src/compiler/evaluator_fiber_mutation.cpp")
     gc = _read("src/compiler/evaluator_gc.cpp")
@@ -105,8 +106,8 @@ def main() -> int:
     must("Issue #2375" in test, "AC4: test cites #2375")
 
     # Gate
-    must("cmd_pin_bulk_all_shards_coverage" in bp, "AC6: gate cmd wired")
-    must("check_pin_bulk_all_shards_2375.py" in bp, "AC6: linter wired")
+    must("check_pin_bulk_all_shards_2375" in wired_text, "AC6: gate cmd wired")
+    must("check_pin_bulk_all_shards_2375.py" in wired_text, "AC6: linter wired")
 
     if fails:
         for f in fails:

@@ -27,6 +27,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -49,7 +51,6 @@ def main() -> int:
     efm = _read("src/compiler/evaluator_fiber_mutation.cpp")
     tma = _read("src/compiler/typed_mutation_audit.h")
     test = _read("tests/compiler/test_audit_mutation_id_unify.cpp")
-    build = _read("build.py")
     q = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
     qr = _read("src/compiler/evaluator_primitives_query_reflect.cpp")
 
@@ -105,12 +106,16 @@ def main() -> int:
     must("densify_hard_3778 ? densify_join_mid_3778", "AC3 Soft densify defuse", mb)
     must("steal_hard_3778 ? typed_audit::join_audit_and_se_mid(0)", "AC3 Soft steal defuse", efm)
 
-    must("check_outermost_persist_audit_order_3653", "AC4 prev linter", build)
-    must("check_occurrence_mid_join_ssot_3778", "AC4 build.py", build)
-    prev = build.find("check_outermost_persist_audit_order_3653")
-    ours = build.find("check_occurrence_mid_join_ssot_3778")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC4: linter must be wired in build.py AFTER #3653")
+    must("check_outermost_persist_audit_order_3653", "AC4 prev linter", wired_text)
+    must("check_occurrence_mid_join_ssot_3778", "AC4 wiring", wired_text)
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must(
+        "check_outermost_persist_audit_order_3653",
+        "AC4: linter must be gated by run_checks.py (both gated)",
+        wired_text,
+    )
+    must("check_occurrence_mid_join_ssot_3778", "AC4: linter must be gated by run_checks.py (both gated)", wired_text)
     must("#3778 AC1: occurrence persist mid joins SSOT", "AC4 test cite", test)
     must_not("schema-3778", "AC4 no new query key", q + qr)
     if _read("tests/compiler/test_issue_3778.cpp"):

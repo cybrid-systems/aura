@@ -24,6 +24,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -44,7 +46,6 @@ def main() -> int:
     fib = _read("src/serve/fiber.cpp")
     obs = _read("src/compiler/evaluator_primitives_obs_jit.cpp")
     test = _read("tests/compiler/test_linear_pin_moving_compact.cpp")
-    build = _read("build.py")
 
     # ── AC1: drain helper + wiring ──
     must("unpin_all_linear_roots", "AC1 helper", lp)
@@ -70,8 +71,8 @@ def main() -> int:
     must("AC3023 soak: live_count==0", "AC3 soak", test)
     must("schema-3023", "AC3 query", obs)
     must("one lock + empty check", "AC3 Soft", lp)
-    must("check_linear_root_abort_release_3023", "AC3 build", build)
-    must("cmd_linear_root_abort_release_3023", "AC3 build cmd", build)
+    must("check_linear_root_abort_release_3023", "AC3 build", wired_text)
+    must("check_linear_root_abort_release_3023.py", "AC3 build cmd", wired_text)
     for rel in (
         "tests/compiler/test_issue_3023.cpp",
         "tests/core/test_issue_3023.cpp",

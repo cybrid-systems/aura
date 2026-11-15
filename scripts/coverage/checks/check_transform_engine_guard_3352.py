@@ -22,6 +22,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -40,7 +42,6 @@ def main() -> int:
     impl = _read("src/compiler/query_impl.cpp")
     main_cpp = _read("src/main.cpp")
     test = _read("tests/compiler/test_mutation_guard_try_acquire_unit.cpp")
-    build = _read("build.py")
 
     must("kTransformEngineGuardIssue = 3352", "AC1 stamp", qixx)
     must("Evaluator* ev = nullptr", "AC1 optional ev", qixx)
@@ -65,10 +66,10 @@ def main() -> int:
     if 'add_mutate("mutate:' in impl:
         fails.append("AC3: new public mutate:* key")
 
-    must("check_transform_engine_guard_3352", "AC4 build.py", build)
-    must("check_mutate_dispatch_sole_guard_3074", "AC4 after #3074", build)
-    i3074 = build.find("check_mutate_dispatch_sole_guard_3074.py")
-    i3352 = build.find("check_transform_engine_guard_3352.py")
+    must("check_transform_engine_guard_3352", "AC4 wiring", wired_text)
+    must("check_mutate_dispatch_sole_guard_3074", "AC4 after #3074", wired_text)
+    i3074 = wired_text.find("check_mutate_dispatch_sole_guard_3074.py")
+    i3352 = wired_text.find("check_transform_engine_guard_3352.py")
     if i3074 < 0 or i3352 < 0 or i3352 < i3074:
         fails.append("AC4: #3352 linter must run after #3074")
     must("ac3352_4_run_all_once_and_linter", "AC4 test", test)

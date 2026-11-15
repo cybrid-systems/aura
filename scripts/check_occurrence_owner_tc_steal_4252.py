@@ -30,7 +30,7 @@ Contract:
   AC5  Soft/Off early return unchanged; no new query key / second model
   AC6  runtime ACs in the existing persist-rehydrate suite; no test_issue_4252
        / docs/design/4252-*
-  AC7  build.py wiring + root_check_allowlist.txt entry
+  AC7  run_checks.py wiring + root_check_allowlist.txt entry
 
 Exit 0 = all rows satisfied.
 """
@@ -41,6 +41,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -63,7 +65,6 @@ def main() -> int:
     efm = _read("src/compiler/evaluator_fiber_mutation.cpp")
     mb = _read("src/compiler/evaluator_mutation_boundary.cpp")
     t = _read("tests/compiler/test_occurrence_goal_persist_rehydrate.cpp")
-    build = _read("build.py")
     allow = _read("scripts/coverage/root_check_allowlist.txt")
 
     # ── AC1: evaluator-aware overload + zero-arg fallback forwarder ──────
@@ -133,7 +134,7 @@ def main() -> int:
             fails.append(f"AC6: docs/design/{f.name} present (forbidden #1655)")
 
     # ── AC7: build.py + allowlist wiring ────────────────────────────────
-    must("check_occurrence_owner_tc_steal_4252.py", "AC7 build.py wires the linter", build)
+    must("check_occurrence_owner_tc_steal_4252.py", "AC7 run_checks.py wires the linter", wired_text)
     must("check_occurrence_owner_tc_steal_4252.py", "AC7 root allowlist entry", allow)
 
     if fails:

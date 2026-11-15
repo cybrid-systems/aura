@@ -21,6 +21,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -41,7 +43,6 @@ def main() -> int:
     t_pol = _read("tests/orch/test_agent_failure_policy.cpp")
     t_sc = _read("tests/orch/test_orch_scope.cpp")
     readme = _read("src/orch/README.md")
-    build = _read("build.py")
 
     must("kRestartNSpecBoundaryIssue = 3250", "AC1 stamp", spawn)
     must("agent_spec_restartable", "AC1 helper", spawn)
@@ -64,7 +65,7 @@ def main() -> int:
     must("3250 AC5", "AC5 Soft", t_pol)
     must("schema-3250", "AC5 orch-scope hash", t_sc)
     must("#2661", "AC4 #2661 preserved", scope)
-    must("check_restart_n_spec_boundary_3250", "AC5 build.py", build)
+    must("check_restart_n_spec_boundary_3250", "AC5 wiring", wired_text)
     must("#3250", "AC5 README", readme)
 
     if "AgentRegistry" in spawn[spawn.find("Issue #3250") : spawn.find("Issue #3250") + 1200]:

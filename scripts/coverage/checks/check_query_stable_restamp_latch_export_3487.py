@@ -25,6 +25,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -53,7 +55,6 @@ def main() -> int:
     gate = _read("tests/compiler/test_restamp_budget_hard_gate.cpp")
     qrp = _read("tests/compiler/test_query_result_full_provenance.cpp")
     batch = _read("tests/compiler/test_stable_ref_provenance_batch.cpp")
-    build = _read("build.py")
 
     must("kQueryStableRestampLatchExportIssue = 3487", "AC1 stamp", restamp)
     must("kQueryStableRestampLatchExportIssue", "AC1 ast export", astx)
@@ -130,11 +131,19 @@ def main() -> int:
     must("3487", "AC5 #3449 suite", qrp)
     must("3487", "AC5 provenance batch", batch)
 
-    must("check_query_stable_restamp_latch_export_3487", "AC6 build.py", build)
-    prev = build.find("check_query_stable_restamp_lag_hard_reject_3230")
-    ours = build.find("check_query_stable_restamp_latch_export_3487")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC6: linter must be wired in build.py AFTER #3230")
+    must("check_query_stable_restamp_latch_export_3487", "AC6 wiring", wired_text)
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must(
+        "check_query_stable_restamp_lag_hard_reject_3230",
+        "AC6: linter must be gated by run_checks.py (both gated)",
+        wired_text,
+    )
+    must(
+        "check_query_stable_restamp_latch_export_3487",
+        "AC6: linter must be gated by run_checks.py (both gated)",
+        wired_text,
+    )
 
     must_not("schema-3487", "AC3 no schema-3487", qws)
     must_not("schema-3487", "AC3 no schema in mutate", asr)

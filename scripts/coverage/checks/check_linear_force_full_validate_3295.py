@@ -22,6 +22,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -40,7 +42,6 @@ def main() -> int:
     tci = _read("src/compiler/type_checker_impl.cpp")
     _read("src/compiler/ownership_escape_lowering_gate.h")
     t = _read("tests/compiler/test_linear_partial_revalidate.cpp")
-    build = _read("build.py")
 
     must("kLinearForceFullValidateIssue = 3295", "AC1 stamp", aud)
     must("linear_force_full_validate_needed", "AC1 helper", aud)
@@ -71,7 +72,7 @@ def main() -> int:
     if "g_3295_" in aud or "g_3295_" in tci:
         fails.append("AC3: invented g_3295_* counter")
 
-    must("check_linear_force_full_validate_3295", "AC4 build.py", build)
+    must("check_linear_force_full_validate_3295", "AC4 wiring", wired_text)
     must("ac3295_4_source_linter", "AC4 test", t)
     must("Issue #3295", "AC4 impl cite", tci)
     if (ROOT / "tests" / "compiler" / "test_issue_3295.cpp").is_file():

@@ -29,6 +29,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -72,7 +74,6 @@ def main() -> int:
     ss = _read("src/serve/steal_safety.cpp")
     _read("src/serve/steal_safety.h")
     t = _read("tests/serve/test_scheduler_gc_defer_pending_panic_steal.cpp")
-    build = _read("build.py")
 
     # AC1 — production + live panic + Ok path → clear + counters.
     must("Issue #2710", "AC1", gh)
@@ -126,7 +127,7 @@ def main() -> int:
     must("ac2710_4_align_with_densify_audit_2598", "AC6", t)
     must("ac2710_5_query_keys_added", "AC6", t)
     must("ac2710_6_source_and_linter", "AC6", t)
-    must("check_panic_checkpoint_steal_hard_2710", "AC6", build)
+    must("check_panic_checkpoint_steal_hard_2710", "AC6", wired_text)
     if _read("docs/design/2710-panic-checkpoint-steal-hard.md"):
         fails.append("AC6: docs/design/2710-* exists (forbidden per #1655)")
 

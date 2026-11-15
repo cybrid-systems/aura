@@ -26,6 +26,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -45,7 +47,6 @@ def main() -> int:
     hdr = _read("src/compiler/aura_jit_bridge.h")
     tree = _read("src/compiler/evaluator_workspace_tree.cpp")
     test = _read("tests/compiler/test_envframe_epoch_batch.cpp")
-    build = _read("build.py")
     l3266 = _read("scripts/coverage/checks/check_module_realpath_toctou_3266.py")
 
     pos = env.find("void Evaluator::publish_live_env_linear_to_bridge() const noexcept")
@@ -100,11 +101,11 @@ def main() -> int:
     must("ac3267_4_legacy_trust_read_once", "AC4 test", test)
 
     must("ac3267_5_source_and_linter", "AC5 test", test)
-    must("check_env_publish_lock_3267", "AC5 build.py", build)
-    prev = build.find("check_module_realpath_toctou_3266")
-    ours = build.find("check_env_publish_lock_3267")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC5: linter must be wired in build.py AFTER #3266")
+    must("check_env_publish_lock_3267", "AC5 wiring", wired_text)
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must("check_module_realpath_toctou_3266", "AC5: linter must be gated by run_checks.py (both gated)", wired_text)
+    must("check_env_publish_lock_3267", "AC5: linter must be gated by run_checks.py (both gated)", wired_text)
     must("3267", "AC5 extend 3266 linter", l3266)
     if (ROOT / "tests" / "issues" / "test_issue_3267.cpp").is_file():
         fails.append("AC5: forbidden tests/issues/test_issue_3267.cpp per #81967")

@@ -25,6 +25,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -43,7 +45,6 @@ def main() -> int:
     ixx = _read("src/compiler/evaluator.ixx")
     compile_p = _read("src/compiler/evaluator_primitives_compile.cpp")
     test = _read("tests/core/test_arena_defrag.cpp")
-    build = _read("build.py")
     l3268 = _read("scripts/coverage/checks/check_guard_flag_atomic_ref_3268.py")
 
     must("Issue #3269", "AC1 cite", mem)
@@ -76,11 +77,11 @@ def main() -> int:
     must("ac3269_4_compact_under_guard", "AC4 test", test)
 
     must("ac3269_5_source_and_linter", "AC5 test", test)
-    must("check_arena_compact_toctou_3269", "AC5 build.py", build)
-    prev = build.find("check_guard_flag_atomic_ref_3268")
-    ours = build.find("check_arena_compact_toctou_3269")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC5: linter must be wired in build.py AFTER #3268")
+    must("check_arena_compact_toctou_3269", "AC5 wiring", wired_text)
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must("check_guard_flag_atomic_ref_3268", "AC5: linter must be gated by run_checks.py (both gated)", wired_text)
+    must("check_arena_compact_toctou_3269", "AC5: linter must be gated by run_checks.py (both gated)", wired_text)
     must("3269", "AC5 extend 3268 linter", l3268)
     if (ROOT / "tests" / "issues" / "test_issue_3269.cpp").is_file():
         fails.append("AC5: forbidden tests/issues/test_issue_3269.cpp per #81967")

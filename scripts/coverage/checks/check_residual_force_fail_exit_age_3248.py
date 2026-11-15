@@ -22,6 +22,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -40,7 +42,6 @@ def main() -> int:
     cpp = _read("src/compiler/hot_update_registry.cpp")
     hh = _read("src/compiler/hot_update_registry.hh")
     rec = _read("tests/compiler/test_reload_recovery_query.cpp")
-    build = _read("build.py")
 
     obs = bnd.find("aura_hot_update_observe_residual_force_stale")
     if obs < 0:
@@ -80,8 +81,8 @@ def main() -> int:
     must("ac3248_2_soft", "AC2 Soft test", rec)
     must("does not double-heal", "AC1 cap", rec)
     must("Playbook stays observe-only", "AC3 playbook", bnd)
-    must("check_residual_force_fail_exit_age_3248", "AC5 build.py", build)
-    must("cmd_residual_force_fail_exit_age_3248_coverage", "AC5 cmd", build)
+    must("check_residual_force_fail_exit_age_3248", "AC5 wiring", wired_text)
+    must("check_residual_force_fail_exit_age_3248.py", "AC5 cmd", wired_text)
     if _read("tests/compiler/test_issue_3248.cpp") or _read("tests/issues/test_issue_3248.cpp"):
         fails.append("AC5: test_issue_3248.cpp present (forbidden #81967)")
     if _read("docs/design/3248-residual-force-fail-exit.md"):

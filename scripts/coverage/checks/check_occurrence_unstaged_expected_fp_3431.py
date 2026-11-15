@@ -26,6 +26,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -46,7 +48,6 @@ def main() -> int:
     emb = _read("src/compiler/evaluator_mutation_boundary.cpp")
     tma = _read("src/compiler/typed_mutation_audit.h")
     t = _read("tests/compiler/test_outermost_persist_fail_closed.cpp")
-    build = _read("build.py")
     lint3170 = _read("scripts/coverage/checks/check_occurrence_persist_fingerprint_3170.py")
     lint3406 = _read("scripts/check_recover_fail_clear_persist_3406.py")
 
@@ -88,14 +89,14 @@ def main() -> int:
     must("3406", "AC4 3406 linter kept", lint3406)
     must("3431 AC4", "AC4 test", t)
 
-    must("check_occurrence_unstaged_expected_fp_3431", "AC5 build.py", build)
+    must("check_occurrence_unstaged_expected_fp_3431", "AC5 wiring", wired_text)
     must("3431 AC5", "AC5 test", t)
-    must("check_occurrence_persist_fingerprint_3170", "AC5 3170 lineage", build)
+    must("check_occurrence_persist_fingerprint_3170", "AC5 3170 lineage", wired_text)
     must("3170", "AC5 3170 linter kept", lint3170)
-    prev3418 = build.find("check_proof_goal_fingerprint_overflow_3418")
-    ours = build.find("check_occurrence_unstaged_expected_fp_3431")
-    if prev3418 < 0 or ours < 0 or ours < prev3418:
-        fails.append("AC5: #3431 linter must run after #3418")
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must("check_proof_goal_fingerprint_overflow_3418", "AC5: #3431 linter must run (both gated)", wired_text)
+    must("check_occurrence_unstaged_expected_fp_3431", "AC5: #3431 linter must run (both gated)", wired_text)
     if "schema-3431" in emb or "schema-3431" in tma:
         fails.append("AC5: new schema-3431 query key")
     if "g_3431_" in emb or "g_3431_" in tma:

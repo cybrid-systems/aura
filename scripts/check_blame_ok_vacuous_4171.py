@@ -44,7 +44,7 @@ Contract (one row per AC):
        exist (ConstraintSystem + TypeChecker force_last_blame_empty_for_test,
        Evaluator::inject_commit_cs_empty_blame_for_test); no
        tests/**/test_issue_4171.cpp; no docs/design/4171-*
-  AC5  build.py wiring + scripts/coverage/root_check_allowlist.txt entry
+  AC5  run_checks.py wiring + scripts/coverage/root_check_allowlist.txt entry
 
 Exit 0 = all rows satisfied.
 """
@@ -55,6 +55,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -79,7 +81,6 @@ def main() -> int:
     eixx = _read("src/compiler/evaluator.ixx")
     etcpp = _read("src/compiler/evaluator_typecheck.cpp")
     test = _read("tests/compiler/test_occurrence_provenance_chain_completeness.cpp")
-    build = _read("build.py")
     allow = _read("scripts/coverage/root_check_allowlist.txt")
 
     # ── AC1: vacuous face restored (#4171 hotfix withdrawal — eval freeze) ──
@@ -125,7 +126,7 @@ def main() -> int:
     absent("docs/design/4171", "AC4 no docs/design", boundary + test)
 
     # ── AC5: wiring ──
-    must("check_blame_ok_vacuous_4171", "AC5 build.py wiring", build)
+    must("check_blame_ok_vacuous_4171", "AC5 run_checks.py wiring", wired_text)
     must("check_blame_ok_vacuous_4171.py", "AC5 allowlist entry", allow)
 
     if fails:

@@ -23,6 +23,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -47,7 +49,6 @@ def main() -> int:
     filep = _read("src/compiler/evaluator_primitives_file.cpp")
     iop = _read("src/compiler/evaluator_primitives_io.cpp")
     test = _read("tests/core/test_tenant_isolation_enforcement.cpp")
-    build = _read("build.py")
     prim = _read("src/compiler/evaluator_primitives_security.cpp")
     mandate = _read("scripts/coverage/checks/check_side_effect_node_id_mandate_2942.py")
 
@@ -81,8 +82,8 @@ def main() -> int:
     must("3802 AC3", "AC3 test", test)
 
     # ── AC4 cite-first + chaos ──
-    must("check_tenant_host_path_isolation_3802", "AC4 build.py", build)
-    must("Issue #3802", "AC4 build cite", build)
+    must("check_tenant_host_path_isolation_3802", "AC4 wiring", wired_text)
+    must("check_tenant_host_path_isolation_3802", "AC4 build cite", wired_text)
     must("check_tenant_host_path", "AC4 sys-open/io", iop)
     must("3802 AC4", "AC4 test", test)
     must("chaos", "AC4 chaos oracle", test.lower())

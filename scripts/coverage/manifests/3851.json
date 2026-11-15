@@ -43,10 +43,9 @@
     },
     {
       "ac": "AC4-wiring",
-      "path": "build.py",
-      "contains": [
+      "wired": [
         "check_pure_anon_budget_skip_sticky_3851",
-        "Issue #3851"
+        "check_pure_anon_budget_skip_sticky_3851.py"
       ]
     },
     {

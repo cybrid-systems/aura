@@ -30,6 +30,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def main() -> int:
@@ -40,7 +42,6 @@ def main() -> int:
     bridge = (ROOT / "src" / "compiler" / "aura_jit_bridge.cpp").read_text()
     (ROOT / "src" / "core" / "workspace_isolation.hh").read_text()
     test = (ROOT / "tests" / "compiler" / "test_aot_incremental_reemit.cpp").read_text()
-    build = (ROOT / "build.py").read_text()
 
     # AC1 — slow path consults aura_jit_is_deopt_pending BEFORE fn() call.
     if "Issue #3412" not in rt:
@@ -152,10 +153,10 @@ def main() -> int:
     if "3412 AC7: build.py wiring" not in test:
         fails.append("AC7: test_aot_incremental_reemit.cpp missing 3412 AC7 marker")
 
-    if "cmd_deopt_pending_closure_call_3412_coverage" not in build:
-        fails.append("AC7: build.py does not register cmd_deopt_pending_closure_call_3412_coverage")
-    if "check_deopt_pending_closure_call_3412" not in build:
-        fails.append("AC7: build.py does not register check_deopt_pending_closure_call_3412 linter script")
+    if "check_deopt_pending_closure_call_3412" not in wired_text:
+        fails.append("AC7: run_checks.py does not gate check_deopt_pending_closure_call_3412")
+    if "check_deopt_pending_closure_call_3412" not in wired_text:
+        fails.append("AC7: run_checks.py does not register check_deopt_pending_closure_call_3412 linter script")
 
     if fails:
         for f in fails:

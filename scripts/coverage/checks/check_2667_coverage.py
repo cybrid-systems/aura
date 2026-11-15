@@ -21,7 +21,7 @@ Contract (one row per AC):
   AC4 tests/serve/test_residual_defer_steal_hard_and.cpp extended with
      #2667 AC1-AC5 source-cite block (per #81967 — no new issue-suffix
      file).
-  AC5 build.py wires check_2667_coverage into the gate after
+  AC5 run_checks.py gates check_2667_coverage into the gate after
      check_2666_coverage.
   AC6 cross-check: check_steal_complete_strong_entry_2377 +
      check_residual_sid0_cap_coverage still green (no regression).
@@ -36,6 +36,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -56,7 +58,6 @@ def main() -> int:
     gc = _read("src/core/gc_hooks.h")
     obs = _read("src/compiler/evaluator_primitives_obs_jit.cpp")
     test = _read("tests/serve/test_residual_defer_steal_hard_and.cpp")
-    build = _read("build.py")
 
     # AC1 — production-default panic_checkpoint clear on steal
     must("Issue #2667", "AC1", efm)
@@ -85,8 +86,8 @@ def main() -> int:
     must("ac2667_3_coverage_linter_wired", "AC4", test)
     must("Issue #2667", "AC4", test)
 
-    # AC5 — build.py wires the linter
-    must("check_2667_coverage", "AC5", build)
+    # AC5 — run_checks.py gates the linter
+    must("check_2667_coverage", "AC5", wired_text)
 
     # Cross-check: check_steal_complete_strong_entry_2377 still green
     r1 = subprocess.run(

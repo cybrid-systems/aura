@@ -51,6 +51,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 MUT = "src/compiler/evaluator_primitives_mutate.cpp"
 TEST = "tests/serve/test_stable_ref_provenance_fiber_cow.cpp"
 NL = chr(10)
@@ -221,7 +224,7 @@ def main() -> int:
             fails.append(f"AC7: forbidden docs/design/{md.name}")
     if (ROOT / "tests" / "core" / "test_issue_4696.cpp").exists():
         fails.append("AC7: forbidden tests/core/test_issue_4696.cpp")
-    must("check_pin_stable_refs_provenance_4696", "AC7", _read("build.py"))
+    must("check_pin_stable_refs_provenance_4696.py", "AC7", wired_text)
     must(
         "check_pin_stable_refs_provenance_4696.py",
         "AC7",

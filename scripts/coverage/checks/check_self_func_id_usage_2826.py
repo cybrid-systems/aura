@@ -17,6 +17,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 # Bare comparisons that reintroduce #2292 (id 0 is a valid func id).
 BARE_ID_CMP = re.compile(
@@ -52,7 +54,6 @@ def main() -> int:
     low = _read("src/compiler/lowering.ixx")
     impl = _read("src/compiler/lowering_impl.cpp")
     test = _read("tests/compiler/test_self_func_active_invariant.cpp")
-    build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
     # AC1
@@ -92,7 +93,7 @@ def main() -> int:
     if (ROOT / "tests" / "compiler" / "test_issue_2826.cpp").is_file():
         fails.append("AC4: test_issue_2826.cpp present (forbidden per #81967)")
     must("test_self_func_active_invariant", "AC4", cmake)
-    must("check_self_func_id_usage_2826", "AC4", build)
+    must("check_self_func_id_usage_2826", "AC4", wired_text)
     docs = ROOT / "docs" / "design"
     if docs.is_dir():
         for f in sorted(docs.glob("2826-*")):

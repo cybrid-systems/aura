@@ -26,7 +26,7 @@ Gate rows:
   G5  test ACs in test_batch_dirty_discipline (#81967): ac3293_1 live
       SIGABRT fixture, ac3293_2 Soft metric-only, ac3293_3 source/linter.
   G6  no test_issue_3293.cpp; no docs/design/3293-* (#1655/#81967).
-  G7  build.py wires this linter.
+  G7  run_checks.py gates this linter.
 
 Exit 0 = all rows satisfied.
 """
@@ -38,6 +38,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 failures: list[str] = []
 
@@ -59,7 +61,6 @@ def main() -> int:
     soa = _read("src/compiler/ir_soa.ixx")
     hooks = _read("src/compiler/typed_mutation_audit_hooks.cpp")
     t = _read("tests/compiler/test_batch_dirty_discipline.cpp")
-    build = _read("build.py")
 
     # ── G1: production path arms hard-abort (env unset → probe) ──
     must("Issue #3293" in soa or "3293" in soa, "G1: ir_soa.ixx cites #3293")
@@ -121,8 +122,8 @@ def main() -> int:
     must(not _read("tests/compiler/test_issue_3293.cpp"), "G6: no test_issue_3293.cpp (#81967)")
     must(not _read("tests/issues/test_issue_3293.cpp"), "G6: no tests/issues/ (#81967)")
 
-    # ── G7: build.py wiring ──
-    must("check_ir_dirty_batch_only_production_default_3293" in build, "G7: build.py wires linter")
+    # ── G7: gate wiring ──
+    must("check_ir_dirty_batch_only_production_default_3293" in wired_text, "G7: run_checks.py gates linter")
 
     docs = ROOT / "docs" / "design"
     if docs.is_dir():

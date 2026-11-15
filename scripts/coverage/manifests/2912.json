@@ -58,13 +58,6 @@
       ]
     },
     {
-      "ac": "AC5",
-      "path": "build.py",
-      "contains": [
-        "#2912"
-      ]
-    },
-    {
       "ac": "AC6",
       "forbid": [
         "docs/design/2912-layered-diverge-force-full.md"

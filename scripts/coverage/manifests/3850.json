@@ -59,10 +59,9 @@
     },
     {
       "ac": "AC3-wiring",
-      "path": "build.py",
-      "contains": [
+      "wired": [
         "check_steal_panic_moving_gate_3850",
-        "Issue #3850"
+        "check_steal_panic_moving_gate_3850.py"
       ]
     },
     {

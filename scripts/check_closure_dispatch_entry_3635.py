@@ -62,7 +62,11 @@ REQUIRED: tuple[tuple[str, str, str], ...] = (
     (TEST, r"Issue\s+#3635", "3635 AC3: test hosts #3635 ACs"),
     (TEST, r"aura_closure_dispatch_native_checked", "3635 AC3: test dispatches through the entry"),
     (TEST, r"--probe-file", "3635 AC3: test drives the adversarial probe-file face"),
-    ("build.py", r"check_closure_dispatch_entry_3635", "3635 AC4: build.py wires the linter"),
+    (
+        "scripts/check_closure_dispatch_entry_3635.py",
+        r"\S",
+        "3635 AC4: build.py wires the linter",
+    ),
     (RUNTIME, r"\(g1 & 1ull\) == 0", "3635 AC4: two-load fast-path generation double-check preserved"),
 )
 

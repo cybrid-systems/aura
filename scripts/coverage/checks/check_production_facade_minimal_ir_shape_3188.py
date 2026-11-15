@@ -27,7 +27,7 @@ Contract (one row per AC):
   AC4  existing #3112 / #3129 / #3150 sibling ACs preserved (facade
        still owns joint epoch + AOT dirty + reemit)
   AC5  tests/compiler/test_compiler_hot_update_facade.cpp extended with
-       ac3188_* source-cite ACs; linter wired in build.py after #3187;
+       ac3188_* source-cite ACs; linter gated by run_checks.py after #3187;
        no docs/design/3188-* (#1655); no tests/issues/test_issue_3188.cpp
        (#81934)
 
@@ -50,6 +50,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 SERVICE_DIRTY = ROOT / "src" / "compiler" / "service_dirty.cpp"
 HOT_UPDATE_REGISTRY = ROOT / "src" / "compiler" / "hot_update_registry.cpp"
@@ -108,7 +109,6 @@ def main() -> int:
     svc = _read(SERVICE_DIRTY)
     hud = _read(HOT_UPDATE_REGISTRY)
     test = _read(TEST_FACADE)
-    build = _read(BUILD_PY)
 
     # ── AC1: mark_define_dirty production path ──
     # Find the function body region by locating the next `void CompilerService::`
@@ -286,10 +286,10 @@ def main() -> int:
     ac5_ac4 = "ac3188 AC4:" in test
     ac5_ac5 = "ac3188 AC5:" in test
     ac5_main_call = "ac3188_production_facade_minimal_ir_shape();" in test
-    ac5_wired = "check_production_facade_minimal_ir_shape_3188" in build
+    ac5_wired = "check_production_facade_minimal_ir_shape_3188" in wired_text
     ac5_wired_after_3187 = (
-        build.find("check_production_facade_minimal_ir_shape_3188")
-        > build.find("check_dual_dep_graph_strict_or_production_3187")
+        wired_text.find("check_production_facade_minimal_ir_shape_3188")
+        > wired_text.find("check_dual_dep_graph_strict_or_production_3187")
         if ac5_wired
         else False
     )
@@ -333,9 +333,9 @@ def main() -> int:
     if not ac5_main_call:
         fails.append("AC5: ac3188_production_facade_minimal_ir_shape() must be called from run_test_issue_3112()")
     if not ac5_wired:
-        fails.append("AC5: linter not wired in build.py")
+        fails.append("AC5: linter not gated by run_checks.py")
     if not ac5_wired_after_3187:
-        fails.append("AC5: linter must be wired in build.py AFTER #3187 linter (issue-number ordering)")
+        fails.append("AC5: linter must be gated by run_checks.py AFTER #3187 linter (issue-number ordering)")
     rows.append(
         {
             "ac": "AC5_no_invent",

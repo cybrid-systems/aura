@@ -19,6 +19,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -41,7 +43,6 @@ def main() -> int:
 
     ws = _read("src/compiler/evaluator_primitives_workspace.cpp")
     test = _read("tests/compiler/test_workspace_sync_from.cpp")
-    build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
     # Locate sync-from window
@@ -79,7 +80,7 @@ def main() -> int:
     must("test_workspace_sync_from", "AC4", cmake)
 
     # AC5
-    must("check_workspace_sync_from_body_2784", "AC5", build)
+    must("check_workspace_sync_from_body_2784", "AC5", wired_text)
     docs = ROOT / "docs" / "design"
     if docs.is_dir():
         for f in sorted(docs.glob("2784-*")):

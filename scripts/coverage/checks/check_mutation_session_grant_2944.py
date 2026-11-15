@@ -18,6 +18,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -40,7 +42,6 @@ def main() -> int:
     bound = _read("src/compiler/evaluator_mutation_boundary.cpp")
     posture = _read("src/compiler/evaluator_primitives_security.cpp")
     test = _read("tests/core/test_capability_single_use_consume.cpp")
-    build = _read("build.py")
 
     # AC1
     must("session_bound", "AC1", cap)
@@ -81,7 +82,7 @@ def main() -> int:
     must("2944", "AC6", test)
     must("grant_session", "AC6", test)
     must("revoke_session_grants_for_mid", "AC6", test)
-    must("check_mutation_session_grant_2944", "AC6", build)
+    must("check_mutation_session_grant_2944", "AC6", wired_text)
     if (ROOT / "tests" / "core" / "test_issue_2944.cpp").is_file():
         fails.append("AC6: test_issue_2944.cpp present (forbidden per #81967)")
     docs = ROOT / "docs" / "design"

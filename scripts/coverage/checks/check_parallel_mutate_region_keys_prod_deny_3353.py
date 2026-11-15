@@ -21,6 +21,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -39,7 +41,6 @@ def main() -> int:
     agent = _read("src/compiler/evaluator_primitives_agent.cpp")
     test = _read("tests/orch/test_parallel_intend_pure_contract.cpp")
     md = _read("src/orch/README.md")
-    build = _read("build.py")
     q = _read("src/compiler/evaluator_primitives_obs_jit.cpp") + _read("src/compiler/evaluator_primitives_obs_eval.cpp")
 
     must("kParallelMutateRegionKeysProductionDenyIssue = 3353", "AC1 stamp", poh)
@@ -56,10 +57,10 @@ def main() -> int:
     must("ac3353_4_env_off", "AC3 env=0", test)
     must("parallel_require_region_keys_explicit_off()", "AC3 skip on 0", poh)
 
-    must("check_parallel_mutate_region_keys_prod_deny_3353", "AC4 build.py", build)
-    must("check_parallel_mutate_region_keys_3299", "AC4 after #3299", build)
-    i3299 = build.find("check_parallel_mutate_region_keys_3299.py")
-    i3353 = build.find("check_parallel_mutate_region_keys_prod_deny_3353.py")
+    must("check_parallel_mutate_region_keys_prod_deny_3353", "AC4 wiring", wired_text)
+    must("check_parallel_mutate_region_keys_3299", "AC4 after #3299", wired_text)
+    i3299 = wired_text.find("check_parallel_mutate_region_keys_3299.py")
+    i3353 = wired_text.find("check_parallel_mutate_region_keys_prod_deny_3353.py")
     if i3299 < 0 or i3353 < 0 or i3353 < i3299:
         fails.append("AC4: #3353 linter must run after #3299")
     must("kMutateOverlapKeys", "AC4 overlap snippet", test)

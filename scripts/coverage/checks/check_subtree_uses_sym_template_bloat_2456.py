@@ -16,6 +16,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -35,7 +37,6 @@ def main() -> int:
     ast = _read("src/core/ast.ixx")
     impl = _read("src/core/ast_impl.cpp")
     test = _read("tests/core/test_subtree_uses_sym_template_bloat.cpp")
-    build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
     must("Issue #2456", "AC1", ast)
@@ -62,8 +63,8 @@ def main() -> int:
 
     must("FlatAST::find_define_by_name", "AC3", impl)
     must("2456 AC3", "AC3", test)
-    must("check_subtree_uses_sym_template_bloat_2456", "gate", build)
-    must("cmd_subtree_uses_sym_template_bloat_coverage", "gate", build)
+    must("check_subtree_uses_sym_template_bloat_2456", "gate", wired_text)
+    must("check_subtree_uses_sym_template_bloat_2456.py", "gate", wired_text)
     must("test_subtree_uses_sym_template_bloat", "gate", cmake)
 
     if fails:

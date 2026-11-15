@@ -60,6 +60,8 @@ from source_window import body_between  # noqa: E402
 from source_window import check as _structural  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -88,7 +90,6 @@ def main() -> int:
     test = _read("tests/compiler/test_apply_closure_envframe_soa.cpp")
     driver = _read("tests/compiler/test_ir_closure_jit_misc_batch.cpp")
     cmake = _read("CMakeLists.txt")
-    build = _read("build.py")
     allow = _read("scripts/coverage/root_check_allowlist.txt")
 
     # ── AC1: seq-survive stamp + re-stamp; old drop condition gone ──────
@@ -165,7 +166,7 @@ def main() -> int:
         driver,
     )
     must("(26 members)", "AC5 driver member count bumped", driver)
-    must("check_apply_closure_tls_seq_4169", "AC5 build.py wiring", build)
+    must("check_apply_closure_tls_seq_4169", "AC5 run_checks.py wiring", wired_text)
     must("check_apply_closure_tls_seq_4169.py", "AC5 allowlist entry", allow)
     # The #3832 regression-guard ordering row: TLS lookup precedes the shard
     # shared_lock on the apply path (its linter pins this ordering).

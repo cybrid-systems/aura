@@ -24,6 +24,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -45,7 +47,6 @@ def main() -> int:
     qw = _read("src/compiler/evaluator_primitives_query_workspace.cpp")
     hyg = _read("tests/compiler/test_hygiene_mutate_closed_loop.cpp")
     batch = _read("tests/compiler/test_mutation_boundary_batch.cpp")
-    build = _read("build.py")
 
     # AC1
     must("Issue #3196", "AC1 boundary", mb)
@@ -83,7 +84,7 @@ def main() -> int:
     must("nested_authority_gap()", "AC1 QueryResult", qw)
 
     # AC5 / AC6
-    must("check_nested_guard_authority_gap_3196", "AC6 build.py", build)
+    must("check_nested_guard_authority_gap_3196", "AC6 wiring", wired_text)
     must("ac3196_4_source_and_linter", "AC5 hygiene source", hyg)
     # Residual #3312: nested thin hot-cone does not replace the gap face.
 

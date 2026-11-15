@@ -55,6 +55,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 IRC = ROOT / "src" / "compiler" / "ir_cache_pure.ixx"
 MET = ROOT / "src" / "compiler" / "observability_metrics.h"
 OBS = ROOT / "src" / "compiler" / "evaluator_primitives_obs_eval.cpp"
@@ -84,7 +87,6 @@ def main() -> int:
     obs = OBS.read_text(encoding="utf-8")
     svc = SVC.read_text(encoding="utf-8")
     tst = TST.read_text(encoding="utf-8")
-    build = BUILD.read_text(encoding="utf-8")
     allow = ALLOW.read_text(encoding="utf-8")
 
     # ── AC1: inverted polarity in the policy mutator ──
@@ -155,7 +157,7 @@ def main() -> int:
         "4156 AC1: peel prefers full under correctness risk" in tst, "AC7: prefer-full-under-risk runtime CHECK present"
     )
     must("ac4156_adaptive_thr_feeds_peel_inverted();" in tst, "AC7: dispatcher invokes the runtime door")
-    must("check_adaptive_thr_4156.py" in build, "AC7: build.py registers this linter")
+    must("check_adaptive_thr_4156.py" in wired_text, "AC7: run_checks.py registers this linter")
     must("check_adaptive_thr_4156.py" in allow, "AC7: root_check_allowlist.txt lists this linter")
     must(
         not (ROOT / "tests" / "compiler" / "test_issue_4156.cpp").exists(), "AC7: no tests/compiler/test_issue_4156.cpp"

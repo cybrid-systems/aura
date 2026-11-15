@@ -20,6 +20,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -42,7 +44,6 @@ def main() -> int:
     t_lin = _read("tests/compiler/test_linear_enforce_production_defaults.cpp")
     t_health = _read("tests/compiler/test_type_linear_commit_health.cpp")
     t_rehy = _read("tests/compiler/test_occurrence_goal_persist_rehydrate.cpp")
-    build = _read("build.py")
     tma = _read("src/compiler/typed_mutation_audit.h")
 
     must("Issue #3819", "AC1 cite", emb)
@@ -83,7 +84,7 @@ def main() -> int:
     must("3819", "AC4 linear suite", t_lin)
     must("3819", "AC4 health suite", t_health)
     must("production_hard_face_active()", "AC4 rehydrate needle", t_rehy)
-    must("check_occurrence_persist_fp_mismatch_dual_track_3819", "AC4 build", build)
+    must("check_occurrence_persist_fp_mismatch_dual_track_3819", "AC4 build", wired_text)
     if (ROOT / "tests" / "compiler" / "test_issue_3819.cpp").is_file():
         fails.append("AC4: forbidden tests/compiler/test_issue_3819.cpp")
     if (ROOT / "tests" / "issues" / "test_issue_3819.cpp").is_file():

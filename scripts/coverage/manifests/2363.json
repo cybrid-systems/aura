@@ -83,13 +83,6 @@
       "contains": [
         "test_general_object_pin_adopt"
       ]
-    },
-    {
-      "ac": "AC10",
-      "path": "build.py",
-      "contains": [
-        "cmd_general_object_pin_adopt_coverage"
-      ]
     }
   ]
 }

@@ -28,6 +28,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -49,7 +51,6 @@ def main() -> int:
     ixx = _read("src/compiler/service.ixx") + _read("src/compiler/service_relower.cpp")
     pure = _read("src/compiler/ir_cache_pure.ixx")
     test = _read("tests/compiler/test_cascade_relower_silent_skip.cpp")
-    build = _read("build.py")
 
     rel_pos = ixx.find("std::size_t CompilerService::relower_dirty_defines_from_workspace()")
     peel = ixx[rel_pos : rel_pos + 20000] if rel_pos >= 0 else ""
@@ -95,11 +96,15 @@ def main() -> int:
     must("should_relower_total", "AC4 soak should_relower", test)
     must("3484 AC3: Soft clean peel does not force-full", "AC3 Soft soak", test)
 
-    must("check_peel_zero_mask_fail_closed_3484", "AC6 build.py", build)
-    prev = build.find("check_production_called_by_cone_bfs_3474")
-    ours = build.find("check_peel_zero_mask_fail_closed_3484")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC6: linter must be wired in build.py AFTER #3474")
+    must("check_peel_zero_mask_fail_closed_3484", "AC6 wiring", wired_text)
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must(
+        "check_production_called_by_cone_bfs_3474",
+        "AC6: linter must be gated by run_checks.py (both gated)",
+        wired_text,
+    )
+    must("check_peel_zero_mask_fail_closed_3484", "AC6: linter must be gated by run_checks.py (both gated)", wired_text)
 
     must("plant_zero_mask_caller_for_test", "AC5 helper", ixx)
     must_not("schema-3484", "AC4 no schema-3484", ixx)

@@ -21,6 +21,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -44,7 +46,6 @@ def main() -> int:
 
     impl = _read("src/compiler/type_checker_impl.cpp")
     t = _read("tests/compiler/test_solve_delta_unresolved_export.cpp")
-    build = _read("build.py")
 
     start = impl.find("ConstraintSystem::DeltaWorklist ConstraintSystem::build_delta_worklist()")
     if start < 0:
@@ -83,7 +84,7 @@ def main() -> int:
     must("3820 soak: next solve_delta does not silently drop pending", "AC3 CHECK", t)
     must("ac3820_4_full_without_prod_retains", "AC4 Full", t)
     must("Full-without-prod", "AC4 cite", t)
-    must("check_pending_offer_map_miss_retain_3820", "AC4 build", build)
+    must("check_pending_offer_map_miss_retain_3820", "AC4 build", wired_text)
 
     if (ROOT / "tests" / "compiler" / "test_issue_3820.cpp").is_file():
         fails.append("AC4: forbidden tests/compiler/test_issue_3820.cpp")

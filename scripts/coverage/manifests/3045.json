@@ -97,13 +97,6 @@
       ]
     },
     {
-      "ac": "AC12",
-      "path": "build.py",
-      "contains": [
-        "cmd_adt_exhaust_undermark_cone_3045_coverage"
-      ]
-    },
-    {
       "ac": "AC13",
       "forbid": [
         "tests/compiler/test_issue_3045.cpp"

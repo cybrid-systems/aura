@@ -28,7 +28,7 @@ Gate rows:
   G6  gensym-ceiling deny routes through note_* (per-fiber stamp).
   G7  tests: test_macro_fiber_hygiene + steal_abort_visibility +
       test_hygiene_mutate_closed_loop.
-  G8  build.py wires this linter AFTER #3340.
+  G8  run_checks.py gates this linter AFTER #3340.
   G9  no docs/design/3341-*, no test_issue_3341.cpp.
   G10 no new query:* name.
 """
@@ -37,6 +37,8 @@ import pathlib
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 failures: list[str] = []
 
@@ -67,7 +69,6 @@ def main() -> int:
     fiber_test = read("tests/compiler/test_macro_fiber_hygiene.cpp")
     steal_test = read("tests/compiler/test_concurrent_clone_steal_abort_visibility.cpp")
     loop = read("tests/compiler/test_hygiene_mutate_closed_loop.cpp")
-    build = read("build.py")
     q_eval = read("src/compiler/evaluator_primitives_obs_eval.cpp")
     q_mid = read("src/compiler/evaluator_primitives_query_obs_mid.cpp")
 
@@ -100,11 +101,11 @@ def main() -> int:
     must("steal-abort-mid-expand Agent string" in steal_test, "G7b: steal-abort suite")
     must("ac3341_per_fiber_reason_and_steal_abort_string" in loop, "G7c: closed-loop AC")
     must(
-        "check_fiber_hygiene_last_limit_reason_3341.py" in build,
-        "G8: build.py wires linter",
+        "check_fiber_hygiene_last_limit_reason_3341.py" in wired_text,
+        "G8: run_checks.py gates linter",
     )
-    i3340 = build.find("check_cross_flat_provenance_homology_3340.py")
-    i3341 = build.find("check_fiber_hygiene_last_limit_reason_3341.py")
+    i3340 = wired_text.find("check_cross_flat_provenance_homology_3340.py")
+    i3341 = wired_text.find("check_fiber_hygiene_last_limit_reason_3341.py")
     must(i3340 >= 0 and i3341 > i3340, "G8b: linter wired AFTER #3340")
     must(
         not any(p.name.startswith("3341-") for p in (ROOT / "docs/design").glob("3341-*"))

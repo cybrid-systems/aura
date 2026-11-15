@@ -24,6 +24,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from query_prims_sources import read_query_prims  # Issue #2914
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -50,7 +52,6 @@ def main() -> int:
     persist = _read("tests/compiler/test_occurrence_goal_persist_rehydrate.cpp")
     esc = _read("tests/compiler/test_escape_move_elision_gate.cpp")
     health = _read("tests/compiler/test_type_linear_commit_health.cpp")
-    build = _read("build.py")
 
     # AC1
     must("invalidate_fast_path_before_steal_densify_restamp", "AC1", tma)
@@ -78,8 +79,8 @@ def main() -> int:
     # AC4 wiring
     must("ac3063_hermetic_success_invalidate", "AC4 escape", esc)
     must("ac3063_health_schema", "AC4 health", health)
-    must("check_half_green_ir_steal_densify_3063", "AC4 build", build)
-    must("cmd_half_green_ir_steal_densify_3063", "AC4 cmd", build)
+    must("check_half_green_ir_steal_densify_3063", "AC4 build", wired_text)
+    must("check_half_green_ir_steal_densify_3063.py", "AC4 cmd", wired_text)
     must_key("schema-3063", "AC4 query", q)
     must_key("steal-densify-success-invalidate-total", "AC4 query total", q)
     must_key("steal-densify-success-invalidate-wired", "AC4 query wired", q)

@@ -21,6 +21,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -42,7 +44,6 @@ def main() -> int:
     adaptive = _read("lib/std/adaptive.aura")
     t = _read("tests/compiler/test_tcp_listen_accept.cpp")
     cmake = _read("CMakeLists.txt")
-    build = _read("build.py")
     surface = _read("scripts/coverage/checks/check_primitive_surface.py")
     tc = _read("src/compiler/type_checker_impl.cpp")
 
@@ -79,7 +80,7 @@ def main() -> int:
     must("#2771", "AC4", surface)
 
     # AC5
-    must("check_tcp_listen_accept_2771", "AC5", build)
+    must("check_tcp_listen_accept_2771", "AC5", wired_text)
     docs = ROOT / "docs" / "design"
     if docs.is_dir():
         for f in sorted(docs.glob("2771-*")):

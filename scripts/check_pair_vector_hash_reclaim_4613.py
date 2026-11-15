@@ -73,6 +73,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 PRIMS = ROOT / "src" / "compiler" / "evaluator_primitives_vector.cpp"
 GC = ROOT / "src" / "compiler" / "evaluator_gc.cpp"
 IXX = ROOT / "src" / "compiler" / "evaluator.ixx"
@@ -118,7 +121,6 @@ def main() -> int:
     gc = GC.read_text()
     ixx = IXX.read_text()
     tst = TST.read_text()
-    build = BUILD.read_text()
     allow = ALLOW.read_text()
 
     # ── AC1: the three primitives mint through the evaluator heap ────
@@ -320,7 +322,7 @@ def main() -> int:
 
     # ── AC5: wiring ──────────────────────────────────────────────────
     must(
-        "check_pair_vector_hash_reclaim_4613.py" in build,
+        "check_pair_vector_hash_reclaim_4613.py" in wired_text,
         "AC5: build.py registers the linter",
     )
     must(

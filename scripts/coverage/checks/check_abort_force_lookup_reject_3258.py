@@ -22,6 +22,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -38,7 +40,6 @@ def main() -> int:
 
     svc = _read("src/compiler/service.ixx")
     t = _read("tests/compiler/test_abort_ir_cache_fence_first.cpp")
-    build = _read("build.py")
 
     must("abort_force_rejects_clean_hit_", "AC1 helper", svc)
     lu = svc.find("int lookup_define_v2(")
@@ -67,11 +68,15 @@ def main() -> int:
     must("ac3258_3_soft_gen0_zero_extra", "AC4 test", t)
 
     must("ac3258_5_source_and_linter", "AC5 test", t)
-    must("check_abort_force_lookup_reject_3258", "AC5 build.py", build)
-    prev = build.find("check_deferred_hybrid_rearm_last_look_3257")
-    ours = build.find("check_abort_force_lookup_reject_3258")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC5: linter must be wired in build.py AFTER #3257")
+    must("check_abort_force_lookup_reject_3258", "AC5 wiring", wired_text)
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must(
+        "check_deferred_hybrid_rearm_last_look_3257",
+        "AC5: linter must be gated by run_checks.py (both gated)",
+        wired_text,
+    )
+    must("check_abort_force_lookup_reject_3258", "AC5: linter must be gated by run_checks.py (both gated)", wired_text)
 
     if (ROOT / "tests" / "issues" / "test_issue_3258.cpp").is_file():
         fails.append("AC6: forbidden tests/issues/test_issue_3258.cpp per #81967")

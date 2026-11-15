@@ -19,6 +19,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -38,7 +40,6 @@ def main() -> int:
     agent = _read("src/compiler/evaluator_primitives_agent.cpp")
     readme = _read("src/orch/README.md")
     test = _read("tests/orch/test_parallel_intend_pure_contract.cpp")
-    build = _read("build.py")
 
     must("region_key = 0", "AC2 AgentSpec.region_key", spawn)
     must("kAgentScopeRegionKeyIsolationIssue = 3803", "AC1 stamp", scope)
@@ -58,7 +59,7 @@ def main() -> int:
     must("ac3803_3_keys", "AC2 keys test", test)
     must("ac3803_4_single", "AC3 single-agent test", test)
 
-    must("check_agent_scope_region_key_isolation_3803", "AC4 build.py", build)
+    must("check_agent_scope_region_key_isolation_3803", "AC4 wiring", wired_text)
     if "query:3803" in agent:
         fails.append("AC1: query:3803 invented (forbidden)")
 

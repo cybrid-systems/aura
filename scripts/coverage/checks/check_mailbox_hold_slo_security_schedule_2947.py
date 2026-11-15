@@ -21,6 +21,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -45,7 +47,6 @@ def main() -> int:
     prim = _read("src/compiler/evaluator_primitives_security.cpp")
     test = _read("tests/orch/test_security_schedule_gate.cpp")
     readme = _read("src/orch/README.md")
-    build = _read("build.py")
     mbc = _read("src/compiler/evaluator_mutation_boundary.cpp")
 
     # AC1
@@ -96,7 +97,7 @@ def main() -> int:
 
     # AC6
     must("2947", "AC6", test)
-    must("check_mailbox_hold_slo_security_schedule_2947", "AC6", build)
+    must("check_mailbox_hold_slo_security_schedule_2947", "AC6", wired_text)
     must("mailbox_hold_slo", "AC6", readme)
     # #2587 independent defense-in-depth
     if "aura_mailbox_starvation_throttled" not in mbc and "aura_orch_mailbox_starvation_throttled" not in mbc:

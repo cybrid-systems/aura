@@ -18,7 +18,7 @@ AC5: Query surface on hot-update-registry-stats / reload-recovery-
      state + schema-2639 / issue-2639 / wired sentinel; #2605 axes
      preserved.
 AC6: src-aligned test (extend test_exhausted_min_dirty_reemit
-     or sibling) + coverage gate (this linter + build.py gate step).
+     or sibling) + coverage gate (this linter + coverage runner step).
 
 Default: non-strict (exit 0, prints coverage summary). Use --strict
 to enforce (exit 1 if any AC fails — gate before merge).
@@ -30,6 +30,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 BRIDGE = ROOT / "src" / "compiler" / "aura_jit_bridge.cpp"
 HOT_UPDATE_CPP = ROOT / "src" / "compiler" / "hot_update_registry.cpp"
 HOT_UPDATE_HH = ROOT / "src" / "compiler" / "hot_update_registry.hh"
@@ -110,7 +113,7 @@ def main() -> int:
     if cpp_text and 'extern "C" void aura_hot_update_maybe_storm_clear_health_pass' not in cpp_text:
         failures.append("AC5: cpp missing extern C hook definition")
 
-    # AC6: tests + build.py gate
+    # AC6: tests + coverage runner
     must_present(
         TEST_2544, "ac2639_storm_clear_fires_on_transition", "AC6: test missing ac2639_storm_clear_fires_on_transition"
     )
@@ -130,11 +133,10 @@ def main() -> int:
             if f"{ac_fn}()" not in test_text:
                 failures.append(f"AC6: main() does not call {ac_fn}()")
 
-    build_text = _read("build.py")
-    if "check_storm_clear_health_pass_coverage" not in build_text:
-        failures.append("AC6: build.py does not reference check_storm_clear_health_pass_coverage linter")
-    if "cmd_storm_clear_health_pass_coverage" not in build_text:
-        failures.append("AC6: build.py missing cmd_storm_clear_health_pass_coverage function")
+    if "check_storm_clear_health_pass_coverage" not in wired_text:
+        failures.append("AC6: run_checks.py does not discover check_storm_clear_health_pass_coverage linter")
+    if "check_storm_clear_health_pass_coverage" not in wired_text:
+        failures.append("AC6: run_checks.py missing storm_clear_health_pass_coverage function")
 
     # AC4: #2604/#2601/#2502 surfaces still work (additive)
     # Verify #2601 exhausted-min-dirty retry surface is preserved in the

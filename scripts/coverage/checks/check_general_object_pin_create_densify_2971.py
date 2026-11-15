@@ -23,6 +23,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 FILES = [
     "src/core/lifetime_pin.hh",
@@ -57,7 +59,6 @@ def main() -> int:
     health = _read("src/compiler/evaluator_primitives_obs_jit.cpp")
     pinq = _read("src/compiler/evaluator_primitives_stdlib_review.cpp")
     test = _read("tests/core/test_moving_densify_fail_closed.cpp")
-    build = _read("build.py")
 
     # ── AC1: production default + create auto-wire ──
     must("Issue #2971", "AC1 lifetime_pin", lp)
@@ -121,8 +122,8 @@ def main() -> int:
     must("ac2971_4_observability_schema", "AC6", test)
     must("ac2971_5_soft_zero_cost", "AC6", test)
     must("ac2971_6_linter_and_no_design", "AC6", test)
-    must("check_general_object_pin_create_densify_2971", "AC6 build", build)
-    must("cmd_general_object_pin_create_densify_2971", "AC6 build cmd", build)
+    must("check_general_object_pin_create_densify_2971", "AC6 build", wired_text)
+    must("check_general_object_pin_create_densify_2971.py", "AC6 build cmd", wired_text)
     design_docs = sorted((ROOT / "docs" / "design").glob("2971-*")) if (ROOT / "docs" / "design").is_dir() else []
     if design_docs:
         fails.append(f"AC6: docs/design/2971-* present ({[p.name for p in design_docs]})")

@@ -15,6 +15,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -33,7 +35,6 @@ def main() -> int:
     cpp = _read("src/serve/steal_safety.cpp")
     wc = _read("src/serve/worker.cpp")
     t = _read("tests/serve/test_steal_complete_restamp_txn.cpp")
-    build = _read("build.py")
 
     must("2901", "AC1", hdr)
     must("g_steal_safety_residual_rearm_race_total", "AC1", hdr)
@@ -61,7 +62,7 @@ def main() -> int:
     must("ac2901_3_counters_additive", "AC5", t)
     must("ac2901_4_chaos_contract_source", "AC5", t)
     must("ac2901_5_source_cite", "AC5", t)
-    must("check_steal_residual_rearm_race_2901", "AC5", build)
+    must("check_steal_residual_rearm_race_2901", "AC5", wired_text)
 
     # No post-transaction residual path that can stamp after reject:
     # stamp must only appear once after residual_ok path.

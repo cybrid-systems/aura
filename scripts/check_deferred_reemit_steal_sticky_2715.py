@@ -40,6 +40,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -80,7 +82,6 @@ def main() -> int:
     efm = _read("src/compiler/evaluator_fiber_mutation.cpp")
     hur = _read("src/compiler/hot_update_registry.hh")
     t = _read("tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp")
-    build = _read("build.py")
 
     # AC1 — production + deferred pending + steal → observability
     # counter advances, no foreign-worker drain, pending stays sticky.
@@ -119,7 +120,7 @@ def main() -> int:
     must("ac2715_4_soft_drain_still_available", "AC6", t)
     must("ac2715_5_additive_no_regression", "AC6", t)
     must("ac2715_6_source_and_linter", "AC6", t)
-    must("check_deferred_reemit_steal_sticky_2715", "AC6", build)
+    must("check_deferred_reemit_steal_sticky_2715", "AC6", wired_text)
     if _read("docs/design/2715-deferred-reemit-steal-sticky.md"):
         fails.append("AC6: docs/design/2715-* exists (forbidden per #1655)")
 

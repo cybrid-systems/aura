@@ -49,6 +49,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _strip_cpp_comments(src: str) -> str:
@@ -88,7 +90,6 @@ def main() -> int:
     # signatures/predicates across lines.
     cap = " ".join(_strip_cpp_comments(cap_raw).split())
     test_src = _read("tests/core/test_capability_single_use_consume.cpp")
-    build_src = _read("build.py")
 
     def must(cond: bool, label: str) -> None:
         if not cond:
@@ -162,7 +163,7 @@ def main() -> int:
     must(not (ROOT / "tests/core/test_issue_4038.cpp").exists(), "AC6: no test_issue_4038.cpp")
     must(not (ROOT / "docs/design/4038-host-cohort-revoke.md").exists(), "AC6: no docs/design/")
     must(
-        "check_session_revoke_host_cohort_4038" in build_src,
+        "check_session_revoke_host_cohort_4038" in wired_text,
         "AC6: build.py wires the linter",
     )
 

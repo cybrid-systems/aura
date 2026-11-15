@@ -32,6 +32,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -49,7 +51,6 @@ def main() -> int:
     spawn = _read("src/orch/agent_spawn.h")
     agent = _read("src/compiler/evaluator_primitives_agent.cpp")
     test = _read("tests/orch/test_join_drain_reclaim.cpp")
-    build = _read("build.py")
 
     # ── AC1: unset → zero cost, no wait_reclaimed_body call ─────────
     must("wait_reclaimed_ms", "AC1", spawn)
@@ -84,7 +85,7 @@ def main() -> int:
     must("#2970", "AC6", spawn)
     must("#2970", "AC6", agent)
     must("#2970 AC1", "AC6", test)
-    must("check_join_wait_reclaimed_2970", "AC6", build)  # linter wired
+    must("check_join_wait_reclaimed_2970", "AC6", wired_text)  # linter wired
     for rel in ("tests/orch/test_issue_2970.cpp", "tests/compiler/test_issue_2970.cpp"):
         if _read(rel):
             fails.append(f"AC6: {rel} exists — forbidden per #81967")

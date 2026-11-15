@@ -19,7 +19,7 @@ Contract (one row per AC):
      moving_blocked_precondition via densify_consistency.overall_ok()).
   AC6 tests/core/test_moving_densify_fail_closed.cpp extended with
      #2664 AC1-AC6 source-cite block + wired in run_test_*.
-  AC7 build.py wires check_2664_coverage into the gate after
+  AC7 run_checks.py gates check_2664_coverage into the gate after
      check_moving_untracked_production_hard_2596.
   AC8 cross-check: check_moving_untracked_production_hard_2596 +
      check_stamp_resolve_coverage still green (no regression).
@@ -34,6 +34,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -53,7 +55,6 @@ def main() -> int:
     arena = _read("src/core/arena.ixx")
     _read("src/compiler/evaluator_mutation_boundary.cpp")
     test = _read("tests/core/test_moving_densify_fail_closed.cpp")
-    build = _read("build.py")
 
     # AC1 — production-default hard-fail (encoded via #2596 pref > 0)
     must("Issue #2664", "AC1", arena)
@@ -85,8 +86,8 @@ def main() -> int:
     must("ac2664_6_coverage_linter_wired", "AC6", test)
     must("Issue #2664", "AC6", test)
 
-    # AC7 — build.py wires the linter
-    must("check_2664_coverage", "AC7", build)
+    # AC7 — run_checks.py gates the linter
+    must("check_2664_coverage", "AC7", wired_text)
 
     # Cross-check: check_moving_untracked_production_hard_2596 still green
     r1 = subprocess.run(

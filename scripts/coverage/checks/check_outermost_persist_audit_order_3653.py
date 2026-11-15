@@ -28,6 +28,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -59,7 +61,6 @@ def main() -> int:
     health = _read("tests/compiler/test_type_linear_commit_health.cpp")
     occ = _read("tests/compiler/test_occurrence_goal_persist_rehydrate.cpp")
     tc = _read("src/compiler/evaluator_typecheck.cpp")
-    build = _read("build.py")
     q = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
     qr = _read("src/compiler/evaluator_primitives_query_reflect.cpp")
 
@@ -118,12 +119,18 @@ def main() -> int:
     must("ac3653_4_soft_zero_cost_no_extra_walk", "AC4 Soft", health)
     must("production_defaults_active()", "AC4 Soft skip face", win)
 
-    must("check_hot_contract_production_pack_3666", "AC5 prev linter", build)
-    must("check_outermost_persist_audit_order_3653", "AC5 build.py", build)
-    prev = build.find("check_hot_contract_production_pack_3666")
-    ours = build.find("check_outermost_persist_audit_order_3653")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC5: linter must be wired in build.py AFTER #3666")
+    must("check_hot_contract_production_pack_3666", "AC5 prev linter", wired_text)
+    must("check_outermost_persist_audit_order_3653", "AC5 wiring", wired_text)
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must(
+        "check_hot_contract_production_pack_3666", "AC5: linter must be gated by run_checks.py (both gated)", wired_text
+    )
+    must(
+        "check_outermost_persist_audit_order_3653",
+        "AC5: linter must be gated by run_checks.py (both gated)",
+        wired_text,
+    )
     must("ac3653_audit_before_persist_source", "AC5 persist-rehydrate", occ)
     must("query:type-linear-commit-health", "AC5 health key retained", qr)
     must("query:type-linear-evolution-snapshot", "AC5 evolution key retained", qr)

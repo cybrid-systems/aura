@@ -19,7 +19,7 @@ Contract (one row per AC):
      metric-only — future enhancement).
   AC6 tests/compiler/test_stable_ref_export_validate.cpp extended with
      #2663 AC1-AC6 source-cite block.
-  AC7 build.py wires check_2663_coverage into the gate after
+  AC7 run_checks.py gates check_2663_coverage into the gate after
      check_export_held_handoff_coverage.
   AC8 cross-check: check_export_held_handoff_coverage + check_pure_parallel_
      isolation_wording remain green (no regression).
@@ -34,6 +34,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -52,7 +54,6 @@ def main() -> int:
 
     mb = _read("src/serve/multi_fiber_mailbox.h")
     test = _read("tests/compiler/test_stable_ref_export_validate.cpp")
-    build = _read("build.py")
 
     # AC1 — MailMessage fields
     must("held_ref_token", "AC1", mb)
@@ -91,8 +92,8 @@ def main() -> int:
     must("2663 AC6", "AC6", test)
     must("Issue #2663", "AC6", test)
 
-    # AC7 — build.py wires the linter
-    must("check_2663_coverage", "AC7", build)
+    # AC7 — run_checks.py gates the linter
+    must("check_2663_coverage", "AC7", wired_text)
 
     # Cross-check: check_export_held_handoff_coverage still green
     r1 = subprocess.run(

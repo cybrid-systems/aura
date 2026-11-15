@@ -21,6 +21,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -42,7 +44,6 @@ def main() -> int:
     tc = _read("src/compiler/evaluator_typecheck.cpp")
     mb = _read("src/compiler/evaluator_mutation_boundary.cpp")
     t = _read("tests/compiler/test_solve_delta_unresolved_export.cpp")
-    build = _read("build.py")
 
     must("kSoftTimeoutExportUniformGateIssue = 3203", "AC1 stamp", ixx)
     must("type_export_is_authoritative", "AC1 TC helper", ixx)
@@ -78,7 +79,7 @@ def main() -> int:
     must("Issue #3203", "AC5 occurrence clear", impl)
     must("last_occurrence_vars_.clear()", "AC5 no live TypeId", impl)
     must("not-authoritative", "AC5 suggest/query", prim)
-    must("check_soft_timeout_export_uniform_gate_3203", "AC5 build.py", build)
+    must("check_soft_timeout_export_uniform_gate_3203", "AC5 wiring", wired_text)
     must("ac3203_5_source_and_linter", "AC5 test", t)
 
     if "query:soft-timeout-uniform-gate" in ev or "query:soft-timeout-uniform-gate" in ixx:

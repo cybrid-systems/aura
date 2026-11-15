@@ -26,7 +26,7 @@ Contract (one row per AC):
        held_ref_stale_after_steal_total reused (no invented counter);
        RecvResult never surfaces "closed" for a handoff miss; test
        ac4137_3_bp_storm_held_ref_stays_typed
-  AC4  linter wired in build.py after the #4001 Guard-face twin; source
+  AC4  linter gated by run_checks.py after the #4001 Guard-face twin; source
        + linter row; no test_issue_4137.cpp; no docs/design/4137-*; no
        new hash schema key
 
@@ -40,6 +40,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 SRC = ROOT / "src"
 CALL_RE = re.compile(r"(?<![\w])agent_recv\s*\(")
 OK_TAG = "orch-raw-recv-ok"
@@ -91,7 +94,6 @@ def main() -> int:
     prim = _read("src/compiler/evaluator_primitives_agent.cpp")
     test = _read("tests/orch/test_orch_obs_facade.cpp")
     twin4001 = _read("scripts/coverage/checks/check_agent_recv_typed_preference_4001.py")
-    build = _read("build.py")
 
     # AC1 — steal soak typed + production sites typed or annotated.
     fails.extend(_scan_production_agent_recv())
@@ -118,14 +120,14 @@ def main() -> int:
 
     # AC4 — wiring + no invent.
     must("ac4137_4_source_and_linter", "AC4 test", test)
-    must("check_agent_recv_steal_handoff_4137", "AC4 build.py", build)
+    must("check_agent_recv_steal_handoff_4137", "AC4 wiring", wired_text)
     must("Issue #4001", "AC4 #4001 Guard-face twin retained", twin4001)
-    prev = build.find("check_agent_recv_typed_preference_4001")
-    ours = build.find("check_agent_recv_steal_handoff_4137")
-    if ours < 0:
-        fails.append("AC4: linter must be wired in build.py")
-    elif prev >= 0 and ours < prev:
-        fails.append("AC4: steal linter must be wired in build.py AFTER the #4001 Guard-face twin")
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must(
+        "check_agent_recv_typed_preference_4001", "AC4: linter must be gated by run_checks.py (both gated)", wired_text
+    )
+    must("check_agent_recv_steal_handoff_4137", "AC4: linter must be gated by run_checks.py (both gated)", wired_text)
     if (ROOT / "tests" / "orch" / "test_issue_4137.cpp").is_file():
         fails.append("AC4: tests/orch/test_issue_4137.cpp present (forbidden #81934)")
     if "schema-4137" in prim:

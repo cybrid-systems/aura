@@ -21,7 +21,7 @@ Contract:
   AC4 Soft/Off: production_defaults_active || Full guard unchanged;
       evaluator_gc.cpp still has no LCP consult
   AC5 tests extend test_moving_densify_fail_closed (no test_issue_3782.cpp);
-      no docs/design/3782-*; build.py wires this linter after #3781
+      no docs/design/3782-*; run_checks.py gates this linter after #3781
 
 Exit 0 = all rows satisfied.
 """
@@ -32,6 +32,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -54,7 +56,6 @@ def main() -> int:
     lcp = _read("src/core/lifetime_consistency_proof.hh")
     gc = _read("src/compiler/evaluator_gc.cpp")
     test = _read("tests/core/test_moving_densify_fail_closed.cpp")
-    build = _read("build.py")
 
     # ── AC1 Phase-5 skip-compact ──
     phase5_anchor = "Issue #3185 AC1: consult last LifetimeConsistencyProof before"
@@ -116,9 +117,11 @@ def main() -> int:
     must("ac3782_1", "AC5 ac3782_1", test)
     must("ac3782_2", "AC5 ac3782_2", test)
     must("ac3782_3", "AC5 ac3782_3", test)
-    must("check_densify_entry_lcp_skip_compact_3782", "AC5 build wire", build)
-    if build.find("check_densify_entry_lcp_skip_compact_3782") <= build.find("check_densify_this_window_rewrite_3781"):
-        fails.append("AC5: linter must be wired in build.py AFTER #3781 linter")
+    must("check_densify_entry_lcp_skip_compact_3782", "AC5 build wire", wired_text)
+    # Sequence positions were a property of the deleted cmd_lint chain
+    # (#5246); the checks below are gated by run_checks.py discovery.
+    must("check_densify_entry_lcp_skip_compact_3782", "AC wiring check_densify_entry_lcp_skip_compact_3782", wired_text)
+    must("check_densify_this_window_rewrite_3781", "AC wiring check_densify_entry_lcp_skip_compact_3782", wired_text)
     must_not("tests/issues/test_issue_3782.cpp", "AC5 no issue test path invent", test)
     if (ROOT / "tests" / "issues" / "test_issue_3782.cpp").is_file():
         fails.append("AC5: tests/issues/test_issue_3782.cpp present (forbidden)")

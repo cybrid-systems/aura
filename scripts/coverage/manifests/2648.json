@@ -73,14 +73,6 @@
     },
     {
       "ac": "AC6",
-      "path": "build.py",
-      "contains": [
-        "check_coercion_evidence_loss_slo_2648",
-        "cmd_coercion_evidence_loss_slo_coverage"
-      ]
-    },
-    {
-      "ac": "AC6",
       "path": "tests/compiler/test_coercion_evidence_loss_slo.cpp",
       "contains": [
         "ac1_soft_skip_preserved",

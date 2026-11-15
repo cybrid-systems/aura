@@ -26,6 +26,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
 
 MB = "src/compiler/evaluator_mutation_boundary.cpp"
 REH = "tests/compiler/test_occurrence_persist_rehydrate.cpp"
@@ -159,7 +162,7 @@ def main() -> int:
         print("self-test: ok")
         return 0
 
-    fails = _rows(_read(MB), _read(REH), _read(BUILD), _read(OBS), _read(ALLOW))
+    fails = _rows(_read(MB), _read(REH), wired_text, _read(OBS), _read(ALLOW))
     if fails:
         print("FAIL #4250 occurrence_drain_order:")
         for f in fails:

@@ -20,6 +20,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from query_prims_sources import read_query_prims  # Issue #2914
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -45,7 +47,6 @@ def main() -> int:
     qy = read_query_prims()
     test = _read("tests/serve/test_residual_defer_steal_hard_and.cpp")
     cmake = _read("CMakeLists.txt")
-    build = _read("build.py")
 
     # AC1
     must("Issue #2546", "AC1", efm)
@@ -83,8 +84,8 @@ def main() -> int:
     must("residual_hard_fail_total", "AC5", qy)
     must("ac5_soak_lineage", "AC5", test)
     must("test_residual_defer_steal_hard_and", "AC5", cmake)
-    must("check_residual_defer_steal_hard_and_2546", "AC5", build)
-    must("cmd_residual_defer_steal_hard_and_coverage", "AC5", build)
+    must("check_residual_defer_steal_hard_and_2546", "AC5", wired_text)
+    must("check_residual_defer_steal_hard_and_2546.py", "AC5", wired_text)
 
     # Phase-1 retained
     must("g_residual_defer_cleared_on_steal_total", "retain", hooks)

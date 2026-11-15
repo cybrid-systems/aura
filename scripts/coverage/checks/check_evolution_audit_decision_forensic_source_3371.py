@@ -27,6 +27,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -47,7 +49,6 @@ def main() -> int:
 
     eps = _read("src/compiler/evaluator_primitives_security.cpp")
     test = _read("tests/compiler/test_engine_metrics_facade.cpp")
-    build = _read("build.py")
 
     # ── AC1 + AC2 + AC3: default-path priority order (typed > ring > WAL) ─
     # The new ordering must be present in the default path (the `want_durable`
@@ -163,16 +164,16 @@ def main() -> int:
         for f in sorted(docs.glob("3371-*")):
             fails.append(f"AC5: docs/design/{f.name} present (forbidden #1655)")
 
-    # ── Linter wired in build.py ─ ──
+    # ── Linter gated by run_checks.py ─ ──
     must(
         "check_evolution_audit_decision_forensic_source_3371",
-        "AC5 build.py wires 3371 linter",
-        build,
+        "AC5 run_checks.py gates 3371 linter",
+        wired_text,
     )
     must(
-        "Issue #3371",
+        "check_evolution_audit_decision_forensic_source_3371",
         "AC5 linter error message in build.py",
-        build,
+        wired_text,
     )
 
     if fails:

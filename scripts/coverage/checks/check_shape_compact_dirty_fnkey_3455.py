@@ -26,6 +26,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -66,7 +68,6 @@ def main() -> int:
     l2617 = _read("scripts/coverage/checks/check_shape_compact_storm_isolation_2617.py")
     l3199 = _read("scripts/coverage/checks/check_shape_compact_no_all_shards_lock_3199.py")
     l2908 = _read("scripts/coverage/checks/check_shape_compact_no_global_bump_2908.py")
-    build = _read("build.py")
 
     must("kShapeCompactDirtyFnkeyIssue = 3455", "AC1 stamp", hh)
     must("dirty_or_relocated", "AC1 header span", hh)
@@ -99,7 +100,7 @@ def main() -> int:
     must("check_shape_compact_no_global_bump_2908", "AC3 lineage", l2908)
     must("ac3199_2_version_advances", "AC4 concurrency suite", conc)
 
-    must("check_shape_compact_dirty_fnkey_3455", "AC5 build.py", build)
+    must("check_shape_compact_dirty_fnkey_3455", "AC5 wiring", wired_text)
     if "schema-3455" in hh or "schema-3455" in cpp or "schema-3455" in svc:
         fails.append("AC5: new schema-3455 query key")
     if (ROOT / "tests" / "compiler" / "test_issue_3455.cpp").is_file():

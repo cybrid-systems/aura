@@ -20,6 +20,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -41,7 +43,6 @@ def main() -> int:
     t_persist = _read("tests/compiler/test_outermost_persist_fail_closed.cpp")
     t_lin = _read("tests/compiler/test_linear_enforce_production_defaults.cpp")
     t_health = _read("tests/compiler/test_type_linear_commit_health.cpp")
-    build = _read("build.py")
 
     must("Issue #3818", "AC1 cite", emb)
     must("aura_persist_reject_undo", "AC1 shared helper", emb)
@@ -72,7 +73,7 @@ def main() -> int:
     must("3818 soak", "AC4 soak", t_persist)
     must("3818", "AC4 linear suite", t_lin)
     must("3818", "AC4 health suite", t_health)
-    must("check_post_persist_linear_deny_coercion_undo_3818", "AC4 build", build)
+    must("check_post_persist_linear_deny_coercion_undo_3818", "AC4 build", wired_text)
     if (ROOT / "tests" / "compiler" / "test_issue_3818.cpp").is_file():
         fails.append("AC4: forbidden tests/compiler/test_issue_3818.cpp")
     if (ROOT / "tests" / "issues" / "test_issue_3818.cpp").is_file():

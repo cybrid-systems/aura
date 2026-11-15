@@ -5,7 +5,7 @@ Contract:
   AC1 swarm.aura: swarm-step-fss! feeding/collective/volitive + step opt
   AC2 fss.aura surface + docs/stdlib/fss.md vs PSO/ABC
   AC3 suite fss_2880.aura; INDEX entry
-  AC4 linter wired in build.py
+  AC4 linter gated by run_checks.py
   AC5 no docs/design/2880-* / no test_issue_2880.cpp
 
 Exit 0 = all rows satisfied.
@@ -17,6 +17,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -38,7 +40,6 @@ def main() -> int:
     docs = _read("docs/stdlib/fss.md")
     suite = _read("tests/suite/fss_2880.aura")
     index = _read("lib/std/INDEX.aura")
-    build = _read("build.py")
 
     # AC1
     must("swarm-step-fss!", "AC1", swarm)
@@ -65,7 +66,7 @@ def main() -> int:
     must('"fss"', "AC3", index)
 
     # AC4
-    must("check_fss_2880", "AC4", build)
+    must("check_fss_2880", "AC4", wired_text)
 
     # AC5
     if (ROOT / "tests" / "compiler" / "test_issue_2880.cpp").is_file():

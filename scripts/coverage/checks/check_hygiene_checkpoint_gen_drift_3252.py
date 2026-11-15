@@ -22,6 +22,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -40,7 +42,6 @@ def main() -> int:
     ixx = _read("src/compiler/evaluator.ixx")
     q = _read("src/compiler/evaluator_primitives_query.cpp")
     test = _read("tests/compiler/test_hygiene_checkpoint.cpp")
-    build = _read("build.py")
 
     must("Issue #3252", "AC1 cite", bound)
     must("restamp_macro_introduced_generations", "AC1 restamp", bound)
@@ -60,7 +61,7 @@ def main() -> int:
     must("hygiene-checkpoint-gen-drift-wired", "AC5 wired", q)
     must("ac3252_prod_gen_drift_restamp_homology", "AC4 prod test", test)
     must("ac3252_soft_gen_drift_zero_extra", "AC5 Soft test", test)
-    must("check_hygiene_checkpoint_gen_drift_3252", "AC4 build.py", build)
+    must("check_hygiene_checkpoint_gen_drift_3252", "AC4 wiring", wired_text)
     must("hygiene-checkpoint-gen-drift", "AC6 reason test", test)
 
     if _read("tests/compiler/test_issue_3252.cpp") or _read("tests/core/test_issue_3252.cpp"):

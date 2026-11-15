@@ -10,7 +10,7 @@ Contract (one row per AC):
      (evaluator_primitives_agent.cpp)
   AC5 multi_fiber_mailbox.h references handoff_ref (handoff gate)
   AC6 test_stable_ref_export_validate.cpp covers handoff_ref
-  AC7 build.py wires the linter into the lint / gate step
+  AC7 run_checks.py gates the linter into the lint / gate step
   AC8 schema-2632 keys appear in observability prims (stable-ref-handoff-*)
 
 Exit 0 = all rows satisfied.
@@ -23,6 +23,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -46,7 +48,6 @@ def main() -> int:
     ag = _read("src/compiler/evaluator_primitives_agent.cpp")
     mb = _read("src/serve/multi_fiber_mailbox.h")
     test = _read("tests/compiler/test_stable_ref_export_validate.cpp")
-    build = _read("build.py")
     pe = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
     _read("scripts/coverage/checks/check_stamp_resolve_coverage.py")
 
@@ -82,7 +83,7 @@ def main() -> int:
     must("2632 AC", "AC6", test)
 
     # AC7
-    must("check_export_held_handoff_coverage", "AC7", build)
+    must("check_export_held_handoff_coverage", "AC7", wired_text)
 
     # AC8 (optional observability schema)
     has_schema = ("schema-2632" in pe) or ("issue-2632" in pe) or ("stable-ref-handoff" in pe)

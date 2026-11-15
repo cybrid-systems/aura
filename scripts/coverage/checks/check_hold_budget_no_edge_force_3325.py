@@ -27,6 +27,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -48,7 +50,6 @@ def main() -> int:
     mhb = _read("src/compiler/mutation_hold_budget.h")
     t = _read("tests/serve/test_hold_budget_synthetic_yield_injection.cpp")
     chaos = _read("tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp")
-    build = _read("build.py")
 
     poll_pos = fc.find("aura_hold_budget_poll_inbody_window(void) noexcept")
     poll_win = fc[poll_pos : poll_pos + 9000] if poll_pos >= 0 else ""
@@ -77,7 +78,7 @@ def main() -> int:
 
     must("run_test_hold_budget_no_edge_force_3325", "AC5", t)
     must("aura_hold_budget_poll_inbody_window", "AC5 chaos poll", chaos)
-    must("check_hold_budget_no_edge_force_3325", "AC6 build.py", build)
+    must("check_hold_budget_no_edge_force_3325", "AC6 wiring", wired_text)
 
     # Issue #3588: busy-path poll after fiber swap-back (extend #3325;
     # no new check_*3588.py). All-busy + edge-free never parks.

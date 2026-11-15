@@ -56,10 +56,7 @@
     },
     {
       "ac": "Build-3143",
-      "path": "build.py",
-      "contains": [
-        "check_mid_provenance_unified.py"
-      ]
+      "wired": "check_mid_provenance_unified.py"
     }
   ]
 }

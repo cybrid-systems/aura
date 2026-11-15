@@ -5,7 +5,7 @@ Contract:
   AC1 is_plausible_module_path refuses empty / whitespace / pure-digit
   AC2 refuse messages before resolve (not only cannot resolve)
   AC3 use/load-module/import snapshot via copy_string_heap_at
-  AC4 unit test + cmake + build.py gate
+  AC4 unit test + cmake + coverage runner
 
 Exit 0 = all rows satisfied.
 """
@@ -16,6 +16,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -36,7 +38,6 @@ def main() -> int:
     mod = _read("src/compiler/evaluator_primitives_module.cpp")
     test = _read("tests/compiler/test_module_path_refuse.cpp")
     cmake = _read("CMakeLists.txt")
-    build = _read("build.py")
 
     must("#2653" in loader, "AC1: loader cites #2653")
     must("is_plausible_module_path" in loader, "AC1: validator")
@@ -59,8 +60,8 @@ def main() -> int:
     must("push_string_heap" in mod, "AC3: error strings via locked push")
 
     must("test_module_path_refuse" in cmake, "AC4: cmake")
-    must("check_module_path_refuse_2653" in build, "AC4: linter")
-    must("cmd_module_path_refuse_coverage" in build, "AC4: coverage cmd")
+    must("check_module_path_refuse_2653" in wired_text, "AC4: linter")
+    must("check_module_path_refuse_2653" in wired_text, "AC4: coverage cmd")
     must("AC1" in test and "AC3" in test and "AC5" in test, "AC4: unit ACs")
     must("#2653" in test, "AC4: test cites #2653")
 

@@ -17,6 +17,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -38,7 +40,6 @@ def main() -> int:
     sec = _read("src/compiler/evaluator_primitives_security.cpp")
     grant_t = _read("tests/compiler/test_grant_macro_self_evo_stamp.cpp")
     lim_t = _read("tests/compiler/test_macro_hygiene_limits.cpp")
-    build = _read("build.py")
 
     # AC1 grant fence
     must("Issue #3029", "AC1", cap)
@@ -71,8 +72,8 @@ def main() -> int:
     must("macro-self-evo-grant-needs-tenant-admin", "AC1 audit test", grant_t)
 
     # AC4 wiring
-    must("check_macro_self_evo_grant_fence_3029", "AC4 build", build)
-    must("cmd_macro_self_evo_grant_fence_3029", "AC4 cmd", build)
+    must("check_macro_self_evo_grant_fence_3029", "AC4 build", wired_text)
+    must("check_macro_self_evo_grant_fence_3029.py", "AC4 cmd", wired_text)
     cite = cap.find("Issue #3029")
     if cite >= 0 and "AgentRegistry" in cap[cite : cite + 2000]:
         fails.append("AC4: must not introduce AgentRegistry")

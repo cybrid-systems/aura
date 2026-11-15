@@ -51,6 +51,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 TMH = ROOT / "src" / "compiler" / "typed_mutation_audit.h"
 PRIM = ROOT / "src" / "compiler" / "evaluator_primitives_security.cpp"
 TST = ROOT / "tests" / "compiler" / "test_evolution_audit_decision_forensic.cpp"
@@ -84,7 +87,6 @@ def main() -> int:
     tmh = TMH.read_text()
     prim = PRIM.read_text()
     tst = TST.read_text()
-    build = BUILD.read_text()
     allow = ALLOW.read_text()
 
     # ── AC1: header fold contract the prune arm rides ───────────────
@@ -196,7 +198,7 @@ def main() -> int:
         not glob.glob(str(ROOT / "docs" / "design" / "4240-*")),
         "AC4: no docs/design/4240-* (per #1655)",
     )
-    must("check_wal_prune_fold_4240.py" in build, "AC4: build.py registers the linter")
+    must("check_wal_prune_fold_4240.py" in wired_text, "AC4: run_checks.py registers the linter")
     must("check_wal_prune_fold_4240.py" in allow, "AC4: root_check_allowlist.txt lists the linter")
 
     if failures:

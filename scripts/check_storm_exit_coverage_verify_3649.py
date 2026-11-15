@@ -24,6 +24,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
 
 CPP = "src/compiler/hot_update_registry.cpp"
 TEST = "tests/compiler/test_exhausted_min_dirty_reemit.cpp"
@@ -99,7 +102,7 @@ def _rows(cpp: str, test: str, build: str) -> list[str]:
     ):
         must(ac, "AC5 runner wired", test)
     must("storm_exit_force_full_active()", "AC5 edge consult in test", test)
-    must("check_storm_exit_coverage_verify_3649", "AC5 build.py registration", build)
+    must("check_storm_exit_coverage_verify_3649", "AC5 build.py registration", wired_text)
     must_not("test_issue_3649", "AC5 no tests/issues literal", test)
     for stale in ROOT.glob("docs/design/*3649*"):
         fails.append(f"AC5: forbidden design doc {stale.name}")
@@ -116,7 +119,7 @@ def main() -> int:
     args = ap.parse_args()
     cpp = _read(CPP)
     test = _read(TEST)
-    build = _read(BUILD)
+    build = wired_text
     if args.self_test:
         broken = cpp.replace("Issue #3649", "Issue #redacted")
         self_fails = _rows(broken, test, build)

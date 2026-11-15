@@ -31,6 +31,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -48,7 +50,6 @@ def main() -> int:
     hh = _read("src/core/cpp26_contract_stats.h")
     q = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
     test = _read("tests/compiler/test_hot_contract_placement.cpp")
-    build = _read("build.py")
     lint3043 = _read("scripts/coverage/checks/check_hot_contract_soft_observe_3043.py")
 
     # ── AC1: harden-armed CHECK path bumps both counters + aborts ───────
@@ -99,13 +100,13 @@ def main() -> int:
     must("3106 AC3", "AC3 test", test)
 
     # ── AC4: production-soak / agent-self-modify presets arm harden ──────
-    # 3043 pattern: linter script name wired in build.py (same gate runner);
+    # 3043 pattern: linter script name gated by run_checks.py (same gate runner);
     # production-soak preset reads the runtime probe hot_contract_harden_armed()
     # to assert harden is armed under the self-modify preset. Compile-flag
     # selection is opt-in via -DAURA_CONTRACTS_HOT_MODE_SOFT_OBSERVE_HARDEN;
     # the env AURA_HOT_HARDEN is the runtime armed probe (Issue #3106 AC4).
-    must("check_hot_contract_harden_3106", "AC4 linter wired", build)
-    must("Issue #3106", "AC4 linter error message", build)
+    must("check_hot_contract_harden_3106", "AC4 linter wired", wired_text)
+    must("check_hot_contract_harden_3106", "AC4 linter error message", wired_text)
     # test_hot_contract_placement.cpp covers #3106 (AC1-AC5 markers)
     for ac in ("3106 AC1", "3106 AC2", "3106 AC3", "3106 AC4", "3106 AC5"):
         must(ac, f"AC4 {ac}", test)

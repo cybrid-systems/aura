@@ -20,7 +20,7 @@ Contract (one row per AC):
   AC4  cleanup-pending / cleanup-pending-count hash keys; no new query:*;
        SSOT ensure_reclaimed_cleanup preserved; no process-global registry
   AC5  extend test_join_drain_reclaim; no test_issue_3272.cpp;
-       no docs/design/ (#1655); build.py wires linter; README contract
+       no docs/design/ (#1655); run_checks.py gates linter; README contract
 
 Exit 0 = all rows satisfied.
 """
@@ -31,6 +31,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -48,7 +50,6 @@ def main() -> int:
     spawn = _read("src/orch/agent_spawn.h")
     prim = _read("src/compiler/evaluator_primitives_agent.cpp")
     test = _read("tests/orch/test_join_drain_reclaim.cpp")
-    build = _read("build.py")
     readme = _read("src/orch/README.md")
 
     must("kHostForgetWindowCloseIssue = 3272", "AC4 stamp", spawn)
@@ -65,7 +66,7 @@ def main() -> int:
     must("3272 AC4", "AC4 test", test)
     must("#2661 no-early-free", "AC1 #2661", test)
     must("idempotent", "AC2 idempotency", test)
-    must("check_host_forget_window_3272", "AC5 build.py", build)
+    must("check_host_forget_window_3272", "AC5 wiring", wired_text)
     must("ensure_reclaimed_cleanup", "AC5 README contract", readme)
     if "query:cleanup-pending" in prim or "query:host-forget-pending" in prim:
         fails.append("AC4: new query:* (reuse query:orch-module-stats)")

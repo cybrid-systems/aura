@@ -65,6 +65,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 IXX = ROOT / "src" / "compiler" / "evaluator.ixx"
 GC = ROOT / "src" / "compiler" / "evaluator_gc.cpp"
 FLAT = ROOT / "src" / "compiler" / "evaluator_eval_flat.cpp"
@@ -96,7 +99,6 @@ def main() -> int:
     gc = GC.read_text()
     flat = FLAT.read_text()
     tst = TST.read_text()
-    build = BUILD.read_text()
     allow = ALLOW.read_text()
 
     # ── AC1: heap-proportional ceiling in the decl + contracts ──────
@@ -160,7 +162,7 @@ def main() -> int:
     must(not glob.glob(str(ROOT / "docs" / "design" / "4474-*")), "AC3: no docs/design/4474-* (per #1655)")
 
     # ── AC4: wiring ─────────────────────────────────────────────────
-    must("check_reclaim_trigger_large_heap_4474.py" in build, "AC4: build.py registers the linter")
+    must("check_reclaim_trigger_large_heap_4474.py" in wired_text, "AC4: run_checks.py registers the linter")
     must("check_reclaim_trigger_large_heap_4474.py" in allow, "AC4: root_check_allowlist.txt lists the linter")
 
     if failures:

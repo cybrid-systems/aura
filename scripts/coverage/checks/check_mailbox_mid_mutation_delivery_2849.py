@@ -26,6 +26,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -53,7 +55,6 @@ def main() -> int:
     fh = _read("src/serve/fiber.h")
     msg = _read("src/compiler/evaluator_primitives_messaging.cpp")
     test = _read("tests/serve/test_mailbox_recv_mutation_boundary.cpp")
-    build = _read("build.py")
     l2680 = _read("scripts/coverage/checks/check_mailbox_boundary_interleave_2680.py")
 
     # AC1 — sole helper + push/fanout sites
@@ -110,7 +111,7 @@ def main() -> int:
     # AC6 — Soft never weakens; residual #2551
     must("never weakens the gate", "AC6", mb)
     must("mailbox_hold_starvation_hard_total", "AC6 residual", mb)
-    must("check_mailbox_mid_mutation_delivery_2849", "AC6", build)
+    must("check_mailbox_mid_mutation_delivery_2849", "AC6", wired_text)
     # #2680 linter still green under sole-helper refactor
     must("note_mailbox_deferred_under_boundary", "AC6 #2680 linter", l2680)
 

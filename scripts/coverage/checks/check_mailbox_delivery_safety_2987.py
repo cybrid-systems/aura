@@ -19,6 +19,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -44,7 +46,6 @@ def main() -> int:
     fh = _read("src/serve/fiber.h")
     msg = _read("src/compiler/evaluator_primitives_messaging.cpp")
     t = _read("tests/serve/test_mailbox_recv_mutation_boundary.cpp")
-    build = _read("build.py")
 
     # AC1 — gate sites + never enqueue
     must("Issue #2987", "AC1", mb)
@@ -94,7 +95,7 @@ def main() -> int:
     # AC6 — inject + linter + no invent
     must("set_mailbox_delivery_inject_for_test", "AC6", ss)
     must("ac2987_6_source_and_linter", "AC6", t)
-    must("check_mailbox_delivery_safety_2987", "AC6", build)
+    must("check_mailbox_delivery_safety_2987", "AC6", wired_text)
     docs = ROOT / "docs" / "design"
     if docs.is_dir():
         for f in docs.glob("2987-*"):

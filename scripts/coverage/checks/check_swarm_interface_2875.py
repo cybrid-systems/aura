@@ -5,7 +5,7 @@ Contract:
   AC1 swarm:population + mean-fit in report/export; discrete grid builder
   AC2 docs/stdlib/swarm.md present
   AC3 suite swarm_interface_2875.aura
-  AC4 linter wired in build.py
+  AC4 linter gated by run_checks.py
   AC5 no docs/design/2875-* / no test_issue_2875.cpp
 
 Exit 0 = all rows satisfied.
@@ -17,6 +17,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -36,7 +38,6 @@ def main() -> int:
     swarm = _read("lib/std/swarm.aura")
     docs = _read("docs/stdlib/swarm.md")
     suite = _read("tests/suite/swarm_interface_2875.aura")
-    build = _read("build.py")
 
     # AC1
     must("#2875", "AC1", swarm)
@@ -61,7 +62,7 @@ def main() -> int:
     must("mean-fit", "AC3", suite)
 
     # AC4
-    must("check_swarm_interface_2875", "AC4", build)
+    must("check_swarm_interface_2875", "AC4", wired_text)
 
     # AC5
     if (ROOT / "tests" / "compiler" / "test_issue_2875.cpp").is_file():

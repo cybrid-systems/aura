@@ -23,7 +23,7 @@ Gate rows:
       (bool overflowed = false; counts match finish counts).
   G4  no destroy+make_void() capacity-miss path left in the six TUs
       (insert-miss now sets overflowed, keeps existing keys).
-  G5  build.py wires this linter.
+  G5  run_checks.py gates this linter.
   G6  test ACs in tests/compiler/test_engine_metrics_facade.cpp (#81967)
       exercising forced overflow (hash-overflow=1 + non-void hash) via
       aura_query_hash_set_force_cap.
@@ -38,6 +38,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 TUS = [
     "src/compiler/evaluator_primitives_security.cpp",
@@ -79,7 +81,6 @@ def read(rel: str) -> str:
 
 def main() -> int:
     print("=== #3282 residual fixed FlatHashTable::create(N) linter ===")
-    build = read("build.py")
     test = read("tests/compiler/test_engine_metrics_facade.cpp")
 
     # G1: no bare create(literal) in the six TUs
@@ -125,8 +126,8 @@ def main() -> int:
         ok = ("overflowed = true;" in src) or ("insert_kv_checked" in src)
         must(ok, f"G4b: {rel} overflow miss path present")
 
-    # G5: build.py wires this linter
-    must("check_query_hash_overflow_3282.py" in build, "G5: build.py wires linter")
+    # G5: run_checks.py gates this linter
+    must("check_query_hash_overflow_3282.py" in wired_text, "G5: run_checks.py gates linter")
 
     # G6: test ACs exercise forced overflow via force-cap hook
     must("aura_query_hash_set_force_cap" in test, "G6: test uses force-cap hook")

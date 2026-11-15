@@ -16,6 +16,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -39,7 +41,6 @@ def main() -> int:
     msg = _read("src/compiler/evaluator_primitives_messaging.cpp")
     ixx = _read("src/compiler/evaluator.ixx")
     test = _read("tests/compiler/test_channel_rendezvous.cpp")
-    build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
     must("Issue #2483", "AC1", msg)
@@ -60,8 +61,8 @@ def main() -> int:
     must("waiting_receivers", "AC3-recv", rbody)
 
     must("2483 AC1", "gate", test)
-    must("check_channel_rendezvous_2483", "gate", build)
-    must("cmd_channel_rendezvous_coverage", "gate", build)
+    must("check_channel_rendezvous_2483", "gate", wired_text)
+    must("check_channel_rendezvous_2483.py", "gate", wired_text)
     must("test_channel_rendezvous", "gate", cmake)
     must("2483 AC4", "gate", test)
 

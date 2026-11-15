@@ -51,6 +51,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 MUT = ROOT / "src" / "compiler" / "evaluator_mutation_boundary.cpp"
 ARENA = ROOT / "src" / "core" / "arena.ixx"
 HDR = ROOT / "src" / "core" / "densify_consistency_report.h"
@@ -72,7 +75,6 @@ def main() -> int:
     arena = ARENA.read_text() if ARENA.exists() else ""
     hdr = HDR.read_text() if HDR.exists() else ""
     tst = TST.read_text() if TST.exists() else ""
-    build = (ROOT / "build.py").read_text()
     allow = (ROOT / "scripts" / "coverage" / "root_check_allowlist.txt").read_text()
     ok = True
 
@@ -142,7 +144,7 @@ def main() -> int:
         and tst.count("ac4144_3_source_cite_and_wiring();") == 1
         and not (ROOT / "tests" / "core" / "test_issue_4144.cpp").exists()
         and no_doc
-        and "check_envframe_pool_slot_remap_4144.py" in build
+        and "check_envframe_pool_slot_remap_4144.py" in wired_text
         and "check_envframe_pool_slot_remap_4144.py" in allow
     )
     report(

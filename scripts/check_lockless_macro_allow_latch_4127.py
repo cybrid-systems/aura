@@ -38,6 +38,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
 
 EFL = "src/compiler/evaluator_eval_flat.cpp"
 MUT = "src/compiler/evaluator_primitives_mutate.cpp"
@@ -95,7 +98,6 @@ def _rows() -> list[str]:
     mut = _read(MUT)
     ixx = _read(IXX)
     net = _read(NET)
-    build = _read(BUILD)
     allow = _read(ALLOWLIST)
     if not efl or not mut or not ixx or not net:
         fails.append("inputs: source files unreadable")
@@ -201,7 +203,7 @@ def _rows() -> list[str]:
         "AC5 (public parity mv)",
         mut,
     )
-    must("check_lockless_macro_allow_latch_4127.py", "AC5 (build.py registration)", build)
+    must("check_lockless_macro_allow_latch_4127.py", "AC5 (build.py registration)", wired_text)
     must("check_lockless_macro_allow_latch_4127.py", "AC5 (root_check_allowlist)", allow)
     for artifact in (
         "docs/design/4127-lockless-macro-allow-latch.md",

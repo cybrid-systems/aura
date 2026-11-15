@@ -23,6 +23,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -44,7 +46,6 @@ def main() -> int:
     steal = _read("src/compiler/evaluator_fiber_mutation.cpp")
     qs = _read("src/compiler/evaluator_primitives_query_type_stats.cpp")
     t = _read("tests/compiler/test_occurrence_goal_persist_rehydrate.cpp")
-    build = _read("build.py")
 
     must("kNestedAbortAuthorityFaceResidualIssue = 3232", "AC1 stamp", aud)
     must("kNestedAbortAuthorityFaceIssue = 3193", "AC1 lineage", aud)
@@ -81,8 +82,8 @@ def main() -> int:
     must("ac3193_1_prod_hold_blocks_rehydrate", "AC4 3193 preserved", t)
     must("schema-3193", "AC4 3193 schema", qs)
     must("schema-3232", "AC4 schema-3232", qs)
-    must("check_nested_abort_authority_face_3232", "AC4 build.py", build)
-    must("check_nested_abort_authority_face_3193", "AC4 3193 linter", build)
+    must("check_nested_abort_authority_face_3232", "AC4 wiring", wired_text)
+    must("check_nested_abort_authority_face_3193", "AC4 3193 linter", wired_text)
 
     if "g_3232_" in aud:
         fails.append("AC5: new g_3232_* counter")

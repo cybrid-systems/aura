@@ -33,6 +33,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -53,7 +55,6 @@ def main() -> int:
     fails: list[str] = []
 
     ast_ixx = _read("src/core/ast.ixx")
-    build = _read("build.py")
     ast_stripped = _strip_comments_and_strings(ast_ixx)
 
     # AC1: child_data_ + child_begin_ + child_count_ declared in FlatAST.
@@ -174,8 +175,8 @@ def main() -> int:
     # AC7: source-cite #3402 + build.py registration; no design docs.
     if "#3402" not in ast_ixx:
         fails.append("AC7: source-cite #3402 missing from ast.ixx")
-    if "check_dense_children_columns_3402" not in build:
-        fails.append("AC7: build.py does not register check_dense_children_columns_3402")
+    if "check_dense_children_columns_3402" not in wired_text:
+        fails.append("AC7: run_checks.py does not register check_dense_children_columns_3402")
 
     if fails:
         for f in fails:

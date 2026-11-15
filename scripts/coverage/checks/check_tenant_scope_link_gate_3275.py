@@ -23,7 +23,7 @@ link-configuration residual without touching the TenantScope body:
   AC4  Soft / sandbox=off / unit light-link unchanged (self-check not
        required; weak no-op preserved)
   AC5  tests extend test_tenant_scope_fiber_mandate.cpp (#81967);
-       no test_issue_3275.cpp; no docs/design/ (#1655); build.py wires
+       no test_issue_3275.cpp; no docs/design/ (#1655); run_checks.py gates
        linter
 
 Exit 0 = all rows satisfied.
@@ -35,6 +35,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -55,7 +57,6 @@ def main() -> int:
     rah = _read("src/serve/runtime_production_abi.h")
     gc = _read("src/core/gc_hooks.h")
     test = _read("tests/compiler/test_tenant_scope_fiber_mandate.cpp")
-    build = _read("build.py")
 
     must("aura_abi_strong_tenant_scope_resume_v", "AC1 weak marker", fb)
     must("aura_abi_strong_tenant_scope_resume_v", "AC2 strong def", fm)
@@ -72,7 +73,7 @@ def main() -> int:
     must("ac3275_2_production_lock_roundtrip", "AC5 test", test)
     must("ac3275_3_soft_no_abort_path", "AC5 test", test)
     must("ac3275_4_linter_and_no_invent", "AC5 test", test)
-    must("check_tenant_scope_link_gate_3275", "AC5 build.py", build)
+    must("check_tenant_scope_link_gate_3275", "AC5 wiring", wired_text)
     if _read("tests/compiler/test_issue_3275.cpp"):
         fails.append("AC5: test_issue_3275.cpp present (forbidden #81967)")
     if _read("docs/design/3275-tenant-scope-link-gate.md"):

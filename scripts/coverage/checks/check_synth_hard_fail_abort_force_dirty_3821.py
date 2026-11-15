@@ -29,6 +29,8 @@ _sys.path.insert(0, str(_Path(__file__).resolve().parents[1]))
 from service_source import service_source  # #5242: interface + implementation units
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -46,7 +48,6 @@ def main() -> int:
     emb = _read("src/compiler/evaluator_mutation_boundary.cpp")
     svc = service_source()
     t = _read("tests/compiler/test_abort_ir_cache_fence_first.cpp")
-    build = _read("build.py")
 
     # ── AC1: synth-hard-fail arm pairs begin → restore → force_dirty ──
     marker = 'force_linear_rollback(composite ? "composite-linear-synth-hard-fail"'
@@ -113,7 +114,7 @@ def main() -> int:
     must("ac3821_2_begin_equals_dirty_count", "AC5 pairing count", t)
     must("ac3821_3_force_dirty_clears_in_progress", "AC5 runtime latch", t)
     must("ac3821_4_soak_no_permanent_latch", "AC5 soak", t)
-    must("check_synth_hard_fail_abort_force_dirty_3821", "AC5 build.py", build)
+    must("check_synth_hard_fail_abort_force_dirty_3821", "AC5 wiring", wired_text)
     if (ROOT / "tests" / "compiler" / "test_issue_3821.cpp").is_file():
         fails.append("AC5: test_issue_3821.cpp present (forbidden #81967)")
     if (ROOT / "tests" / "issues" / "test_issue_3821.cpp").is_file():

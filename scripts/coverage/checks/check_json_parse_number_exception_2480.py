@@ -17,6 +17,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -37,7 +39,6 @@ def main() -> int:
     reg = _read("src/compiler/evaluator_primitives_registry.cpp")
     ixx = _read("src/compiler/evaluator.ixx")
     test = _read("tests/compiler/test_json_parse_number_exception.cpp")
-    build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
     pidx = js.find("EvalValue JsonParser::parse_number")
@@ -61,8 +62,8 @@ def main() -> int:
     must("SILENCE-PRIM", "AC4", body)
     must("2480 AC1", "AC4", test)
 
-    must("check_json_parse_number_exception_2480", "gate", build)
-    must("cmd_json_parse_number_exception_coverage", "gate", build)
+    must("check_json_parse_number_exception_2480", "gate", wired_text)
+    must("check_json_parse_number_exception_2480.py", "gate", wired_text)
     must("test_json_parse_number_exception", "gate", cmake)
     must("2480 AC5", "gate", test)
 

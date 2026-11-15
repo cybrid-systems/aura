@@ -21,6 +21,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -41,7 +43,6 @@ def main() -> int:
     bridge = _read("src/compiler/aura_jit_bridge.cpp")
     reg = _read("src/compiler/hot_update_registry.cpp")
     test = _read("tests/compiler/test_reload_recovery_query.cpp")
-    build = _read("build.py")
 
     # AC1 — sole fail helper
     must("stamp_aot_reload_consistency_proof_fail", "AC1", thin)
@@ -104,7 +105,7 @@ def main() -> int:
     must("ac2845_4_concurrent_fail_success_no_tear", "AC6", test)
     must("ac2845_5_soft_no_extra_stamp", "AC6", test)
     must("ac2845_6_source_and_linter", "AC6", test)
-    must("check_aot_reload_proof_fail_stamp_2845", "AC6", build)
+    must("check_aot_reload_proof_fail_stamp_2845", "AC6", wired_text)
     must("ac2753_1_soft_empty_proof", "AC6 #2753 preserved", test)
     must("ac2776_1_fetch_add_and_seqlock_source", "AC6 #2776 preserved", test)
     if (ROOT / "tests" / "compiler" / "test_issue_2845.cpp").is_file():

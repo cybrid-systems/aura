@@ -7,7 +7,7 @@ Contract (one row per AC):
   AC3  check_pipeline_dod_compliance + pure_wrap static_assert still present
   AC4  dirty short-circuit semantics unchanged; test-only fn-pointer setter
   AC5  schema-3042 + concept_rejection under production stress
-  AC6  this linter wired in build.py; no test_issue_3042.cpp; no docs/design/
+  AC6  this linter gated by run_checks.py; no test_issue_3042.cpp; no docs/design/
 
 Exit 0 = all rows satisfied.
 """
@@ -19,6 +19,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 PROD_PUREWRAP = (
     "src/compiler/pass_impls.ixx",
@@ -55,7 +57,6 @@ def main() -> int:
     sweep = _read("src/compiler/evaluator_primitives_stdlib_review.cpp")
     test = _read("tests/compiler/test_hot_pass_hard_dod.cpp")
     wrap = _read("tests/compiler/test_hot_pass_pure_wrap.cpp")
-    build = _read("build.py")
     linear = _read("tests/compiler/test_linear_batch.cpp")
 
     # ── AC1: grep-clean production PureWrap dirty APIs ──
@@ -104,7 +105,7 @@ def main() -> int:
     must("pure_wrap_no_std_function_dirty_wired", "AC5 metric", core)
 
     # ── AC6: wired + no invent / no design ──
-    must("check_pure_wrap_no_std_function_3042", "AC6", build)
+    must("check_pure_wrap_no_std_function_3042", "AC6", wired_text)
     if (ROOT / "tests" / "compiler" / "test_issue_3042.cpp").is_file():
         fails.append("AC6: test_issue_3042.cpp present (forbidden #81967)")
     if (ROOT / "tests" / "core" / "test_issue_3042.cpp").is_file():

@@ -26,6 +26,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
 
 JIT = "src/compiler/aura_jit_runtime.cpp"
 FLAT = "src/compiler/evaluator_eval_flat.cpp"
@@ -114,7 +117,7 @@ def _rows(jit: str, flat: str, test: str, build: str, allow: str) -> list[str]:
     must("Issue #3972", "AC4 test cite", test)
 
     # AC5 — build.py registration + allowlist append.
-    must("check_jit_densify_remap_3972.py", "AC5 build.py registration", build)
+    must("check_jit_densify_remap_3972.py", "AC5 build.py registration", wired_text)
     must(LINTER, "AC5 allowlist append", allow)
 
     return fails
@@ -128,7 +131,7 @@ def main() -> int:
     jit = _read(JIT)
     flat = _read(FLAT)
     test = _read(TEST)
-    build = _read(BUILD)
+    build = wired_text
     allow = _read(ALLOWLIST)
     if args.self_test:
         broken = jit.replace("closure_env_cells_hit_window_remap_", "closure_redacted_")

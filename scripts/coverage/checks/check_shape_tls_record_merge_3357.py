@@ -22,6 +22,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -39,7 +41,6 @@ def main() -> int:
     hh = _read("src/compiler/shape_profiler.h")
     cpp = _read("src/compiler/shape_profiler.cpp")
     test = _read("tests/compiler/test_shape_profiler_concurrency.cpp")
-    build = _read("build.py")
 
     must("kShapeTlsRecordMergeIssue = 3357", "AC1 stamp", hh)
     must("kShapeTlsMergeBatch", "AC1 batch", hh)
@@ -66,11 +67,15 @@ def main() -> int:
     if "std::function<" in cpp:
         fails.append("AC5: shape_profiler.cpp has std::function<")
     must("ac3357_5_source_and_linter", "AC5 test", test)
-    must("check_shape_tls_record_merge_3357", "AC5 build.py", build)
-    prev = build.find("check_shape_dirty_hook_no_std_function_3271")
-    ours = build.find("check_shape_tls_record_merge_3357")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC5: linter must be wired in build.py AFTER #3271")
+    must("check_shape_tls_record_merge_3357", "AC5 wiring", wired_text)
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must(
+        "check_shape_dirty_hook_no_std_function_3271",
+        "AC5: linter must be gated by run_checks.py (both gated)",
+        wired_text,
+    )
+    must("check_shape_tls_record_merge_3357", "AC5: linter must be gated by run_checks.py (both gated)", wired_text)
     if "schema-3357" in hh or "schema-3357" in cpp:
         fails.append("AC5: new schema-3357 query key")
     if "g_3357_" in hh or "g_3357_" in cpp:

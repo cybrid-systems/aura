@@ -23,6 +23,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -96,7 +98,6 @@ def main() -> int:
     disp = _read("src/compiler/mutate_dispatch.hh")
     t = _read("tests/compiler/test_workspace_lock_unlock.cpp")
     g = _read("tests/compiler/test_mutation_guard_try_acquire_unit.cpp")
-    build = _read("build.py")
 
     lam = mut.find("auto add_mutate = [&](std::string name, auto fn, bool guard_exempt")
     # Window = brace-matched lambda body (drift-proof). The fixed
@@ -145,13 +146,13 @@ def main() -> int:
     must("3450 AC4: fingerprint on locked ws", "AC4 test", t)
 
     must_not("schema-3450", "AC5 no new query key", mut)
-    must("check_add_mutate_read_only_fence_3450", "AC5 build.py", build)
-    must("check_add_mutate_acquire_before_body_3423", "AC5 #3423 retained", build)
+    must("check_add_mutate_read_only_fence_3450", "AC5 wiring", wired_text)
+    must("check_add_mutate_acquire_before_body_3423", "AC5 #3423 retained", wired_text)
     must("workspace_read_only_", "AC5 3423 unit cite", g)
-    prev = build.find("check_add_mutate_acquire_before_body_3423")
-    ours = build.find("check_add_mutate_read_only_fence_3450")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC5: #3450 linter must be wired after #3423")
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must("check_add_mutate_acquire_before_body_3423", "AC5: #3450 linter must be wired (both gated)", wired_text)
+    must("check_add_mutate_read_only_fence_3450", "AC5: #3450 linter must be wired (both gated)", wired_text)
     if (ROOT / "tests" / "compiler" / "test_issue_3450.cpp").is_file():
         fails.append("AC5: forbidden tests/compiler/test_issue_3450.cpp")
     if (ROOT / "tests" / "issues" / "test_issue_3450.cpp").is_file():

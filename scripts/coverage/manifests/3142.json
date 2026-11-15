@@ -73,10 +73,7 @@
     },
     {
       "ac": "Build-3142",
-      "path": "build.py",
-      "contains": [
-        "check_session_bound_dtor_cascade.py"
-      ]
+      "wired": "check_session_bound_dtor_cascade.py"
     }
   ]
 }

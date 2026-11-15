@@ -16,6 +16,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -38,7 +40,6 @@ def main() -> int:
 
     ast = _read("src/core/ast.ixx")
     test = _read("tests/core/test_tag_arity_key_hash.cpp")
-    build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
     # Locate TagArityKeyHash body
@@ -60,8 +61,8 @@ def main() -> int:
     must("2420 AC3", "AC3", test)
 
     must("2420 AC4", "AC4", test)
-    must("check_tag_arity_key_hash_2420", "gate", build)
-    must("cmd_tag_arity_key_hash_coverage", "gate", build)
+    must("check_tag_arity_key_hash_2420", "gate", wired_text)
+    must("check_tag_arity_key_hash_2420.py", "gate", wired_text)
     must("test_tag_arity_key_hash", "gate", cmake)
 
     if fails:

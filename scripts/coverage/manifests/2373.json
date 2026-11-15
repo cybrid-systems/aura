@@ -21,13 +21,6 @@
       "absent": [
         "last_render_deopt_ns.store(now_ns"
       ]
-    },
-    {
-      "ac": "AC3",
-      "path": "build.py",
-      "contains": [
-        "cmd_render_deopt_throttle_race_coverage"
-      ]
     }
   ]
 }

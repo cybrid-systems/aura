@@ -27,6 +27,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from query_prims_sources import read_query_prims  # Issue #2914
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -52,7 +54,6 @@ def main() -> int:
     mb = _read("src/compiler/evaluator_mutation_boundary.cpp")
     q = read_query_prims()
     t = _read("tests/compiler/test_solve_delta_unresolved_export.cpp")
-    build = _read("build.py")
 
     must("Issue #3253", "AC1 cite", impl)
     must("try_instance_repair_before_full", "AC1 repair", impl)
@@ -79,7 +80,7 @@ def main() -> int:
     must_key("schema-3253", "AC6 schema", q)
     must_key("repair-solved-residual-wired", "AC6 wired", q)
     must_key("schema-3031", "AC6 3031", q)
-    must("check_repair_solved_residual_3253", "AC6 build", build)
+    must("check_repair_solved_residual_3253", "AC6 build", wired_text)
     must("ac3253_6_source_and_linter", "AC6 test", t)
     if (ROOT / "tests" / "compiler" / "test_issue_3253.cpp").is_file():
         fails.append("AC6: test_issue_3253.cpp present (forbidden #81967)")

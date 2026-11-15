@@ -74,6 +74,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 IXX = ROOT / "src" / "compiler" / "evaluator.ixx"
 EFL = ROOT / "src" / "compiler" / "evaluator_eval_flat.cpp"
 ENV = ROOT / "src" / "compiler" / "evaluator_env.cpp"
@@ -105,7 +108,6 @@ def main() -> int:
     efl = EFL.read_text()
     env = ENV.read_text()
     tst = TST.read_text()
-    build = BUILD.read_text()
     allow = ALLOW.read_text()
 
     # ── AC1: cache shapes ────────────────────────────────────────────
@@ -324,7 +326,7 @@ def main() -> int:
         "AC12: local lookups branch on the index or reverse-scan",
     )
 
-    must("check_call_resolve_cache_4599.py" in build, "AC8: build.py registers the linter")
+    must("check_call_resolve_cache_4599.py" in wired_text, "AC8: run_checks.py registers the linter")
     must("check_call_resolve_cache_4599.py" in allow, "AC8: root_check_allowlist.txt lists the linter")
 
     if failures:

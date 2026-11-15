@@ -23,6 +23,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -62,7 +64,6 @@ def main() -> int:
     soa = _read("src/compiler/ir_soa.ixx")
     obs = _read("src/compiler/evaluator_primitives_obs_jit.cpp")
     test = _read("tests/compiler/test_batch_dirty_discipline.cpp")
-    build = _read("build.py")
 
     # AC1 — residual metric + static production scan
     must("#2774", "AC1", soa)
@@ -101,7 +102,7 @@ def main() -> int:
     # AC5 — tests + wire
     must("ac2774_1_batch_no_residual", "AC5", test)
     must("ac2774_5_source_cite", "AC5", test)
-    must("check_batch_dirty_multi_via_single_ban_2774", "AC5", build)
+    must("check_batch_dirty_multi_via_single_ban_2774", "AC5", wired_text)
     docs = ROOT / "docs" / "design"
     if docs.is_dir():
         for f in sorted(docs.glob("2774-*")):

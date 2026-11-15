@@ -21,6 +21,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from query_prims_sources import read_query_prims  # Issue #2914
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -68,7 +70,6 @@ def main() -> int:
     q = read_query_prims()
     test = _read("tests/compiler/test_shape_compact_storm_isolation.cpp")
     cmake = _read("CMakeLists.txt")
-    build = _read("build.py")
 
     # ── AC1: on_arena_compact must not call update_deopt_storm_state_ ──
     must("COMPACT", "AC1", spc)  # banner comment fragment
@@ -135,8 +136,8 @@ def main() -> int:
     must("deopt-storm-compact-suppressed", "AC5", q)
     must("shape_compact_storm_isolation_wired", "AC5", sph)
     must("test_shape_compact_storm_isolation", "AC5", cmake)
-    must("check_shape_compact_storm_isolation_2617", "AC5", build)
-    must("cmd_shape_compact_storm_isolation_coverage", "AC5", build)
+    must("check_shape_compact_storm_isolation_2617", "AC5", wired_text)
+    must("check_shape_compact_storm_isolation_2617.py", "AC5", wired_text)
     must("ac5_source_cite", "AC5", test)
 
     # Retain adaptive suppress lineage (#2526) — soft, not Threshold

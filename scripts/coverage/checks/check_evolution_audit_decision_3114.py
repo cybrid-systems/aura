@@ -58,6 +58,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -78,7 +80,6 @@ def main() -> int:
     unify = _read("tests/compiler/test_security_audit_unify.cpp")
     facade = _read("tests/compiler/test_engine_metrics_facade.cpp")
     suite = _read("tests/suite/engine_metrics.aura")
-    build = _read("build.py")
 
     # ── AC1: new query name, stats-impl only, catalog ──
     must("query:evolution-audit-decision", "AC1 register name", query)
@@ -239,8 +240,8 @@ def main() -> int:
         for f in sorted(docs3205.glob("3205-*")):
             fails.append(f"AC12: docs/design/{f.name} present (forbidden #1655)")
 
-    must("check_evolution_audit_decision_3114", "linter wired in build.py", build)
-    must("Issue #3114", "linter error message", build)
+    must("check_evolution_audit_decision_3114", "linter gated by run_checks.py", wired_text)
+    must("check_evolution_audit_decision_3114", "linter error message", wired_text)
     if (ROOT / "tests" / "compiler" / "test_issue_3114.cpp").is_file():
         fails.append("AC: tests/compiler/test_issue_3114.cpp present (forbidden #81967)")
     docs = ROOT / "docs" / "design"

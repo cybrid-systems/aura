@@ -78,6 +78,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 AJ = ROOT / "src" / "compiler" / "aura_jit.cpp"
 BR = ROOT / "src" / "compiler" / "aura_jit_bridge.cpp"
 BRH = ROOT / "src" / "compiler" / "aura_jit_bridge.h"
@@ -122,7 +125,6 @@ def main() -> int:
     sv = SV.read_text() + SV_JIT.read_text()
     tst = TST.read_text()
     pyt = PYT.read_text()
-    build = BUILD.read_text()
     allow = ALLOW.read_text()
 
     # ── AC1: env doors + stub declaration and registration ──────────
@@ -260,7 +262,7 @@ def main() -> int:
     must(not list(ROOT.glob("docs/design/4600-*")), "AC10: no docs/design/4600 markdown (#1655)")
 
     # ── AC11: wiring ────────────────────────────────────────────────
-    must("check_jit_frame_deopt_4600.py" in build, "AC11: build.py registers this linter")
+    must("check_jit_frame_deopt_4600.py" in wired_text, "AC11: run_checks.py registers this linter")
     must("check_jit_frame_deopt_4600.py" in allow, "AC11: root_check_allowlist.txt lists this linter")
 
     if failures:

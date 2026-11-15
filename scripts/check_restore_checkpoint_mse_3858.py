@@ -33,6 +33,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 PRIM = ROOT / "src" / "compiler" / "evaluator_primitives_mutate.cpp"
 MB = ROOT / "src" / "compiler" / "evaluator_mutation_boundary.cpp"
 TST = ROOT / "tests" / "compiler" / "test_hygiene_mutate_closed_loop.cpp"
@@ -44,7 +47,6 @@ def main() -> int:
     prim = PRIM.read_text() if PRIM.exists() else ""
     mb = MB.read_text() if MB.exists() else ""
     tst = TST.read_text() if TST.exists() else ""
-    build = BUILD.read_text() if BUILD.exists() else ""
     allow = ALLOWLIST.read_text() if ALLOWLIST.exists() else ""
     ok = True
 
@@ -113,7 +115,7 @@ def main() -> int:
         not (ROOT / "tests" / "compiler" / "test_issue_3858.cpp").exists()
         and not (ROOT / "docs" / "design" / "3858-0.md").exists()
     )
-    wired = "check_restore_checkpoint_mse_3858.py" in build and ("check_restore_checkpoint_mse_3858.py" in allow)
+    wired = "check_restore_checkpoint_mse_3858.py" in wired_text and ("check_restore_checkpoint_mse_3858.py" in allow)
     report("AC5", wired and no_stray, "build.py + allowlist wired; no strays")
 
     return 0 if ok else 1

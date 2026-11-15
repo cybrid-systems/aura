@@ -20,6 +20,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from query_prims_sources import read_query_prims  # Issue #2914
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -43,7 +45,6 @@ def main() -> int:
     q = read_query_prims()
     test = _read("tests/compiler/test_castop_density_closed_loop.cpp")
     cmake = _read("CMakeLists.txt")
-    build = _read("build.py")
 
     must("Issue #2459", "AC1", pol)
     must("apply_density_closed_loop", "AC1", pol)
@@ -71,8 +72,8 @@ def main() -> int:
     must("castop_density_streak", "AC5", met)
     must("castop_density_gate_reject_total", "AC5", fields)
     must("test_castop_density_closed_loop", "gate", cmake)
-    must("check_castop_density_closed_loop_2459", "gate", build)
-    must("cmd_castop_density_closed_loop_coverage", "gate", build)
+    must("check_castop_density_closed_loop_2459", "gate", wired_text)
+    must("check_castop_density_closed_loop_2459.py", "gate", wired_text)
     must("#2459", "gate", sd)
 
     if fails:

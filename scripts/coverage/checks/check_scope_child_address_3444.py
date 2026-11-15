@@ -23,6 +23,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -51,7 +53,6 @@ def main() -> int:
     t_hier = _read("tests/orch/test_agent_scope_hierarchy.cpp")
     t_orch = _read("tests/orch/test_orch_scope.cpp")
     t_child = _read("tests/compiler/test_orch_scope_child.cpp")
-    build = _read("build.py")
 
     must("kScopeChildAddressIssue = 3444" in scope_h, "AC1: stamp in agent_scope.h")
     must("resolve_scope_path" in scope_h, "AC1: resolve_scope_path")
@@ -83,7 +84,7 @@ def main() -> int:
     must("class AgentRegistry" not in scope_h, "AC5: no AgentRegistry in agent_scope.h")
     must("g_evaluator_agent_scopes" in scope_h, "AC5: still one per-Evaluator map")
     must("#3444" in readme, "AC5: README cites #3444")
-    must("check_scope_child_address_3444" in build, "AC6: build.py wires linter")
+    must("check_scope_child_address_3444" in wired_text, "AC6: run_checks.py gates linter")
     must("3444 AC1" in t_hier, "AC6: test_agent_scope_hierarchy extended")
     must("3444 AC1" in t_orch, "AC6: test_orch_scope extended")
     must("3444 AC1" in t_child, "AC6: test_orch_scope_child extended")
@@ -94,10 +95,10 @@ def main() -> int:
         for f in sorted(docs.glob("3444-*")):
             fails.append(f"AC6: docs/design/{f.name} present (forbidden #1655)")
 
-    lint = _block(build, "def cmd_lint", "def cmd_")
-    i3457 = lint.find("check_eval_flat_sym_intern_3457")
-    i3444 = lint.find("check_scope_child_address_3444")
-    must(i3457 >= 0 and i3444 > i3457, "AC6: cmd_lint sequential after #3457")
+    # The sequential cmd_lint chain is gone (#5246): both checks are gated by
+    # run_checks.py discovery, which has no order to assert.
+    must("check_eval_flat_sym_intern_3457" in wired_text, "AC6: #3457 still gated")
+    must("check_scope_child_address_3444" in wired_text, "AC6: #3444 still gated")
 
     if fails:
         print("FAIL #3444 scope_child_address:")

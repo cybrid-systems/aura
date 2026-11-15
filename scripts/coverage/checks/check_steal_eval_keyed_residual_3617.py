@@ -22,7 +22,7 @@ Contract:
       test_mailbox_fiber_batch); no new test file; no docs/design
   AC6 source-cite evaluate_residual_hard_and_bits +
       aura_fiber_evaluator_id_for_steal_safety; identity mirror wired in
-      MutationBoundaryGuard enter/dtor; build.py wires this linter after
+      MutationBoundaryGuard enter/dtor; run_checks.py gates this linter after
       the #3616 linter
 
 Exit 0 = all rows satisfied.
@@ -34,6 +34,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -56,7 +58,6 @@ def main() -> int:
     arena = _read("src/core/arena.ixx")
     hooks = _read("src/core/gc_hooks.h")
     test = _read("tests/serve/test_steal_complete_gc_defer.cpp")
-    build = _read("build.py")
 
     # AC1 — Lifetime arm keyed + LCP per-eval slots.
     must(
@@ -120,7 +121,7 @@ def main() -> int:
         for f in sorted(docs.glob("3617-*")):
             fails.append(f"AC5: docs/design/{f.name} present (forbidden #1655)")
 
-    # AC6 — source-cite + identity mirror + build.py wiring order.
+    # AC6 — source-cite + identity mirror + gate wiring order.
     must("evaluate_residual_hard_and_bits", "AC6 source-cite", test)
     must("aura_fiber_evaluator_id_for_steal_safety(stolen)", "AC6 identity source-cite", test)
     must("set_current_eval_identity", "AC6 Guard-enter mirror", mb)
@@ -129,11 +130,11 @@ def main() -> int:
     must("aura_fiber_eval_identity_get", "AC6 fiber-local identity mirror", hooks)
     must("stamp_lifetime_consistency_proof_for", "AC6 arena keyed stamp", arena)
     must("stamp_lifetime_consistency_proof_for", "AC6 steal-complete keyed stamp", efm)
-    must("check_steal_eval_keyed_residual_3617", "AC6 build.py", build)
-    prev = build.find("check_jit_anon_linear_prologue_3616")
-    ours = build.find("check_steal_eval_keyed_residual_3617")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC6: #3617 linter must run after #3616")
+    must("check_steal_eval_keyed_residual_3617", "AC6 wiring", wired_text)
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must("check_jit_anon_linear_prologue_3616", "AC6: #3617 linter must run (both gated)", wired_text)
+    must("check_steal_eval_keyed_residual_3617", "AC6: #3617 linter must run (both gated)", wired_text)
 
     if fails:
         print("check_steal_eval_keyed_residual_3617: FAIL")

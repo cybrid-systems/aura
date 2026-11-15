@@ -34,10 +34,9 @@
     },
     {
       "ac": "AC4-wiring",
-      "path": "build.py",
-      "contains": [
+      "wired": [
         "check_abort_aot_invalidate_3852",
-        "Issue #3852"
+        "check_abort_aot_invalidate_3852.py"
       ]
     },
     {

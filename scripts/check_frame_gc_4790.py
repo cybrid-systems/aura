@@ -85,6 +85,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 ENV = ROOT / "src" / "compiler" / "evaluator_env.cpp"
 GC = ROOT / "src" / "compiler" / "evaluator_gc.cpp"
 ARENA = ROOT / "src" / "compiler" / "env_frame_arena.hh"
@@ -116,7 +119,6 @@ def main() -> int:
     gc = GC.read_text()
     arena = ARENA.read_text() if ARENA.exists() else ""
     tst = TST.read_text()
-    build = BUILD.read_text()
     allow = ALLOW.read_text()
 
     # AC1: the reuse path holds the slot's shard lock.
@@ -211,7 +213,7 @@ def main() -> int:
     )
 
     # AC5: wiring + no docs/design/4790-*.
-    must("check_frame_gc_4790.py" in build, "AC5: build.py registers this linter")
+    must("check_frame_gc_4790.py" in wired_text, "AC5: run_checks.py registers this linter")
     must("check_frame_gc_4790.py" in allow, "AC5: root_check_allowlist.txt lists this linter")
     must(
         not glob.glob(str(ROOT / "docs" / "design" / "4790-*")),

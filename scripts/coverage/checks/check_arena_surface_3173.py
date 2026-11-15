@@ -26,6 +26,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from query_prims_sources import read_query_prims
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 ADD_RE = re.compile(r'add\(\s*"([^"]+)"')
 HIDDEN_RE = re.compile(r'add_hidden\(\s*"([^"]+)"')
@@ -65,7 +67,6 @@ def main() -> int:
     batch = _read("tests/core/test_arena_batch.cpp")
     gc = _read("tests/serve/test_gc_compact_batch.cpp")
     sweep = _read("tests/compiler/test_production_sweep.cpp")
-    build = _read("build.py")
     q = read_query_prims()
 
     public = [n for n in ADD_RE.findall(mem) if n.startswith("arena:")]
@@ -98,8 +99,8 @@ def main() -> int:
     must("3173: compact public", "AC5 test", batch)
     must("test_arena().defrag()", "AC5 gc C++ defrag", gc)
     must("mw:arena-compact", "AC5 sweep", sweep)
-    must("check_arena_surface_3173", "AC6 build", build)
-    must("cmd_arena_surface_3173", "AC6 cmd", build)
+    must("check_arena_surface_3173", "AC6 build", wired_text)
+    must("check_arena_surface_3173.py", "AC6 cmd", wired_text)
     if (ROOT / "tests" / "compiler" / "test_issue_3173.cpp").is_file():
         fails.append("AC6: test_issue_3173.cpp present (forbidden #81967)")
     if (ROOT / "tests" / "core" / "test_issue_3173.cpp").is_file():

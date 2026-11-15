@@ -30,6 +30,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -51,7 +53,6 @@ def main() -> int:
     arena = _read("src/core/arena.ixx")
     moving = _read("tests/core/test_moving_compact.cpp")
     fail_closed = _read("tests/core/test_moving_densify_fail_closed.cpp")
-    build = _read("build.py")
 
     must("Issue #3781", "AC1 cite", arena)
     must("this_window_remap", "AC1 this-window map", arena)
@@ -114,7 +115,7 @@ def main() -> int:
     must("3781", "AC6 fail_closed suite", fail_closed)
     must("ac3781_", "AC6 fail_closed tests", fail_closed)
     must("3469: A still a remap key after window 2", "AC6 3469 retained", moving)
-    must("check_densify_this_window_rewrite_3781", "AC6 build.py", build)
+    must("check_densify_this_window_rewrite_3781", "AC6 wiring", wired_text)
 
     if fails:
         print("FAIL #3781 densify_this_window_rewrite:")

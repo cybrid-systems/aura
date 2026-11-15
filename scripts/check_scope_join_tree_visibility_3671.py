@@ -23,6 +23,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -35,7 +37,6 @@ def _rows(must, must_count, must_not) -> list[str]:
 
     prim = _read("src/compiler/evaluator_primitives_agent.cpp")
     test = _read("tests/orch/test_scope_join_tree_visibility.cpp")
-    build = _read("build.py")
 
     # AC1: capture + guard + deny intern.
     must("make_scope_addr_fail, add_deny_class]", "AC1 capture", prim)
@@ -64,7 +65,7 @@ def _rows(must, must_count, must_not) -> list[str]:
         fails.append("AC5: test_issue_3671.cpp present (forbidden per #81934)")
     if _read("docs/design/3671-join-all-tree-visibility.md"):
         fails.append("AC5: docs/design/ exists — forbidden per #1655")
-    must("check_scope_join_tree_visibility_3671", "AC5 build.py", build)
+    must("check_scope_join_tree_visibility_3671", "AC5 run_checks.py", wired_text)
     return fails
 
 

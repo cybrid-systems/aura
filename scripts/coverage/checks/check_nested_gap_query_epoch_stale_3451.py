@@ -25,6 +25,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -50,7 +52,6 @@ def main() -> int:
     hyg = _read("tests/compiler/test_hygiene_mutate_closed_loop.cpp")
     rest = _read("tests/core/test_incremental_restamp.cpp")
     l3312 = _read("scripts/coverage/checks/check_nested_return_not_triad_3312.py")
-    build = _read("build.py")
 
     nest = mb.find("Issue #3312: production nested success may thin-hot-cone")
     nwin = mb[nest : nest + 2800] if nest >= 0 else ""
@@ -87,12 +88,14 @@ def main() -> int:
     must("kNestedGapQueryEpochStaleIssue = 3451", "AC5 stamp", we)
     must("ac3451_5_source_and_linter", "AC5 hygiene source", hyg)
     must("3451", "AC5 incremental restamp", rest)
-    must("check_nested_gap_query_epoch_stale_3451", "AC5 build.py", build)
+    must("check_nested_gap_query_epoch_stale_3451", "AC5 wiring", wired_text)
     must("force_query_epoch_stale_from_restamp_budget", "AC5 extend #3312 linter", l3312)
-    prev = build.find("check_nested_return_not_triad_3312")
-    ours = build.find("check_nested_gap_query_epoch_stale_3451")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC5: linter must be wired in build.py AFTER #3312")
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must("check_nested_return_not_triad_3312", "AC5: linter must be gated by run_checks.py (both gated)", wired_text)
+    must(
+        "check_nested_gap_query_epoch_stale_3451", "AC5: linter must be gated by run_checks.py (both gated)", wired_text
+    )
     must_not("schema-3451", "AC5 no new query key", mb)
     must_not("schema-3451", "AC5 no new query key decode", dec)
     if (ROOT / "tests" / "issues" / "test_issue_3451.cpp").is_file():

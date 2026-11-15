@@ -24,6 +24,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -44,7 +46,6 @@ def main() -> int:
     tc = _read("src/compiler/evaluator_typecheck.cpp")
     occ = _read("tests/compiler/test_occurrence_goal_persist_rehydrate.cpp")
     gaps = _read("tests/compiler/test_typesystem_typed_mutate_incremental_gaps.cpp")
-    build = _read("build.py")
 
     win_at = dtor.find("Issue #3655")
     win = dtor[win_at : win_at + 2200] if win_at >= 0 else ""
@@ -64,13 +65,17 @@ def main() -> int:
 
     must("production_defaults_active()", "AC4 Soft skip", win)
 
-    must("check_persist_sdo_before_unstaged_3655", "AC5 build.py", build)
+    must("check_persist_sdo_before_unstaged_3655", "AC5 wiring", wired_text)
     must("ac3655_persist_requires_this_mutate_sdo", "AC5 persist-rehydrate", occ)
     must("ac3655_non_rebind_persist_sdo", "AC5 gaps suite", gaps)
-    prev = build.find("check_jit_linear_post_mutate_unset_3654")
-    ours = build.find("check_persist_sdo_before_unstaged_3655")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC5: linter must be wired in build.py AFTER #3654")
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must(
+        "check_jit_linear_post_mutate_unset_3654", "AC5: linter must be gated by run_checks.py (both gated)", wired_text
+    )
+    must(
+        "check_persist_sdo_before_unstaged_3655", "AC5: linter must be gated by run_checks.py (both gated)", wired_text
+    )
     if "query:type-linear-commit-health" in win or "query:type-linear-evolution-snapshot" in win:
         fails.append("AC5: rewrote old query:type-linear-* key")
     if _read("tests/compiler/test_issue_3655.cpp"):

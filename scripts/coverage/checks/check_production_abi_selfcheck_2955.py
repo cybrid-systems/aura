@@ -16,6 +16,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -39,7 +41,6 @@ def main() -> int:
     q = _read("src/compiler/evaluator_primitives_obs_jit.cpp")
     test = _read("tests/serve/test_steal_complete_strong_entry.cpp")
     cmake = _read("CMakeLists.txt")
-    build = _read("build.py")
 
     # AC1
     must("Issue #2955", "AC1", hh)
@@ -77,7 +78,7 @@ def main() -> int:
 
     # AC5 / AC6
     must("runtime_production_abi.cpp", "AC5", cmake)
-    must("check_production_abi_selfcheck_2955", "AC5", build)
+    must("check_production_abi_selfcheck_2955", "AC5", wired_text)
     must("2955", "AC5", test)
     if (ROOT / "tests" / "serve" / "test_issue_2955.cpp").is_file():
         fails.append("AC6: test_issue_2955.cpp present (forbidden #81967)")

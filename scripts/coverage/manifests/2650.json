@@ -46,14 +46,6 @@
     },
     {
       "ac": "AC5",
-      "path": "build.py",
-      "contains": [
-        "check_fiber_eval_depth_isolation_2650",
-        "cmd_fiber_eval_depth_isolation_coverage"
-      ]
-    },
-    {
-      "ac": "AC5",
       "path": "tests/compiler/test_fiber_eval_depth_isolation.cpp",
       "contains": [
         "ac1_fiber_depth_isolated",

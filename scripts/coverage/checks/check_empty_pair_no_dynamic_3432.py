@@ -25,6 +25,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -44,7 +46,6 @@ def main() -> int:
     test = _read("tests/compiler/test_bidirectional_match_check.cpp")
     lint3330 = _read("scripts/coverage/checks/check_bidirectional_uncovered_no_dynamic_3330.py")
     lint3044 = _read("scripts/coverage/checks/check_bidirectional_tag_coverage_3044.py")
-    build = _read("build.py")
 
     start = impl.find("TypeId InferenceEngine::synthesize_flat")
     pair = impl.find("case Tag::Pair:", start) if start >= 0 else -1
@@ -73,14 +74,14 @@ def main() -> int:
     must("kBidirectionalUncoveredTagIssue = 3044", "AC3 3044 stamp", hdr)
     must("3432 AC3", "AC3 test", test)
 
-    must("check_empty_pair_no_dynamic_3432", "AC4 build.py", build)
+    must("check_empty_pair_no_dynamic_3432", "AC4 wiring", wired_text)
     must("3432 AC4", "AC4 test", test)
     must("3330", "AC4 3330 linter kept", lint3330)
     must("3044", "AC4 3044 linter kept", lint3044)
-    prev = build.find("check_bidirectional_uncovered_no_dynamic_3330")
-    ours = build.find("check_empty_pair_no_dynamic_3432")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC4: #3432 linter must run after #3330")
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must("check_bidirectional_uncovered_no_dynamic_3330", "AC4: #3432 linter must run (both gated)", wired_text)
+    must("check_empty_pair_no_dynamic_3432", "AC4: #3432 linter must run (both gated)", wired_text)
     if "schema-3432" in impl or "schema-3432" in hdr:
         fails.append("AC4: new schema-3432 query key")
     if "g_3432_" in impl or "g_3432_" in hdr:

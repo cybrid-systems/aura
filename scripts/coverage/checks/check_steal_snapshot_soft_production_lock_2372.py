@@ -17,6 +17,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -41,7 +43,6 @@ def main() -> int:
     q = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
     test = _read("tests/serve/test_steal_snapshot_soft_production_lock.cpp")
     cmake = _read("CMakeLists.txt")
-    bp = _read("build.py")
 
     # AC1 Soft ignored under production lock
     must("set_steal_snapshot_soft_production_locked", "AC1", fh)
@@ -77,7 +78,7 @@ def main() -> int:
     must("steal-snapshot-soft-forbidden-wired", "AC5", q)
     must("steal-snapshot-soft-production-locked", "AC5", q)
     must("test_steal_snapshot_soft_production_lock", "AC5", cmake)
-    must("cmd_steal_snapshot_soft_production_lock_coverage", "AC5", bp)
+    must("check_steal_snapshot_soft_production_lock_2372.py", "AC5", wired_text)
     must("AC5:", "AC5", test)
     must("Issue #2372", "AC5", test)
 

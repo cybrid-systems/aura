@@ -25,6 +25,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -106,7 +108,6 @@ def main() -> int:
     mut_other = _read("src/compiler/evaluator_primitives_mutation.cpp")
     mut_boundary = _read("src/compiler/evaluator_mutation_boundary.cpp")
     dispatch = _read("src/compiler/mutate_dispatch.hh")
-    build = _read("build.py")
     t = _read("tests/compiler/test_hygiene_mutate_closed_loop.cpp")
 
     # AC1 — every structural mutate primitive must contain the SSOT acquire.
@@ -163,7 +164,7 @@ def main() -> int:
         fails.append("AC5: forbidden docs/design/3192-* per #1655")
 
     # AC6 — wired into build.py.
-    must("check_mutate_dispatch_sole_entry_3192", "AC6", build)
+    must("check_mutate_dispatch_sole_entry_3192", "AC6", wired_text)
 
     if fails:
         print("FAIL #3192 mutate_dispatch_sole_entry:")

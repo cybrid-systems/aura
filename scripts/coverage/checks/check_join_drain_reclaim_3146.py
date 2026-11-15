@@ -36,6 +36,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -52,7 +54,6 @@ def main() -> int:
 
     spawn = _read("src/orch/agent_spawn.h")
     test = _read("tests/orch/test_join_drain_reclaim.cpp")
-    build = _read("build.py")
     lint3110 = _read("scripts/coverage/checks/check_join_drain_reclaim_3110.py")
 
     # ── AC1: production auto-wait Timeout retains must_wait_reclaimed
@@ -218,8 +219,8 @@ def main() -> int:
         if "Issue #3146" not in lint3110:
             fails.append("AC8: #3110 linter contract docstring does not reference #3146 (refinement lineage)")
     # Sibling (#3146) linter wired into build.py.
-    must("check_join_drain_reclaim_3146", "AC8 build.py wiring for #3146 linter", build)
-    must("Issue #3146", "AC8 build.py linter error message references #3146", build)
+    must("check_join_drain_reclaim_3146", "AC8 gate wiring for #3146 linter", wired_text)
+    must("check_join_drain_reclaim_3146", "AC8 wiring linter error message references #3146", wired_text)
     # No process-global AgentRegistry (Soft/Off not a vulnerability).
     # Strip C++ comments before checking — agent_spawn.h file-header comment
     # (line 9) lists the #1966 forbidden patterns as a contract guard, so

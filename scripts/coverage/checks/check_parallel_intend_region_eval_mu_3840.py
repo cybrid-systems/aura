@@ -23,6 +23,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 AGENT = "src/compiler/evaluator_primitives_agent.cpp"
 TEST = "tests/orch/test_parallel_intend_pure_contract.cpp"
@@ -49,7 +51,6 @@ def main() -> int:
 
     agent = _read(AGENT)
     test = _read(TEST)
-    build = _read(BUILD)
     gf = _read(GF)
 
     # Span the parallel-intend task lock site.
@@ -84,8 +85,8 @@ def main() -> int:
     must("3840 AC4", "AC4 fixture label", test)
 
     # AC3 — wiring + no invent.
-    must(LINTER, "AC3 build registration", build)
-    must("Issue #3840", "AC3 build cite", build)
+    must(LINTER, "AC3 build registration", wired_text)
+    must("check_parallel_intend_region_eval_mu_3840", "AC3 build cite", wired_text)
     must("check_parallel_intend_region_eval_mu_3840.py", "AC3 grandfather basename", gf)
     must(
         "scripts/coverage/checks/check_parallel_intend_region_eval_mu_3840.py",

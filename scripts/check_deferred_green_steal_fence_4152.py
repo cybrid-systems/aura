@@ -53,6 +53,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 TMH = ROOT / "src" / "compiler" / "typed_mutation_audit.h"
 EMB = ROOT / "src" / "compiler" / "evaluator_mutation_boundary.cpp"
 TEST = ROOT / "tests" / "compiler" / "test_type_linear_commit_health.cpp"
@@ -179,8 +182,8 @@ def main() -> int:
         "AC5: no docs/design/4152-* (#1655)",
     )
     check(
-        "check_deferred_green_steal_fence_4152.py" in BUILD.read_text(),
-        "AC5: build.py wires this linter",
+        "check_deferred_green_steal_fence_4152.py" in wired_text,
+        "AC5: run_checks.py gates this linter",
     )
     check(
         "check_deferred_green_steal_fence_4152.py" in ALLOWLIST.read_text(),

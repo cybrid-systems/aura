@@ -32,6 +32,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from query_prims_sources import read_query_prims
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -161,7 +163,7 @@ def main() -> int:
             fails.append(f"AC5: docs/design/{f.name} present (forbidden #1655)")
 
     # Coverage wiring — linter must be reachable from build.py.
-    must("check_hold_budget_synthetic_yield_3133", "AC6 build.py wiring", _read("build.py") + _read("pyproject.toml"))
+    must("check_hold_budget_synthetic_yield_3133", "AC6 gate wiring", wired_text)
 
     if fails:
         for f in fails:

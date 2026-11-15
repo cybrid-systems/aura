@@ -29,6 +29,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -51,7 +53,6 @@ def main() -> int:
     sec = _read("src/compiler/evaluator_security.cpp")
     _read("src/compiler/typed_mutation_audit_hooks.cpp")
     test = _read("tests/core/test_tenant_isolation_enforcement.cpp")
-    build = _read("build.py")
     prim = _read("src/compiler/evaluator_primitives_security.cpp")
 
     # ── AC1 IsolationDeny TypedMid join ──
@@ -79,8 +80,8 @@ def main() -> int:
 
     # ── AC4: forbid production epoch?:1 outside Soft arms; no query key ──
     must("Issue #3801", "AC4 cite sec", sec)
-    must("check_isolation_deny_mid_join_3801", "AC4 build.py", build)
-    must("Issue #3801", "AC4 build cite", build)
+    must("check_isolation_deny_mid_join_3801", "AC4 wiring", wired_text)
+    must("check_isolation_deny_mid_join_3801", "AC4 build cite", wired_text)
     must_not("schema-3801", "AC4 no schema key", prim)
     must_not("issue-3801", "AC4 no issue key", prim)
     for rel in ("tests/core/test_issue_3801.cpp", "tests/compiler/test_issue_3801.cpp"):

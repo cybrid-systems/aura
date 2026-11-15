@@ -69,6 +69,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 RT = ROOT / "src" / "compiler" / "aura_jit_runtime.cpp"
 SVC = ROOT / "src" / "compiler" / "service.ixx"
 SVC_JIT = ROOT / "src" / "compiler" / "service_exec_jit.cpp"
@@ -223,7 +226,6 @@ def main() -> int:
     svc = (SVC.read_text() if SVC.exists() else "") + (SVC_JIT.read_text() if SVC_JIT.exists() else "")
     pair = PAIR.read_text() if PAIR.exists() else ""
     reg = REG.read_text() if REG.exists() else ""
-    build = BUILD.read_text() if BUILD.exists() else ""
     allow = ALLOW.read_text() if ALLOW.exists() else ""
 
     # -- AC1: the refuse arm ahead of the legacy callee_val echo -------
@@ -364,7 +366,7 @@ def main() -> int:
             )
 
     # -- AC5: wiring ---------------------------------------------------
-    must("check_jit_pair_mutation_4602.py" in build, "AC5: build.py registers this linter")
+    must("check_jit_pair_mutation_4602.py" in wired_text, "AC5: run_checks.py registers this linter")
     must(
         "check_jit_pair_mutation_4602.py" in allow,
         "AC5: root_check_allowlist.txt lists this linter",

@@ -19,6 +19,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -36,7 +38,6 @@ def main() -> int:
     poh = _read("src/serve/parallel_orch.h")
     agent = _read("src/compiler/evaluator_primitives_agent.cpp")
     test = _read("tests/orch/test_parallel_intend_pure_contract.cpp")
-    build = _read("build.py")
 
     must("kParallelRegionKeyMissingIssue = 3243", "AC2 stamp", poh)
     must("region_key_missing_serialized_total", "AC2 counter", poh)
@@ -55,7 +56,7 @@ def main() -> int:
 
     must("ac3243_1_soft", "AC1 Soft test", test)
     must("ac3243_2_prod_zero", "AC2 prod test", test)
-    must("check_parallel_region_key_missing_3243", "AC5 build.py", build)
+    must("check_parallel_region_key_missing_3243", "AC5 wiring", wired_text)
     if (ROOT / "tests" / "orch" / "test_issue_3243.cpp").is_file():
         fails.append("AC5: tests/orch/test_issue_3243.cpp present (forbidden #81967)")
     if _read("docs/design/3243-region-key-missing.md"):

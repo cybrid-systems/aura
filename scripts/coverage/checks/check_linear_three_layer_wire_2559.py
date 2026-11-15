@@ -33,6 +33,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 # ── Inventory (source of truth for AC comments / future growth) ──────────
 # Type layer production sites that must route linear deny / post-mutate.
@@ -109,7 +111,6 @@ def main(argv: list[str] | None = None) -> int:
     arx = _read("src/core/arena.ixx")
     test = _read("tests/compiler/test_linear_three_layer_wire.cpp")
     cmake = _read("CMakeLists.txt")
-    build = _read("build.py")
     this = _read("scripts/coverage/checks/check_linear_three_layer_wire_2559.py")
 
     # ── AC1: outermost hard-gate / boundary uses unified linear deny ──
@@ -205,8 +206,8 @@ def main(argv: list[str] | None = None) -> int:
     must("ac5_source_inventory", "AC6", test)
     must("ac6_linter_self_test", "AC6", test)
     must("test_linear_three_layer_wire", "AC6", cmake)
-    must("check_linear_three_layer_wire_2559", "AC6", build)
-    must("cmd_linear_three_layer_wire_coverage", "AC6", build)
+    must("check_linear_three_layer_wire_2559", "AC6", wired_text)
+    must("check_linear_three_layer_wire_2559.py", "AC6", wired_text)
 
     # Inventory files must exist (prevents silent path drift).
     for rel in TYPE_LAYER_SITES + IR_LAYER_SITES + MEMORY_LAYER_SITES:

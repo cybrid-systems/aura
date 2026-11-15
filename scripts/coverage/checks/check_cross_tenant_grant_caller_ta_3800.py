@@ -21,6 +21,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -37,7 +39,6 @@ def main() -> int:
 
     iso = _read("src/core/workspace_isolation.hh")
     test_iso = _read("tests/core/test_tenant_isolation_enforcement.cpp")
-    build = _read("build.py")
     prim = _read("src/compiler/evaluator_primitives_security.cpp")
 
     # ── AC1/AC2 fence: caller-only TA; no OR of target ──
@@ -72,8 +73,8 @@ def main() -> int:
     must("#3086 AC3/#3800", "AC4 oracle cite", test_iso)
     must("target-only TA → deny", "AC4 oracle deny", test_iso)
     must("cross_grant_bits unchanged when only target holds TenantAdmin", "AC4 bits unchanged", test_iso)
-    must("check_cross_tenant_grant_caller_ta_3800", "AC4 build.py", build)
-    must("Issue #3800", "AC4 build cite", build)
+    must("check_cross_tenant_grant_caller_ta_3800", "AC4 wiring", wired_text)
+    must("check_cross_tenant_grant_caller_ta_3800", "AC4 build cite", wired_text)
     if "schema-3800" in prim:
         fails.append("AC4: schema-3800 leaked into posture — forbidden")
     if "issue-3800" in prim:

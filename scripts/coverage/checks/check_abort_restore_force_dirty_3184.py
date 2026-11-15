@@ -57,6 +57,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from service_source import service_source  # #5242: interface + implementation units
 
 ROOT = Path(__file__).resolve().parents[3]
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 IR_CACHE_PURE = ROOT / "src" / "compiler" / "ir_cache_pure.ixx"
 EVALUATOR = ROOT / "src" / "compiler" / "evaluator.ixx"
@@ -86,7 +87,6 @@ def main() -> int:
     _read(EVALUATOR)
     svc = service_source()
     emb = _read(MUTATION_BOUNDARY)
-    build = _read(BUILD_PY)
 
     # ── AC1: CacheEntryVersionStamp carries abort_force_generation ──
     ac1_struct = "struct CacheEntryVersionStamp" in ir
@@ -256,7 +256,7 @@ def main() -> int:
     rows.append({"ac": "AC6_no_orphan_site", "ok": ac6_ok, "delegated_to": "AC3"})
 
     # ── AC7: linter wired, no docs/design/, no tests/issues/ ──
-    ac7_wired = "check_abort_restore_force_dirty_3184" in build
+    ac7_wired = "check_abort_restore_force_dirty_3184" in wired_text
     no_design = True
     if DOCS_DESIGN_DIR.is_dir():
         for f in sorted(DOCS_DESIGN_DIR.glob("3184-*")):
@@ -267,7 +267,7 @@ def main() -> int:
         fails.append("AC7: tests/issues/test_issue_3184.cpp present (forbidden per #81934)")
     ac7_ok = ac7_wired and no_design and no_issues_test
     if not ac7_wired:
-        fails.append("AC7: linter not wired in build.py")
+        fails.append("AC7: linter not gated by run_checks.py")
     rows.append(
         {
             "ac": "AC7_no_invent",

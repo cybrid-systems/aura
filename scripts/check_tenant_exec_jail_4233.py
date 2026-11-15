@@ -40,6 +40,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _strip_cpp_comments(src: str) -> str:
@@ -167,8 +169,7 @@ def main() -> int:
     must("len(EXEMPT_2ARG_OPS) != 7" in inv, "AC6: frozen exempt-count guard intact")
 
     # ── AC7: wiring + runtime AC host file + no invent ──
-    build = read("build.py")
-    must("check_tenant_exec_jail_4233" in build, "AC7: build.py wires the #4233 linter")
+    must("check_tenant_exec_jail_4233" in wired_text, "AC7: run_checks.py wires the #4233 linter")
     allow = read("scripts/coverage/root_check_allowlist.txt")
     must("check_tenant_exec_jail_4233.py" in allow, "AC7: linter on the root_check_allowlist")
     tf = read("tests/core/test_tenant_isolation_enforcement.cpp")

@@ -16,6 +16,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -36,7 +38,6 @@ def main() -> int:
     bound = _read("src/compiler/evaluator_mutation_boundary.cpp")
     obs = _read("src/compiler/evaluator_primitives_obs_jit.cpp")
     test = _read("tests/compiler/test_capture_audit_event_forced_enforcement_link.cpp")
-    build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
     def_pos = h.find("inline void capture_audit_event_forced")
@@ -80,7 +81,7 @@ def main() -> int:
     must("test_capture_audit_event_forced_enforcement_link", "AC3", cmake)
 
     # AC4
-    must("check_capture_audit_event_forced_enforcement_link_2814", "AC4", build)
+    must("check_capture_audit_event_forced_enforcement_link_2814", "AC4", wired_text)
     docs = ROOT / "docs" / "design"
     if docs.is_dir():
         for f in sorted(docs.glob("2814-*")):

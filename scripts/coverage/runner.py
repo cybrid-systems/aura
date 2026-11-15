@@ -44,6 +44,17 @@ assert _scan_spec.loader is not None
 _scan_spec.loader.exec_module(_scan)
 source_block_after = _scan.source_block_after
 
+# Gate wiring (Issue #5246): a manifest row may assert that a check is gated
+# by the runner itself instead of pinning build.py text. The old 10k-line
+# cmd_lint chain listed every check by name; discovery owns that now.
+_wire_spec = importlib.util.spec_from_file_location(
+    "coverage_wiring",
+    Path(__file__).resolve().parent / "checks" / "_wiring.py",
+)
+_wiring = importlib.util.module_from_spec(_wire_spec)
+assert _wire_spec.loader is not None
+_wire_spec.loader.exec_module(_wiring)
+
 # Diffing these paths forces a full manifest run under --changed.
 ALWAYS_ALL_PREFIXES = (
     "scripts/coverage/",
@@ -133,6 +144,30 @@ def run_manifest(data: dict) -> list[str]:
             for rel in check["forbid"]:
                 if (ROOT / rel).is_file():
                     fails.append(f"{prefix}: unexpected file {rel!r}")
+            continue
+
+        # Issue #5246: wiring rows. "wired" asserts a check script is gated
+        # by run_checks.py discovery; "gated_manifest" asserts this issue's
+        # manifest is still in the runner's set (not skipped). Both replace
+        # the old "grep build.py for the linter name" rows.
+        if "wired" in check and "path" not in check and "paths" not in check:
+            for name in _as_needles(check.get("wired")):
+                if not _wiring.is_wired(name):
+                    fails.append(
+                        f"{prefix}: {name!r} is not gated — no check script under "
+                        "scripts/coverage/checks/ discovered by run_checks.py"
+                    )
+            continue
+
+        if "gated_manifest" in check and "path" not in check and "paths" not in check:
+            for issue_id in _as_needles(check.get("gated_manifest")):
+                try:
+                    n = int(issue_id)
+                except ValueError:
+                    fails.append(f"{prefix}: gated_manifest {issue_id!r} is not an issue id")
+                    continue
+                if n in _skip_ids():
+                    fails.append(f"{prefix}: manifest #{n} is in manifest_skip.txt — the contract no longer runs")
             continue
 
         if "forbid_glob" in check and "path" not in check and "paths" not in check:

@@ -44,6 +44,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _strip_cpp_comments(src: str) -> str:
@@ -82,7 +84,6 @@ def main() -> int:
     scope_raw = _read("src/orch/agent_scope.h")
     scope = _strip_cpp_comments(scope_raw)
     test_src = _read("tests/orch/test_failure_policy_bridge.cpp")
-    build_src = _read("build.py")
     allow_src = _read("scripts/coverage/root_check_allowlist.txt")
     obs_src = _read("src/compiler/evaluator_primitives_observability.cpp")
 
@@ -157,7 +158,7 @@ def main() -> int:
         fails.append("AC5: query:orch-module-stats key must stay (no rename)")
     if "class AgentRegistry" in scope:
         fails.append("AC5: no process-global AgentRegistry")
-    if "check_join_fail_failfast_4114" not in build_src:
+    if "check_join_fail_failfast_4114" not in wired_text:
         fails.append("AC5: linter must be registered in build.py")
     if "check_join_fail_failfast_4114.py" not in allow_src:
         fails.append("AC5: linter must be on the root check allowlist")

@@ -20,6 +20,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -37,7 +39,6 @@ def main() -> int:
     tma = _read("src/compiler/typed_mutation_audit.h")
     sec = _read("src/compiler/evaluator_primitives_security.cpp")
     test = _read("tests/compiler/test_audit_mid_fallback_slo.cpp")
-    build = _read("build.py")
 
     must("kMidFallbackRefuseSeIssue = 3054", "AC1 stamp", tma)
     must("emit_security_event_durable", "AC1 emit", tma)
@@ -62,7 +63,7 @@ def main() -> int:
     must("3054 AC5", "AC5 test", test)
     must("return 0;", "AC5 refuse", tma)
 
-    must("check_mid_fallback_refuse_se_3054", "AC6 build", build)
+    must("check_mid_fallback_refuse_se_3054", "AC6 build", wired_text)
     must("3054 AC6", "AC6 test", test)
     if _read("docs/design/3054-mid-fallback-refuse-se.md"):
         fails.append("AC6: docs/design/3054-* present")

@@ -53,6 +53,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 DIRTY = ROOT / "src" / "compiler" / "dirty_propagation.ixx"
 TMH = ROOT / "src" / "compiler" / "typed_mutation_audit.h"
 TST = ROOT / "tests" / "compiler" / "test_dead_coercion_dirty_cone.cpp"
@@ -79,7 +82,6 @@ def main() -> int:
     dirty = DIRTY.read_text()
     tmh = TMH.read_text()
     tst = TST.read_text()
-    build = BUILD.read_text()
     allow = ALLOW.read_text()
 
     # ── AC1: remirror durability probe + existing #3031 face latch ──
@@ -160,7 +162,7 @@ def main() -> int:
         "AC4: no tests/**/test_issue_4154.cpp (per #81934)",
     )
     must(not glob.glob(str(ROOT / "docs" / "design" / "4154-*")), "AC4: no docs/design/4154-* (per #1655)")
-    must("check_residual_castop_remirror_4154.py" in build, "AC4: build.py registers the linter")
+    must("check_residual_castop_remirror_4154.py" in wired_text, "AC4: run_checks.py registers the linter")
     must(
         "check_residual_castop_remirror_4154.py" in allow,
         "AC4: root_check_allowlist.txt lists the linter",

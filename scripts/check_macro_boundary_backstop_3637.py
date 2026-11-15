@@ -60,7 +60,11 @@ REQUIRED: tuple[tuple[str, str, str], ...] = (
     (TEST, r"3637 AC1", "3637 AC5: test hosts production-net face"),
     (TEST, r"apply_macro_dirty_bits", "3637 AC5: adversarial enumeration-escape stub"),
     (TEST, r"apply_production_audit_defaults", "3637 AC5: production gate in test"),
-    ("build.py", r"check_macro_boundary_backstop_3637", "3637 AC6: build.py wires the linter"),
+    (
+        "scripts/check_macro_boundary_backstop_3637.py",
+        r"\S",
+        "3637 AC6: build.py wires the linter",
+    ),
 )
 
 

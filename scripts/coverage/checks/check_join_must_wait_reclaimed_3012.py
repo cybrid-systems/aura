@@ -29,6 +29,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -46,7 +48,6 @@ def main() -> int:
     spawn = _read("src/orch/agent_spawn.h")
     agent = _read("src/compiler/evaluator_primitives_agent.cpp")
     test = _read("tests/orch/test_join_drain_reclaim.cpp")
-    build = _read("build.py")
 
     # ── AC1: production unset wait → must_wait_reclaimed, no inject ─
     must("Issue #3012", "AC1", spawn)
@@ -83,7 +84,7 @@ def main() -> int:
 
     # ── AC6: tests + no invent + no docs/design/ ───────────────────
     must("#3012 AC1", "AC6", test)
-    must("check_join_must_wait_reclaimed_3012", "AC6", build)
+    must("check_join_must_wait_reclaimed_3012", "AC6", wired_text)
     must("#3012", "AC6", spawn)
     for rel in ("tests/orch/test_issue_3012.cpp", "tests/compiler/test_issue_3012.cpp"):
         if _read(rel):

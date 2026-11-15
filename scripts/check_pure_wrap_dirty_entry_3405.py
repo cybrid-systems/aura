@@ -32,6 +32,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -47,7 +49,6 @@ def main() -> int:
     concepts = _read("src/core/concept_constraints.ixx")
     pipeline_core = _read("src/compiler/pass_pipeline_core.ixx")
     opt_passes = _read("src/compiler/optimization_passes.ixx")
-    build = _read("build.py")
 
     # AC1: ProductionPureWrapPass concept exists + #3405 source-cite anchor.
     if "concept ProductionPureWrapPass" not in concepts:
@@ -143,8 +144,8 @@ def main() -> int:
         fails.append(
             "AC6: ProductionPureWrapPass concept + #3405 source-cite anchor missing from concept_constraints.ixx"
         )
-    if "check_pure_wrap_dirty_entry_3405" not in build:
-        fails.append("AC6: build.py does not register check_pure_wrap_dirty_entry_3405")
+    if "check_pure_wrap_dirty_entry_3405" not in wired_text:
+        fails.append("AC6: run_checks.py does not register check_pure_wrap_dirty_entry_3405")
 
     # Issue #3454 Option B belt: production incremental pack grandfather
     # is explicit and length-capped at today's 5 Wraps. New names in

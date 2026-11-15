@@ -42,6 +42,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -69,7 +71,6 @@ def main() -> int:
     mb_impl = _read("src/compiler/messaging_bridge_impl.cpp")
     efm = _read("src/compiler/evaluator_fiber_mutation.cpp")
     test = _read("tests/serve/test_mailbox_recv_mutation_boundary.cpp")
-    build = _read("build.py")
 
     # ============================================================
     # AC1: push + broadcast_fanout defer on shared-evaluator held
@@ -189,7 +190,7 @@ def main() -> int:
     # ============================================================
     # Self-coverage + build.py wire-up
     # ============================================================
-    must("check_mailbox_boundary_interleave_2680", "self", build)
+    must("check_mailbox_boundary_interleave_2680", "self", wired_text)
     must("#2680", "self", mb)
 
     if fails:

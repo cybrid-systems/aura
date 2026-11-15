@@ -23,6 +23,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 TCP_NAMES = (
     "tcp-connect",
@@ -52,7 +54,6 @@ def main() -> int:
 
     sock = _read("lib/std/socket.aura")
     test = _read("tests/compiler/test_tcp_listen_accept.cpp")
-    build = _read("build.py")
 
     # Strip line comments so documentation of the anti-pattern is not matched.
     sock_code = "\n".join(ln for ln in sock.splitlines() if not ln.lstrip().startswith(";"))
@@ -85,7 +86,7 @@ def main() -> int:
     must("ac2865_3_no_recursive_wrappers", "AC4", test)
     must("ac2865_4_linter", "AC4", test)
     must("Issue #2865", "AC4", test)
-    must("check_std_socket_require_path_2865", "AC4", build)
+    must("check_std_socket_require_path_2865", "AC4", wired_text)
     for rel in (
         "docs/design/2865-std-socket-require.md",
         "docs/2865-std-socket-require.md",

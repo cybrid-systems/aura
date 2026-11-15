@@ -28,6 +28,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -51,7 +53,6 @@ def main() -> int:
     qw = _read("src/compiler/evaluator_primitives_query_workspace.cpp")
     flat = _read("src/compiler/evaluator_eval_flat.cpp")
     test = _read("tests/core/test_general_object_pin_coverage_gate.cpp")
-    build = _read("build.py")
 
     # AC1 — set-code intermediate create uses required-fail wire + fail closed
     must("Issue #2891", "AC1", ev)
@@ -106,7 +107,7 @@ def main() -> int:
     must("ac2891_1_set_code_and_check_form_wire", "AC5", test)
     must("ac2891_2_soft_observe_only", "AC5", test)
     must("ac2891_3_no_void_cast_linter", "AC5", test)
-    must("check_general_object_pin_required_2891", "AC5", build)
+    must("check_general_object_pin_required_2891", "AC5", wired_text)
     if (ROOT / "tests" / "core" / "test_issue_2891.cpp").is_file():
         fails.append("AC5: test_issue_2891.cpp present (forbidden per #81967)")
     docs = ROOT / "docs" / "design"

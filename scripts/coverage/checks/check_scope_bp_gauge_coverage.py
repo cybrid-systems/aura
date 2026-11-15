@@ -23,6 +23,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -41,7 +43,6 @@ def main() -> int:
 
     spawn = _read("src/orch/agent_spawn.h")
     prim = _read("src/compiler/evaluator_primitives_agent.cpp")
-    build = _read("build.py")
 
     # AC1
     must("bp_scope_id", "AC1", spawn)
@@ -86,7 +87,7 @@ def main() -> int:
     must("spec.bp_scope_id = std::move(bp_scope_id)", "AC8", prim)
 
     # AC9
-    must("check_scope_bp_gauge_coverage", "AC9", build)
+    must("check_scope_bp_gauge_coverage", "AC9", wired_text)
 
     # cross-check: stamp-resolve --strict must still be green (no regression)
     r = subprocess.run(

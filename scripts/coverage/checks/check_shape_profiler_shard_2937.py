@@ -21,6 +21,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -58,7 +60,6 @@ def main() -> int:
     hh = _read("src/compiler/shape_profiler.h")
     cpp = _read("src/compiler/shape_profiler.cpp")
     test = _read("tests/compiler/test_shape_profiler_concurrency.cpp")
-    build = _read("build.py")
 
     # ── AC1: sharding ──
     must("#2937", "AC1", hh)
@@ -119,11 +120,11 @@ def main() -> int:
     must("#2141", "AC5", hh)
     must("lock_contended_total", "AC5", hh)
     must("run_test_shape_profiler_concurrency", "AC5", test)
-    must("check_shape_compact_storm_isolation_2617", "AC5 lineage", build)
+    must("check_shape_compact_storm_isolation_2617", "AC5 lineage", wired_text)
 
     # ── AC6: tests + build + no design ──
-    must("check_shape_profiler_shard_2937", "AC6", build)
-    must("cmd_shape_profiler_shard_2937", "AC6", build)
+    must("check_shape_profiler_shard_2937", "AC6", wired_text)
+    must("check_shape_profiler_shard_2937.py", "AC6", wired_text)
     must("Issue #2937", "AC6", test)
     docs = ROOT / "docs" / "design"
     if docs.is_dir():

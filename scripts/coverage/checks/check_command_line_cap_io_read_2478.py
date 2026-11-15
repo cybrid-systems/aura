@@ -17,6 +17,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -35,7 +37,6 @@ def main() -> int:
 
     src = _read("src/compiler/evaluator_primitives_file.cpp")
     test = _read("tests/compiler/test_command_line_cap_io_read.cpp")
-    build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
     # #3174: command-line is deferred until (require "std/process");
@@ -62,8 +63,8 @@ def main() -> int:
     must("test_command_line_cap_io_read", "AC4", test)
     must("kCapIoRead", "AC4", test)
 
-    must("check_command_line_cap_io_read_2478", "gate", build)
-    must("cmd_command_line_cap_io_read_coverage", "gate", build)
+    must("check_command_line_cap_io_read_2478", "gate", wired_text)
+    must("check_command_line_cap_io_read_2478.py", "gate", wired_text)
     must("test_command_line_cap_io_read", "gate", cmake)
     must("2478 AC5", "gate", test)
 

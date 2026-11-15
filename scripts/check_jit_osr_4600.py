@@ -59,6 +59,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 BR = ROOT / "src" / "compiler" / "aura_jit_bridge.cpp"
 BRH = ROOT / "src" / "compiler" / "aura_jit_bridge.h"
 BRS = ROOT / "src" / "compiler" / "aura_jit_bridge_stub.cpp"
@@ -91,7 +94,6 @@ def main() -> int:
     sv = SV.read_text() + SV_JIT.read_text()
     tst = TST.read_text()
     pyt = PYT.read_text()
-    build = BUILD.read_text()
     allow = ALLOW.read_text()
 
     # ── AC1: bridge ABI ─────────────────────────────────────────────
@@ -171,7 +173,7 @@ def main() -> int:
     must(not list(ROOT.glob("docs/design/4600-*")), "AC5: no docs/design/4600 markdown (#1655)")
 
     # ── AC6: wiring ────────────────────────────────────────────────
-    must("check_jit_osr_4600.py" in build, "AC6: build.py registers this linter")
+    must("check_jit_osr_4600.py" in wired_text, "AC6: run_checks.py registers this linter")
     must("check_jit_osr_4600.py" in allow, "AC6: root_check_allowlist.txt lists this linter")
 
     if failures:

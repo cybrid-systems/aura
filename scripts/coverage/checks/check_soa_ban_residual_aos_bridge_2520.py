@@ -19,6 +19,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -44,7 +46,6 @@ def main() -> int:
     test = _read("tests/compiler/test_soa_ban_residual_aos_bridge.cpp")
     dual = _read("tests/compiler/test_ir_soa_dual_emit_batch.cpp")
     cmake = _read("CMakeLists.txt")
-    build = _read("build.py")
 
     # AC1
     must("Issue #2520", "AC1", soa)
@@ -78,8 +79,8 @@ def main() -> int:
     if "TEST-ONLY" not in met and "#2520" not in met:
         fails.append("AC5: metrics missing TEST-ONLY / #2520 residual note")
     must("test_soa_ban_residual_aos_bridge", "AC5", cmake)
-    must("check_soa_ban_residual_aos_bridge_2520", "AC5", build)
-    must("cmd_soa_ban_residual_aos_bridge_coverage", "AC5", build)
+    must("check_soa_ban_residual_aos_bridge_2520", "AC5", wired_text)
+    must("check_soa_ban_residual_aos_bridge_2520.py", "AC5", wired_text)
     must("ac5_observability", "AC5", test)
 
     # Grep: production call sites of to_aos_view( (ignore // comments)

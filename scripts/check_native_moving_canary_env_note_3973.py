@@ -25,6 +25,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
 
 JIT = "src/compiler/aura_jit_runtime.cpp"
 ARENA = "src/core/arena.ixx"
@@ -104,7 +107,7 @@ def _rows(jit: str, arena: str, test: str, build: str, allow: str) -> list[str]:
     must("aura_closure_dispatch_native_checked(cid, args, 1)", "AC6 live dispatch", test)
 
     # AC7 — build.py registration + allowlist append.
-    must("check_native_moving_canary_env_note_3973.py", "AC7 build.py registration", build)
+    must("check_native_moving_canary_env_note_3973.py", "AC7 build.py registration", wired_text)
     must(LINTER, "AC7 allowlist append", allow)
 
     return fails
@@ -118,7 +121,7 @@ def main() -> int:
     jit = _read(JIT)
     arena = _read(ARENA)
     test = _read(TEST)
-    build = _read(BUILD)
+    build = wired_text
     allow = _read(ALLOWLIST)
     if args.self_test:
         broken = jit.replace("walk_env_cells_", "walk_redacted_")

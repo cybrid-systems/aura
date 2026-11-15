@@ -10,7 +10,7 @@ Contract (one row per AC):
       (no recursive iter over index on hot path)
   AC2 commercial_readiness + suite regressions for 5k / 2k-lines
   AC3 suite/e2e coverage for large splits (static; no live aura smoke in gate)
-  AC4 this linter wired in build.py; no docs/design/2770-*
+  AC4 this linter gated by run_checks.py; no docs/design/2770-*
 
 Exit 0 = all rows satisfied.
 """
@@ -22,6 +22,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -82,7 +84,6 @@ def main() -> int:
     src = _read("lib/std/string.aura")
     suite = _read("tests/suite/string_split_fast_5283.aura")
     e2e = _read("tests/e2e/commercial_readiness/commercial_readiness_stdlib_string.aura")
-    build = _read("build.py")
 
     # ── AC1: iterative rewrite present ──
     must("#2770", "AC1", src)
@@ -120,7 +121,7 @@ def main() -> int:
     must("split-words-long", "AC2", e2e)
 
     # ── AC4: wire + no docs/design ──
-    must("check_string_split_iterative_2770", "AC4", build)
+    must("check_string_split_iterative_2770", "AC4", wired_text)
     docs_dir = ROOT / "docs" / "design"
     if docs_dir.is_dir():
         for f in sorted(docs_dir.glob("2770-*")):

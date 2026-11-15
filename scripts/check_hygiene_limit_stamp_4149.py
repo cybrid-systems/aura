@@ -43,6 +43,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 MUT = ROOT / "src" / "compiler" / "evaluator_primitives_mutate.cpp"
 EFL = ROOT / "src" / "compiler" / "evaluator_eval_flat.cpp"
 MCX = ROOT / "src" / "compiler" / "macro_expansion.cpp"
@@ -134,7 +137,7 @@ def main() -> int:
         fails.append("AC5: tests/compiler/test_issue_4149.cpp must not exist (#81934)")
     if any((ROOT / "docs" / "design").glob("4149-*")):
         fails.append("AC5: docs/design/4149-* must not exist (#1655)")
-    if "check_hygiene_limit_stamp_4149" not in BUILD.read_text():
+    if "check_hygiene_limit_stamp_4149" not in wired_text:
         fails.append("AC5: build.py does not wire check_hygiene_limit_stamp_4149.py")
     if "check_hygiene_limit_stamp_4149.py" not in ALLOW.read_text():
         fails.append("AC5: scripts/coverage/root_check_allowlist.txt does not list the linter")

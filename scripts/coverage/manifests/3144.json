@@ -64,10 +64,7 @@
     },
     {
       "ac": "Build-3144",
-      "path": "build.py",
-      "contains": [
-        "check_wildcard_effects_for_fence.py"
-      ]
+      "wired": "check_wildcard_effects_for_fence.py"
     }
   ]
 }

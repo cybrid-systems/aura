@@ -19,6 +19,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -42,7 +44,6 @@ def main() -> int:
     flat = _read("src/compiler/evaluator_eval_flat.cpp")
     ast = _read("src/core/ast.ixx")
     test = _read("tests/compiler/test_move_node_partial_failure_no_dangling.cpp")
-    build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
     ppos = mut.find('add_mutate("mutate:move-node"')
@@ -86,7 +87,7 @@ def main() -> int:
     must("test_move_node_partial_failure_no_dangling", "AC3", cmake)
 
     # AC4
-    must("check_move_node_partial_failure_no_dangling_2803", "AC4", build)
+    must("check_move_node_partial_failure_no_dangling_2803", "AC4", wired_text)
     docs = ROOT / "docs" / "design"
     if docs.is_dir():
         for f in sorted(docs.glob("2803-*")):

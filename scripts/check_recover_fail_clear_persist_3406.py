@@ -44,6 +44,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -68,7 +70,6 @@ def main() -> int:
     fails: list[str] = []
 
     emb = _read("src/compiler/evaluator_mutation_boundary.cpp")
-    build = _read("build.py")
 
     fn_pos = emb.find('extern "C" void aura_outermost_success_persist_occurrence(')
     if fn_pos == -1:
@@ -196,7 +197,7 @@ def main() -> int:
         )
 
     # AC7: build.py registration.
-    if "check_recover_fail_clear_persist_3406" not in build:
+    if "check_recover_fail_clear_persist_3406" not in wired_text:
         fails.append(
             "AC7: build.py does not register "
             "check_recover_fail_clear_persist_3406 (linter not wired into "

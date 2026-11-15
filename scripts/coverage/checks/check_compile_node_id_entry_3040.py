@@ -11,7 +11,7 @@ Contract (one row per AC):
        (zero extra stores).
   AC4  nodeid_only_entry_prevented_total + schema-3040 posture keys.
   AC5  Extends test_tenant_isolation_enforcement.cpp; this linter.
-  AC6  build.py wires this check; no test_issue_3040.cpp; no docs/design/.
+  AC6  run_checks.py gates this check; no test_issue_3040.cpp; no docs/design/.
 
 Exit 0 = all rows satisfied.
 """
@@ -23,6 +23,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 # Agent-reachable NodeId writers that must gate before mutate body.
 RESIDUAL_SITES = (
@@ -91,7 +93,6 @@ def main() -> int:
     iso = _read("src/core/workspace_isolation.hh")
     posture = _read("src/compiler/evaluator_primitives_security.cpp")
     test_iso = _read("tests/core/test_tenant_isolation_enforcement.cpp")
-    build = _read("build.py")
     lint2942 = _read("scripts/coverage/checks/check_side_effect_node_id_mandate_2942.py")
 
     # ── AC1: residual sites gate before mutate body ──
@@ -173,7 +174,7 @@ def main() -> int:
     must("3040", "AC5 2942 lineage", lint2942)
 
     # ── AC6: linter wired + no invent / no design ──
-    must("check_compile_node_id_entry_3040", "AC6", build)
+    must("check_compile_node_id_entry_3040", "AC6", wired_text)
     if (ROOT / "tests" / "core" / "test_issue_3040.cpp").is_file():
         fails.append("AC6: test_issue_3040.cpp present (forbidden #81967)")
     if (ROOT / "tests" / "compiler" / "test_issue_3040.cpp").is_file():

@@ -48,6 +48,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _strip_cpp_comments(src: str) -> str:
@@ -143,8 +145,7 @@ def main() -> int:
     )
 
     # AC6 — build.py + allowlist wiring.
-    build_py = (ROOT / "build.py").read_text(encoding="utf-8")
-    check("check_materialize_defuse_4109" in build_py, "AC6: build.py must register check_materialize_defuse_4109")
+    check("check_materialize_defuse_4109" in wired_text, "AC6: build.py must register check_materialize_defuse_4109")
     allow = ROOT / "scripts" / "coverage" / "root_check_allowlist.txt"
     allow_txt = allow.read_text(encoding="utf-8") if allow.exists() else ""
     check(

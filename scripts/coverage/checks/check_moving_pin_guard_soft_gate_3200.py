@@ -23,6 +23,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -59,7 +61,6 @@ def main() -> int:
     hh = _read("src/core/moving_densify_health.hh")
     q = _read("src/compiler/evaluator_primitives_obs_jit.cpp")
     t = _read("tests/compiler/test_arena_moving_densify_health.cpp")
-    build = _read("build.py")
 
     must("kMovingPinGuardSoftGateIssue = 3200", "AC1 stamp arena", arena)
     must("kMovingPinGuardSoftGateIssue = 3200", "AC1 stamp health", hh)
@@ -91,7 +92,7 @@ def main() -> int:
     must("schema-3200", "AC5 query", q)
     must("pin-or-guard-soft-gate-total", "AC5 query key", q)
     must("ac3200_5_source_and_linter", "AC5 test", t)
-    must("check_moving_pin_guard_soft_gate_3200", "AC5 build.py", build)
+    must("check_moving_pin_guard_soft_gate_3200", "AC5 wiring", wired_text)
     if "query:pin-or-guard-soft-gate" in q:
         fails.append("AC5: new public query key")
 

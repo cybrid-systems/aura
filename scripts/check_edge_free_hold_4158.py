@@ -54,6 +54,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 FIBER = ROOT / "src" / "serve" / "fiber.cpp"
 EMB = ROOT / "src" / "compiler" / "evaluator_mutation_boundary.cpp"
 MHB = ROOT / "src" / "compiler" / "mutation_hold_budget.h"
@@ -71,7 +74,6 @@ def run_rows(texts: dict) -> list[str]:
     fiber = texts["fiber"]
     emb = texts["emb"]
     mhb = texts["mhb"]
-    build = texts["build"]
     allow = texts["allow"]
 
     # ── AC1: quarantine-age escalation in the inbody-window poll ──
@@ -138,7 +140,7 @@ def run_rows(texts: dict) -> list[str]:
     must("Issue #3859" in fiber, "AC3: #3859 quarantine face cite intact")
 
     # ── AC4: wiring + no invent ──
-    must("check_edge_free_hold_4158" in build, "AC4: build.py wires the linter")
+    must("check_edge_free_hold_4158" in wired_text, "AC4: run_checks.py gates the linter")
     must("check_edge_free_hold_4158.py" in allow, "AC4: root_check_allowlist row present")
     must(
         not glob.glob(str(ROOT / "tests" / "**" / "test_issue_4158.cpp"), recursive=True),

@@ -23,12 +23,17 @@
     {
       "ac": "AC4-tests",
       "path": "tests/compiler/test_soa_dirty_aware_pipeline.cpp",
-      "contains": ["4262 AC1", "4262 AC3"]
+      "contains": [
+        "4262 AC1",
+        "4262 AC3"
+      ]
     },
     {
       "ac": "AC4-wiring",
-      "path": "build.py",
-      "contains": ["check_escape_soa_no_flat_4262", "Issue #4262"]
+      "wired": [
+        "check_escape_soa_no_flat_4262",
+        "check_escape_soa_no_flat_4262.py"
+      ]
     },
     {
       "ac": "AC4-forbid",

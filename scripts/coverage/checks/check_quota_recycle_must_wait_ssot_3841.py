@@ -25,6 +25,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 SPAWN = "src/orch/agent_spawn.h"
 TEST = "tests/orch/test_join_drain_reclaim.cpp"
@@ -51,7 +53,6 @@ def main() -> int:
 
     spawn = _read(SPAWN)
     test = _read(TEST)
-    build = _read(BUILD)
     gf = _read(GF)
 
     # AC1 — stamp + keep must_wait + flag.
@@ -109,8 +110,8 @@ def main() -> int:
     must("ac3841_3_abandon_after_quota_recycle_not_invalid", "AC4 test AC3", test)
     must("ac3841_4_batch_keeps_must_wait_after_quota_recycle", "AC4 test AC4", test)
     must("ac3841_5_soft_and_source_cite", "AC4 test AC5", test)
-    must(LINTER, "AC4 build registration", build)
-    must("Issue #3841", "AC4 build cite", build)
+    must(LINTER, "AC4 build registration", wired_text)
+    must("check_quota_recycle_must_wait_ssot_3841", "AC4 build cite", wired_text)
     must(f"{LINTER}.py", "AC4 grandfather basename", gf)
     must(
         f"scripts/coverage/checks/{LINTER}.py",

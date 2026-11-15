@@ -27,6 +27,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
 
 MUT = "src/compiler/evaluator_primitives_mutate.cpp"
 CMP = "src/compiler/evaluator_primitives_compile.cpp"
@@ -101,7 +104,7 @@ def _rows(mut: str, cmp_: str, test: str, build: str) -> list[str]:
     must("static void ac3650_5_source_and_no_artifacts()", "AC5 AC5", test)
     must("ac3650_1_rollback_denied_without_mse();", "AC5 main wired", test)
     must("grant_macro_self_evo", "AC5 MSE grant path", test)
-    must("check_rollback_mse_3650", "AC5 build.py registration", build)
+    must("check_rollback_mse_3650", "AC5 build.py registration", wired_text)
     for stale in ROOT.glob("docs/design/*3650*"):
         fails.append(f"AC5: forbidden design doc {stale.name}")
     for stale in ROOT.glob("tests/**/test_issue_3650*.cpp"):
@@ -118,7 +121,7 @@ def main() -> int:
     mut = _read(MUT)
     cmp_ = _read(CMP)
     test = _read(TEST)
-    build = _read(BUILD)
+    build = wired_text
     if args.self_test:
         broken = mut.replace("Issue #3650", "Issue #redacted")
         self_fails = _rows(broken, cmp_, test, build)

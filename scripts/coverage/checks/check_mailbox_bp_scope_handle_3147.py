@@ -35,6 +35,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -56,7 +58,6 @@ def main() -> int:
     spawn = _read("src/orch/agent_spawn.h")
     scope = _read("src/orch/agent_scope.h")
     test = _read("tests/orch/test_per_scope_bp_admit.cpp")
-    build = _read("build.py")
 
     # ── AC1: agent_send BP arm routes to handle's bp_scope_id
     # Issue #3147 marker must appear in agent_spawn.h.
@@ -170,8 +171,8 @@ def main() -> int:
     # preserve the existing surface (no breakage in the source-cite chain).
     must("#3015", "AC8 lineage preserved (AgentScope #3015 inherit)", scope)
     # Linter wired into build.py.
-    must("check_mailbox_bp_scope_handle_3147", "AC8 build.py wiring for #3147 linter", build)
-    must("Issue #3147", "AC8 build.py linter error message references #3147", build)
+    must("check_mailbox_bp_scope_handle_3147", "AC8 gate wiring for #3147 linter", wired_text)
+    must("check_mailbox_bp_scope_handle_3147", "AC8 wiring linter error message references #3147", wired_text)
     # No process-global AgentRegistry. Strip comments before checking —
     # the file-header warning lists the #1966 forbidden patterns.
     spawn_no_comments = re.sub(r"//[^\n]*", "", spawn)

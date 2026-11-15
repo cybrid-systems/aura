@@ -16,7 +16,7 @@ Contract (one row per AC):
        wait_reclaimed_total); no new query key, no metrics middle insertion
   AC6  Extend tests/orch/test_join_drain_reclaim.cpp (no test_issue_3110.cpp
        per #81967; no docs/design/3110-* per #1655)
-  AC7  Source-cite + build.py wiring + join_agents span variant same pattern
+  AC7  Source-cite + gate wiring + join_agents span variant same pattern
        (mirrors #3146 conditional flag update in both single-handle and
        span variants)
 
@@ -37,6 +37,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -53,7 +55,6 @@ def main() -> int:
 
     spawn = _read("src/orch/agent_spawn.h")
     test = _read("tests/orch/test_join_drain_reclaim.cpp")
-    build = _read("build.py")
     _read("scripts/coverage/manifests/2397.json")
 
     # ── AC1: join_agent auto-wait when Reclaimed + unset wait + production
@@ -140,7 +141,7 @@ def main() -> int:
         for f in sorted(docs.glob("3110-*")):
             fails.append(f"AC6: docs/design/{f.name} present (forbidden #1655)")
 
-    # ── AC7: Source-cite + build.py wiring + join_agents span variant
+    # ── AC7: Source-cite + gate wiring + join_agents span variant
     must("Issue #3110: auto-wait to close the host-forget cleanup window", "AC7 source-cite comment", spawn)
     must(
         "maybe_auto_wait_reclaimed_batch(agents,",
@@ -155,9 +156,9 @@ def main() -> int:
         fails.append(
             f"AC7: expected ≥2 auto-wait comment blocks (join_agent + join_agents), found {auto_wait_comment_count}"
         )
-    # Linter wired in build.py
-    must("check_join_drain_reclaim_3110", "AC7 build.py wiring", build)
-    must("Issue #3110", "AC7 linter error message", build)
+    # Linter gated by run_checks.py
+    must("check_join_drain_reclaim_3110", "AC7 gate wiring", wired_text)
+    must("check_join_drain_reclaim_3110", "AC7 linter error message", wired_text)
     # #2661 / #2924 / #3012 / #3051 / #3087 lineage preserved
     must("wait_reclaimed_body(", "AC7 #2924 wait_reclaimed_body helper preserved", spawn)
     must("complete_agent_join_cleanup(", "AC7 #2661 lineage preserved", spawn)

@@ -26,6 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _source_scan import lambda_body_after  # noqa: E402  (sibling helper)
 
 ROOT = Path(__file__).resolve().parents[3]
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -85,7 +86,6 @@ def main() -> int:
     mut = _read("src/compiler/evaluator_primitives_mutate.cpp")
     emb = _read("src/compiler/evaluator_mutation_boundary.cpp")
     t = _read("tests/serve/test_hold_budget_synthetic_yield_injection.cpp")
-    build = _read("build.py")
 
     start = mut.find("auto add_mutate = ")
     if start < 0:
@@ -124,11 +124,19 @@ def main() -> int:
     must_not("schema-3480", "AC4 no query key", mut)
     must_not("g_3480_", "AC4 no g_3480_*", mut)
 
-    must("check_hold_budget_add_mutate_inbody_poll_3480", "AC6 build.py", build)
-    prev = build.find("check_hold_budget_inbody_force_unlock_3222")
-    ours = build.find("check_hold_budget_add_mutate_inbody_poll_3480")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC6: linter must be wired in build.py AFTER #3222")
+    must("check_hold_budget_add_mutate_inbody_poll_3480", "AC6 wiring", wired_text)
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must(
+        "check_hold_budget_inbody_force_unlock_3222",
+        "AC6: linter must be gated by run_checks.py (both gated)",
+        wired_text,
+    )
+    must(
+        "check_hold_budget_add_mutate_inbody_poll_3480",
+        "AC6: linter must be gated by run_checks.py (both gated)",
+        wired_text,
+    )
 
     if (ROOT / "tests" / "serve" / "test_issue_3480.cpp").is_file():
         fails.append("AC6: test_issue_3480.cpp present (forbidden #81967)")

@@ -25,6 +25,9 @@ import re
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 REPO = Path(__file__).resolve().parents[3]
 
 ADD_TUI_RE = re.compile(r'\badd\(\s*"(tui:[^"]+|terminal:[^"]+)"')
@@ -76,8 +79,8 @@ def check() -> list[str]:
 
     build = _read("build.py")
     _must(
-        "register-render-hot-prim" in build or "cmd_register_render_hot_prim_coverage" in build,
-        "AC5: build.py gate command missing",
+        "register-render-hot-prim" in build or "check_register_render_hot_prim_coverage" in wired_text,
+        "AC5: coverage runner command missing",
         fails,
     )
     _must(

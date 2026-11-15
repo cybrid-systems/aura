@@ -5,7 +5,7 @@ Contract:
   AC1 swarm.aura: swarm-step-abc! employ/onlooker/scout + limit/neighbor
   AC2 abc.aura surface + docs/stdlib/abc.md vs PSO
   AC3 suite abc_2878.aura; INDEX entry
-  AC4 linter wired in build.py
+  AC4 linter gated by run_checks.py
   AC5 no docs/design/2878-* / no test_issue_2878.cpp
 
 Exit 0 = all rows satisfied.
@@ -17,6 +17,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -38,7 +40,6 @@ def main() -> int:
     docs = _read("docs/stdlib/abc.md")
     suite = _read("tests/suite/abc_2878.aura")
     index = _read("lib/std/INDEX.aura")
-    build = _read("build.py")
 
     # AC1
     must("swarm-step-abc!", "AC1", swarm)
@@ -65,7 +66,7 @@ def main() -> int:
     must('"abc"', "AC3", index)
 
     # AC4
-    must("check_abc_2878", "AC4", build)
+    must("check_abc_2878", "AC4", wired_text)
 
     # AC5
     if (ROOT / "tests" / "compiler" / "test_issue_2878.cpp").is_file():

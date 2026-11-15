@@ -21,6 +21,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -41,7 +43,6 @@ def main() -> int:
     sg = _read("scripts/coverage/checks/check_mutate_dispatch_sole_guard_3074.py")
     se = _read("scripts/coverage/checks/check_mutate_dispatch_sole_entry_3192.py")
     t = _read("tests/compiler/test_mutate_batch.cpp")
-    build = _read("build.py")
 
     # AC1 — compile.cpp has no raw add("mutate:
     for i, ln in enumerate(compile_cpp.splitlines(), 1):
@@ -80,7 +81,7 @@ def main() -> int:
     must("test_ac3828_", "AC3 suite", t)
 
     # AC4 — wiring / no invent
-    must("check_mutate_from_feedback_ssot_3828", "AC4 build.py", build)
+    must("check_mutate_from_feedback_ssot_3828", "AC4 wiring", wired_text)
     must("Issue #3828", "AC4 test cite", t)
     if (ROOT / "tests" / "compiler" / "test_issue_3828.cpp").is_file():
         fails.append("AC4: test_issue_3828.cpp present (forbidden invent)")

@@ -27,6 +27,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -48,7 +50,6 @@ def main() -> int:
     sec = _read("src/compiler/evaluator_primitives_security.cpp")
     test = _read("tests/compiler/test_security_posture_trail.cpp")
     tdev = _read("src/compiler/typed_mutation_audit.h")
-    build = _read("build.py")
     lint3109 = _read("scripts/coverage/checks/check_wal_append_fail_closed_3109.py")
     lint3056 = _read("scripts/coverage/checks/check_wal_append_fail_slo_3056.py")
     lint3211 = _read("scripts/coverage/checks/check_wal_append_fail_schedule_3211.py")
@@ -109,10 +110,10 @@ def main() -> int:
     must('insert_kv("schema-3302"', "AC6 schema-3302", sec)
     must('insert_kv("issue-3302"', "AC6 issue-3302", sec)
     must('insert_kv("wal-fail-closed-active"', "AC6 3109 key preserved", sec)
-    must("check_wal_fail_closed_force_wal_3302", "AC6 build.py wiring", build)
-    must("check_wal_append_fail_closed_3109", "AC6 3109 linter still wired", build)
-    must("check_wal_append_fail_slo_3056", "AC6 3056 linter still wired", build)
-    must("check_wal_append_fail_schedule_3211", "AC6 3211 linter still wired", build)
+    must("check_wal_fail_closed_force_wal_3302", "AC6 gate wiring", wired_text)
+    must("check_wal_append_fail_closed_3109", "AC6 3109 linter still wired", wired_text)
+    must("check_wal_append_fail_slo_3056", "AC6 3056 linter still wired", wired_text)
+    must("check_wal_append_fail_schedule_3211", "AC6 3211 linter still wired", wired_text)
     must("3109", "AC6 3109 lineage", lint3109)
     must("3056", "AC6 3056 lineage", lint3056)
     must("3211", "AC6 3211 lineage", lint3211)

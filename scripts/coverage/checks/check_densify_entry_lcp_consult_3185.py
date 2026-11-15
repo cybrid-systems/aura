@@ -33,7 +33,7 @@ Contract (one row per AC):
   AC6  tests/core/test_moving_densify_fail_closed.cpp extended with
        ac3185_1-5 source-cite ACs (extends existing fail-closed test
        per #81967)
-  AC7  linter wired in build.py after #3184, no docs/design/, no
+  AC7  linter gated by run_checks.py after #3184, no docs/design/, no
        tests/issues/test_issue_3185.cpp (#81934)
 
 Exit codes:
@@ -55,6 +55,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 LCP = ROOT / "src" / "core" / "lifetime_consistency_proof.hh"
 MUTATION_BOUNDARY = ROOT / "src" / "compiler" / "evaluator_mutation_boundary.cpp"
@@ -98,7 +99,6 @@ def main() -> int:
     mut = _read(MUTATION_BOUNDARY)
     gc = _read(EVALUATOR_GC)
     test = _read(TEST_FAIL_CLOSED)
-    build = _read(BUILD_PY)
 
     # ── AC1: lifetime_consistency_proof.hh defines the consult helper ──
     ac1_poll_struct = "struct DensifyEntryLCPPoll" in lcp
@@ -368,12 +368,15 @@ def main() -> int:
         }
     )
 
-    # ── AC7: linter wired in build.py after #3184, no docs/design/, no tests/issues/ ──
-    ac7_wired = "check_densify_entry_lcp_consult_3185" in build
+    # ── AC7: linter gated by run_checks.py after #3184, no docs/design/, no tests/issues/ ──
+    ac7_wired = "check_densify_entry_lcp_consult_3185" in wired_text
     # Position must come after #3184 wire-in (string check; build.py is appended
     # in issue order). Confirm the build.py wire-in calls this linter.
     ac7_wired_after_3184 = (
-        (build.find("check_densify_entry_lcp_consult_3185") > build.find("check_abort_restore_force_dirty_3184"))
+        (
+            wired_text.find("check_densify_entry_lcp_consult_3185")
+            > wired_text.find("check_abort_restore_force_dirty_3184")
+        )
         if ac7_wired
         else False
     )
@@ -387,9 +390,9 @@ def main() -> int:
         fails.append("AC7: tests/issues/test_issue_3185.cpp present (forbidden per #81934)")
     ac7_ok = ac7_wired and ac7_wired_after_3184 and no_design and no_issues_test
     if not ac7_wired:
-        fails.append("AC7: linter not wired in build.py")
+        fails.append("AC7: linter not gated by run_checks.py")
     if not ac7_wired_after_3184:
-        fails.append("AC7: linter must be wired in build.py AFTER #3184 linter (issue-number ordering)")
+        fails.append("AC7: linter must be gated by run_checks.py AFTER #3184 linter (issue-number ordering)")
     rows.append(
         {
             "ac": "AC7_no_invent",

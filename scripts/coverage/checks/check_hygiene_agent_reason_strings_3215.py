@@ -27,6 +27,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -48,7 +50,6 @@ def main() -> int:
     q = _read("src/compiler/evaluator_primitives_query_obs_mid.cpp")
     loop = _read("tests/compiler/test_hygiene_mutate_closed_loop.cpp")
     rest = _read("tests/compiler/test_rest_param_hygiene.cpp")
-    build = _read("build.py")
     stub = _read("src/compiler/aura_jit_bridge_stub.cpp")
     hdr = _read("src/compiler/aura_jit_bridge.h")
 
@@ -79,7 +80,7 @@ def main() -> int:
     must("hygiene-macro-introduced", "AC5 mutate suite", loop)
     must("ac3215_macro_introduced_reason_string", "AC5 mutate AC", loop)
     must("hygiene-rest-unmarked", "AC5 rest suite", rest)
-    must("check_hygiene_agent_reason_strings_3215", "AC5 build.py", build)
+    must("check_hygiene_agent_reason_strings_3215", "AC5 wiring", wired_text)
     must("aura_note_macro_hygiene_last_limit_reason", "AC5 C ABI", hdr)
     must("aura_note_macro_hygiene_last_limit_reason", "AC5 stub", stub)
 

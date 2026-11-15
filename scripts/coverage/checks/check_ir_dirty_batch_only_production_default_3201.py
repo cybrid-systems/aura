@@ -23,6 +23,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -39,7 +41,6 @@ def main() -> int:
 
     soa = _read("src/compiler/ir_soa.ixx")
     t = _read("tests/compiler/test_batch_dirty_discipline.cpp")
-    build = _read("build.py")
 
     must("kIrSoaBatchOnlyProductionDefaultIssue = 3201", "AC1 stamp", soa)
     must("aura_production_defaults_active_probe", "AC1 probe", soa)
@@ -74,7 +75,7 @@ def main() -> int:
     must("ac3201_2_soft_env0", "AC2 test", t)
     must("ac3201_3_batch_clears", "AC3 test", t)
     must("ac3201_4_source_and_linter", "AC5 test", t)
-    must("check_ir_dirty_batch_only_production_default_3201", "AC5 build.py", build)
+    must("check_ir_dirty_batch_only_production_default_3201", "AC5 wiring", wired_text)
     if "query:ir-dirty-batch-only" in soa:
         fails.append("AC6: new public query key")
     if "g_3201_" in soa:

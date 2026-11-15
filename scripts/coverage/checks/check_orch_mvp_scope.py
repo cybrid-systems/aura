@@ -11,7 +11,7 @@ cycle 1 have been **removed** from orch headers:
 
 This linter is a reintroduction guard: any non-comment / non-string
 occurrence of the removed identifiers outside the allowlist fails
-under --strict (wired into ./build.py gate).
+under --strict (wired into ./coverage runner).
 
 MVP (allowed freely):
   spawn_agent_with_mailbox, join_agent, join_agents, agent_send,
@@ -258,7 +258,7 @@ def main() -> int:
         f"  Allowlisted files ({len(ALLOWLIST)}): see ALLOWLIST in "
         f"scripts/coverage/checks/check_orch_mvp_scope.py\n"
         f"  Feature-flag-gated symbols: {', '.join(p[0] for p in FEATURE_FLAG_PATTERNS) or '(none after #2226)'}\n"
-        f"  Use --strict to enforce (exit 1; ./build.py gate always uses --strict)."
+        f"  Use --strict to enforce (exit 1; ./coverage runner always uses --strict)."
     )
     if not args.quiet:
         if args.per_violation:

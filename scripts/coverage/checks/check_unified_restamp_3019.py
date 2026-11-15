@@ -24,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _source_scan import source_block_after  # noqa: E402  (sibling helper)
 
 ROOT = Path(__file__).resolve().parents[3]
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -46,7 +47,6 @@ def main() -> int:
     ast = _read("src/core/ast.ixx")
     review = _read("src/compiler/evaluator_primitives_stdlib_review.cpp")
     test = _read("tests/core/test_restamp_sla_observability.cpp")
-    build = _read("build.py")
 
     must("unified_restamp_after_boundary", "AC1", ev)
     must("UnifiedRestampSite", "AC1", ev)
@@ -90,8 +90,8 @@ def main() -> int:
 
     must("ac3019_1_unified_entry_four_sites", "AC5", test)
     must("ac3019_5_canary_soak_linter", "AC5", test)
-    must("check_unified_restamp_3019", "AC5", build)
-    must("cmd_unified_restamp_3019", "AC5", build)
+    must("check_unified_restamp_3019", "AC5", wired_text)
+    must("check_unified_restamp_3019.py", "AC5", wired_text)
     if _read("tests/core/test_issue_3019.cpp"):
         fails.append("AC5: test_issue_3019.cpp exists — forbidden per #81967")
     if _read("docs/design/3019-unified-restamp.md"):

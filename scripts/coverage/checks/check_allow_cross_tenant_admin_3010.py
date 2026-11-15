@@ -32,6 +32,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -52,7 +54,6 @@ def main() -> int:
     sec_caps = _read("src/compiler/security_capabilities.h")
     ixx = _read("src/compiler/evaluator.ixx")
     test_iso = _read("tests/core/test_tenant_isolation_enforcement.cpp")
-    build = _read("build.py")
 
     # ── AC1: EDSL prim privilege test precedes set_tenant_principal ─
     must("Issue #3010", "AC1", posture)
@@ -120,7 +121,7 @@ def main() -> int:
     must("#3010", "AC6", sec)
     must("#3010", "AC6", test_iso)
     must("schema-3010", "AC6", posture)
-    must("check_allow_cross_tenant_admin_3010", "AC6", build)
+    must("check_allow_cross_tenant_admin_3010", "AC6", wired_text)
     for rel in ("tests/core/test_issue_3010.cpp", "tests/compiler/test_issue_3010.cpp"):
         if _read(rel):
             fails.append(f"AC6: {rel} exists — forbidden per #81967")

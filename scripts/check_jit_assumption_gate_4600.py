@@ -69,6 +69,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 AJ = ROOT / "src" / "compiler" / "aura_jit.cpp"
 RT = ROOT / "src" / "compiler" / "aura_jit_runtime.cpp"
 JA = ROOT / "src" / "compiler" / "jit_assumptions.hh"
@@ -130,7 +133,6 @@ def main() -> int:
     mn = MN.read_text()
     tst = TST.read_text()
     pyt = PYT.read_text()
-    build = BUILD.read_text()
     allow = ALLOW.read_text()
 
     # ── AC1: §7 prologue assumption-word gate ───────────────────────
@@ -272,7 +274,7 @@ def main() -> int:
 
     # ── AC11: wiring ────────────────────────────────────────────────
     must(
-        "check_jit_assumption_gate_4600.py" in build,
+        "check_jit_assumption_gate_4600.py" in wired_text,
         "AC11: build.py registers this linter",
     )
     must(

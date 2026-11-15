@@ -25,6 +25,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from query_prims_sources import read_query_prims
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -55,7 +57,6 @@ def main() -> int:
     health = _read("tests/compiler/test_type_linear_commit_health.cpp")
     obs = _read("src/compiler/evaluator_primitives_obs_jit.cpp")
     q = read_query_prims()
-    build = _read("build.py")
 
     # AC1 sites
     must("kLinearFastPathStealDensifyClearCompleteIssue = 3171", "AC1 stamp", tma)
@@ -119,8 +120,8 @@ def main() -> int:
     must("ac3171_hermetic_clear_and_invalidate", "AC5 escape", esc)
     must("ac3171_restamp_sites_clear", "AC5 steal-clear", steal)
     must("ac3171_health_schema", "AC5 health", health)
-    must("check_linear_fast_path_clear_on_restamp_3171", "AC6 build", build)
-    must("cmd_linear_fast_path_clear_on_restamp_3171", "AC6 cmd", build)
+    must("check_linear_fast_path_clear_on_restamp_3171", "AC6 build", wired_text)
+    must("check_linear_fast_path_clear_on_restamp_3171.py", "AC6 cmd", wired_text)
     if (ROOT / "tests" / "compiler" / "test_issue_3171.cpp").is_file():
         fails.append("AC5: test_issue_3171.cpp present (forbidden #81967)")
     docs = ROOT / "docs" / "design"

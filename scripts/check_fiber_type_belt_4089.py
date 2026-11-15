@@ -19,7 +19,7 @@ Contract (one row per AC):
        pre-mutate tree, success flipped via
        note_outermost_audit_rollback_needs_fail, proof outcome Reject); the
        old unconditional skip is gone
-  AC5  build.py wires check_fiber_type_belt_4089 + root allowlist; ACs
+  AC5  run_checks.py wires check_fiber_type_belt_4089 + root allowlist; ACs
        extend tests/serve/test_orch_soft_boundary_unified.cpp; no
        tests/**/test_issue_4089.cpp; no docs/design/4089-*
 
@@ -32,6 +32,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -54,7 +56,6 @@ def main() -> int:
     efm = _read("src/compiler/evaluator_fiber_mutation.cpp")
     emb = _read("src/compiler/evaluator_mutation_boundary.cpp")
     test = _read("tests/serve/test_orch_soft_boundary_unified.cpp")
-    build = _read("build.py")
     allow = _read("scripts/coverage/root_check_allowlist.txt")
 
     # ── AC1: MutationCheckpoint orch_soft_frame marker ───────────────────
@@ -96,7 +97,7 @@ def main() -> int:
     must("publish_type_linear_proof_outcome", "AC4 abort publishes Reject outcome", emb)
 
     # ── AC5: linter wiring + test extension + no new files ───────────────
-    must("check_fiber_type_belt_4089", "AC5 build.py wires the linter", build)
+    must("check_fiber_type_belt_4089", "AC5 run_checks.py wires the linter", wired_text)
     must("check_fiber_type_belt_4089.py", "AC5 root allowlist carries the linter", allow)
     must("Issue #4089", "AC5 test file cites issue", test)
     must("run_test_orch_soft_boundary_unified", "AC5 ACs in soft-boundary batch", test)

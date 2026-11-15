@@ -75,6 +75,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 MESSAGING = ROOT / "src" / "compiler" / "evaluator_primitives_messaging.cpp"
 SCHED = ROOT / "src" / "serve" / "scheduler.cpp"
 SERVE = ROOT / "src" / "serve" / "serve_async.cpp"
@@ -116,7 +119,6 @@ def main() -> int:
     fiber_h = FIBER_H.read_text() if FIBER_H.exists() else ""
     fiber_cpp = FIBER_CPP.read_text() if FIBER_CPP.exists() else ""
     tst = TST.read_text() if TST.exists() else ""
-    build = (ROOT / "build.py").read_text()
     allow = (ROOT / "scripts" / "coverage" / "root_check_allowlist.txt").read_text()
     ok = True
 
@@ -196,7 +198,7 @@ def main() -> int:
         and "test_issue_4176_fd_budget_oneshots" in tst
         and no_issue_test_file
         and no_design_doc
-        and "check_serve_async_join_wake_4176.py" in build
+        and "check_serve_async_join_wake_4176.py" in wired_text
         and "check_serve_async_join_wake_4176.py" in allow,
         "runtime ACs in test_concurrent.cpp; no test_issue_4176.cpp; no docs/design/4176-*; build.py + allowlist wired",
     )

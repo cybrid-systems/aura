@@ -326,11 +326,11 @@ def main() -> int:
     ap.add_argument(
         "--strict",
         action="store_true",
-        help="exit 1 on violations (default for ./build.py gate)",
+        help="exit 1 on violations (default for ./coverage runner)",
     )
     # Issue #2494: --path overrides the production PRIM_GLOB so the
     # AC1 self-test can point the gate at a fixture prim without
-    # contaminating src/compiler/. CI / build.py gate never pass --path.
+    # contaminating src/compiler/. CI / coverage runner never pass --path.
     ap.add_argument(
         "--path",
         action="store",

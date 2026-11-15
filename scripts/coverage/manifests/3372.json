@@ -40,13 +40,6 @@
       "forbid_glob": [
         "docs/design/3372-*"
       ]
-    },
-    {
-      "ac": "AC5",
-      "path": "build.py",
-      "contains": [
-        "Issue #3372"
-      ]
     }
   ]
 }

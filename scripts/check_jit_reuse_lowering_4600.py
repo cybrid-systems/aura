@@ -67,6 +67,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 JA = ROOT / "src" / "compiler" / "jit_assumptions.hh"
 SV = ROOT / "src" / "compiler" / "service.ixx"
 SV_JIT = ROOT / "src" / "compiler" / "service_exec_jit.cpp"
@@ -97,7 +100,6 @@ def main() -> int:
     ja = JA.read_text()
     sv = SV.read_text() + SV_JIT.read_text()
     pyt = PYT.read_text()
-    build = BUILD.read_text()
     allow = ALLOW.read_text()
 
     # ── AC1: stats ────────────────────────────────────────────────
@@ -179,7 +181,7 @@ def main() -> int:
     must("assert skips_k[-1] == 0" in pyt, "AC5: walltime bench asserts the kill switch")
 
     # ── AC6: wiring ───────────────────────────────────────────────
-    must("check_jit_reuse_lowering_4600.py" in build, "AC6: build.py registers this linter")
+    must("check_jit_reuse_lowering_4600.py" in wired_text, "AC6: run_checks.py registers this linter")
     must("check_jit_reuse_lowering_4600.py" in allow, "AC6: root_check_allowlist.txt lists this linter")
 
     if failures:

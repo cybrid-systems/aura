@@ -25,6 +25,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 UNPARSE = "src/core/ast_unparse.ixx"
 PARSER = "src/parser/parser_impl.cpp"
@@ -105,8 +106,7 @@ def main() -> int:
     must(t.count("has_quote_zero(") >= 6, "AC3: has_quote_zero used across ACs")
 
     # ── AC4: wiring + non-goals ──
-    build = _read(BUILD)
-    must("check_empty_list_unparse_4130" in build, "AC4: build.py registration")
+    must("check_empty_list_unparse_4130" in wired_text, "AC4: build.py registration")
     allow = _read(ALLOWLIST)
     must("check_empty_list_unparse_4130.py" in allow, "AC4: root allowlist entry")
     must(not any((ROOT / "docs" / "design").glob("4130-*")), "AC4: no docs/design/4130-* per #1655")

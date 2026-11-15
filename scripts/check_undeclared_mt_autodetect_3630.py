@@ -33,6 +33,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
 
 SEC = "src/compiler/evaluator_security.cpp"
 PROV = "src/core/provenance_tracker.hh"
@@ -253,7 +256,7 @@ def main() -> int:
         _read(OBS),
         _read(SECP),
         _read(TEST),
-        _read(BUILD),
+        wired_text,
     )
     if rows:
         for r in rows:

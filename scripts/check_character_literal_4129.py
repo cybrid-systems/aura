@@ -60,6 +60,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 LEXER_IXX = ROOT / "src" / "parser" / "lexer.ixx"
 LEXER_CPP = ROOT / "src" / "parser" / "lexer_impl.cpp"
 PARSER_IXX = ROOT / "src" / "parser" / "parser.ixx"
@@ -86,7 +89,6 @@ def main() -> int:
     parser_ixx = PARSER_IXX.read_text() if PARSER_IXX.exists() else ""
     parser_cpp = PARSER_CPP.read_text() if PARSER_CPP.exists() else ""
     test = TEST.read_text() if TEST.exists() else ""
-    build = (ROOT / "build.py").read_text()
     allow = (ROOT / "scripts" / "coverage" / "root_check_allowlist.txt").read_text()
     ok = True
 
@@ -193,7 +195,7 @@ def main() -> int:
         and "=== Results: {} passed, {} failed" in test
         and no_test_file
         and no_doc
-        and "check_character_literal_4129.py" in build
+        and "check_character_literal_4129.py" in wired_text
         and "check_character_literal_4129.py" in allow
     )
     report(

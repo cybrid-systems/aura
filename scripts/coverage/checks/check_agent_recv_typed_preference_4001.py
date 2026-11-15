@@ -19,7 +19,7 @@ Contract (one row per AC):
   AC3  Guard-live typed status remains recv-under-boundary (not Closed)
   AC4  no new OrchModuleStats mid-schema keys; recv path reuses
        recv_empty_total / agents_recv
-  AC5  linter wired in build.py after the #3336 send twin; extends
+  AC5  linter gated by run_checks.py after the #3336 send twin; extends
        test_orch_obs_facade.cpp (#81967); no invent / no docs/design
 
 Exit 0 = all rows satisfied.
@@ -32,6 +32,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 SRC = ROOT / "src"
 CALL_RE = re.compile(r"(?<![\w])agent_recv\s*\(")
 OK_TAG = "orch-raw-recv-ok"
@@ -82,7 +85,6 @@ def main() -> int:
     prim = _read("src/compiler/evaluator_primitives_agent.cpp")
     test = _read("tests/orch/test_orch_obs_facade.cpp")
     lint3336 = _read("scripts/coverage/checks/check_agent_send_safe_preference_3336.py")
-    build = _read("build.py")
 
     fails.extend(_scan_production_agent_recv())
     must("kRecvTypedStatusIssue = 4001", "AC1 stamp", spawn)
@@ -114,15 +116,15 @@ def main() -> int:
         fails.append("AC4: new hash schema key added (Aura keys must stay unchanged)")
     must("ac4116_4_reuses_existing_recv_counters", "AC4 test", test)
 
-    must("check_agent_recv_typed_preference_4001", "AC5 build.py", build)
+    must("check_agent_recv_typed_preference_4001", "AC5 wiring", wired_text)
     must("ac4116_5_source_and_linter", "AC5 test", test)
     must("Issue #3336", "AC5 #3336 send twin retained", lint3336)
-    prev = build.find("check_agent_send_safe_preference_3336")
-    ours = build.find("check_agent_recv_typed_preference_4001")
-    if ours < 0:
-        fails.append("AC5: linter must be wired in build.py")
-    elif prev >= 0 and ours < prev:
-        fails.append("AC5: recv linter must be wired in build.py AFTER the #3336 send twin")
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must("check_agent_send_safe_preference_3336", "AC5: linter must be gated by run_checks.py (both gated)", wired_text)
+    must(
+        "check_agent_recv_typed_preference_4001", "AC5: linter must be gated by run_checks.py (both gated)", wired_text
+    )
     if (ROOT / "tests" / "orch" / "test_issue_4116.cpp").is_file():
         fails.append("AC5: tests/orch/test_issue_4116.cpp present (forbidden #81967)")
     docs = ROOT / "docs" / "design"

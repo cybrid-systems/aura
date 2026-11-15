@@ -21,6 +21,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -38,7 +40,6 @@ def main() -> int:
     arena = _read("src/core/arena.ixx")
     t = _read("tests/core/test_arena_required_cover_no_value_only.cpp")
     l3420 = _read("scripts/coverage/checks/check_factory_refuse_uncovered_3420.py")
-    build = _read("build.py")
 
     must("kDestroyDtorIndexIssue = 3456", "AC1 stamp", arena)
     must("dtor_index_", "AC1 index", arena)
@@ -66,7 +67,7 @@ def main() -> int:
     must("check_factory_refuse_uncovered_3420", "AC3 #3420 linter", l3420)
 
     must("ac3456_destroy_dtor_index", "AC1 test", t)
-    must("check_destroy_dtor_index_3456", "AC5 build.py", build)
+    must("check_destroy_dtor_index_3456", "AC5 wiring", wired_text)
     if "schema-3456" in arena:
         fails.append("AC4: new schema-3456 query key")
     if (ROOT / "tests" / "core" / "test_issue_3456.cpp").is_file():

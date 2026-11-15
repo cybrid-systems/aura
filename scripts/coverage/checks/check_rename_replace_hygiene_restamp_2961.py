@@ -17,6 +17,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -74,7 +76,6 @@ def main() -> int:
     ast = _read("src/core/ast.ixx")
     q = _read("src/compiler/evaluator_primitives_obs_jit.cpp")
     test = _read("tests/compiler/test_hygiene_mutate_closed_loop.cpp")
-    build = _read("build.py")
 
     def _prim_window(hay: str, name: str) -> str:
         key = f'add_mutate("{name}"'
@@ -134,7 +135,7 @@ def main() -> int:
     # AC5
     must("ac2961_1_source_guard_hygiene_restamp", "AC5", test)
     must("#2961", "AC5", test)
-    must("check_rename_replace_hygiene_restamp_2961", "AC5", build)
+    must("check_rename_replace_hygiene_restamp_2961", "AC5", wired_text)
     if (ROOT / "tests" / "compiler" / "test_issue_2961.cpp").is_file():
         fails.append("AC5: test_issue_2961.cpp present (forbidden #81967)")
     docs = ROOT / "docs" / "design"

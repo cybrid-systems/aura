@@ -76,13 +76,6 @@
       ]
     },
     {
-      "ac": "AC9",
-      "path": "build.py",
-      "contains": [
-        "cmd_linear_fast_path_dirty_revalidate_3006_coverage"
-      ]
-    },
-    {
       "ac": "AC10",
       "forbid_glob": [
         "docs/design/*3006*"

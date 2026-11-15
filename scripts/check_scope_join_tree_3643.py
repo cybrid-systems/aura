@@ -17,7 +17,7 @@ Contract (one row per AC):
        behavior change on the default path)
   AC5  ACs live in tests/orch/test_agent_scope_hierarchy.cpp (3643
        markers); no tests/**/test_issue_3643.cpp; no docs/design/3642-*;
-       build.py wires check_scope_join_tree_3643 + root allowlist
+       run_checks.py wires check_scope_join_tree_3643 + root allowlist
 
 Exit 0 = all rows satisfied.
 """
@@ -28,6 +28,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -49,7 +51,6 @@ def main() -> int:
     scope = _read("src/orch/agent_scope.h")
     prim = _read("src/compiler/evaluator_primitives_agent.cpp")
     test = _read("tests/orch/test_agent_scope_hierarchy.cpp")
-    build = _read("build.py")
     allow = _read("scripts/coverage/root_check_allowlist.txt")
 
     # ── AC1: default local contract preserved ────────────────────────────
@@ -103,7 +104,7 @@ def main() -> int:
             fails.append(f"AC5: docs/design file present: {p.name}")
 
     # ── AC5: gate wiring ─────────────────────────────────────────────────
-    must("check_scope_join_tree_3643", "AC5 build.py wires linter", build)
+    must("check_scope_join_tree_3643", "AC5 run_checks.py wires linter", wired_text)
     must("check_scope_join_tree_3643.py", "AC5 root allowlist", allow)
 
     if fails:

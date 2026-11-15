@@ -45,6 +45,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 AST = ROOT / "src" / "core" / "ast.ixx"
 SEC = ROOT / "src" / "compiler" / "evaluator_security.cpp"
 TST_QRP = ROOT / "tests" / "compiler" / "test_query_result_full_provenance.cpp"
@@ -81,7 +84,6 @@ def main() -> int:
     sec = SEC.read_text(encoding="utf-8")
     qrp = TST_QRP.read_text(encoding="utf-8")
     exp = TST_EXP.read_text(encoding="utf-8")
-    build = BUILD.read_text(encoding="utf-8")
     allow = ALLOW.read_text(encoding="utf-8")
 
     # ── AC1: make_ref_layout production free-slot guard ──
@@ -152,7 +154,7 @@ def main() -> int:
         not (ROOT / "tests" / "compiler" / "test_issue_4164.cpp").exists(), "AC4: no tests/compiler/test_issue_4164.cpp"
     )
     must(not list((ROOT / "docs" / "design").glob("4164-*")), "AC4: no docs/design/4164-* markdown")
-    must("check_ref_layout_gen_paint_4164.py" in build, "AC4: build.py registers this linter")
+    must("check_ref_layout_gen_paint_4164.py" in wired_text, "AC4: run_checks.py registers this linter")
     must("check_ref_layout_gen_paint_4164.py" in allow, "AC4: root_check_allowlist.txt lists this linter")
 
     failed = 0

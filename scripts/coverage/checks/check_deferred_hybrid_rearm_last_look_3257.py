@@ -26,6 +26,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -42,7 +44,6 @@ def main() -> int:
 
     svc = _read("src/compiler/service.ixx") + _read("src/compiler/service_relower.cpp")
     t = _read("tests/compiler/test_cascade_decision_residual_atomic.cpp")
-    build = _read("build.py")
     obs = _read("src/compiler/observability_metrics.h")
 
     rel_pos = svc.find("std::size_t CompilerService::relower_dirty_defines_from_workspace()")
@@ -76,11 +77,17 @@ def main() -> int:
     must("public_note_stale_dep_reject", "AC4 inject", t)
 
     must("ac3257_5_source_and_linter", "AC5 test", t)
-    must("check_deferred_hybrid_rearm_last_look_3257", "AC5 build.py", build)
-    prev = build.find("check_mailbox_defer_slo_hold_unify_3256")
-    ours = build.find("check_deferred_hybrid_rearm_last_look_3257")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC5: linter must be wired in build.py AFTER #3256")
+    must("check_deferred_hybrid_rearm_last_look_3257", "AC5 wiring", wired_text)
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must(
+        "check_mailbox_defer_slo_hold_unify_3256", "AC5: linter must be gated by run_checks.py (both gated)", wired_text
+    )
+    must(
+        "check_deferred_hybrid_rearm_last_look_3257",
+        "AC5: linter must be gated by run_checks.py (both gated)",
+        wired_text,
+    )
 
     if (ROOT / "tests" / "issues" / "test_issue_3257.cpp").is_file():
         fails.append("AC5: forbidden tests/issues/test_issue_3257.cpp per #81967")

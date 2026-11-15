@@ -21,6 +21,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -47,7 +49,6 @@ def main() -> int:
     mbc = _read("src/compiler/evaluator_mutation_boundary.cpp")
     steal = _read("src/compiler/evaluator_fiber_mutation.cpp")
     test = _read("tests/compiler/test_anonymous_residual_stable_id_policy.cpp")
-    build = _read("build.py")
 
     # AC1
     must("Issue #2950", "AC1", rt)
@@ -97,7 +98,7 @@ def main() -> int:
     must("aura_pure_anon_bg_enqueue", "AC6", sh)
     must("aura_pure_anon_bg_enqueue", "AC6", stub)
     must("ac2950", "AC6", test)
-    must("check_pure_anon_bg_remount_2950", "AC6", build)
+    must("check_pure_anon_bg_remount_2950", "AC6", wired_text)
     if (ROOT / "tests" / "compiler" / "test_issue_2950.cpp").is_file():
         fails.append("AC6: test_issue_2950.cpp present (forbidden per #81967)")
     docs = ROOT / "docs" / "design"

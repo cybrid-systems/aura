@@ -22,6 +22,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
 
 FLAT = "src/compiler/evaluator_eval_flat.cpp"
 TEST = "tests/compiler/test_setcode_rebind_survive.cpp"
@@ -110,7 +113,7 @@ def _rows(flat: str, test: str, build: str) -> list[str]:
     must("std::uint64_t untracked = 0, std::uint64_t root_fail = 0", "AC5 guard axes", test)
     must("=== #2569/#3421/#3469/#3602/#3634/#3648/#3848/#3849:", "AC5 summary line", test)
     must_not("test_issue_3648", "AC5 no tests/issues file", test)
-    must("check_apply_window_gate_3648.py", "AC5 build.py registration", build)
+    must("check_apply_window_gate_3648.py", "AC5 build.py registration", wired_text)
     for stale in ROOT.glob("docs/design/*3648*"):
         fails.append(f"AC5: forbidden design doc {stale.name}")
     for stale in ROOT.glob("tests/**/test_issue_3648*.cpp"):
@@ -126,7 +129,7 @@ def main() -> int:
     args = ap.parse_args()
     flat = _read(FLAT)
     test = _read(TEST)
-    build = _read(BUILD)
+    build = wired_text
     if args.self_test:
         broken = flat.replace("Issue #3648", "Issue #redacted")
         self_fails = _rows(broken, test, build)

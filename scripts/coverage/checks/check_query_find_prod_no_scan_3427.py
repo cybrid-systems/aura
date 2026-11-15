@@ -24,6 +24,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -40,7 +42,6 @@ def main() -> int:
 
     qws = _read("src/compiler/evaluator_primitives_query_workspace.cpp")
     t = _read("tests/compiler/test_query_find_by_define.cpp")
-    build = _read("build.py")
 
     start = qws.find('["query:find"]')
     nxt = qws.find('["query:children"]', start) if start >= 0 else -1
@@ -69,11 +70,11 @@ def main() -> int:
     must("try_acquire_soa_reader_lock", "AC3 Soft SoA lock", after)
     must("Issue #2488", "AC3 #2488 cite", after)
 
-    must("check_query_find_prod_no_scan_3427", "AC4 build.py", build)
-    prev = build.find("check_query_default_stamped_3395")
-    ours = build.find("check_query_find_prod_no_scan_3427")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC4: #3427 linter must run after #3395")
+    must("check_query_find_prod_no_scan_3427", "AC4 wiring", wired_text)
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must("check_query_default_stamped_3395", "AC4: #3427 linter must run (both gated)", wired_text)
+    must("check_query_find_prod_no_scan_3427", "AC4: #3427 linter must run (both gated)", wired_text)
     if (ROOT / "tests" / "issues" / "test_issue_3427.cpp").is_file():
         fails.append("AC4: forbidden tests/issues/test_issue_3427.cpp")
     if (ROOT / "tests" / "compiler" / "test_issue_3427.cpp").is_file():

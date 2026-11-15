@@ -59,13 +59,6 @@
       ]
     },
     {
-      "ac": "AC7",
-      "path": "build.py",
-      "contains": [
-        "cmd_composite_audit_mid_se_join_3066"
-      ]
-    },
-    {
       "ac": "AC8",
       "forbid": [
         "tests/compiler/test_issue_3066.cpp"

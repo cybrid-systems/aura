@@ -15,7 +15,7 @@ Contract (one row per AC):
      zero-cost retention (gated on pref <= 0).
   AC4 tests/core/test_general_object_pin_coverage_gate.cpp extended
      with #2665 AC1-AC4 source-cite block (per #81967 — no new file).
-  AC5 build.py wires check_2665_coverage into the gate after
+  AC5 run_checks.py gates check_2665_coverage into the gate after
      check_general_object_pin_2298.
   AC6 cross-check: check_general_object_pin_2298 + check_general_object_
      pin_auto_wire_2597 still green (no regression).
@@ -30,6 +30,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -49,7 +51,6 @@ def main() -> int:
     lp = _read("src/core/lifetime_pin.hh")  # SSOT
     obs = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
     test = _read("tests/core/test_general_object_pin_coverage_gate.cpp")
-    build = _read("build.py")
 
     # AC1 — production-default required-mode fail-closed enforcement
     must("Issue #2665", "AC1", lp)
@@ -75,8 +76,8 @@ def main() -> int:
     must("ac2665_4_existing_ac4_unchanged", "AC4", test)
     must("Issue #2665", "AC4", test)
 
-    # AC5 — build.py wires the linter
-    must("check_2665_coverage", "AC5", build)
+    # AC5 — run_checks.py gates the linter
+    must("check_2665_coverage", "AC5", wired_text)
 
     # Cross-check: check_general_object_pin_2298 still green
     r1 = subprocess.run(

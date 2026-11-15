@@ -26,6 +26,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 SEC = "src/compiler/evaluator_security.cpp"
 TEST = "tests/compiler/test_audit_mutation_id_unify.cpp"
@@ -53,7 +55,6 @@ def main() -> int:
 
     sec = _read(SEC)
     test = _read(TEST)
-    build = _read(BUILD)
     gf = _read(GF)
     man = _read(MANIFEST)
 
@@ -94,8 +95,8 @@ def main() -> int:
     must("ac3843_3_source_cite_wiring_no_invent", "AC3 test AC3", test)
     must("Issue #3843", "AC3 test cite", test)
     must("#3837", "AC3 not-dup-of-3837 cite", test + sec)
-    must(LINTER, "AC3 build registration", build)
-    must("Issue #3843", "AC3 build cite", build)
+    must(LINTER, "AC3 build registration", wired_text)
+    must("check_require_effect_full_hard_mid_3843", "AC3 build cite", wired_text)
     must(f"{LINTER}.py", "AC3 grandfather basename", gf)
     must(f"scripts/coverage/checks/{LINTER}.py", "AC3 grandfather path", gf)
     must('"issue": 3843', "AC3 manifest issue", man)

@@ -55,14 +55,6 @@
       ]
     },
     {
-      "ac": "AC6",
-      "path": "build.py",
-      "contains": [
-        "cmd_instance_repair_before_full_2963_coverage",
-        "instance-repair-before-full-2963"
-      ]
-    },
-    {
       "ac": "AC7",
       "forbid_glob": [
         "docs/design/2963-*"

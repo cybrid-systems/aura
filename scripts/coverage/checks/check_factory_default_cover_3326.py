@@ -31,6 +31,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -49,7 +51,6 @@ def main() -> int:
     lp = _read("src/core/lifetime_pin.hh")
     fail_closed = _read("tests/core/test_moving_densify_fail_closed.cpp")
     cover = _read("tests/core/test_arena_required_cover_no_value_only.cpp")
-    build = _read("build.py")
     eval_flat = _read("src/compiler/evaluator_eval_flat.cpp")
 
     must("kFactoryDefaultCoverIssue = 3326", "AC1 arena stamp", arena)
@@ -76,7 +77,7 @@ def main() -> int:
         fails.append("AC5: second pin registry introduced")
     if "g_3326_" in arena:
         fails.append("AC5: invented g_3326_* counter")
-    must("check_factory_default_cover_3326", "AC6 build.py", build)
+    must("check_factory_default_cover_3326", "AC6 wiring", wired_text)
     must("create_with_cover", "AC6 hot-path eval_flat migrated", eval_flat)
 
     if (ROOT / "tests" / "issues" / "test_issue_3326.cpp").is_file():

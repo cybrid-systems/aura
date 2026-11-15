@@ -22,7 +22,7 @@ Contract:
   AC2 runtime registrations present: car/cdr (pair prims) + null? (list prims)
   AC3 type-checker rows: car/cdr {Dyn}->Dyn and null? {Dyn}->Bool
   AC4 runtime ACs live in test_primcall_narg.cpp (#4232 AC helpers + calls)
-  AC5 build.py wiring + root_check_allowlist entry; no docs/design/4232-*
+  AC5 run_checks.py wiring + root_check_allowlist entry; no docs/design/4232-*
 
 Exit 0 = all rows satisfied.
 """
@@ -33,6 +33,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -80,8 +82,7 @@ def main() -> int:
     must("ac19_source_gate", "AC4", test)
     must("(car (quote (5 2 7)))", "AC4", test)
 
-    build = _read("build.py")
-    must("check_soft_list_prims_4232", "AC5", build)
+    must("check_soft_list_prims_4232", "AC5", wired_text)
     allow = _read("scripts/coverage/root_check_allowlist.txt")
     must("check_soft_list_prims_4232.py", "AC5", allow)
     if (ROOT / "docs" / "design").is_dir() and list((ROOT / "docs" / "design").glob("4232-*")):

@@ -27,6 +27,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -44,7 +46,6 @@ def main() -> int:
     fiber = _read("src/compiler/evaluator_fiber_mutation.cpp")
     ixx = _read("src/compiler/evaluator.ixx")
     test = _read("tests/compiler/test_clone_provenance_per_evaluator.cpp")
-    build = _read("build.py")
     l3260 = _read("scripts/coverage/checks/check_macro_provenance_counter_unify_3260.py")
 
     pos = fiber.find("void Evaluator::flush_mutation_boundary()")
@@ -87,12 +88,20 @@ def main() -> int:
         fails.append("AC4: flush must not dual-write repin (hygiene-only site)")
 
     must("ac3261_5_source_and_linter", "AC5 test", test)
-    must("check_flush_mutation_boundary_toctou_3261", "AC5 build.py", build)
+    must("check_flush_mutation_boundary_toctou_3261", "AC5 wiring", wired_text)
     must("Issue #3261", "AC5 evaluator.ixx", ixx)
-    prev = build.find("check_macro_provenance_counter_unify_3260")
-    ours = build.find("check_flush_mutation_boundary_toctou_3261")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC5: linter must be wired in build.py AFTER #3260")
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must(
+        "check_macro_provenance_counter_unify_3260",
+        "AC5: linter must be gated by run_checks.py (both gated)",
+        wired_text,
+    )
+    must(
+        "check_flush_mutation_boundary_toctou_3261",
+        "AC5: linter must be gated by run_checks.py (both gated)",
+        wired_text,
+    )
     must("3261", "AC5 extend 3260 linter", l3260)
     if (ROOT / "tests" / "issues" / "test_issue_3261.cpp").is_file():
         fails.append("AC5: forbidden tests/issues/test_issue_3261.cpp per #81967")

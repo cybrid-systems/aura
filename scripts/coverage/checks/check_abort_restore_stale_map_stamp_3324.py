@@ -30,6 +30,8 @@ _sys.path.insert(0, str(_Path(__file__).resolve().parents[1]))
 from service_source import service_source  # #5242: interface + implementation units
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -47,7 +49,6 @@ def main() -> int:
     svc = service_source()
     pure = _read("src/compiler/ir_cache_pure.ixx")
     t = _read("tests/compiler/test_abort_ir_cache_fence_first.cpp")
-    build = _read("build.py")
 
     lu = svc.find("int lookup_define_v2(")
     lu_win = svc[lu : lu + 2500] if lu >= 0 else ""
@@ -74,12 +75,16 @@ def main() -> int:
     must("if (gen == 0)", "AC4 gen==0 skip", svc)
     must("ac3324_4_recover_force_full", "AC4 test", t)
 
-    must("check_abort_restore_stale_map_stamp_3324", "AC5 build.py", build)
+    must("check_abort_restore_stale_map_stamp_3324", "AC5 wiring", wired_text)
     must("ac3324_5_source_and_linter", "AC5 test", t)
-    prev = build.find("check_abort_restore_force_dirty_3184")
-    ours = build.find("check_abort_restore_stale_map_stamp_3324")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC5: linter must be wired in build.py AFTER #3184")
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must("check_abort_restore_force_dirty_3184", "AC5: linter must be gated by run_checks.py (both gated)", wired_text)
+    must(
+        "check_abort_restore_stale_map_stamp_3324",
+        "AC5: linter must be gated by run_checks.py (both gated)",
+        wired_text,
+    )
     if "schema-3324" in svc or "g_3324_" in svc:
         fails.append("AC5: new schema-3324 / g_3324_*")
     if _read("tests/compiler/test_issue_3324.cpp") or _read("tests/issues/test_issue_3324.cpp"):

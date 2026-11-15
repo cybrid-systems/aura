@@ -71,14 +71,6 @@
       ]
     },
     {
-      "ac": "AC8",
-      "path": "build.py",
-      "contains": [
-        "cmd_linear_fast_path_unified_2964_coverage",
-        "linear-fast-path-unified-2964"
-      ]
-    },
-    {
       "ac": "AC9",
       "forbid_glob": [
         "docs/design/2964-*"

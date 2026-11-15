@@ -20,6 +20,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -37,7 +39,6 @@ def main() -> int:
     svc = _read("src/compiler/service.ixx")
     soa = _read("src/compiler/ir_soa.ixx")
     t = _read("tests/compiler/test_soa_dirty_aware_pipeline.cpp")
-    build = _read("build.py")
 
     must("Issue #3822", "AC1 cite", svc)
     must("sync_soa_dirty_blocks_into_aos", "AC1 sync helper", soa)
@@ -78,7 +79,7 @@ def main() -> int:
     must("3822 AC1: AoS dirty const matches SoA", "AC4 AC1 test", t)
     must("3822 Soft: suite no longer gates hot pack on bare soa_hot", "AC4 Soft test", t)
     must("3822 soak: hot_pack invocations advance with sync companion", "AC4 soak", t)
-    must("check_prod_soa_writeback_sync_3822", "AC4 build.py", build)
+    must("check_prod_soa_writeback_sync_3822", "AC4 wiring", wired_text)
 
     if (ROOT / "tests" / "compiler" / "test_issue_3822.cpp").is_file():
         fails.append("AC4: test_issue_3822.cpp present (forbidden #81967)")

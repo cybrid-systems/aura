@@ -34,7 +34,7 @@ Contract (one row per AC):
      preserved (strict superset, no replacement).
   AC5 Source-cite + extend tests/serve/test_mailbox_hold_starvation_hard
      (no new test file) per #81967. Coverage linter present (this file)
-     + wired in build.py.
+     + gated by run_checks.py.
   AC6 No docs/design/2726-* on disk per #1655 (design rationale lives in
      the close comment, not in a per-issue plan doc).
 
@@ -51,6 +51,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from query_prims_sources import read_query_prims  # Issue #2914
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -84,7 +86,6 @@ def main() -> int:
     fh = _read("src/serve/fiber.h")
     fc = _read("src/serve/fiber.cpp")
     t = _read("tests/serve/test_mailbox_hold_starvation_hard.cpp")
-    build = _read("build.py")
 
     # AC1 — per-Fiber pending-cancel flag + registry + C-linkage shim +
     # cross-fiber wire-up + Phase-5 poll.
@@ -144,7 +145,7 @@ def main() -> int:
     must_key("schema-2724", "AC4", q)
 
     # AC5 — source-cite + test extension per #81967 (no new test file) +
-    # build.py wires linter.
+    # run_checks.py gates linter.
     must("ac2726_1_cross_fiber_real_cancel", "AC5", t)
     must("ac2726_2_soft_counter_only", "AC5", t)
     must("ac2726_3_nested_outermost_only", "AC5", t)
@@ -154,7 +155,7 @@ def main() -> int:
     # #81967: NO new test file — extend the existing one.
     if (ROOT / "tests" / "serve" / "test_issue_2726.cpp").is_file():
         fails.append("AC5: tests/serve/test_issue_2726.cpp present (forbidden per #81967)")
-    must("check_cross_fiber_hold_budget_cancel_2726", "AC5", build)
+    must("check_cross_fiber_hold_budget_cancel_2726", "AC5", wired_text)
 
     # AC6 — no docs/design/2726-* on disk per #1655.
     docs_dir = ROOT / "docs" / "design"

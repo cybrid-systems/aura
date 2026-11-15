@@ -25,6 +25,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -43,7 +45,6 @@ def main() -> int:
 
     mut = _read("src/compiler/evaluator_primitives_mutate.cpp")
     fixture = _read("tests/core/test_stale_ref_string_heap.cpp")
-    build = _read("build.py")
 
     pos = mut.find('add_mutate(\n        "mutate:check-stable-ref"')
     if pos < 0:
@@ -73,8 +74,8 @@ def main() -> int:
     must("production_defaults_active()", "AC4 production gate", win)
 
     # AC5: fixture placement + wiring
-    must("check_stable_ref_probe_3400", "AC5 build wiring", build)
-    must("cmd_stable_ref_probe_3400_coverage", "AC5 build cmd", build)
+    must("check_stable_ref_probe_3400", "AC5 build wiring", wired_text)
+    must("check_stable_ref_probe_3400.py", "AC5 build cmd", wired_text)
     if (ROOT / "tests" / "issues" / "test_issue_3400.cpp").is_file():
         fails.append("AC5: tests/issues/test_issue_3400.cpp present (forbidden per #81967)")
     docs = ROOT / "docs" / "design"

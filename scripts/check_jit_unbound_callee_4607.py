@@ -53,6 +53,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 LOW = ROOT / "src" / "compiler" / "lowering_impl.cpp"
 LOW_IXX = ROOT / "src" / "compiler" / "lowering.ixx"
 SVC = ROOT / "src" / "compiler" / "service.ixx"
@@ -87,7 +90,6 @@ def main() -> int:
     walk = WALK.read_text() if WALK.exists() else ""
     tst = TST.read_text() if TST.exists() else ""
     py = PY.read_text() if PY.exists() else ""
-    build = BUILD.read_text() if BUILD.exists() else ""
     allow = ALLOW.read_text() if ALLOW.exists() else ""
 
     # ── AC1: the lowering records the unresolved name ──────────────
@@ -155,7 +157,7 @@ def main() -> int:
     must("never-reached" in py, "AC5: the never-reached parity row is asserted")
 
     # ── AC6: wiring ────────────────────────────────────────────────
-    must("check_jit_unbound_callee_4607.py" in build, "AC6: build.py registers this linter")
+    must("check_jit_unbound_callee_4607.py" in wired_text, "AC6: run_checks.py registers this linter")
     must("check_jit_unbound_callee_4607.py" in allow, "AC6: root_check_allowlist.txt lists this linter")
 
     # ── AC7: house rules ───────────────────────────────────────────

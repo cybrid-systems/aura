@@ -26,6 +26,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 # Legacy 4-file HOT_FILES list (#2615 baseline). #2681 widens scan to ALL prod TUs.
 HOT_FILES_LEGACY = [
@@ -98,7 +100,6 @@ def main() -> int:
     q = _read("src/compiler/evaluator_primitives_obs_jit.cpp")
     test = _read("tests/compiler/test_batch_dirty_discipline.cpp")
     cmake = _read("CMakeLists.txt")
-    build = _read("build.py")
 
     # ── #2615 baseline ──
 
@@ -135,8 +136,8 @@ def main() -> int:
     must("soa-batch-dirty-cascades-total", "AC5", q)
     must("soa-dirty-fence-total", "AC5", q)
     must("test_batch_dirty_discipline", "AC5", cmake)
-    must("check_batch_dirty_discipline_2615", "AC5", build)
-    must("cmd_batch_dirty_discipline_coverage", "AC5", build)
+    must("check_batch_dirty_discipline_2615", "AC5", wired_text)
+    must("check_batch_dirty_discipline_2615.py", "AC5", wired_text)
     must("ac5_fence_rate", "AC5", test)
 
     # No design docs (per #1655).
@@ -205,7 +206,7 @@ def main() -> int:
     must("#2681", "AC6", svc)
     must("#2681", "AC6", q)
     must("ac2681_source_cite", "AC6", test)
-    must("check_batch_dirty_discipline_2615", "AC6", build)  # linter already wired
+    must("check_batch_dirty_discipline_2615", "AC6", wired_text)  # linter already wired
 
     if fails:
         for f in fails:

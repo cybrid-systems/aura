@@ -17,6 +17,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -37,7 +39,6 @@ def main() -> int:
     emb = _read("src/compiler/evaluator_mutation_boundary.cpp")
     epm = _read("src/compiler/evaluator_primitives_messaging.cpp")
     test = _read("tests/serve/test_mailbox_recv_mutation_boundary.cpp")
-    bp = _read("build.py")
 
     # AC1
     must("note_mailbox_mutation_hold_defer", "AC1", mb)
@@ -73,8 +74,8 @@ def main() -> int:
 
     # AC5
     must("mailbox_defer_starvation_total", "AC5", mb)
-    must("cmd_mailbox_defer_drain_sla_coverage", "AC5", bp)
-    must("check_mailbox_defer_drain_sla_2378.py", "AC5", bp)
+    must("check_mailbox_defer_drain_sla_2378.py", "AC5", wired_text)
+    must("check_mailbox_defer_drain_sla_2378.py", "AC5", wired_text)
     must("ac2378_source_cite", "AC5", test)
     must("Issue #2378", "AC5", emb)
 

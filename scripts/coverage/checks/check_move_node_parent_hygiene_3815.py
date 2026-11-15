@@ -21,6 +21,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -38,7 +40,6 @@ def main() -> int:
     mut = _read("src/compiler/evaluator_primitives_mutate.cpp")
     flat = _read("src/compiler/evaluator_eval_flat.cpp")
     test = _read("tests/compiler/test_move_node_hygiene.cpp")
-    build = _read("build.py")
 
     # Locate public move-node window
     ppos = mut.find("── mutate:move-node")
@@ -81,7 +82,7 @@ def main() -> int:
     must("3815 AC3", "AC4 test Soft/Off", test)
     must("3815 AC4", "AC4 test batch", test)
     must("Issue #3815", "AC4 test cite", test)
-    must("check_move_node_parent_hygiene_3815", "AC4 build wire", build)
+    must("check_move_node_parent_hygiene_3815", "AC4 build wire", wired_text)
     if (ROOT / "tests" / "compiler" / "test_issue_3815.cpp").is_file():
         fails.append("AC4: invent test_issue_3815.cpp forbidden")
     if (ROOT / "docs" / "design" / "3815-move-node-parent-hygiene.md").is_file():

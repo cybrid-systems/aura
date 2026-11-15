@@ -21,6 +21,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -42,7 +44,6 @@ def main() -> int:
     arena = _read("src/core/arena.ixx")
     mut = _read("src/compiler/evaluator_mutation_boundary.cpp")
     test = _read("tests/core/test_moving_densify_fail_closed.cpp")
-    build = _read("build.py")
 
     arm = arena.find("should_production_auto_arm_moving(frag_before)")
     win = arena[arm : arm + 5500] if arm != -1 else ""
@@ -71,11 +72,15 @@ def main() -> int:
     must("ac3783_1", "AC4 ac3783_1", test)
     must("ac3783_2", "AC4 ac3783_2", test)
     must("ac3783_3", "AC4 ac3783_3", test)
-    must("check_auto_arm_densify_health_publish_3783", "AC4 build wire", build)
-    if build.find("check_auto_arm_densify_health_publish_3783") <= build.find(
-        "check_densify_entry_lcp_skip_compact_3782"
-    ):
-        fails.append("AC4: linter must be wired in build.py AFTER #3782 linter")
+    must("check_auto_arm_densify_health_publish_3783", "AC4 build wire", wired_text)
+    # Sequence positions were a property of the deleted cmd_lint chain
+    # (#5246); the checks below are gated by run_checks.py discovery.
+    must(
+        "check_auto_arm_densify_health_publish_3783", "AC wiring check_auto_arm_densify_health_publish_3783", wired_text
+    )
+    must(
+        "check_densify_entry_lcp_skip_compact_3782", "AC wiring check_auto_arm_densify_health_publish_3783", wired_text
+    )
     must_not("tests/issues/test_issue_3783.cpp", "AC4 no invent", test)
     if (ROOT / "tests" / "issues" / "test_issue_3783.cpp").is_file():
         fails.append("AC4: tests/issues/test_issue_3783.cpp present (forbidden)")

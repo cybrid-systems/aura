@@ -42,10 +42,7 @@
     },
     {
       "ac": "Build-3207",
-      "path": "build.py",
-      "contains": [
-        "check_dual_evaluator_cascade_3207.py"
-      ]
+      "wired": "check_dual_evaluator_cascade_3207.py"
     }
   ]
 }

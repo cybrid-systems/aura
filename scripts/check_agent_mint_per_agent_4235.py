@@ -42,7 +42,7 @@ Contract (one row per AC):
        InvalidFiber arms plus InvalidFiber = 3 are verbatim
   AC4  runtime ACs dispatched in test_stable_ref_provenance_fiber_cow.cpp
        (ac4235_1..5); no tests/**/test_issue_4235.cpp; no docs/design/4235-*
-  AC5  build.py wiring + root_check_allowlist.txt entry
+  AC5  run_checks.py wiring + root_check_allowlist.txt entry
 
 Exit 0 = all rows satisfied.
 """
@@ -57,6 +57,8 @@ from source_window import body_between  # noqa: E402
 from source_window import check as _structural  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -88,7 +90,6 @@ def main() -> int:
     dec = _read("src/compiler/query_result_decode.hh")
     epoch = _read("src/core/workspace_epoch.hh")
     cow_test = _read("tests/serve/test_stable_ref_provenance_fiber_cow.cpp")
-    build = _read("build.py")
     allow = _read("scripts/coverage/root_check_allowlist.txt")
 
     # ── AC1: per-Agent keyed mint in the security TU ─────────────────────
@@ -157,7 +158,7 @@ def main() -> int:
         fails.append("AC4: no docs/design/4235-*")
 
     # ── AC5: build.py + allowlist wiring ─────────────────────────────────
-    must("check_agent_mint_per_agent_4235.py", "AC5 build.py wires the linter", build)
+    must("check_agent_mint_per_agent_4235.py", "AC5 run_checks.py wires the linter", wired_text)
     must("check_agent_mint_per_agent_4235.py", "AC5 root allowlist entry", allow)
 
     if fails:

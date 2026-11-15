@@ -26,6 +26,8 @@ _sys.path.insert(0, str(_Path(__file__).resolve().parents[1]))
 from service_source import service_source  # #5242: interface + implementation units
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -53,7 +55,6 @@ def main() -> int:
     ev = _read("src/compiler/evaluator_primitives_eval.cpp")
     test = _read("tests/compiler/test_type_dirty_txn_order.cpp")
     cmake = _read("CMakeLists.txt")
-    build = _read("build.py")
 
     # AC1
     must("Issue #2516", "AC1", tci)
@@ -99,8 +100,8 @@ def main() -> int:
     must("schema-2355", "AC5", q)
     must("type_dirty_cone_mirrored_total", "AC5", met)
     must("test_type_dirty_txn_order", "AC5", cmake)
-    must("check_type_dirty_txn_order_2516", "AC5", build)
-    must("cmd_type_dirty_txn_order_coverage", "AC5", build)
+    must("check_type_dirty_txn_order_2516", "AC5", wired_text)
+    must("check_type_dirty_txn_order_2516.py", "AC5", wired_text)
     must("ac5_counters_and_query", "AC5", test)
 
     # Retain prior pieces

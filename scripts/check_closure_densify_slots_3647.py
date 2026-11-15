@@ -29,6 +29,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
 
 MB = "src/compiler/evaluator_mutation_boundary.cpp"
 HDR = "src/core/densify_consistency_report.h"
@@ -157,7 +160,7 @@ def _rows(mb: str, hdr: str, arena_src: str, test: str, build: str) -> list[str]
         fails.append(f"AC5: forbidden design doc {stale.name}")
     for stale in ROOT.glob("tests/**/test_issue_3647*.cpp"):
         fails.append(f"AC5: forbidden issue test {stale.name}")
-    must("check_closure_densify_slots_3647.py", "AC5 build.py registration", build)
+    must("check_closure_densify_slots_3647.py", "AC5 build.py registration", wired_text)
 
     return fails
 
@@ -171,7 +174,7 @@ def main() -> int:
     hdr = _read(HDR)
     arena_src = _read(ARENA)
     test = _read(TEST)
-    build = _read(BUILD)
+    build = wired_text
     if args.self_test:
         broken = mb.replace("Issue #3647", "Issue #redacted")
         self_fails = _rows(broken, hdr, arena_src, test, build)

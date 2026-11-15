@@ -54,6 +54,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 IXX = ROOT / "src" / "compiler" / "type_checker.ixx"
 TMH = ROOT / "src" / "compiler" / "typed_mutation_audit.h"
 EMB = ROOT / "src" / "compiler" / "evaluator_mutation_boundary.cpp"
@@ -77,7 +80,6 @@ def main() -> int:
     tmh = TMH.read_text()
     emb = EMB.read_text()
     tst = TST.read_text()
-    build = BUILD.read_text()
     allow = ALLOW.read_text()
 
     # ── AC1: restore point staged BEFORE the truncation clear ───────
@@ -193,7 +195,7 @@ def main() -> int:
 
     # ── AC5: wiring + runtime doors ─────────────────────────────────
     must(
-        "check_recover_truncation_4174.py" in build,
+        "check_recover_truncation_4174.py" in wired_text,
         "AC5: build.py registers the linter",
     )
     must(

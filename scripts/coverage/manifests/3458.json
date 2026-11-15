@@ -66,10 +66,7 @@
     },
     {
       "ac": "Build-3458",
-      "path": "build.py",
-      "contains": [
-        "check_tenant_scope_release_key_3458.py"
-      ]
+      "wired": "check_tenant_scope_release_key_3458.py"
     }
   ]
 }

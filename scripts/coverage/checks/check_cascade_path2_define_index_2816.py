@@ -16,6 +16,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -36,7 +38,6 @@ def main() -> int:
     met = _read("src/compiler/observability_metrics.h")
     obs = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
     test = _read("tests/compiler/test_cascade_path2_define_index.cpp")
-    build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
     cascade = mut.find("push_post_mutate_incremental_cascade")
@@ -82,7 +83,7 @@ def main() -> int:
     must("test_cascade_path2_define_index", "AC3", cmake)
 
     # AC4
-    must("check_cascade_path2_define_index_2816", "AC4", build)
+    must("check_cascade_path2_define_index_2816", "AC4", wired_text)
     docs = ROOT / "docs" / "design"
     if docs.is_dir():
         for f in sorted(docs.glob("2816-*")):

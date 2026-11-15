@@ -23,6 +23,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from query_prims_sources import read_query_prims  # Issue #2914
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -48,7 +50,6 @@ def main() -> int:
     q = read_query_prims()
     persist = _read("tests/compiler/test_occurrence_goal_persist_rehydrate.cpp")
     health = _read("tests/compiler/test_type_linear_commit_health.cpp")
-    build = _read("build.py")
 
     must("struct OccurrenceCommitHealth", "AC1", ixx)
     must("evaluate_occurrence_commit_health", "AC1", ixx)
@@ -92,7 +93,7 @@ def main() -> int:
     must("ac2995_6_health_query_keys", "AC6", health)
 
     must("ac2995_7_source_cite", "AC7", persist)
-    must("check_occurrence_commit_health_2995", "AC7", build)
+    must("check_occurrence_commit_health_2995", "AC7", wired_text)
     if (ROOT / "tests" / "compiler" / "test_issue_2995.cpp").is_file():
         fails.append("AC7: test_issue_2995.cpp present (forbidden #81967)")
     docs = ROOT / "docs" / "design"

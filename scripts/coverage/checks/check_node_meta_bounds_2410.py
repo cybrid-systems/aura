@@ -17,6 +17,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -39,7 +41,6 @@ def main() -> int:
 
     ast = _read("src/core/ast.ixx")
     test = _read("tests/core/test_node_meta_bounds.cpp")
-    build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
     # Locate meta() body
@@ -70,8 +71,8 @@ def main() -> int:
     must("static_assert(kNodeMeta.size() == static_cast<std::size_t>(NodeTag::Class)", "AC5", ast)
     must("2410 AC5", "AC5", test)
 
-    must("check_node_meta_bounds_2410", "gate", build)
-    must("cmd_node_meta_bounds_coverage", "gate", build)
+    must("check_node_meta_bounds_2410", "gate", wired_text)
+    must("check_node_meta_bounds_2410.py", "gate", wired_text)
     must("test_node_meta_bounds", "gate", cmake)
 
     if fails:

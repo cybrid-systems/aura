@@ -24,6 +24,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -46,7 +48,6 @@ def main() -> int:
     ss = _read("src/serve/steal_safety.cpp")
     fb = _read("src/compiler/fiber_bridge.cpp")
     t = _read("tests/serve/test_steal_complete_gc_defer.cpp")
-    build = _read("build.py")
 
     fn = wc.find("static inline void call_steal_complete")
     win = wc[fn : fn + 2200] if fn >= 0 else ""
@@ -70,11 +71,13 @@ def main() -> int:
     must("aura_test_call_steal_complete", "AC5 test seam", t)
     must("ac3483_1_runtime_latch_strong_only", "AC5 AC1 runtime", t)
 
-    must("check_steal_complete_latch_strong_3483", "AC6 build.py", build)
-    prev = build.find("check_steal_sole_enqueue_gate_2844")
-    ours = build.find("check_steal_complete_latch_strong_3483")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC6: linter must be wired in build.py AFTER #2844")
+    must("check_steal_complete_latch_strong_3483", "AC6 wiring", wired_text)
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must("check_steal_sole_enqueue_gate_2844", "AC6: linter must be gated by run_checks.py (both gated)", wired_text)
+    must(
+        "check_steal_complete_latch_strong_3483", "AC6: linter must be gated by run_checks.py (both gated)", wired_text
+    )
     must_not("schema-3483", "AC4 no schema-3483", wc)
     must_not("g_3483_", "AC4 no g_3483_*", wc)
     if _read("tests/serve/test_issue_3483.cpp") or _read("tests/issues/test_issue_3483.cpp"):

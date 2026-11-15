@@ -54,6 +54,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 DIRTY = ROOT / "src" / "compiler" / "dirty_propagation.ixx"
 SVC = ROOT / "src" / "compiler" / "service.ixx"
 TST = ROOT / "tests" / "compiler" / "test_dead_coercion_dirty_cone.cpp"
@@ -80,7 +83,6 @@ def main() -> int:
     dirty = DIRTY.read_text()
     svc = SVC.read_text() + SVC.parent.joinpath("service_relower.cpp").read_text()
     tst = TST.read_text()
-    build = BUILD.read_text()
     allow = ALLOW.read_text()
 
     # ── AC1: the #3985 densify surface drops the stale persist ──────
@@ -135,7 +137,7 @@ def main() -> int:
         "AC4: no tests/**/test_issue_4155.cpp (per #81934)",
     )
     must(not glob.glob(str(ROOT / "docs" / "design" / "4155-*")), "AC4: no docs/design/4155-* (per #1655)")
-    must("check_residual_castop_densify_clear_4155" in build, "AC4: build.py registers the linter")
+    must("check_residual_castop_densify_clear_4155" in wired_text, "AC4: run_checks.py registers the linter")
     must("check_residual_castop_densify_clear_4155.py" in allow, "AC4: root_check_allowlist.txt lists the linter")
 
     # ── AC5: Soft / Off zero-cost ordering ──────────────────────────

@@ -38,7 +38,7 @@ Contract (one row per AC):
   AC6  tests/compiler/test_unquote_splicing_hygiene.cpp extended with
        #3181 ACs (binding == ref under Quote / Call-head "quote" /
        qq regression / qq+unquote regression / source-cite / cross-flat)
-  AC7  this linter wired in build.py; no docs/design/3181-* (per #1655);
+  AC7  this linter gated by run_checks.py; no docs/design/3181-* (per #1655);
        no tests/issues/test_issue_3181.cpp (per #81934 — extends existing
        src/-aligned suite test_unquote_splicing_hygiene.cpp instead)
 
@@ -61,6 +61,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 MACRO_EXPANSION = ROOT / "src" / "compiler" / "macro_expansion.cpp"
 MACRO_IXX = ROOT / "src" / "compiler" / "macro_expansion.ixx"
@@ -88,7 +89,6 @@ def main() -> int:
     me = _read(MACRO_EXPANSION)
     _read(MACRO_IXX)
     test = _read(TEST_FILE)
-    build = _read(BUILD_PY)
 
     # ── AC1: clone_macro_body_at_depth in_quote parameter ──
     # Issue #3181 + #2807 collateral: the function also gained an
@@ -275,9 +275,9 @@ def main() -> int:
         }
     )
 
-    # ── AC7: linter wired in build.py; no docs/design/3181-*;
+    # ── AC7: linter gated by run_checks.py; no docs/design/3181-*;
     #         no tests/issues/test_issue_3181.cpp ──
-    linter_wired = "check_quote_clone_hygiene_3181" in build
+    linter_wired = "check_quote_clone_hygiene_3181" in wired_text
     no_design_docs = True
     if DOCS_DESIGN_DIR.is_dir():
         for f in sorted(DOCS_DESIGN_DIR.glob("3181-*")):
@@ -288,7 +288,7 @@ def main() -> int:
         fails.append("AC7: tests/issues/test_issue_3181.cpp present (forbidden per #81934)")
     ac7_ok = linter_wired and no_design_docs and no_issue_test
     if not linter_wired:
-        fails.append("AC7: linter not wired in build.py")
+        fails.append("AC7: linter not gated by run_checks.py")
     rows.append(
         {
             "ac": "AC7_no_invent",

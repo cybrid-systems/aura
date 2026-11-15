@@ -28,6 +28,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from query_prims_sources import read_query_prims  # Issue #2914
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -57,7 +59,6 @@ def main() -> int:
     matcher = _read("src/compiler/query_matcher.ixx")
     mcpp = _read("src/compiler/query_matcher.cpp")
     t = _read("tests/compiler/test_query_pattern_default_hygiene.cpp")
-    build = _read("build.py")
 
     # AC1 — delta default under low dirty ratio.
     must("#2763", "AC1", idx)
@@ -101,7 +102,7 @@ def main() -> int:
     must("ac2763_4_quiet_path", "AC6", t)
     must("ac2763_5_observability", "AC6", t)
     must("ac2763_6_source_and_linter", "AC6", t)
-    must("check_query_pattern_delta_hygiene_2763", "AC6", build)
+    must("check_query_pattern_delta_hygiene_2763", "AC6", wired_text)
     if (ROOT / "tests" / "compiler" / "test_issue_2763.cpp").is_file():
         fails.append("AC6: tests/compiler/test_issue_2763.cpp present (forbidden per #81967)")
     docs_dir = ROOT / "docs" / "design"

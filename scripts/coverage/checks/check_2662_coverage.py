@@ -19,7 +19,7 @@ Contract (one row per AC):
   AC6 tests/orch/test_parallel_intend_pure_contract.cpp extended with #2662
      AC6 (flag atomic + wire-up source-cite) + AC7 (8+ fibers string/cons
      stress under :pure #t — no SIGSEGV invariant under fanout).
-  AC7 build.py wires check_2662_coverage into the gate (runs before
+  AC7 run_checks.py gates check_2662_coverage into the gate (runs before
      pre-push); cross-check: check_pure_probe_hardening_2634 +
      check_pure_parallel_isolation_wording still green.
 
@@ -33,6 +33,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -53,7 +55,6 @@ def main() -> int:
     ag = _read("src/compiler/evaluator_primitives_agent.cpp")
     rd = _read("src/orch/README.md")
     test = _read("tests/orch/test_parallel_intend_pure_contract.cpp")
-    bp = _read("build.py")
 
     # AC1 — OrchModuleStats flag atomic
     must("parallel_intend_force_lock_on_violation", "AC1", spawn_src)
@@ -90,8 +91,8 @@ def main() -> int:
     must("string-append", "AC6", test)
     must("(cons 1 2)", "AC6", test)
 
-    # AC7 — build.py wires check_2662_coverage into the gate
-    must("check_2662_coverage", "AC7", bp)
+    # AC7 — run_checks.py gates check_2662_coverage into the gate
+    must("check_2662_coverage", "AC7", wired_text)
 
     # Cross-check: check_pure_probe_hardening_2634 still green
     r1 = subprocess.run(

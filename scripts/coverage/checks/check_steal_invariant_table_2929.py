@@ -22,6 +22,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -42,7 +44,6 @@ def main() -> int:
     ss = _read("src/serve/steal_safety.cpp")
     qjit = _read("src/compiler/evaluator_primitives_obs_jit.cpp")
     test = _read("tests/serve/test_steal_complete_restamp_txn.cpp")
-    build = _read("build.py")
 
     # AC1 — named table + counters
     must("enum class StealInvariant", "AC1", hdr)
@@ -98,7 +99,7 @@ def main() -> int:
     must("ac2929_3_soft_metric_only_production_fail_closed", "AC5", test)
     must("ac2929_4_query_additive", "AC5", test)
     must("ac2929_5_source_and_linter", "AC5", test)
-    must("check_steal_invariant_table_2929", "AC5", build)
+    must("check_steal_invariant_table_2929", "AC5", wired_text)
     must("ac2844_1_sole_enqueue_gate", "AC5 #2844 preserved", test)
     must("ac2721_1_residual_hard_and_inside_transaction", "AC5 #2721 preserved", test)
     if (ROOT / "tests" / "serve" / "test_issue_2929.cpp").is_file():

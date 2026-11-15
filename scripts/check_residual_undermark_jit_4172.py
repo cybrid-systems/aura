@@ -46,6 +46,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 POL = ROOT / "src" / "compiler" / "castop_density_policy.hh"
 OPT = ROOT / "src" / "compiler" / "optimization_passes.ixx"
 SVC = ROOT / "src" / "compiler" / "service.ixx"
@@ -73,7 +76,6 @@ def main() -> int:
     opt = OPT.read_text()
     svc = SVC.read_text() + SVC.parent.joinpath("service_relower.cpp").read_text()
     tst = TST.read_text()
-    build = BUILD.read_text()
     allow = ALLOW.read_text()
 
     # ── AC1: verifier shape in optimization_passes.ixx ──
@@ -160,7 +162,7 @@ def main() -> int:
         return fail("AC5 test_issue_4172.cpp must not exist (#81934)")
     if list(ROOT.glob("docs/design/4172-*")):
         return fail("AC5 docs/design/4172-* must not exist (#1655)")
-    if "check_residual_undermark_jit_4172" not in build:
+    if "check_residual_undermark_jit_4172" not in wired_text:
         return fail("AC5 build.py must wire this linter")
     if "check_residual_undermark_jit_4172.py" not in allow:
         return fail("AC5 root_check_allowlist.txt must list this linter")

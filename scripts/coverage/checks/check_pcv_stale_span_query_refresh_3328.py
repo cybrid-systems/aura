@@ -25,6 +25,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -45,7 +47,6 @@ def main() -> int:
     fiber = _read("src/compiler/evaluator_fiber_mutation.cpp")
     t = _read("tests/core/test_pcv_exclusive_with_set.cpp")
     hyg = _read("tests/compiler/test_hygiene_mutate_closed_loop.cpp")
-    build = _read("build.py")
 
     must("kPcvSpanQueryRefreshIssue = 3328", "AC1 stamp", hh)
     must("pcv_span_for_agent_export", "AC1 helper", ast)
@@ -71,17 +72,12 @@ def main() -> int:
     must("pcv_span_for_agent_export", "AC5 children_stable_batch", fiber)
     must("query:children-stable", "AC5 children-stable prim", qws)
     must("ac3328_5_source_and_linter", "AC5 hygiene", hyg)
-    must("check_pcv_stale_span_query_refresh_3328", "AC5 build.py", build)
+    must("check_pcv_stale_span_query_refresh_3328", "AC5 wiring", wired_text)
 
-    prev3167 = build.find("check_pcv_span_stale_coverage_3167")
-    prev3233 = build.find("check_pcv_stale_span_exclusive_3233")
-    ours = build.find("check_pcv_stale_span_query_refresh_3328")
-    if ours < 0:
-        fails.append("AC5: linter must be wired in build.py")
-    elif prev3233 >= 0 and ours < prev3233:
-        fails.append("AC5: linter must be wired in build.py AFTER #3233")
-    if prev3167 < 0:
-        fails.append("AC5: #3167 linter missing (lineage)")
+    # Ordering was a property of the deleted sequential chain (#5246); the
+    # three checks below are all gated by run_checks.py discovery now.
+    must("check_pcv_span_stale_coverage_3167", "AC5: #3167 lineage still gated", wired_text)
+    must("check_pcv_stale_span_query_refresh_3328", "AC5: #3328 still gated", wired_text)
 
     if "g_3328_" in hh or "g_3328_" in ast:
         fails.append("AC5: new g_3328_* counter")

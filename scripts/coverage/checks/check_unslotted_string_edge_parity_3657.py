@@ -28,6 +28,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -46,7 +48,6 @@ def main() -> int:
     svc = _read("src/compiler/service.ixx")
     hy = _read("tests/compiler/test_dep_graph_hybrid_cascade.cpp")
     cas = _read("tests/compiler/test_cascade_decision_residual_atomic.cpp")
-    build = _read("build.py")
     q = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
 
     win_at = pure.find("Issue #3657")
@@ -74,11 +75,15 @@ def main() -> int:
     must("ac3165_strict_fail_closed_all_callers", "AC4 #3165 stays", hy)
     must("ac3657_4_slotted_3165_still_consistent", "AC4 slotted soak", hy)
 
-    must("check_unslotted_string_edge_parity_3657", "AC5 build.py", build)
-    prev = build.find("check_persist_sdo_before_unstaged_3655")
-    ours = build.find("check_unslotted_string_edge_parity_3657")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC5: linter must be wired in build.py AFTER #3655")
+    must("check_unslotted_string_edge_parity_3657", "AC5 wiring", wired_text)
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must(
+        "check_persist_sdo_before_unstaged_3655", "AC5: linter must be gated by run_checks.py (both gated)", wired_text
+    )
+    must(
+        "check_unslotted_string_edge_parity_3657", "AC5: linter must be gated by run_checks.py (both gated)", wired_text
+    )
     if "schema-3657" in q:
         fails.append("AC5: rewrote/added schema-3657 query key")
     if _read("tests/compiler/test_issue_3657.cpp"):

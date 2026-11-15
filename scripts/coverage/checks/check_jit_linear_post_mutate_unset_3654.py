@@ -23,6 +23,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -44,7 +46,6 @@ def main() -> int:
     jit = _read("src/compiler/aura_jit.cpp")
     occ = _read("tests/compiler/test_occurrence_goal_persist_rehydrate.cpp")
     steal = _read("tests/serve/test_steal_complete_strong_entry.cpp")
-    build = _read("build.py")
 
     fn = brc.find('extern "C" int aura_jit_linear_post_mutate_enforce')
     # #4600: the declared-none consult (exec_jit's explicit no-linear-env
@@ -80,13 +81,19 @@ def main() -> int:
     must("can_linear = hard_typed_entry && !can_epoch", "AC4 #3616 anon emit", jit)
 
     # AC5
-    must("check_jit_linear_post_mutate_unset_3654", "AC5 build.py", build)
+    must("check_jit_linear_post_mutate_unset_3654", "AC5 wiring", wired_text)
     must("ac3654_linear_post_mutate_unset_fail_closed", "AC5 steal test", steal)
     must("ac3654_linear_post_mutate_unset_fail_closed", "AC5 occ test", occ)
-    prev = build.find("check_production_weak_abi_commit_readiness_3343")
-    ours = build.find("check_jit_linear_post_mutate_unset_3654")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC5: linter must be wired in build.py AFTER #3343")
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must(
+        "check_production_weak_abi_commit_readiness_3343",
+        "AC5: linter must be gated by run_checks.py (both gated)",
+        wired_text,
+    )
+    must(
+        "check_jit_linear_post_mutate_unset_3654", "AC5: linter must be gated by run_checks.py (both gated)", wired_text
+    )
     if "schema-3654" in brc or "schema-3654" in stub:
         fails.append("AC5: new schema-3654 query key")
     if "g_3654_" in brc or "g_3654_" in stub:

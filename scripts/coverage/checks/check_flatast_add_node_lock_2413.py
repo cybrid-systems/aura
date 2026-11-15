@@ -19,6 +19,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -80,7 +82,6 @@ def main() -> int:
 
     ast = _read("src/core/ast.ixx")
     test = _read("tests/core/test_flatast_add_node_lock.cpp")
-    build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
     # AC1 documentation
@@ -127,8 +128,8 @@ def main() -> int:
 
     must("2413 AC4", "AC4", test)
 
-    must("check_flatast_add_node_lock_2413", "gate", build)
-    must("cmd_flatast_add_node_lock_coverage", "gate", build)
+    must("check_flatast_add_node_lock_2413", "gate", wired_text)
+    must("check_flatast_add_node_lock_2413.py", "gate", wired_text)
     must("test_flatast_add_node_lock", "gate", cmake)
 
     if fails:

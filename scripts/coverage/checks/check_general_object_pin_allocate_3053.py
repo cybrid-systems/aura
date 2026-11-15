@@ -20,6 +20,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -38,7 +40,6 @@ def main() -> int:
     arena = _read("src/core/arena.ixx")
     test = _read("tests/core/test_moving_densify_fail_closed.cpp")
     gate = _read("tests/core/test_general_object_pin_coverage_gate.cpp")
-    build = _read("build.py")
 
     must("kGeneralObjectPinAllocateResidualIssue = 3053", "AC1 stamp", lp)
     must("maybe_note_allocate_intermediate_", "AC1 helper", arena)
@@ -56,7 +57,7 @@ def main() -> int:
 
     must("ac3053_4_mutate_densify_allocate_soak", "AC5 soak", test)
     must("3053", "AC5 coverage-gate", gate)
-    must("check_general_object_pin_allocate_3053", "AC5 build", build)
+    must("check_general_object_pin_allocate_3053", "AC5 build", wired_text)
 
     if "g_moving_pin_registry_3053" in arena or "class DensifyPinRegistry" in arena:
         fails.append("AC6: second pin registry introduced")

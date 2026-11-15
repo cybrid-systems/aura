@@ -36,7 +36,7 @@ Gate rows:
   G7  mid=0 refuse → no invented InvariantFail (mid-fallback-refused only).
   G8  test ACs in tests/compiler/test_security_audit_unify.cpp
       (#2054 suite home, #81967).
-  G9  build.py wires this linter.
+  G9  run_checks.py gates this linter.
   G10 no docs/design/3280-* (per #1655), no tests/issue*/test_issue_3280.cpp
       (per #81967).
 
@@ -47,6 +47,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 failures: list[str] = []
 
@@ -71,7 +73,6 @@ def main() -> int:
     print("=== #3280 invariant/boundary deny SE dual-write linter ===")
     typed = read("src/compiler/typed_mutation_audit.h")
     test = read("tests/compiler/test_security_audit_unify.cpp")
-    build = read("build.py")
 
     must("#3280" in typed, "G1: typed_mutation_audit.h cites Issue #3280")
     must(
@@ -106,8 +107,8 @@ def main() -> int:
     must("#3280 AC4" in test, "G8d: test AC4 present")
     must("#3280 AC5" in test, "G8e: test AC5 present")
     must(
-        "check_invariant_deny_se_dual_write_3280.py" in build,
-        "G9: build.py wires linter",
+        "check_invariant_deny_se_dual_write_3280.py" in wired_text,
+        "G9: run_checks.py gates linter",
     )
     must(
         not any(p.name.startswith("3280-") for p in (ROOT / "docs/design").glob("3280-*"))

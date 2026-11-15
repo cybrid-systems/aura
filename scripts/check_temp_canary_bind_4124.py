@@ -28,6 +28,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
 
 JIT = "src/compiler/aura_jit_runtime.cpp"
 ARENA = "src/core/arena.ixx"
@@ -153,7 +156,7 @@ def _rows(jit: str, arena: str, apply: str, test: str, build: str, allow: str) -
         fails.append(f"AC5: forbidden issue test {stale.name}")
 
     # AC6 — build.py registration + allowlist append.
-    must("check_temp_canary_bind_4124.py", "AC6 build.py registration", build)
+    must("check_temp_canary_bind_4124.py", "AC6 build.py registration", wired_text)
     must(LINTER, "AC6 allowlist append", allow)
 
     return fails
@@ -168,7 +171,7 @@ def main() -> int:
     arena = _read(ARENA)
     apply = _read(APPLY)
     test = _read(TEST)
-    build = _read(BUILD)
+    build = wired_text
     allow = _read(ALLOWLIST)
     if args.self_test:
         broken = jit.replace("aura_bind_temporary_moving_live_ptr_any_arena", "bind_redacted_4124_")

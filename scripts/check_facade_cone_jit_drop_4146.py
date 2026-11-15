@@ -53,6 +53,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 SVC = ROOT / "src" / "compiler" / "service_dirty.cpp"
 IXX = ROOT / "src" / "compiler" / "service.ixx"
 TST = ROOT / "tests" / "compiler" / "test_compiler_hot_update_facade.cpp"
@@ -75,7 +78,6 @@ def main() -> int:
     ixx_raw = IXX.read_text() if IXX.exists() else ""
     ixx = _strip_comments(ixx_raw)
     tst = TST.read_text() if TST.exists() else ""
-    build = (ROOT / "build.py").read_text()
     allow = (ROOT / "scripts" / "coverage" / "root_check_allowlist.txt").read_text()
     ok = True
 
@@ -234,8 +236,8 @@ def main() -> int:
     )
     report(
         "AC6.wiring",
-        "check_facade_cone_jit_drop_4146.py" in build and "check_facade_cone_jit_drop_4146.py" in allow,
-        "build.py wires this linter; root_check_allowlist.txt lists it",
+        "check_facade_cone_jit_drop_4146.py" in wired_text and "check_facade_cone_jit_drop_4146.py" in allow,
+        "run_checks.py wires this linter; root_check_allowlist.txt lists it",
     )
 
     print(f"check_facade_cone_jit_drop_4146: {'OK' if ok else 'FAILED'}")

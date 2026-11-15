@@ -6,7 +6,7 @@ AC:
   2. Uses :workspace / workspace_source helper; fails when no workspace
   3. ast:diff same
   4. Aura stdlib safe-refactor / refactor / workspace prefer :workspace
-  5. Suite + build.py wiring
+  5. Suite + gate wiring
 """
 
 from __future__ import annotations
@@ -98,7 +98,7 @@ def main() -> int:
     must(
         (ROOT / "scripts" / "coverage" / "checks" / "check_ast_snapshot_workspace_2918.py").is_file()
         and "discover_checks" in _read("scripts/coverage/run_checks.py"),
-        "AC5: build.py gate",
+        "AC5: coverage runner",
     )
 
     if fails:

@@ -32,10 +32,9 @@
     },
     {
       "ac": "AC3-wiring",
-      "path": "build.py",
-      "contains": [
+      "wired": [
         "check_apply_closure_happy_path_densify_3849",
-        "Issue #3849"
+        "check_apply_closure_happy_path_densify_3849.py"
       ]
     },
     {

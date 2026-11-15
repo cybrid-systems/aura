@@ -15,6 +15,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -34,7 +36,6 @@ def main() -> int:
     q = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
     metrics = _read("src/compiler/observability_metrics.h")
     test = _read("tests/core/test_restore_children_structural_lock.cpp")
-    build = _read("build.py")
 
     # AC1
     must("Issue #2959", "AC1", ast)
@@ -61,7 +62,7 @@ def main() -> int:
     # AC3–AC5
     must("abort_restore_dual_topology", "AC3 test", test)
     must("2959 AC3", "AC3 soak", test)
-    must("check_topology_dual_restore_2959", "AC5", build)
+    must("check_topology_dual_restore_2959", "AC5", wired_text)
     must("2959 AC5", "AC5 test", test)
     if (ROOT / "tests" / "core" / "test_issue_2959.cpp").is_file():
         fails.append("AC5: test_issue_2959.cpp present (forbidden #81967)")

@@ -32,6 +32,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -56,7 +58,6 @@ def main() -> int:
     ev = _read("src/compiler/evaluator_eval_flat.cpp")
     bridge = _read("src/compiler/aura_jit_bridge.cpp")
     test = _read("tests/core/test_stress_alloc_storage_lock.cpp")
-    build = _read("build.py")
     lock_audit = _read("src/compiler/lock_order_audit.h")
 
     # AC1: closure materialization — shared_lock(closures_mtx_) around
@@ -88,7 +89,7 @@ def main() -> int:
     must("alloc_storage_lock_", "AC5", lock_audit)
 
     # AC6: linter self-coverage + build.py wire-up.
-    must("check_shared_heap_serial_2676", "AC6", build)
+    must("check_shared_heap_serial_2676", "AC6", wired_text)
     must("#2676", "AC6", bridge)
     must("#2676", "AC6", ev)
     must("#2676", "AC6", test)

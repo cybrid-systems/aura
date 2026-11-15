@@ -25,6 +25,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 SEW = "src/core/security_event_wal.hh"
 PRIM = "src/compiler/evaluator_primitives_security.cpp"
@@ -54,7 +56,6 @@ def main() -> int:
     prim = _read(PRIM)
     test = _read(TEST)
     posture = _read(POSTURE)
-    build = _read(BUILD)
 
     # AC1 — wrap counter bumped on overwrite.
     must("kWalOverflowWrapIssue = 3806", "AC1 issue stamp", sew)
@@ -109,7 +110,7 @@ def main() -> int:
     must("#3806 AC1/AC2/AC3", "AC5 test block", test)
     must("wal_overflow_ring_wrap_total", "AC5 test uses wrap accessor", test)
     must("wal-overflow-wrap-total", "AC5 test asserts Agent key", test)
-    must(LINTER, "AC5 build registration", build)
+    must(LINTER, "AC5 build registration", wired_text)
     for rel in (
         "tests/compiler/test_issue_3806.cpp",
         "tests/core/test_issue_3806.cpp",
@@ -123,8 +124,8 @@ def main() -> int:
             fails.append(f"AC5: docs/design/{p.name} exists")
 
     # Lineage: #3109/#3178 still wired.
-    must("check_wal_append_fail_closed_3109", "AC5 #3109 linter still wired", build)
-    must("check_wal_overflow_mid_3178", "AC5 #3178 linter still wired", build)
+    must("check_wal_append_fail_closed_3109", "AC5 #3109 linter still wired", wired_text)
+    must("check_wal_overflow_mid_3178", "AC5 #3178 linter still wired", wired_text)
 
     if fails:
         for f in fails:

@@ -23,6 +23,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -43,7 +45,6 @@ def main() -> int:
     asr = _read("src/compiler/evaluator_primitives_mutate.cpp")
     sec = _read("src/compiler/evaluator_security.cpp")
     t = _read("tests/compiler/test_hygiene_mutate_closed_loop.cpp")
-    build = _read("build.py")
 
     must("Issue #3121", "AC1 restamp", restamp)
     must("kQueryStableRestampLagStructuredIssue = 3121", "AC1 stamp", restamp)
@@ -73,7 +74,7 @@ def main() -> int:
     must("Issue #3121", "AC4 query sites", qws)
     must("Issue #3121", "AC4 restamp", restamp)
     must("ac3121_4_source_and_linter", "AC4 test", t)
-    must("check_query_stable_restamp_lag_3121", "AC5 build.py", build)
+    must("check_query_stable_restamp_lag_3121", "AC5 wiring", wired_text)
     if (ROOT / "tests" / "compiler" / "test_issue_3121.cpp").is_file():
         fails.append("AC5: test_issue_3121.cpp present (forbidden #81967)")
     docs = ROOT / "docs" / "design"

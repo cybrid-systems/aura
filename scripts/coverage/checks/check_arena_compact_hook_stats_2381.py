@@ -16,6 +16,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -39,7 +41,6 @@ def main() -> int:
     arena = _read("src/core/arena.ixx")
     test = _read("tests/core/test_arena_compact_hook_stats.cpp")
     cmake = _read("CMakeLists.txt")
-    build = _read("build.py")
 
     # AC1 concurrent-safe path
     must("shape_inval_on_compact_", "AC1", arena)
@@ -64,8 +65,8 @@ def main() -> int:
     # AC4 wiring
     must("invoke_compact_hook_()", "AC4", arena)
     must("test_arena_compact_hook_stats", "AC4", cmake)
-    must("check_arena_compact_hook_stats_2381", "AC4", build)
-    must("cmd_arena_compact_hook_stats_coverage", "AC4", build)
+    must("check_arena_compact_hook_stats_2381", "AC4", wired_text)
+    must("check_arena_compact_hook_stats_2381.py", "AC4", wired_text)
     must("ac4_wiring", "AC4", test)
     must("Issue #2381", "AC4", test)
 

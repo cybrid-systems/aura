@@ -22,6 +22,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
 
 MB = "src/serve/multi_fiber_mailbox.h"
 TEST = "tests/serve/test_mailbox_hold_starvation_hard.cpp"
@@ -151,7 +154,7 @@ def main() -> int:
         print("self-test: ok")
         return 0
 
-    fails = _rows(_read(MB), _read(TEST), _read(CANARY), _read(BUILD), _read(QUERY), _read(OBS))
+    fails = _rows(_read(MB), _read(TEST), _read(CANARY), wired_text, _read(QUERY), _read(OBS))
     if fails:
         for f in fails:
             print(f"FAIL {f}")

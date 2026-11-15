@@ -25,6 +25,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 # Intermediate / FFI / agent / scratch create surfaces (#3017 AC1).
 # Extends #2709's four-file set so a new allocate in agent/FFI/scratch
@@ -117,7 +119,6 @@ def main() -> int:
     lp = _read("src/core/lifetime_pin.hh")
     obs = _read("src/compiler/evaluator_primitives_obs_jit.cpp")
     test = _read("tests/core/test_moving_densify_fail_closed.cpp")
-    build = _read("build.py")
 
     # ── AC1: caller audit + value-only is not cover ──
     must("Issue #3017: value-only prep is observability only, not safe cover", "AC1 arena", arena)
@@ -175,8 +176,8 @@ def main() -> int:
     must("ac3017_4_sticky_recover_after_inject", "AC5", test)
     must("ac3017_5_soft_zero_cost", "AC5", test)
     must("ac3017_6_linter_and_no_design", "AC5", test)
-    must("check_moving_incomplete_remap_3017", "AC5 build", build)
-    must("cmd_moving_incomplete_remap_3017", "AC5 build cmd", build)
+    must("check_moving_incomplete_remap_3017", "AC5 build", wired_text)
+    must("check_moving_incomplete_remap_3017.py", "AC5 build cmd", wired_text)
     if "new pin registry" in arena.lower() and "do not" not in arena.lower():
         pass
     # No second pin registry symbol.

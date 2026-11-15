@@ -55,7 +55,11 @@ REQUIRED: tuple[tuple[str, str, str], ...] = (
     (TEST, r"3636 AC7", "3636 AC5: test watermark face"),
     (TEST, r"reemit_soft_storm_region_skips", "3636 AC5: test asserts scoped skips"),
     (TEST, r"hard ceiling throttles all", "3636 AC5: test hard-ceiling throttle-all"),
-    ("build.py", r"check_region_storm_attribution_3636", "3636 AC6: build.py wires the linter"),
+    (
+        "scripts/check_region_storm_attribution_3636.py",
+        r"\S",
+        "3636 AC6: build.py wires the linter",
+    ),
 )
 
 

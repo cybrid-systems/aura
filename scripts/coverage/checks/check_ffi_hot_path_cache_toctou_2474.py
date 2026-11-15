@@ -17,6 +17,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -34,7 +36,6 @@ def main() -> int:
             fails.append(f"{label}: missing {n!r}")
 
     hh = _read("src/compiler/ffi_hot_path.hh")
-    build = _read("build.py")
 
     uidx = hh.find("void update_cache")
     update = hh[uidx : uidx + 900] if uidx >= 0 else ""
@@ -67,8 +68,8 @@ def main() -> int:
     must("Issue #2474", "AC4", clear)
 
     must("ffi_hot_path_cache_update_race_total", "AC5", hh)
-    must("check_ffi_hot_path_cache_toctou_2474", "gate", build)
-    must("cmd_ffi_hot_path_cache_toctou_coverage", "gate", build)
+    must("check_ffi_hot_path_cache_toctou_2474", "gate", wired_text)
+    must("check_ffi_hot_path_cache_toctou_2474.py", "gate", wired_text)
     must("#2626", "gate", _read("scripts/coverage/checks/check_ffi_hot_path_cache_toctou_2474.py"))
 
     if fails:

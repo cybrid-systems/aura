@@ -24,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _source_scan import source_block_after  # noqa: E402  (sibling helper)
 
 ROOT = Path(__file__).resolve().parents[3]
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -44,7 +45,6 @@ def main() -> int:
     cpp = _read("src/compiler/hot_update_registry.cpp")
     mut = _read("src/compiler/evaluator_primitives_mutate.cpp")
     test = _read("tests/compiler/test_reload_recovery_query.cpp")
-    build = _read("build.py")
 
     # AC1
     must("Issue #2953", "AC1", hh)
@@ -85,7 +85,7 @@ def main() -> int:
 
     # AC5 / AC6
     must("ac2953_playbook", "AC6", test)
-    must("check_reload_recovery_playbook_2953", "AC6", build)
+    must("check_reload_recovery_playbook_2953", "AC6", wired_text)
     if (ROOT / "tests" / "compiler" / "test_issue_2953.cpp").is_file():
         fails.append("AC6: test_issue_2953.cpp present (forbidden per #81967)")
     docs = ROOT / "docs" / "design"

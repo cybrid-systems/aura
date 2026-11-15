@@ -48,6 +48,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 QWS = ROOT / "src" / "compiler" / "evaluator_primitives_query_workspace.cpp"
 SEC = ROOT / "src" / "compiler" / "evaluator_security.cpp"
 TST = ROOT / "tests" / "compiler" / "test_query_result_full_provenance.cpp"
@@ -74,7 +77,6 @@ def main() -> int:
     qws = QWS.read_text() if QWS.exists() else ""
     sec = SEC.read_text() if SEC.exists() else ""
     tst = TST.read_text() if TST.exists() else ""
-    build = BUILD.read_text() if BUILD.exists() else ""
     allow = ALLOW.read_text() if ALLOW.exists() else ""
 
     must(bool(qws), "query_workspace TU readable")
@@ -159,7 +161,7 @@ def main() -> int:
         "4162 AC5: tombstone match NOT Fresh (StaleByEpoch)" in tst,
         "AC7: freshness-with-refs tombstone runtime CHECK present",
     )
-    must("check_query_free_slot_4162.py" in build, "AC7: build.py registers this linter")
+    must("check_query_free_slot_4162.py" in wired_text, "AC7: run_checks.py registers this linter")
     must("check_query_free_slot_4162.py" in allow, "AC7: root_check_allowlist.txt lists this linter")
     must(
         not (ROOT / "tests" / "compiler" / "test_issue_4162.cpp").exists(), "AC7: no tests/compiler/test_issue_4162.cpp"

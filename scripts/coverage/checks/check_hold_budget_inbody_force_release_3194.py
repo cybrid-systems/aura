@@ -22,6 +22,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -41,7 +43,6 @@ def main() -> int:
     mhb = _read("src/compiler/mutation_hold_budget.h")
     br = _read("src/compiler/fiber_bridge.cpp")
     t = _read("tests/serve/test_hold_budget_synthetic_yield_injection.cpp")
-    build = _read("build.py")
 
     poll_pos = fc.find("aura_hold_budget_poll_inbody_window(void) noexcept")
     poll_win = fc[poll_pos : poll_pos + 7000] if poll_pos >= 0 else ""
@@ -72,7 +73,7 @@ def main() -> int:
     # AC5 / AC6
     must("ac3194_1_same_fiber_force_release", "AC5", t)
     must("run_test_hold_budget_inbody_force_release", "AC5", t)
-    must("check_hold_budget_inbody_force_release_3194", "AC6 build.py", build)
+    must("check_hold_budget_inbody_force_release_3194", "AC6 wiring", wired_text)
     must("aura_evaluator_force_release_outermost_holder", "AC6 weak stub", br)
 
     if (ROOT / "tests" / "issues" / "test_issue_3194.cpp").is_file():

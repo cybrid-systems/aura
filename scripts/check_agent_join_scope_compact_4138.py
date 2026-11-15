@@ -51,6 +51,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _strip_cpp_comments(src: str) -> str:
@@ -112,7 +114,6 @@ def main() -> int:
     scope_src = _strip_cpp_comments(_read("src/orch/agent_scope.h"))
     spawn_src = _strip_cpp_comments(_read("src/orch/agent_spawn.h"))
     prim_src = _strip_cpp_comments(_read("src/compiler/evaluator_primitives_agent.cpp"))
-    build_src = _read("build.py")
     allowlist = _read("scripts/coverage/root_check_allowlist.txt")
     test_src = _read("tests/orch/test_join_drain_reclaim.cpp")
 
@@ -201,7 +202,7 @@ def main() -> int:
     import glob
 
     _must(not glob.glob(str(ROOT / "docs" / "design" / "4138-*")), "AC5: no docs/design/4138-* per #1655")
-    _must("check_agent_join_scope_compact_4138" in build_src, "AC5: build.py wires the linter")
+    _must("check_agent_join_scope_compact_4138" in wired_text, "AC5: build.py wires the linter")
     _must("check_agent_join_scope_compact_4138.py" in allowlist, "AC5: linter on the root check allowlist")
 
     if _FAILS:

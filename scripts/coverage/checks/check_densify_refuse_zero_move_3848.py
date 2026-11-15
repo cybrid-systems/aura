@@ -23,6 +23,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 FLAT = "src/compiler/evaluator_eval_flat.cpp"
 SURVIVE = "tests/compiler/test_setcode_rebind_survive.cpp"
 FAIL = "tests/core/test_moving_densify_fail_closed.cpp"
@@ -51,7 +54,6 @@ def main() -> int:
     flat = _read(FLAT)
     survive = _read(SURVIVE)
     failc = _read(FAIL)
-    build = _read(BUILD)
     gf = _read(GF)
     man = _read(MANIFEST)
 
@@ -97,8 +99,8 @@ def main() -> int:
     must("ac3848_2_zero_move_publish_keeps_tombstones();", "AC2 tombstone AC", failc)
     must("production + empty remap still recover", "AC2 Soft/empty recover", survive)
 
-    must(LINTER, "AC3 build registration", build)
-    must("Issue #3848", "AC3 build cite", build)
+    must(LINTER, "AC3 build registration", wired_text)
+    must("check_densify_refuse_zero_move_3848", "AC3 build cite", wired_text)
     must(f"{LINTER}.py", "AC3 grandfather basename", gf)
     must(f"scripts/coverage/checks/{LINTER}.py", "AC3 grandfather path", gf)
     must('"issue": 3848', "AC3 manifest issue", man)

@@ -27,7 +27,7 @@ Contract (one row per AC):
   AC7  tests/core/test_moving_densify_fail_closed.cpp extended with
        ac3182_1-7 (extends existing src/-aligned suite per #81934; no
        tests/issues/test_issue_3182.cpp; no docs/design/3182-* per #1655)
-  AC8  this linter wired in build.py; no docs/design/3182-* (per #1655)
+  AC8  this linter gated by run_checks.py; no docs/design/3182-* (per #1655)
 
 Exit codes:
   0 — clean
@@ -48,6 +48,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 ARENA_IXX = ROOT / "src" / "core" / "arena.ixx"
 EV_MUTATION_BOUNDARY = ROOT / "src" / "compiler" / "evaluator_mutation_boundary.cpp"
@@ -77,7 +78,6 @@ def main() -> int:
     ev = _read(EV_MUTATION_BOUNDARY)
     envframe = _read(ENVFRAME_LIFETIME)
     test = _read(TEST_FILE)
-    build = _read(BUILD_PY)
 
     # ── AC1: AdaptiveCompactResult.post_moving_stale_count_total field ──
     ac1_field = arena.find("post_moving_stale_count_total = 0;") != -1
@@ -257,7 +257,7 @@ def main() -> int:
     )
 
     # ── AC8: linter wired, no docs/design/, no tests/issues/ ──
-    ac8_wired = "check_post_moving_stale_hard_gate_3182" in build
+    ac8_wired = "check_post_moving_stale_hard_gate_3182" in wired_text
     no_design = True
     if DOCS_DESIGN_DIR.is_dir():
         for f in sorted(DOCS_DESIGN_DIR.glob("3182-*")):
@@ -268,7 +268,7 @@ def main() -> int:
         fails.append("AC8: tests/issues/test_issue_3182.cpp present (forbidden per #81934)")
     ac8_ok = ac8_wired and no_design and no_issues_test
     if not ac8_wired:
-        fails.append("AC8: linter not wired in build.py")
+        fails.append("AC8: linter not gated by run_checks.py")
     rows.append(
         {
             "ac": "AC8_no_invent",

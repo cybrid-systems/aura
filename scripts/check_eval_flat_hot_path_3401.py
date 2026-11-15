@@ -31,6 +31,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -58,7 +60,6 @@ def main() -> int:
     eval_flat = _read("src/compiler/evaluator_eval_flat.cpp")
     evaluator_ixx = _read("src/compiler/evaluator.ixx")
     env_cpp = _read("src/compiler/evaluator_env.cpp")
-    build = _read("build.py")
     flat_stripped = _strip_comments_and_strings(eval_flat)
 
     # AC1: function-scope try { in eval_flat must be wrapped with
@@ -165,8 +166,8 @@ def main() -> int:
     # AC7: source-cite #3401 + build gate; no design docs.
     if "#3401" not in eval_flat and "#3401" not in evaluator_ixx:
         fails.append("AC7: source-cite #3401 missing from eval_flat / evaluator.ixx")
-    if "check_eval_flat_hot_path_3401" not in build:
-        fails.append("AC7: build.py does not register check_eval_flat_hot_path_3401")
+    if "check_eval_flat_hot_path_3401" not in wired_text:
+        fails.append("AC7: run_checks.py does not register check_eval_flat_hot_path_3401")
 
     if fails:
         for f in fails:

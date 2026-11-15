@@ -20,7 +20,7 @@ Contract (one row per AC):
        never drains / forces pure-anon (#2715 preserved)
   AC5  source-cite in aura_jit_runtime.cpp + test extends
        test_anonymous_residual_stable_id_policy (#81967); no
-       test_issue_3277.cpp; no docs/design/ (#1655); build.py wires
+       test_issue_3277.cpp; no docs/design/ (#1655); run_checks.py gates
        linter; no new query keys / counters (reuses
        pure_anon_bg_overflow_must_deopt_total)
 
@@ -33,6 +33,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -51,7 +53,6 @@ def main() -> int:
     br = _read("src/compiler/aura_jit_bridge.cpp")
     steal = _read("src/compiler/evaluator_fiber_mutation.cpp")
     test = _read("tests/compiler/test_anonymous_residual_stable_id_policy.cpp")
-    build = _read("build.py")
 
     must("Issue #3277", "AC1/AC5 cite", rt)
     must("pure_anon_pressure_force_leave_oldest(skip)", "AC1 walk force-leave", rt)
@@ -65,7 +66,7 @@ def main() -> int:
     must("ac3277_5_source_and_linter", "AC5 test", test)
     must("should_throttle_reemit()", "AC4 storm gate", br)
     must("pure_budget = aura_sync_remount_pure_anon_budget_base()", "AC4 storm shrink", br)
-    must("check_pure_anon_no_boundary_force_leave_3277", "AC5 build.py", build)
+    must("check_pure_anon_no_boundary_force_leave_3277", "AC5 wiring", wired_text)
     # AC4: steal-complete must not drain / force pure-anon (#2715 preserved).
     pos = steal.find("aura_evaluator_on_steal_complete")
     if pos != -1:

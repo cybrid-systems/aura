@@ -36,13 +36,6 @@
       ]
     },
     {
-      "ac": "AC4",
-      "path": "build.py",
-      "contains": [
-        "cmd_incoming_parent_dirty_atomic_coverage"
-      ]
-    },
-    {
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [

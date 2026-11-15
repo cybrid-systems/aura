@@ -34,6 +34,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 # Prim TUs that may host side-effect + NodeId paths (full residual mandate).
 SCOPE_FILES = [
@@ -212,7 +214,6 @@ def main() -> int:
     io_cpp = _read("src/compiler/evaluator_primitives_io.cpp")
     test_re = _read("tests/compiler/test_require_effect_auto_isolation.cpp")
     test_ts = _read("tests/compiler/test_tenant_scope_fiber_mandate.cpp")
-    build = _read("build.py")
     linter_self = _read("scripts/coverage/checks/check_side_effect_node_id_mandate_2942.py")
 
     # ── AC1: workspace NodeId paths use mandated helpers ──
@@ -315,7 +316,7 @@ def main() -> int:
     must("schema-2881", "AC5", posture)
     must("schema-2839", "AC5", posture)
     must("require-effect-for-node-id-wired", "AC5", posture)
-    must("check_side_effect_node_id_mandate_2942", "AC5", build)
+    must("check_side_effect_node_id_mandate_2942", "AC5", wired_text)
     must("kNodeIdMandateExemptOpsCount", "AC5", evaluator_ixx)
     must("kNodeIdMandateWired", "AC5", evaluator_ixx)
 

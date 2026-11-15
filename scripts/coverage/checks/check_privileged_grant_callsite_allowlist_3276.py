@@ -37,7 +37,7 @@ Contract (one row per AC):
        (allowlist does not silently rot)
   AC4  no new query:* / no second capability model / no docs/design/
        (#1655); tests extend existing src-aligned suite (#81967)
-  AC5  build.py wires this linter
+  AC5  run_checks.py gates this linter
 
 Exit 0 = all rows satisfied.
 """
@@ -50,6 +50,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 ALLOWLIST = ROOT / "scripts" / "coverage" / "allowlists" / "privileged_grant_calls.json"
 
 # Grant-family call forms to scan for. Read-only getters are NOT matched
@@ -144,10 +147,9 @@ def main() -> int:
         if not any(pat in src_text for pat in allowed_pats):
             fails.append(f"AC3: {rel} contains none of its permitted grant patterns")
 
-    # ── AC4 / AC5: no invent + build.py wiring ──
-    build = _read("build.py")
-    if "check_privileged_grant_callsite_allowlist_3276" not in build:
-        fails.append("AC5: build.py does not wire check_privileged_grant_callsite_allowlist_3276")
+    # ── AC4 / AC5: no invent + gate wiring ──
+    if "check_privileged_grant_callsite_allowlist_3276" not in wired_text:
+        fails.append("AC5: run_checks.py does not discover check_privileged_grant_callsite_allowlist_3276")
     if _read("tests/core/test_issue_3276.cpp") or _read("tests/issues/test_issue_3276.cpp"):
         fails.append("AC4: test_issue_3276.cpp present (forbidden #81967)")
     if _read("docs/design/3276-privileged-grant-allowlist.md"):

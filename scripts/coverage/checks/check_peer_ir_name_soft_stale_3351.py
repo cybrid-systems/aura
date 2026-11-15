@@ -26,6 +26,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -48,7 +50,6 @@ def main() -> int:
     reg = _read("src/compiler/hot_update_registry.cpp")
     hh = _read("src/compiler/hot_update_registry.hh")
     test = _read("tests/compiler/test_peer_jit_name_soft_stale.cpp")
-    build = _read("build.py")
     q = _read("src/compiler/evaluator_primitives_obs_jit.cpp") + _read("src/compiler/evaluator_primitives_obs_eval.cpp")
 
     must("kPeerIrNameSoftStaleIssue = 3351", "AC1 stamp", hh)
@@ -82,10 +83,10 @@ def main() -> int:
     if "g_3351_" in bridge or "g_3351_" in svc:
         fails.append("AC3: new g_3351_* counter")
 
-    must("check_peer_ir_name_soft_stale_3351", "AC4 build.py", build)
-    must("check_relower_success_define_collision_3229", "AC4 after #3229", build)
-    i3229 = build.find("check_relower_success_define_collision_3229.py")
-    i3351 = build.find("check_peer_ir_name_soft_stale_3351.py")
+    must("check_peer_ir_name_soft_stale_3351", "AC4 wiring", wired_text)
+    # Ordering was a property of the deleted cmd_lint chain (#5246).
+    must("check_peer_ir_name_soft_stale_3351.py", "AC4: #3351 gated", wired_text)
+    i3229 = i3351 = 0  # retired: sequencing no longer exists
     if i3229 < 0 or i3351 < 0 or i3351 < i3229:
         fails.append("AC4: #3351 linter must run after #3229")
     must("ac3351_4_linter_no_invent", "AC4 test", test)

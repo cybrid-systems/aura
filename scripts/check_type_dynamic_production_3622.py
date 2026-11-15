@@ -27,6 +27,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
 
 IMPL = "src/compiler/type_checker_impl.cpp"
 TIR = "tests/compiler/test_ir.cpp"
@@ -166,7 +169,7 @@ def main() -> int:
         print("self-test: ok")
         return 0
 
-    fails = _rows(_read(IMPL), _read(TIR), _read(TBI), _read(BUILD), _read(ALLOW))
+    fails = _rows(_read(IMPL), _read(TIR), _read(TBI), wired_text, _read(ALLOW))
     if fails:
         for f in fails:
             print(f"FAIL {f}")

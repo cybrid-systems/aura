@@ -46,6 +46,8 @@ SCOPE_FILES = [
 ]
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -72,7 +74,6 @@ def main() -> int:
     scope = _read("src/orch/agent_scope.h")
     prim = _read("src/compiler/evaluator_primitives_agent.cpp")
     test = _read("tests/orch/test_bare_bp_resolve.cpp")
-    build = _read("build.py")
     # Lineage / additive-only references (must remain unchanged in meaning).
     check3015 = _read("scripts/coverage/checks/check_scope_bp_inherit_3015.py")
     check3147 = _read("scripts/coverage/checks/check_mailbox_bp_scope_handle_3147.py")
@@ -149,8 +150,8 @@ def main() -> int:
     # #3147 linter (handle persistence) still passes — we persist on
     # h.bp_scope_id after the resolver runs.
     must("h.bp_scope_id", "AC lineage #3147 handle persistence intact", check3147)
-    # build.py wires the new linter.
-    must("check_per_scope_bp_admit_3179", "AC build.py wires #3179 linter", build)
+    # run_checks.py gates the new linter.
+    must("check_per_scope_bp_admit_3179", "AC run_checks.py gates #3179 linter", wired_text)
     # No new public query key required (additive only, AC4).
     must_not("schema-3179", "AC4 no new schema-3179 prim key", prim)
     must_not("issue-3179", "AC4 no new issue-3179 prim key", prim)

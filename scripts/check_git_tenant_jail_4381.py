@@ -45,6 +45,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 GIT_PRIMS = [
     "git-status",
@@ -173,8 +175,7 @@ def main() -> int:
     must(not design.exists() or not any(design.glob("4381-*")), "AC5: no docs/design/4381-* (#1655)")
 
     # ── AC6: wiring ──
-    build = read("build.py")
-    must("check_git_tenant_jail_4381" in build, "AC6: build.py wires the #4381 linter")
+    must("check_git_tenant_jail_4381" in wired_text, "AC6: run_checks.py wires the #4381 linter")
     allow = read("scripts/coverage/root_check_allowlist.txt")
     must("check_git_tenant_jail_4381.py" in allow, "AC6: linter on the root_check_allowlist")
 

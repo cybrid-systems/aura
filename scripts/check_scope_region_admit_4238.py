@@ -63,6 +63,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -93,7 +95,6 @@ def main() -> int:
     orch_src = _read("src/serve/parallel_orch.h")
     prim_src = _read("src/compiler/evaluator_primitives_agent.cpp")
     test_src = _read("tests/orch/test_agent_scope.cpp")
-    build_src = _read("build.py")
     allow_src = _read("scripts/coverage/root_check_allowlist.txt")
 
     # ── AC1: admit gate hosted in spawn(), typed deny, counter reuse ──
@@ -205,7 +206,7 @@ def main() -> int:
     must("!handle.ok", "AC4-prim", prim_src)
 
     # ── AC5: wiring ──
-    must("check_scope_region_admit_4238", "AC5", build_src)
+    must("check_scope_region_admit_4238", "AC5", wired_text)
     must("check_scope_region_admit_4238.py", "AC5", allow_src)
 
     if fails:

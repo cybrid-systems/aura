@@ -51,6 +51,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 EFL = ROOT / "src" / "compiler" / "evaluator_eval_flat.cpp"
 TST = ROOT / "tests" / "compiler" / "test_pmr_alloc_fiber_safe.cpp"
 BUILD = ROOT / "build.py"
@@ -92,7 +95,6 @@ def has(text: str, needle: str) -> bool:
 def main() -> int:
     efl = EFL.read_text()
     tst = TST.read_text()
-    build = BUILD.read_text()
     allow = ALLOW.read_text()
 
     # ── AC1: the span root carries a live count ──────────────────────
@@ -213,7 +215,7 @@ def main() -> int:
     )
 
     # ── AC6: wiring ──────────────────────────────────────────────────
-    must("check_prim_call_arg_rooting_4611.py" in build, "AC6: build.py registers the linter")
+    must("check_prim_call_arg_rooting_4611.py" in wired_text, "AC6: run_checks.py registers the linter")
     must("check_prim_call_arg_rooting_4611.py" in allow, "AC6: root_check_allowlist.txt lists the linter")
 
     if failures:

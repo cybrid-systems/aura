@@ -22,6 +22,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -42,7 +44,6 @@ def main() -> int:
     ev = _read("src/compiler/evaluator.ixx")
     t = _read("tests/core/test_tenant_isolation_enforcement.cpp")
     q = _read("src/compiler/evaluator_primitives_obs_eval.cpp") + _read("src/compiler/evaluator_primitives_obs_jit.cpp")
-    build = _read("build.py")
 
     must("kStableRefExportProductionHardRejectIssue = 3204", "AC1 stamp", prov)
     must("set_stable_ref_export_hard_reject", "AC1 pref", prov)
@@ -63,7 +64,7 @@ def main() -> int:
         fails.append("AC3: stable_ref_export_hard_reject missing")
 
     must("stamp_stable_ref", "AC4 #2759", sec)
-    must("check_stable_ref_export_production_hard_reject_3204", "AC4 build.py", build)
+    must("check_stable_ref_export_production_hard_reject_3204", "AC4 wiring", wired_text)
     must("ac3204_4_concurrent", "AC4 chaos", t)
     must("ac3204_5_source_linter", "AC4 test", t)
     must("Issue #3204", "AC4 export_ref comment", ev)

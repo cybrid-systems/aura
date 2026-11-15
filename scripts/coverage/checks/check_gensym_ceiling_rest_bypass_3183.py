@@ -27,7 +27,7 @@ Contract (one row per AC):
        ac3183_1-6 (extends existing src/-aligned suite per #81934;
        no tests/issues/test_issue_3183.cpp; no docs/design/3183-*
        per #1655)
-  AC7  this linter wired in build.py; no docs/design/3183-* (per #1655)
+  AC7  this linter gated by run_checks.py; no docs/design/3183-* (per #1655)
 
 Exit codes:
   0 — clean
@@ -48,6 +48,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 MACRO_EXPANSION = ROOT / "src" / "compiler" / "macro_expansion.cpp"
 TEST_FILE = ROOT / "tests" / "compiler" / "test_unquote_splicing_hygiene.cpp"
@@ -94,7 +95,6 @@ def main() -> int:
 
     me = _read(MACRO_EXPANSION)
     test = _read(TEST_FILE)
-    build = _read(BUILD_PY)
 
     if not me:
         fails.append("source: src/compiler/macro_expansion.cpp not readable")
@@ -269,7 +269,7 @@ def main() -> int:
     )
 
     # ── AC7: linter wired, no docs/design/, no tests/issues/ ──
-    ac7_wired = "check_gensym_ceiling_rest_bypass_3183" in build
+    ac7_wired = "check_gensym_ceiling_rest_bypass_3183" in wired_text
     no_design = True
     if DOCS_DESIGN_DIR.is_dir():
         for f in sorted(DOCS_DESIGN_DIR.glob("3183-*")):
@@ -280,7 +280,7 @@ def main() -> int:
         fails.append("AC7: tests/issues/test_issue_3183.cpp present (forbidden per #81934)")
     ac7_ok = ac7_wired and no_design and no_issues_test
     if not ac7_wired:
-        fails.append("AC7: linter not wired in build.py")
+        fails.append("AC7: linter not gated by run_checks.py")
     rows.append(
         {
             "ac": "AC7_no_invent",

@@ -23,7 +23,7 @@ Gate rows:
       extra cost (compile-time only).
   G5  test ACs in tests/compiler/test_pcv_children_safe_default_migration
       (#81967 suite home); no test_issue_3292.cpp; no docs/design/ (#1655).
-  G6  build.py wires this linter.
+  G6  run_checks.py gates this linter.
 
 Exit 0 = all rows satisfied.
 """
@@ -34,6 +34,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 failures: list[str] = []
 
@@ -54,7 +56,6 @@ def _read(rel: str) -> str:
 def main() -> int:
     pcv = _read("src/core/persistent_child_vector.hh")
     test = _read("tests/compiler/test_pcv_children_safe_default_migration.cpp")
-    build = _read("build.py")
 
     # ── G1: static_assert stamps next to the struct (#2906 lineage) ──
     must("Issue #3292" in pcv, "G1: persistent_child_vector.hh cites Issue #3292")
@@ -99,8 +100,8 @@ def main() -> int:
     must(not _read("tests/compiler/test_issue_3292.cpp"), "G5: no tests/compiler/test_issue_3292.cpp per #81967")
     must(not _read("tests/issues/test_issue_3292.cpp"), "G5: no tests/issues/test_issue_3292.cpp per #81967")
 
-    # ── G6: build.py wiring ──
-    must("check_pcv_hotpath_metrics_layout_3292" in build, "G6: build.py wires linter")
+    # ── G6: gate wiring ──
+    must("check_pcv_hotpath_metrics_layout_3292" in wired_text, "G6: run_checks.py gates linter")
 
     docs = ROOT / "docs" / "design"
     if docs.is_dir():

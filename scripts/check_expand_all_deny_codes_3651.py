@@ -25,6 +25,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
 
 ME = "src/compiler/macro_expansion.cpp"
 TEST = "tests/compiler/test_macro_hygiene_limits.cpp"
@@ -112,7 +115,7 @@ def _rows(me: str, test: str, build: str) -> list[str]:
     must("ac3651_1_gensym_ceiling_restore();", "AC5 main call", test)
     must('"hygiene-gensym-ceiling"', "AC5 reason string pinned", test)
     must_not("test_issue_3651", "AC5 no tests/issues literal", test)
-    must("check_expand_all_deny_codes_3651", "AC5 build.py registration", build)
+    must("check_expand_all_deny_codes_3651", "AC5 build.py registration", wired_text)
     for stale in ROOT.glob("docs/design/*3651*"):
         fails.append(f"AC5: forbidden design doc {stale.name}")
     for stale in ROOT.glob("tests/**/test_issue_3651*.cpp"):
@@ -128,7 +131,7 @@ def main() -> int:
     args = ap.parse_args()
     me = _read(ME)
     test = _read(TEST)
-    build = _read(BUILD)
+    build = wired_text
     if args.self_test:
         broken = me.replace("Issue #3651", "Issue #redacted")
         self_fails = _rows(broken, test, build)

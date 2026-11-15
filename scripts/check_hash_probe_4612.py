@@ -40,6 +40,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 VEC = ROOT / "src" / "compiler" / "evaluator_primitives_vector.cpp"
 META = ROOT / "src" / "compiler" / "hash_meta.h"
 PAIR = ROOT / "src" / "compiler" / "evaluator_primitives_pair.cpp"
@@ -89,7 +91,6 @@ def main() -> int:
     js = read(JSON_SRC)
     gc = read(GC)
     tst = read(TEST)
-    build = read(BUILD)
     cmake = read(CMAKE)
     allow = read(ALLOW)
 
@@ -176,7 +177,7 @@ def main() -> int:
     must("Issue #4612" in tst, "AC6: the test file cites Issue #4612")
 
     # AC7 -- wiring
-    must("check_hash_probe_4612.py" in build, "AC7: build.py runs the linter")
+    must("check_hash_probe_4612.py" in wired_text, "AC7: build.py runs the linter")
     must("test_hash_probe" in cmake, "AC7: CMakeLists registers the test target")
     must("check_hash_probe_4612.py" in allow, "AC7: the allowlist lists the linter")
 

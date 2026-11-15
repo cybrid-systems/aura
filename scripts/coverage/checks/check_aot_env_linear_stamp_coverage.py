@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # scripts/coverage/checks/check_aot_env_linear_stamp_coverage.py
 #
-# Issue #2091 + #2168 linter (hard `./build.py gate` step):
+# Issue #2091 + #2168 linter (hard `./coverage runner` step):
 # ensure every production AOT emit / reemit / registration site
 # threads live env_frame_version + linear_state into
 # mangle_aot_name / aot_link_name. Pre-#2091 most call sites

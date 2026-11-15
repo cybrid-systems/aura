@@ -25,6 +25,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -44,7 +46,6 @@ def main() -> int:
     jit = _read("src/compiler/aura_jit_bridge.cpp")
     mut = _read("src/compiler/evaluator_primitives_mutate.cpp")
     t = _read("tests/compiler/test_hard_gate_full_strict.cpp")
-    build = _read("build.py")
 
     must("kDenyRestoreThenStampIssue = 3217", "AC1 constant", aud)
     must("record_boundary_deny_after_restore", "AC1 helper", aud)
@@ -76,7 +77,7 @@ def main() -> int:
     must("ac3217_deny_restore_then_stamp", "AC6 test fn", t)
     must("ac3217_4: production mid=0 does not stamp fake Success", "AC6 mid=0", t)
     must("ac3217_5: Soft/Off deny helper does not force extra trail I/O", "AC6 Soft", t)
-    must("check_deny_restore_then_stamp_3217", "AC6 build.py", build)
+    must("check_deny_restore_then_stamp_3217", "AC6 wiring", wired_text)
     if (ROOT / "tests" / "compiler" / "test_issue_3217.cpp").is_file():
         fails.append("AC6: test_issue_3217.cpp present (forbidden #81967)")
     if (ROOT / "tests" / "issues" / "test_issue_3217.cpp").is_file():

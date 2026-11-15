@@ -19,6 +19,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -39,7 +41,6 @@ def main() -> int:
     mb = _read("src/compiler/evaluator_mutation_boundary.cpp")
     q = _read("src/compiler/evaluator_primitives_query_type_stats.cpp")
     test = _read("tests/compiler/test_occurrence_goal_persist_rehydrate.cpp")
-    build = _read("build.py")
 
     # ── AC1: post-persist stamp + counters ──
     must("#2938", "AC1", tma)
@@ -93,8 +94,8 @@ def main() -> int:
     must("ac2938_4_fence_after_snapshot", "AC6", test)
     must("ac2938_5_lineage_query", "AC6", test)
     must("ac2938_6_linter_and_no_design", "AC6", test)
-    must("check_occurrence_commit_snapshot_2938", "AC6", build)
-    must("cmd_occurrence_commit_snapshot_2938", "AC6", build)
+    must("check_occurrence_commit_snapshot_2938", "AC6", wired_text)
+    must("check_occurrence_commit_snapshot_2938.py", "AC6", wired_text)
     docs = ROOT / "docs" / "design"
     if docs.is_dir():
         for f in sorted(docs.glob("2938-*")):

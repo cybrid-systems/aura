@@ -37,6 +37,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -53,7 +55,6 @@ def main() -> int:
 
     arena = _read("src/core/arena.ixx")
     test = _read("tests/core/test_moving_densify_fail_closed.cpp")
-    build = _read("build.py")
 
     # AC1: restore-to-old on !neu (no hole in dtors_).
     must("Issue #3435", "AC1 stamp", arena)
@@ -82,7 +83,7 @@ def main() -> int:
     must("g_relocate_alloc_fail_inject_remaining", "AC5 inject seam", arena)
     must("reset_relocate_alloc_fail_inject_for_test", "AC5 reset helper", arena)
     must("ac3435_5_source_and_linter", "AC5 test", test)
-    must("check_relocate_drop_tracking_3435", "AC5 build.py", build)
+    must("check_relocate_drop_tracking_3435", "AC5 wiring", wired_text)
     if (ROOT / "tests" / "core" / "test_issue_3435.cpp").is_file():
         fails.append("AC5: tests/core/test_issue_3435.cpp present (forbidden #81967)")
     docs = ROOT / "docs" / "design"

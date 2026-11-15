@@ -26,6 +26,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -57,7 +59,6 @@ def main() -> int:
     table = _read("src/compiler/agent_name_table.h")
     scope = _read("src/orch/agent_scope.h")
     test = _read("tests/orch/test_agent_name_table_isolation.cpp")
-    build = _read("build.py")
     allow = _read("scripts/coverage/root_check_allowlist.txt")
 
     gate = window(
@@ -97,7 +98,7 @@ def main() -> int:
     if _read("docs/design/4280-name-table-region-admit.md"):
         fails.append("AC4: docs/design/4280-* must not exist")
 
-    must("check_name_table_region_admit_4280", "AC5", build)
+    must("check_name_table_region_admit_4280", "AC5", wired_text)
     must("check_name_table_region_admit_4280.py", "AC5", allow)
 
     if fails:

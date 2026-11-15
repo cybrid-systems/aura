@@ -24,6 +24,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -43,7 +45,6 @@ def main() -> int:
     impls = _read("src/compiler/pass_impls.ixx")
     test = _read("tests/compiler/test_partial_relower_storm_gate.cpp")
     shape = _read("src/compiler/shape_profiler.cpp")
-    build = _read("build.py")
 
     must("kDirtyAwareStormForceFullCapIssue = 3831", "AC1 stamp", core)
     must("Issue #3831", "AC1 cite", core)
@@ -72,7 +73,7 @@ def main() -> int:
     must("3831 AC3: Soft consult-only", "AC3 Soft", test)
     must("last_storm_from_compact_", "AC3 compact flag", shape)
     must("deopt_storm_compact_suppressed", "AC3 compact suppress", shape)
-    must("check_dirty_aware_storm_force_full_cap_3831", "AC3 build.py", build)
+    must("check_dirty_aware_storm_force_full_cap_3831", "AC3 wiring", wired_text)
 
     if "schema-3831" in core or "schema-3831" in svc:
         fails.append("AC3: new schema-3831 query key")

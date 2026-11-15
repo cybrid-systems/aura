@@ -56,6 +56,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 RT = ROOT / "src" / "compiler" / "aura_jit_runtime.cpp"
 TST = ROOT / "tests" / "compiler" / "test_closure_call_must_deopt_toctou.cpp"
 BUILD = ROOT / "build.py"
@@ -80,7 +83,6 @@ def window(src: str, start: str, size: int) -> tuple[int, str]:
 def main() -> int:
     rt = RT.read_text() if RT.exists() else ""
     tst = TST.read_text() if TST.exists() else ""
-    build = BUILD.read_text() if BUILD.exists() else ""
     allow = ALLOW.read_text() if ALLOW.exists() else ""
 
     # ── AC1: the refuse arm inside the blessed entry ───────────────
@@ -134,7 +136,7 @@ def main() -> int:
     must(not list(ROOT.glob("docs/design/4606-*")), "AC3: no docs/design/4606 markdown (#1655)")
 
     # ── AC4: wiring ────────────────────────────────────────────────
-    must("check_jit_prim_callee_refuse_4606.py" in build, "AC4: build.py registers this linter")
+    must("check_jit_prim_callee_refuse_4606.py" in wired_text, "AC4: run_checks.py registers this linter")
     must("check_jit_prim_callee_refuse_4606.py" in allow, "AC4: root_check_allowlist.txt lists this linter")
 
     if failures:

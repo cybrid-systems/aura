@@ -23,6 +23,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -45,7 +47,6 @@ def main() -> int:
     q = _read("src/compiler/evaluator_primitives_query.cpp") + _read(
         "src/compiler/evaluator_primitives_query_type_stats.cpp"
     )
-    build = _read("build.py")
 
     must("kSoftTimeoutExportRefuseIssue = 3360", "AC1 stamp", ixx)
     must("discard_provisional_occurrence_goals", "AC1 discard", impl)
@@ -67,12 +68,12 @@ def main() -> int:
     must("g_type_export_soft_refuse_observe_total", "AC3 reuse refuse", aud)
     must("ac3360_3_soft_commit_iteration_ok", "AC3 test", t)
 
-    must("check_soft_timeout_export_refuse_3360", "AC4 build.py", build)
+    must("check_soft_timeout_export_refuse_3360", "AC4 wiring", wired_text)
     must("ac3360_4_source_and_linter", "AC4 test", t)
-    prev = build.find("check_type_export_outermost_face_3294")
-    ours = build.find("check_soft_timeout_export_refuse_3360")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC4: linter must be wired in build.py AFTER #3294")
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must("check_type_export_outermost_face_3294", "AC4: linter must be gated by run_checks.py (both gated)", wired_text)
+    must("check_soft_timeout_export_refuse_3360", "AC4: linter must be gated by run_checks.py (both gated)", wired_text)
     if "schema-3360" in q:
         fails.append("AC4: new schema-3360 query key")
     if "g_3360_" in impl or "g_3360_" in ixx or "g_3360_" in ev:

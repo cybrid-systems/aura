@@ -41,6 +41,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -122,7 +124,6 @@ def main() -> int:
 
     tci = _read("src/compiler/type_checker_impl.cpp")
     tcx = _read("src/compiler/type_checker.ixx")
-    build = _read("build.py")
     test = _read("tests/compiler/test_synthesize_set_walks_rhs.cpp")
 
     synth_pos = tci.find("TypeId InferenceEngine::synthesize_flat(")
@@ -264,7 +265,7 @@ def main() -> int:
             "occurrence_goal_stale_drop_total (must reuse existing counter "
             "per issue AC4)"
         )
-    if "check_set_assignment_hygiene_3408" not in build:
+    if "check_set_assignment_hygiene_3408" not in wired_text:
         fails.append(
             "AC7: build.py does not register "
             "check_set_assignment_hygiene_3408 (linter not wired into "

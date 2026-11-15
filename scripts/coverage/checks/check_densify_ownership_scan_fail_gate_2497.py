@@ -30,6 +30,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -51,7 +53,6 @@ def main() -> int:
     q = _read("src/compiler/evaluator_primitives_obs_jit.cpp")
     test = _read("tests/compiler/test_densify_ownership_scan_fail_gate.cpp")
     cmake = _read("CMakeLists.txt")
-    build = _read("build.py")
 
     # AC1 — Phase 5 driver must snapshot baseline + recompute delta + AND into
     # envframe_ok (fail-closed shape mirrors pin_contract_held gating).
@@ -116,7 +117,7 @@ def main() -> int:
     must("scan_fail_baseline", "AC5", test)
     must("!scan_fail_delta", "AC5", test)
     must("tests/compiler/test_densify_ownership_scan_fail_gate.cpp", "AC5", cmake)  # batch member source (S5)
-    must("check_densify_ownership_scan_fail_gate_2497", "AC5", build)
+    must("check_densify_ownership_scan_fail_gate_2497", "AC5", wired_text)
 
     # Self-test pass — exit 0 with no fails (rows above already encode the
     # contract). Print summary so CI / coverage gates surface.

@@ -26,6 +26,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -47,7 +49,6 @@ def main() -> int:
     qws = _read("src/compiler/evaluator_primitives_query_workspace.cpp")
     qec = _read("tests/compiler/test_query_epoch_contract.cpp")
     sla = _read("tests/core/test_restamp_sla_observability.cpp")
-    build = _read("build.py")
 
     must("kQueryEpochProductionStrictIssue = 3075", "AC1 stamp", epoch)
     must("Issue #3075", "AC1 epoch", epoch)
@@ -92,7 +93,7 @@ def main() -> int:
     if "schema-3590" in qws:
         fails.append("AC3590: schema-3590 present (forbidden new query key)")
 
-    must("check_query_epoch_production_strict_3075", "AC5 build.py", build)
+    must("check_query_epoch_production_strict_3075", "AC5 wiring", wired_text)
     must("#3075 AC1", "AC5 contract test", qec)
     must("ac3075_1_production_strict_finish_stale", "AC5 sla test", sla)
     if (ROOT / "tests" / "core" / "test_issue_3075.cpp").is_file():

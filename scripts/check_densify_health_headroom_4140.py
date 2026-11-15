@@ -51,6 +51,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 HEADROOM = 8
 PLANNED = 96
 INSERT_RE = re.compile(r'insert_kv(?:_str)?\(\s*"([^"]+)"')
@@ -71,7 +74,6 @@ def main() -> int:
     obsjit = read("src/compiler/evaluator_primitives_obs_jit.cpp")
     checker = read("scripts/coverage/checks/check_agent_decision_facade_headroom_3339.py")
     test = read("tests/compiler/test_engine_metrics_facade.cpp")
-    build = read("build.py")
     allow = read("scripts/coverage/root_check_allowlist.txt")
     densify_live = -1
 
@@ -135,7 +137,7 @@ def main() -> int:
     if docs.is_dir():
         for f in sorted(docs.glob("4140-*")):
             fails.append(f"AC5: docs/design/{f.name} present (forbidden #1655)")
-    must("check_densify_health_headroom_4140", "AC5 build.py wiring", build)
+    must("check_densify_health_headroom_4140", "AC5 run_checks.py wiring", wired_text)
     must("check_densify_health_headroom_4140.py", "AC5 allowlist entry", allow)
 
     # Issue #4284: pin the existing #4140 close. Recount live insert_kv;

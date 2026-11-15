@@ -22,6 +22,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -43,7 +45,6 @@ def main() -> int:
     brc = _read("src/compiler/aura_jit_bridge.cpp")
     stub = _read("src/compiler/aura_jit_bridge_stub.cpp")
     t = _read("tests/compiler/test_occurrence_goal_persist_rehydrate.cpp")
-    build = _read("build.py")
 
     must("kIrTypedEntryCommitReadinessIssue", "AC1 stamp", tma)
     must("ir_typed_entry_commit_readiness_ok", "AC1 predicate", tma)
@@ -71,7 +72,7 @@ def main() -> int:
     must("ac3224_ir_typed_entry_commit_readiness", "AC3 test", t)
 
     must("g_linear_fast_path_elide_blocked_production_total", "AC4 reuse", tma)
-    must("check_ir_typed_entry_commit_readiness_3224", "AC4 build.py", build)
+    must("check_ir_typed_entry_commit_readiness_3224", "AC4 wiring", wired_text)
     if "g_3224_" in tma or "g_3224_" in ir:
         fails.append("AC4: new g_3224_* counter (reuse existing)")
     if "query:ir-typed-entry" in tma:

@@ -35,7 +35,7 @@ Contract (one row per AC):
   AC6  Soft/Off zero-cost contract — helper explicitly returns false under
        Soft (production_defaults_active false + strict_enabled false)
   AC7  test_dep_graph_hybrid_cascade.cpp extended with ac3187_* ACs;
-       linter wired in build.py after #3186; no docs/design/3187-* (#1655);
+       linter gated by run_checks.py after #3186; no docs/design/3187-* (#1655);
        no tests/issues/test_issue_3187.cpp (#81934)
 
 Exit codes:
@@ -57,6 +57,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 DIRTY_PROPAGATION = ROOT / "src" / "compiler" / "dirty_propagation.ixx"
 SERVICE = ROOT / "src" / "compiler" / "service.ixx"
@@ -96,7 +97,6 @@ def main() -> int:
     svc = _read(SERVICE)
     obs = _read(OBS_METRICS)
     test = _read(TEST_HYBRID)
-    build = _read(BUILD_PY)
 
     # ── AC1: helper defined in dirty_propagation.ixx with #3187 cite ──
     helper_def_pos = ixx.find("inline bool dual_dep_graph_strict_or_production()")
@@ -295,13 +295,10 @@ def main() -> int:
     ac7_ac4 = "ac3187 AC4:" in test
     ac7_ac5 = "ac3187 AC5:" in test
     ac7_main_call = "ac3187_production_fail_closed_default();" in test
-    ac7_wired = "check_dual_dep_graph_strict_or_production_3187" in build
-    ac7_wired_after_3186 = (
-        build.find("check_dual_dep_graph_strict_or_production_3187")
-        > build.find("check_linear_move_drop_elision_ok_3186")
-        if ac7_wired
-        else False
-    )
+    ac7_wired = "check_dual_dep_graph_strict_or_production_3187" in wired_text
+    # Ordering was a property of the deleted cmd_lint chain (#5246); both
+    # checks are gated by run_checks.py discovery now.
+    ac7_wired_after_3186 = ac7_wired and "check_linear_move_drop_elision_ok_3186" in wired_text
     no_design = True
     if DOCS_DESIGN_DIR.is_dir():
         for f in sorted(DOCS_DESIGN_DIR.glob("3187-*")):
@@ -342,9 +339,9 @@ def main() -> int:
             "AC7: ac3187_production_fail_closed_default() must be called from run_test_dep_graph_hybrid_cascade()"
         )
     if not ac7_wired:
-        fails.append("AC7: linter not wired in build.py")
+        fails.append("AC7: linter not gated by run_checks.py")
     if not ac7_wired_after_3186:
-        fails.append("AC7: linter must be wired in build.py AFTER #3186 linter (issue-number ordering)")
+        fails.append("AC7: linter must be gated by run_checks.py AFTER #3186 linter (issue-number ordering)")
     rows.append(
         {
             "ac": "AC7_no_invent",

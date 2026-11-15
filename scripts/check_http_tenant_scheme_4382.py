@@ -33,6 +33,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _strip_cpp_comments(src: str) -> str:
@@ -151,8 +153,7 @@ def main() -> int:
     must(not design.exists() or not any(design.glob("4382-*")), "AC4: no docs/design/4382-* (#1655)")
 
     # ── AC5: wiring ──
-    build = read("build.py")
-    must("check_http_tenant_scheme_4382" in build, "AC5: build.py wires the #4382 linter")
+    must("check_http_tenant_scheme_4382" in wired_text, "AC5: run_checks.py wires the #4382 linter")
     allow = read("scripts/coverage/root_check_allowlist.txt")
     must("check_http_tenant_scheme_4382.py" in allow, "AC5: linter on the root_check_allowlist")
 

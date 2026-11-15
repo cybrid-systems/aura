@@ -15,6 +15,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -36,7 +38,6 @@ def main() -> int:
     q = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
     wc = _read("src/serve/worker.cpp")
     test = _read("tests/serve/test_mutation_safety_snapshot_steal.cpp")
-    build = _read("build.py")
 
     # AC1 — outermost Guard enter/exit call canary after publish
     must("Issue #2956", "AC1", emb)
@@ -80,7 +81,7 @@ def main() -> int:
     must("schema-2956", "AC5", test)
     must("aura_mutation_boundary_assert_mirrors_consistent", "AC5", fb)
     must("__attribute__((weak))", "AC5", fb)
-    must("check_mutation_mirror_canary_2956", "AC5", build)
+    must("check_mutation_mirror_canary_2956", "AC5", wired_text)
     if (ROOT / "tests" / "serve" / "test_issue_2956.cpp").is_file():
         fails.append("AC5: test_issue_2956.cpp present (forbidden #81967)")
     docs = ROOT / "docs" / "design"

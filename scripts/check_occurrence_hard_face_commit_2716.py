@@ -43,6 +43,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage"))
 from query_prims_sources import read_query_prims
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -88,7 +90,6 @@ def main() -> int:
     tma = _read("src/compiler/typed_mutation_audit.h")
     q = read_query_prims()
     t = _read("tests/compiler/test_partial_cone_commit_gate.cpp")
-    build = _read("build.py")
 
     # AC1 — production + face hit → commit hard-rejects with new
     # force_reasons. Force_reason codes 10 + 11 + active branch.
@@ -138,7 +139,7 @@ def main() -> int:
     must("ac2716_4_additive_no_regression", "AC6", t)
     must("ac2716_5_query_keys_added", "AC6", t)
     must("ac2716_6_source_and_linter", "AC6", t)
-    must("check_occurrence_hard_face_commit_2716", "AC6", build)
+    must("check_occurrence_hard_face_commit_2716", "AC6", wired_text)
     if _read("docs/design/2716-occurrence-hard-face-commit.md"):
         fails.append("AC6: docs/design/2716-* exists (forbidden per #1655)")
 

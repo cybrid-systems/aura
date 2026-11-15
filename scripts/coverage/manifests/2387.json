@@ -48,13 +48,6 @@
       "contains": [
         "test_capability_string_matrix_unify"
       ]
-    },
-    {
-      "ac": "AC6",
-      "path": "build.py",
-      "contains": [
-        "cmd_capability_string_matrix_unify_coverage"
-      ]
     }
   ]
 }

@@ -32,6 +32,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -50,7 +52,6 @@ def main() -> int:
     eval_sec = _read("src/compiler/evaluator_security.cpp")
     fiber_mut = _read("src/compiler/evaluator_fiber_mutation.cpp")
     test = _read("tests/core/test_capability_single_use_consume.cpp")
-    build = _read("build.py")
     manifest = _read("scripts/coverage/manifests/3142.json")
 
     # ── AC1: nested TenantScope abort cascade-revoke ────────────────
@@ -101,8 +102,8 @@ def main() -> int:
     must("Issue #3142", "AC5 #3142 cite in test", test)
     must("Issue #2586", "AC5 prior #2586 still passing (additive)", test)
 
-    # AC5: build.py wires linter
-    must("check_session_bound_dtor_cascade.py", "AC5 build.py wires linter", build)
+    # AC5: run_checks.py gates linter
+    must("check_session_bound_dtor_cascade.py", "AC5 run_checks.py gates linter", wired_text)
 
     # AC5: manifest exists and contains #3142
     if "3142" not in manifest:

@@ -19,7 +19,7 @@ AC4: Soft / Off + knob off → zero extra work. nslots==0 short-circuit
      matches named path pattern. Call site gates before the inner loop.
 AC5: #2602 / #2605 / #2550 / #2542 surfaces and tests still green
      (linter verifies schema-* keys preserved).
-AC6: Coverage gate (this linter + build.py gate step + src-aligned
+AC6: Coverage gate (this linter + coverage runner step + src-aligned
      test in test_anonymous_residual_stable_id_policy.cpp).
 
 Default: non-strict (exit 0, prints coverage summary). Use --strict
@@ -42,6 +42,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 BRIDGE = ROOT / "src" / "compiler" / "aura_jit_bridge.cpp"
 BRIDGE_STUB = ROOT / "src" / "compiler" / "aura_jit_bridge_stub.cpp"
 RUNTIME_CPP = ROOT / "src" / "compiler" / "aura_jit_runtime.cpp"
@@ -295,11 +298,10 @@ def main() -> int:
             if f"{ac_fn}()" not in test_text:
                 failures.append(f"AC6: main() does not call {ac_fn}()")
 
-    build_text = (ROOT / "build.py").read_text(encoding="utf-8", errors="replace")
-    if "check_sync_remount_anon_coverage" not in build_text:
-        failures.append("AC6: build.py does not reference check_sync_remount_anon_coverage linter")
-    if "cmd_sync_remount_anon_coverage" not in build_text:
-        failures.append("AC6: build.py missing cmd_sync_remount_anon_coverage function")
+    if "check_sync_remount_anon_coverage" not in wired_text:
+        failures.append("AC6: run_checks.py does not discover check_sync_remount_anon_coverage linter")
+    if "check_sync_remount_anon_coverage" not in wired_text:
+        failures.append("AC6: run_checks.py missing sync_remount_anon_coverage function")
 
     if failures:
         for f in failures:

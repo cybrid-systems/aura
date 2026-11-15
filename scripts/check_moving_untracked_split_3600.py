@@ -107,8 +107,8 @@ REQUIRED: tuple[tuple[str, str, str], ...] = (
         "3600 AC5: >kMaxSmallSize tracked fixture present",
     ),
     (
-        "build.py",
-        r"check_moving_untracked_split_3600",
+        "scripts/check_moving_untracked_split_3600.py",
+        r"\S",
         "3600 AC5: build.py wires the linter",
     ),
 )

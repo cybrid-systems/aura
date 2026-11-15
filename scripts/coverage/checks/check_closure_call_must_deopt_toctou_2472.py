@@ -17,6 +17,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -35,7 +37,6 @@ def main() -> int:
 
     rt = _read("src/compiler/aura_jit_runtime.cpp")
     test = _read("tests/compiler/test_closure_call_must_deopt_toctou.cpp")
-    build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
     # Locate MustDeopt section inside the blessed dispatch entry
@@ -71,8 +72,8 @@ def main() -> int:
     must("2472 AC4", "AC4", test)
     must("lock-downgrade TOCTOU", "AC4", rt)
 
-    must("check_closure_call_must_deopt_toctou_2472", "gate", build)
-    must("cmd_closure_call_must_deopt_toctou_coverage", "gate", build)
+    must("check_closure_call_must_deopt_toctou_2472", "gate", wired_text)
+    must("check_closure_call_must_deopt_toctou_2472.py", "gate", wired_text)
     must("test_closure_call_must_deopt_toctou", "gate", cmake)
     must("2472 AC5", "gate", test)
 

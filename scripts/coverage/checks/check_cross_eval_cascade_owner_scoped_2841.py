@@ -23,6 +23,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -45,7 +47,6 @@ def main() -> int:
     dirty = _read("src/compiler/service_dirty.cpp")
     q = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
     t = _read("tests/compiler/test_named_closure_stable_id_at_create.cpp")
-    build = _read("build.py")
 
     # AC1 — owner-scoped cascade path
     must("Issue #2841", "AC1", cpp)
@@ -83,7 +84,7 @@ def main() -> int:
     must("ac2841_4_soft_opt_in_production_default", "AC6", t)
     must("ac2841_5_query_additive", "AC6", t)
     must("ac2841_6_source_and_linter", "AC6", t)
-    must("check_cross_eval_cascade_owner_scoped_2841", "AC6", build)
+    must("check_cross_eval_cascade_owner_scoped_2841", "AC6", wired_text)
     if (ROOT / "tests" / "compiler" / "test_issue_2841.cpp").is_file():
         fails.append("AC6: test_issue_2841.cpp present (forbidden per #81967)")
     docs = ROOT / "docs" / "design"

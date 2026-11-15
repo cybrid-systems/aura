@@ -16,6 +16,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -84,8 +86,7 @@ def main() -> int:
     must("member not-found is #f" in suite, "AC5: suite keeps not-found (#4491)")
     must("json-parse invalid" in suite, "AC6: suite json invalid")
 
-    build = _read("build.py")
-    must("prim_error_convention_2998" in build or "prim-error-convention-2998" in build, "AC6: build.py gate")
+    must("check_prim_error_convention_2998" in wired_text, "AC6: coverage runner")
 
     if fails:
         for f in fails:

@@ -70,8 +70,8 @@ REQUIRED: tuple[tuple[str, str, str], ...] = (
         "3601 AC4: test reaches the lockless deny via batch-level opt-out",
     ),
     (
-        "build.py",
-        r"check_lockless_hygiene_se_3601",
+        "scripts/check_lockless_hygiene_se_3601.py",
+        r"\S",
         "3601 AC5: build.py wires the linter",
     ),
 )

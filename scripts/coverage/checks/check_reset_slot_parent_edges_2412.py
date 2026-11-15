@@ -16,6 +16,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -38,7 +40,6 @@ def main() -> int:
 
     ast = _read("src/core/ast.ixx")
     test = _read("tests/core/test_reset_slot_parent_edges.cpp")
-    build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
     # Locate reset_node_slot body
@@ -70,8 +71,8 @@ def main() -> int:
     must("incoming_parent_edge_count_raw", "AC4", ast)
     must("2412 AC4", "AC4", test)
 
-    must("check_reset_slot_parent_edges_2412", "gate", build)
-    must("cmd_reset_slot_parent_edges_coverage", "gate", build)
+    must("check_reset_slot_parent_edges_2412", "gate", wired_text)
+    must("check_reset_slot_parent_edges_2412.py", "gate", wired_text)
     must("test_reset_slot_parent_edges", "gate", cmake)
 
     if fails:

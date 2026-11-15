@@ -5,7 +5,7 @@ Contract:
   AC1 Valid deltas → absolute children
   AC2 Over-large / overflow deltas clamp to NULL_NODE
   AC3 Documented relative-delta model; no unchecked cid+id alone
-  AC4 Tests + CMake + build.py gate
+  AC4 Tests + CMake + coverage runner
   AC5 No hard-abort on fixup path
 
 Exit 0 = all rows satisfied.
@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _source_scan import source_block_after  # noqa: E402  (sibling helper)
 
 ROOT = Path(__file__).resolve().parents[3]
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -41,7 +42,6 @@ def main() -> int:
     ixx = _read("src/core/ast.ixx")
     test = _read("tests/core/test_fixup_deltas.cpp")
     cmake = _read("CMakeLists.txt")
-    build = _read("build.py")
 
     # AC1–AC3 implementation
     must("Issue #2392", "AC1", impl)
@@ -58,8 +58,8 @@ def main() -> int:
     # AC4 registration
     must("2392", "AC4", ixx)
     must("test_fixup_deltas", "AC4", cmake)
-    must("check_fixup_deltas_2392", "AC4", build)
-    must("cmd_fixup_deltas_coverage", "AC4", build)
+    must("check_fixup_deltas_2392", "AC4", wired_text)
+    must("check_fixup_deltas_2392.py", "AC4", wired_text)
     must("ac4_source_and_gate", "AC4", test)
     must("Issue #2392", "AC4", test)
 

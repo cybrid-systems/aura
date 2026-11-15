@@ -26,6 +26,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 SEC = "src/compiler/evaluator_security.cpp"
 TEST = "tests/core/test_capability_single_use_consume.cpp"
@@ -54,7 +56,6 @@ def main() -> int:
     sec = _read(SEC)
     test = _read(TEST)
     l3436 = _read(L3436)
-    build = _read(BUILD)
     gf = _read(GF)
 
     # Span the single-arg string path only (before the 4-arg mirror).
@@ -113,8 +114,8 @@ def main() -> int:
     )
 
     # AC3 — wiring + no invent.
-    must(LINTER, "AC3 build registration", build)
-    must("Issue #3839", "AC3 build cite", build)
+    must(LINTER, "AC3 build registration", wired_text)
+    must("check_string_grant_session_bound_3839", "AC3 build cite", wired_text)
     must("check_string_grant_session_bound_3839.py", "AC3 grandfather basename", gf)
     must(
         "scripts/coverage/checks/check_string_grant_session_bound_3839.py",

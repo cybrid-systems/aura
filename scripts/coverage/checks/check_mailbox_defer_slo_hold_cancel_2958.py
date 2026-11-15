@@ -16,6 +16,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -36,7 +38,6 @@ def main() -> int:
     fiber_h = _read("src/serve/fiber.h")
     gate = _read("src/orch/security_schedule_gate.h")
     test = _read("tests/serve/test_mailbox_recv_mutation_boundary.cpp")
-    build = _read("build.py")
 
     # AC1
     must("Issue #2958", "AC1", mb)
@@ -68,7 +69,7 @@ def main() -> int:
     must("ac2958_4_query_additive", "AC4", test)
 
     # AC5 / AC6
-    must("check_mailbox_defer_slo_hold_cancel_2958", "AC5", build)
+    must("check_mailbox_defer_slo_hold_cancel_2958", "AC5", wired_text)
     must("ac2958_5_source_and_linter", "AC5", test)
     must("aura_fiber_request_hold_budget_cancel", "AC5 weak", fb)
     # Call sites

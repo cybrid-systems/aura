@@ -24,6 +24,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -52,7 +54,6 @@ def main() -> int:
     jit = _read("src/compiler/evaluator_primitives_obs_jit.cpp")
     test = _read("tests/compiler/test_engine_metrics_facade.cpp")
     suite = _read("tests/suite/engine_metrics.aura")
-    build = _read("build.py")
     fields = _read("src/compiler/compiler_metrics_fields.inc")
 
     # ── AC1: shared helper + inventory ──
@@ -106,8 +107,8 @@ def main() -> int:
     must("no second metrics bus", "AC4", ev)
     if "AgentRegistry" in ev[ev.find("Issue #3020") : ev.find("Issue #3020") + 4000]:
         fails.append("AC4: must not introduce AgentRegistry")
-    must("check_query_hash_overflow_3020", "AC4 build", build)
-    must("cmd_query_hash_overflow_3020", "AC4 build cmd", build)
+    must("check_query_hash_overflow_3020", "AC4 build", wired_text)
+    must("check_query_hash_overflow_3020.py", "AC4 build cmd", wired_text)
 
     # ── AC5: soak + no invented test/docs ──
     must("#3020 AC5: soak — no query_hash_overflow_total bump under default catalog", "AC5 soak", test)

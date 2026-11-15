@@ -22,6 +22,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -41,7 +43,6 @@ def main() -> int:
     audit = _read("src/compiler/typed_mutation_audit.h")
     l3074 = _read("scripts/coverage/checks/check_mutate_dispatch_sole_guard_3074.py")
     t = _read("tests/compiler/test_mutation_guard_try_acquire_unit.cpp")
-    build = _read("build.py")
 
     lines = mut.splitlines()
     for i, ln in enumerate(lines, 1):
@@ -97,12 +98,12 @@ def main() -> int:
     if "schema-3452" in mut or "schema-3452" in disp or "schema-3452" in audit:
         fails.append("AC4: new schema-3452 query key")
 
-    must("check_mutate_reg_kind_3452", "AC5 build.py", build)
+    must("check_mutate_reg_kind_3452", "AC5 wiring", wired_text)
     must("ac3452_5_source_and_linter", "AC5 test", t)
-    prev = build.find("check_mutate_dispatch_sole_guard_3074")
-    ours = build.find("check_mutate_reg_kind_3452")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC5: #3452 linter must be wired after #3074")
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must("check_mutate_dispatch_sole_guard_3074", "AC5: #3452 linter must be wired (both gated)", wired_text)
+    must("check_mutate_reg_kind_3452", "AC5: #3452 linter must be wired (both gated)", wired_text)
     if (ROOT / "tests" / "compiler" / "test_issue_3452.cpp").is_file():
         fails.append("AC5: forbidden tests/compiler/test_issue_3452.cpp")
     if (ROOT / "tests" / "issues" / "test_issue_3452.cpp").is_file():

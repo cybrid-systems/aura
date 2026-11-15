@@ -5,7 +5,7 @@ Contract:
   AC1 boids.aura: separation/alignment/cohesion/step/diversity pure API
   AC2 swarm kind:boids uses boids:step; docs/stdlib/boids.md
   AC3 suite boids_2879.aura; INDEX entry
-  AC4 linter wired in build.py
+  AC4 linter gated by run_checks.py
   AC5 no docs/design/2879-* / no test_issue_2879.cpp
 
 Exit 0 = all rows satisfied.
@@ -17,6 +17,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -38,7 +40,6 @@ def main() -> int:
     docs = _read("docs/stdlib/boids.md")
     suite = _read("tests/suite/boids_2879.aura")
     index = _read("lib/std/INDEX.aura")
-    build = _read("build.py")
 
     # AC1
     must("boids:separation", "AC1", boids)
@@ -64,7 +65,7 @@ def main() -> int:
     must('"boids"', "AC3", index)
 
     # AC4
-    must("check_boids_2879", "AC4", build)
+    must("check_boids_2879", "AC4", wired_text)
 
     # AC5
     if (ROOT / "tests" / "compiler" / "test_issue_2879.cpp").is_file():

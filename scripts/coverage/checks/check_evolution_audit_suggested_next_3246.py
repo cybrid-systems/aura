@@ -23,6 +23,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -41,7 +43,6 @@ def main() -> int:
     sec = _read("src/compiler/evaluator_primitives_security.cpp")
     unify = _read("tests/compiler/test_security_audit_unify.cpp")
     facade = _read("tests/compiler/test_engine_metrics_facade.cpp")
-    build = _read("build.py")
 
     must("kEvolutionAuditSuggestedNextIssue = 3246", "AC1 stamp", header)
     must("decide_evolution_suggested_next", "AC1 pure helper", header)
@@ -56,7 +57,7 @@ def main() -> int:
     must("ac3246_4_ok", "AC4 ok test", unify)
     must("ac3246_4_breach", "AC4 breach test", unify)
     must("kEvolutionAuditDecisionPlannedKeys = 80", "AC5 planned 72 (#3339 headroom)", sec)
-    must("check_evolution_audit_suggested_next_3246", "AC5 build.py", build)
+    must("check_evolution_audit_suggested_next_3246", "AC5 wiring", wired_text)
     must("schema-3246", "AC5 facade", facade)
     if _read("tests/compiler/test_issue_3246.cpp"):
         fails.append("AC5: test_issue_3246.cpp present (forbidden #81967)")

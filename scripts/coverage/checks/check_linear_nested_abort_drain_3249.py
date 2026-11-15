@@ -23,6 +23,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -43,7 +45,6 @@ def main() -> int:
     fibm = _read("src/compiler/evaluator_fiber_mutation.cpp")
     fib = _read("src/serve/fiber.cpp")
     test = _read("tests/compiler/test_linear_pin_moving_compact.cpp")
-    build = _read("build.py")
 
     must("kLinearNestedAbortDrainIssue = 3249", "AC1 stamp", lp)
     must("snapshot_linear_roots", "AC1 snapshot", lp)
@@ -64,8 +65,8 @@ def main() -> int:
     must("ac3249_4_soak", "AC4 soak", test)
     must("ac3249_5_soft", "AC5 Soft test", test)
     must("unpin_linear_roots_except", "AC2 ixx export", ixx)
-    must("check_linear_nested_abort_drain_3249", "AC5 build.py", build)
-    must("cmd_linear_nested_abort_drain_3249_coverage", "AC5 cmd", build)
+    must("check_linear_nested_abort_drain_3249", "AC5 wiring", wired_text)
+    must("check_linear_nested_abort_drain_3249.py", "AC5 cmd", wired_text)
     if "AgentRegistry" in lp[lp.find("Issue #3249") : lp.find("Issue #3249") + 1800]:
         fails.append("AC5: must not introduce AgentRegistry")
     if _read("tests/compiler/test_issue_3249.cpp") or _read("tests/core/test_issue_3249.cpp"):

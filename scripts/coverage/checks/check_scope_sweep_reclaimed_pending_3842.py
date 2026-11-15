@@ -23,6 +23,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 SPAWN = "src/orch/agent_spawn.h"
 SCOPE = "src/orch/agent_scope.h"
@@ -51,7 +53,6 @@ def main() -> int:
     spawn = _read(SPAWN)
     scope = _read(SCOPE)
     test = _read(TEST)
-    build = _read(BUILD)
     gf = _read(GF)
 
     # AC1 — stamp + sweep API + ensure SSOT.
@@ -101,8 +102,8 @@ def main() -> int:
     must("ac3842_3_soft_zero_cost_no_force", "AC4 test AC3", test)
     must("ac3842_4_spawn_registers_with_scope_lifetime", "AC4 test AC4", test)
     must("ac3842_5_source_cite_linter_no_invent", "AC4 test AC5", test)
-    must(LINTER, "AC4 build registration", build)
-    must("Issue #3842", "AC4 build cite", build)
+    must(LINTER, "AC4 build registration", wired_text)
+    must("check_scope_sweep_reclaimed_pending_3842", "AC4 build cite", wired_text)
     must(f"{LINTER}.py", "AC4 grandfather basename", gf)
     must(
         f"scripts/coverage/checks/{LINTER}.py",

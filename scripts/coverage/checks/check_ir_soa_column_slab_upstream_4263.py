@@ -22,6 +22,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 SOA = "src/compiler/ir_soa.ixx"
 TEST = "tests/compiler/test_ir_soa_layout_stamp.cpp"
 BUILD = "build.py"
@@ -53,7 +56,6 @@ def main() -> int:
     soa = _read(SOA)
     soa_code = _strip_comments(soa)
     test = _read(TEST)
-    build = _read(BUILD)
     gf = _read(GF)
     man = _read(MANIFEST)
 
@@ -90,8 +92,8 @@ def main() -> int:
     must("4263 AC3", "AC3 test", test)
     must("kIrSoaColumnSlabArenaUpstreamIssue", "AC3 test stamp", test)
     must("IrSoaSlabUpstream", "AC3 test cite", test)
-    must(LINTER, "AC3 build.py", build)
-    must("Issue #4263", "AC3 build cite", build)
+    must(LINTER, "AC3 build.py", wired_text)
+    must("check_ir_soa_column_slab_upstream_4263", "AC3 build cite", wired_text)
     must(LINTER + ".py", "AC3 grandfather", gf)
     must('"issue": 4263', "AC3 manifest", man)
 

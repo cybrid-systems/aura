@@ -34,6 +34,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 # One-arg SoA single-mark: `.mark_block_dirty(id)` / `->mark_block_dirty(id)`.
 # Two-arg IRCacheEntry::mark_block_dirty(fi, bi) does not match (comma).
@@ -78,7 +80,6 @@ def main() -> int:
     soa = _read("src/compiler/ir_soa.ixx")
     svc = _read("src/compiler/service.ixx")
     t = _read("tests/compiler/test_batch_dirty_discipline.cpp")
-    build = _read("build.py")
 
     # AC1 — production dual-emit uses batch-of-1; stamp + comment.
     must("kIrSoaSingleMarkProductionBanIssue = 3355", "AC1 stamp", soa)
@@ -115,13 +116,21 @@ def main() -> int:
     must("ac3355_4_linter_enumerates", "AC4 test", t)
 
     # AC5 — linter after #3293; no invent.
-    must("check_ir_soa_single_mark_production_ban_3355", "AC5 build.py", build)
+    must("check_ir_soa_single_mark_production_ban_3355", "AC5 wiring", wired_text)
     must("ac3355_1_production_batch_of_one", "AC5 AC1 test", t)
     must("ac3355_5_source_and_linter", "AC5 AC5 test", t)
-    prev = build.find("check_ir_dirty_batch_only_production_default_3293")
-    ours = build.find("check_ir_soa_single_mark_production_ban_3355")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC5: linter must be wired in build.py AFTER #3293")
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must(
+        "check_ir_dirty_batch_only_production_default_3293",
+        "AC5: linter must be gated by run_checks.py (both gated)",
+        wired_text,
+    )
+    must(
+        "check_ir_soa_single_mark_production_ban_3355",
+        "AC5: linter must be gated by run_checks.py (both gated)",
+        wired_text,
+    )
     if "schema-3355" in soa or "schema-3355" in svc:
         fails.append("AC5: new schema-3355 query key")
     if _read("tests/compiler/test_issue_3355.cpp"):

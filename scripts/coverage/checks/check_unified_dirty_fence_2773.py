@@ -22,6 +22,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -65,7 +67,6 @@ def main() -> int:
     shape = _read("src/compiler/shape_profiler.h")
     obs = _read("src/compiler/evaluator_primitives_obs_jit.cpp")
     test = _read("tests/compiler/test_batch_dirty_discipline.cpp")
-    build = _read("build.py")
 
     # AC1 — batch path one fence + note_logical
     must("#2773", "AC1", soa)
@@ -118,7 +119,7 @@ def main() -> int:
     must("ac2773_3_shape_isolation", "AC5", test)
     must("ac2773_4_obs_schema", "AC5", test)
     must("ac2773_5_source_cite_quiet", "AC5", test)
-    must("check_unified_dirty_fence_2773", "AC5", build)
+    must("check_unified_dirty_fence_2773", "AC5", wired_text)
     docs = ROOT / "docs" / "design"
     if docs.is_dir():
         for f in sorted(docs.glob("2773-*")):

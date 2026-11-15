@@ -25,6 +25,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -47,7 +49,6 @@ def main() -> int:
     bnd = _read("src/compiler/evaluator_mutation_boundary.cpp")
     ixx = _read("src/compiler/evaluator.ixx")
     test = _read("tests/core/test_audit_replay_join.cpp")
-    build = _read("build.py")
 
     # ── AC1: pre-persist gate + emit returns false ─────────────────────
     must("[[nodiscard]] bool emit_mutation_audit", "AC1 bool signature", ixx)
@@ -89,7 +90,7 @@ def main() -> int:
     must("3780 AC2", "AC4 test marker AC2", test)
     must("3780 AC4", "AC4 test marker AC4", test)
     must("ac17_pre_persist_wal_miss_fail_closed_3780", "AC4 test fn", test)
-    must("check_mutation_wal_miss_fail_closed_3780", "AC4 build.py wiring", build)
+    must("check_mutation_wal_miss_fail_closed_3780", "AC4 gate wiring", wired_text)
     must_not("schema-3780", "AC4 no schema-3780", test)
     must_not("schema-3780", "AC4 no schema-3780 in sec", sec)
     if (ROOT / "tests" / "core" / "test_issue_3780.cpp").is_file():

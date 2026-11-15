@@ -32,6 +32,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 SCOPE_FILES = [
     "src/core/capability_model.hh",
@@ -61,7 +63,6 @@ def main() -> int:
     posture = _read("src/compiler/evaluator_primitives_security.cpp")
     sec_caps = _read("src/compiler/security_capabilities.h")
     test_su = _read("tests/core/test_capability_single_use_consume.cpp")
-    build = _read("build.py")
 
     # ── AC1: TenantAdmin gate under production ────────────────────
     must("Issue #2967", "AC1", sec)
@@ -112,7 +113,7 @@ def main() -> int:
     must("#2967", "AC6", ixx)
     must("#2967", "AC6", cap_model)
     must("#2967", "AC6", sec)
-    must("check_capability_durable_gate_2967", "AC6", build)  # linter wired
+    must("check_capability_durable_gate_2967", "AC6", wired_text)  # linter wired
     # The test file's own forbidden-check (no test_issue_2967.cpp) is allowed;
     # only a real new test file at either canonical path fails AC6.
     for rel in ("tests/core/test_issue_2967.cpp", "tests/compiler/test_issue_2967.cpp"):

@@ -20,6 +20,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -43,7 +45,6 @@ def main() -> int:
     health = _read("src/compiler/aot_hot_update_health.hh")
     thr_test = _read("tests/compiler/test_orch_hot_update_health_throttle.cpp")
     heal_test = _read("tests/compiler/test_issue_3096.cpp")
-    build = _read("build.py")
 
     # AC1: playbook observe-only — FallBackJit row + no auto execution in decide
     must("Issue #3814", "AC1 playbook cite", cpp)
@@ -98,8 +99,8 @@ def main() -> int:
     must("covered sticky force cleared", "AC4 clear assert", heal_test)
 
     # AC5 wiring / no invent
-    must("check_sticky_force_empty_residual_3814", "AC5 build", build)
-    must("cmd_sticky_force_empty_residual_3814", "AC5 build cmd", build)
+    must("check_sticky_force_empty_residual_3814", "AC5 build", wired_text)
+    must("check_sticky_force_empty_residual_3814.py", "AC5 build cmd", wired_text)
     if (ROOT / "tests" / "compiler" / "test_issue_3814.cpp").is_file():
         fails.append("AC5: test_issue_3814.cpp present (forbidden per #81967)")
     if _read("docs/design/3814-sticky-force-empty-residual.md"):

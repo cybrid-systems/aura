@@ -13,6 +13,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -29,7 +31,6 @@ def main() -> int:
 
     me = _read("src/compiler/macro_expansion.cpp")
     test = _read("tests/compiler/test_concurrent_clone_hygiene_depth.cpp")
-    build = _read("build.py")
     gf = _read("scripts/coverage/simple_check_grandfather.txt")
 
     must("Issue #3787", "AC1 cite", me)
@@ -42,7 +43,7 @@ def main() -> int:
     must("kHygieneLimitReasonConcurrentTopLevel", "AC3 clear codes", me)
 
     must("3787 AC1", "AC4 test", test)
-    must("check_sticky_last_limit_deny_all_3787", "AC4 build.py", build)
+    must("check_sticky_last_limit_deny_all_3787", "AC4 wiring", wired_text)
     must("check_sticky_last_limit_deny_all_3787.py", "AC4 grandfather", gf)
 
     if _read("tests/compiler/test_issue_3787.cpp"):

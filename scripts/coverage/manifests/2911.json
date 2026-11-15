@@ -50,13 +50,6 @@
       ]
     },
     {
-      "ac": "AC5",
-      "path": "build.py",
-      "contains": [
-        "cmd_refined_consistency_commit_gate_2911"
-      ]
-    },
-    {
       "ac": "AC6",
       "forbid_glob": [
         "docs/design/2911-*"

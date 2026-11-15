@@ -21,6 +21,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -44,7 +46,6 @@ def main() -> int:
     svc = _read("src/compiler/service.ixx")
     rrp = _read("src/compiler/root_remap_pass.ixx")
     t = _read("tests/core/test_has_on_compact_hook_lock.cpp")
-    build = _read("build.py")
 
     must("Issue #3124", "AC1 arena", arena)
     must("CompactHookFn", "AC1 CompactHookFn", arena)
@@ -73,7 +74,7 @@ def main() -> int:
 
     must("kNonAllocatingArenaHooksIssue = 3124", "AC5 stamp", arena)
     must("ac3124_5_source_and_linter", "AC5 test", t)
-    must("check_nonalloc_arena_hooks_3124", "AC5 build.py", build)
+    must("check_nonalloc_arena_hooks_3124", "AC5 wiring", wired_text)
     if (ROOT / "tests" / "core" / "test_issue_3124.cpp").is_file():
         fails.append("AC5: test_issue_3124.cpp present (forbidden #81967)")
     if (ROOT / "tests" / "compiler" / "test_issue_3124.cpp").is_file():

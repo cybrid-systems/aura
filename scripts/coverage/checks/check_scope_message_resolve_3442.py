@@ -100,7 +100,7 @@ def main() -> int:
     must(
         (ROOT / "scripts" / "coverage" / "checks" / "check_scope_message_resolve_3442.py").is_file()
         and "discover_checks" in _read("scripts/coverage/run_checks.py"),
-        "AC7: build.py wires linter",
+        "AC7: run_checks.py gates linter",
     )
     must("3442 AC1" in t_orch, "AC7: test_orch_scope extended")
     must("3442 AC1" in t_scope, "AC7: test_agent_scope extended")

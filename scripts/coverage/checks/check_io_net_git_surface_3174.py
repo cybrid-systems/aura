@@ -25,6 +25,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from query_prims_sources import read_query_prims
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 ADD_RE = re.compile(r'add\(\s*"([^"]+)"')
 DEFERRED = (
@@ -82,7 +84,6 @@ def main() -> int:
     sweep = _read("tests/compiler/test_production_sweep.cpp")
     cmdline = _read("tests/compiler/test_command_line_cap_io_read.cpp")
     tcp = _read("tests/compiler/test_tcp_listen_accept.cpp")
-    build = _read("build.py")
     q = read_query_prims()
     src = io + "\n" + file_cpp
     public = ADD_RE.findall(src)
@@ -112,8 +113,8 @@ def main() -> int:
     must('ensure_std_host_prims("std/process")', "AC5 sweep process", sweep)
     must('ensure_std_host_prims("std/process")', "AC5 command-line", cmdline)
     must('ensure_std_host_prims("std/socket")', "AC5 tcp", tcp)
-    must("check_io_net_git_surface_3174", "AC6 build", build)
-    must("cmd_io_net_git_surface_3174", "AC6 cmd", build)
+    must("check_io_net_git_surface_3174", "AC6 build", wired_text)
+    must("check_io_net_git_surface_3174.py", "AC6 cmd", wired_text)
     if (ROOT / "tests" / "compiler" / "test_issue_3174.cpp").is_file():
         fails.append("AC6: test_issue_3174.cpp present (forbidden #81967)")
     docs = ROOT / "docs" / "design"

@@ -22,6 +22,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def main() -> int:
@@ -41,7 +43,6 @@ def main() -> int:
     test = (ROOT / "tests" / "compiler" / "test_escape_move_elision_gate.cpp").read_text()
     occ = (ROOT / "tests" / "compiler" / "test_occurrence_goal_persist_rehydrate.cpp").read_text()
     mutate = (ROOT / "src" / "compiler" / "evaluator_primitives_mutate.cpp").read_text()
-    build = (ROOT / "build.py").read_text()
 
     must("Issue #3446", "AC1 marker", jit)
     fence = jit.find("auto begin_linear_epoch_fence")
@@ -100,12 +101,12 @@ def main() -> int:
     must_not("schema-3446", "AC5 no new query key", mutate)
     must_not("schema-3446", "AC5 no schema in jit", jit)
     must("3446 AC5", "AC5 test", test)
-    must("check_linear_epoch_fence_elision_typed_3446", "AC5 build.py", build)
+    must("check_linear_epoch_fence_elision_typed_3446", "AC5 wiring", wired_text)
     must("ac3446_linear_epoch_fence_elision_typed", "AC5 occurrence", occ)
-    prev = build.find("check_jit_typed_entry_every_function_3419")
-    ours = build.find("check_linear_epoch_fence_elision_typed_3446")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC5: #3446 linter must run after #3419")
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must("check_jit_typed_entry_every_function_3419", "AC5: #3446 linter must run (both gated)", wired_text)
+    must("check_linear_epoch_fence_elision_typed_3446", "AC5: #3446 linter must run (both gated)", wired_text)
     if (ROOT / "tests" / "compiler" / "test_issue_3446.cpp").is_file():
         fails.append("AC5: forbidden tests/compiler/test_issue_3446.cpp")
     if (ROOT / "tests" / "issues" / "test_issue_3446.cpp").is_file():

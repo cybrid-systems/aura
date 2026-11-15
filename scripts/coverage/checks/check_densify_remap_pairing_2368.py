@@ -16,6 +16,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -39,7 +41,6 @@ def main() -> int:
     q = _read("src/compiler/evaluator_primitives_obs_jit.cpp")
     test = _read("tests/compiler/test_densify_remap_pairing.cpp")
     cmake = _read("CMakeLists.txt")
-    build = _read("build.py")
 
     # AC1 Soft
     must("note_last_densify_remap_pairing_forced(false)", "AC1", emb)
@@ -83,8 +84,8 @@ def main() -> int:
     must("force_densify_remap_pairing", "AC5", emb)
     must("Issue #2368", "AC5", emb)
     must("test_densify_remap_pairing", "AC5", cmake)
-    must("check_densify_remap_pairing_2368", "AC5", build)
-    must("cmd_densify_remap_pairing_coverage", "AC5", build)
+    must("check_densify_remap_pairing_2368", "AC5", wired_text)
+    must("check_densify_remap_pairing_2368.py", "AC5", wired_text)
     must("ac5_phase5_source", "AC5", test)
 
     if fails:

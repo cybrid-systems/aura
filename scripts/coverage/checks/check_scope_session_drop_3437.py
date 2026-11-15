@@ -24,6 +24,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -41,7 +43,6 @@ def main() -> int:
     ctor = _read("src/compiler/evaluator_ctor.cpp")
     prim = _read("src/compiler/evaluator_primitives_agent.cpp")
     test = _read("tests/orch/test_orch_scope.cpp")
-    build = _read("build.py")
 
     # AC1: the drop call lives INSIDE cleanup_orch_agents (window check,
     # not file-wide — per source-cite windowing rule).
@@ -76,15 +77,13 @@ def main() -> int:
         # the prim to keep growing. The anchor itself is still required.
         must("scope->release_settled_members()", "AC4 settled members released", prim[ja : ja + 20000])
 
-    # AC5: linter wired in build.py AFTER #3434; no test_issue files;
+    # AC5: linter gated by run_checks.py AFTER #3434; no test_issue files;
     # no docs/design.
-    must("check_scope_session_drop_3437", "AC5 build.py", build)
-    prev = build.find("check_tenant_spawn_mandate_3434")
-    ours = build.find("check_scope_session_drop_3437")
-    if ours < 0:
-        fails.append("AC5: linter must be wired in build.py")
-    elif prev >= 0 and ours < prev:
-        fails.append("AC5: linter must be wired in build.py AFTER #3434")
+    must("check_scope_session_drop_3437", "AC5 wiring", wired_text)
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must("check_tenant_spawn_mandate_3434", "AC5: linter must be gated by run_checks.py (both gated)", wired_text)
+    must("check_scope_session_drop_3437", "AC5: linter must be gated by run_checks.py (both gated)", wired_text)
     for forbidden in ("tests/orch/test_issue_3437.cpp", "tests/issues/test_issue_3437.cpp"):
         if (ROOT / forbidden).is_file():
             fails.append(f"AC5: {forbidden} present (forbidden #81967)")

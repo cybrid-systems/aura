@@ -6,7 +6,7 @@ Contract:
   AC2 no stamp without narrow_evidence (skipped_no_evidence / early return)
   AC3 soft empty cone path does not stamp (DeadCoercionPass empty-cone early-out)
   AC4 schema-2611 keys on query:dead-coercion-layered-stats + source-cite
-  AC5 test + cmake + build.py gate; no docs/design md for #2611
+  AC5 test + cmake + coverage runner; no docs/design md for #2611
 
 Exit 0 = all rows satisfied.
 """
@@ -20,6 +20,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from query_prims_sources import read_query_prims  # Issue #2914
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -47,7 +49,6 @@ def main() -> int:
     query = read_query_prims()
     test = _read("tests/compiler/test_dce_elided_deopt_meta.cpp")
     cmake = _read("CMakeLists.txt")
-    build = _read("build.py")
 
     # AC1
     must("Issue #2611", "AC1", meta)
@@ -79,8 +80,8 @@ def main() -> int:
 
     # AC5 gate + no design docs for 2611
     must("test_dce_elided_deopt_meta", "AC5", cmake)
-    must("check_dce_elided_deopt_meta_2611", "AC5", build)
-    must("cmd_dce_elided_deopt_meta_coverage", "AC5", build)
+    must("check_dce_elided_deopt_meta_2611", "AC5", wired_text)
+    must("check_dce_elided_deopt_meta_2611.py", "AC5", wired_text)
     must("ac5_no_docs", "AC5", test)
     # No new design markdown referencing 2611
     for rel in (

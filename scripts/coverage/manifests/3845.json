@@ -34,10 +34,9 @@
     },
     {
       "ac": "AC4-wiring",
-      "path": "build.py",
-      "contains": [
+      "wired": [
         "check_promote_force_join_mid_no_invent_3845",
-        "Issue #3845"
+        "check_promote_force_join_mid_no_invent_3845.py"
       ]
     },
     {

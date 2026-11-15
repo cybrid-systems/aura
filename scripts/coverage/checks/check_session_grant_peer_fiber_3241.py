@@ -21,6 +21,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -40,7 +42,6 @@ def main() -> int:
     steal = _read("src/compiler/evaluator_fiber_mutation.cpp")
     eval_sec = _read("src/compiler/evaluator_security.cpp")
     test = _read("tests/core/test_capability_single_use_consume.cpp")
-    build = _read("build.py")
 
     must("kCapabilitySessionPeerFiberIssue = 3241", "AC1 stamp", cap)
     must("Issue #3241", "AC1 cap cite", cap)
@@ -74,7 +75,7 @@ def main() -> int:
     must("ac3241_2_steal_a_does_not_touch_b", "AC6 AC2 test", test)
     must("ac3241_3_soft_zero_and_legacy_mid_only", "AC6 AC3 test", test)
     must("ac3241_4_source_cite_and_linter", "AC6 AC4 test", test)
-    must("check_session_grant_peer_fiber_3241", "AC6 build.py", build)
+    must("check_session_grant_peer_fiber_3241", "AC6 wiring", wired_text)
     if (ROOT / "tests" / "core" / "test_issue_3241.cpp").is_file():
         fails.append("AC6: tests/core/test_issue_3241.cpp present (forbidden #81967)")
     if _read("docs/design/3241-session-grant-peer-fiber.md"):

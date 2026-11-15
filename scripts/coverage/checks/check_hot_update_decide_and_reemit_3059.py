@@ -20,6 +20,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -41,7 +43,6 @@ def main() -> int:
     br = _read("src/compiler/aura_jit_bridge.cpp")
     fib = _read("src/compiler/evaluator_fiber_mutation.cpp")
     test = _read("tests/compiler/test_hot_update_cascade_dirty_reemit.cpp")
-    build = _read("build.py")
 
     # AC1
     must("kHotUpdateDecideAndReemitIssue = 3059", "AC1 stamp", hh)
@@ -142,8 +143,8 @@ def main() -> int:
     must("ac3059_4_linter_no_invent", "AC4/5 test", test)
 
     # AC5
-    must("check_hot_update_decide_and_reemit_3059", "AC5 build", build)
-    must("cmd_hot_update_decide_and_reemit_3059", "AC5 cmd", build)
+    must("check_hot_update_decide_and_reemit_3059", "AC5 build", wired_text)
+    must("check_hot_update_decide_and_reemit_3059.py", "AC5 cmd", wired_text)
     if (ROOT / "tests" / "compiler" / "test_issue_3059.cpp").is_file():
         fails.append("AC5: test_issue_3059.cpp present (forbidden per #81967)")
     if _read("docs/design/3059-decide-and-reemit.md"):

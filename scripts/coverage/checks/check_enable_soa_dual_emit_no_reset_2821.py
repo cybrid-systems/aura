@@ -16,6 +16,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -36,7 +38,6 @@ def main() -> int:
     soa = _read("src/compiler/ir_soa.ixx")
     obs = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
     test = _read("tests/compiler/test_enable_soa_dual_emit_no_reset.cpp")
-    build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
     pos = low.find("void enable_soa_dual_emit")
@@ -65,7 +66,7 @@ def main() -> int:
     must("test_enable_soa_dual_emit_no_reset", "AC2", cmake)
 
     # AC4
-    must("check_enable_soa_dual_emit_no_reset_2821", "AC4", build)
+    must("check_enable_soa_dual_emit_no_reset_2821", "AC4", wired_text)
     must("schema-2821", "AC4", obs)
     must("enable-soa-dual-emit-skip-reset-total", "AC4", obs)
     docs = ROOT / "docs" / "design"

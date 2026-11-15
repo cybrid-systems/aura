@@ -27,6 +27,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -45,7 +47,6 @@ def main() -> int:
     dirty_cpp = _read("src/compiler/service_dirty.cpp")
     dirty = _read("src/compiler/dirty_propagation.ixx")
     t = _read("tests/compiler/test_dead_coercion_dirty_cone.cpp")
-    build = _read("build.py")
     q = _read("src/compiler/evaluator_primitives_obs_eval.cpp") + _read("src/compiler/evaluator_primitives_query.cpp")
 
     must("kDeadCoercionPersistBeforePartialIssue = 3349", "AC1 stamp", dirty)
@@ -77,12 +78,12 @@ def main() -> int:
     if "g_3349_" in dirty or "g_3349_" in svc:
         fails.append("AC3: new g_3349_* counter")
 
-    must("check_dead_coercion_persist_before_partial_3349", "AC4 build.py", build)
-    must("check_residual_castop_readiness_undermark_3347", "AC4 after #3347", build)
-    i3347 = build.find("check_residual_castop_readiness_undermark_3347")
-    i3349 = build.find("check_dead_coercion_persist_before_partial_3349")
-    if i3347 < 0 or i3349 < 0 or i3349 < i3347:
-        fails.append("AC4: #3349 linter must run after #3347")
+    must("check_dead_coercion_persist_before_partial_3349", "AC4 wiring", wired_text)
+    must("check_residual_castop_readiness_undermark_3347", "AC4 after #3347", wired_text)
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must("check_residual_castop_readiness_undermark_3347", "AC4: #3349 linter must run (both gated)", wired_text)
+    must("check_dead_coercion_persist_before_partial_3349", "AC4: #3349 linter must run (both gated)", wired_text)
     must("ac3349_4_linter_no_invent", "AC4 test", t)
     if (ROOT / "tests" / "issues" / "test_issue_3349.cpp").is_file():
         fails.append("AC4: forbidden tests/issues/test_issue_3349.cpp")

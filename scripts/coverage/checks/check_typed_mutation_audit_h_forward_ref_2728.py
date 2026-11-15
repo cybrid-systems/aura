@@ -40,6 +40,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from query_prims_sources import read_query_prims  # Issue #2914
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -121,9 +123,8 @@ def main() -> int:
     # tests/serve/test_issue_2728.cpp).
     if (ROOT / "tests" / "serve" / "test_issue_2728.cpp").is_file():
         fails.append("AC4: tests/serve/test_issue_2728.cpp present (forbidden per #81967)")
-    # build.py wires the linter.
-    build = _read("build.py")
-    must("check_typed_mutation_audit_h_forward_ref_2728", "AC4", build)
+    # run_checks.py gates the linter.
+    must("check_typed_mutation_audit_h_forward_ref_2728", "AC4", wired_text)
     # No docs/design/2728-* on disk per #1655.
     docs_dir = ROOT / "docs" / "design"
     if docs_dir.is_dir():

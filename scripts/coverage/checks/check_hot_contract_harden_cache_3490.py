@@ -23,6 +23,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -42,7 +44,6 @@ def main() -> int:
     tma = _read("src/compiler/typed_mutation_audit.h")
     q = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
     test = _read("tests/compiler/test_hot_contract_placement.cpp")
-    build = _read("build.py")
     lint3313 = _read("scripts/coverage/checks/check_hot_contract_production_harden_3313.py")
     lint3428 = _read("scripts/coverage/checks/check_hot_contract_view_at_harden_3428.py")
 
@@ -78,15 +79,19 @@ def main() -> int:
     must("AURA_HOT_CONTRACT", "AC4 view_at CONTRACT", vwin)
     must("record_hotpath_contract_harden_trap", "AC4 trap helper", hh)
     must("3490 AC4", "AC4 test", test)
-    must("check_hot_contract_view_at_harden_3428", "AC4 3428 linter kept", build)
+    must("check_hot_contract_view_at_harden_3428", "AC4 3428 linter kept", wired_text)
     must("3428", "AC4 3428 linter body", lint3428)
     must("3313", "AC4 3313 linter body", lint3313)
 
-    must("check_hot_contract_harden_cache_3490", "AC5 build.py", build)
-    prev = build.find("check_hot_contract_production_harden_3313")
-    ours = build.find("check_hot_contract_harden_cache_3490")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC5: linter must be wired in build.py AFTER #3313")
+    must("check_hot_contract_harden_cache_3490", "AC5 wiring", wired_text)
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must(
+        "check_hot_contract_production_harden_3313",
+        "AC5: linter must be gated by run_checks.py (both gated)",
+        wired_text,
+    )
+    must("check_hot_contract_harden_cache_3490", "AC5: linter must be gated by run_checks.py (both gated)", wired_text)
     must("hot-contract-harden-trap-total", "AC5 reuse trap-total", q)
     must("hot-contract-harden-armed", "AC5 reuse armed", q)
     must("3490 AC5", "AC5 test", test)

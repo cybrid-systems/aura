@@ -23,7 +23,7 @@ Contract:
   AC4  dual_dep_graph_parity_fail_total still increments; distinguisher
        reuses partial_forced_full_by_impact_total
   AC5  test_dep_graph_hybrid_cascade.cpp extended with ac3255_*
-  AC6  linter wired in build.py after #3254; no docs/design/3255-* (#1655);
+  AC6  linter gated by run_checks.py after #3254; no docs/design/3255-* (#1655);
        no tests/issues/test_issue_3255.cpp (#81967)
 
 Exit 0 = all rows satisfied.
@@ -35,6 +35,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -54,7 +56,6 @@ def main() -> int:
     q_obs = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
     q_std = _read("src/compiler/evaluator_primitives_stdlib_review.cpp")
     t = _read("tests/compiler/test_dep_graph_hybrid_cascade.cpp")
-    build = _read("build.py")
 
     helper_pos = svc.find("fail_closed_soft_dual_graph_parity_before_partial_")
     helper_win = svc[max(0, helper_pos - 2000) : helper_pos + 3500] if helper_pos >= 0 else ""
@@ -120,11 +121,19 @@ def main() -> int:
     must("ac3255_4_metrics_soak_and_linter();", "AC5 main", t)
     must("#3255: Soft dual-graph parity fail", "AC5 marker", t)
 
-    must("check_dual_dep_graph_soft_parity_partial_3255", "AC6 build.py", build)
-    nfe = build.find("check_hold_budget_noncoop_force_edge_3254")
-    ours = build.find("check_dual_dep_graph_soft_parity_partial_3255")
-    if nfe < 0 or ours < 0 or ours < nfe:
-        fails.append("AC6: linter must be wired in build.py AFTER #3254 linter")
+    must("check_dual_dep_graph_soft_parity_partial_3255", "AC6 wiring", wired_text)
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must(
+        "check_hold_budget_noncoop_force_edge_3254",
+        "AC6: linter must be gated by run_checks.py (both gated)",
+        wired_text,
+    )
+    must(
+        "check_dual_dep_graph_soft_parity_partial_3255",
+        "AC6: linter must be gated by run_checks.py (both gated)",
+        wired_text,
+    )
 
     if (ROOT / "tests" / "issues" / "test_issue_3255.cpp").is_file():
         fails.append("AC6: forbidden tests/issues/test_issue_3255.cpp per #81967")

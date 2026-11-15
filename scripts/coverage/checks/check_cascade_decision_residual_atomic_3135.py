@@ -38,6 +38,8 @@ from service_source import service_source  # #5242: interface + implementation u
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -168,8 +170,8 @@ def main() -> int:
             fails.append(f"AC5: docs/design/{f.name} present (forbidden #1655)")
     must(
         "check_cascade_decision_residual_atomic_3135",
-        "AC6 build.py wiring",
-        _read("build.py") + _read("pyproject.toml"),
+        "AC6 gate wiring",
+        wired_text + _read("pyproject.toml"),
     )
 
     if fails:

@@ -29,7 +29,7 @@ Gate rows:
       (source-cite for the path that feeds the homology check).
   G7  test ACs in tests/compiler/test_macro_cross_flat_hygiene.cpp
       (the #2235 suite home — issue AC5: extend existing suite).
-  G8  build.py wires this linter AFTER #3278.
+  G8  run_checks.py gates this linter AFTER #3278.
   G9  no docs/design/3340-* (per #1655), no tests/issue*/test_issue_3340.cpp
       (per #81967 — src-aligned suites only).
 """
@@ -38,6 +38,8 @@ import pathlib
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 failures: list[str] = []
 
@@ -62,7 +64,6 @@ def main() -> int:
     print("=== #3340 cross-flat provenance homology linter ===")
     macro = read("src/compiler/macro_expansion.cpp")
     test = read("tests/compiler/test_macro_cross_flat_hygiene.cpp")
-    build = read("build.py")
 
     must("#3340" in macro, "G1: macro_expansion.cpp cites Issue #3340")
     must(
@@ -91,16 +92,14 @@ def main() -> int:
     must("leftover provenance zeroed" in test, "G7d: AC10 leftover provenance zeroed")
     must("Issue #3340" in test, "G7e: test cites #3340")
     must(
-        "check_cross_flat_provenance_homology_3340.py" in build,
-        "G8: build.py wires linter",
+        "check_cross_flat_provenance_homology_3340.py" in wired_text,
+        "G8: run_checks.py gates linter",
     )
     # AFTER #3278: 3340 block appears after the 3278 script name in build.py.
-    i3278 = build.find("check_cross_flat_schema_homology_3278.py")
-    i3340 = build.find("check_cross_flat_provenance_homology_3340.py")
-    must(
-        i3278 >= 0 and i3340 > i3278,
-        "G8b: linter wired AFTER #3278",
-    )
+    # Ordering was a property of the deleted cmd_lint chain (#5246); both
+    # checks are gated by run_checks.py discovery now.
+    must("check_cross_flat_schema_homology_3278.py" in wired_text, "G8b: #3278 still gated")
+    must("check_cross_flat_provenance_homology_3340.py" in wired_text, "G8b: #3340 still gated")
     must(
         not any(p.name.startswith("3340-") for p in (ROOT / "docs/design").glob("3340-*"))
         if (ROOT / "docs/design").exists()

@@ -19,6 +19,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -38,7 +40,6 @@ def main() -> int:
     arena = _read("src/core/arena.ixx")
     obs = _read("src/compiler/evaluator_primitives_obs_jit.cpp")
     test = _read("tests/core/test_moving_densify_fail_closed.cpp")
-    build = _read("build.py")
 
     # AC1 — slot registration + rewrite
     must("Issue #2837", "AC1", arena)
@@ -76,7 +77,7 @@ def main() -> int:
     must("external-root-remap-wired", "AC6", obs)
     must("ac2837_1_slot_remapped", "AC6", test)
     must("ac2837_3_sticky_densify_off_under_hard", "AC6", test)
-    must("check_moving_external_root_remap_2837", "AC6", build)
+    must("check_moving_external_root_remap_2837", "AC6", wired_text)
     if (ROOT / "tests" / "core" / "test_issue_2837.cpp").is_file():
         fails.append("AC6: test_issue_2837.cpp present (forbidden per #81967)")
     docs = ROOT / "docs" / "design"

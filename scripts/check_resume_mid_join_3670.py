@@ -24,6 +24,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -37,7 +39,6 @@ def _rows(must, must_count, must_not) -> list[str]:
     fm = _read("src/compiler/evaluator_fiber_mutation.cpp")
     test = _read("tests/compiler/test_tenant_scope_fiber_mandate.cpp")
     _read("tests/serve/test_resume_session_revoke.cpp")
-    build = _read("build.py")
 
     # AC1/AC2: both resume emit sites join the SSOT mid.
     must_count("auto mid = typed_audit::join_audit_and_se_mid(0);", "AC1/AC2 join x2", fm, 2)
@@ -68,7 +69,7 @@ def _rows(must, must_count, must_not) -> list[str]:
         fails.append("AC5: test_issue_3670.cpp present (forbidden per #81934)")
     if _read("docs/design/3670-resume-mid-join.md"):
         fails.append("AC5: docs/design/ exists — forbidden per #1655")
-    must("check_resume_mid_join_3670", "AC5 build.py", build)
+    must("check_resume_mid_join_3670", "AC5 run_checks.py", wired_text)
     return fails
 
 

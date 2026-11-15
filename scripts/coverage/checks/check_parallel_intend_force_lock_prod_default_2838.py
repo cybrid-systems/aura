@@ -19,6 +19,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -39,7 +41,6 @@ def main() -> int:
     ag = _read("src/compiler/evaluator_primitives_agent.cpp")
     rd = _read("src/orch/README.md")
     test = _read("tests/orch/test_parallel_intend_pure_contract.cpp")
-    build = _read("build.py")
 
     # AC1 — resolve helper + production default inject
     must("Issue #2838", "AC1", spawn)
@@ -79,7 +80,7 @@ def main() -> int:
     # AC5 — test extension + linter wire + no invent
     must("2838 AC1", "AC5", test)
     must("resolve_parallel_intend_force_lock_on_violation", "AC5", test)
-    must("check_parallel_intend_force_lock_prod_default_2838", "AC5", build)
+    must("check_parallel_intend_force_lock_prod_default_2838", "AC5", wired_text)
     if (ROOT / "tests" / "orch" / "test_issue_2838.cpp").is_file():
         fails.append("AC5: test_issue_2838.cpp present (forbidden per #81967)")
     docs = ROOT / "docs" / "design"

@@ -25,6 +25,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
 
 H = "src/compiler/typed_mutation_audit.h"
 TEST = "tests/compiler/test_partial_cone_commit_gate.cpp"
@@ -174,7 +177,7 @@ def main() -> int:
         print("self-test: ok")
         return 0
 
-    fails = _rows(_read(H), _read(TEST), _read(BUILD), _read(ALLOW))
+    fails = _rows(_read(H), _read(TEST), wired_text, _read(ALLOW))
     if fails:
         for f in fails:
             print(f"FAIL {f}")

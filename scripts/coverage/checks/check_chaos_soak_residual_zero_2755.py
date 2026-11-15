@@ -13,7 +13,7 @@ Contract (one row per AC):
      linter + chaos harness comments (four residual + related surfaces).
   AC4 Existing #2722 ACs preserved (duration / fiber count / production
      envelope / ordering before softprops/action-gh-release). Additive.
-  AC5 Source-cite + linter wired in build.py; no docs/design/2755-*.
+  AC5 Source-cite + linter gated by run_checks.py; no docs/design/2755-*.
      Extend tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp.
 
 Exit 0 = all rows satisfied.
@@ -25,6 +25,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -61,7 +63,7 @@ def main() -> int:
     # Gate function still runs under production concurrency + SOAK hard gate.
     must('env["AURA_PRODUCTION_CONCURRENCY_GATE"] = "1"', "AC1", build)
     must('env["AURA_CHAOS_SOAK_HARD_GATE"] = "1"', "AC1", build)
-    must("cmd_chaos_soak_residual_zero_2755_coverage", "AC1", build)
+    must("check_chaos_soak_residual_zero_2755.py", "AC1", wired_text)
 
     # AC2 — Soft / local non-gating.
     must("Soft / local", "AC2", chaos)
@@ -103,7 +105,7 @@ def main() -> int:
         fails.append("AC4: release.yml missing gate or upload step")
     elif gate >= upload:
         fails.append("AC4: gate must PRECEDE softprops/action-gh-release")
-    must("check_chaos_soak_hard_gate_2722", "AC4", build)
+    must("check_chaos_soak_hard_gate_2722", "AC4", wired_text)
 
     # AC5 — source-cite + test extension + linter wire-up + no docs/design.
     must("ac2755_1_residual_zero_under_hard_gate", "AC5", chaos)
@@ -111,7 +113,7 @@ def main() -> int:
     must("ac2755_3_counter_list_documented", "AC5", chaos)
     must("ac2755_4_2722_preserved", "AC5", chaos)
     must("ac2755_5_source_and_linter", "AC5", chaos)
-    must("check_chaos_soak_residual_zero_2755", "AC5", build)
+    must("check_chaos_soak_residual_zero_2755", "AC5", wired_text)
     # Gate wire: serial or-chain (legacy) OR parallel run_checks.py discovery.
     if (
         "or cmd_chaos_soak_residual_zero_2755_coverage()" not in build

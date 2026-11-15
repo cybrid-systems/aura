@@ -6,27 +6,42 @@
     {
       "ac": "AC1-cite",
       "path": "src/compiler/evaluator.ixx",
-      "contains": ["Issue #4261", "kPrimFnNoStdFunctionIssue = 4261"]
+      "contains": [
+        "Issue #4261",
+        "kPrimFnNoStdFunctionIssue = 4261"
+      ]
     },
     {
       "ac": "AC1-primfn",
       "path": "src/compiler/evaluator_pure.ixx",
-      "contains": ["uses_std_function", "kSboBytes"]
+      "contains": [
+        "uses_std_function",
+        "kSboBytes"
+      ]
     },
     {
       "ac": "AC3-finalize",
       "path": "src/compiler/evaluator.ixx",
-      "contains": ["hot_timing_held_", "name_cstr"]
+      "contains": [
+        "hot_timing_held_",
+        "name_cstr"
+      ]
     },
     {
       "ac": "AC4-tests",
       "path": "tests/compiler/test_primitives_hotpath_registry_slo.cpp",
-      "contains": ["4261 AC1", "4261 AC2", "4261 AC3"]
+      "contains": [
+        "4261 AC1",
+        "4261 AC2",
+        "4261 AC3"
+      ]
     },
     {
       "ac": "AC4-wiring",
-      "path": "build.py",
-      "contains": ["check_primfn_no_std_function_4261", "Issue #4261"]
+      "wired": [
+        "check_primfn_no_std_function_4261",
+        "check_primfn_no_std_function_4261.py"
+      ]
     },
     {
       "ac": "AC4-forbid",

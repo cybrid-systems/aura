@@ -31,6 +31,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -70,7 +72,6 @@ def main() -> int:
 
     cpp = _read("src/compiler/aura_jit_bridge.cpp")
     t = _read("tests/compiler/test_anonymous_residual_stable_id_policy.cpp")
-    build = _read("build.py")
 
     # AC1 — production_defaults_active() OR AURA_SYNC_REMOUNT_ANON → captured
     # anon sync remount runs on reemit success (no env knob required).
@@ -111,7 +112,7 @@ def main() -> int:
     must("ac2714_4_soft_zero_cost_preserved", "AC6", t)
     must("ac2714_5_additive_no_regression", "AC6", t)
     must("ac2714_6_source_and_linter", "AC6", t)
-    must("check_captured_anon_sync_remount_prod_default_2714", "AC6", build)
+    must("check_captured_anon_sync_remount_prod_default_2714", "AC6", wired_text)
     if _read("docs/design/2714-captured-anon-sync-remount.md"):
         fails.append("AC6: docs/design/2714-* exists (forbidden per #1655)")
 

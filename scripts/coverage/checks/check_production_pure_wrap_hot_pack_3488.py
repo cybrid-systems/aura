@@ -23,6 +23,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -50,7 +52,6 @@ def main() -> int:
     opt = _read("tests/compiler/test_optimization_passes_contracts.cpp")
     l3454 = _read("scripts/coverage/checks/check_production_pure_wrap_soa_3454.py")
     l3329 = _read("scripts/coverage/checks/check_production_pipeline_purity_3329.py")
-    build = _read("build.py")
 
     must("kProductionPureWrapHotPackIssue = 3488", "AC1 stamp", concepts)
     must("kProductionPureWrapHotPackIssue = 3488", "AC1 header stamp", sig)
@@ -105,11 +106,15 @@ def main() -> int:
     must("check_production_pipeline_purity_3329", "AC5 #3329 linter stays", l3329)
     must("static_assert(ProductionPureWrapPass<ComputeKindWrap>", "AC5 #3454 CK updated", l3454)
 
-    must("check_production_pure_wrap_hot_pack_3488", "AC5 build.py", build)
-    prev = build.find("check_production_pure_wrap_soa_3454")
-    ours = build.find("check_production_pure_wrap_hot_pack_3488")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC5: linter must be wired in build.py AFTER #3454")
+    must("check_production_pure_wrap_hot_pack_3488", "AC5 wiring", wired_text)
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must("check_production_pure_wrap_soa_3454", "AC5: linter must be gated by run_checks.py (both gated)", wired_text)
+    must(
+        "check_production_pure_wrap_hot_pack_3488",
+        "AC5: linter must be gated by run_checks.py (both gated)",
+        wired_text,
+    )
 
     must_not("schema-3488", "AC5 no schema-3488", impls)
     must_not("schema-3488", "AC5 no schema in service", svc)

@@ -20,6 +20,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -42,7 +44,6 @@ def main() -> int:
     mb = _read("src/compiler/evaluator_mutation_boundary.cpp")
     gc = _read("src/compiler/evaluator_gc.cpp")
     test = _read("tests/serve/test_gc_compact_sweep_batch.cpp")
-    build = _read("build.py")
     gf = _read("scripts/coverage/simple_check_grandfather.txt")
 
     probe = ixx.find("void probe_arena_auto_policy_on_boundary_exit")
@@ -79,8 +80,8 @@ def main() -> int:
         fails.append("AC4: Soft probe must not call publish_last_moving_densify_window(")
     must("3809 AC4", "AC4 test marker", test)
 
-    must("check_boundary_soft_densify_restamp_3809", "AC wire build.py", build)
-    must("Issue #3809", "AC build cite", build)
+    must("check_boundary_soft_densify_restamp_3809", "AC wire wiring", wired_text)
+    must("check_boundary_soft_densify_restamp_3809", "AC build cite", wired_text)
     must("check_boundary_soft_densify_restamp_3809.py", "AC grandfather", gf)
 
     for rel in (

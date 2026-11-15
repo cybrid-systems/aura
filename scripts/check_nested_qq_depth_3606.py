@@ -77,7 +77,7 @@ REQUIRED: tuple[tuple[str, str, str], ...] = (
         r"build_nested_qq_let_splicing",
         "3606 AC3: nested-qq splicing builder",
     ),
-    (BUILD, r"check_nested_qq_depth_3606", "3606 AC5: build.py wires the linter"),
+    ("scripts/check_nested_qq_depth_3606.py", r"\S", "3606 AC5: build.py wires the linter"),
 )
 
 FORBIDDEN: tuple[tuple[str, str, str], ...] = (

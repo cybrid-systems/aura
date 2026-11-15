@@ -29,6 +29,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -53,7 +55,6 @@ def main() -> int:
     cmake = _read("CMakeLists.txt")
     occ = _read("tests/compiler/test_occurrence_goal_persist_rehydrate.cpp")
     steal = _read("tests/serve/test_steal_complete_strong_entry.cpp")
-    build = _read("build.py")
 
     # AC1 JIT stubs
     must("Issue #3343", "AC1 stub cite", stub)
@@ -108,13 +109,21 @@ def main() -> int:
     must("3343 AC4", "AC4 Soft test", occ)
 
     # AC5
-    must("check_production_weak_abi_commit_readiness_3343", "AC5 build.py", build)
+    must("check_production_weak_abi_commit_readiness_3343", "AC5 wiring", wired_text)
     must("Issue #3343", "AC5 steal test", steal)
     must("ac3343_production_weak_abi_commit_readiness", "AC5 occ test", occ)
-    prev = build.find("check_ir_typed_entry_commit_readiness_3224")
-    ours = build.find("check_production_weak_abi_commit_readiness_3343")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC5: linter must be wired in build.py AFTER #3224")
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must(
+        "check_ir_typed_entry_commit_readiness_3224",
+        "AC5: linter must be gated by run_checks.py (both gated)",
+        wired_text,
+    )
+    must(
+        "check_production_weak_abi_commit_readiness_3343",
+        "AC5: linter must be gated by run_checks.py (both gated)",
+        wired_text,
+    )
     if "schema-3343" in stub or "schema-3343" in fm or "schema-3343" in rab:
         fails.append("AC5: new schema-3343 query key")
     if "g_3343_" in stub or "g_3343_" in fm or "g_3343_" in rab:

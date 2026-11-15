@@ -16,6 +16,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -42,7 +44,6 @@ def main() -> int:
     ast_ixx = _read("src/core/ast.ixx")
     ast_impl = _read("src/core/ast_impl.cpp")
     test = _read("tests/compiler/test_qq_unwrap_targeted_restamp.cpp")
-    build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
     pos = me.find("static void restamp_after_qq_unwrap")
@@ -89,7 +90,7 @@ def main() -> int:
     must("test_qq_unwrap_targeted_restamp", "AC3", cmake)
 
     # AC4
-    must("check_qq_unwrap_targeted_restamp_2809", "AC4", build)
+    must("check_qq_unwrap_targeted_restamp_2809", "AC4", wired_text)
     docs = ROOT / "docs" / "design"
     if docs.is_dir():
         for f in sorted(docs.glob("2809-*")):

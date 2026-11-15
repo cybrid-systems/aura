@@ -23,9 +23,12 @@ Exit 0 = all rows satisfied.
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -46,7 +49,6 @@ def main() -> int:
     st = _read("src/compiler/evaluator_fiber_mutation.cpp")
     mb = _read("src/compiler/evaluator_mutation_boundary.cpp")
     test = _read("tests/serve/test_fiber_reclaim_orphan_release.cpp")
-    build = _read("build.py")
 
     # AC1/AC3: fiber face — shared scoped helper + keep storage on the Fiber.
     must("unpin_linear_roots_scoped_for_fiber", "AC3 helper decl", fh)
@@ -103,13 +105,11 @@ def main() -> int:
             fails.append(f"AC6: {forbidden} present")
 
     # Wiring in build.py after #3437.
-    must("check_scoped_linear_drain_3438", "wiring build.py", build)
-    prev = build.find("check_scope_session_drop_3437")
-    ours = build.find("check_scoped_linear_drain_3438")
-    if ours < 0:
-        fails.append("wiring: linter not in build.py")
-    elif prev >= 0 and ours < prev:
-        fails.append("wiring: must come after #3437 linter")
+    must("check_scoped_linear_drain_3438", "wiring wiring", wired_text)
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must("check_scope_session_drop_3437", "wiring: linter not in build.py (both gated)", wired_text)
+    must("check_scoped_linear_drain_3438", "wiring: linter not in build.py (both gated)", wired_text)
 
     if fails:
         print("FAIL: Issue #3438 scoped linear drain:")

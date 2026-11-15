@@ -23,6 +23,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -43,7 +45,6 @@ def main() -> int:
 
     impl = _read("src/compiler/type_checker_impl.cpp")
     tir = _read("tests/compiler/test_ir.cpp")
-    build = _read("build.py")
     qh = _read("src/compiler/evaluator_primitives_query.cpp")
     obs = _read("src/compiler/evaluator_primitives_observability.cpp")
 
@@ -76,12 +77,16 @@ def main() -> int:
     cwin = impl[coe : coe + 500] if coe >= 0 else ""
     must_not("is_coercible", "AC4 explicit Coercion", cwin)
 
-    must("check_packed_v2_no_occupancy_refresh_3661", "AC5 prev linter", build)
-    must("check_is_coercible_dynamic_prod_3662", "AC5 build.py", build)
-    prev = build.find("check_packed_v2_no_occupancy_refresh_3661")
-    ours = build.find("check_is_coercible_dynamic_prod_3662")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC5: linter must be wired in build.py AFTER #3661")
+    must("check_packed_v2_no_occupancy_refresh_3661", "AC5 prev linter", wired_text)
+    must("check_is_coercible_dynamic_prod_3662", "AC5 wiring", wired_text)
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must(
+        "check_packed_v2_no_occupancy_refresh_3661",
+        "AC5: linter must be gated by run_checks.py (both gated)",
+        wired_text,
+    )
+    must("check_is_coercible_dynamic_prod_3662", "AC5: linter must be gated by run_checks.py (both gated)", wired_text)
     must("query:type-linear-commit-health", "AC5 commit-health key", qh + obs)
     must("query:type-linear-evolution-snapshot", "AC5 evolution-snapshot key", qh + obs)
     if _read("tests/compiler/test_issue_3662.cpp"):

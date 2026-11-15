@@ -31,6 +31,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _strip_cpp_comments(src: str) -> str:
@@ -62,7 +64,6 @@ def main() -> int:
     cap = (ROOT / "src" / "core" / "capability_model.hh").read_text()
     wiso = (ROOT / "src" / "core" / "workspace_isolation.hh").read_text()
     test = (ROOT / "tests" / "core" / "test_tenant_isolation_enforcement.cpp").read_text()
-    build = (ROOT / "build.py").read_text()
 
     # AC1 — has_capability computes eff before wildcard short-circuit + TA/MSE routing.
     if "Issue #3411" not in sec:
@@ -172,10 +173,10 @@ def main() -> int:
     if "3411 AC6: no docs/design/3411-*; no test_issue_3411.cpp" not in test:
         fails.append("AC7: test_tenant_isolation_enforcement.cpp missing 3411 AC6 marker")
 
-    if "cmd_wildcard_ta_string_gate_3411_coverage" not in build:
-        fails.append("AC7: build.py does not register cmd_wildcard_ta_string_gate_3411_coverage")
-    if "check_wildcard_ta_string_gate_3411" not in build:
-        fails.append("AC7: build.py does not register check_wildcard_ta_string_gate_3411 linter script")
+    if "check_wildcard_ta_string_gate_3411" not in wired_text:
+        fails.append("AC7: run_checks.py does not register cmd_wildcard_ta_string_gate_3411_coverage")
+    if "check_wildcard_ta_string_gate_3411" not in wired_text:
+        fails.append("AC7: run_checks.py does not register check_wildcard_ta_string_gate_3411 linter script")
 
     if fails:
         for f in fails:

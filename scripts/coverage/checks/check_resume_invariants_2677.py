@@ -38,6 +38,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -66,7 +68,6 @@ def main() -> int:
     ev_fiber = _read("src/compiler/evaluator_fiber_mutation.cpp")
     obs = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
     test = _read("tests/serve/test_fiber_mutation_steal_safety.cpp")
-    build = _read("build.py")
 
     # AC1: check_and_enforce_resume_invariants() exists + Fiber::resume
     # is the single call site (no other callers in production path).
@@ -145,7 +146,7 @@ def main() -> int:
     must("return true; // consistent", "AC6", fiber_cpp)
 
     # Linter self-coverage + build.py wire-up.
-    must("check_resume_invariants_2677", "self", build)
+    must("check_resume_invariants_2677", "self", wired_text)
     must("#2677", "self", fiber_cpp)
     must("#2677", "self", ev_fiber)
     must("#2677", "self", obs)

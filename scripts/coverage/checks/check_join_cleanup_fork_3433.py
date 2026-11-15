@@ -36,6 +36,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -52,7 +54,6 @@ def main() -> int:
 
     spawn = _read("src/orch/agent_spawn.h")
     test = _read("tests/orch/test_join_drain_reclaim.cpp")
-    build = _read("build.py")
 
     # AC1: single-handle join_agent re-derives local status from
     # post-drain fiber liveness (is_reclaimed OR non-Ok + !is_done).
@@ -96,13 +97,11 @@ def main() -> int:
     # linter wired AFTER #3334; no test_issue / no docs/design.
     must("ac3433_5_abandon_attach_only", "AC5 abandon test", test)
     must("ac3433_6_source_and_linter", "AC5 source-cite test", test)
-    must("check_join_cleanup_fork_3433", "AC5 build.py", build)
-    prev = build.find("check_reclaimed_abandon_3334")
-    ours = build.find("check_join_cleanup_fork_3433")
-    if ours < 0:
-        fails.append("AC5: linter must be wired in build.py")
-    elif prev >= 0 and ours < prev:
-        fails.append("AC5: linter must be wired in build.py AFTER #3334")
+    must("check_join_cleanup_fork_3433", "AC5 wiring", wired_text)
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must("check_reclaimed_abandon_3334", "AC5: linter must be gated by run_checks.py (both gated)", wired_text)
+    must("check_join_cleanup_fork_3433", "AC5: linter must be gated by run_checks.py (both gated)", wired_text)
     if (ROOT / "tests" / "orch" / "test_issue_3433.cpp").is_file():
         fails.append("AC5: tests/orch/test_issue_3433.cpp present (forbidden #81967)")
     if (ROOT / "tests" / "issues" / "test_issue_3433.cpp").is_file():

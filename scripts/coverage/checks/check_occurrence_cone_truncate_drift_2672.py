@@ -30,6 +30,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 TC_IXX = ROOT / "src" / "compiler" / "type_checker.ixx"
 TC_IMPL = ROOT / "src" / "compiler" / "type_checker_impl.cpp"
 EVAL_IXX = ROOT / "src" / "compiler" / "evaluator.ixx"
@@ -169,12 +172,11 @@ def main() -> int:
             if f"{ac_fn}()" not in test_text:
                 failures.append(f"AC6: run_test does not call {ac_fn}()")
 
-    # AC6: build.py wiring.
-    build_text = _read("build.py")
-    if "check_occurrence_cone_truncate_drift_2672" not in build_text:
-        failures.append("AC6: build.py does not reference check_occurrence_cone_truncate_drift_2672 linter")
-    if "cmd_occurrence_cone_truncate_drift_2672_coverage" not in build_text:
-        failures.append("AC6: build.py missing cmd_occurrence_cone_truncate_drift_2672_coverage function")
+    # AC6: gate wiring.
+    if "check_occurrence_cone_truncate_drift_2672" not in wired_text:
+        failures.append("AC6: run_checks.py does not discover check_occurrence_cone_truncate_drift_2672 linter")
+    if "check_occurrence_cone_truncate_drift_2672" not in wired_text:
+        failures.append("AC6: run_checks.py missing occurrence_cone_truncate_drift_2672_coverage function")
 
     if failures:
         for f in failures:

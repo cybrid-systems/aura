@@ -26,6 +26,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -44,7 +46,6 @@ def main() -> int:
     obs = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
     skip = _read("tests/compiler/test_cascade_skip_metrics.cpp")
     cascade = _read("tests/compiler/test_dirty_propagation_cascade.cpp")
-    build = _read("build.py")
     l3263 = _read("scripts/coverage/checks/check_quote_lambda_marker_once_3263.py")
 
     must("Issue #3264", "AC1 cite", dirty)
@@ -79,11 +80,11 @@ def main() -> int:
 
     must("ac3264_5_source_and_linter", "AC5 test", skip)
     must("run_3264_source", "AC5 cascade family", cascade)
-    must("check_cascade_dep_graph_atomic_3264", "AC5 build.py", build)
-    prev = build.find("check_quote_lambda_marker_once_3263")
-    ours = build.find("check_cascade_dep_graph_atomic_3264")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC5: linter must be wired in build.py AFTER #3263")
+    must("check_cascade_dep_graph_atomic_3264", "AC5 wiring", wired_text)
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must("check_quote_lambda_marker_once_3263", "AC5: linter must be gated by run_checks.py (both gated)", wired_text)
+    must("check_cascade_dep_graph_atomic_3264", "AC5: linter must be gated by run_checks.py (both gated)", wired_text)
     must("3264", "AC5 extend 3263 linter", l3263)
     if (ROOT / "tests" / "issues" / "test_issue_3264.cpp").is_file():
         fails.append("AC5: forbidden tests/issues/test_issue_3264.cpp per #81967")

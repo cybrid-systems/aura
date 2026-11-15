@@ -7,7 +7,7 @@ Contract:
   AC3 query schema-2647 keys
   AC4 unit test present
   AC5 drift miss export (type_repair_occurrence_replay_miss)
-  AC6 build.py gate wired
+  AC6 coverage runner wired
 
 Exit 0 = all rows satisfied.
 """
@@ -21,6 +21,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from query_prims_sources import read_query_prims  # Issue #2914
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _source_has_key(hay: str, key: str) -> bool:
@@ -98,11 +100,11 @@ def main() -> int:
     )
 
     must(
-        "check_occurrence_goal_vacuous_solve_prevent_2647" in build,
-        "AC6: build.py wires linter",
+        "check_occurrence_goal_vacuous_solve_prevent_2647" in wired_text,
+        "AC6: run_checks.py gates linter",
     )
     must(
-        "cmd_occurrence_goal_vacuous_solve_prevent_coverage" in build
+        "check_occurrence_goal_vacuous_solve_prevent_2647" in wired_text
         or "occurrence_goal_vacuous_solve_prevent" in build,
         "AC6: build.py coverage cmd or reference",
     )

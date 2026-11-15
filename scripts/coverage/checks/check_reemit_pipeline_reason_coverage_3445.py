@@ -26,6 +26,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def main() -> int:
@@ -42,7 +44,6 @@ def main() -> int:
     hot = (ROOT / "src" / "compiler" / "hot_update_registry.cpp").read_text()
     hh = (ROOT / "src" / "compiler" / "hot_update_registry.hh").read_text()
     test = (ROOT / "tests" / "compiler" / "test_aot_incremental_reemit.cpp").read_text()
-    build = (ROOT / "build.py").read_text()
     mutate = (ROOT / "src" / "compiler" / "evaluator_primitives_mutate.cpp").read_text()
 
     must("Issue #3445", "AC1 marker", hot)
@@ -110,7 +111,7 @@ def main() -> int:
         fails.append("AC6: #3136 / #3229 relower define coverage marker missing")
     must("stamp_aot_reload_consistency_proof_fail_after_force_jit", "AC6 #2845", hot)
     must("3445 AC6", "AC6 test", test)
-    must("check_reemit_pipeline_reason_coverage_3445", "AC6 build.py", build)
+    must("check_reemit_pipeline_reason_coverage_3445", "AC6 wiring", wired_text)
     must_not("schema-3445", "AC6 no new query key", mutate)
     if (ROOT / "tests" / "compiler" / "test_issue_3445.cpp").is_file():
         fails.append("AC6: forbidden tests/compiler/test_issue_3445.cpp")

@@ -17,6 +17,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -43,7 +45,6 @@ def main() -> int:
     impls = _read("src/compiler/pass_impls.ixx")
     cmake = _read("cmake/AuraModules.cmake")
     test = _read("tests/compiler/test_module_partition_map.cpp")
-    build = _read("build.py")
     clists = _read("CMakeLists.txt")
 
     # AC1 — partition map lives as facade header (no docs/design/ plan docs)
@@ -96,8 +97,8 @@ def main() -> int:
 
     # Gate
     must("test_module_partition_map", "gate", clists)
-    must("check_module_partition_map_2524", "gate", build)
-    must("cmd_module_partition_map_coverage", "gate", build)
+    must("check_module_partition_map_2524", "gate", wired_text)
+    must("check_module_partition_map_2524.py", "gate", wired_text)
 
     # Retain evaluator/ast size awareness in map
     must("evaluator.ixx", "retain", facade)

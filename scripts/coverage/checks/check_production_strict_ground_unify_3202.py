@@ -24,6 +24,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -42,7 +44,6 @@ def main() -> int:
     impl = _read("src/compiler/type_checker_impl.cpp")
     ta = _read("tests/compiler/test_bidirectional_annotation.cpp")
     tir = _read("tests/compiler/test_ir.cpp")
-    build = _read("build.py")
 
     must("kProductionStrictGroundUnifyIssue = 3202", "AC1 stamp", tix)
     must("set_unify_gradual_mode", "AC1 CS setter", tix)
@@ -84,7 +85,7 @@ def main() -> int:
     must("ac3202_1_prod_strict_unify_false", "AC1 live test_ir", tir)
     must("ac3202_2_soft_strict_unify_true", "AC2 live test_ir", tir)
     must("ac3202_3_dynamic_permissive", "AC3 live test_ir", tir)
-    must("check_production_strict_ground_unify_3202", "AC5 build.py", build)
+    must("check_production_strict_ground_unify_3202", "AC5 wiring", wired_text)
 
     if "query:production-strict-ground-unify" in impl or "query:production-strict-ground-unify" in tix:
         fails.append("AC5: new public query key")

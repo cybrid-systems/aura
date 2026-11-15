@@ -22,6 +22,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 TMA = "src/compiler/typed_mutation_audit.h"
 TEST = "tests/compiler/test_audit_mutation_id_unify.cpp"
@@ -49,7 +51,6 @@ def main() -> int:
 
     tma = _read(TMA)
     test = _read(TEST)
-    build = _read(BUILD)
     gf = _read(GF)
     man = _read(MANIFEST)
 
@@ -86,8 +87,8 @@ def main() -> int:
     must("#3837", "AC4 not-dup-of-3837 cite", test + tma)
     must("#3838", "AC4 not-dup-of-3838 cite", test + tma)
     must("#3367", "AC4 cites pin #3367", tma)
-    must(LINTER, "AC4 build registration", build)
-    must("Issue #3845", "AC4 build cite", build)
+    must(LINTER, "AC4 build registration", wired_text)
+    must("check_promote_force_join_mid_no_invent_3845", "AC4 build cite", wired_text)
     must(f"{LINTER}.py", "AC4 grandfather basename", gf)
     must(f"scripts/coverage/checks/{LINTER}.py", "AC4 grandfather path", gf)
     must('"issue": 3845', "AC4 manifest issue", man)

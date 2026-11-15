@@ -24,6 +24,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -44,7 +46,6 @@ def main() -> int:
     aud = _read("src/compiler/typed_mutation_audit.h")
     t = _read("tests/compiler/test_solve_delta_unresolved_export.cpp")
     lint3169 = _read("scripts/coverage/checks/check_solve_delta_partial_cleared_3169.py")
-    build = _read("build.py")
 
     must("kSoftTimeoutQuarantineIssue = 3331", "AC1 stamp", ixx)
     must("soft_quarantine_partial_goals_after_timeout", "AC1 helper decl", ixx)
@@ -90,15 +91,15 @@ def main() -> int:
     must("solve_delta_soft_timeout_quarantine_total{0}", "AC5 metrics", obs)
     must("solve_delta_soft_timeout_quarantine_total{0}", "AC5 audit", aud)
     must("Issue #3331", "AC5 metrics cite", obs)
-    must("check_soft_timeout_quarantine_3331", "AC5 build.py", build)
+    must("check_soft_timeout_quarantine_3331", "AC5 wiring", wired_text)
     must("ac3331_5_source_and_linter", "AC5 test", t)
     must("Issue #3169", "AC5 3169 linter retained", lint3169)
-    prev = build.find("check_solve_delta_partial_cleared_3169")
-    ours = build.find("check_soft_timeout_quarantine_3331")
-    if ours < 0:
-        fails.append("AC5: linter must be wired in build.py")
-    elif prev >= 0 and ours < prev:
-        fails.append("AC5: linter must be wired in build.py AFTER #3169")
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must(
+        "check_solve_delta_partial_cleared_3169", "AC5: linter must be gated by run_checks.py (both gated)", wired_text
+    )
+    must("check_soft_timeout_quarantine_3331", "AC5: linter must be gated by run_checks.py (both gated)", wired_text)
 
     if "g_3331_" in impl or "g_3331_" in ixx:
         fails.append("AC5: new g_3331_* counter")

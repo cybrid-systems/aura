@@ -20,6 +20,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from query_prims_sources import read_query_prims  # Issue #2914
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -45,7 +47,6 @@ def main() -> int:
     jit = _read("src/compiler/evaluator_primitives_obs_jit.cpp")
     test = _read("tests/serve/test_steal_complete_restamp_txn.cpp")
     cmake = _read("CMakeLists.txt")
-    build = _read("build.py")
 
     # AC1 sole restamp entry
     must("aura_evaluator_on_steal_complete", "AC1", fm)
@@ -87,8 +88,8 @@ def main() -> int:
     must("steal-complete-layout-hard-fail-total", "AC5", q)
     must("schema-2510", "AC5", jit)
     must("test_steal_complete_restamp_txn", "AC5", cmake)
-    must("check_steal_complete_restamp_txn_2510", "AC5", build)
-    must("cmd_steal_complete_restamp_txn_coverage", "AC5", build)
+    must("check_steal_complete_restamp_txn_2510", "AC5", wired_text)
+    must("check_steal_complete_restamp_txn_2510.py", "AC5", wired_text)
     must("AC5", "AC5", test)
     must("schema-2351", "AC5", q)
 

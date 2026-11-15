@@ -24,6 +24,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -47,7 +49,6 @@ def main() -> int:
     l3405 = _read("scripts/check_pure_wrap_dirty_entry_3405.py")
     l3403 = _read("scripts/check_inline_pass_soa_3403.py")
     t = _read("tests/core/test_arena_required_cover_no_value_only.cpp")
-    build = _read("build.py")
 
     must("kProductionPureWrapSoaIssue = 3454", "AC1 stamp", concepts)
     must("kProductionPureWrapSoaIssue = 3454", "AC1 header stamp", sig)
@@ -107,7 +108,7 @@ def main() -> int:
     must("ac3454_production_pure_wrap_soa", "AC1 test", t)
     must("check_pure_wrap_dirty_entry_3405", "AC5 extend 3405", l3405)
     must("AC2/#3454", "AC5 extend 3403", l3403)
-    must("check_production_pure_wrap_soa_3454", "AC5 build.py", build)
+    must("check_production_pure_wrap_soa_3454", "AC5 wiring", wired_text)
     if "schema-3454" in concepts or "schema-3454" in service or "schema-3454" in pass_impls:
         fails.append("AC4: new schema-3454 query key")
     if (ROOT / "tests" / "core" / "test_issue_3454.cpp").is_file():

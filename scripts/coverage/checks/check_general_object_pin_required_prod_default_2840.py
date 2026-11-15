@@ -20,6 +20,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -43,7 +45,6 @@ def main() -> int:
     mut = _read("src/compiler/evaluator_primitives_mutate.cpp")
     ev = _read("src/compiler/evaluator_primitives_eval.cpp")
     test = _read("tests/core/test_general_object_pin_coverage_gate.cpp")
-    build = _read("build.py")
 
     # AC1 — breach + densify gate
     must("Issue #2840", "AC1", lp)
@@ -80,7 +81,7 @@ def main() -> int:
     # AC6 — test + linter + no invent/design
     must("ac2840_1_breach_and_densify_gate", "AC6", test)
     must("ac2840_2_callers_fail_closed", "AC6", test)
-    must("check_general_object_pin_required_prod_default_2840", "AC6", build)
+    must("check_general_object_pin_required_prod_default_2840", "AC6", wired_text)
     if (ROOT / "tests" / "core" / "test_issue_2840.cpp").is_file():
         fails.append("AC6: test_issue_2840.cpp present (forbidden per #81967)")
     docs = ROOT / "docs" / "design"

@@ -46,6 +46,8 @@ SCOPE_FILES = [
 ]
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -67,7 +69,6 @@ def main() -> int:
     sew = _read("src/core/security_event_wal.hh")
     slo = _read("src/core/wal_append_fail_slo.h")
     test = _read("tests/compiler/test_security_event_wal_replay.cpp")
-    build = _read("build.py")
     # Lineage / additive-only references (must remain unchanged in meaning).
     check3109 = _read("scripts/coverage/checks/check_wal_append_fail_closed_3109.py")
 
@@ -133,8 +134,8 @@ def main() -> int:
     must("wal_append_fail_closed_active", "AC5 #3109 linter preserved", check3109)
     must("wal-overflow-ring-depth", "AC5 #3109 depth key in linter", check3109)
     must("schema-3109", "AC5 #3109 schema preserved in linter", check3109)
-    # build.py wires the #3109 linter (lineage intact).
-    must("check_wal_append_fail_closed_3109", "AC5 build.py wires #3109 linter", build)
+    # run_checks.py gates the #3109 linter (lineage intact).
+    must("check_wal_append_fail_closed_3109", "AC5 run_checks.py gates #3109 linter", wired_text)
 
     # ── AC6: test exercises force-inject path + mid=0 no-synthesis ───
     must("#3178", "AC6 test marker in test file", test)

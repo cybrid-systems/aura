@@ -25,6 +25,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -51,7 +53,6 @@ def main() -> int:
     hur = _read("src/compiler/hot_update_registry.cpp")
     hh = _read("src/compiler/hot_update_registry.hh")
     t = _read("tests/compiler/test_compiler_hot_update_facade.cpp")
-    build = _read("build.py")
 
     md = _fn_win(svc, "void CompilerService::mark_define_dirty")
     inv = _fn_win(svc, "void CompilerService::invalidate_function")
@@ -73,7 +74,7 @@ def main() -> int:
     must("hard_invalidate_via_facade", "AC3 facade still used", md)
     must("g_dual_track_bypass_total", "AC3 dual-track counter", md)
     must("ac3221_cascade_reason_not_residual_force_heal", "AC3 test fn", t)
-    must("check_cascade_reason_not_residual_force_heal_3221", "AC3 build.py", build)
+    must("check_cascade_reason_not_residual_force_heal_3221", "AC3 wiring", wired_text)
     if "query:last-reemit-reason" in hur or "query:cascade-reason" in hur:
         fails.append("AC3: new query:* name (reuse last_reemit_reason hook)")
 

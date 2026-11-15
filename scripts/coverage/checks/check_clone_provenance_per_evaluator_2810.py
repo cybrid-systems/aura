@@ -16,6 +16,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -43,7 +45,6 @@ def main() -> int:
     fiber = _read("src/compiler/evaluator_fiber_mutation.cpp")
     stub = _read("src/compiler/aura_jit_bridge_stub.cpp")
     test = _read("tests/compiler/test_clone_provenance_per_evaluator.cpp")
-    build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
     # AC1 — clone path
@@ -80,7 +81,7 @@ def main() -> int:
     must("test_clone_provenance_per_evaluator", "AC3", cmake)
 
     # AC4
-    must("check_clone_provenance_per_evaluator_2810", "AC4", build)
+    must("check_clone_provenance_per_evaluator_2810", "AC4", wired_text)
     docs = ROOT / "docs" / "design"
     if docs.is_dir():
         for f in sorted(docs.glob("2810-*")):

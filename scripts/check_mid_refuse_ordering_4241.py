@@ -34,13 +34,16 @@ ACs:
   AC4  emit_invariant_deny_se's mid==0 arm calls resolve_audit_mutation_id
        under the hard face (deny faces emit; Soft stays silent), cites #4241.
   AC5  tests cite #4241 ACs; no tests/core/test_issue_4241.cpp; no
-       docs/design/4241-* markdown; build.py + root_check_allowlist wired.
+       docs/design/4241-* markdown; run_checks.py + root_check_allowlist wired.
 """
 
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 TMA = ROOT / "src" / "compiler" / "typed_mutation_audit.h"
 SEC = ROOT / "src" / "compiler" / "evaluator_security.cpp"
 TST = ROOT / "tests" / "compiler" / "test_require_effect_live_mid.cpp"
@@ -58,7 +61,6 @@ def main() -> int:
     tma = TMA.read_text() if TMA.exists() else ""
     sec = SEC.read_text() if SEC.exists() else ""
     tst = TST.read_text() if TST.exists() else ""
-    build = (ROOT / "build.py").read_text()
     allow = (ROOT / "scripts" / "coverage" / "root_check_allowlist.txt").read_text()
     ok = True
 
@@ -152,7 +154,7 @@ def main() -> int:
         and "ac4241_5_commit_face_wal_dual_write" in tst
         and not (ROOT / "tests" / "core" / "test_issue_4241.cpp").exists()
         and no_doc
-        and "check_mid_refuse_ordering_4241.py" in build
+        and "check_mid_refuse_ordering_4241.py" in wired_text
         and "check_mid_refuse_ordering_4241.py" in allow
     )
     report("AC5", good, "tests cite #4241 ACs; no issue-file/doc; build.py + allowlist wired")

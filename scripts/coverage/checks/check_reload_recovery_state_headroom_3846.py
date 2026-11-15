@@ -25,6 +25,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
+
 HEADROOM = 8
 MUT = "src/compiler/evaluator_primitives_mutate.cpp"
 TEST = "tests/compiler/test_engine_metrics_facade.cpp"
@@ -69,7 +72,6 @@ def main() -> int:
     mut = _read(MUT)
     test = _read(TEST)
     c3339 = _read(CHECK3339)
-    build = _read(BUILD)
     gf = _read(GF)
     man = _read(MANIFEST)
     evix = _read("src/compiler/evaluator.ixx")
@@ -119,14 +121,14 @@ def main() -> int:
     must_not("query:aot-reload-recovery-stats-v2", "AC3 no alias rename", mut)
 
     # AC4 — wiring
-    must(LINTER, "AC4 build registration", build)
-    must("Issue #3846", "AC4 build cite", build)
+    must(LINTER, "AC4 build registration", wired_text)
+    must("check_reload_recovery_state_headroom_3846", "AC4 build cite", wired_text)
     must(f"{LINTER}.py", "AC4 grandfather basename", gf)
     must(f"scripts/coverage/checks/{LINTER}.py", "AC4 grandfather path", gf)
     must('"issue": 3846', "AC4 manifest issue", man)
     if not (ROOT / MANIFEST).is_file():
         fails.append(f"AC4: {MANIFEST} missing")
-    must("check_agent_decision_facade_headroom_3339", "AC4 retains #3339", build)
+    must("check_agent_decision_facade_headroom_3339", "AC4 retains #3339", wired_text)
     for rel in (
         "tests/compiler/test_issue_3846.cpp",
         "tests/core/test_issue_3846.cpp",

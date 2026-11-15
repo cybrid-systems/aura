@@ -35,6 +35,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from query_prims_sources import read_query_prims  # Issue #2914
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -55,7 +57,6 @@ def main() -> int:
     sandbox = _read("src/core/sandbox.hh")
     q = read_query_prims()
     t = _read("tests/serve/test_mailbox_recv_mutation_boundary.cpp")
-    build = _read("build.py")
 
     # AC1 — contract documentation + gate counters
     must("Issue #2700", "AC1", mb)
@@ -89,7 +90,7 @@ def main() -> int:
     must("ac2700_4_zero_cost_on_string_payload", "AC5", t)
     must("ac2700_5_query_keys_and_source_cite", "AC5", t)
     must("ac2700_6_no_docs_design", "AC5", t)
-    must("check_handoff_ref_mailbox_gate_2700", "AC5", build)
+    must("check_handoff_ref_mailbox_gate_2700", "AC5", wired_text)
 
     # AC6 — no docs/design/2700-* on disk
     docs_dir = ROOT / "docs" / "design"

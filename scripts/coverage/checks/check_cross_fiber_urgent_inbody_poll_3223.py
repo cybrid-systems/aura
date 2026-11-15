@@ -26,6 +26,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -47,7 +49,6 @@ def main() -> int:
     mhb = _read("src/compiler/mutation_hold_budget.h")
     br = _read("src/compiler/fiber_bridge.cpp")
     t = _read("tests/serve/test_hold_budget_synthetic_yield_injection.cpp")
-    build = _read("build.py")
 
     sp = fc.find("void Fiber::check_gc_safepoint()")
     sp_win = fc[sp : sp + 2800] if sp >= 0 else ""
@@ -82,7 +83,7 @@ def main() -> int:
     # AC5 / AC6
     must("ac3223_1_cross_fiber_force_degrade_victim_force_release", "AC5", t)
     must("run_test_hold_budget_cross_fiber_urgent_inbody_poll", "AC5", t)
-    must("check_cross_fiber_urgent_inbody_poll_3223", "AC6 build.py", build)
+    must("check_cross_fiber_urgent_inbody_poll_3223", "AC6 wiring", wired_text)
     must("aura_fiber_request_urgent_inbody_poll", "AC6 weak stub", br)
 
     if (ROOT / "tests" / "issues" / "test_issue_3223.cpp").is_file():

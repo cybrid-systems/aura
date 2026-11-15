@@ -19,6 +19,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -37,7 +39,6 @@ def main() -> int:
     flat = _read("src/compiler/evaluator_eval_flat.cpp")
     tmove = _read("tests/compiler/test_move_node_hygiene.cpp")
     trepl = _read("tests/compiler/test_replace_subtree_new_body_hygiene.cpp")
-    build = _read("build.py")
 
     ppos = mut.find('add_mutate("mutate:move-node"')
     if ppos < 0:
@@ -90,8 +91,8 @@ def main() -> int:
     must("propagate_macro_introduced_marker", "AC4 replace", rprop)
 
     # AC5
-    must("check_move_replace_allow_macro_3061", "AC5 build", build)
-    must("cmd_move_replace_allow_macro_3061", "AC5 cmd", build)
+    must("check_move_replace_allow_macro_3061", "AC5 build", wired_text)
+    must("check_move_replace_allow_macro_3061.py", "AC5 cmd", wired_text)
     must("3061 AC5", "AC5 move test", tmove)
     if (ROOT / "tests" / "compiler" / "test_issue_3061.cpp").is_file():
         fails.append("AC5: test_issue_3061.cpp present (forbidden per #81967)")

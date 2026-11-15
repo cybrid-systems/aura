@@ -24,6 +24,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -54,7 +56,6 @@ def main() -> int:
     ixx = _read("src/compiler/service.ixx")
     test_cascade = _read("tests/compiler/test_dep_graph_hybrid_cascade.cpp")
     test_facade = _read("tests/compiler/test_compiler_hot_update_facade.cpp")
-    build = _read("build.py")
 
     must("mark_node_dep_dependents_body_dirty_", "AC1 decl", ixx)
     must("void CompilerService::mark_node_dep_dependents_body_dirty_", "AC1 def", svc)
@@ -87,9 +88,8 @@ def main() -> int:
     must("3823 AC2: helper only on Production facade path (before Soft body)", "AC2 soft", test_cascade)
     must("3823: node-dep union after #3474 cone mark", "AC3 facade cite", test_facade)
 
-    must("check_production_mark_node_dep_union_3823", "AC4 build.py", build)
-    must("check_production_called_by_cone_bfs_3474", "AC4 #3474 still wired", build)
-    must("pmndu3823_script", "AC4 lint-batch var", build)
+    must("check_production_mark_node_dep_union_3823", "AC4 wiring", wired_text)
+    must("check_production_called_by_cone_bfs_3474", "AC4 #3474 still wired", wired_text)
 
     must_not("schema-3823", "AC4 no query key", svc + ixx)
     must_not("g_3823_", "AC4 no g_3823_*", svc + ixx)

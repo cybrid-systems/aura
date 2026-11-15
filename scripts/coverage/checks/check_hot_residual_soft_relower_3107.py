@@ -25,6 +25,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -41,7 +43,6 @@ def main() -> int:
 
     pol = _read("src/compiler/castop_density_policy.hh")
     test = _read("tests/compiler/test_castop_density_hard.cpp")
-    build = _read("build.py")
     lint3084 = _read("scripts/coverage/manifests/3084.json")
 
     # ── AC1: Production path unchanged (density-keep + force-JIT) ────────
@@ -113,9 +114,9 @@ def main() -> int:
     must("ac3107_3_quiet_zero_cost", "AC5 AC3 test function", test)
     must("ac3107_4_additive_counter_only", "AC5 AC4 test function", test)
     must("ac3107_5_schema_and_linter", "AC5 AC5 test function", test)
-    # Linter wired in build.py
-    must("check_hot_residual_soft_relower_3107", "AC5 build.py wiring", build)
-    must("Issue #3107", "AC5 linter error message", build)
+    # Linter gated by run_checks.py
+    must("check_hot_residual_soft_relower_3107", "AC5 gate wiring", wired_text)
+    must("check_hot_residual_soft_relower_3107", "AC5 linter error message", wired_text)
     # No invent
     if (ROOT / "tests" / "compiler" / "test_issue_3107.cpp").is_file():
         fails.append("AC5: test_issue_3107.cpp present (forbidden #81967)")

@@ -26,6 +26,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from query_prims_sources import read_query_prims  # Issue #2914
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 # Production registration of mutate:* / canonical 6-op dispatcher.
 # `\s*` spans the common
@@ -174,7 +176,6 @@ def main() -> int:
     hh = _read("src/compiler/evaluator.ixx")
     metrics = _read("src/compiler/observability_metrics.h")
     t = _read("tests/compiler/test_mutation_guard_try_acquire_unit.cpp")
-    build = _read("build.py")
     q = read_query_prims() + "\n" + obs + "\n" + compile_cpp
 
     # AC1 — scan every production mutate:* / 6-op dispatcher.
@@ -239,7 +240,7 @@ def main() -> int:
     must("wraps_after == wraps_before", "AC5", mut)
     must("Happy Guard path", "AC5", mut)
     must("ac2986_5_zero_happy_overhead", "AC5", t)
-    must("check_mutate_guard_coverage", "AC5", build)
+    must("check_mutate_guard_coverage", "AC5", wired_text)
 
     # AC6 — no design doc / invent test.
     must("ac2986_6_source_and_linter", "AC6", t)

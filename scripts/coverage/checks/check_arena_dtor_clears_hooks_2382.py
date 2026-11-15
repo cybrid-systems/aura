@@ -5,7 +5,7 @@ Contract:
   AC1 Dtor nulls on_compact_hook_ / on_layout_change_ / root_remap_ under mtx
   AC2 Hook clear precedes run_destructors(); test proves capture destroyed
   AC3 Concurrent invoke + destroy stress test surface
-  AC4 CMake + build.py gate + source-cite
+  AC4 CMake + coverage runner + source-cite
 
 Exit 0 = all rows satisfied.
 """
@@ -16,6 +16,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -35,7 +37,6 @@ def main() -> int:
     arena = _read("src/core/arena.ixx")
     test = _read("tests/core/test_arena_dtor_clears_hooks.cpp")
     cmake = _read("CMakeLists.txt")
-    build = _read("build.py")
 
     # AC1 dtor clears under locks
     must("Issue #2382", "AC1", arena)
@@ -74,8 +75,8 @@ def main() -> int:
 
     # AC4 registration
     must("test_arena_dtor_clears_hooks", "AC4", cmake)
-    must("check_arena_dtor_clears_hooks_2382", "AC4", build)
-    must("cmd_arena_dtor_clears_hooks_coverage", "AC4", build)
+    must("check_arena_dtor_clears_hooks_2382", "AC4", wired_text)
+    must("check_arena_dtor_clears_hooks_2382.py", "AC4", wired_text)
     must("ac4_source_and_registration", "AC4", test)
     must("Issue #2382", "AC4", test)
 

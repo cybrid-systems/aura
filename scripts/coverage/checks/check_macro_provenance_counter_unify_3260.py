@@ -23,6 +23,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -44,7 +46,6 @@ def main() -> int:
     me = _read("src/compiler/macro_expansion.cpp")
     fiber = _read("src/compiler/evaluator_fiber_mutation.cpp")
     test = _read("tests/compiler/test_clone_provenance_per_evaluator.cpp")
-    build = _read("build.py")
     l2810 = _read("scripts/coverage/checks/check_clone_provenance_per_evaluator_2810.py")
 
     must("was_violation", "AC1 hook param", hdr)
@@ -85,11 +86,15 @@ def main() -> int:
         fails.append("AC4: stub total still hard-zero")
 
     must("ac3260_5_source_and_linter", "AC5 test", test)
-    must("check_macro_provenance_counter_unify_3260", "AC5 build.py", build)
-    prev = build.find("check_restamp_hot_cone_budget_3259")
-    ours = build.find("check_macro_provenance_counter_unify_3260")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC5: linter must be wired in build.py AFTER #3259")
+    must("check_macro_provenance_counter_unify_3260", "AC5 wiring", wired_text)
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must("check_restamp_hot_cone_budget_3259", "AC5: linter must be gated by run_checks.py (both gated)", wired_text)
+    must(
+        "check_macro_provenance_counter_unify_3260",
+        "AC5: linter must be gated by run_checks.py (both gated)",
+        wired_text,
+    )
     must("3260", "AC5 extend 2810 linter", l2810)
     must("Issue #3260", "AC5 runtime stub", rt)
     if (ROOT / "tests" / "issues" / "test_issue_3260.cpp").is_file():

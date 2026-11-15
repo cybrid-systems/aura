@@ -27,6 +27,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # noqa: E402  (_wiring sibling)
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 
 def _read(rel: str) -> str:
@@ -45,7 +47,6 @@ def main() -> int:
     br = _read("src/compiler/aura_jit_bridge.cpp")
     hdr_stub = _read("src/compiler/aura_jit_bridge_stub.cpp")
     test = _read("tests/compiler/test_jit_macro_deopt_hygiene.cpp")
-    build = _read("build.py")
     l3262 = _read("scripts/coverage/checks/check_gc_safepoint_restamp_lock_3262.py")
 
     pos = low.find("Issue #3263: propagate SyntaxMarker")
@@ -75,11 +76,11 @@ def main() -> int:
     must("ac3263_4_quiet_zero_extra", "AC4 test", test)
 
     must("ac3263_5_source_and_linter", "AC5 test", test)
-    must("check_quote_lambda_marker_once_3263", "AC5 build.py", build)
-    prev = build.find("check_gc_safepoint_restamp_lock_3262")
-    ours = build.find("check_quote_lambda_marker_once_3263")
-    if prev < 0 or ours < 0 or ours < prev:
-        fails.append("AC5: linter must be wired in build.py AFTER #3262")
+    must("check_quote_lambda_marker_once_3263", "AC5 wiring", wired_text)
+    # Ordering was a property of the deleted sequential chain (#5246):
+    # both checks are gated by run_checks.py discovery now.
+    must("check_gc_safepoint_restamp_lock_3262", "AC5: linter must be gated by run_checks.py (both gated)", wired_text)
+    must("check_quote_lambda_marker_once_3263", "AC5: linter must be gated by run_checks.py (both gated)", wired_text)
     must("3263", "AC5 extend 3262 linter", l3262)
     if (ROOT / "tests" / "issues" / "test_issue_3263.cpp").is_file():
         fails.append("AC5: forbidden tests/issues/test_issue_3263.cpp per #81967")
