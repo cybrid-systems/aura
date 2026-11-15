@@ -35,6 +35,7 @@ extern "C" std::uint64_t aura_displayed_error_count() noexcept;
 
 import aura.compiler.service;
 import aura.compiler.evaluator;
+import aura.diag; // #5240: stable kind_ident in async error lines
 import aura.compiler.value;
 
 namespace aura::serve {
@@ -390,7 +391,27 @@ std::string status_line_error(std::string_view session, std::string_view msg,
 static void emit_exec_result(std::string_view sid, const EvalValue& v, std::string_view display,
                              aura::compiler::CompilerService& cs) {
     if (is_error(v) && !is_string(v)) {
-        emit_status_line(status_line_error(sid, cs.evaluator().soft_error_message(v), display));
+        // #5240: same code/span/message fields as --error-format=json and
+        // sync --serve; session/status/display stay the async shell.
+        aura::diag::Diagnostic d{cs.evaluator().error_value_kind(v),
+                                 cs.evaluator().soft_error_message(v)};
+        if (auto loc = cs.evaluator().error_location(v))
+            d.location = *loc;
+        d.kind = d.display_kind();
+        std::string line = "{\"session\":\"" + json_escape(sid) +
+                           "\",\"status\":\"error\",\"msg\":\"" + json_escape(d.format()) +
+                           "\",\"code\":\"" + json_escape(aura::diag::kind_ident(d.kind)) +
+                           "\",\"message\":\"" + json_escape(d.message) + "\"";
+        if (d.location.line > 0) {
+            line += ",\"span\":{\"start\":{\"line\":" + std::to_string(d.location.line) +
+                    ",\"column\":" + std::to_string(d.location.column) +
+                    "},\"end\":{\"line\":" + std::to_string(d.location.line) +
+                    ",\"column\":" + std::to_string(d.location.column) + "}}";
+        }
+        if (!display.empty())
+            line += ",\"display\":\"" + json_escape(display) + "\"";
+        line += "}";
+        emit_status_line(line);
         return;
     }
     emit_status_line(status_line_ok(sid, fmt_val(v, cs), display));
