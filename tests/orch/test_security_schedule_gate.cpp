@@ -38,6 +38,7 @@
 //
 // No docs/design/ per #1655 / #1485.
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include "orch/security_schedule_gate.h"
@@ -511,7 +512,7 @@ int run_test_security_schedule_gate() {
         std::println("\n--- #2660 AC2: deny_storm threshold → reject ---");
         reset_orch_security_schedule_counters_for_test();
         // Lower the threshold so a single denial is enough to trip the storm.
-        ::unsetenv("AURA_DENY_STORM_THRESHOLD");
+        ::aura::config::test_unsetenv("AURA_DENY_STORM_THRESHOLD");
         aura::orch::reset_capability_deny_storm_window_for_test();
         aura::orch::g_capability_deny_storm_threshold().store(1, std::memory_order_relaxed);
         // Bump the process counter (set + reset helper for tests).
@@ -1152,7 +1153,7 @@ int run_test_security_schedule_gate() {
         using aura::serve::Scheduler;
         CHECK(kScheduleGateAtSpawnIssue == 3777, "3777: issue stamp");
         aura::compiler::typed_audit::apply_production_audit_defaults();
-        ::unsetenv("AURA_DENY_STORM_THRESHOLD");
+        ::aura::config::test_unsetenv("AURA_DENY_STORM_THRESHOLD");
         aura::orch::reset_capability_deny_storm_window_for_test();
         const auto prev_thr =
             g_capability_deny_storm_threshold().exchange(1, std::memory_order_relaxed);
@@ -1246,7 +1247,7 @@ int run_test_security_schedule_gate() {
         // succeeds there), then flip to production so the fiber body belt
         // rejects with TryAcquire before the security-schedule observe
         // branch, while the spawn preflight itself still admits.
-        ::setenv("AURA_SANDBOX", "off", 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
         apply_dev_audit_defaults();
         CompilerService cs;
         auto& ev = cs.evaluator();
@@ -1275,8 +1276,8 @@ int run_test_security_schedule_gate() {
 
         // ── Production: reject at body entry, row survives is_done ──
         arm_body_reject_4300();
-        ::setenv("AURA_SANDBOX", "restricted", 1);
-        ::unsetenv("AURA_DENY_STORM_THRESHOLD");
+        ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
+        ::aura::config::test_unsetenv("AURA_DENY_STORM_THRESHOLD");
         apply_production_audit_defaults();
         (void)cs.eval(R"((orch:scope-spawn "rej-4300" (lambda () 1)))");
         auto* scope_4300 = aura::orch::find_agent_scope(static_cast<void*>(&ev));
@@ -1346,7 +1347,7 @@ int run_test_security_schedule_gate() {
         (void)cs.eval(R"((orch:agent-join "ok-4300" :timeout-ms 2000))");
 
         // ── Soft / Off: same belt reject, no lifecycle intern ──
-        ::setenv("AURA_SANDBOX", "off", 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
         apply_dev_audit_defaults();
         arm_body_reject_4300();
         (void)cs.eval(R"((orch:scope-spawn "rej-4300-soft" (lambda () 1)))");
@@ -1386,9 +1387,9 @@ int run_test_security_schedule_gate() {
         ev.reset_mutation_quota_used();
         aura::core::resource_quota::reset_process_resource_quota_for_test();
         if (prev_sb_4300_s.empty())
-            ::unsetenv("AURA_SANDBOX");
+            ::aura::config::test_unsetenv("AURA_SANDBOX");
         else
-            ::setenv("AURA_SANDBOX", prev_sb_4300_s.c_str(), 1);
+            ::aura::config::test_setenv("AURA_SANDBOX", prev_sb_4300_s.c_str(), 1);
         apply_dev_audit_defaults();
     }
 
@@ -1412,7 +1413,7 @@ int run_test_security_schedule_gate() {
 
         const char* prev_sb = std::getenv("AURA_SANDBOX");
         std::string prev_sb_s = prev_sb ? prev_sb : "";
-        ::setenv("AURA_SANDBOX", "restricted", 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
         aura::compiler::typed_audit::apply_production_audit_defaults();
         set_mode(SandboxMode::Strict);
         std::filesystem::create_directories("build/test-wal-3932");
@@ -1455,9 +1456,9 @@ int run_test_security_schedule_gate() {
         aura::compiler::typed_audit::apply_dev_audit_defaults();
         set_mode(SandboxMode::Off);
         if (!prev_sb_s.empty())
-            ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+            ::aura::config::test_setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
         else
-            ::unsetenv("AURA_SANDBOX");
+            ::aura::config::test_unsetenv("AURA_SANDBOX");
         reset_orch_security_schedule_counters_for_test();
     }
 
@@ -1495,7 +1496,7 @@ int run_test_security_schedule_gate() {
 
         const char* prev_sb = std::getenv("AURA_SANDBOX");
         std::string prev_sb_s = prev_sb ? prev_sb : "";
-        ::setenv("AURA_SANDBOX", "restricted", 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
         aura::compiler::typed_audit::apply_production_audit_defaults();
         set_mode(SandboxMode::Strict);
         std::filesystem::create_directories("build/test-wal-3938");
@@ -1589,9 +1590,9 @@ int run_test_security_schedule_gate() {
         aura::compiler::typed_audit::apply_dev_audit_defaults();
         set_mode(SandboxMode::Off);
         if (!prev_sb_s.empty())
-            ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+            ::aura::config::test_setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
         else
-            ::unsetenv("AURA_SANDBOX");
+            ::aura::config::test_unsetenv("AURA_SANDBOX");
         reset_orch_security_schedule_counters_for_test();
     }
 
@@ -1617,7 +1618,7 @@ int run_test_security_schedule_gate() {
 
         const char* prev_sb = std::getenv("AURA_SANDBOX");
         std::string prev_sb_s = prev_sb ? prev_sb : "";
-        ::setenv("AURA_SANDBOX", "restricted", 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
         aura::compiler::typed_audit::apply_production_audit_defaults();
         set_mode(SandboxMode::Strict);
         std::filesystem::create_directories("build/test-wal-4639");
@@ -1738,9 +1739,9 @@ int run_test_security_schedule_gate() {
         aura::compiler::typed_audit::apply_dev_audit_defaults();
         set_mode(SandboxMode::Off);
         if (!prev_sb_s.empty())
-            ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+            ::aura::config::test_setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
         else
-            ::unsetenv("AURA_SANDBOX");
+            ::aura::config::test_unsetenv("AURA_SANDBOX");
         reset_orch_security_schedule_counters_for_test();
     }
 
@@ -1763,7 +1764,7 @@ int run_test_security_schedule_gate() {
         CHECK(read_file("tests/orch/test_issue_3952.cpp").empty(), "3952: no test_issue_3952.cpp");
         CHECK(read_file("docs/design/3952-deny-storm-window.md").empty(), "3952: no docs/design");
 
-        ::unsetenv("AURA_DENY_STORM_THRESHOLD");
+        ::aura::config::test_unsetenv("AURA_DENY_STORM_THRESHOLD");
         reset_capability_deny_storm_window_for_test();
         const auto prev_thr = g_capability_deny_storm_threshold().exchange(
             kCapabilityDenyStormThresholdDefault, std::memory_order_relaxed);
@@ -1779,9 +1780,9 @@ int run_test_security_schedule_gate() {
         CHECK(!capability_deny_storm_live(), "3952: slide heals after re-arm");
         g_capability_deny_storm_threshold().store(kCapabilityDenyStormThresholdDefault,
                                                   std::memory_order_relaxed);
-        ::setenv("AURA_DENY_STORM_THRESHOLD", "7", 1);
+        ::aura::config::test_setenv("AURA_DENY_STORM_THRESHOLD", "7", 1);
         CHECK(resolve_capability_deny_storm_threshold() == 7, "3952: env overlays atomic");
-        ::unsetenv("AURA_DENY_STORM_THRESHOLD");
+        ::aura::config::test_unsetenv("AURA_DENY_STORM_THRESHOLD");
         CHECK(resolve_capability_deny_storm_threshold() == kCapabilityDenyStormThresholdDefault,
               "3952: unset env falls back to atomic");
         aura::orch::SecurityScheduleInput in;

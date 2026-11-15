@@ -29,6 +29,7 @@
 //   AC10: Source-cite for panic state (g_gc_defer_pending_panic_depth +
 //         gc_deferred_for_evaluator) in src/core/gc_hooks.h.
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 #include "../support/service_module_source.hh"
 
@@ -8027,7 +8028,7 @@ struct Ac4396Face {
     }
     ~Ac4396Face() {
         if (had_sandbox_env)
-            ::setenv("AURA_SANDBOX", sandbox_env.c_str(), 1);
+            ::aura::config::test_setenv("AURA_SANDBOX", sandbox_env.c_str(), 1);
         aura::core::sandbox::set_mode(static_cast<aura::core::sandbox::SandboxMode>(mode));
         aura::core::provenance::set_multi_tenant_env_active(was_mt);
         aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
@@ -8046,7 +8047,7 @@ struct Ac4396Face {
         // Security defaults take the dev path when AURA_SANDBOX=off and do
         // not latch production_defaults_active. Unset only for the call.
         if (had_sandbox_env && sandbox_env == "off")
-            ::unsetenv("AURA_SANDBOX");
+            ::aura::config::test_unsetenv("AURA_SANDBOX");
         aura::compiler::security::apply_production_security_defaults();
         if (!aura::compiler::typed_audit::production_defaults_active())
             aura::compiler::typed_audit::apply_production_audit_defaults();

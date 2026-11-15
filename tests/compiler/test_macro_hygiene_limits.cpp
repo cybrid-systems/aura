@@ -11,6 +11,7 @@
 //   AC5: process-wide atomics — concurrent set+expand well-defined
 //   AC6: source wiring (#2101 + API + query keys)
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 #include "../support/service_module_source.hh"
 
@@ -1035,7 +1036,7 @@ static void ac3735_hygiene_se_keeps_join_mid() {
     CHECK(saw_hygiene0, "3735 AC1: hygiene-macro-introduced at mutation_id=0");
     CHECK(!saw_mid1, "3735 AC3: no SE with mutation_id=1 from this path");
 
-    ::setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
     aura::compiler::typed_audit::apply_production_audit_defaults();
     CompilerService cs_q;

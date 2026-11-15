@@ -8,6 +8,7 @@
 //   AC4: source cites #2485 + kCapIoRead + path deny
 //   AC5: gate wiring
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include "compiler/security_capabilities.h"
@@ -222,7 +223,7 @@ static void ac6_4059_host_path_escape_deny() {
     // high-bits (Mutate) writes while the registry mode is armed — arm the
     // Restricted/Off face AFTER the grants land (the #3720 AC4 shape).
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
-    setenv("AURA_TENANT_FS_ROOT", "/tmp/aura_4059_tenant_root", 1);
+    ::aura::config::test_setenv("AURA_TENANT_FS_ROOT", "/tmp/aura_4059_tenant_root", 1);
     std::filesystem::create_directories("/tmp/aura_4059_tenant_root/t-7");
     {
         std::ofstream out("/tmp/aura_4059_tenant_root/t-7/in4059.aura");
@@ -263,7 +264,7 @@ static void ac6_4059_host_path_escape_deny() {
         CHECK(e.epoch == iso_epoch, "4059 AC1: row epoch is the Mutation epoch");
         CHECK(e.fiber_id == fiber_now, "4059 AC1: row carries the fiber id");
     }
-    unsetenv("AURA_TENANT_FS_ROOT");
+    ::aura::config::test_unsetenv("AURA_TENANT_FS_ROOT");
 }
 
 static void ac7_4059_no_mutate_effect_deny() {
@@ -275,7 +276,7 @@ static void ac7_4059_no_mutate_effect_deny() {
     // high-bits (Mutate) writes while the registry mode is armed — arm the
     // Restricted/Off face AFTER the grants land (the #3720 AC4 shape).
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
-    setenv("AURA_TENANT_FS_ROOT", "/tmp/aura_4059_tenant_root", 1);
+    ::aura::config::test_setenv("AURA_TENANT_FS_ROOT", "/tmp/aura_4059_tenant_root", 1);
     std::filesystem::create_directories("/tmp/aura_4059_tenant_root/t-7");
     {
         std::ofstream out("/tmp/aura_4059_tenant_root/t-7/in4059.aura");
@@ -296,7 +297,7 @@ static void ac7_4059_no_mutate_effect_deny() {
     const auto idx = find_se_row_4059(
         cursor0, aura::core::security_event::SecurityEventKind::EffectDeny, "load", true);
     CHECK(idx != std::size_t(-1), "4059 AC2: EffectDeny row present");
-    unsetenv("AURA_TENANT_FS_ROOT");
+    ::aura::config::test_unsetenv("AURA_TENANT_FS_ROOT");
 }
 
 static void ac9_4059_soft_off_unchanged() {

@@ -26,6 +26,7 @@
 //   AC4: invalidate_all keeps its cold all-shard shared walk
 //   AC5: no new query key / mid-struct counter
 
+#include "core/runtime_config.hh"
 #include "compiler/shape.h"
 #include "compiler/shape_profiler.h"
 #include "test_harness.hpp"
@@ -401,7 +402,7 @@ static void ac2908_compact_no_global_bump() {
     CHECK(kShapeCompactNoGlobalBumpIssue == 2908, "AC1: issue stamp");
     // Ensure PerEval (#2683). Strong HotUpdateRegistry getter defaults
     // to Global; set explicitly so compact does not bump process-global.
-    ::unsetenv("AURA_SHAPE_STORM_ISOLATION");
+    ::aura::config::test_unsetenv("AURA_SHAPE_STORM_ISOLATION");
     ::aura_set_storm_isolation_mode(2);
     ShapeProfiler sp;
     sp.apply_preset(ShapeProfiler::kLowMutationPreset);

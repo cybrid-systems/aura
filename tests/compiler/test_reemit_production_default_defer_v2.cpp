@@ -9,6 +9,7 @@
 //   AC4: Schema-2114 counters remain; reemit_boundary_policy + schema-2208.
 //   AC5: Inside-boundary fast path unchanged (reemit under Guard ok).
 
+#include "core/runtime_config.hh"
 #include "compiler/aura_jit_bridge.h"
 #include "compiler/hot_update_registry.hh"
 #include "compiler/typed_mutation_audit.h"
@@ -303,8 +304,8 @@ static void ac2855_1_production_force_drain() {
     aura_hot_update_reset_reemit_boundary_handshake_for_test();
     hot_update_registry().reset_reemit_force_drain_for_test();
     ProdLockTestGuard prod(true);
-    unsetenv("AURA_SANDBOX");
-    setenv("AURA_REEMIT_FORCE_DRAIN_DEADLINE_MS", "1", 1);
+    ::aura::config::test_unsetenv("AURA_SANDBOX");
+    ::aura::config::test_setenv("AURA_REEMIT_FORCE_DRAIN_DEADLINE_MS", "1", 1);
     CHECK(aura::compiler::HotUpdateRegistry::force_drain_deadline_ms() == 1,
           "AC1: deadline inline-read = 1ms");
     aura_hot_update_set_reemit_boundary_policy(1); // Defer: outside-boundary reemit pendings
@@ -334,7 +335,7 @@ static void ac2855_1_production_force_drain() {
           "AC1: force-drain total bumped");
     CHECK(!hot_update_registry().should_force_drain_deferred_reemit(),
           "AC1: should_force_drain returns false after drain (no pending)");
-    unsetenv("AURA_REEMIT_FORCE_DRAIN_DEADLINE_MS");
+    ::aura::config::test_unsetenv("AURA_REEMIT_FORCE_DRAIN_DEADLINE_MS");
     hot_update_registry().reset_reemit_force_drain_for_test();
 }
 
@@ -344,8 +345,8 @@ static void ac2855_2_deadline_zero_disabled() {
     aura_hot_update_reset_reemit_boundary_handshake_for_test();
     hot_update_registry().reset_reemit_force_drain_for_test();
     ProdLockTestGuard prod(true);
-    unsetenv("AURA_REEMIT_FORCE_DRAIN_DEADLINE_MS");
-    setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_unsetenv("AURA_REEMIT_FORCE_DRAIN_DEADLINE_MS");
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
     CHECK(aura::compiler::HotUpdateRegistry::force_drain_deadline_ms() == 0,
           "AC2: deadline==0 (disabled)");
     CHECK(!hot_update_registry().should_force_drain_deferred_reemit(),
@@ -354,7 +355,7 @@ static void ac2855_2_deadline_zero_disabled() {
           "AC2: force_drain returns false when env == 0");
     CHECK(hot_update_registry().reemit_deferred_force_drain_total() == 0,
           "AC2: no force-drain counter bump when env == 0");
-    unsetenv("AURA_SANDBOX");
+    ::aura::config::test_unsetenv("AURA_SANDBOX");
 }
 
 // AC3: steal-complete path does NOT call force-drain (#2715 regression).
@@ -390,8 +391,8 @@ static void ac2855_4_concurrent_reentry() {
     aura_hot_update_reset_reemit_boundary_handshake_for_test();
     hot_update_registry().reset_reemit_force_drain_for_test();
     ProdLockTestGuard prod(true);
-    unsetenv("AURA_SANDBOX");
-    setenv("AURA_REEMIT_FORCE_DRAIN_DEADLINE_MS", "1", 1);
+    ::aura::config::test_unsetenv("AURA_SANDBOX");
+    ::aura::config::test_setenv("AURA_REEMIT_FORCE_DRAIN_DEADLINE_MS", "1", 1);
     aura_hot_update_set_reemit_boundary_policy(1); // Defer
     ReemitFixture rf;
     EmitFixture ef;
@@ -408,7 +409,7 @@ static void ac2855_4_concurrent_reentry() {
         hot_update_registry().reemit_deferred_force_drain_skipped_reentered_total();
     const auto doublep = hot_update_registry().reemit_deferred_force_drain_double_prevented_total();
     CHECK(skipped >= 0 && doublep >= 0, "AC4: skipped + double_prevented observable");
-    unsetenv("AURA_REEMIT_FORCE_DRAIN_DEADLINE_MS");
+    ::aura::config::test_unsetenv("AURA_REEMIT_FORCE_DRAIN_DEADLINE_MS");
     hot_update_registry().reset_reemit_force_drain_for_test();
 }
 

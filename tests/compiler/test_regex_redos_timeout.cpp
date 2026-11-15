@@ -8,6 +8,7 @@
 //   AC4: source cites #2479 + run_regex_timed / timeout message
 //   AC5: gate wiring
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include "compiler/observability_metrics.h"
@@ -65,7 +66,7 @@ static void ac1_well_formed() {
 static void ac2_redos_timeout() {
     std::println("\n--- #2479 AC2: catastrophic pattern times out ---");
     // Tight budget so test is fast; worker may still run briefly after.
-    setenv("AURA_REGEX_TIMEOUT_MS", "50", 1);
+    ::aura::config::test_setenv("AURA_REGEX_TIMEOUT_MS", "50", 1);
     CompilerService cs;
     auto& ev = cs.evaluator();
     auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
@@ -95,13 +96,13 @@ static void ac2_redos_timeout() {
         CHECK(false, "AC2: unexpected result type");
     }
     // Restore default for other ACs in this process.
-    unsetenv("AURA_REGEX_TIMEOUT_MS");
+    ::aura::config::test_unsetenv("AURA_REGEX_TIMEOUT_MS");
 }
 
 // ── AC3: size limit ──
 static void ac3_size_limit() {
     std::println("\n--- #2479 AC3: size limit ---");
-    setenv("AURA_REGEX_MAX_INPUT", "16", 1);
+    ::aura::config::test_setenv("AURA_REGEX_MAX_INPUT", "16", 1);
     // Need fresh service after env change? Config is static-init once.
     // If process already read max_input, skip — document static init.
     // Call with oversized subject: if cap already cached at 1MiB from AC1,
@@ -116,7 +117,7 @@ static void ac3_size_limit() {
         CHECK(true, "AC3: size limit error when cfg active");
     else
         CHECK(true, "AC3: size cfg already fixed for process (source-gated)");
-    unsetenv("AURA_REGEX_MAX_INPUT");
+    ::aura::config::test_unsetenv("AURA_REGEX_MAX_INPUT");
 }
 
 // ── AC4: source ──

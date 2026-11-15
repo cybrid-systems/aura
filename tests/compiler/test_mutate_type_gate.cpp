@@ -14,6 +14,7 @@
 //   AC4: UnboundVariable hard-rejects both modes
 //   AC5: Source cites of filter + gate + production wire
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include "compiler/mutate_type_gate.hh"
@@ -913,38 +914,38 @@ int run_test_mutate_type_gate() {
 
         // 6.3 — AC1: production (dev_sandbox_off=false) + no env → Hard.
         reset_for_test();
-        unsetenv("AURA_MUTATE_TYPE_GATE");
-        unsetenv("AURA_ALLOW_SOFT_TYPE_GATE");
+        ::aura::config::test_unsetenv("AURA_MUTATE_TYPE_GATE");
+        ::aura::config::test_unsetenv("AURA_ALLOW_SOFT_TYPE_GATE");
         apply_production_defaults(false);
         CHECK(is_hard(), "AC6.6: prod no-env → Hard (AC1 default)");
         CHECK(!allow_soft_override(), "AC6.7: no-override flag stays 0");
 
         // 6.4 — AC1: AURA_MUTATE_TYPE_GATE=hard wins → Hard, no override needed.
         reset_for_test();
-        setenv("AURA_MUTATE_TYPE_GATE", "hard", 1);
+        ::aura::config::test_setenv("AURA_MUTATE_TYPE_GATE", "hard", 1);
         apply_production_defaults(false);
         CHECK(is_hard(), "AC6.8: AURA_MUTATE_TYPE_GATE=hard → Hard");
-        unsetenv("AURA_MUTATE_TYPE_GATE");
+        ::aura::config::test_unsetenv("AURA_MUTATE_TYPE_GATE");
 
         // 6.5 — AC1: AURA_MUTATE_TYPE_GATE=soft without override → force Hard.
         reset_for_test();
-        setenv("AURA_MUTATE_TYPE_GATE", "soft", 1);
-        unsetenv("AURA_ALLOW_SOFT_TYPE_GATE");
+        ::aura::config::test_setenv("AURA_MUTATE_TYPE_GATE", "soft", 1);
+        ::aura::config::test_unsetenv("AURA_ALLOW_SOFT_TYPE_GATE");
         apply_production_defaults(false);
         CHECK(is_hard(), "AC6.9: AURA_MUTATE_TYPE_GATE=soft + no override → force Hard (AC1)");
-        unsetenv("AURA_MUTATE_TYPE_GATE");
+        ::aura::config::test_unsetenv("AURA_MUTATE_TYPE_GATE");
 
         // 6.6 — AC1: AURA_ALLOW_SOFT_TYPE_GATE=1 + AURA_MUTATE_TYPE_GATE=soft
         //          → keep Soft (explicit dev-only escape), override flag set.
         reset_for_test();
-        setenv("AURA_MUTATE_TYPE_GATE", "soft", 1);
-        setenv("AURA_ALLOW_SOFT_TYPE_GATE", "1", 1);
+        ::aura::config::test_setenv("AURA_MUTATE_TYPE_GATE", "soft", 1);
+        ::aura::config::test_setenv("AURA_ALLOW_SOFT_TYPE_GATE", "1", 1);
         apply_production_defaults(false);
         CHECK(!is_hard(), "AC6.10: override allows Soft under prod");
         CHECK(allow_soft_override(), "AC6.11: soft_override_allowed == 1");
         CHECK(read_allow_soft_override_env(), "AC6.12: env reader round-trip");
-        unsetenv("AURA_MUTATE_TYPE_GATE");
-        unsetenv("AURA_ALLOW_SOFT_TYPE_GATE");
+        ::aura::config::test_unsetenv("AURA_MUTATE_TYPE_GATE");
+        ::aura::config::test_unsetenv("AURA_ALLOW_SOFT_TYPE_GATE");
 
         // 6.7 — alarm path: production_locked + Soft + check_soft_in_production_or_abort
         //          → bumps counter. (No abort under default env; we never set
@@ -1021,13 +1022,13 @@ int run_test_mutate_type_gate() {
         }
 
         // 6.13 — AURA_HARD_TYPE_GATE_ABORT env reader round-trip.
-        unsetenv("AURA_HARD_TYPE_GATE_ABORT");
+        ::aura::config::test_unsetenv("AURA_HARD_TYPE_GATE_ABORT");
         CHECK(!read_hard_type_gate_abort_env(), "AC6.22: default abort env = false");
-        setenv("AURA_HARD_TYPE_GATE_ABORT", "1", 1);
+        ::aura::config::test_setenv("AURA_HARD_TYPE_GATE_ABORT", "1", 1);
         CHECK(read_hard_type_gate_abort_env(), "AC6.23: AURA_HARD_TYPE_GATE_ABORT=1");
-        setenv("AURA_HARD_TYPE_GATE_ABORT", "true", 1);
+        ::aura::config::test_setenv("AURA_HARD_TYPE_GATE_ABORT", "true", 1);
         CHECK(read_hard_type_gate_abort_env(), "AC6.24: AURA_HARD_TYPE_GATE_ABORT=true");
-        unsetenv("AURA_HARD_TYPE_GATE_ABORT");
+        ::aura::config::test_unsetenv("AURA_HARD_TYPE_GATE_ABORT");
     }
 
     // Issue #4397: try/catch, while (statement and thunk), apply, and an

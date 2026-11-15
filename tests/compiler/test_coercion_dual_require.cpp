@@ -8,6 +8,7 @@
 //   AC4: Additive schema-2562 + source-cite
 //   AC5: completeness_bp / miss counters remain authority metrics
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 #include "compiler/typed_mutation_audit.h"
 #include "compiler/coercion_provenance_policy.hh"
@@ -105,7 +106,7 @@ static void reset_2562() {
     set_strategy(AuditStrategy::Sampled);
     clear_coercion_active_mutation_context();
     set_coercion_dual_require(false);
-    unsetenv("AURA_COERCION_DUAL_REQUIRE");
+    ::aura::config::test_unsetenv("AURA_COERCION_DUAL_REQUIRE");
     g_coercion_dual_require_drop_total.store(0, std::memory_order_relaxed);
 }
 
@@ -150,9 +151,9 @@ static void ac1_production_dual_drop() {
     // Env force-on.
     reset_2562();
     set_strategy(AuditStrategy::Sampled);
-    setenv("AURA_COERCION_DUAL_REQUIRE", "1", 1);
+    ::aura::config::test_setenv("AURA_COERCION_DUAL_REQUIRE", "1", 1);
     CHECK(coercion_dual_require_active(), "AC1: env=1 enables");
-    unsetenv("AURA_COERCION_DUAL_REQUIRE");
+    ::aura::config::test_unsetenv("AURA_COERCION_DUAL_REQUIRE");
     reset_2562();
 }
 
@@ -161,7 +162,7 @@ static void ac1_production_dual_drop() {
 static void ac2_soft_insert_no_drop() {
     std::println("\n--- #2562 AC2: Soft incomplete → #2620 skip; dual drop=0 ---");
     reset_2562();
-    ::unsetenv("AURA_COERCION_SAMPLED_INCOMPLETE_INSERT");
+    ::aura::config::test_unsetenv("AURA_COERCION_SAMPLED_INCOMPLETE_INSERT");
     set_strategy(AuditStrategy::Sampled);
     set_reject_apply_on_provenance_miss(false);
     CHECK(!coercion_dual_require_active(), "AC2: Soft dual-require off");

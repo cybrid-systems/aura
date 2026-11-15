@@ -9,6 +9,7 @@
 //   AC5: Additive schema-2620; #2317/#2562 counters retained
 //   AC6: Source-cite #2620 on skip-insert branch
 
+#include "core/runtime_config.hh"
 #include "compiler/coercion_provenance_policy.hh"
 #include "compiler/typed_mutation_audit.h"
 #include "test_harness.hpp"
@@ -94,8 +95,8 @@ static void reset_2620() {
     set_coercion_dual_require(false);
     set_reject_apply_on_provenance_miss(false);
     clear_coercion_active_mutation_context();
-    ::unsetenv("AURA_COERCION_SAMPLED_INCOMPLETE_INSERT");
-    ::unsetenv("AURA_COERCION_DUAL_REQUIRE");
+    ::aura::config::test_unsetenv("AURA_COERCION_SAMPLED_INCOMPLETE_INSERT");
+    ::aura::config::test_unsetenv("AURA_COERCION_DUAL_REQUIRE");
     g_coercion_prov_slo_force_full_pending.store(0, std::memory_order_relaxed);
 }
 
@@ -174,7 +175,7 @@ static void ac4_canary_restores_insert() {
     reset_2620();
     set_strategy(AuditStrategy::Sampled);
     set_reject_apply_on_provenance_miss(false);
-    ::setenv("AURA_COERCION_SAMPLED_INCOMPLETE_INSERT", "1", 1);
+    ::aura::config::test_setenv("AURA_COERCION_SAMPLED_INCOMPLETE_INSERT", "1", 1);
 
     StringPool pool;
     aura::ast::NodeId lit = 0, call = 0;
@@ -189,7 +190,7 @@ static void ac4_canary_restores_insert() {
     CHECK(flat.get(call).child(1) != lit, "AC4: parent rewritten to CoercionNode");
     CHECK(g_coercion_sampled_insert_incomplete_total.load() > ins0,
           "AC4: sampled_insert_incomplete bumped");
-    ::unsetenv("AURA_COERCION_SAMPLED_INCOMPLETE_INSERT");
+    ::aura::config::test_unsetenv("AURA_COERCION_SAMPLED_INCOMPLETE_INSERT");
 }
 
 // ── AC5: schema ──

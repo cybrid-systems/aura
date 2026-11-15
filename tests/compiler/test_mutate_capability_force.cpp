@@ -10,6 +10,7 @@
 //   AC6: query:capability-effect-stats schema-2052 keys
 //   AC7: query-and-replace + extract-function go through add_mutate (force checks)
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include "compiler/observability_metrics.h"
@@ -192,9 +193,9 @@ struct SavedEnv {
     }
     ~SavedEnv() {
         if (had)
-            ::setenv(key, val.c_str(), 1);
+            ::aura::config::test_setenv(key, val.c_str(), 1);
         else
-            ::unsetenv(key);
+            ::aura::config::test_unsetenv(key);
     }
 };
 
@@ -229,10 +230,10 @@ void run_issue_4575() {
         SavedEnv soft2("AURA_SOFT_AUTO_GRANT");
         SavedEnv sb("AURA_SANDBOX");
         SavedEnv mt("AURA_MULTI_TENANT");
-        ::setenv("AURA_SOFT", "1", 1);
-        ::setenv("AURA_SOFT_AUTO_GRANT", "1", 1);
-        ::setenv("AURA_SANDBOX", "restricted", 1);
-        ::unsetenv("AURA_MULTI_TENANT");
+        ::aura::config::test_setenv("AURA_SOFT", "1", 1);
+        ::aura::config::test_setenv("AURA_SOFT_AUTO_GRANT", "1", 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
+        ::aura::config::test_unsetenv("AURA_MULTI_TENANT");
         aura::core::provenance::reset_multi_tenant_env_for_test();
         reset_all();
         CompilerService cs;
@@ -242,7 +243,7 @@ void run_issue_4575() {
               "4575: AURA_SOFT does not mint");
         CHECK(href_q(cs, "query:capability-effect-stats", "soft-auto-grant") == 0,
               "4575: stats stay 0 without enter");
-        ::unsetenv("AURA_SANDBOX");
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
         CompilerService cs_unset;
         cs_unset.evaluator().apply_production_security_defaults_for_test();
         CHECK(!g_capability_registry().find_grant(0, "soft-auto-grant", g),

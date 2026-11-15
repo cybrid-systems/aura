@@ -48,6 +48,7 @@
 //      clock and their windows overlapped (a serial round is a FAIL, never a
 //      skip).
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include "serve/fiber.h"
@@ -418,14 +419,14 @@ int main() {
     // test uses (AURA_SANDBOX=off) and put the process face back after.
     const char* prev_sandbox = std::getenv("AURA_SANDBOX");
     const std::string saved_sandbox = prev_sandbox != nullptr ? prev_sandbox : "";
-    ::setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
     ac2_control();
     ac1_sibling_hold();
     ac4_simultaneous_spawn();
     if (prev_sandbox != nullptr)
-        ::setenv("AURA_SANDBOX", saved_sandbox.c_str(), 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", saved_sandbox.c_str(), 1);
     else
-        ::unsetenv("AURA_SANDBOX");
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

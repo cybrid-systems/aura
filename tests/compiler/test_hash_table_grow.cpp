@@ -8,6 +8,7 @@
 //   AC4: source cites #2654 + flat_hash_grow_eval / load factor
 //   AC5: gate wiring (cmake + coverage)
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include "compiler/mutation_concurrency_health.hh"
@@ -161,7 +162,7 @@ static void ac3235_3_production_guard() {
     aura::compiler::reset_mutation_concurrency_health_admit_for_test();
     aura::compiler::MutationConcurrencyHealthSnapshot clean;
     aura::compiler::set_mutation_concurrency_health_admit_snapshot_for_test(clean);
-    ::setenv("AURA_PIPELINE_STRICT", "0", 1);
+    ::aura::config::test_setenv("AURA_PIPELINE_STRICT", "0", 1);
     aura::core::bump_mutation_epoch(1);
     const auto live_mid = aura::core::current_mutation_epoch();
     // Issue #3720: hash/vector-set! now require Mutate at dispatch. Seed

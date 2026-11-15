@@ -8,6 +8,7 @@
 //   AC4: Source-cite next to #2314 / #2377; schema-2546 additive keys
 //   AC5: Chaos soak lineage (#2513) counters present; clean soak hard-fail==0
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include "compiler/mutation_hold_budget.h"
@@ -87,14 +88,14 @@ static void set_env(const char* k, const char* v) {
 #if defined(_WIN32)
     _putenv_s(k, v);
 #else
-    setenv(k, v, 1);
+    ::aura::config::test_setenv(k, v, 1);
 #endif
 }
 static void clear_env(const char* k) {
 #if defined(_WIN32)
     _putenv_s(k, "");
 #else
-    unsetenv(k);
+    ::aura::config::test_unsetenv(k);
 #endif
 }
 
@@ -423,7 +424,7 @@ struct ProdLockGuard {
 static void ac2853_1_production_lock_state() {
     std::println("\n--- #2853 AC1: production lock state (defaults_active + sandbox) ---");
     // Clear any pre-existing state.
-    unsetenv("AURA_SANDBOX");
+    ::aura::config::test_unsetenv("AURA_SANDBOX");
     {
         ProdLockGuard prod(/*active=*/false);
         CHECK(!aura::serve::production_residual_policy_locked(),
@@ -434,7 +435,7 @@ static void ac2853_1_production_lock_state() {
         CHECK(aura::serve::production_residual_policy_locked(),
               "AC1: prod active + sandbox unset → lock active");
     }
-    setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
     {
         ProdLockGuard prod(/*active=*/true);
         CHECK(!aura::serve::production_residual_policy_locked(),
@@ -445,13 +446,13 @@ static void ac2853_1_production_lock_state() {
         CHECK(!aura::serve::production_residual_policy_locked(),
               "AC1: prod inactive → lock inactive regardless of sandbox");
     }
-    unsetenv("AURA_SANDBOX");
+    ::aura::config::test_unsetenv("AURA_SANDBOX");
 }
 
 static void ac2853_2_test_override_bypasses_lock() {
     std::println("\n--- #2853 AC2: test override bypasses production lock ---");
     ProdLockGuard prod(/*active=*/true);
-    unsetenv("AURA_SANDBOX");
+    ::aura::config::test_unsetenv("AURA_SANDBOX");
     CHECK(aura::serve::production_residual_policy_locked(), "AC2: lock active baseline");
 
     // Without override: residual/hold-SLO effective mode is Production (not Soft).
@@ -476,26 +477,26 @@ static void ac2853_3_hold_slo_soft_env_ignored_under_lock() {
     // Soft path is OFF under production lock.
     {
         ProdLockGuard prod(/*active=*/true);
-        unsetenv("AURA_SANDBOX");
-        setenv("AURA_MUTATION_HOLD_SLO_SOFT", "1", 1);
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
+        ::aura::config::test_setenv("AURA_MUTATION_HOLD_SLO_SOFT", "1", 1);
         CHECK(!aura::compiler::mutation_hold_slo_soft_mode(),
               "AC3: prod lock + AURA_MUTATION_HOLD_SLO_SOFT=1 → still Production (env ignored)");
-        unsetenv("AURA_MUTATION_HOLD_SLO_SOFT");
+        ::aura::config::test_unsetenv("AURA_MUTATION_HOLD_SLO_SOFT");
     }
     // Without lock, legacy behavior preserved.
     {
         ProdLockGuard prod(/*active=*/false);
-        unsetenv("AURA_SANDBOX");
-        setenv("AURA_MUTATION_HOLD_SLO_SOFT", "1", 1);
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
+        ::aura::config::test_setenv("AURA_MUTATION_HOLD_SLO_SOFT", "1", 1);
         CHECK(aura::compiler::mutation_hold_slo_soft_mode(),
               "AC3: no prod + AURA_MUTATION_HOLD_SLO_SOFT=1 → Soft (legacy)");
-        unsetenv("AURA_MUTATION_HOLD_SLO_SOFT");
+        ::aura::config::test_unsetenv("AURA_MUTATION_HOLD_SLO_SOFT");
     }
 }
 
 static void ac2853_4_sandbox_off_always_soft() {
     std::println("\n--- #2853 AC4: AURA_SANDBOX=off always Soft regardless of prod state ---");
-    setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
     {
         ProdLockGuard prod(/*active=*/true);
         CHECK(aura::compiler::mutation_hold_slo_soft_mode(),
@@ -507,7 +508,7 @@ static void ac2853_4_sandbox_off_always_soft() {
         ProdLockGuard prod(/*active=*/false);
         CHECK(aura::compiler::mutation_hold_slo_soft_mode(), "AC4: sandbox=off + no prod → Soft");
     }
-    unsetenv("AURA_SANDBOX");
+    ::aura::config::test_unsetenv("AURA_SANDBOX");
 }
 
 static void ac2853_5_phase5_dtor_gauge_and_query_surface() {
@@ -516,7 +517,7 @@ static void ac2853_5_phase5_dtor_gauge_and_query_surface() {
     CompilerMetrics metrics;
     cs.evaluator().set_compiler_metrics(&metrics);
     ProdLockGuard prod(/*active=*/true);
-    unsetenv("AURA_SANDBOX");
+    ::aura::config::test_unsetenv("AURA_SANDBOX");
 
     // Warm eval for metrics registration.
     CHECK(cs.eval("(+ 1 1)").has_value(), "AC5: warm eval");
@@ -603,9 +604,9 @@ static void ac2853_6_phase5_dtor_force_fail_hold_slo() {
     CompilerMetrics metrics;
     cs.evaluator().set_compiler_metrics(&metrics);
     ProdLockGuard prod(/*active=*/true);
-    unsetenv("AURA_SANDBOX");
-    unsetenv("AURA_MUTATION_HOLD_SLO_SOFT");
-    setenv("AURA_MUTATION_HOLD_SLO_US", "2000", 1); // 2ms SLO
+    ::aura::config::test_unsetenv("AURA_SANDBOX");
+    ::aura::config::test_unsetenv("AURA_MUTATION_HOLD_SLO_SOFT");
+    ::aura::config::test_setenv("AURA_MUTATION_HOLD_SLO_US", "2000", 1); // 2ms SLO
 
     const auto viol0 = metrics.mutation_hold_slo_violation_total.load();
     const auto rollback0 = metrics.mutation_boundary_rollbacks_total.load();
@@ -621,7 +622,7 @@ static void ac2853_6_phase5_dtor_force_fail_hold_slo() {
           "AC5b: rollback counter bumped");
 
     cs.evaluator().set_compiler_metrics(nullptr);
-    unsetenv("AURA_MUTATION_HOLD_SLO_US");
+    ::aura::config::test_unsetenv("AURA_MUTATION_HOLD_SLO_US");
 }
 
 // ── Issue #2890: cross-fiber steal residual for PanicCheckpoint + GC defer ──

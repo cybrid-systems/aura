@@ -35,6 +35,7 @@
 //     AC5: production expired-gen packed ref is refused, not remade
 //     AC6: no docs/design/4696-*, linter wired, no test_issue_4696.cpp
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 #include "compiler/typed_mutation_audit.h"
 
@@ -2156,17 +2157,17 @@ static void ac4438_fiberless_cross_agent_query_stale() {
     struct ProdFace4438 {
         bool restored = false;
         void restore(CompilerService& cs) {
-            ::setenv("AURA_SANDBOX", "off", 1);
-            ::unsetenv("AURA_MULTI_TENANT");
-            ::unsetenv("AURA_PIPELINE_STRICT");
-            ::unsetenv("AURA_GENERAL_OBJECT_PIN");
+            ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
+            ::aura::config::test_unsetenv("AURA_MULTI_TENANT");
+            ::aura::config::test_unsetenv("AURA_PIPELINE_STRICT");
+            ::aura::config::test_unsetenv("AURA_GENERAL_OBJECT_PIN");
             cs.evaluator().apply_production_security_defaults_for_test();
             aura_typed_audit_clear_readiness_evaluator();
             cs.evaluator().disarm_production_audit_defaults_for_test();
             cs.evaluator().set_effect_sandbox_mode(0);
             cs.evaluator().set_capability_tenant_id(0);
             cs.evaluator().set_current_agent_fingerprint(0);
-            ::unsetenv("AURA_SANDBOX");
+            ::aura::config::test_unsetenv("AURA_SANDBOX");
             aura::core::provenance::reset_multi_tenant_env_for_test();
             aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
             aura::compiler::typed_audit::apply_dev_audit_defaults();
@@ -2183,19 +2184,19 @@ static void ac4438_fiberless_cross_agent_query_stale() {
     auto arm = [&face](CompilerService& cs, bool mt) {
         face.restored = false;
         aura::core::resource_quota::reset_process_resource_quota_for_test();
-        ::unsetenv("AURA_SANDBOX");
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
         if (mt)
-            ::setenv("AURA_MULTI_TENANT", "1", 1);
+            ::aura::config::test_setenv("AURA_MULTI_TENANT", "1", 1);
         else
-            ::unsetenv("AURA_MULTI_TENANT");
+            ::aura::config::test_unsetenv("AURA_MULTI_TENANT");
         // The unit eval path is the tree walker. The production bundle
         // forbids that fallback (#2213). The env override is the
         // documented escape and does not change the sandbox or audit face.
-        ::setenv("AURA_PIPELINE_STRICT", "allow", 1);
+        ::aura::config::test_setenv("AURA_PIPELINE_STRICT", "allow", 1);
         // query:pattern parses into a temp FlatAST. Production pin-required
         // refuses that both-null create (#3420) and the prim returns void.
         // off is the documented operator override; sandbox and audit stay.
-        ::setenv("AURA_GENERAL_OBJECT_PIN", "off", 1);
+        ::aura::config::test_setenv("AURA_GENERAL_OBJECT_PIN", "off", 1);
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
         cs.evaluator().apply_production_security_defaults_for_test();
         cs.evaluator().arm_production_audit_defaults_for_test();

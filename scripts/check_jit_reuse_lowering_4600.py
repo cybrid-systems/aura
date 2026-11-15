@@ -117,7 +117,7 @@ def main() -> int:
     ):
         must(row in memo, f"AC2: JitProgramMemo carries {label}")
     must("std::unique_ptr<JitProgramMemo> jit_program_memo_;" in sv, "AC2: one-entry memo member")
-    must('std::getenv("AURA_JIT_REUSE_LOWERING")' in sv, "AC2: AURA_JIT_REUSE_LOWERING kill switch")
+    must("::aura::config::Key::AURA_JIT_REUSE_LOWERING)" in sv, "AC2: AURA_JIT_REUSE_LOWERING kill switch")
     must("static std::uint64_t jit_program_hash_(std::string_view s)" in sv, "AC2: jit_program_hash_")
     must(
         'own != "__top__"' in sv and "for (const auto& fv : f.free_vars)" in sv,

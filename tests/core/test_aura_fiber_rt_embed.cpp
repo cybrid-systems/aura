@@ -17,6 +17,7 @@
 //        (the CLI thread backend runs one std::thread per fiber, so a raw
 //        thread_local pointer leaked ~0.5 KB per fiber:spawn).
 
+#include "core/runtime_config.hh"
 #include "core/fiber_context.hh"
 #include "serve/fiber.h"
 #include "serve/scheduler.h"
@@ -148,7 +149,7 @@ int main() {
     std::printf("=== Issue #4774: aura::fiber_rt standalone embed ===\n");
     // Issue #3586: an unarmed multi-worker pool is refused outside a sandbox
     // decision; this host takes the documented escape for AC2.
-    ::setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
     ac1_yield_resume();
     ac2_many_fibers();
     ac3_fiber_context();

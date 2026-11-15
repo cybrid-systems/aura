@@ -39,6 +39,7 @@
 //                                       query:orch-module-stats
 //                                       new keys + schema-2229
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 #include "orch/sched_runner_test_helper.h"
 
@@ -343,8 +344,8 @@ static void ac3208_4_hash_and_soak() {
     const std::string saved_sandbox = sb0 ? sb0 : "";
     const bool had_sandbox = sb0 != nullptr;
     ac3208_set_prod(true);
-    unsetenv("AURA_SANDBOX");
-    unsetenv("AURA_AGENT_SCOPE_CONCURRENT_ABORT");
+    ::aura::config::test_unsetenv("AURA_SANDBOX");
+    ::aura::config::test_unsetenv("AURA_AGENT_SCOPE_CONCURRENT_ABORT");
     CHECK(aura::orch::resolve_agent_scope_concurrent_policy() ==
               aura::orch::AgentScopeConcurrentPolicy::HardDeny,
           "AC5: production concurrent enter is HardDeny");
@@ -381,9 +382,9 @@ static void ac3208_4_hash_and_soak() {
     // #3586: restore inherited AURA_SANDBOX so later Scheduler(N>1)
     // in this member does not abort (ci/issues isolate signal=6).
     if (had_sandbox)
-        ::setenv("AURA_SANDBOX", saved_sandbox.c_str(), 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", saved_sandbox.c_str(), 1);
     else
-        ::unsetenv("AURA_SANDBOX");
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
 
     CompilerService cs;
     CHECK(href(cs, "schema-3208") == 3208, "AC4: schema-3208");
@@ -829,7 +830,7 @@ int run_test_agent_failure_policy() {
         {
             std::println("\n--- #2948 AC2/AC5: policy 0 → process; query schema ---");
             CHECK(aura::orch::kBpThresholdSsotIssue == 2948, "2948: issue stamp");
-            unsetenv("AURA_ORCH_BP_ADMIT_THRESHOLD");
+            ::aura::config::test_unsetenv("AURA_ORCH_BP_ADMIT_THRESHOLD");
             const auto proc = aura::orch::resolve_mailbox_bp_admit_threshold();
             // AC2: policy bp_threshold=0 resolves to process default
             const auto d0 = aura::orch::resolve_bp_threshold(

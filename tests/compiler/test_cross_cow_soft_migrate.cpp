@@ -8,6 +8,7 @@
 //   AC4: query schema-2371
 //   AC5: source-cite + gate
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include "compiler/aura_jit_bridge.h"
@@ -64,7 +65,7 @@ static std::int64_t href(CompilerService& cs, const char* key) {
 // ── AC1: soft migrate on stale within drift ──
 static void ac1_soft_migrate() {
     std::println("\n--- AC1: soft migrate restamp on dual-epoch miss ---");
-    unsetenv("AURA_CROSS_COW_SOFT_MIGRATE"); // default on
+    ::aura::config::test_unsetenv("AURA_CROSS_COW_SOFT_MIGRATE"); // default on
     CompilerMetrics metrics{};
     aura_set_aot_metrics(&metrics);
 
@@ -100,7 +101,7 @@ static void ac1_soft_migrate() {
 // ── AC2: hard reject paths ──
 static void ac2_hard_reject() {
     std::println("\n--- AC2: hard reject when soft disabled / freed ---");
-    setenv("AURA_CROSS_COW_SOFT_MIGRATE", "0", 1);
+    ::aura::config::test_setenv("AURA_CROSS_COW_SOFT_MIGRATE", "0", 1);
     CompilerMetrics metrics{};
     aura_set_aot_metrics(&metrics);
 
@@ -120,7 +121,7 @@ static void ac2_hard_reject() {
     }
 
     // Freed slot: always hard (no soft).
-    setenv("AURA_CROSS_COW_SOFT_MIGRATE", "1", 1);
+    ::aura::config::test_setenv("AURA_CROSS_COW_SOFT_MIGRATE", "1", 1);
     const auto cid2 = aura_alloc_closure(3);
     aura_closure_set_name(cid2, "ac2_freed_2371");
     aura_free_closure(cid2);
@@ -131,15 +132,15 @@ static void ac2_hard_reject() {
     // necessarily); just ensure no crash.
     CHECK(true, "AC2: freed slot call safe");
     (void)hard2;
-    unsetenv("AURA_CROSS_COW_SOFT_MIGRATE");
+    ::aura::config::test_unsetenv("AURA_CROSS_COW_SOFT_MIGRATE");
     aura_set_aot_metrics(nullptr);
 }
 
 // ── AC3: far-behind drift hard reject ──
 static void ac3_far_behind() {
     std::println("\n--- AC3: far-behind generation → hard reject ---");
-    setenv("AURA_CROSS_COW_SOFT_MIGRATE", "1", 1);
-    setenv("AURA_CROSS_COW_SOFT_MIGRATE_MAX_DRIFT", "1", 1);
+    ::aura::config::test_setenv("AURA_CROSS_COW_SOFT_MIGRATE", "1", 1);
+    ::aura::config::test_setenv("AURA_CROSS_COW_SOFT_MIGRATE_MAX_DRIFT", "1", 1);
     CompilerMetrics metrics{};
     aura_set_aot_metrics(&metrics);
 
@@ -161,8 +162,8 @@ static void ac3_far_behind() {
         if (hard1 > hard0)
             CHECK(soft1 == soft0, "AC3: hard reject without soft");
     }
-    unsetenv("AURA_CROSS_COW_SOFT_MIGRATE_MAX_DRIFT");
-    unsetenv("AURA_CROSS_COW_SOFT_MIGRATE");
+    ::aura::config::test_unsetenv("AURA_CROSS_COW_SOFT_MIGRATE_MAX_DRIFT");
+    ::aura::config::test_unsetenv("AURA_CROSS_COW_SOFT_MIGRATE");
     aura_set_aot_metrics(nullptr);
 }
 

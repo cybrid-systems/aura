@@ -1,6 +1,7 @@
 // Issue #1097/#1104/#1122 (#1978 renamed): issue# moved from filename to header.
 // test_production_safety_1097_1122.cpp — Issues #1097–#1122 Phase 1
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include <cstdint>
@@ -80,7 +81,7 @@ int emit_to_path(const std::string& bin, const std::string& out_path, std::strin
     const std::string saved_runtime = prior_runtime != nullptr ? prior_runtime : "";
     const bool had_runtime = prior_runtime != nullptr;
     const std::string runtime_dir = std::string(AURA_SOURCE_DIR) + "/lib";
-    ::setenv("AURA_RUNTIME_DIR", runtime_dir.c_str(), 1);
+    ::aura::config::test_setenv("AURA_RUNTIME_DIR", runtime_dir.c_str(), 1);
     std::array<int, 2> in_pipe{-1, -1};
     std::array<int, 2> err_pipe{-1, -1};
     if (::pipe2(in_pipe.data(), O_CLOEXEC) != 0)
@@ -207,15 +208,15 @@ int emit_to_path(const std::string& bin, const std::string& out_path, std::strin
             ::waitpid(pid, &status, 0);
         }
         if (had_runtime)
-            ::setenv("AURA_RUNTIME_DIR", saved_runtime.c_str(), 1);
+            ::aura::config::test_setenv("AURA_RUNTIME_DIR", saved_runtime.c_str(), 1);
         else
-            ::unsetenv("AURA_RUNTIME_DIR");
+            ::aura::config::test_unsetenv("AURA_RUNTIME_DIR");
         return -1;
     }
     if (had_runtime)
-        ::setenv("AURA_RUNTIME_DIR", saved_runtime.c_str(), 1);
+        ::aura::config::test_setenv("AURA_RUNTIME_DIR", saved_runtime.c_str(), 1);
     else
-        ::unsetenv("AURA_RUNTIME_DIR");
+        ::aura::config::test_unsetenv("AURA_RUNTIME_DIR");
     if (WIFEXITED(status))
         return WEXITSTATUS(status);
     return -1;
@@ -374,13 +375,13 @@ struct EnvGuard {
             old = v;
         }
     }
-    void set(const char* v) const { ::setenv(key.c_str(), v, 1); }
-    void clear() const { ::unsetenv(key.c_str()); }
+    void set(const char* v) const { ::aura::config::test_setenv(key.c_str(), v, 1); }
+    void clear() const { ::aura::config::test_unsetenv(key.c_str()); }
     ~EnvGuard() {
         if (had)
-            ::setenv(key.c_str(), old.c_str(), 1);
+            ::aura::config::test_setenv(key.c_str(), old.c_str(), 1);
         else
-            ::unsetenv(key.c_str());
+            ::aura::config::test_unsetenv(key.c_str());
     }
 };
 
@@ -810,9 +811,10 @@ void check_libcurl_unavailable() {
         if (pid == 0) {
             ::dup2(out_pipe[1], STDOUT_FILENO);
             ::dup2(out_pipe[1], STDERR_FILENO);
-            ::setenv("LD_PRELOAD", so.c_str(), 1);
-            ::setenv("AURA_SANDBOX", "off", 1);
-            ::setenv("AURA_RUNTIME_DIR", (std::string(AURA_SOURCE_DIR) + "/lib").c_str(), 1);
+            ::aura::config::test_setenv("LD_PRELOAD", so.c_str(), 1);
+            ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
+            ::aura::config::test_setenv("AURA_RUNTIME_DIR",
+                                        (std::string(AURA_SOURCE_DIR) + "/lib").c_str(), 1);
             const std::string expr =
                 "(begin (require \"std/net\") (display (try (http-get \"http://127.0.0.1:" +
                 std::to_string(port) +

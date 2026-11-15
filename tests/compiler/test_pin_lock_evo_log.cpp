@@ -7,6 +7,7 @@
 //   AC3: the log escapes a control character and formats dur_ms without a C buffer
 //   AC4: a record KEEP advances the tip; a later line keeps that parent
 
+#include "core/runtime_config.hh"
 #include "compiler/evo_log_4910.hh"
 #include "core/lifetime_pin.hh"
 #include "core/resource_quota.hh"
@@ -96,7 +97,7 @@ int main() {
 
     const TempDir dir;
     const auto path = dir.path / "log.jsonl";
-    ::setenv("AURA_EVO_LOG", path.c_str(), 1);
+    ::aura::config::test_setenv("AURA_EVO_LOG", path.c_str(), 1);
     aura::evo::log_reset_for_test();
     aura::evo::Entry first;
     // Issue #5139: only a record KEEP advances the worldline tip.
@@ -125,7 +126,7 @@ int main() {
     expect(!id2.empty() && file.find("\"parent\":\"" + id + "\"") != std::string::npos,
            "the next line's parent is the KEEP tip");
     aura::evo::log_reset_for_test();
-    ::unsetenv("AURA_EVO_LOG");
+    ::aura::config::test_unsetenv("AURA_EVO_LOG");
 
     // #5234: one shared escaper now feeds the evo log, reflect, the LSP
     // writer and the LLM payload builder. Pin the control-character shape.

@@ -18,6 +18,7 @@
 //        principal bleed (chaos pattern).
 //   AC7: Source-cite fiber entry + TenantScope install sites + metrics.
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include "compiler/security_capabilities.h"
@@ -659,7 +660,7 @@ static void ac3434_1_production_spawn_stamps_tenant() {
     reset_all();
     const char* prev_sb = std::getenv("AURA_SANDBOX");
     std::string prev_sb_s = prev_sb ? prev_sb : "";
-    ::setenv("AURA_SANDBOX", "restricted", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
     apply_production_audit_defaults();
     set_mode(SandboxMode::Strict);
     aura::core::provenance::set_multi_tenant_env_active(true);
@@ -684,9 +685,9 @@ static void ac3434_1_production_spawn_stamps_tenant() {
     aura::core::provenance::set_multi_tenant_env_active(false);
     apply_dev_audit_defaults();
     if (!prev_sb_s.empty())
-        ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
     else
-        ::unsetenv("AURA_SANDBOX");
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
 }
 
 static void ac3434_2_steal_resume_rebind() {
@@ -759,7 +760,7 @@ static void ac3434_5_restricted_single_tenant_no_deny() {
     reset_all();
     const char* prev_sb = std::getenv("AURA_SANDBOX");
     std::string prev_sb_s = prev_sb ? prev_sb : "";
-    ::setenv("AURA_SANDBOX", "restricted", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
     apply_production_audit_defaults();
     set_mode(SandboxMode::Restricted);
     aura::core::provenance::set_multi_tenant_env_active(false); // single-tenant
@@ -779,9 +780,9 @@ static void ac3434_5_restricted_single_tenant_no_deny() {
     aura::core::provenance::set_multi_tenant_env_active(false);
     apply_dev_audit_defaults();
     if (!prev_sb_s.empty())
-        ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
     else
-        ::unsetenv("AURA_SANDBOX");
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
 }
 
 static void ac3494_restricted_mt_tenant_required() {
@@ -791,7 +792,7 @@ static void ac3494_restricted_mt_tenant_required() {
     reset_all();
     const char* prev_sb = std::getenv("AURA_SANDBOX");
     std::string prev_sb_s = prev_sb ? prev_sb : "";
-    ::setenv("AURA_SANDBOX", "restricted", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
     apply_production_audit_defaults();
     set_mode(SandboxMode::Restricted);
     aura::core::resource_quota::set_current_quota_tenant(0);
@@ -852,9 +853,9 @@ static void ac3494_restricted_mt_tenant_required() {
     aura::core::provenance::set_multi_tenant_env_active(false);
     apply_dev_audit_defaults();
     if (!prev_sb_s.empty())
-        ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
     else
-        ::unsetenv("AURA_SANDBOX");
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
 }
 
 static void ac3434_6_source_and_linter() {

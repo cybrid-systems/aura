@@ -59,6 +59,7 @@
 //   AC27: #4771 — prepare/cancel (WAL write failed): no ghost claim is left
 //         in the log, so a later overlay from the same base commits cleanly.
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 #include "../support/service_module_source.hh"
 #include "compiler/fiber_cow_overlay.hh" // Issue #4715
@@ -590,7 +591,7 @@ static pid_t spawn_4720_pin_child(const std::string& bin, const std::string& fil
     const pid_t pid = ::fork();
     if (pid != 0)
         return pid;
-    ::setenv("AURA_PIPELINE_STRICT", "0", 1);
+    ::aura::config::test_setenv("AURA_PIPELINE_STRICT", "0", 1);
     ::freopen("/dev/null", "w", stdout);
     ::freopen("/dev/null", "w", stderr);
     ::execl(bin.c_str(), bin.c_str(), file.c_str(), static_cast<char*>(nullptr));
@@ -1241,16 +1242,16 @@ static void ac23_parallel_eval_no_deadlock() {
     const char* prev_strict = ::getenv("AURA_PIPELINE_STRICT");
     const std::string prev_strict_val = prev_strict != nullptr ? prev_strict : "";
     const bool had_strict = prev_strict != nullptr;
-    ::setenv("AURA_PIPELINE_STRICT", "0", 1);
+    ::aura::config::test_setenv("AURA_PIPELINE_STRICT", "0", 1);
     const pid_t pid = spawn_4131_oneshot(bin, prog, /*ignore_term=*/false);
     CHECK(pid > 0, "AC23: wave child spawned");
     int rc = -1;
     if (pid > 0)
         rc = wait_4131_exit(pid, 120000);
     if (had_strict)
-        ::setenv("AURA_PIPELINE_STRICT", prev_strict_val.c_str(), 1);
+        ::aura::config::test_setenv("AURA_PIPELINE_STRICT", prev_strict_val.c_str(), 1);
     else
-        ::unsetenv("AURA_PIPELINE_STRICT");
+        ::aura::config::test_unsetenv("AURA_PIPELINE_STRICT");
     CHECK(rc == 0, "AC23: 200 parallel-eval waves finish (no 0-CPU deadlock)");
     ::unlink(prog.c_str());
 }

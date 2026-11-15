@@ -34,6 +34,7 @@
 // string, which embeds diagnostics and returns normally on type errors;
 // check-and-apply restores the snapshot when post-verify throws.
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 #include "../support/service_module_source.hh"
 
@@ -989,12 +990,12 @@ static void ac4598_phase4_snapshot_cap_counts_copies() {
 // printed as 1/0 comes back as an integer ((q) was 1, (boolean? (q)) #f).
 static void ac4357_workspace_bools() {
     std::println("\n--- #4357: workspace defines keep booleans ---");
-    setenv("AURA_SANDBOX", "off", 1);
-    setenv("AURA_PIPELINE_STRICT", "0", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_PIPELINE_STRICT", "0", 1);
     struct RestoreEnv {
         ~RestoreEnv() {
-            unsetenv("AURA_SANDBOX");
-            unsetenv("AURA_PIPELINE_STRICT");
+            ::aura::config::test_unsetenv("AURA_SANDBOX");
+            ::aura::config::test_unsetenv("AURA_PIPELINE_STRICT");
         }
     } restore_env;
     CompilerService cs;
@@ -1034,12 +1035,12 @@ static void ac4357_workspace_bools() {
 // mutate:rebind publishes the raw string, so both stayed correct.
 static void ac4475_workspace_floats() {
     std::println("\n--- #4475: workspace lambda bodies keep float literals ---");
-    setenv("AURA_SANDBOX", "off", 1);
-    setenv("AURA_PIPELINE_STRICT", "0", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_PIPELINE_STRICT", "0", 1);
     struct RestoreEnv {
         ~RestoreEnv() {
-            unsetenv("AURA_SANDBOX");
-            unsetenv("AURA_PIPELINE_STRICT");
+            ::aura::config::test_unsetenv("AURA_SANDBOX");
+            ::aura::config::test_unsetenv("AURA_PIPELINE_STRICT");
         }
     } restore_env;
     auto close_to = [](double got, double want) { return std::fabs(got - want) < 1e-9; };
@@ -1092,12 +1093,12 @@ static void ac4475_workspace_floats() {
 // dispatch routes them to the minting interpreter via runtime_closures_.
 static void run_4450_runtime_mint_ids() {
     std::println("\n--- #4450: escaped define closures run their own body ---");
-    setenv("AURA_SANDBOX", "off", 1);
-    setenv("AURA_PIPELINE_STRICT", "1", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_PIPELINE_STRICT", "1", 1);
     struct RestoreEnv {
         ~RestoreEnv() {
-            unsetenv("AURA_SANDBOX");
-            unsetenv("AURA_PIPELINE_STRICT");
+            ::aura::config::test_unsetenv("AURA_SANDBOX");
+            ::aura::config::test_unsetenv("AURA_PIPELINE_STRICT");
         }
     } restore_env;
     // AC1/AC2: the issue repro — both escaped closures run THEIR OWN mk.
@@ -1146,12 +1147,12 @@ static void run_4450_runtime_mint_ids() {
 // Both calls must be (8 (a)). Rows the report listed as already ok stay ok.
 static void ac4584_hof_callee_stable() {
     std::println("\n--- #4584: second call keeps the HOF callee ---");
-    setenv("AURA_SANDBOX", "off", 1);
-    setenv("AURA_PIPELINE_STRICT", "0", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_PIPELINE_STRICT", "0", 1);
     struct RestoreEnv {
         ~RestoreEnv() {
-            unsetenv("AURA_SANDBOX");
-            unsetenv("AURA_PIPELINE_STRICT");
+            ::aura::config::test_unsetenv("AURA_SANDBOX");
+            ::aura::config::test_unsetenv("AURA_PIPELINE_STRICT");
         }
     } restore_env;
     auto is_true = [](CompilerService& cs, std::string_view code) {
@@ -1275,12 +1276,12 @@ static void ac4584_hof_callee_stable() {
 // a stale birth stamp counts about twice per call. (four) stays 4.
 static void ac4585_host_calls_stay_on_snapshot() {
     std::println("\n--- #4585: host calls stay fresh after set-code ---");
-    setenv("AURA_SANDBOX", "off", 1);
-    setenv("AURA_PIPELINE_STRICT", "0", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_PIPELINE_STRICT", "0", 1);
     struct RestoreEnv {
         ~RestoreEnv() {
-            unsetenv("AURA_SANDBOX");
-            unsetenv("AURA_PIPELINE_STRICT");
+            ::aura::config::test_unsetenv("AURA_SANDBOX");
+            ::aura::config::test_unsetenv("AURA_PIPELINE_STRICT");
         }
     } restore_env;
     CHECK(aura::core::current_mutation_epoch() == 0, "4585: epoch is 0 before the first workspace");
@@ -1356,12 +1357,12 @@ static void ac4585_host_calls_stay_on_snapshot() {
 // stays armed only for Soft; hard still typechecks and still drains.
 static void ac4360_sibling_and_hard_caller() {
     std::println("\n--- #4360: sibling closure and hard caller survive ---");
-    setenv("AURA_SANDBOX", "off", 1);
-    setenv("AURA_PIPELINE_STRICT", "0", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_PIPELINE_STRICT", "0", 1);
     struct RestoreEnv {
         ~RestoreEnv() {
-            unsetenv("AURA_SANDBOX");
-            unsetenv("AURA_PIPELINE_STRICT");
+            ::aura::config::test_unsetenv("AURA_SANDBOX");
+            ::aura::config::test_unsetenv("AURA_PIPELINE_STRICT");
         }
     } restore_env;
     {
@@ -1423,12 +1424,12 @@ static void ac4360_sibling_and_hard_caller() {
 // arg stay committed. An unbound name stays refused.
 static void ac4362_soft_caller_arity() {
     std::println("\n--- #4362: soft rebind refuses a caller arity mismatch ---");
-    setenv("AURA_SANDBOX", "off", 1);
-    setenv("AURA_PIPELINE_STRICT", "0", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_PIPELINE_STRICT", "0", 1);
     struct RestoreEnv {
         ~RestoreEnv() {
-            unsetenv("AURA_SANDBOX");
-            unsetenv("AURA_PIPELINE_STRICT");
+            ::aura::config::test_unsetenv("AURA_SANDBOX");
+            ::aura::config::test_unsetenv("AURA_PIPELINE_STRICT");
         }
     } restore_env;
     using aura::compiler::mutate_type_gate::mode;
@@ -1540,12 +1541,12 @@ static void ac4362_soft_caller_arity() {
 // try catches it. A let whose init is that call does not run its body.
 static void ac4586_hof_callback_error_propagates() {
     std::println("\n--- #4586: map/filter callback errors propagate ---");
-    setenv("AURA_SANDBOX", "off", 1);
-    setenv("AURA_PIPELINE_STRICT", "0", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_PIPELINE_STRICT", "0", 1);
     struct RestoreEnv {
         ~RestoreEnv() {
-            unsetenv("AURA_SANDBOX");
-            unsetenv("AURA_PIPELINE_STRICT");
+            ::aura::config::test_unsetenv("AURA_SANDBOX");
+            ::aura::config::test_unsetenv("AURA_PIPELINE_STRICT");
         }
     } restore_env;
     CompilerService cs;
@@ -1580,12 +1581,12 @@ static void ac4586_hof_callback_error_propagates() {
 // reject a later rebind, and a real free name still does.
 static void ac4587_workspace_free_names() {
     std::println("\n--- #4587: workspace free names are not silent 0 ---");
-    setenv("AURA_SANDBOX", "off", 1);
-    setenv("AURA_PIPELINE_STRICT", "0", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_PIPELINE_STRICT", "0", 1);
     struct RestoreEnv {
         ~RestoreEnv() {
-            unsetenv("AURA_SANDBOX");
-            unsetenv("AURA_PIPELINE_STRICT");
+            ::aura::config::test_unsetenv("AURA_SANDBOX");
+            ::aura::config::test_unsetenv("AURA_PIPELINE_STRICT");
         }
     } restore_env;
     const char* ws = "(define a (lambda () n))\n"
@@ -1649,12 +1650,12 @@ static void ac4587_workspace_free_names() {
 // The same let/let* rule holds for plain script defines.
 static void ac4588_error_data_propagates() {
     std::println("\n--- #4588: error values propagate as data ---");
-    setenv("AURA_SANDBOX", "off", 1);
-    setenv("AURA_PIPELINE_STRICT", "0", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_PIPELINE_STRICT", "0", 1);
     struct RestoreEnv {
         ~RestoreEnv() {
-            unsetenv("AURA_SANDBOX");
-            unsetenv("AURA_PIPELINE_STRICT");
+            ::aura::config::test_unsetenv("AURA_SANDBOX");
+            ::aura::config::test_unsetenv("AURA_PIPELINE_STRICT");
         }
     } restore_env;
     const char* ws = "(define g (lambda () (let ((r (error \"x\"))) (if (error? r) 1 2))))\n"
@@ -1744,12 +1745,12 @@ static void ac4588_error_data_propagates() {
 // that exists only on the child is added. set-code failure says "rejected".
 static void ac4589_merge_child_define_wins() {
     std::println("\n--- #4589: merge promotes the child define ---");
-    setenv("AURA_SANDBOX", "off", 1);
-    setenv("AURA_PIPELINE_STRICT", "0", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_PIPELINE_STRICT", "0", 1);
     struct RestoreEnv {
         ~RestoreEnv() {
-            unsetenv("AURA_SANDBOX");
-            unsetenv("AURA_PIPELINE_STRICT");
+            ::aura::config::test_unsetenv("AURA_SANDBOX");
+            ::aura::config::test_unsetenv("AURA_PIPELINE_STRICT");
         }
     } restore_env;
     auto count_sub = [](const std::string& s, std::string_view sub) {
@@ -1836,12 +1837,12 @@ static void ac4589_merge_child_define_wins() {
 // 60 trial cycles + 20 merge cycles top_env still holds one `f` row.
 static void ac4779_trial_merge_cycles_do_not_grow_top_env() {
     std::println("\n--- #4779: trial/merge cycles keep top_env flat ---");
-    setenv("AURA_SANDBOX", "off", 1);
-    setenv("AURA_PIPELINE_STRICT", "0", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_PIPELINE_STRICT", "0", 1);
     struct RestoreEnv {
         ~RestoreEnv() {
-            unsetenv("AURA_SANDBOX");
-            unsetenv("AURA_PIPELINE_STRICT");
+            ::aura::config::test_unsetenv("AURA_SANDBOX");
+            ::aura::config::test_unsetenv("AURA_PIPELINE_STRICT");
         }
     } restore_env;
     CompilerService cs;
@@ -1886,12 +1887,12 @@ static void ac4779_trial_merge_cycles_do_not_grow_top_env() {
 //  64  ids keep increasing across the restore (counter not rewound)
 static void ac4729_merge_and_restore_keep_provenance() {
     std::println("\n--- #4729: merge/restore keep the mutation log ---");
-    setenv("AURA_SANDBOX", "off", 1);
-    setenv("AURA_PIPELINE_STRICT", "0", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_PIPELINE_STRICT", "0", 1);
     struct RestoreEnv {
         ~RestoreEnv() {
-            unsetenv("AURA_SANDBOX");
-            unsetenv("AURA_PIPELINE_STRICT");
+            ::aura::config::test_unsetenv("AURA_SANDBOX");
+            ::aura::config::test_unsetenv("AURA_PIPELINE_STRICT");
         }
     } restore_env;
     const auto prog = std::string(R"AURA(
@@ -2016,11 +2017,11 @@ static DepGraphRun4793 run_restore_dep_graph_4793() {
 }
 static void ac4793_restore_dep_graph_incremental() {
     std::println("\n--- #4793: ast:restore re-walks only the changed cone ---");
-    unsetenv("AURA_RESTORE_DEP_GRAPH_FULL");
+    ::aura::config::test_unsetenv("AURA_RESTORE_DEP_GRAPH_FULL");
     const auto inc = run_restore_dep_graph_4793();
-    setenv("AURA_RESTORE_DEP_GRAPH_FULL", "1", 1);
+    ::aura::config::test_setenv("AURA_RESTORE_DEP_GRAPH_FULL", "1", 1);
     const auto full = run_restore_dep_graph_4793();
-    unsetenv("AURA_RESTORE_DEP_GRAPH_FULL");
+    ::aura::config::test_unsetenv("AURA_RESTORE_DEP_GRAPH_FULL");
     std::println("  #4793 incremental run: incremental={} full={}; full run: incremental={} "
                  "full={}",
                  inc.incremental, inc.full, full.incremental, full.full);

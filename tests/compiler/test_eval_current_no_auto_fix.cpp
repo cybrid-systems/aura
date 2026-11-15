@@ -7,6 +7,7 @@
 //   AC3: source has #2484 + no auto-fix machinery
 //   AC4: gate wiring
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 #include "../support/service_module_source.hh"
 
@@ -380,8 +381,8 @@ static void ac4373_define_of_eval_binds() {
     const std::string saved_ps = prev_ps ? prev_ps : "";
     const bool had_sb = prev_sb != nullptr;
     const bool had_ps = prev_ps != nullptr;
-    setenv("AURA_SANDBOX", "off", 1);
-    setenv("AURA_PIPELINE_STRICT", "0", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_PIPELINE_STRICT", "0", 1);
     struct RestoreEnv {
         std::string sb;
         std::string ps;
@@ -389,13 +390,13 @@ static void ac4373_define_of_eval_binds() {
         bool had_ps;
         ~RestoreEnv() {
             if (had_sb)
-                setenv("AURA_SANDBOX", sb.c_str(), 1);
+                ::aura::config::test_setenv("AURA_SANDBOX", sb.c_str(), 1);
             else
-                unsetenv("AURA_SANDBOX");
+                ::aura::config::test_unsetenv("AURA_SANDBOX");
             if (had_ps)
-                setenv("AURA_PIPELINE_STRICT", ps.c_str(), 1);
+                ::aura::config::test_setenv("AURA_PIPELINE_STRICT", ps.c_str(), 1);
             else
-                unsetenv("AURA_PIPELINE_STRICT");
+                ::aura::config::test_unsetenv("AURA_PIPELINE_STRICT");
         }
     } restore{saved_sb, saved_ps, had_sb, had_ps};
 
@@ -435,8 +436,8 @@ static void ac4374_eval_let_keeps_primitives() {
     const std::string saved_ps = prev_ps ? prev_ps : "";
     const bool had_sb = prev_sb != nullptr;
     const bool had_ps = prev_ps != nullptr;
-    setenv("AURA_SANDBOX", "off", 1);
-    setenv("AURA_PIPELINE_STRICT", "0", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_PIPELINE_STRICT", "0", 1);
     struct RestoreEnv {
         std::string sb;
         std::string ps;
@@ -444,13 +445,13 @@ static void ac4374_eval_let_keeps_primitives() {
         bool had_ps;
         ~RestoreEnv() {
             if (had_sb)
-                setenv("AURA_SANDBOX", sb.c_str(), 1);
+                ::aura::config::test_setenv("AURA_SANDBOX", sb.c_str(), 1);
             else
-                unsetenv("AURA_SANDBOX");
+                ::aura::config::test_unsetenv("AURA_SANDBOX");
             if (had_ps)
-                setenv("AURA_PIPELINE_STRICT", ps.c_str(), 1);
+                ::aura::config::test_setenv("AURA_PIPELINE_STRICT", ps.c_str(), 1);
             else
-                unsetenv("AURA_PIPELINE_STRICT");
+                ::aura::config::test_unsetenv("AURA_PIPELINE_STRICT");
         }
     } restore{saved_sb, saved_ps, had_sb, had_ps};
 

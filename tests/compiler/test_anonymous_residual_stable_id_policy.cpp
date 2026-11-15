@@ -8,6 +8,7 @@
 //   AC4: Query distinguishes assign / preserve / residual_backfill
 //   AC5: Source-cite + linter coverage for create/set_name/remap
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include "compiler/aura_jit_bridge.h"
@@ -375,7 +376,7 @@ static void ac2637_schema_and_source_cite() {
 //   AC5: Query keys + schema + wired sentinel; #2605 axes preserved
 //   AC6: src-aligned soak (no residual growth under normal) + inject-over-cap test + coverage gate
 //
-// Note: setenv("AURA_RESIDUAL_SID0_CAP", "2", 1) is called at start of
+// Note: ::aura::config::test_setenv("AURA_RESIDUAL_SID0_CAP", "2", 1) is called at start of
 // main() BEFORE any aura_* call, so the resolver caches cap=2 for all
 // tests. This lets the same binary exercise both below-cap (1 residual
 // backfills) and above-cap (3 residuals → 3rd hits cap) paths.
@@ -3462,7 +3463,7 @@ int run_test_anonymous_residual_stable_id_policy() {
     // Set AURA_RESIDUAL_SID0_CAP=2 BEFORE any aura_* call so the
     // resolver caches cap=2 (allow testing both below-cap and
     // above-cap paths in this binary).
-    setenv("AURA_RESIDUAL_SID0_CAP", "2", 1);
+    ::aura::config::test_setenv("AURA_RESIDUAL_SID0_CAP", "2", 1);
     ac1_named_soak_no_residual_growth();
     ac2_anonymous_must_deopt_no_invent();
     ac3_residual_one_shot_backfill();

@@ -6,6 +6,7 @@
 // primitive body (io_walk_tenant_allows + io_print_val), not eval dispatch
 // and not a copied helper.
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include "compiler/security_capabilities.h"
@@ -110,13 +111,13 @@ template <typename F> StdoutCapture capture_stdout(F&& fn) {
 
 void arm_face(const char* sandbox, bool multi_tenant) {
     if (sandbox != nullptr && sandbox[0] != '\0')
-        ::setenv("AURA_SANDBOX", sandbox, 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", sandbox, 1);
     else
-        ::unsetenv("AURA_SANDBOX");
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
     if (multi_tenant)
-        ::setenv("AURA_MULTI_TENANT", "1", 1);
+        ::aura::config::test_setenv("AURA_MULTI_TENANT", "1", 1);
     else
-        ::unsetenv("AURA_MULTI_TENANT");
+        ::aura::config::test_unsetenv("AURA_MULTI_TENANT");
     aura::compiler::security::apply_production_security_defaults();
 }
 
@@ -490,8 +491,8 @@ int main() {
         expect_prints(ev, display, lst, kSecret, "4965 Soft/Off still prints");
     }
 
-    ::unsetenv("AURA_SANDBOX");
-    ::unsetenv("AURA_MULTI_TENANT");
+    ::aura::config::test_unsetenv("AURA_SANDBOX");
+    ::aura::config::test_unsetenv("AURA_MULTI_TENANT");
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
     aura::core::provenance::set_multi_tenant_env_active(false);
 

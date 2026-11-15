@@ -1,6 +1,7 @@
 // test_mutation_hold_boundary_batch.cpp — thematic multi-TU batch
 // Stream S4 disambiguated names.
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include "compiler/coercion_provenance_policy.hh"
@@ -26,7 +27,7 @@ static void reset_member_face() {
     // Soft lock-order: a prior member's apply_production Hard leftover
     // must not abort a later Soft revalidate on inversion.
     aura::compiler::lock_order::force_audit_mode_for_test(1);
-    ::setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
 }
 
 extern int run_test_effect_epoch_mutation_unify();

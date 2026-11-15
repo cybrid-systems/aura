@@ -3,6 +3,7 @@
 // capability cross-tenant grant, provenance deny, Strict sandbox link,
 // mutate/workspace force path, query:tenant-isolation-stats, stress deny.
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 #include "../support/service_module_source.hh"
 
@@ -766,9 +767,9 @@ static void ac4413_exec_fs_jail() {
     };
 
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
-    ::setenv("AURA_MULTI_TENANT", "1", 1);
+    ::aura::config::test_setenv("AURA_MULTI_TENANT", "1", 1);
     aura::core::provenance::set_multi_tenant_env_active(true);
-    ::setenv("AURA_TENANT_FS_ROOT", base.c_str(), 1);
+    ::aura::config::test_setenv("AURA_TENANT_FS_ROOT", base.c_str(), 1);
     using aura::compiler::security::tenant_host_root_for;
     const auto root = tenant_host_root_for(9);
     ::mkdir(root.c_str(), 0700);
@@ -837,7 +838,7 @@ static void ac4413_exec_fs_jail() {
     ::mkdir(link_base.c_str(), 0700);
     ::mkdir((link_base + "/real").c_str(), 0700);
     ::symlink((link_base + "/real").c_str(), (link_base + "/t-3").c_str());
-    ::setenv("AURA_TENANT_FS_ROOT", link_base.c_str(), 1);
+    ::aura::config::test_setenv("AURA_TENANT_FS_ROOT", link_base.c_str(), 1);
     ev.set_capability_tenant_id(3);
     if (jail_ok) {
         const auto se_base = ring.seq.load(std::memory_order_acquire);
@@ -1002,8 +1003,8 @@ static void ac4413_exec_fs_jail() {
         invent.open("../tests/core/test_issue_4413.cpp");
     CHECK(!invent.good(), "4413: no tests/core/test_issue_4413.cpp");
 
-    ::unsetenv("AURA_TENANT_FS_ROOT");
-    ::unsetenv("AURA_MULTI_TENANT");
+    ::aura::config::test_unsetenv("AURA_TENANT_FS_ROOT");
+    ::aura::config::test_unsetenv("AURA_MULTI_TENANT");
     aura::core::provenance::set_multi_tenant_env_active(false);
     rm_tree(base);
     rm_tree(link_base);
@@ -1021,9 +1022,9 @@ static void ac4414_module_reader_host_path() {
     const bool had_path = saved_aura_path != nullptr;
     auto restore_aura_path = [&]() {
         if (had_path)
-            ::setenv("AURA_PATH", saved_path.c_str(), 1);
+            ::aura::config::test_setenv("AURA_PATH", saved_path.c_str(), 1);
         else
-            ::unsetenv("AURA_PATH");
+            ::aura::config::test_unsetenv("AURA_PATH");
     };
 
     const std::string base = std::string("/tmp/aura-4414-") + std::to_string(::getpid());
@@ -1034,9 +1035,9 @@ static void ac4414_module_reader_host_path() {
 
     {
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
-        ::setenv("AURA_MULTI_TENANT", "1", 1);
+        ::aura::config::test_setenv("AURA_MULTI_TENANT", "1", 1);
         aura::core::provenance::set_multi_tenant_env_active(true);
-        ::setenv("AURA_TENANT_FS_ROOT", base.c_str(), 1);
+        ::aura::config::test_setenv("AURA_TENANT_FS_ROOT", base.c_str(), 1);
         using aura::compiler::security::tenant_host_root_for;
         const auto root_a = tenant_host_root_for(7);
         const std::string path_dir = base + "/on-path";
@@ -1063,7 +1064,7 @@ static void ac4414_module_reader_host_path() {
         rm_ec.clear();
         std::filesystem::create_symlink(victim, root_a + "/linked.aura-type", rm_ec);
         CHECK(!rm_ec, "4414 setup: linked.aura-type symlink");
-        ::setenv("AURA_PATH", path_dir.c_str(), 1);
+        ::aura::config::test_setenv("AURA_PATH", path_dir.c_str(), 1);
 
         CompilerService cs;
         auto& ev = cs.evaluator();
@@ -1249,8 +1250,8 @@ static void ac4414_module_reader_host_path() {
             CHECK(saw_escape(se_base, "load-module"), "4414: outside load-module still denies");
         }
 
-        ::unsetenv("AURA_TENANT_FS_ROOT");
-        ::unsetenv("AURA_MULTI_TENANT");
+        ::aura::config::test_unsetenv("AURA_TENANT_FS_ROOT");
+        ::aura::config::test_unsetenv("AURA_MULTI_TENANT");
         aura::core::provenance::set_multi_tenant_env_active(false);
         restore_aura_path();
     }
@@ -1464,8 +1465,8 @@ static void ac4414_module_reader_host_path() {
     }
 
     restore_aura_path();
-    ::unsetenv("AURA_TENANT_FS_ROOT");
-    ::unsetenv("AURA_MULTI_TENANT");
+    ::aura::config::test_unsetenv("AURA_TENANT_FS_ROOT");
+    ::aura::config::test_unsetenv("AURA_MULTI_TENANT");
     aura::core::provenance::set_multi_tenant_env_active(false);
     std::filesystem::remove_all(base, rm_ec);
     reset_all();
@@ -1592,9 +1593,9 @@ static void ac4643_1_jailed_child_stdio_is_null() {
     const std::string base = std::string("/tmp/aura-4643-") + std::to_string(::getpid());
     ::mkdir(base.c_str(), 0700);
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
-    ::setenv("AURA_MULTI_TENANT", "1", 1);
+    ::aura::config::test_setenv("AURA_MULTI_TENANT", "1", 1);
     aura::core::provenance::set_multi_tenant_env_active(true);
-    ::setenv("AURA_TENANT_FS_ROOT", base.c_str(), 1);
+    ::aura::config::test_setenv("AURA_TENANT_FS_ROOT", base.c_str(), 1);
     using aura::compiler::security::tenant_host_root_for;
     const auto root = tenant_host_root_for(9);
     ::mkdir(root.c_str(), 0700);
@@ -1647,8 +1648,8 @@ static void ac4643_1_jailed_child_stdio_is_null() {
         CHECK(true, "4643: no exec fs jail on this kernel — runtime AC skipped");
     }
 
-    ::unsetenv("AURA_TENANT_FS_ROOT");
-    ::unsetenv("AURA_MULTI_TENANT");
+    ::aura::config::test_unsetenv("AURA_TENANT_FS_ROOT");
+    ::aura::config::test_unsetenv("AURA_MULTI_TENANT");
     aura::core::provenance::set_multi_tenant_env_active(false);
     ::unlink((root + "/wrote.txt").c_str());
     ::rmdir(root.c_str());
@@ -1737,7 +1738,7 @@ static void ac4644_1_foreign_listener_is_not_drained() {
           "4644: socket prims installed");
 
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
-    ::setenv("AURA_MULTI_TENANT", "1", 1);
+    ::aura::config::test_setenv("AURA_MULTI_TENANT", "1", 1);
     aura::core::provenance::set_multi_tenant_env_active(true);
     ev_a.set_effect_sandbox_mode(1);
     ev_b.set_effect_sandbox_mode(1);
@@ -1825,7 +1826,7 @@ static void ac4644_1_foreign_listener_is_not_drained() {
     if (lfd >= 0)
         ::close(lfd);
 
-    ::unsetenv("AURA_MULTI_TENANT");
+    ::aura::config::test_unsetenv("AURA_MULTI_TENANT");
     aura::core::provenance::set_multi_tenant_env_active(false);
     reset_all();
 }
@@ -1975,7 +1976,7 @@ static void ac4922_1_sys_close_releases_owner_fd() {
     aura::core::bump_mutation_epoch(1);
     grant_sys_open_off(ev_a, 7);
     grant_sys_open_off(ev_b, 42);
-    ::setenv("AURA_MULTI_TENANT", "1", 1);
+    ::aura::config::test_setenv("AURA_MULTI_TENANT", "1", 1);
     aura::core::provenance::set_multi_tenant_env_active(true);
     set_mode(SandboxMode::Restricted);
     CHECK(ev_a.has_capability(aura::compiler::security::kCapSysOpen) &&
@@ -2038,7 +2039,7 @@ static void ac4922_1_sys_close_releases_owner_fd() {
         }
     }
 
-    ::unsetenv("AURA_MULTI_TENANT");
+    ::aura::config::test_unsetenv("AURA_MULTI_TENANT");
     aura::core::provenance::set_multi_tenant_env_active(false);
     reset_all();
 
@@ -2048,7 +2049,7 @@ static void ac4922_1_sys_close_releases_owner_fd() {
     // the per-Evaluator owned set is what release_minted_fds drains.
     {
         aura::core::bump_mutation_epoch(1);
-        ::setenv("AURA_MULTI_TENANT", "1", 1);
+        ::aura::config::test_setenv("AURA_MULTI_TENANT", "1", 1);
         aura::core::provenance::set_multi_tenant_env_active(true);
         set_mode(SandboxMode::Restricted);
 
@@ -2088,7 +2089,7 @@ static void ac4922_1_sys_close_releases_owner_fd() {
         if (fd_keep >= 0 && keep_close)
             (*keep_close)({make_int(fd_keep)});
 
-        ::unsetenv("AURA_MULTI_TENANT");
+        ::aura::config::test_unsetenv("AURA_MULTI_TENANT");
         aura::core::provenance::set_multi_tenant_env_active(false);
         reset_all();
     }
@@ -5036,17 +5037,17 @@ int main() {
         reset_all();
         CHECK(aura::core::provenance::kStableRefExportProductionHardRejectIssue == 3204,
               "3204 AC1: issue stamp");
-        ::unsetenv("AURA_STABLE_REF_EXPORT_HARD_REJECT");
+        ::aura::config::test_unsetenv("AURA_STABLE_REF_EXPORT_HARD_REJECT");
         CHECK(!aura::core::provenance::stable_ref_export_hard_reject(), "3204 AC1: Soft pref off");
-        ::setenv("AURA_SANDBOX", "restricted", 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
         aura::compiler::security::apply_production_security_defaults();
         CHECK(aura::core::provenance::stable_ref_export_hard_reject(),
               "ac3204_1_production_hard_reject: Restricted arms hard-reject");
-        ::setenv("AURA_SANDBOX", "off", 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
         aura::compiler::security::apply_production_security_defaults();
         CHECK(!aura::core::provenance::stable_ref_export_hard_reject(),
               "3204 AC1: sandbox=off leaves Soft");
-        ::unsetenv("AURA_SANDBOX");
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
         reset_all();
     }
     {
@@ -5086,7 +5087,7 @@ int main() {
     {
         std::println("\n--- #3204 AC3: Soft layout-only stays zero-cost contract ---");
         reset_all();
-        ::setenv("AURA_SANDBOX", "off", 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
         aura::compiler::security::apply_production_security_defaults();
         CHECK(!aura::core::provenance::stable_ref_export_hard_reject(),
               "ac3204_3_soft_quiet: Soft hard-reject off");
@@ -5123,7 +5124,7 @@ int main() {
         CHECK(read_file("src/compiler/security_defaults.hh").find("Issue #3204") !=
                   std::string::npos,
               "3204 AC3: production defaults cite #3204");
-        ::unsetenv("AURA_SANDBOX");
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
         reset_all();
     }
     {
@@ -5545,7 +5546,7 @@ int main() {
         // audit reason + env opt-in -> single_use=false, session_bound=false
         // — consumable outside a MutationBoundary (the bare rollback eval
         // runs without one).
-        ::setenv("AURA_ALLOW_DURABLE_STICKY", "1", 1);
+        ::aura::config::test_setenv("AURA_ALLOW_DURABLE_STICKY", "1", 1);
         ev.grant_effect_durable_sticky(/*tenant=*/7, "rb-3722-own", kEffectMutate,
                                        /*mid=*/1, "3722 AC3 own-mid rollback allow");
         CHECK(cs.eval("(set-code \"(define (n3722c x) x)\")").has_value(), "3722 AC3 set-code");
@@ -6353,7 +6354,7 @@ int main() {
         reset_all();
         aura::core::reset_mutation_epoch_for_test();
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
-        ::setenv("AURA_MULTI_TENANT", "1", 1);
+        ::aura::config::test_setenv("AURA_MULTI_TENANT", "1", 1);
         aura::core::provenance::set_multi_tenant_env_active(true);
         aura::compiler::typed_audit::apply_production_audit_defaults();
         CompilerService cs;
@@ -6402,7 +6403,7 @@ int main() {
         }
         CHECK(iso_mid0, "3801 AC2: IsolationDeny mid=0 at epoch=0");
         CHECK(!iso_mid1, "3801 AC2: no phantom IsolationDeny mid=1");
-        ::unsetenv("AURA_MULTI_TENANT");
+        ::aura::config::test_unsetenv("AURA_MULTI_TENANT");
         aura::core::provenance::set_multi_tenant_env_active(false);
         aura::compiler::typed_audit::apply_dev_audit_defaults();
     }
@@ -6700,12 +6701,12 @@ int main() {
             "\n--- #3802 AC1: Restricted+MT tenant A cannot write under tenant B prefix ---");
         reset_all();
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
-        ::setenv("AURA_MULTI_TENANT", "1", 1);
+        ::aura::config::test_setenv("AURA_MULTI_TENANT", "1", 1);
         aura::core::provenance::set_multi_tenant_env_active(true);
         // Isolate tenant FS base for the oracle.
         const char* tmp = std::getenv("TMPDIR");
         const std::string base = std::string(tmp && tmp[0] ? tmp : "/tmp") + "/aura-3802-ac1";
-        ::setenv("AURA_TENANT_FS_ROOT", base.c_str(), 1);
+        ::aura::config::test_setenv("AURA_TENANT_FS_ROOT", base.c_str(), 1);
         using aura::compiler::security::resolve_tenant_host_path;
         using aura::compiler::security::tenant_host_root_for;
         using aura::compiler::security::TenantHostPathVerdict;
@@ -6742,8 +6743,8 @@ int main() {
             }
         }
         CHECK(saw, "3802 AC1: IsolationDeny SE reason tenant-path-escape");
-        ::unsetenv("AURA_TENANT_FS_ROOT");
-        ::unsetenv("AURA_MULTI_TENANT");
+        ::aura::config::test_unsetenv("AURA_TENANT_FS_ROOT");
+        ::aura::config::test_unsetenv("AURA_MULTI_TENANT");
         aura::core::provenance::set_multi_tenant_env_active(false);
     }
 
@@ -6826,11 +6827,11 @@ int main() {
         // Dual-tenant chaos: A and B Evaluators; each denied on the other's root.
         reset_all();
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
-        ::setenv("AURA_MULTI_TENANT", "1", 1);
+        ::aura::config::test_setenv("AURA_MULTI_TENANT", "1", 1);
         aura::core::provenance::set_multi_tenant_env_active(true);
         const char* tmp = std::getenv("TMPDIR");
         const std::string base = std::string(tmp && tmp[0] ? tmp : "/tmp") + "/aura-3802-chaos";
-        ::setenv("AURA_TENANT_FS_ROOT", base.c_str(), 1);
+        ::aura::config::test_setenv("AURA_TENANT_FS_ROOT", base.c_str(), 1);
         CompilerService cs_a;
         CompilerService cs_b;
         auto& a = cs_a.evaluator();
@@ -6849,8 +6850,8 @@ int main() {
         CHECK(a.check_tenant_host_path("local.txt", out, "write-file"),
               "3802 AC4 chaos: A allows relative under own root");
         CHECK(out.find("/t-11/") != std::string::npos, "3802 AC4 chaos: A resolved under t-11");
-        ::unsetenv("AURA_TENANT_FS_ROOT");
-        ::unsetenv("AURA_MULTI_TENANT");
+        ::aura::config::test_unsetenv("AURA_TENANT_FS_ROOT");
+        ::aura::config::test_unsetenv("AURA_MULTI_TENANT");
         aura::core::provenance::set_multi_tenant_env_active(false);
 
         std::ifstream invent("tests/core/test_issue_3802.cpp");
@@ -6865,11 +6866,11 @@ int main() {
             "\n--- #3835 AC1: Restricted+MT tenant A cannot read under tenant B prefix ---");
         reset_all();
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
-        ::setenv("AURA_MULTI_TENANT", "1", 1);
+        ::aura::config::test_setenv("AURA_MULTI_TENANT", "1", 1);
         aura::core::provenance::set_multi_tenant_env_active(true);
         const char* tmp = std::getenv("TMPDIR");
         const std::string base = std::string(tmp && tmp[0] ? tmp : "/tmp") + "/aura-3835-ac1";
-        ::setenv("AURA_TENANT_FS_ROOT", base.c_str(), 1);
+        ::aura::config::test_setenv("AURA_TENANT_FS_ROOT", base.c_str(), 1);
         using aura::compiler::security::resolve_tenant_host_path;
         using aura::compiler::security::tenant_host_root_for;
         using aura::compiler::security::TenantHostPathVerdict;
@@ -6910,8 +6911,8 @@ int main() {
         CHECK(ev.check_tenant_host_path("ok.txt", out, "read-file"),
               "3835 AC1: in-tenant relative allows for read-file");
         CHECK(out.find(root_a) == 0, "3835 AC1: resolved under tenant A root");
-        ::unsetenv("AURA_TENANT_FS_ROOT");
-        ::unsetenv("AURA_MULTI_TENANT");
+        ::aura::config::test_unsetenv("AURA_TENANT_FS_ROOT");
+        ::aura::config::test_unsetenv("AURA_MULTI_TENANT");
         aura::core::provenance::set_multi_tenant_env_active(false);
     }
 
@@ -7026,11 +7027,11 @@ int main() {
             "\n--- #4233 AC1: Restricted+MT tenant A cannot shell into tenant B prefix ---");
         reset_all();
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
-        ::setenv("AURA_MULTI_TENANT", "1", 1);
+        ::aura::config::test_setenv("AURA_MULTI_TENANT", "1", 1);
         aura::core::provenance::set_multi_tenant_env_active(true);
         const char* tmp = std::getenv("TMPDIR");
         const std::string base = std::string(tmp && tmp[0] ? tmp : "/tmp") + "/aura-4233-ac1";
-        ::setenv("AURA_TENANT_FS_ROOT", base.c_str(), 1);
+        ::aura::config::test_setenv("AURA_TENANT_FS_ROOT", base.c_str(), 1);
         using aura::compiler::security::tenant_host_root_for;
         const auto root_a = tenant_host_root_for(7);
         const auto root_b = tenant_host_root_for(42);
@@ -7080,15 +7081,15 @@ int main() {
               "4233 AC1: redirect-read absolute denies");
         CHECK(!ev.check_tenant_exec_jail("git --git-dir=/etc/x status", out, "command-output"),
               "4233 AC1: '='-joined absolute denies");
-        ::unsetenv("AURA_TENANT_FS_ROOT");
-        ::unsetenv("AURA_MULTI_TENANT");
+        ::aura::config::test_unsetenv("AURA_TENANT_FS_ROOT");
+        ::aura::config::test_unsetenv("AURA_MULTI_TENANT");
         aura::core::provenance::set_multi_tenant_env_active(false);
     }
 
     {
         std::println("\n--- #4233 AC2: Soft/Off / single-tenant Restricted exec passthrough ---");
         reset_all();
-        ::unsetenv("AURA_MULTI_TENANT");
+        ::aura::config::test_unsetenv("AURA_MULTI_TENANT");
         aura::core::provenance::set_multi_tenant_env_active(false);
         using aura::compiler::security::tenant_exec_cmd_escapes_root;
         using aura::compiler::security::tenant_host_path_policy_active;
@@ -7164,11 +7165,11 @@ int main() {
         std::println("\n--- #4233 AC3: active-policy allow carries the jail root; prims wired ---");
         reset_all();
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
-        ::setenv("AURA_MULTI_TENANT", "1", 1);
+        ::aura::config::test_setenv("AURA_MULTI_TENANT", "1", 1);
         aura::core::provenance::set_multi_tenant_env_active(true);
         const char* tmp = std::getenv("TMPDIR");
         const std::string base = std::string(tmp && tmp[0] ? tmp : "/tmp") + "/aura-4233-ac3";
-        ::setenv("AURA_TENANT_FS_ROOT", base.c_str(), 1);
+        ::aura::config::test_setenv("AURA_TENANT_FS_ROOT", base.c_str(), 1);
         using aura::compiler::security::tenant_host_root_for;
         const auto root_a = tenant_host_root_for(7);
         CompilerService cs;
@@ -7212,8 +7213,8 @@ int main() {
               "4233 AC3: command-output prim wires the jail fence");
         CHECK(filep.find("::chdir(jail_root.c_str())") != std::string::npos,
               "4233 AC3: exec children chdir under the tenant root");
-        ::unsetenv("AURA_TENANT_FS_ROOT");
-        ::unsetenv("AURA_MULTI_TENANT");
+        ::aura::config::test_unsetenv("AURA_TENANT_FS_ROOT");
+        ::aura::config::test_unsetenv("AURA_MULTI_TENANT");
         aura::core::provenance::set_multi_tenant_env_active(false);
     }
 
@@ -7221,11 +7222,11 @@ int main() {
         std::println("\n--- #4233 AC4: dual-evaluator chaos — Exec face fenced per tenant ---");
         reset_all();
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
-        ::setenv("AURA_MULTI_TENANT", "1", 1);
+        ::aura::config::test_setenv("AURA_MULTI_TENANT", "1", 1);
         aura::core::provenance::set_multi_tenant_env_active(true);
         const char* tmp = std::getenv("TMPDIR");
         const std::string base = std::string(tmp && tmp[0] ? tmp : "/tmp") + "/aura-4233-chaos";
-        ::setenv("AURA_TENANT_FS_ROOT", base.c_str(), 1);
+        ::aura::config::test_setenv("AURA_TENANT_FS_ROOT", base.c_str(), 1);
         using aura::compiler::security::tenant_host_root_for;
         const auto root_a = tenant_host_root_for(11);
         const auto root_b = tenant_host_root_for(22);
@@ -7253,8 +7254,8 @@ int main() {
             CHECK(!ev_b.check_tenant_exec_jail("work.txt", out, "command-output"),
                   "4233 AC4: no filesystem jail denies B's relative exec");
         }
-        ::unsetenv("AURA_TENANT_FS_ROOT");
-        ::unsetenv("AURA_MULTI_TENANT");
+        ::aura::config::test_unsetenv("AURA_TENANT_FS_ROOT");
+        ::aura::config::test_unsetenv("AURA_MULTI_TENANT");
         aura::core::provenance::set_multi_tenant_env_active(false);
     }
 
@@ -7286,11 +7287,11 @@ int main() {
             "\n--- #4380 AC1: quoted / interpreter-arg absolute paths deny at the jail ---");
         reset_all();
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
-        ::setenv("AURA_MULTI_TENANT", "1", 1);
+        ::aura::config::test_setenv("AURA_MULTI_TENANT", "1", 1);
         aura::core::provenance::set_multi_tenant_env_active(true);
         const char* tmp = std::getenv("TMPDIR");
         const std::string base = std::string(tmp && tmp[0] ? tmp : "/tmp") + "/aura-4380-ac1";
-        ::setenv("AURA_TENANT_FS_ROOT", base.c_str(), 1);
+        ::aura::config::test_setenv("AURA_TENANT_FS_ROOT", base.c_str(), 1);
         CompilerService cs;
         auto& ev = cs.evaluator();
         ev.set_effect_sandbox_mode(1);
@@ -7329,8 +7330,8 @@ int main() {
             }
             CHECK(saw, (std::string("4380 AC1: IsolationDeny SE for ") + op).c_str());
         }
-        ::unsetenv("AURA_TENANT_FS_ROOT");
-        ::unsetenv("AURA_MULTI_TENANT");
+        ::aura::config::test_unsetenv("AURA_TENANT_FS_ROOT");
+        ::aura::config::test_unsetenv("AURA_MULTI_TENANT");
         aura::core::provenance::set_multi_tenant_env_active(false);
     }
 
@@ -7367,11 +7368,11 @@ int main() {
             "\n--- #4380 AC3: symlink component under tenant root denies the file face ---");
         reset_all();
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
-        ::setenv("AURA_MULTI_TENANT", "1", 1);
+        ::aura::config::test_setenv("AURA_MULTI_TENANT", "1", 1);
         aura::core::provenance::set_multi_tenant_env_active(true);
         const char* tmp = std::getenv("TMPDIR");
         const std::string base = std::string(tmp && tmp[0] ? tmp : "/tmp") + "/aura-4380-ac3";
-        ::setenv("AURA_TENANT_FS_ROOT", base.c_str(), 1);
+        ::aura::config::test_setenv("AURA_TENANT_FS_ROOT", base.c_str(), 1);
         using aura::compiler::security::tenant_host_root_for;
         const auto root_a = tenant_host_root_for(7);
         // Idempotent across runs: a previous run left links/dirs in place
@@ -7430,8 +7431,8 @@ int main() {
               "4380 AC3: final-component symlink denies");
         CHECK(ring.seq.load(std::memory_order_acquire) > se_base_lnk,
               "4380 AC3: final symlink deny joins the SE row");
-        ::unsetenv("AURA_TENANT_FS_ROOT");
-        ::unsetenv("AURA_MULTI_TENANT");
+        ::aura::config::test_unsetenv("AURA_TENANT_FS_ROOT");
+        ::aura::config::test_unsetenv("AURA_MULTI_TENANT");
         aura::core::provenance::set_multi_tenant_env_active(false);
     }
 
@@ -7461,11 +7462,11 @@ int main() {
         std::println("\n--- #4381 AC1: git-* runs jailed under the caller tenant root ---");
         reset_all();
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
-        ::setenv("AURA_MULTI_TENANT", "1", 1);
+        ::aura::config::test_setenv("AURA_MULTI_TENANT", "1", 1);
         aura::core::provenance::set_multi_tenant_env_active(true);
         const char* tmp = std::getenv("TMPDIR");
         const std::string base = std::string(tmp && tmp[0] ? tmp : "/tmp") + "/aura-4381-ac1";
-        ::setenv("AURA_TENANT_FS_ROOT", base.c_str(), 1);
+        ::aura::config::test_setenv("AURA_TENANT_FS_ROOT", base.c_str(), 1);
         using aura::compiler::security::tenant_host_root_for;
         const auto root_a = tenant_host_root_for(7);
         // Idempotent across runs: a stale tenant repo from a previous run
@@ -7607,8 +7608,8 @@ int main() {
         CHECK(log_out.find("init") != std::string::npos,
               "4381 AC1: jailed git-log shows the tenant repo commit");
 
-        ::unsetenv("AURA_TENANT_FS_ROOT");
-        ::unsetenv("AURA_MULTI_TENANT");
+        ::aura::config::test_unsetenv("AURA_TENANT_FS_ROOT");
+        ::aura::config::test_unsetenv("AURA_MULTI_TENANT");
         aura::core::provenance::set_multi_tenant_env_active(false);
     }
 
@@ -7684,11 +7685,11 @@ int main() {
         std::println("\n--- #4382 AC1: http-* scheme fence denies non-http(s) URLs ---");
         reset_all();
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
-        ::setenv("AURA_MULTI_TENANT", "1", 1);
+        ::aura::config::test_setenv("AURA_MULTI_TENANT", "1", 1);
         aura::core::provenance::set_multi_tenant_env_active(true);
         const char* tmp = std::getenv("TMPDIR");
         const std::string base = std::string(tmp && tmp[0] ? tmp : "/tmp") + "/aura-4382-ac1";
-        ::setenv("AURA_TENANT_FS_ROOT", base.c_str(), 1);
+        ::aura::config::test_setenv("AURA_TENANT_FS_ROOT", base.c_str(), 1);
         CompilerService cs;
         auto& ev = cs.evaluator();
         ev.set_effect_sandbox_mode(1);
@@ -7775,8 +7776,8 @@ int main() {
             CHECK(ring.seq.load(std::memory_order_acquire) > se_base,
                   "4382 AC1: http-post prim deny joins the SE row");
         }
-        ::unsetenv("AURA_TENANT_FS_ROOT");
-        ::unsetenv("AURA_MULTI_TENANT");
+        ::aura::config::test_unsetenv("AURA_TENANT_FS_ROOT");
+        ::aura::config::test_unsetenv("AURA_MULTI_TENANT");
         aura::core::provenance::set_multi_tenant_env_active(false);
     }
 
@@ -7912,11 +7913,11 @@ int main() {
             "\n--- #4399 AC1: Restricted+MT denies host paths outside the tenant root ---");
         reset_all();
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
-        ::setenv("AURA_MULTI_TENANT", "1", 1);
+        ::aura::config::test_setenv("AURA_MULTI_TENANT", "1", 1);
         aura::core::provenance::set_multi_tenant_env_active(true);
         const char* tmp = std::getenv("TMPDIR");
         const std::string base = std::string(tmp && tmp[0] ? tmp : "/tmp") + "/aura-4399-ac1";
-        ::setenv("AURA_TENANT_FS_ROOT", base.c_str(), 1);
+        ::aura::config::test_setenv("AURA_TENANT_FS_ROOT", base.c_str(), 1);
         using aura::compiler::security::tenant_host_root_for;
         const auto root_a = tenant_host_root_for(7);
         std::error_code rm_ec;
@@ -8107,8 +8108,8 @@ int main() {
             CHECK(slurp(victim) == "SECRET", "4399 AC1: victim still SECRET after in-root writes");
         }
 
-        ::unsetenv("AURA_TENANT_FS_ROOT");
-        ::unsetenv("AURA_MULTI_TENANT");
+        ::aura::config::test_unsetenv("AURA_TENANT_FS_ROOT");
+        ::aura::config::test_unsetenv("AURA_MULTI_TENANT");
         aura::core::provenance::set_multi_tenant_env_active(false);
     }
 
@@ -8286,7 +8287,7 @@ int main() {
         const std::string base = std::string(tmp && tmp[0] ? tmp : "/tmp") + "/aura-4400";
         std::error_code rm_ec;
         std::filesystem::remove_all(base, rm_ec);
-        ::setenv("AURA_TENANT_FS_ROOT", base.c_str(), 1);
+        ::aura::config::test_setenv("AURA_TENANT_FS_ROOT", base.c_str(), 1);
         using aura::compiler::security::tenant_host_root_for;
         const auto root_a = tenant_host_root_for(7);
         std::filesystem::create_directories(root_a);
@@ -8323,7 +8324,7 @@ int main() {
         }
 
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
-        ::setenv("AURA_MULTI_TENANT", "1", 1);
+        ::aura::config::test_setenv("AURA_MULTI_TENANT", "1", 1);
         aura::core::provenance::set_multi_tenant_env_active(true);
         CompilerService cs;
         auto& ev = cs.evaluator();
@@ -8376,7 +8377,7 @@ int main() {
                       std::string::npos,
                   "4400 AC1: deny reason is tenant-path-escape");
         }
-        ::unsetenv("AURA_MULTI_TENANT");
+        ::aura::config::test_unsetenv("AURA_MULTI_TENANT");
         aura::core::provenance::set_multi_tenant_env_active(false);
     }
 
@@ -8385,11 +8386,11 @@ int main() {
         reset_all();
         const char* tmp = std::getenv("TMPDIR");
         const std::string base = std::string(tmp && tmp[0] ? tmp : "/tmp") + "/aura-4400";
-        ::setenv("AURA_TENANT_FS_ROOT", base.c_str(), 1);
+        ::aura::config::test_setenv("AURA_TENANT_FS_ROOT", base.c_str(), 1);
         using aura::compiler::security::tenant_host_root_for;
         const auto root_a = tenant_host_root_for(7);
         const std::string crafted = root_a + "/crafted.bin";
-        ::setenv("AURA_MULTI_TENANT", "1", 1);
+        ::aura::config::test_setenv("AURA_MULTI_TENANT", "1", 1);
         aura::core::provenance::set_multi_tenant_env_active(true);
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
         CompilerService cs;
@@ -8479,8 +8480,8 @@ int main() {
                 rel_escape = true;
         }
         CHECK(!rel_escape, "4400 AC2: relative in-root path is not a tenant-path-escape");
-        ::unsetenv("AURA_TENANT_FS_ROOT");
-        ::unsetenv("AURA_MULTI_TENANT");
+        ::aura::config::test_unsetenv("AURA_TENANT_FS_ROOT");
+        ::aura::config::test_unsetenv("AURA_MULTI_TENANT");
         aura::core::provenance::set_multi_tenant_env_active(false);
     }
 
@@ -8490,10 +8491,10 @@ int main() {
         reset_all();
         const char* tmp = std::getenv("TMPDIR");
         const std::string base = std::string(tmp && tmp[0] ? tmp : "/tmp") + "/aura-4400";
-        ::setenv("AURA_TENANT_FS_ROOT", base.c_str(), 1);
+        ::aura::config::test_setenv("AURA_TENANT_FS_ROOT", base.c_str(), 1);
         using aura::compiler::security::tenant_host_root_for;
         const std::string crafted = tenant_host_root_for(7) + "/crafted.bin";
-        ::unsetenv("AURA_MULTI_TENANT");
+        ::aura::config::test_unsetenv("AURA_MULTI_TENANT");
         aura::core::provenance::set_multi_tenant_env_active(false);
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
         CompilerService cs;
@@ -8529,14 +8530,14 @@ int main() {
                 path_escape = true;
         }
         CHECK(!path_escape, "4400 AC3: Off deserialize emits no tenant-path-escape");
-        ::unsetenv("AURA_TENANT_FS_ROOT");
+        ::aura::config::test_unsetenv("AURA_TENANT_FS_ROOT");
     }
 
     {
         std::println(
             "\n--- #4400 AC4: ast:restore direct path without Mutate keeps workspace B ---");
         reset_all();
-        ::unsetenv("AURA_MULTI_TENANT");
+        ::aura::config::test_unsetenv("AURA_MULTI_TENANT");
         aura::core::provenance::set_multi_tenant_env_active(false);
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
         CompilerService cs;
@@ -8550,7 +8551,7 @@ int main() {
         CHECK(cs.eval("(eval-current)").has_value(), "4400 AC4: eval B");
         auto before = cs.eval("(marker)");
         CHECK(before && is_int(*before) && as_int(*before) == 9, "4400 AC4: workspace is B");
-        ::setenv("AURA_MULTI_TENANT", "1", 1);
+        ::aura::config::test_setenv("AURA_MULTI_TENANT", "1", 1);
         aura::core::provenance::set_multi_tenant_env_active(true);
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
         ev.set_effect_sandbox_mode(1);
@@ -8565,7 +8566,7 @@ int main() {
         CHECK(msg.find("op=mw:restore") != std::string::npos, "4400 AC4: deny op is mw:restore");
         auto after = cs.eval("(marker)");
         CHECK(after && is_int(*after) && as_int(*after) == 9, "4400 AC4: workspace stays B");
-        ::unsetenv("AURA_MULTI_TENANT");
+        ::aura::config::test_unsetenv("AURA_MULTI_TENANT");
         aura::core::provenance::set_multi_tenant_env_active(false);
     }
 
@@ -8657,11 +8658,11 @@ int main() {
             "\n--- #4560 AC1: Restricted+MT denies persist-info outside the tenant root ---");
         reset_all();
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
-        ::setenv("AURA_MULTI_TENANT", "1", 1);
+        ::aura::config::test_setenv("AURA_MULTI_TENANT", "1", 1);
         aura::core::provenance::set_multi_tenant_env_active(true);
         const char* tmp = std::getenv("TMPDIR");
         const std::string base = std::string(tmp && tmp[0] ? tmp : "/tmp") + "/aura-4560-ac1";
-        ::setenv("AURA_TENANT_FS_ROOT", base.c_str(), 1);
+        ::aura::config::test_setenv("AURA_TENANT_FS_ROOT", base.c_str(), 1);
         using aura::compiler::security::tenant_host_root_for;
         const auto root_a = tenant_host_root_for(7);
         std::error_code rm_ec;
@@ -8783,8 +8784,8 @@ int main() {
             CHECK(saw_escape(se_esc, sibling_mid), "4560 AC1: ../ escape emits IsolationDeny");
         }
 
-        ::unsetenv("AURA_TENANT_FS_ROOT");
-        ::unsetenv("AURA_MULTI_TENANT");
+        ::aura::config::test_unsetenv("AURA_TENANT_FS_ROOT");
+        ::aura::config::test_unsetenv("AURA_MULTI_TENANT");
         aura::core::provenance::set_multi_tenant_env_active(false);
         std::filesystem::remove_all(base, rm_ec);
     }
@@ -8927,7 +8928,7 @@ int main() {
               "4561: socket prims installed");
 
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
-        ::setenv("AURA_MULTI_TENANT", "1", 1);
+        ::aura::config::test_setenv("AURA_MULTI_TENANT", "1", 1);
         aura::core::provenance::set_multi_tenant_env_active(true);
         ev_a.set_effect_sandbox_mode(1);
         ev_a.set_capability_tenant_id(7);
@@ -9063,7 +9064,7 @@ int main() {
 
         std::println("\n--- #4561: Soft skips the fd owner map ---");
         reset_all();
-        ::unsetenv("AURA_MULTI_TENANT");
+        ::aura::config::test_unsetenv("AURA_MULTI_TENANT");
         ev_a.set_effect_sandbox_mode(0);
         ev_a.set_capability_tenant_id(7);
         int soft_sv[2] = {-1, -1};
@@ -9102,7 +9103,7 @@ int main() {
             invent.open("../tests/core/test_issue_4561.cpp");
         CHECK(!invent.good(), "4561: no tests/core/test_issue_4561.cpp");
 
-        ::unsetenv("AURA_MULTI_TENANT");
+        ::aura::config::test_unsetenv("AURA_MULTI_TENANT");
         aura::core::provenance::set_multi_tenant_env_active(false);
         reset_all();
     }
@@ -9135,7 +9136,7 @@ int main() {
         reset_all();
         aura::core::bump_mutation_epoch(1);
         aura::core::provenance::set_multi_tenant_env_active(true);
-        ::setenv("AURA_MULTI_TENANT", "1", 1);
+        ::aura::config::test_setenv("AURA_MULTI_TENANT", "1", 1);
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
         CompilerService cs;
         auto& ev = cs.evaluator();
@@ -9372,7 +9373,7 @@ int main() {
                   "4691: recover cause fence is before the byte copy");
         }
 
-        ::unsetenv("AURA_MULTI_TENANT");
+        ::aura::config::test_unsetenv("AURA_MULTI_TENANT");
         aura::core::provenance::set_multi_tenant_env_active(false);
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
         reset_all();
@@ -9384,9 +9385,9 @@ int main() {
         reset_all();
         aura::core::provenance::reset_undeclared_mt_autodetect_for_test();
         aura::core::bump_mutation_epoch(1);
-        ::unsetenv("AURA_MT_AUTODETECT");
-        ::unsetenv("AURA_MULTI_TENANT");
-        ::unsetenv("AURA_HARD_CAPTURE_TENANT");
+        ::aura::config::test_unsetenv("AURA_MT_AUTODETECT");
+        ::aura::config::test_unsetenv("AURA_MULTI_TENANT");
+        ::aura::config::test_unsetenv("AURA_HARD_CAPTURE_TENANT");
         CompilerService cs;
         auto& ev = cs.evaluator();
         ev.disarm_production_audit_defaults_for_test();
@@ -9482,9 +9483,9 @@ int main() {
         std::println("\n--- #4693: JIT hash-ref misses a foreign table and a non-hash ---");
         reset_all();
         aura::core::provenance::reset_undeclared_mt_autodetect_for_test();
-        ::unsetenv("AURA_MT_AUTODETECT");
-        ::unsetenv("AURA_MULTI_TENANT");
-        ::unsetenv("AURA_HARD_CAPTURE_TENANT");
+        ::aura::config::test_unsetenv("AURA_MT_AUTODETECT");
+        ::aura::config::test_unsetenv("AURA_MULTI_TENANT");
+        ::aura::config::test_unsetenv("AURA_HARD_CAPTURE_TENANT");
         CompilerService cs;
         auto& ev = cs.evaluator();
         ev.disarm_production_audit_defaults_for_test();
@@ -9718,9 +9719,9 @@ int main() {
         std::println("\n--- #4694: closure:free! audits a foreign and an unstamped slot ---");
         reset_all();
         aura::core::provenance::reset_undeclared_mt_autodetect_for_test();
-        ::unsetenv("AURA_MT_AUTODETECT");
-        ::unsetenv("AURA_MULTI_TENANT");
-        ::unsetenv("AURA_HARD_CAPTURE_TENANT");
+        ::aura::config::test_unsetenv("AURA_MT_AUTODETECT");
+        ::aura::config::test_unsetenv("AURA_MULTI_TENANT");
+        ::aura::config::test_unsetenv("AURA_HARD_CAPTURE_TENANT");
         CompilerService cs;
         auto& ev = cs.evaluator();
         ev.disarm_production_audit_defaults_for_test();
@@ -9906,8 +9907,8 @@ int main() {
 
         const char* tmp = std::getenv("TMPDIR");
         const std::string base = std::string(tmp && tmp[0] ? tmp : "/tmp") + "/aura-5212-toctou";
-        ::setenv("AURA_TENANT_FS_ROOT", base.c_str(), 1);
-        ::setenv("AURA_MULTI_TENANT", "1", 1);
+        ::aura::config::test_setenv("AURA_TENANT_FS_ROOT", base.c_str(), 1);
+        ::aura::config::test_setenv("AURA_MULTI_TENANT", "1", 1);
         aura::core::provenance::set_multi_tenant_env_active(true);
         using aura::compiler::security::open_tenant_root_dirfd;
         using aura::compiler::security::open_under_tenant_root;
@@ -10132,8 +10133,8 @@ int main() {
         CHECK(!std::filesystem::exists(victim_y, ec),
               "5212: planted symlink write created nothing outside");
 
-        ::unsetenv("AURA_TENANT_FS_ROOT");
-        ::unsetenv("AURA_MULTI_TENANT");
+        ::aura::config::test_unsetenv("AURA_TENANT_FS_ROOT");
+        ::aura::config::test_unsetenv("AURA_MULTI_TENANT");
         aura::core::provenance::set_multi_tenant_env_active(false);
         ev.set_effect_sandbox_mode(0);
         reset_all();

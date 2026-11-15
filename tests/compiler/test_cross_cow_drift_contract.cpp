@@ -8,6 +8,7 @@
 //   AC4: Soft disabled via env → always hard on dual miss (disabled reason)
 //   AC5: Header documents single-workspace MVP vs call-time soft scope
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include "compiler/aura_jit_bridge.h"
@@ -59,8 +60,8 @@ static std::int64_t href(CompilerService& cs, const char* key) {
 }
 
 static void clear_env() {
-    unsetenv("AURA_CROSS_COW_SOFT_MIGRATE");
-    unsetenv("AURA_CROSS_COW_SOFT_MIGRATE_MAX_DRIFT");
+    ::aura::config::test_unsetenv("AURA_CROSS_COW_SOFT_MIGRATE");
+    ::aura::config::test_unsetenv("AURA_CROSS_COW_SOFT_MIGRATE_MAX_DRIFT");
 }
 
 // Ensure table epoch tracking is active (non-zero) and stamp a fresh closure.
@@ -77,8 +78,8 @@ static std::int64_t alloc_stamped(const char* name) {
 static void ac1_near_drift_soft() {
     std::println("\n--- #2505 AC1: near-drift live → soft migrate ---");
     clear_env();
-    setenv("AURA_CROSS_COW_SOFT_MIGRATE", "1", 1);
-    setenv("AURA_CROSS_COW_SOFT_MIGRATE_MAX_DRIFT", "8", 1);
+    ::aura::config::test_setenv("AURA_CROSS_COW_SOFT_MIGRATE", "1", 1);
+    ::aura::config::test_setenv("AURA_CROSS_COW_SOFT_MIGRATE_MAX_DRIFT", "8", 1);
     CompilerMetrics metrics{};
     aura_set_aot_metrics(&metrics);
 
@@ -116,8 +117,8 @@ static void ac1_near_drift_soft() {
 static void ac2_far_drift_hard() {
     std::println("\n--- #2505 AC2: far-drift → hard reject + FarBehind reason ---");
     clear_env();
-    setenv("AURA_CROSS_COW_SOFT_MIGRATE", "1", 1);
-    setenv("AURA_CROSS_COW_SOFT_MIGRATE_MAX_DRIFT", "1", 1);
+    ::aura::config::test_setenv("AURA_CROSS_COW_SOFT_MIGRATE", "1", 1);
+    ::aura::config::test_setenv("AURA_CROSS_COW_SOFT_MIGRATE_MAX_DRIFT", "1", 1);
     CompilerMetrics metrics{};
     aura_set_aot_metrics(&metrics);
 
@@ -154,8 +155,8 @@ static void ac2_far_drift_hard() {
 static void ac3_linear_and_freed() {
     std::println("\n--- #2505 AC3: linear drift / freed → hard path only ---");
     clear_env();
-    setenv("AURA_CROSS_COW_SOFT_MIGRATE", "1", 1);
-    setenv("AURA_CROSS_COW_SOFT_MIGRATE_MAX_DRIFT", "64", 1);
+    ::aura::config::test_setenv("AURA_CROSS_COW_SOFT_MIGRATE", "1", 1);
+    ::aura::config::test_setenv("AURA_CROSS_COW_SOFT_MIGRATE_MAX_DRIFT", "64", 1);
     CompilerMetrics metrics{};
     aura_set_aot_metrics(&metrics);
 
@@ -199,8 +200,8 @@ static void ac3_linear_and_freed() {
 static void ac4_soft_disabled() {
     std::println("\n--- #2505 AC4: soft disabled → always hard on dual miss ---");
     clear_env();
-    setenv("AURA_CROSS_COW_SOFT_MIGRATE", "0", 1);
-    setenv("AURA_CROSS_COW_SOFT_MIGRATE_MAX_DRIFT", "4096", 1);
+    ::aura::config::test_setenv("AURA_CROSS_COW_SOFT_MIGRATE", "0", 1);
+    ::aura::config::test_setenv("AURA_CROSS_COW_SOFT_MIGRATE_MAX_DRIFT", "4096", 1);
     CompilerMetrics metrics{};
     aura_set_aot_metrics(&metrics);
 

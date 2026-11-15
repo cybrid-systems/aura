@@ -38,6 +38,7 @@
 //                                       query:orch-module-stats
 //                                       join-drain-residual-reclaim-total
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 #include "orch/sched_runner_test_helper.h"
 
@@ -1021,7 +1022,7 @@ static void ac3529_1_dtor_timeout_force_releases() {
     apply_production_audit_defaults();
     const char* prev = std::getenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
     std::string prev_s = prev ? prev : "";
-    ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", "0", 1);
+    ::aura::config::test_setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", "0", 1);
     const auto before =
         g_orch_module_stats.reclaimed_quota_force_released_total.load(std::memory_order_relaxed);
     auto fiber_owned = std::make_unique<Fiber>([] {});
@@ -1043,9 +1044,9 @@ static void ac3529_1_dtor_timeout_force_releases() {
     CHECK(h.reserved_memory_bytes == 0, "3529 AC1: reservation released (#3012)");
     CHECK(!h.fiber->is_done(), "3529 AC1: body-stack untouched (#2661)");
     if (!prev_s.empty())
-        ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", prev_s.c_str(), 1);
+        ::aura::config::test_setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", prev_s.c_str(), 1);
     else
-        ::unsetenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
+        ::aura::config::test_unsetenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
     apply_dev_audit_defaults();
 }
 
@@ -1059,7 +1060,7 @@ static void ac3529_2_soft_zero_cost() {
     apply_dev_audit_defaults();
     const char* prev = std::getenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
     std::string prev_s = prev ? prev : "";
-    ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", "0", 1);
+    ::aura::config::test_setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", "0", 1);
     const auto before =
         g_orch_module_stats.reclaimed_quota_force_released_total.load(std::memory_order_relaxed);
     auto fiber_owned = std::make_unique<Fiber>([] {});
@@ -1077,9 +1078,9 @@ static void ac3529_2_soft_zero_cost() {
     CHECK(after == before, "3529 AC2: Soft does not bump force-released (no getenv path)");
     CHECK(h.reserved_memory_bytes == 0, "3529 AC2: #3012 dtor still releases quota");
     if (!prev_s.empty())
-        ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", prev_s.c_str(), 1);
+        ::aura::config::test_setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", prev_s.c_str(), 1);
     else
-        ::unsetenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
+        ::aura::config::test_unsetenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
 }
 
 static void ac3529_3_ensure_timeout_force_releases() {
@@ -1090,7 +1091,7 @@ static void ac3529_3_ensure_timeout_force_releases() {
     apply_production_audit_defaults();
     const char* prev = std::getenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
     std::string prev_s = prev ? prev : "";
-    ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", "0", 1);
+    ::aura::config::test_setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", "0", 1);
     const auto before =
         g_orch_module_stats.reclaimed_quota_force_released_total.load(std::memory_order_relaxed);
     auto fiber_owned = std::make_unique<Fiber>([] {});
@@ -1115,9 +1116,9 @@ static void ac3529_3_ensure_timeout_force_releases() {
               std::memory_order_relaxed) == before + 1,
           "3529 AC3: force-released counter bumps");
     if (!prev_s.empty())
-        ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", prev_s.c_str(), 1);
+        ::aura::config::test_setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", prev_s.c_str(), 1);
     else
-        ::unsetenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
+        ::aura::config::test_unsetenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
     apply_dev_audit_defaults();
 }
 
@@ -1167,7 +1168,7 @@ static void ac3564_1_name_table_find_recycles() {
     apply_production_audit_defaults();
     const char* prev = std::getenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
     std::string prev_s = prev ? prev : "";
-    ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", "0", 1);
+    ::aura::config::test_setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", "0", 1);
     const auto before =
         g_orch_module_stats.reclaimed_quota_force_released_total.load(std::memory_order_relaxed);
     auto fiber_owned = std::make_unique<Fiber>([] {});
@@ -1183,9 +1184,9 @@ static void ac3564_1_name_table_find_recycles() {
               std::memory_order_relaxed) == before + 1,
           "3564 AC1: force-released counter +1");
     if (!prev_s.empty())
-        ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", prev_s.c_str(), 1);
+        ::aura::config::test_setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", prev_s.c_str(), 1);
     else
-        ::unsetenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
+        ::aura::config::test_unsetenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
     apply_dev_audit_defaults();
 }
 
@@ -1195,7 +1196,7 @@ static void ac3564_2_soft_find_zero_cost() {
     apply_dev_audit_defaults();
     const char* prev = std::getenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
     std::string prev_s = prev ? prev : "";
-    ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", "0", 1);
+    ::aura::config::test_setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", "0", 1);
     const auto before =
         g_orch_module_stats.reclaimed_quota_force_released_total.load(std::memory_order_relaxed);
     auto fiber_owned = std::make_unique<Fiber>([] {});
@@ -1209,9 +1210,9 @@ static void ac3564_2_soft_find_zero_cost() {
               std::memory_order_relaxed) == before,
           "3564 AC2: Soft does not bump force-released");
     if (!prev_s.empty())
-        ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", prev_s.c_str(), 1);
+        ::aura::config::test_setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", prev_s.c_str(), 1);
     else
-        ::unsetenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
+        ::aura::config::test_unsetenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
 }
 
 static void ac3564_3_scope_find_recycles() {
@@ -1222,7 +1223,7 @@ static void ac3564_3_scope_find_recycles() {
     apply_production_audit_defaults();
     const char* prev = std::getenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
     std::string prev_s = prev ? prev : "";
-    ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", "0", 1);
+    ::aura::config::test_setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", "0", 1);
     const auto before =
         g_orch_module_stats.reclaimed_quota_force_released_total.load(std::memory_order_relaxed);
     Scheduler sched(1);
@@ -1241,9 +1242,9 @@ static void ac3564_3_scope_find_recycles() {
     auto taken = std::move(scope.handles_mut()[0]);
     taken.fiber = nullptr;
     if (!prev_s.empty())
-        ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", prev_s.c_str(), 1);
+        ::aura::config::test_setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", prev_s.c_str(), 1);
     else
-        ::unsetenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
+        ::aura::config::test_unsetenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
     apply_dev_audit_defaults();
 }
 
@@ -1253,7 +1254,7 @@ static void ac3564_4_put_other_name_walks() {
     apply_production_audit_defaults();
     const char* prev = std::getenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
     std::string prev_s = prev ? prev : "";
-    ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", "0", 1);
+    ::aura::config::test_setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", "0", 1);
     auto fiber_owned = std::make_unique<Fiber>([] {});
     fiber_owned->mark_reclaimed();
     aura::compiler::AgentNameTable table;
@@ -1273,9 +1274,9 @@ static void ac3564_4_put_other_name_walks() {
               std::memory_order_relaxed) == before + 1,
           "3564 AC4: force-released +1 on put walk, not find");
     if (!prev_s.empty())
-        ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", prev_s.c_str(), 1);
+        ::aura::config::test_setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", prev_s.c_str(), 1);
     else
-        ::unsetenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
+        ::aura::config::test_unsetenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
     apply_dev_audit_defaults();
 }
 
@@ -1308,7 +1309,7 @@ static void ac3433_1_timeout_live_defers_like_reclaimed() {
     std::println("\n--- #3433 AC1: production Timeout + live body → Reclaimed-defer ---");
     const char* prev_sb = std::getenv("AURA_SANDBOX");
     std::string prev_sb_s = prev_sb ? prev_sb : "";
-    ::setenv("AURA_SANDBOX", "restricted", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
     apply_production_audit_defaults();
     set_mode(SandboxMode::Strict);
     // #3797-wave CI: the security-schedule posture gate denies production
@@ -1366,9 +1367,9 @@ static void ac3433_1_timeout_live_defers_like_reclaimed() {
     if (!wal_on_3433)
         aura::core::audit_wal::g_mutation_audit_wal().disable();
     if (!prev_sb_s.empty())
-        ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
     else
-        ::unsetenv("AURA_SANDBOX");
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
 }
 
 static void ac3433_2_ok_done_unchanged() {
@@ -1490,7 +1491,7 @@ static void ac3433_5_abandon_attach_only() {
         "\n--- #3433 AC5: abandon after Timeout-derived Reclaimed releases attach-only ---");
     const char* prev_sb = std::getenv("AURA_SANDBOX");
     std::string prev_sb_s = prev_sb ? prev_sb : "";
-    ::setenv("AURA_SANDBOX", "restricted", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
     apply_production_audit_defaults();
     set_mode(SandboxMode::Strict);
     // #3797-wave CI: pin the audit WAL on for this production spawn â
@@ -1544,9 +1545,9 @@ static void ac3433_5_abandon_attach_only() {
     if (!wal_on_3433b)
         aura::core::audit_wal::g_mutation_audit_wal().disable();
     if (!prev_sb_s.empty())
-        ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
     else
-        ::unsetenv("AURA_SANDBOX");
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
 }
 
 static void ac3433_6_source_and_linter() {
@@ -1596,7 +1597,7 @@ static void ac3467_name_reuse_fail_closed() {
     std::println("\n--- #3467 AC1/AC5: production pending slot → same-name put denied ---");
     const char* prev_sb = std::getenv("AURA_SANDBOX");
     std::string prev_sb_s = prev_sb ? prev_sb : "";
-    ::setenv("AURA_SANDBOX", "restricted", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
     apply_production_audit_defaults();
     set_mode(SandboxMode::Strict);
     // #3797-wave CI: pin the audit WAL on for the #3467 production
@@ -1694,9 +1695,9 @@ static void ac3467_name_reuse_fail_closed() {
     if (!wal_on_3467)
         aura::core::audit_wal::g_mutation_audit_wal().disable();
     if (!prev_sb_s.empty())
-        ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
     else
-        ::unsetenv("AURA_SANDBOX");
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
 }
 
 // Issue #3497: AgentScope::spawn fail-closes production same-name
@@ -1736,7 +1737,7 @@ static void ac3497_scope_spawn_pending_name() {
         std::println("\n--- #3497 AC1: production pending → spawn denied ---");
         const char* prev_sb = std::getenv("AURA_SANDBOX");
         std::string prev_sb_s = prev_sb ? prev_sb : "";
-        ::setenv("AURA_SANDBOX", "restricted", 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
         // Strict before defaults so force_wal arms; pin WAL so #3777
         // posture-degraded cannot deny the first spawn (same as #3433).
         set_mode(SandboxMode::Strict);
@@ -1777,9 +1778,9 @@ static void ac3497_scope_spawn_pending_name() {
         if (!wal_on_3497)
             aura::core::audit_wal::g_mutation_audit_wal().disable();
         if (!prev_sb_s.empty())
-            ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+            ::aura::config::test_setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
         else
-            ::unsetenv("AURA_SANDBOX");
+            ::aura::config::test_unsetenv("AURA_SANDBOX");
     }
 
     // AC2: clean same-name still appends (existing scope contract).
@@ -2171,7 +2172,7 @@ static void ac3776_scope_done_husk_compact() {
         std::println("\n--- #3776: pending slot survives compact (#3497 intact) ---");
         const char* prev_sb = std::getenv("AURA_SANDBOX");
         std::string prev_sb_s = prev_sb ? prev_sb : "";
-        ::setenv("AURA_SANDBOX", "restricted", 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
         apply_production_audit_defaults();
         std::filesystem::create_directories("build/test-wal-3776");
@@ -2211,9 +2212,9 @@ static void ac3776_scope_done_husk_compact() {
         if (!wal_on_3776)
             aura::core::audit_wal::g_mutation_audit_wal().disable();
         if (!prev_sb_s.empty())
-            ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+            ::aura::config::test_setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
         else
-            ::unsetenv("AURA_SANDBOX");
+            ::aura::config::test_unsetenv("AURA_SANDBOX");
     }
 }
 
@@ -2419,7 +2420,7 @@ static void ac3595_4_join_agent_routes_wrapper() {
     std::println("\n--- #3595 AC4: C++ join_agent production → same wrapper/budget ---");
     const char* prev_sb = std::getenv("AURA_SANDBOX");
     std::string prev_sb_s = prev_sb ? prev_sb : "";
-    ::setenv("AURA_SANDBOX", "restricted", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
     set_mode(SandboxMode::Strict);
     apply_production_audit_defaults();
     std::filesystem::create_directories("build/test-wal-3595");
@@ -2458,9 +2459,9 @@ static void ac3595_4_join_agent_routes_wrapper() {
     if (!wal_on_3595)
         aura::core::audit_wal::g_mutation_audit_wal().disable();
     if (!prev_sb_s.empty())
-        ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
     else
-        ::unsetenv("AURA_SANDBOX");
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
 }
 
 static void ac3595_5_source_and_no_invent() {
@@ -2506,7 +2507,7 @@ static void ac3631_1_batch_shared_budget() {
     std::println("\n--- #3631 AC1: batch residual wait ~= shared budget (not N x) ---");
     const char* prev_sb = std::getenv("AURA_SANDBOX");
     std::string prev_sb_s = prev_sb ? prev_sb : "";
-    ::setenv("AURA_SANDBOX", "restricted", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
     set_mode(SandboxMode::Strict);
     apply_production_audit_defaults();
     std::filesystem::create_directories("build/test-wal-3631");
@@ -2567,9 +2568,9 @@ static void ac3631_1_batch_shared_budget() {
     if (!wal_on_3631)
         aura::core::audit_wal::g_mutation_audit_wal().disable();
     if (!prev_sb_s.empty())
-        ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
     else
-        ::unsetenv("AURA_SANDBOX");
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
 }
 
 static void ac3631_2_cleanup_after_expiry() {
@@ -2578,7 +2579,7 @@ static void ac3631_2_cleanup_after_expiry() {
     std::println("\n--- #3631 AC2: expiry leaves contracts intact; later exit cleans ---");
     const char* prev_sb = std::getenv("AURA_SANDBOX");
     std::string prev_sb_s = prev_sb ? prev_sb : "";
-    ::setenv("AURA_SANDBOX", "restricted", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
     set_mode(SandboxMode::Strict);
     apply_production_audit_defaults();
     std::filesystem::create_directories("build/test-wal-3631b");
@@ -2637,9 +2638,9 @@ static void ac3631_2_cleanup_after_expiry() {
     if (!wal_on_3631b)
         aura::core::audit_wal::g_mutation_audit_wal().disable();
     if (!prev_sb_s.empty())
-        ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
     else
-        ::unsetenv("AURA_SANDBOX");
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
 }
 
 static void ac3631_3_single_handle_regression() {
@@ -2648,7 +2649,7 @@ static void ac3631_3_single_handle_regression() {
     std::println("\n--- #3631 AC3: single-handle join_agent unchanged (SSOT wrapper) ---");
     const char* prev_sb = std::getenv("AURA_SANDBOX");
     std::string prev_sb_s = prev_sb ? prev_sb : "";
-    ::setenv("AURA_SANDBOX", "restricted", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
     apply_production_audit_defaults();
     set_mode(SandboxMode::Strict);
     Scheduler sched(1);
@@ -2682,9 +2683,9 @@ static void ac3631_3_single_handle_regression() {
     h.finish_reclaimed_cleanup_on_dtor();
     apply_dev_audit_defaults();
     if (!prev_sb_s.empty())
-        ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
     else
-        ::unsetenv("AURA_SANDBOX");
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
 }
 
 static void ac3631_4_soft_zero_cost() {
@@ -2742,7 +2743,7 @@ static void ac3644_1_done_body_full_cleanup_on_find() {
     apply_production_audit_defaults();
     const char* prev = std::getenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
     std::string prev_s = prev ? prev : "";
-    ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", "0", 1);
+    ::aura::config::test_setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", "0", 1);
     const auto fr0 =
         g_orch_module_stats.reclaimed_quota_force_released_total.load(std::memory_order_relaxed);
     auto fiber_owned = std::make_unique<Fiber>([] {});
@@ -2765,9 +2766,9 @@ static void ac3644_1_done_body_full_cleanup_on_find() {
     auto* again = table.put(make_pending_reclaimed_handle(fiber_owned.get(), "agent-3644", 0));
     CHECK(again != nullptr, "3644 AC1: same-name put succeeds after the recycle");
     if (!prev_s.empty())
-        ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", prev_s.c_str(), 1);
+        ::aura::config::test_setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", prev_s.c_str(), 1);
     else
-        ::unsetenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
+        ::aura::config::test_unsetenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
     apply_dev_audit_defaults();
 }
 
@@ -2779,7 +2780,7 @@ static void ac3644_2_live_body_abandon_shape_on_later_find() {
     apply_production_audit_defaults();
     const char* prev = std::getenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
     std::string prev_s = prev ? prev : "";
-    ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", "0", 1);
+    ::aura::config::test_setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", "0", 1);
     const auto ab0 = g_orch_module_stats.reclaimed_abandon_total.load(std::memory_order_relaxed);
     const auto fr0 =
         g_orch_module_stats.reclaimed_quota_force_released_total.load(std::memory_order_relaxed);
@@ -2810,9 +2811,9 @@ static void ac3644_2_live_body_abandon_shape_on_later_find() {
     CHECK(again != nullptr, "3644 AC2 / #3805: same-name put is a fresh insert after retire");
     CHECK(again->fiber == fiber_owned.get(), "3644 AC2: fresh slot holds the new handle");
     if (!prev_s.empty())
-        ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", prev_s.c_str(), 1);
+        ::aura::config::test_setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", prev_s.c_str(), 1);
     else
-        ::unsetenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
+        ::aura::config::test_unsetenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
     apply_dev_audit_defaults();
 }
 
@@ -2824,7 +2825,7 @@ static void ac3644_3_soft_no_recycle() {
     apply_dev_audit_defaults();
     const char* prev = std::getenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
     std::string prev_s = prev ? prev : "";
-    ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", "0", 1);
+    ::aura::config::test_setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", "0", 1);
     const auto ab0 = g_orch_module_stats.reclaimed_abandon_total.load(std::memory_order_relaxed);
     const auto fr0 =
         g_orch_module_stats.reclaimed_quota_force_released_total.load(std::memory_order_relaxed);
@@ -2852,9 +2853,9 @@ static void ac3644_3_soft_no_recycle() {
     auto* denied = table.put(make_pending_reclaimed_handle(fiber_owned.get(), "soft-3644", 0));
     CHECK(denied == nullptr, "3644 AC3: same-name put still typed-denied (#3467)");
     if (!prev_s.empty())
-        ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", prev_s.c_str(), 1);
+        ::aura::config::test_setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", prev_s.c_str(), 1);
     else
-        ::unsetenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
+        ::aura::config::test_unsetenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
 }
 
 static void ac3644_4_not_stuck_no_recycle_deny_and_wait_intact() {
@@ -2911,7 +2912,7 @@ static void ac3805_1_put_retires_abandoned_live_not_move_assign() {
     apply_production_audit_defaults();
     const char* prev = std::getenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
     std::string prev_s = prev ? prev : "";
-    ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", "0", 1);
+    ::aura::config::test_setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", "0", 1);
 
     auto old_fiber = std::make_unique<Fiber>([] {});
     old_fiber->mark_reclaimed();
@@ -2941,9 +2942,9 @@ static void ac3805_1_put_retires_abandoned_live_not_move_assign() {
     CHECK(!old_fiber->is_done(), "3805 AC1: #2661 preserved after replace");
 
     if (!prev_s.empty())
-        ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", prev_s.c_str(), 1);
+        ::aura::config::test_setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", prev_s.c_str(), 1);
     else
-        ::unsetenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
+        ::aura::config::test_unsetenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
     apply_dev_audit_defaults();
 }
 
@@ -2957,7 +2958,7 @@ static void ac3805_2_directory_scope_skip_abandoned_ghost() {
     apply_production_audit_defaults();
     const char* prev = std::getenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
     std::string prev_s = prev ? prev : "";
-    ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", "0", 1);
+    ::aura::config::test_setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", "0", 1);
 
     Scheduler sched(1);
     AgentScope scope(sched);
@@ -2990,9 +2991,9 @@ static void ac3805_2_directory_scope_skip_abandoned_ghost() {
     }
 
     if (!prev_s.empty())
-        ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", prev_s.c_str(), 1);
+        ::aura::config::test_setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", prev_s.c_str(), 1);
     else
-        ::unsetenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
+        ::aura::config::test_unsetenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
     apply_dev_audit_defaults();
 }
 
@@ -3004,7 +3005,7 @@ static void ac3805_3_soft_and_done_path_unchanged() {
     // Soft: pending deny (#3467) unchanged — no abandon recycle.
     apply_dev_audit_defaults();
     {
-        ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", "0", 1);
+        ::aura::config::test_setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", "0", 1);
         auto fiber_owned = std::make_unique<Fiber>([] {});
         fiber_owned->mark_reclaimed();
         auto h = make_pending_reclaimed_handle(fiber_owned.get(), "soft-3805", 4096);
@@ -3016,7 +3017,7 @@ static void ac3805_3_soft_and_done_path_unchanged() {
         CHECK(table.find("soft-3805") != nullptr, "3805 AC3: soft find keeps pending");
         auto* denied = table.put(make_pending_reclaimed_handle(fiber_owned.get(), "soft-3805", 0));
         CHECK(denied == nullptr, "3805 AC3: Soft same-name still typed-denied (#3467)");
-        ::unsetenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
+        ::aura::config::test_unsetenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
     }
     // Done-path clean retire (#3598) still erase+insert under production.
     apply_production_audit_defaults();
@@ -3049,7 +3050,7 @@ static void ac3805_4_no_body_stack_free_on_retire() {
     apply_production_audit_defaults();
     const char* prev = std::getenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
     std::string prev_s = prev ? prev : "";
-    ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", "0", 1);
+    ::aura::config::test_setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", "0", 1);
     auto fiber_owned = std::make_unique<Fiber>([] {});
     fiber_owned->mark_reclaimed();
     auto h = make_pending_reclaimed_handle(fiber_owned.get(), "live-3805", 4096);
@@ -3108,9 +3109,9 @@ static void ac3805_4_no_body_stack_free_on_retire() {
     CHECK(!f2->is_done(), "3805 AC4: #2661 old body after put-retire");
 
     if (!prev_s.empty())
-        ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", prev_s.c_str(), 1);
+        ::aura::config::test_setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", prev_s.c_str(), 1);
     else
-        ::unsetenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
+        ::aura::config::test_unsetenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
     apply_dev_audit_defaults();
 }
 
@@ -3149,7 +3150,7 @@ static void ac3841_1_ensure_keeps_must_wait_after_quota_recycle() {
     apply_production_audit_defaults();
     const char* prev = std::getenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
     std::string prev_s = prev ? prev : "";
-    ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", "0", 1);
+    ::aura::config::test_setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", "0", 1);
     const auto before =
         g_orch_module_stats.reclaimed_quota_force_released_total.load(std::memory_order_relaxed);
     auto fiber_owned = std::make_unique<Fiber>([] {});
@@ -3173,9 +3174,9 @@ static void ac3841_1_ensure_keeps_must_wait_after_quota_recycle() {
               std::memory_order_relaxed) == before + 1,
           "3841 AC1: force-released counter +1");
     if (!prev_s.empty())
-        ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", prev_s.c_str(), 1);
+        ::aura::config::test_setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", prev_s.c_str(), 1);
     else
-        ::unsetenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
+        ::aura::config::test_unsetenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
     apply_dev_audit_defaults();
 }
 
@@ -3186,7 +3187,7 @@ static void ac3841_2_auto_wait_not_done_from_quota_alone() {
     apply_production_audit_defaults();
     const char* prev = std::getenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
     std::string prev_s = prev ? prev : "";
-    ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", "0", 1);
+    ::aura::config::test_setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", "0", 1);
     const auto hf0 =
         g_orch_module_stats.host_forget_reclaimed_risk_total.load(std::memory_order_relaxed);
     auto fiber_owned = std::make_unique<Fiber>([] {});
@@ -3211,9 +3212,9 @@ static void ac3841_2_auto_wait_not_done_from_quota_alone() {
               hf0 + 1,
           "3841 AC2: host_forget bumps on budget expiry (not silent Done)");
     if (!prev_s.empty())
-        ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", prev_s.c_str(), 1);
+        ::aura::config::test_setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", prev_s.c_str(), 1);
     else
-        ::unsetenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
+        ::aura::config::test_unsetenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
     apply_dev_audit_defaults();
 }
 
@@ -3227,7 +3228,7 @@ static void ac3841_3_abandon_after_quota_recycle_not_invalid() {
     apply_production_audit_defaults();
     const char* prev = std::getenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
     std::string prev_s = prev ? prev : "";
-    ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", "0", 1);
+    ::aura::config::test_setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", "0", 1);
     auto fiber_owned = std::make_unique<Fiber>([] {});
     fiber_owned->mark_reclaimed();
     AgentHandle h;
@@ -3252,9 +3253,9 @@ static void ac3841_3_abandon_after_quota_recycle_not_invalid() {
     CHECK(!h.quota_recycled_pending, "3841 AC3: quota_recycled_pending cleared");
     CHECK(!h.fiber->is_done(), "3841 AC3: body-stack untouched (#2661)");
     if (!prev_s.empty())
-        ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", prev_s.c_str(), 1);
+        ::aura::config::test_setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", prev_s.c_str(), 1);
     else
-        ::unsetenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
+        ::aura::config::test_unsetenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
     apply_dev_audit_defaults();
 }
 
@@ -3266,7 +3267,7 @@ static void ac3841_4_batch_keeps_must_wait_after_quota_recycle() {
     apply_production_audit_defaults();
     const char* prev = std::getenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
     std::string prev_s = prev ? prev : "";
-    ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", "0", 1);
+    ::aura::config::test_setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", "0", 1);
     auto fiber_owned = std::make_unique<Fiber>([] {});
     fiber_owned->mark_reclaimed();
     AgentHandle h;
@@ -3287,9 +3288,9 @@ static void ac3841_4_batch_keeps_must_wait_after_quota_recycle() {
     // Steal fiber so dtor does not join never-started body.
     agents[0].fiber = nullptr;
     if (!prev_s.empty())
-        ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", prev_s.c_str(), 1);
+        ::aura::config::test_setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", prev_s.c_str(), 1);
     else
-        ::unsetenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
+        ::aura::config::test_unsetenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
     apply_dev_audit_defaults();
 }
 
@@ -3303,7 +3304,7 @@ static void ac3841_5_soft_and_source_cite() {
     apply_dev_audit_defaults();
     const char* prev = std::getenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
     std::string prev_s = prev ? prev : "";
-    ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", "0", 1);
+    ::aura::config::test_setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", "0", 1);
     const auto before =
         g_orch_module_stats.reclaimed_quota_force_released_total.load(std::memory_order_relaxed);
     auto fiber_owned = std::make_unique<Fiber>([] {});
@@ -3333,9 +3334,9 @@ static void ac3841_5_soft_and_source_cite() {
     CHECK(wr.status == aura::serve::JoinStatus::Invalid && wr.wait_us == 0,
           "3841 AC5: Soft ensure !must_wait zero-cost");
     if (!prev_s.empty())
-        ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", prev_s.c_str(), 1);
+        ::aura::config::test_setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", prev_s.c_str(), 1);
     else
-        ::unsetenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
+        ::aura::config::test_unsetenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
 
     const auto spawn = read_file("src/orch/agent_spawn.h");
     CHECK(spawn.find("kQuotaRecycleMustWaitSsotIssue = 3841") != std::string::npos,
@@ -3824,7 +3825,7 @@ static void ac4136_1_sweep_handles_releases_after_body_exit() {
     // production admits with commit-not-ready.
     const char* prev_sb = std::getenv("AURA_SANDBOX");
     std::string prev_sb_s = prev_sb ? prev_sb : "";
-    ::setenv("AURA_SANDBOX", "restricted", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
     apply_production_audit_defaults();
     set_mode(SandboxMode::Strict);
     std::filesystem::create_directories("build/test-wal-4136");
@@ -3862,7 +3863,7 @@ static void ac4136_1_sweep_handles_releases_after_body_exit() {
             std::println("  4136 AC1 spawn diag (attempt {}): ok={} fiber={} error={}", attempt,
                          spawned.ok, spawned.fiber != nullptr, spawned.error);
             soft_prime_4136();
-            ::setenv("AURA_SANDBOX", "restricted", 1);
+            ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
             apply_production_audit_defaults();
             set_mode(SandboxMode::Strict);
         }
@@ -3968,9 +3969,9 @@ static void ac4136_1_sweep_handles_releases_after_body_exit() {
     if (!wal_on_4136)
         (void)aura::core::audit_wal::g_mutation_audit_wal().disable();
     if (!prev_sb_s.empty())
-        ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
     else
-        ::unsetenv("AURA_SANDBOX");
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
     // Soft prime so later production blocks (ac4097) find a clean
     // security-schedule commit posture.
     soft_prime_4136();
@@ -4154,7 +4155,7 @@ static void ac4138_3_must_wait_survives_compact() {
     std::println("\n--- #4138 AC3: must_wait pending survives the single-join compact ---");
     const char* prev_sb = std::getenv("AURA_SANDBOX");
     std::string prev_sb_s = prev_sb ? prev_sb : "";
-    ::setenv("AURA_SANDBOX", "restricted", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
     apply_production_audit_defaults();
     std::filesystem::create_directories("build/test-wal-4138");
@@ -4198,9 +4199,9 @@ static void ac4138_3_must_wait_survives_compact() {
     if (!wal_on_4138)
         aura::core::audit_wal::g_mutation_audit_wal().disable();
     if (!prev_sb_s.empty())
-        ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
     else
-        ::unsetenv("AURA_SANDBOX");
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
 }
 
 static void ac4138_4_soft_append_only() {
@@ -4402,7 +4403,7 @@ static void ac4097_agents_active_held_across_reclaimed_retry() {
 
     const char* prev_sb = std::getenv("AURA_SANDBOX");
     std::string prev_sb_s = prev_sb ? prev_sb : "";
-    ::setenv("AURA_SANDBOX", "restricted", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
     apply_production_audit_defaults();
     set_mode(SandboxMode::Strict);
     std::filesystem::create_directories("build/test-wal-4097");
@@ -4491,9 +4492,9 @@ static void ac4097_agents_active_held_across_reclaimed_retry() {
     if (!wal_on)
         aura::core::audit_wal::g_mutation_audit_wal().disable();
     if (!prev_sb_s.empty())
-        ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
     else
-        ::unsetenv("AURA_SANDBOX");
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
 }
 
 // Issue #4334: an abandoned handle (no join, no Done-path) whose Scheduler
@@ -4517,7 +4518,7 @@ static void ac4334_teardown_consumes_transferred_agents_active() {
 
     const char* prev_sb = std::getenv("AURA_SANDBOX");
     std::string prev_sb_s = prev_sb ? prev_sb : "";
-    ::setenv("AURA_SANDBOX", "restricted", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
     apply_production_audit_defaults();
     set_mode(SandboxMode::Strict);
     std::filesystem::create_directories("build/test-wal-4334");
@@ -4567,9 +4568,9 @@ static void ac4334_teardown_consumes_transferred_agents_active() {
     if (!wal_on)
         aura::core::audit_wal::g_mutation_audit_wal().disable();
     if (!prev_sb_s.empty())
-        ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
     else
-        ::unsetenv("AURA_SANDBOX");
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
 }
 
 // Issue #4442: ~Scheduler must not run Fiber destructors while
@@ -4846,7 +4847,7 @@ static void ac3953_1_repeat_join_short_budget() {
     std::println("\n--- #3953 AC: 2nd join_agent uses 50ms, not drain×8 ---");
     const char* prev_sb = std::getenv("AURA_SANDBOX");
     std::string prev_sb_s = prev_sb ? prev_sb : "";
-    ::setenv("AURA_SANDBOX", "restricted", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
     set_mode(SandboxMode::Strict);
     apply_production_audit_defaults();
     auto fiber_owned = std::make_unique<Fiber>([] {});
@@ -4873,9 +4874,9 @@ static void ac3953_1_repeat_join_short_budget() {
     h.finish_reclaimed_cleanup_on_dtor();
     apply_dev_audit_defaults();
     if (!prev_sb_s.empty())
-        ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
     else
-        ::unsetenv("AURA_SANDBOX");
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
 }
 
 // Issue #3953: wait_reclaimed_body in fiber context aborts on cancel
@@ -4999,7 +5000,7 @@ static void ac4139_1_cross_evaluator_soak_observe_not_reclaim_complete() {
     // force_wal reads sandbox mode at defaults-call time — pin WAL on).
     const char* prev_sb_4139 = std::getenv("AURA_SANDBOX");
     std::string prev_sb_4139_s = prev_sb_4139 ? prev_sb_4139 : "";
-    ::setenv("AURA_SANDBOX", "restricted", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
     apply_production_audit_defaults();
     set_mode(SandboxMode::Strict);
     std::filesystem::create_directories("build/test-wal-4139");
@@ -5105,9 +5106,9 @@ static void ac4139_1_cross_evaluator_soak_observe_not_reclaim_complete() {
     if (!wal_on_4139)
         aura::core::audit_wal::g_mutation_audit_wal().disable();
     if (!prev_sb_4139_s.empty())
-        ::setenv("AURA_SANDBOX", prev_sb_4139_s.c_str(), 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", prev_sb_4139_s.c_str(), 1);
     else
-        ::unsetenv("AURA_SANDBOX");
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
 }
 
 // ac4139_2: source Scheduler destroy invalidates the observe join
@@ -5300,7 +5301,7 @@ static void ac4299_1_name_table_live_abandon_notes_orphan() {
     apply_production_audit_defaults();
     const char* prev = std::getenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
     std::string prev_s = prev ? prev : "";
-    ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", "0", 1);
+    ::aura::config::test_setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", "0", 1);
 
     const auto active0 = g_orch_module_stats.agents_active.load(std::memory_order_relaxed);
     Scheduler sched(1);
@@ -5355,9 +5356,9 @@ static void ac4299_1_name_table_live_abandon_notes_orphan() {
           "4299 AC1: still baseline after a second consume attempt");
 
     if (!prev_s.empty())
-        ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", prev_s.c_str(), 1);
+        ::aura::config::test_setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", prev_s.c_str(), 1);
     else
-        ::unsetenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
+        ::aura::config::test_unsetenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
     apply_dev_audit_defaults();
 }
 
@@ -5372,7 +5373,7 @@ static void ac4299_2_scope_live_abandon_notes_orphan() {
     apply_production_audit_defaults();
     const char* prev = std::getenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
     std::string prev_s = prev ? prev : "";
-    ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", "0", 1);
+    ::aura::config::test_setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", "0", 1);
 
     const auto active0 = g_orch_module_stats.agents_active.load(std::memory_order_relaxed);
     Scheduler sched(1);
@@ -5429,9 +5430,9 @@ static void ac4299_2_scope_live_abandon_notes_orphan() {
     }
 
     if (!prev_s.empty())
-        ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", prev_s.c_str(), 1);
+        ::aura::config::test_setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", prev_s.c_str(), 1);
     else
-        ::unsetenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
+        ::aura::config::test_unsetenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
     apply_dev_audit_defaults();
 }
 
@@ -5447,7 +5448,7 @@ static void ac4299_3_abandon_reclaimed_timeout_transfers() {
     apply_production_audit_defaults();
     const char* prev = std::getenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
     std::string prev_s = prev ? prev : "";
-    ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", "0", 1);
+    ::aura::config::test_setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", "0", 1);
 
     const auto active0 = g_orch_module_stats.agents_active.load(std::memory_order_relaxed);
     Scheduler sched(1);
@@ -5489,9 +5490,9 @@ static void ac4299_3_abandon_reclaimed_timeout_transfers() {
           "4299 AC3: one-shot already consumed (no double decrement)");
 
     if (!prev_s.empty())
-        ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", prev_s.c_str(), 1);
+        ::aura::config::test_setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", prev_s.c_str(), 1);
     else
-        ::unsetenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
+        ::aura::config::test_unsetenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
     apply_dev_audit_defaults();
 }
 
@@ -5643,7 +5644,7 @@ static void ac4658_1_bare_spawn_adopt_then_sweep_cleans() {
     std::println("\n--- #4658 AC1: bare spawn → join Timeout → adopt → sweep cleans ---");
     const char* prev_sb = std::getenv("AURA_SANDBOX");
     std::string prev_sb_s = prev_sb ? prev_sb : "";
-    ::setenv("AURA_SANDBOX", "restricted", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
     apply_production_audit_defaults();
     // Function-scope: the atomic must outlive the scheduler block — the
     // body closure references it until the scheduler itself dies.
@@ -5693,9 +5694,9 @@ static void ac4658_1_bare_spawn_adopt_then_sweep_cleans() {
     }
     apply_dev_audit_defaults();
     if (!prev_sb_s.empty())
-        ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
     else
-        ::unsetenv("AURA_SANDBOX");
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
 }
 
 static void ac4658_2_bare_spawn_no_adopt_contract_unchanged() {
@@ -5706,7 +5707,7 @@ static void ac4658_2_bare_spawn_no_adopt_contract_unchanged() {
     std::println("\n--- #4658 AC2: bare spawn without adopt → dtor/ensure plane unchanged ---");
     const char* prev_sb = std::getenv("AURA_SANDBOX");
     std::string prev_sb_s = prev_sb ? prev_sb : "";
-    ::setenv("AURA_SANDBOX", "restricted", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
     apply_production_audit_defaults();
     std::atomic<bool> stop_4658b{false}; // outlives the scheduler block
     {
@@ -5745,9 +5746,9 @@ static void ac4658_2_bare_spawn_no_adopt_contract_unchanged() {
     }
     apply_dev_audit_defaults();
     if (!prev_sb_s.empty())
-        ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
     else
-        ::unsetenv("AURA_SANDBOX");
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
 }
 
 static void ac4658_3_soft_face_zero_cost_adopt_opt_in() {
@@ -5759,7 +5760,7 @@ static void ac4658_3_soft_face_zero_cost_adopt_opt_in() {
     std::println("\n--- #4658 AC3: Soft/Off — no spawn probe, adopt opt-in, sweep zeros ---");
     const char* prev_sb = std::getenv("AURA_SANDBOX");
     std::string prev_sb_s = prev_sb ? prev_sb : "";
-    ::setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
     apply_dev_audit_defaults();
     std::atomic<bool> stop_4658c{false}; // outlives the scheduler block
     {
@@ -5804,9 +5805,9 @@ static void ac4658_3_soft_face_zero_cost_adopt_opt_in() {
     }
     apply_dev_audit_defaults();
     if (!prev_sb_s.empty())
-        ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
     else
-        ::unsetenv("AURA_SANDBOX");
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
 }
 
 static void ac4658_4_adopt_rejects_and_source_cite() {
@@ -5862,7 +5863,7 @@ static void ac4923_1_adopt_rejects_import_proxy() {
     std::println("\n--- #4923 AC1: adopt(import_proxy) false; dst cancel_all spares source ---");
     const char* prev_sb = std::getenv("AURA_SANDBOX");
     std::string prev_sb_s = prev_sb ? prev_sb : "";
-    ::setenv("AURA_SANDBOX", "restricted", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
     apply_production_audit_defaults();
     std::atomic<bool> stop_4923a{false};
     {
@@ -5896,9 +5897,9 @@ static void ac4923_1_adopt_rejects_import_proxy() {
     }
     apply_dev_audit_defaults();
     if (!prev_sb_s.empty())
-        ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
     else
-        ::unsetenv("AURA_SANDBOX");
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
 }
 
 // #4923 defense in depth: a proxy row that already reached the plane
@@ -6017,7 +6018,7 @@ static void ac4659_1_zero_drain_batch_floor_cleans_late_exit() {
     std::println("\n--- #4659 AC1: drain=0 batch — body exits 1ms into the floor window ---");
     const char* prev_sb = std::getenv("AURA_SANDBOX");
     std::string prev_sb_s = prev_sb ? prev_sb : "";
-    ::setenv("AURA_SANDBOX", "restricted", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
     apply_production_audit_defaults();
     // Issue #4659 CI: the body must take its wait_reclaimed_total snapshot
     // BEFORE the join starts. If the fiber is first scheduled after the
@@ -6103,9 +6104,9 @@ static void ac4659_1_zero_drain_batch_floor_cleans_late_exit() {
     }
     apply_dev_audit_defaults();
     if (!prev_sb_s.empty())
-        ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
     else
-        ::unsetenv("AURA_SANDBOX");
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
 }
 
 static void ac4659_2_budget_formula_floor() {
@@ -6129,7 +6130,7 @@ static void ac4659_3_drain_2000_window_unchanged() {
     std::println("\n--- #4659 AC3: drain=2000 — 16s bounded window unchanged ---");
     const char* prev_sb = std::getenv("AURA_SANDBOX");
     std::string prev_sb_s = prev_sb ? prev_sb : "";
-    ::setenv("AURA_SANDBOX", "restricted", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
     apply_production_audit_defaults();
     {
         Scheduler sched(2);
@@ -6163,9 +6164,9 @@ static void ac4659_3_drain_2000_window_unchanged() {
     }
     apply_dev_audit_defaults();
     if (!prev_sb_s.empty())
-        ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
     else
-        ::unsetenv("AURA_SANDBOX");
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
 }
 
 static void ac4659_4_single_join_one_shot_window_unchanged() {
@@ -6176,7 +6177,7 @@ static void ac4659_4_single_join_one_shot_window_unchanged() {
     std::println("\n--- #4659 AC4: single join_agent drain=0 — one 50ms ensure arm, then SSOT ---");
     const char* prev_sb = std::getenv("AURA_SANDBOX");
     std::string prev_sb_s = prev_sb ? prev_sb : "";
-    ::setenv("AURA_SANDBOX", "restricted", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
     apply_production_audit_defaults();
     {
         Scheduler sched(2);
@@ -6217,9 +6218,9 @@ static void ac4659_4_single_join_one_shot_window_unchanged() {
     }
     apply_dev_audit_defaults();
     if (!prev_sb_s.empty())
-        ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
     else
-        ::unsetenv("AURA_SANDBOX");
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
 }
 
 // AC5 (Soft/Off zero-extra-wait on the drain=0 batch) is covered by the
@@ -7478,7 +7479,7 @@ int run_test_join_drain_reclaim() {
         {
             const char* prev_sb = std::getenv("AURA_SANDBOX");
             std::string prev_sb_s = prev_sb ? prev_sb : "";
-            ::setenv("AURA_SANDBOX", "restricted", 1);
+            ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
             apply_production_audit_defaults();
             auto fiber_owned = std::make_unique<Fiber>([] {});
             fiber_owned->mark_reclaimed();
@@ -7501,9 +7502,9 @@ int run_test_join_drain_reclaim() {
                   "3012 AC1: documented mild deadline is 50ms");
             apply_dev_audit_defaults();
             if (!prev_sb_s.empty())
-                ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+                ::aura::config::test_setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
             else
-                ::unsetenv("AURA_SANDBOX");
+                ::aura::config::test_unsetenv("AURA_SANDBOX");
             fiber_owned->set_state(FiberState::Done);
             fiber_owned->note_body_exit_if_reclaimed();
             h.finish_reclaimed_cleanup_on_dtor();
@@ -7649,7 +7650,7 @@ int run_test_join_drain_reclaim() {
         {
             const char* prev_sb = std::getenv("AURA_SANDBOX");
             std::string prev_sb_s = prev_sb ? prev_sb : "";
-            ::setenv("AURA_SANDBOX", "restricted", 1);
+            ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
             apply_production_audit_defaults();
             auto ok_f = std::make_unique<Fiber>([] {});
             ok_f->set_state(FiberState::Done);
@@ -7673,9 +7674,9 @@ int run_test_join_drain_reclaim() {
             (void)wait0;
             apply_dev_audit_defaults();
             if (!prev_sb_s.empty())
-                ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+                ::aura::config::test_setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
             else
-                ::unsetenv("AURA_SANDBOX");
+                ::aura::config::test_unsetenv("AURA_SANDBOX");
             rec_f->set_state(FiberState::Done);
             rec_f->note_body_exit_if_reclaimed();
             hs[1].finish_reclaimed_cleanup_on_dtor();
@@ -7728,7 +7729,7 @@ int run_test_join_drain_reclaim() {
         {
             const char* prev_sb = std::getenv("AURA_SANDBOX");
             std::string prev_sb_s = prev_sb ? prev_sb : "";
-            ::setenv("AURA_SANDBOX", "restricted", 1);
+            ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
             apply_production_audit_defaults();
             auto fiber_owned = std::make_unique<Fiber>([] {});
             fiber_owned->mark_reclaimed();
@@ -7765,16 +7766,16 @@ int run_test_join_drain_reclaim() {
                   "3051 AC5: reuses wait_reclaimed_cleanup_total");
             apply_dev_audit_defaults();
             if (!prev_sb_s.empty())
-                ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+                ::aura::config::test_setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
             else
-                ::unsetenv("AURA_SANDBOX");
+                ::aura::config::test_unsetenv("AURA_SANDBOX");
         }
 
         std::println("\n--- #3051 AC1b/AC3: still-running auto-wait times out, no release ---");
         {
             const char* prev_sb = std::getenv("AURA_SANDBOX");
             std::string prev_sb_s = prev_sb ? prev_sb : "";
-            ::setenv("AURA_SANDBOX", "restricted", 1);
+            ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
             apply_production_audit_defaults();
             auto fiber_owned = std::make_unique<Fiber>([] {});
             fiber_owned->mark_reclaimed();
@@ -7793,9 +7794,9 @@ int run_test_join_drain_reclaim() {
             CHECK(extra > 0, "3051: auto-wait folded wait_us");
             apply_dev_audit_defaults();
             if (!prev_sb_s.empty())
-                ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+                ::aura::config::test_setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
             else
-                ::unsetenv("AURA_SANDBOX");
+                ::aura::config::test_unsetenv("AURA_SANDBOX");
             fiber_owned->set_state(FiberState::Done);
             fiber_owned->note_body_exit_if_reclaimed();
             h.finish_reclaimed_cleanup_on_dtor();
@@ -7829,7 +7830,7 @@ int run_test_join_drain_reclaim() {
         {
             const char* prev_sb = std::getenv("AURA_SANDBOX");
             std::string prev_sb_s = prev_sb ? prev_sb : "";
-            ::setenv("AURA_SANDBOX", "restricted", 1);
+            ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
             apply_production_audit_defaults();
             auto fiber_owned = std::make_unique<Fiber>([] {});
             fiber_owned->mark_reclaimed();
@@ -7856,9 +7857,9 @@ int run_test_join_drain_reclaim() {
                   "3051 AC2: helper no-op when caller_passed");
             apply_dev_audit_defaults();
             if (!prev_sb_s.empty())
-                ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+                ::aura::config::test_setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
             else
-                ::unsetenv("AURA_SANDBOX");
+                ::aura::config::test_unsetenv("AURA_SANDBOX");
             fiber_owned->set_state(FiberState::Done);
             fiber_owned->note_body_exit_if_reclaimed();
             h.finish_reclaimed_cleanup_on_dtor();
@@ -7898,7 +7899,7 @@ int run_test_join_drain_reclaim() {
         {
             const char* prev_sb = std::getenv("AURA_SANDBOX");
             std::string prev_sb_s = prev_sb ? prev_sb : "";
-            ::setenv("AURA_SANDBOX", "restricted", 1);
+            ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
             apply_production_audit_defaults();
             auto fiber_owned = std::make_unique<Fiber>([] {});
             fiber_owned->mark_reclaimed();
@@ -7924,9 +7925,9 @@ int run_test_join_drain_reclaim() {
             CHECK(elapsed_ms < 20, "3923 AC1: skip is not a second 16s/50ms loop");
             apply_dev_audit_defaults();
             if (!prev_sb_s.empty())
-                ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+                ::aura::config::test_setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
             else
-                ::unsetenv("AURA_SANDBOX");
+                ::aura::config::test_unsetenv("AURA_SANDBOX");
             fiber_owned->set_state(FiberState::Done);
             fiber_owned->note_body_exit_if_reclaimed();
             h.finish_reclaimed_cleanup_on_dtor();
@@ -7996,7 +7997,7 @@ int run_test_join_drain_reclaim() {
         {
             const char* prev_sb = std::getenv("AURA_SANDBOX");
             std::string prev_sb_s = prev_sb ? prev_sb : "";
-            ::setenv("AURA_SANDBOX", "restricted", 1);
+            ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
             apply_production_audit_defaults();
             auto fiber_owned = std::make_unique<Fiber>([] {});
             fiber_owned->mark_reclaimed();
@@ -8034,9 +8035,9 @@ int run_test_join_drain_reclaim() {
                   "3087 AC2: reuses wait_reclaimed_cleanup_total");
             apply_dev_audit_defaults();
             if (!prev_sb_s.empty())
-                ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+                ::aura::config::test_setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
             else
-                ::unsetenv("AURA_SANDBOX");
+                ::aura::config::test_unsetenv("AURA_SANDBOX");
         }
 
         // ── AC3: must_wait + body still running → timeout, no release ──
@@ -8045,7 +8046,7 @@ int run_test_join_drain_reclaim() {
         {
             const char* prev_sb = std::getenv("AURA_SANDBOX");
             std::string prev_sb_s = prev_sb ? prev_sb : "";
-            ::setenv("AURA_SANDBOX", "restricted", 1);
+            ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
             apply_production_audit_defaults();
             auto fiber_owned = std::make_unique<Fiber>([] {});
             fiber_owned->mark_reclaimed();
@@ -8068,9 +8069,9 @@ int run_test_join_drain_reclaim() {
             CHECK(wr.wait_us > 0, "3087 AC3: folded wait_us > 0 (50ms window elapsed)");
             apply_dev_audit_defaults();
             if (!prev_sb_s.empty())
-                ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+                ::aura::config::test_setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
             else
-                ::unsetenv("AURA_SANDBOX");
+                ::aura::config::test_unsetenv("AURA_SANDBOX");
             fiber_owned->set_state(FiberState::Done);
             fiber_owned->note_body_exit_if_reclaimed();
             h.finish_reclaimed_cleanup_on_dtor();
@@ -8081,7 +8082,7 @@ int run_test_join_drain_reclaim() {
         {
             const char* prev_sb = std::getenv("AURA_SANDBOX");
             std::string prev_sb_s = prev_sb ? prev_sb : "";
-            ::setenv("AURA_SANDBOX", "restricted", 1);
+            ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
             apply_production_audit_defaults();
             auto fiber_owned = std::make_unique<Fiber>([] {});
             fiber_owned->mark_reclaimed();
@@ -8118,9 +8119,9 @@ int run_test_join_drain_reclaim() {
                   "3087 AC4: second call does not bump cleanup counter");
             apply_dev_audit_defaults();
             if (!prev_sb_s.empty())
-                ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+                ::aura::config::test_setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
             else
-                ::unsetenv("AURA_SANDBOX");
+                ::aura::config::test_unsetenv("AURA_SANDBOX");
         }
 
         // ── AC5: long-lived handle keep pattern → cleanup within ≤50ms ──
@@ -8128,7 +8129,7 @@ int run_test_join_drain_reclaim() {
         {
             const char* prev_sb = std::getenv("AURA_SANDBOX");
             std::string prev_sb_s = prev_sb ? prev_sb : "";
-            ::setenv("AURA_SANDBOX", "restricted", 1);
+            ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
             apply_production_audit_defaults();
             std::vector<std::unique_ptr<Fiber>> fibers;
             std::vector<std::unique_ptr<AgentHandle>> handles;
@@ -8161,9 +8162,9 @@ int run_test_join_drain_reclaim() {
             }
             apply_dev_audit_defaults();
             if (!prev_sb_s.empty())
-                ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+                ::aura::config::test_setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
             else
-                ::unsetenv("AURA_SANDBOX");
+                ::aura::config::test_unsetenv("AURA_SANDBOX");
         }
 
         // ── AC6: source-cite + no invent + no docs/design/ ──
@@ -9295,16 +9296,16 @@ int run_test_join_drain_reclaim() {
 
         auto restore_sandbox = [](const std::string& prev) {
             if (prev.empty())
-                ::unsetenv("AURA_SANDBOX");
+                ::aura::config::test_unsetenv("AURA_SANDBOX");
             else
-                ::setenv("AURA_SANDBOX", prev.c_str(), 1);
+                ::aura::config::test_setenv("AURA_SANDBOX", prev.c_str(), 1);
         };
         const char* prev_sb = std::getenv("AURA_SANDBOX");
         const std::string prev_sb_s = prev_sb ? prev_sb : "";
 
         std::println("\n--- #3216 AC2: production join miss identity-plane=name-table ---");
         {
-            ::setenv("AURA_SANDBOX", "restricted", 1);
+            ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
             apply_production_audit_defaults();
             CompilerService cs;
             auto plane = cs.eval(
@@ -9329,7 +9330,7 @@ int run_test_join_drain_reclaim() {
 
         std::println("\n--- #3216 AC2: production join-via-token handoff-token-present ---");
         {
-            ::setenv("AURA_SANDBOX", "restricted", 1);
+            ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
             apply_production_audit_defaults();
             CompilerService cs;
             auto missing = cs.eval(
@@ -9405,7 +9406,7 @@ int run_test_join_drain_reclaim() {
 
         std::println("\n--- #3216 AC3: Soft path zero extra intern ---");
         {
-            ::setenv("AURA_SANDBOX", "off", 1);
+            ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
             apply_dev_audit_defaults();
             CompilerService cs;
             auto join_soft = cs.eval(
@@ -9736,7 +9737,7 @@ int run_test_join_drain_reclaim() {
         std::println("\n--- #3494: Restricted+MT tenant 0 deny (live spawn) ---");
         const char* prev_sb = std::getenv("AURA_SANDBOX");
         std::string prev_sb_s = prev_sb ? prev_sb : "";
-        ::setenv("AURA_SANDBOX", "restricted", 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
         apply_production_audit_defaults();
         set_mode(SandboxMode::Restricted);
         aura::core::resource_quota::set_current_quota_tenant(0);
@@ -9760,9 +9761,9 @@ int run_test_join_drain_reclaim() {
         apply_dev_audit_defaults();
         set_mode(SandboxMode::Off);
         if (!prev_sb_s.empty())
-            ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+            ::aura::config::test_setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
         else
-            ::unsetenv("AURA_SANDBOX");
+            ::aura::config::test_unsetenv("AURA_SANDBOX");
     }
 
 
@@ -9809,7 +9810,7 @@ int run_test_join_drain_reclaim() {
         {
             const char* prev_sb = std::getenv("AURA_SANDBOX");
             std::string prev_sb_s = prev_sb ? prev_sb : "";
-            ::setenv("AURA_SANDBOX", "restricted", 1);
+            ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
             apply_production_audit_defaults();
             set_mode(SandboxMode::Restricted);
             aura::core::provenance::set_multi_tenant_env_active(true);
@@ -9853,16 +9854,16 @@ int run_test_join_drain_reclaim() {
             set_mode(SandboxMode::Off);
             g_capability_registry().clear_for_test();
             if (!prev_sb_s.empty())
-                ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+                ::aura::config::test_setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
             else
-                ::unsetenv("AURA_SANDBOX");
+                ::aura::config::test_unsetenv("AURA_SANDBOX");
         }
 
         std::println("\n--- #4017 AC2: same-tenant spawn OK ---");
         {
             const char* prev_sb = std::getenv("AURA_SANDBOX");
             std::string prev_sb_s = prev_sb ? prev_sb : "";
-            ::setenv("AURA_SANDBOX", "restricted", 1);
+            ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
             apply_production_audit_defaults();
             set_mode(SandboxMode::Restricted);
             aura::core::provenance::set_multi_tenant_env_active(true);
@@ -9891,9 +9892,9 @@ int run_test_join_drain_reclaim() {
             set_mode(SandboxMode::Off);
             g_capability_registry().clear_for_test();
             if (!prev_sb_s.empty())
-                ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+                ::aura::config::test_setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
             else
-                ::unsetenv("AURA_SANDBOX");
+                ::aura::config::test_unsetenv("AURA_SANDBOX");
         }
 
         std::println("\n--- #4017 AC3: TenantAdmin cross-tenant OK ---");
@@ -9906,7 +9907,7 @@ int run_test_join_drain_reclaim() {
             g_capability_registry().clear_for_test();
             grant_ta(11);
 
-            ::setenv("AURA_SANDBOX", "restricted", 1);
+            ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
             apply_production_audit_defaults();
             set_mode(SandboxMode::Restricted);
             aura::core::provenance::set_multi_tenant_env_active(true);
@@ -9933,16 +9934,16 @@ int run_test_join_drain_reclaim() {
             set_mode(SandboxMode::Off);
             g_capability_registry().clear_for_test();
             if (!prev_sb_s.empty())
-                ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+                ::aura::config::test_setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
             else
-                ::unsetenv("AURA_SANDBOX");
+                ::aura::config::test_unsetenv("AURA_SANDBOX");
         }
 
         std::println("\n--- #4017 AC4: Soft/Off zero-force (foreign tenant still admits) ---");
         {
             apply_dev_audit_defaults();
             set_mode(SandboxMode::Off);
-            ::setenv("AURA_SANDBOX", "off", 1);
+            ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
             aura::core::provenance::set_multi_tenant_env_active(false);
             g_capability_registry().clear_for_test();
 
@@ -9962,7 +9963,7 @@ int run_test_join_drain_reclaim() {
             aura::serve::g_current_fiber = nullptr;
             aura::core::resource_quota::set_current_quota_tenant(0);
             g_capability_registry().clear_for_test();
-            ::unsetenv("AURA_SANDBOX");
+            ::aura::config::test_unsetenv("AURA_SANDBOX");
         }
 
         std::println("\n--- #4017 AC5: Aura orch:spawn-agent :tenant-id spoof deny ---");
@@ -9973,7 +9974,7 @@ int run_test_join_drain_reclaim() {
             set_mode(SandboxMode::Off);
             g_capability_registry().clear_for_test();
 
-            ::setenv("AURA_SANDBOX", "restricted", 1);
+            ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
             apply_production_audit_defaults();
             set_mode(SandboxMode::Restricted);
 
@@ -10002,9 +10003,9 @@ int run_test_join_drain_reclaim() {
             set_mode(SandboxMode::Off);
             g_capability_registry().clear_for_test();
             if (!prev_sb_s.empty())
-                ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+                ::aura::config::test_setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
             else
-                ::unsetenv("AURA_SANDBOX");
+                ::aura::config::test_unsetenv("AURA_SANDBOX");
         }
     }
 
@@ -10542,7 +10543,7 @@ int run_test_join_drain_reclaim() {
             // audit defaults still stamp the observation hash (#3273 keys).
             set_mode(SandboxMode::Off);
             CompilerService cs;
-            ::setenv("AURA_SANDBOX", "restricted", 1);
+            ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
             apply_production_audit_defaults();
             auto obsv = cs.eval(
                 R"((let ((r (orch:join-via-token "no-such-token-3273")))
@@ -10573,9 +10574,9 @@ int run_test_join_drain_reclaim() {
             CHECK(obsv2.has_value(), "3273 AC3: valid join-via-token hash returns");
             apply_dev_audit_defaults();
             if (!prev_sb_s.empty())
-                ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+                ::aura::config::test_setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
             else
-                ::unsetenv("AURA_SANDBOX");
+                ::aura::config::test_unsetenv("AURA_SANDBOX");
         }
 
         std::println("\n--- #3273 AC5: source-cite + no invent + no registry ---");
@@ -10761,7 +10762,7 @@ int run_test_join_drain_reclaim() {
             // B's join runs under production + restricted so the #3273
             // hash keys are observable (#3273 AC3 obsv2 shape — let-wrapped
             // call, not a bare literal).
-            ::setenv("AURA_SANDBOX", "restricted", 1);
+            ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
             apply_production_audit_defaults();
             auto subst_token = [&](std::string s) {
                 const auto pos = s.find("TOKEN");
@@ -10790,9 +10791,9 @@ int run_test_join_drain_reclaim() {
             CHECK(send_ok && is_int(*send_ok) && as_int(*send_ok) == 1,
                   "4117 AC3: A's mailbox still held after B's observation");
             if (!prev_sb_s.empty())
-                ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+                ::aura::config::test_setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
             else
-                ::unsetenv("AURA_SANDBOX");
+                ::aura::config::test_unsetenv("AURA_SANDBOX");
             aura::orch::reset_all_agent_scopes_for_test();
         }
 
@@ -10919,7 +10920,7 @@ int run_test_join_drain_reclaim() {
             // (agent-import/agent-join) stay callable under the strict WAL
             // posture the block verifies.
             CompilerService cs;
-            ::setenv("AURA_SANDBOX", "restricted", 1);
+            ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
             apply_production_audit_defaults();
             set_mode(SandboxMode::Strict);
             std::filesystem::create_directories("build/test-wal-3930");
@@ -10942,9 +10943,9 @@ int run_test_join_drain_reclaim() {
             apply_dev_audit_defaults();
             set_mode(SandboxMode::Off);
             if (!prev_sb_s.empty())
-                ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+                ::aura::config::test_setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
             else
-                ::unsetenv("AURA_SANDBOX");
+                ::aura::config::test_unsetenv("AURA_SANDBOX");
         }
 
         std::println("\n--- #3930 AC4: source-cite — flag gate, no reservation-0, no registry ---");
@@ -11003,7 +11004,7 @@ int run_test_join_drain_reclaim() {
         auto restore_sb = [] {
             apply_dev_audit_defaults();
             set_mode(SandboxMode::Off);
-            ::setenv("AURA_SANDBOX", "off", 1);
+            ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
         };
 
         std::println(
@@ -11011,7 +11012,7 @@ int run_test_join_drain_reclaim() {
         {
             const char* prev_sb = std::getenv("AURA_SANDBOX");
             std::string prev_sb_s = prev_sb ? prev_sb : "";
-            ::setenv("AURA_SANDBOX", "restricted", 1);
+            ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
             apply_production_audit_defaults();
             set_mode(SandboxMode::Strict);
             CHECK(production_reclaimed_must_wait(), "3934 AC1: production face armed");
@@ -11042,9 +11043,9 @@ int run_test_join_drain_reclaim() {
             fiber_owned->set_state(FiberState::Done);
             fiber_owned->note_body_exit_if_reclaimed();
             if (!prev_sb_s.empty())
-                ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+                ::aura::config::test_setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
             else
-                ::unsetenv("AURA_SANDBOX");
+                ::aura::config::test_unsetenv("AURA_SANDBOX");
             restore_sb();
         }
 
@@ -11052,7 +11053,7 @@ int run_test_join_drain_reclaim() {
         {
             const char* prev_sb = std::getenv("AURA_SANDBOX");
             std::string prev_sb_s = prev_sb ? prev_sb : "";
-            ::setenv("AURA_SANDBOX", "restricted", 1);
+            ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
             apply_production_audit_defaults();
             set_mode(SandboxMode::Strict);
             auto fiber_owned = std::make_unique<Fiber>([] {});
@@ -11074,9 +11075,9 @@ int run_test_join_drain_reclaim() {
             CHECK(ens.status == JoinStatus::Invalid,
                   "3934 AC2: ensure Invalid after Done (already cleaned)");
             if (!prev_sb_s.empty())
-                ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+                ::aura::config::test_setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
             else
-                ::unsetenv("AURA_SANDBOX");
+                ::aura::config::test_unsetenv("AURA_SANDBOX");
             restore_sb();
         }
 
@@ -11084,7 +11085,7 @@ int run_test_join_drain_reclaim() {
         {
             apply_dev_audit_defaults();
             set_mode(SandboxMode::Off);
-            ::setenv("AURA_SANDBOX", "off", 1);
+            ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
             CHECK(!production_reclaimed_must_wait(), "3934 AC3: Soft face");
             auto fiber_owned = std::make_unique<Fiber>([] {});
             fiber_owned->mark_reclaimed();
@@ -11159,14 +11160,14 @@ int run_test_join_drain_reclaim() {
         auto restore_sb = [] {
             apply_dev_audit_defaults();
             set_mode(SandboxMode::Off);
-            ::setenv("AURA_SANDBOX", "off", 1);
+            ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
         };
 
         std::println("\n--- #3939 AC1: join_agents explicit Timeout is one-shot ---");
         {
             const char* prev_sb = std::getenv("AURA_SANDBOX");
             std::string prev_sb_s = prev_sb ? prev_sb : "";
-            ::setenv("AURA_SANDBOX", "restricted", 1);
+            ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
             apply_production_audit_defaults();
             set_mode(SandboxMode::Strict);
             CHECK(production_reclaimed_must_wait(), "3939 AC1: production face armed");
@@ -11200,9 +11201,9 @@ int run_test_join_drain_reclaim() {
             fiber_owned->set_state(FiberState::Done);
             fiber_owned->note_body_exit_if_reclaimed();
             if (!prev_sb_s.empty())
-                ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+                ::aura::config::test_setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
             else
-                ::unsetenv("AURA_SANDBOX");
+                ::aura::config::test_unsetenv("AURA_SANDBOX");
             restore_sb();
         }
 
@@ -11210,7 +11211,7 @@ int run_test_join_drain_reclaim() {
         {
             apply_dev_audit_defaults();
             set_mode(SandboxMode::Off);
-            ::setenv("AURA_SANDBOX", "off", 1);
+            ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
             auto fiber_owned = std::make_unique<Fiber>([] {});
             fiber_owned->mark_reclaimed();
             AgentHandle h;

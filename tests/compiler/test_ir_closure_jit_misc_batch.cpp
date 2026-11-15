@@ -2,6 +2,7 @@
 // Stream S4: member filenames stripped of _NNNN issue suffixes where unique.
 // Members: run_<stem>(); standalones keep main via #ifndef AURA_ISSUE_BATCH_MEMBER.
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include <cstdlib>
@@ -69,7 +70,7 @@ int main() {
     int members_failed = 0;
     int members_passed = 0;
     std::println("=== test_ir_closure_jit_misc_batch (26 members) ===");
-    ::setenv("AURA_IR_DIRTY_BATCH_ONLY", "0", 1);
+    ::aura::config::test_setenv("AURA_IR_DIRTY_BATCH_ONLY", "0", 1);
     const struct {
         const char* name;
         int (*fn)();
@@ -136,7 +137,7 @@ int main() {
 
 #if 0
     std::println("=== test_ir_closure_jit_misc_batch (23 members) ===");
-    ::setenv("AURA_IR_DIRTY_BATCH_ONLY", "0", 1);
+    ::aura::config::test_setenv("AURA_IR_DIRTY_BATCH_ONLY", "0", 1);
 
     std::println("\n──── test_anonymous_residual_stable_id_policy ────");
     g_passed = 0;

@@ -10,6 +10,7 @@
 //   AC5: Query keys additive (schema-2648); single bp; source-cite + linter
 //   AC6: dual-require / reject-on-miss production paths unchanged
 
+#include "core/runtime_config.hh"
 #include "compiler/coercion_provenance_policy.hh"
 #include "compiler/typed_mutation_audit.h"
 #include "test_harness.hpp"
@@ -121,8 +122,8 @@ static void reset_2648() {
     set_coercion_dual_require(false);
     set_reject_apply_on_provenance_miss(false);
     clear_coercion_active_mutation_context();
-    ::unsetenv("AURA_COERCION_EVIDENCE_LOSS_BP");
-    ::unsetenv("AURA_COERCION_SAMPLED_INCOMPLETE_INSERT");
+    ::aura::config::test_unsetenv("AURA_COERCION_EVIDENCE_LOSS_BP");
+    ::aura::config::test_unsetenv("AURA_COERCION_SAMPLED_INCOMPLETE_INSERT");
     g_coercion_soft_incomplete_skip_total.store(0, std::memory_order_relaxed);
     g_coercion_provenance_complete_total.store(0, std::memory_order_relaxed);
     g_dead_coercion_ast_elided_total.store(0, std::memory_order_relaxed);

@@ -23,6 +23,7 @@
 //        existing queries unchanged except new optional keys.
 //   AC6: Tests: mid join after deny; source-cite resolve helper.
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include "compiler/security_capabilities.h"
@@ -1460,11 +1461,11 @@ static void ac3994_1_host_path_deny_typed_tenant() {
     reset_all();
     bump_mutation_epoch(1);
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
-    ::setenv("AURA_MULTI_TENANT", "1", 1);
+    ::aura::config::test_setenv("AURA_MULTI_TENANT", "1", 1);
     aura::core::provenance::set_multi_tenant_env_active(true);
     const char* tmp = std::getenv("TMPDIR");
     const std::string base = std::string(tmp && tmp[0] ? tmp : "/tmp") + "/aura-3994-ac1";
-    ::setenv("AURA_TENANT_FS_ROOT", base.c_str(), 1);
+    ::aura::config::test_setenv("AURA_TENANT_FS_ROOT", base.c_str(), 1);
     using aura::compiler::security::kHostPathCorrelateTenantIssue;
     using aura::compiler::security::tenant_host_root_for;
     CHECK(kHostPathCorrelateTenantIssue == 3994, "3994 AC1: issue stamp");
@@ -1492,8 +1493,8 @@ static void ac3994_1_host_path_deny_typed_tenant() {
     }
     CHECK(found, "3994 AC1: Typed deny row for write-file reachable");
     CHECK(seen_tenant == 7, "3994 AC1: Typed tenant_id == capability_tenant_id_");
-    ::unsetenv("AURA_TENANT_FS_ROOT");
-    ::unsetenv("AURA_MULTI_TENANT");
+    ::aura::config::test_unsetenv("AURA_TENANT_FS_ROOT");
+    ::aura::config::test_unsetenv("AURA_MULTI_TENANT");
     aura::core::provenance::set_multi_tenant_env_active(false);
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
     reset_all();

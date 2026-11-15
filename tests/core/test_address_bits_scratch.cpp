@@ -7,6 +7,7 @@
 //   AC3: densify eval-id table is 64 slots and publishes per id
 //   AC4: float, radix, anonymous feedback key, and evo run id spellings
 
+#include "core/runtime_config.hh"
 #include "compiler/evo_log_4910.hh"
 #include "compiler/float_repr.hh"
 #include "compiler/type_feedback.h"
@@ -104,7 +105,7 @@ int main() {
                   static_cast<unsigned long>(aura::core::address_bits(info.key)));
     expect(key == expect_key.data(), "anonymous feedback key");
 
-    ::unsetenv("AURA_EVO_RUN");
+    ::aura::config::test_unsetenv("AURA_EVO_RUN");
     const auto run = aura::evo::default_run_id();
     expect(run.size() >= 18 && run.find('T') != std::string::npos &&
                run.find('Z') != std::string::npos,

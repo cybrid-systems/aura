@@ -12,6 +12,7 @@
 // AC7  invalid arguments are refused, never abort
 // AC8  one session tolerates concurrent callers (calls serialized)
 
+#include "core/runtime_config.hh"
 #include "eval/aura_eval.h"
 
 #include <atomic>
@@ -225,9 +226,9 @@ int main() {
     // The test runs from the build tree; point the stdlib loader at the
     // source tree so (require "std/...") resolves without an install.
 #ifdef AURA_SOURCE_DIR
-    ::setenv("AURA_STDLIB_DIR", AURA_SOURCE_DIR "/lib/std", 0);
+    ::aura::config::test_setenv("AURA_STDLIB_DIR", AURA_SOURCE_DIR "/lib/std", 0);
 #endif
-    ::setenv("AURA_PIPELINE_STRICT", "0", 0);
+    ::aura::config::test_setenv("AURA_PIPELINE_STRICT", "0", 0);
     // Do not force AURA_SANDBOX=off: the default Restricted posture plus the
     // Soft session grant must be enough for a stdlib that mutates its state.
 

@@ -25,6 +25,7 @@
 //   AC4 query schema-2378 depth/latency/starvation keys
 //   AC5 source-cite + chaos-safe (no hang)
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include "serve/fiber.h"
@@ -383,7 +384,7 @@ static void ac2312_source_cite_rows() {
 static void ac2347_soft_only_soft_counter() {
     std::println("\n--- #2347 AC1: Soft path Policy A soft counter only ---");
     // Ensure Strict env is off for Soft AC.
-    unsetenv("AURA_MUTATE_MAILBOX_STRICT");
+    ::aura::config::test_unsetenv("AURA_MUTATE_MAILBOX_STRICT");
     clear_recv_boundary_reject_window();
     CompilerService cs;
     CHECK(cs.eval("(+ 1 1)").has_value(), "warm");
@@ -412,9 +413,9 @@ static void ac2347_soft_only_soft_counter() {
 // ── Issue #2347 AC2: Strict hard counter ──
 static void ac2347_strict_hard_counter() {
     std::println("\n--- #2347 AC2: Strict hard-total bumps ---");
-    setenv("AURA_MUTATE_MAILBOX_STRICT", "1", 1);
+    ::aura::config::test_setenv("AURA_MUTATE_MAILBOX_STRICT", "1", 1);
     // Disable threshold so this AC only exercises hard counter.
-    setenv("AURA_MUTATE_MAILBOX_REJECT_THRESHOLD", "0", 1);
+    ::aura::config::test_setenv("AURA_MUTATE_MAILBOX_REJECT_THRESHOLD", "0", 1);
     clear_recv_boundary_reject_window();
     CompilerService cs;
     CHECK(cs.eval("(+ 1 1)").has_value(), "warm");
@@ -435,15 +436,15 @@ static void ac2347_strict_hard_counter() {
         CHECK(hard1 >= hard0 + 2, "AC2 Strict: hard-total +2");
         CHECK(ok, "AC2 Strict: threshold=0 does not mark-failed");
     }
-    unsetenv("AURA_MUTATE_MAILBOX_STRICT");
-    unsetenv("AURA_MUTATE_MAILBOX_REJECT_THRESHOLD");
+    ::aura::config::test_unsetenv("AURA_MUTATE_MAILBOX_STRICT");
+    ::aura::config::test_unsetenv("AURA_MUTATE_MAILBOX_REJECT_THRESHOLD");
 }
 
 // ── Issue #2347 AC3: threshold force-rollback ──
 static void ac2347_threshold_force_rollback() {
     std::println("\n--- #2347 AC3: threshold → success_flag=false ---");
-    setenv("AURA_MUTATE_MAILBOX_STRICT", "1", 1);
-    setenv("AURA_MUTATE_MAILBOX_REJECT_THRESHOLD", "3", 1);
+    ::aura::config::test_setenv("AURA_MUTATE_MAILBOX_STRICT", "1", 1);
+    ::aura::config::test_setenv("AURA_MUTATE_MAILBOX_REJECT_THRESHOLD", "3", 1);
     clear_recv_boundary_reject_window();
     CompilerService cs;
     CHECK(cs.eval("(+ 1 1)").has_value(), "warm");
@@ -469,14 +470,14 @@ static void ac2347_threshold_force_rollback() {
     }
     // Window cleared on outermost Guard exit.
     CHECK(g_recv_boundary_reject_window == 0, "AC3: window cleared on Guard exit");
-    unsetenv("AURA_MUTATE_MAILBOX_STRICT");
-    unsetenv("AURA_MUTATE_MAILBOX_REJECT_THRESHOLD");
+    ::aura::config::test_unsetenv("AURA_MUTATE_MAILBOX_STRICT");
+    ::aura::config::test_unsetenv("AURA_MUTATE_MAILBOX_REJECT_THRESHOLD");
 }
 
 // ── Issue #2347 AC4: happy path zero extra hard cost ──
 static void ac2347_happy_path_no_hard() {
     std::println("\n--- #2347 AC4: depth==0 happy path hard-total unchanged ---");
-    setenv("AURA_MUTATE_MAILBOX_STRICT", "1", 1);
+    ::aura::config::test_setenv("AURA_MUTATE_MAILBOX_STRICT", "1", 1);
     clear_recv_boundary_reject_window();
     CHECK(aura_evaluator_mutation_boundary_depth() == 0, "AC4: depth 0");
     MultiFiberMailbox mb(/*high_water=*/8);
@@ -497,7 +498,7 @@ static void ac2347_happy_path_no_hard() {
     CHECK(g_mf_mailbox_stats.recv_boundary_force_rollback_total.load(std::memory_order_relaxed) ==
               force0,
           "AC4: force-rollback unchanged off boundary");
-    unsetenv("AURA_MUTATE_MAILBOX_STRICT");
+    ::aura::config::test_unsetenv("AURA_MUTATE_MAILBOX_STRICT");
 }
 
 // ── Issue #2347 AC5: schema + Agent contract cite ──
@@ -1081,8 +1082,8 @@ static void ac2987_6_source_and_linter() {
 static void ac3036_1_production_residual_hard_bp() {
     std::println("\n--- #3036 AC1: production + residual → BP + hard-reject ---");
     aura::compiler::typed_audit::apply_production_audit_defaults();
-    unsetenv("AURA_SANDBOX");
-    unsetenv("AURA_MUTATE_MAILBOX_STRICT");
+    ::aura::config::test_unsetenv("AURA_SANDBOX");
+    ::aura::config::test_unsetenv("AURA_MUTATE_MAILBOX_STRICT");
     CHECK(aura::serve::mf_mailbox::mailbox_residual_hard_enabled(),
           "3036 AC1: production residual hard enabled");
     CHECK(aura_evaluator_mutation_boundary_depth() == 0, "3036 AC1: depth 0");
@@ -1110,7 +1111,7 @@ static void ac3036_1_production_residual_hard_bp() {
 static void ac3036_2_soft_observe_only() {
     std::println("\n--- #3036 AC2: Soft observe on fail; happy zero extra ---");
     aura::compiler::typed_audit::apply_dev_audit_defaults();
-    unsetenv("AURA_MUTATE_MAILBOX_STRICT");
+    ::aura::config::test_unsetenv("AURA_MUTATE_MAILBOX_STRICT");
     CHECK(!aura::serve::mf_mailbox::mailbox_residual_hard_enabled(),
           "3036 AC2: Soft residual hard off");
     const auto hard0 =
@@ -1205,8 +1206,8 @@ static void ac3036_5_source_linter_chaos() {
 static void ac3692_1_peer_recv_does_not_fail_holder() {
     std::println("\n--- #3692 AC1: peer recv ×8 does not fail-close holder Guard ---");
     aura::compiler::typed_audit::apply_production_audit_defaults();
-    ::setenv("AURA_MUTATE_MAILBOX_STRICT", "1", 1);
-    ::setenv("AURA_MUTATE_MAILBOX_REJECT_THRESHOLD", "8", 1);
+    ::aura::config::test_setenv("AURA_MUTATE_MAILBOX_STRICT", "1", 1);
+    ::aura::config::test_setenv("AURA_MUTATE_MAILBOX_REJECT_THRESHOLD", "8", 1);
     clear_recv_boundary_reject_window();
     CompilerService cs;
     CHECK(cs.eval("(+ 1 1)").has_value(), "3692 AC1: warm");
@@ -1245,8 +1246,8 @@ static void ac3692_1_peer_recv_does_not_fail_holder() {
               std::memory_order_relaxed) == hard0,
           "3692 AC1: peer does not bump Policy A hard-total");
     Evaluator::set_query_evaluator(nullptr);
-    ::unsetenv("AURA_MUTATE_MAILBOX_STRICT");
-    ::unsetenv("AURA_MUTATE_MAILBOX_REJECT_THRESHOLD");
+    ::aura::config::test_unsetenv("AURA_MUTATE_MAILBOX_STRICT");
+    ::aura::config::test_unsetenv("AURA_MUTATE_MAILBOX_REJECT_THRESHOLD");
     aura::compiler::typed_audit::apply_dev_audit_defaults();
 }
 
@@ -1283,7 +1284,7 @@ static void ac3692_3_push_still_bp_on_process_held() {
 static void ac3692_4_soft_no_mark_failed() {
     std::println("\n--- #3692 AC4: Soft/Off peer recv never mark-failed ---");
     aura::compiler::typed_audit::apply_dev_audit_defaults();
-    ::unsetenv("AURA_MUTATE_MAILBOX_STRICT");
+    ::aura::config::test_unsetenv("AURA_MUTATE_MAILBOX_STRICT");
     clear_recv_boundary_reject_window();
     CompilerService cs;
     CHECK(cs.eval("(+ 1 1)").has_value(), "3692 AC4: warm");
@@ -1470,7 +1471,7 @@ static void ac4514_1_peer_recv_parks_sibling_runs_first() {
     aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
     const char* prev_slo_4514 = std::getenv("AURA_MUTATION_HOLD_SLO_US");
     const std::string prev_slo_4514_s = prev_slo_4514 != nullptr ? prev_slo_4514 : "";
-    ::setenv("AURA_MUTATION_HOLD_SLO_US", "60000000", 1); // 60s > AC wait bounds
+    ::aura::config::test_setenv("AURA_MUTATION_HOLD_SLO_US", "60000000", 1); // 60s > AC wait bounds
     CompilerService cs;
     CHECK(cs.eval("(+ 1 1)").has_value(), "4514 AC1: warm");
     Evaluator::set_query_evaluator(&cs.evaluator());
@@ -1622,9 +1623,9 @@ static void ac4514_1_peer_recv_parks_sibling_runs_first() {
     sched.stop();
     io.join();
     if (!prev_slo_4514_s.empty())
-        ::setenv("AURA_MUTATION_HOLD_SLO_US", prev_slo_4514_s.c_str(), 1);
+        ::aura::config::test_setenv("AURA_MUTATION_HOLD_SLO_US", prev_slo_4514_s.c_str(), 1);
     else
-        ::unsetenv("AURA_MUTATION_HOLD_SLO_US");
+        ::aura::config::test_unsetenv("AURA_MUTATION_HOLD_SLO_US");
     aura::compiler::clear_hold_budget_no_edge_force_for_test();
     aura::compiler::clear_hold_budget_no_edge_quarantine_for_test();
     aura::compiler::mutation_hold_live_reset_for_test();
@@ -1984,7 +1985,7 @@ static void ac2958_1_production_wait_slo_cancels_holder() {
 
     // Production defaults active for cancel path.
     aura::compiler::typed_audit::apply_production_audit_defaults();
-    ::setenv("AURA_MAILBOX_UNDER_BOUNDARY_WAIT_SLO_US", "1000", 1); // 1 ms SLO
+    ::aura::config::test_setenv("AURA_MAILBOX_UNDER_BOUNDARY_WAIT_SLO_US", "1000", 1); // 1 ms SLO
 
     const auto cancel0 =
         g_mf_mailbox_stats.mailbox_defer_slo_hold_cancel_total.load(std::memory_order_relaxed);
@@ -2018,7 +2019,7 @@ static void ac2958_1_production_wait_slo_cancels_holder() {
 
     mutation_hold_live_note_exit(kHolder);
     aura::compiler::typed_audit::apply_dev_audit_defaults();
-    ::unsetenv("AURA_MAILBOX_UNDER_BOUNDARY_WAIT_SLO_US");
+    ::aura::config::test_unsetenv("AURA_MAILBOX_UNDER_BOUNDARY_WAIT_SLO_US");
     g_mailbox_defer_slo_hold_cancel_armed.store(0, std::memory_order_relaxed);
 }
 
@@ -2032,7 +2033,7 @@ static void ac2958_2_soft_and_under_slo() {
         note_mailbox_push_ok_drain_progress();
     g_mailbox_defer_slo_hold_cancel_armed.store(0, std::memory_order_relaxed);
     aura::compiler::typed_audit::apply_dev_audit_defaults();
-    ::setenv("AURA_MAILBOX_UNDER_BOUNDARY_WAIT_SLO_US", "1000", 1);
+    ::aura::config::test_setenv("AURA_MAILBOX_UNDER_BOUNDARY_WAIT_SLO_US", "1000", 1);
 
     const auto cancel0 =
         g_mf_mailbox_stats.mailbox_defer_slo_hold_cancel_total.load(std::memory_order_relaxed);
@@ -2056,7 +2057,8 @@ static void ac2958_2_soft_and_under_slo() {
     // Under-SLO: tiny sample with high SLO → no cancel, no soft breach from this call
     // (may still hot if max stays high from prior samples — reset max not available;
     // use slo=0 disable or huge SLO).
-    ::setenv("AURA_MAILBOX_UNDER_BOUNDARY_WAIT_SLO_US", "0", 1); // disable latency arm
+    ::aura::config::test_setenv("AURA_MAILBOX_UNDER_BOUNDARY_WAIT_SLO_US", "0",
+                                1); // disable latency arm
     g_mailbox_defer_slo_hold_cancel_armed.store(0, std::memory_order_relaxed);
     const auto soft1 =
         g_mf_mailbox_stats.mailbox_defer_slo_soft_observe_total.load(std::memory_order_relaxed);
@@ -2071,7 +2073,7 @@ static void ac2958_2_soft_and_under_slo() {
               cancel1,
           "2958 AC2: under-SLO no cancel");
 
-    ::unsetenv("AURA_MAILBOX_UNDER_BOUNDARY_WAIT_SLO_US");
+    ::aura::config::test_unsetenv("AURA_MAILBOX_UNDER_BOUNDARY_WAIT_SLO_US");
 }
 
 static void ac2958_3_one_shot_no_storm() {
@@ -2082,7 +2084,7 @@ static void ac2958_3_one_shot_no_storm() {
     using aura::serve::mf_mailbox::maybe_mailbox_defer_slo_hold_cancel;
 
     aura::compiler::typed_audit::apply_production_audit_defaults();
-    ::setenv("AURA_MAILBOX_UNDER_BOUNDARY_WAIT_SLO_US", "1", 1);
+    ::aura::config::test_setenv("AURA_MAILBOX_UNDER_BOUNDARY_WAIT_SLO_US", "1", 1);
     g_mailbox_defer_slo_hold_cancel_armed.store(0, std::memory_order_relaxed);
     mutation_hold_live_note_enter(/*fiber_id=*/7, /*start_ns=*/1, /*depth=*/1);
 
@@ -2108,7 +2110,7 @@ static void ac2958_3_one_shot_no_storm() {
 
     mutation_hold_live_note_exit(7);
     aura::compiler::typed_audit::apply_dev_audit_defaults();
-    ::unsetenv("AURA_MAILBOX_UNDER_BOUNDARY_WAIT_SLO_US");
+    ::aura::config::test_unsetenv("AURA_MAILBOX_UNDER_BOUNDARY_WAIT_SLO_US");
     g_mailbox_defer_slo_hold_cancel_armed.store(0, std::memory_order_relaxed);
 }
 
@@ -2188,7 +2190,7 @@ static void ac3002_1_gate_sample_cancels_holder() {
     while (g_mf_mailbox_stats.mailbox_deferred_depth.load(std::memory_order_relaxed) > 0)
         note_mailbox_push_ok_drain_progress();
     g_mailbox_defer_slo_hold_cancel_armed.store(0, std::memory_order_relaxed);
-    ::setenv("AURA_MAILBOX_UNDER_BOUNDARY_WAIT_SLO_US", "1000", 1);
+    ::aura::config::test_setenv("AURA_MAILBOX_UNDER_BOUNDARY_WAIT_SLO_US", "1000", 1);
 
     constexpr std::uint64_t kHolder = 3002;
     mutation_hold_live_note_enter(kHolder, /*start_ns=*/1, /*depth=*/1);
@@ -2245,7 +2247,7 @@ static void ac3002_1_gate_sample_cancels_holder() {
 
     mutation_hold_live_note_exit(kHolder);
     aura::compiler::typed_audit::apply_dev_audit_defaults();
-    ::unsetenv("AURA_MAILBOX_UNDER_BOUNDARY_WAIT_SLO_US");
+    ::aura::config::test_unsetenv("AURA_MAILBOX_UNDER_BOUNDARY_WAIT_SLO_US");
     g_mailbox_defer_slo_hold_cancel_armed.store(0, std::memory_order_relaxed);
     g_mf_mailbox_stats.mailbox_under_boundary_wait_us_p99.store(0, std::memory_order_relaxed);
 }
@@ -2263,7 +2265,7 @@ static void ac3002_2_shared_sample_quiet_path() {
     g_mailbox_defer_slo_hold_cancel_armed.store(0, std::memory_order_relaxed);
     g_mf_mailbox_stats.mailbox_under_boundary_wait_us_p99.store(0, std::memory_order_relaxed);
     g_mf_mailbox_stats.agent_throttle_for_mailbox_starvation.store(0, std::memory_order_relaxed);
-    ::setenv("AURA_MAILBOX_UNDER_BOUNDARY_WAIT_SLO_US", "100000", 1);
+    ::aura::config::test_setenv("AURA_MAILBOX_UNDER_BOUNDARY_WAIT_SLO_US", "100000", 1);
 
     std::uint64_t p99 = 99, slo = 99;
     bool th = true;
@@ -2283,7 +2285,7 @@ static void ac3002_2_shared_sample_quiet_path() {
     CHECK(g_mf_mailbox_stats.mailbox_defer_slo_hold_cancel_total.load(std::memory_order_relaxed) ==
               cancel0,
           "3002 AC2: quiet path no cancel (two relaxed loads only)");
-    ::unsetenv("AURA_MAILBOX_UNDER_BOUNDARY_WAIT_SLO_US");
+    ::aura::config::test_unsetenv("AURA_MAILBOX_UNDER_BOUNDARY_WAIT_SLO_US");
 }
 
 static void ac3002_4_schema_and_lineage() {
@@ -2348,7 +2350,7 @@ static void ac3256_1_production_slo_force_degrades_holder() {
         note_mailbox_push_ok_drain_progress();
     g_mailbox_defer_slo_hold_cancel_armed.store(0, std::memory_order_relaxed);
     aura::compiler::typed_audit::apply_production_audit_defaults();
-    ::setenv("AURA_MAILBOX_UNDER_BOUNDARY_WAIT_SLO_US", "1000", 1);
+    ::aura::config::test_setenv("AURA_MAILBOX_UNDER_BOUNDARY_WAIT_SLO_US", "1000", 1);
 
     const auto deg0 = g_mutation_hold_budget_holder_degrade_total.load(std::memory_order_relaxed);
     const auto cancel0 =
@@ -2379,7 +2381,7 @@ static void ac3256_1_production_slo_force_degrades_holder() {
 
     mutation_hold_live_note_exit(kHolder);
     aura::compiler::typed_audit::apply_dev_audit_defaults();
-    ::unsetenv("AURA_MAILBOX_UNDER_BOUNDARY_WAIT_SLO_US");
+    ::aura::config::test_unsetenv("AURA_MAILBOX_UNDER_BOUNDARY_WAIT_SLO_US");
     g_mailbox_defer_slo_hold_cancel_armed.store(0, std::memory_order_relaxed);
 }
 
@@ -2434,7 +2436,7 @@ static void ac3256_4_soft_observe_only() {
         note_mailbox_push_ok_drain_progress();
     g_mailbox_defer_slo_hold_cancel_armed.store(0, std::memory_order_relaxed);
     aura::compiler::typed_audit::apply_dev_audit_defaults();
-    ::setenv("AURA_MAILBOX_UNDER_BOUNDARY_WAIT_SLO_US", "1000", 1);
+    ::aura::config::test_setenv("AURA_MAILBOX_UNDER_BOUNDARY_WAIT_SLO_US", "1000", 1);
 
     const auto deg0 = g_mutation_hold_budget_holder_degrade_total.load(std::memory_order_relaxed);
     const auto cancel0 =
@@ -2451,7 +2453,7 @@ static void ac3256_4_soft_observe_only() {
     CHECK(g_mutation_hold_budget_holder_degrade_total.load(std::memory_order_relaxed) == deg0,
           "3256 AC4: Soft does not force_degrade");
 
-    ::unsetenv("AURA_MAILBOX_UNDER_BOUNDARY_WAIT_SLO_US");
+    ::aura::config::test_unsetenv("AURA_MAILBOX_UNDER_BOUNDARY_WAIT_SLO_US");
 }
 
 static void ac3256_5_source_and_linter() {

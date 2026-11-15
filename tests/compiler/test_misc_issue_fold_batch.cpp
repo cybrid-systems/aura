@@ -2,6 +2,7 @@
 // Stream S4: member filenames stripped of _NNNN issue suffixes where unique.
 // Members: run_<stem>(); standalones keep main via #ifndef AURA_ISSUE_BATCH_MEMBER.
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include "compiler/coercion_provenance_policy.hh"
@@ -29,13 +30,13 @@ static void reset_member_face() {
     aura::core::capability::reset_capability_effects_for_test();
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
     aura::compiler::clear_escape_move_elision_gate();
-    ::setenv("AURA_IR_DIRTY_BATCH_ONLY", "0", 1);
+    ::aura::config::test_setenv("AURA_IR_DIRTY_BATCH_ONLY", "0", 1);
     // Unset means apply_env_sandbox re-arms Restricted (production default)
     // and Hard lock-order. Keep the env aligned with the Off face.
-    ::setenv("AURA_SANDBOX", "off", 1);
-    ::unsetenv("AURA_COMMERCIAL_TENANT");
-    ::unsetenv("AURA_MULTI_TENANT");
-    ::unsetenv("AURA_HARD_FIBER_ISOLATION");
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_unsetenv("AURA_COMMERCIAL_TENANT");
+    ::aura::config::test_unsetenv("AURA_MULTI_TENANT");
+    ::aura::config::test_unsetenv("AURA_HARD_FIBER_ISOLATION");
 }
 
 extern int run_test_aether_denseness_residual();

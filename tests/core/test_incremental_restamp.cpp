@@ -15,6 +15,7 @@
 //   AC6: metrics on query:generation-stats (schema-2122 keys when workspace live)
 //   AC7: this file (reuse #2061 test per #81967)
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include <cstdint>
@@ -250,7 +251,7 @@ int run_test_incremental_restamp() {
         std::println("\n--- #2402 AC1: production default prefers dirty-cone restamp ---");
         CHECK(true, "issue stamp #2402");
         // Default policy Auto (unset env) → restamp_incremental_default=1
-        unsetenv("AURA_RESTAMP_POLICY");
+        ::aura::config::test_unsetenv("AURA_RESTAMP_POLICY");
         CHECK(aura::ast::FlatAST::restamp_incremental_default() == 1,
               "#2402 AC1: restamp_incremental_default=1 under Auto");
         CHECK(aura::ast::resolve_restamp_policy() == aura::ast::RestampPolicy::Auto,

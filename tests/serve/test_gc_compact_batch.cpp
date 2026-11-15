@@ -34,6 +34,7 @@
 //                  empty live_mask all-live + selective mask +
 //                  all-dead returns 0 + return type unsigned
 
+#include "core/runtime_config.hh"
 #include "arena_nonalloc_hooks.hpp"
 #include "test_harness.hpp"
 #include "core/gc_hooks.h"
@@ -2261,7 +2262,7 @@ static void run_1508_jit_closure_dual_check_deopt() {
     // AC1: aura_is_jit_closure_fresh matches table + defuse epochs
     {
         std::println("\n--- #1508 AC1: aura_is_jit_closure_fresh helper ---");
-        setenv("AURA_BRIDGE_EPOCH_LEGACY_TRUST", "0", 1);
+        ::aura::config::test_setenv("AURA_BRIDGE_EPOCH_LEGACY_TRUST", "0", 1);
         aura_set_aot_defuse_version(10);
         const auto e0 = aura_aot_func_table_epoch();
         aura_aot_bump_func_table_epoch();

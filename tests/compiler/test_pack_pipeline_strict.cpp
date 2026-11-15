@@ -7,6 +7,7 @@
 // face lives in test_tree_walker_fallback_strict.cpp (sandbox=off →
 // Allow, #2213 AC2).
 
+#include "core/runtime_config.hh"
 #include "compiler/pipeline_policy.hh"
 #include "../support/service_module_source.hh"
 #include "core/cpp26_contract_stats.h"
@@ -54,8 +55,8 @@ void ac3627_default_and_reset() {
 
 void ac3627_pack_env_unset() {
     std::printf("\n--- 3627 AC1: pack + env unset -> Forbidden, never TakeWalker ---\n");
-    (void)unsetenv("AURA_PIPELINE_STRICT");
-    (void)unsetenv("AURA_SANDBOX");
+    (void)::aura::config::test_unsetenv("AURA_PIPELINE_STRICT");
+    (void)::aura::config::test_unsetenv("AURA_SANDBOX");
     apply_pipeline_strict_defaults(/*dev_sandbox_off=*/true);
     CHECK(tree_walker_fallback_policy() == TreeWalkerFallbackPolicy::Forbidden,
           "pack + sandbox=off + env unset -> Forbidden (#3627 AC1)");
@@ -68,7 +69,7 @@ void ac3627_pack_env_unset() {
 
 void ac3627_pack_ignores_dev_flag() {
     std::printf("\n--- 3627 AC2: pack ignores dev_sandbox_off entirely ---\n");
-    (void)unsetenv("AURA_PIPELINE_STRICT");
+    (void)::aura::config::test_unsetenv("AURA_PIPELINE_STRICT");
     apply_pipeline_strict_defaults(/*dev_sandbox_off=*/false);
     CHECK(tree_walker_fallback_policy() == TreeWalkerFallbackPolicy::Forbidden,
           "pack + dev_off=false -> Forbidden (same strict binding)");
@@ -79,25 +80,25 @@ void ac3627_pack_ignores_dev_flag() {
 
 void ac3627_operator_wins() {
     std::printf("\n--- 3627 AC3: AURA_PIPELINE_STRICT operator override wins in pack ---\n");
-    (void)setenv("AURA_PIPELINE_STRICT", "allow", 1);
+    (void)::aura::config::test_setenv("AURA_PIPELINE_STRICT", "allow", 1);
     apply_pipeline_strict_defaults(/*dev_sandbox_off=*/true);
     CHECK(tree_walker_fallback_policy() == TreeWalkerFallbackPolicy::Allow,
           "env allow -> operator Soft in pack (#3627 AC3)");
     CHECK(tree_walker_fallback_disposition(true) == TreeWalkerFallbackDisposition::TakeWalker,
           "operator allow -> TakeWalker (explicit, not silent)");
 
-    (void)setenv("AURA_PIPELINE_STRICT", "force-soa", 1);
+    (void)::aura::config::test_setenv("AURA_PIPELINE_STRICT", "force-soa", 1);
     apply_pipeline_strict_defaults(/*dev_sandbox_off=*/true);
     CHECK(tree_walker_fallback_policy() == TreeWalkerFallbackPolicy::ForceSoa,
           "env force-soa -> ForceSoa in pack");
     CHECK(tree_walker_fallback_disposition(true) == TreeWalkerFallbackDisposition::ContinueIr,
           "ForceSoa -> ContinueIr (no silent walker)");
 
-    (void)setenv("AURA_PIPELINE_STRICT", "1", 1);
+    (void)::aura::config::test_setenv("AURA_PIPELINE_STRICT", "1", 1);
     apply_pipeline_strict_defaults(/*dev_sandbox_off=*/true);
     CHECK(tree_walker_fallback_policy() == TreeWalkerFallbackPolicy::Forbidden,
           "env 1 -> Forbidden in pack");
-    (void)unsetenv("AURA_PIPELINE_STRICT");
+    (void)::aura::config::test_unsetenv("AURA_PIPELINE_STRICT");
     reset_tree_walker_fallback_policy_for_test();
 }
 

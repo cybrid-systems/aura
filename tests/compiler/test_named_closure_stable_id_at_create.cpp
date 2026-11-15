@@ -21,6 +21,7 @@
 //   AC5: query size + preserve/assign counters still advance
 //   AC6: src-aligned test + coverage gate (extend #2550 suite, no new file)
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 #include "../support/service_module_source.hh"
 
@@ -1062,7 +1063,7 @@ static void ac2841_1_dual_eval_cascade_owner_scoped() {
     CHECK(aura_aot_state_map_size() >= 2, "AC1: dual-eval AotState map size >= 2");
 
     const char* prev_env = std::getenv("AURA_CROSS_EVAL_EPOCH_THROTTLE");
-    ::setenv("AURA_CROSS_EVAL_EPOCH_THROTTLE", "1", 1);
+    ::aura::config::test_setenv("AURA_CROSS_EVAL_EPOCH_THROTTLE", "1", 1);
     const auto epoch0 = aura_aot_func_table_epoch();
     const auto thr0 = cross_eval_epoch_action_throttled_total_v_read();
     aura_aot_set_reemit_owner_eval(eval_a);
@@ -1075,9 +1076,9 @@ static void ac2841_1_dual_eval_cascade_owner_scoped() {
     CHECK(epoch1 == epoch0, "AC1: global table epoch does not advance on cascade");
     CHECK(thr1 > thr0, "AC1: cross-eval-epoch-action-throttled-total advances");
     if (prev_env)
-        ::setenv("AURA_CROSS_EVAL_EPOCH_THROTTLE", prev_env, 1);
+        ::aura::config::test_setenv("AURA_CROSS_EVAL_EPOCH_THROTTLE", prev_env, 1);
     else
-        ::unsetenv("AURA_CROSS_EVAL_EPOCH_THROTTLE");
+        ::aura::config::test_unsetenv("AURA_CROSS_EVAL_EPOCH_THROTTLE");
     aura_cleanup_aot_state(eval_a);
     aura_cleanup_aot_state(eval_b);
 }
@@ -1104,7 +1105,7 @@ static void ac2841_2_hard_force_advances_joint_epoch() {
     aura_set_aot_region_mask_for_eval(eval_a, 1);
     aura_set_aot_region_mask_for_eval(eval_b, 2);
     const char* prev_env = std::getenv("AURA_CROSS_EVAL_EPOCH_THROTTLE");
-    ::setenv("AURA_CROSS_EVAL_EPOCH_THROTTLE", "1", 1);
+    ::aura::config::test_setenv("AURA_CROSS_EVAL_EPOCH_THROTTLE", "1", 1);
     const auto epoch0 = aura_aot_func_table_epoch();
     aura_aot_set_reemit_owner_eval(eval_a);
     aura_aot_set_register_owner_eval(eval_a);
@@ -1115,9 +1116,9 @@ static void ac2841_2_hard_force_advances_joint_epoch() {
     const auto epoch1 = aura_aot_func_table_epoch();
     CHECK(epoch1 == epoch0 + 1, "AC2: force-bump advances joint table epoch");
     if (prev_env)
-        ::setenv("AURA_CROSS_EVAL_EPOCH_THROTTLE", prev_env, 1);
+        ::aura::config::test_setenv("AURA_CROSS_EVAL_EPOCH_THROTTLE", prev_env, 1);
     else
-        ::unsetenv("AURA_CROSS_EVAL_EPOCH_THROTTLE");
+        ::aura::config::test_unsetenv("AURA_CROSS_EVAL_EPOCH_THROTTLE");
     aura_cleanup_aot_state(eval_a);
     aura_cleanup_aot_state(eval_b);
 }
@@ -1215,8 +1216,8 @@ static void ac2951_1_hard_owner_scoped_no_joint_advance() {
         aura_cleanup_aot_state(eval_b);
         return;
     }
-    ::setenv("AURA_CROSS_EVAL_EPOCH_THROTTLE", "1", 1);
-    ::setenv("AURA_CROSS_EVAL_HARD_OWNER_SCOPED", "1", 1);
+    ::aura::config::test_setenv("AURA_CROSS_EVAL_EPOCH_THROTTLE", "1", 1);
+    ::aura::config::test_setenv("AURA_CROSS_EVAL_HARD_OWNER_SCOPED", "1", 1);
     aura_aot_set_reemit_owner_eval(eval_a);
     aura_aot_set_register_owner_eval(eval_a);
     const auto epoch0 = aura_aot_func_table_epoch();
@@ -1235,22 +1236,22 @@ static void ac2951_1_hard_owner_scoped_no_joint_advance() {
     CHECK(aura_aot_func_table_epoch() == epoch0, "2951 AC1: peer not force-staled by joint bump");
     aura_aot_set_reemit_owner_eval(nullptr);
     aura_aot_set_register_owner_eval(nullptr);
-    ::unsetenv("AURA_CROSS_EVAL_EPOCH_THROTTLE");
-    ::unsetenv("AURA_CROSS_EVAL_HARD_OWNER_SCOPED");
+    ::aura::config::test_unsetenv("AURA_CROSS_EVAL_EPOCH_THROTTLE");
+    ::aura::config::test_unsetenv("AURA_CROSS_EVAL_HARD_OWNER_SCOPED");
     aura_cleanup_aot_state(eval_a);
     aura_cleanup_aot_state(eval_b);
 }
 
 static void ac2951_2_soft_force_joint() {
     std::println("\n--- #2951 AC2: Soft / force path still advances joint epoch ---");
-    ::setenv("AURA_CROSS_EVAL_HARD_OWNER_SCOPED", "0", 1);
+    ::aura::config::test_setenv("AURA_CROSS_EVAL_HARD_OWNER_SCOPED", "0", 1);
     CHECK(aura_aot_cross_eval_hard_owner_scoped_armed() == 0,
           "2951 AC2: env=0 disarms hard owner-scoped");
     void* eval_a = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0xC2951ULL));
     void* eval_b = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0xD2951ULL));
     aura_set_aot_region_mask_for_eval(eval_a, 1);
     aura_set_aot_region_mask_for_eval(eval_b, 2);
-    ::setenv("AURA_CROSS_EVAL_EPOCH_THROTTLE", "1", 1);
+    ::aura::config::test_setenv("AURA_CROSS_EVAL_EPOCH_THROTTLE", "1", 1);
     const auto epoch0 = aura_aot_func_table_epoch();
     aura_aot_set_reemit_owner_eval(eval_a);
     aura_aot_set_register_owner_eval(eval_a);
@@ -1260,8 +1261,8 @@ static void ac2951_2_soft_force_joint() {
           "2951 AC2: force-bump advances joint epoch under multi");
     aura_aot_set_reemit_owner_eval(nullptr);
     aura_aot_set_register_owner_eval(nullptr);
-    ::unsetenv("AURA_CROSS_EVAL_EPOCH_THROTTLE");
-    ::unsetenv("AURA_CROSS_EVAL_HARD_OWNER_SCOPED");
+    ::aura::config::test_unsetenv("AURA_CROSS_EVAL_EPOCH_THROTTLE");
+    ::aura::config::test_unsetenv("AURA_CROSS_EVAL_HARD_OWNER_SCOPED");
     aura_cleanup_aot_state(eval_a);
     aura_cleanup_aot_state(eval_b);
 }

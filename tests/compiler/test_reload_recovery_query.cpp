@@ -8,6 +8,7 @@
 //   AC4: keys on hot-update-registry-stats + schema-2367 lineage
 //   AC5: source-cite + gate wiring
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include "compiler/aura_jit_bridge.h"
@@ -1289,8 +1290,8 @@ static void ac3026_1_residual_visible_until_covered() {
     clear_recovery_idle(reg);
     reg.reset_force_jit_repromote_for_test();
     aura::compiler::typed_audit::apply_production_audit_defaults();
-    unsetenv("AURA_FORCE_JIT_REPROMOTE_ONLY_COVERED");
-    unsetenv("AURA_SANDBOX");
+    ::aura::config::test_unsetenv("AURA_FORCE_JIT_REPROMOTE_ONLY_COVERED");
+    ::aura::config::test_unsetenv("AURA_SANDBOX");
     CHECK(reg.resolve_force_jit_repromote_only_covered(), "3026 AC1: production only_covered");
     reg.set_force_jit_repromote_window(1);
     reg.on_force_jit_for_reason(AotReloadFail::Defuse);
@@ -1321,8 +1322,8 @@ static void ac3026_2_agent_min_dirty_reemit_clears() {
     reg.reset_force_jit_repromote_for_test();
     aura_hot_update_reset_residual_force_observe_for_test();
     aura::compiler::typed_audit::apply_production_audit_defaults();
-    unsetenv("AURA_FORCE_JIT_REPROMOTE_ONLY_COVERED");
-    unsetenv("AURA_SANDBOX");
+    ::aura::config::test_unsetenv("AURA_FORCE_JIT_REPROMOTE_ONLY_COVERED");
+    ::aura::config::test_unsetenv("AURA_SANDBOX");
 
     {
         AotReloadConsistencyProof ok{};

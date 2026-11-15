@@ -41,6 +41,7 @@
 //
 // No docs/design/ per #1655 / #1485.
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include "compiler/agent_name_table.h"
@@ -300,7 +301,7 @@ int run_test_orch_obs_facade() {
         if (pid == 0) {
             ::alarm(10);
             aura::compiler::typed_audit::note_production_defaults_active(false);
-            ::unsetenv("AURA_SANDBOX");
+            ::aura::config::test_unsetenv("AURA_SANDBOX");
             aura::serve::Scheduler sched(2);
             sched.evaluate_start_gate();
             ::_exit(99);
@@ -1420,7 +1421,7 @@ int run_test_orch_obs_facade() {
             const char* prev_sb = std::getenv("AURA_SANDBOX");
             const std::string prev_sb_s = prev_sb ? prev_sb : "";
             const auto before = href3733("spawn-tenant-required-total");
-            ::setenv("AURA_SANDBOX", "restricted", 1);
+            ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
             apply_production_audit_defaults();
             set_mode(SandboxMode::Restricted);
             aura::core::resource_quota::set_current_quota_tenant(0);
@@ -1438,9 +1439,9 @@ int run_test_orch_obs_facade() {
             apply_dev_audit_defaults();
             set_mode(SandboxMode::Off);
             if (!prev_sb_s.empty())
-                ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+                ::aura::config::test_setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
             else
-                ::unsetenv("AURA_SANDBOX");
+                ::aura::config::test_unsetenv("AURA_SANDBOX");
             CHECK(href3733("spawn-tenant-required-total") >= before + 1,
                   "3733 AC2: spawn-tenant-required-total ≥ 1 on engine:metrics");
         }

@@ -19,6 +19,7 @@
 //        (multi-tenant / Strict / Restricted counters still fire)
 //   AC5: no docs/design/3375-*; no test_issue_3375.cpp per #1655 / #81967
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include "compiler/security_capabilities.h"
@@ -233,8 +234,8 @@ int run_test_audit_durable_gap_force_wal() {
         std::string prev_sb_s = prev_sb ? prev_sb : "";
         const char* prev_open = std::getenv("AURA_WAL_APPEND_FAIL_OPEN");
         std::string prev_open_s = prev_open ? prev_open : "";
-        ::unsetenv("AURA_WAL_APPEND_FAIL_OPEN");
-        ::setenv("AURA_SANDBOX", "restricted", 1);
+        ::aura::config::test_unsetenv("AURA_WAL_APPEND_FAIL_OPEN");
+        ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
         apply_production_audit_defaults();
         apply_production_security_defaults();
@@ -259,13 +260,13 @@ int run_test_audit_durable_gap_force_wal() {
         apply_dev_audit_defaults();
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
         if (!prev_sb_s.empty())
-            ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+            ::aura::config::test_setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
         else
-            ::unsetenv("AURA_SANDBOX");
+            ::aura::config::test_unsetenv("AURA_SANDBOX");
         if (!prev_open_s.empty())
-            ::setenv("AURA_WAL_APPEND_FAIL_OPEN", prev_open_s.c_str(), 1);
+            ::aura::config::test_setenv("AURA_WAL_APPEND_FAIL_OPEN", prev_open_s.c_str(), 1);
         else
-            ::unsetenv("AURA_WAL_APPEND_FAIL_OPEN");
+            ::aura::config::test_unsetenv("AURA_WAL_APPEND_FAIL_OPEN");
     }
 
     // ── #3965: SE enable-fail + mutation WAL enable-fail stay fail-closed ──
@@ -305,8 +306,8 @@ int run_test_audit_durable_gap_force_wal() {
         std::string prev_sb_s = prev_sb ? prev_sb : "";
         const char* prev_open = std::getenv("AURA_WAL_APPEND_FAIL_OPEN");
         std::string prev_open_s = prev_open ? prev_open : "";
-        ::unsetenv("AURA_WAL_APPEND_FAIL_OPEN");
-        ::setenv("AURA_SANDBOX", "restricted", 1);
+        ::aura::config::test_unsetenv("AURA_WAL_APPEND_FAIL_OPEN");
+        ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
         apply_production_audit_defaults();
         apply_production_security_defaults();
@@ -341,7 +342,7 @@ int run_test_audit_durable_gap_force_wal() {
         wal_overflow_ring_clear_for_test();
         apply_dev_audit_defaults();
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
-        ::setenv("AURA_SANDBOX", "off", 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
         apply_dev_audit_defaults();
         wal_overflow_ring_clear_for_test();
         CompilerService cs_soft;
@@ -355,13 +356,13 @@ int run_test_audit_durable_gap_force_wal() {
 
         wal_overflow_ring_clear_for_test();
         if (!prev_sb_s.empty())
-            ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+            ::aura::config::test_setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
         else
-            ::unsetenv("AURA_SANDBOX");
+            ::aura::config::test_unsetenv("AURA_SANDBOX");
         if (!prev_open_s.empty())
-            ::setenv("AURA_WAL_APPEND_FAIL_OPEN", prev_open_s.c_str(), 1);
+            ::aura::config::test_setenv("AURA_WAL_APPEND_FAIL_OPEN", prev_open_s.c_str(), 1);
         else
-            ::unsetenv("AURA_WAL_APPEND_FAIL_OPEN");
+            ::aura::config::test_unsetenv("AURA_WAL_APPEND_FAIL_OPEN");
     }
 
     // ── #4005: force_wal pair enable-fail is a posture breach ──
@@ -474,25 +475,25 @@ int run_test_audit_durable_gap_force_wal() {
 
         auto restore_env = [&]() {
             if (!prev_sb_s.empty())
-                ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+                ::aura::config::test_setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
             else
-                ::unsetenv("AURA_SANDBOX");
+                ::aura::config::test_unsetenv("AURA_SANDBOX");
             if (!prev_mt_s.empty())
-                ::setenv("AURA_MULTI_TENANT", prev_mt_s.c_str(), 1);
+                ::aura::config::test_setenv("AURA_MULTI_TENANT", prev_mt_s.c_str(), 1);
             else
-                ::unsetenv("AURA_MULTI_TENANT");
+                ::aura::config::test_unsetenv("AURA_MULTI_TENANT");
             if (!prev_wal_s.empty())
-                ::setenv("AURA_MUTATION_AUDIT_WAL", prev_wal_s.c_str(), 1);
+                ::aura::config::test_setenv("AURA_MUTATION_AUDIT_WAL", prev_wal_s.c_str(), 1);
             else
-                ::unsetenv("AURA_MUTATION_AUDIT_WAL");
+                ::aura::config::test_unsetenv("AURA_MUTATION_AUDIT_WAL");
             if (!prev_persist_s.empty())
-                ::setenv("AURA_PERSIST_DIR", prev_persist_s.c_str(), 1);
+                ::aura::config::test_setenv("AURA_PERSIST_DIR", prev_persist_s.c_str(), 1);
             else
-                ::unsetenv("AURA_PERSIST_DIR");
+                ::aura::config::test_unsetenv("AURA_PERSIST_DIR");
             if (!prev_open_s.empty())
-                ::setenv("AURA_WAL_APPEND_FAIL_OPEN", prev_open_s.c_str(), 1);
+                ::aura::config::test_setenv("AURA_WAL_APPEND_FAIL_OPEN", prev_open_s.c_str(), 1);
             else
-                ::unsetenv("AURA_WAL_APPEND_FAIL_OPEN");
+                ::aura::config::test_unsetenv("AURA_WAL_APPEND_FAIL_OPEN");
         };
 
         reset_audit_wal_for_test();
@@ -500,11 +501,11 @@ int run_test_audit_durable_gap_force_wal() {
         wal_overflow_ring_clear_for_test();
         ::aura::core::wal_slo::reset_wal_append_fail_slo_for_test();
         reset_orch_security_schedule_counters_for_test();
-        ::unsetenv("AURA_SANDBOX");
-        ::unsetenv("AURA_WAL_APPEND_FAIL_OPEN");
-        ::unsetenv("AURA_PERSIST_DIR");
-        ::setenv("AURA_MULTI_TENANT", "1", 1);
-        ::setenv("AURA_MUTATION_AUDIT_WAL", "/proc/nonwritable", 1);
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
+        ::aura::config::test_unsetenv("AURA_WAL_APPEND_FAIL_OPEN");
+        ::aura::config::test_unsetenv("AURA_PERSIST_DIR");
+        ::aura::config::test_setenv("AURA_MULTI_TENANT", "1", 1);
+        ::aura::config::test_setenv("AURA_MUTATION_AUDIT_WAL", "/proc/nonwritable", 1);
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
         apply_production_audit_defaults();
         CHECK(g_audit_wal_metrics().force_wal_enable_fail_total.load(std::memory_order_relaxed) ==
@@ -560,10 +561,10 @@ int run_test_audit_durable_gap_force_wal() {
         reset_audit_wal_for_test();
         g_security_event_wal().disable();
         ::aura::core::wal_slo::reset_wal_append_fail_slo_for_test();
-        ::setenv("AURA_WAL_APPEND_FAIL_OPEN", "1", 1);
-        ::unsetenv("AURA_SANDBOX");
-        ::setenv("AURA_MULTI_TENANT", "1", 1);
-        ::setenv("AURA_MUTATION_AUDIT_WAL", "/proc/nonwritable", 1);
+        ::aura::config::test_setenv("AURA_WAL_APPEND_FAIL_OPEN", "1", 1);
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
+        ::aura::config::test_setenv("AURA_MULTI_TENANT", "1", 1);
+        ::aura::config::test_setenv("AURA_MUTATION_AUDIT_WAL", "/proc/nonwritable", 1);
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
         apply_production_audit_defaults();
         CHECK(g_audit_wal_metrics().force_wal_enable_fail_total.load(std::memory_order_relaxed) >=
@@ -618,9 +619,9 @@ int run_test_audit_durable_gap_force_wal() {
         std::string prev_wal_s = prev_wal ? prev_wal : "";
         const char* prev_open = std::getenv("AURA_WAL_APPEND_FAIL_OPEN");
         std::string prev_open_s = prev_open ? prev_open : "";
-        ::unsetenv("AURA_WAL_APPEND_FAIL_OPEN");
-        ::setenv("AURA_SANDBOX", "restricted", 1);
-        ::setenv("AURA_MUTATION_AUDIT_WAL", dir_4686a.c_str(), 1);
+        ::aura::config::test_unsetenv("AURA_WAL_APPEND_FAIL_OPEN");
+        ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
+        ::aura::config::test_setenv("AURA_MUTATION_AUDIT_WAL", dir_4686a.c_str(), 1);
 
         apply_production_security_defaults();
         CHECK(se_wal_4686::g_security_event_wal().is_enabled(),
@@ -718,7 +719,7 @@ int run_test_audit_durable_gap_force_wal() {
         se_wal_4686::g_security_event_wal().disable();
         aura::core::audit_wal::g_mutation_audit_wal().disable();
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
-        ::setenv("AURA_SANDBOX", "off", 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
         aura::compiler::typed_audit::apply_dev_audit_defaults();
         slo_4686::reset_wal_append_fail_slo_for_test();
         const auto dir_4686b = fresh_wal_dir_4686("soft");
@@ -753,17 +754,17 @@ int run_test_audit_durable_gap_force_wal() {
         fs_4686::remove_all(dir_4686a, ec_4686);
         fs_4686::remove_all(dir_4686b, ec_4686);
         if (!prev_sb_s.empty())
-            ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+            ::aura::config::test_setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
         else
-            ::unsetenv("AURA_SANDBOX");
+            ::aura::config::test_unsetenv("AURA_SANDBOX");
         if (!prev_wal_s.empty())
-            ::setenv("AURA_MUTATION_AUDIT_WAL", prev_wal_s.c_str(), 1);
+            ::aura::config::test_setenv("AURA_MUTATION_AUDIT_WAL", prev_wal_s.c_str(), 1);
         else
-            ::unsetenv("AURA_MUTATION_AUDIT_WAL");
+            ::aura::config::test_unsetenv("AURA_MUTATION_AUDIT_WAL");
         if (!prev_open_s.empty())
-            ::setenv("AURA_WAL_APPEND_FAIL_OPEN", prev_open_s.c_str(), 1);
+            ::aura::config::test_setenv("AURA_WAL_APPEND_FAIL_OPEN", prev_open_s.c_str(), 1);
         else
-            ::unsetenv("AURA_WAL_APPEND_FAIL_OPEN");
+            ::aura::config::test_unsetenv("AURA_WAL_APPEND_FAIL_OPEN");
         aura::compiler::typed_audit::apply_dev_audit_defaults();
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
     }

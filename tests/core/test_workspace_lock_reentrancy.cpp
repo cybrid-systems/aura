@@ -14,6 +14,7 @@
 //      metrics path do not throw (pin adopt)
 // AC4: source markers for Wave1 helpers present
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include <fstream>
@@ -118,9 +119,9 @@ int main() {
 #else
         const std::string lib = "lib";
 #endif
-        setenv("AURA_PATH", lib.c_str(), 1);
-        setenv("AURA_SANDBOX", "off", 1);
-        setenv("AURA_PIPELINE_STRICT", "0", 1);
+        ::aura::config::test_setenv("AURA_PATH", lib.c_str(), 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
+        ::aura::config::test_setenv("AURA_PIPELINE_STRICT", "0", 1);
         CompilerService cs;
         // C++ \\\" → runtime \" → aura escaped quote inside the set-code
         // string literal (matches the oneshot/serve e2e escaping for #4264).
@@ -141,8 +142,8 @@ int main() {
     // already held; prim body uses alloc_storage_lock_).
     {
         std::println("\n--- AC7 (#4272): vector-set! under set-code + eval-current ---");
-        setenv("AURA_SANDBOX", "off", 1);
-        setenv("AURA_PIPELINE_STRICT", "0", 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
+        ::aura::config::test_setenv("AURA_PIPELINE_STRICT", "0", 1);
         {
             CompilerService cs;
             const std::string src =
@@ -188,8 +189,8 @@ int main() {
     // still has_value) — Soft serve surfaces that as status=error.
     {
         std::println("\n--- AC8 (#4272): set-code rejects extra close-paren ---");
-        setenv("AURA_SANDBOX", "off", 1);
-        setenv("AURA_PIPELINE_STRICT", "0", 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
+        ::aura::config::test_setenv("AURA_PIPELINE_STRICT", "0", 1);
         CompilerService cs;
         auto merr_kind_is = [&](const std::string& set_code_arg, std::string_view expect) -> bool {
             auto r = cs.eval(std::string("(set-code \"") + set_code_arg + "\")");
@@ -231,8 +232,8 @@ int main() {
     // closure. The slot write must keep the value and the closure.
     {
         std::println("\n--- AC9 (#4346): vector-set!/set-car! keep closures ---");
-        setenv("AURA_SANDBOX", "off", 1);
-        setenv("AURA_PIPELINE_STRICT", "0", 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
+        ::aura::config::test_setenv("AURA_PIPELINE_STRICT", "0", 1);
         CompilerService cs;
         const std::string src = "(define (tab) 2)\\n"
                                 "(define (indent n) (* n (tab)))\\n"

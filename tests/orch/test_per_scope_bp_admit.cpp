@@ -37,6 +37,7 @@
 //
 // No docs/design/ per #1655 / #1485.
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include "compiler/typed_mutation_audit.h"
@@ -77,7 +78,7 @@ using aura::test::g_failed;
 using aura::test::g_passed;
 
 static void ac3730_set_sandbox_off() {
-    ::setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
 }
 
@@ -301,7 +302,7 @@ int run_test_per_scope_bp_admit() {
 
         // AC1: nullopt + empty scope → same as resolve_mailbox_bp_admit_threshold
         {
-            unsetenv("AURA_ORCH_BP_ADMIT_THRESHOLD");
+            ::aura::config::test_unsetenv("AURA_ORCH_BP_ADMIT_THRESHOLD");
             const auto proc = aura::orch::resolve_mailbox_bp_admit_threshold();
             const auto d = aura::orch::resolve_bp_threshold(
                 std::nullopt, /*scope_id=*/{}, /*policy_zero_means_process_default=*/false);
@@ -314,7 +315,7 @@ int run_test_per_scope_bp_admit() {
 
         // AC3: spec 0 → always_reject (distinct from process env=0)
         {
-            unsetenv("AURA_ORCH_BP_ADMIT_THRESHOLD");
+            ::aura::config::test_unsetenv("AURA_ORCH_BP_ADMIT_THRESHOLD");
             const auto d = aura::orch::resolve_bp_threshold(
                 std::optional<std::uint64_t>{0}, {}, /*policy_zero_means_process_default=*/false);
             CHECK(d.always_reject, "2948 AC3: spec 0 → always_reject");
@@ -413,7 +414,7 @@ int run_test_per_scope_bp_admit() {
         {
             reset_3015();
             set_prod(false);
-            unsetenv("AURA_SANDBOX");
+            ::aura::config::test_unsetenv("AURA_SANDBOX");
             CHECK(!aura::orch::production_scope_bp_inherit(), "#3015 AC2: Soft inherit OFF");
             aura::orch::AgentScope sa(sched);
             aura::orch::AgentScope sb(sched);
@@ -431,7 +432,7 @@ int run_test_per_scope_bp_admit() {
         {
             reset_3015();
             set_prod(true);
-            unsetenv("AURA_SANDBOX");
+            ::aura::config::test_unsetenv("AURA_SANDBOX");
             CHECK(aura::orch::production_scope_bp_inherit(), "#3015 AC3: production inherit ON");
             aura::orch::AgentScope sa(sched);
             aura::orch::AgentScope sb(sched);
@@ -481,7 +482,7 @@ int run_test_per_scope_bp_admit() {
         {
             reset_3015();
             set_prod(true);
-            unsetenv("AURA_SANDBOX");
+            ::aura::config::test_unsetenv("AURA_SANDBOX");
             bump_bp_recent(40);
             aura::orch::AgentScope sc(sched);
             auto spec = make_spec("explicit-process");
@@ -494,7 +495,7 @@ int run_test_per_scope_bp_admit() {
         {
             reset_3015();
             set_prod(true);
-            unsetenv("AURA_SANDBOX");
+            ::aura::config::test_unsetenv("AURA_SANDBOX");
             auto spec = make_spec("direct-prod");
             auto h = aura::orch::spawn_agent_with_mailbox(sched, std::move(spec));
             CHECK(h.ok, "#3015 AC2: direct empty id admits (no storm)");
@@ -507,7 +508,7 @@ int run_test_per_scope_bp_admit() {
         }
 
         set_prod(false);
-        unsetenv("AURA_SANDBOX");
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
         reset_3015();
     }
 
@@ -520,7 +521,7 @@ int run_test_per_scope_bp_admit() {
         std::println("\n--- #3147 AC1: scoped agent BP storm isolates to scope gauge ---");
         reset_all();
         set_prod(true);
-        unsetenv("AURA_SANDBOX");
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
         AgentScope sc_a(sched);
         AgentScope sc_b(sched);
         const auto a_scope = std::string{sc_a.bp_scope_id()};
@@ -549,7 +550,7 @@ int run_test_per_scope_bp_admit() {
         std::println("\n--- #3147 AC2: explicit '-' / empty → process bucket ---");
         reset_all();
         set_prod(true);
-        unsetenv("AURA_SANDBOX");
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
         auto spec = make_spec("explicit-empty");
         spec.bp_scope_id.clear();
         auto h = aura::orch::spawn_agent_with_mailbox(sched, std::move(spec));
@@ -785,7 +786,7 @@ int run_test_per_scope_bp_admit() {
 
         std::println("\n--- #3730 AC4: #3015 inherit still fills empty; explicit wins ---");
         {
-            unsetenv("AURA_SANDBOX");
+            ::aura::config::test_unsetenv("AURA_SANDBOX");
             set_prod(true);
             CHECK(aura::orch::production_scope_bp_inherit(), "3730 AC4: inherit armed");
             AgentScope sa(sched);
@@ -850,7 +851,7 @@ int run_test_per_scope_bp_admit() {
         std::println("\n--- #4327 AC1: note/load send \"-\" to the process bucket ---");
         reset_all();
         set_prod(true);
-        ::unsetenv("AURA_SANDBOX");
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
 
         const auto proc0 =
             g_orch_module_stats.mailbox_bp_recent_total.load(std::memory_order_relaxed);
@@ -880,11 +881,11 @@ int run_test_per_scope_bp_admit() {
         std::println("\n--- #4327 AC2: \"-\" storm rejects the next \"-\" spawn ---");
         reset_all();
         set_prod(true);
-        ::unsetenv("AURA_SANDBOX");
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
         (void)aura::orch::reset_scope_bp_map_for_test();
         const char* prev_thr = std::getenv("AURA_ORCH_BP_ADMIT_THRESHOLD");
         std::string prev_thr_s = prev_thr ? prev_thr : "";
-        ::setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "4", 1);
+        ::aura::config::test_setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "4", 1);
 
         const auto rej0 =
             g_orch_module_stats.spawn_bp_admit_reject_total.load(std::memory_order_relaxed);
@@ -910,9 +911,9 @@ int run_test_per_scope_bp_admit() {
               "4327 AC2: process admit-reject counter bumped");
 
         if (!prev_thr_s.empty())
-            ::setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", prev_thr_s.c_str(), 1);
+            ::aura::config::test_setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", prev_thr_s.c_str(), 1);
         else
-            ::unsetenv("AURA_ORCH_BP_ADMIT_THRESHOLD");
+            ::aura::config::test_unsetenv("AURA_ORCH_BP_ADMIT_THRESHOLD");
     }
 
     std::println("\n=== #2591/#2948/#3015/#3147/#3337/#3730: {}/{} checks passed ===", g_passed,

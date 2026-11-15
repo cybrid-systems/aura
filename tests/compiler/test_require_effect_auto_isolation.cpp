@@ -17,6 +17,7 @@
 //   AC6: Tests + source-cite require_effect (prefer-existing isolation /
 //        capability suites).
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include "compiler/security_capabilities.h"
@@ -2298,7 +2299,7 @@ static void ac3630_4_off_and_optout() {
     auto& ev2 = cs2.evaluator();
     ev2.set_effect_sandbox_mode(1);
     const bool fiber_ctor = aura::core::capability::g_capability_registry().hard_fiber_isolation();
-    setenv("AURA_MT_AUTODETECT", "0", 1);
+    ::aura::config::test_setenv("AURA_MT_AUTODETECT", "0", 1);
     const auto det1 = aura::core::workspace_isolation::g_tenant_isolation_metrics()
                           .undeclared_multi_tenant_detected_total.load(std::memory_order_relaxed);
     ev2.set_tenant_principal(7, {}, false);
@@ -2313,7 +2314,7 @@ static void ac3630_4_off_and_optout() {
           "3630 AC4: opt-out does not change hard fiber (ctor baseline held)");
     CHECK(!aura::core::provenance::undeclared_mt_autodetect_armed(),
           "3630 AC4: opt-out keeps posture flag dark");
-    unsetenv("AURA_MT_AUTODETECT");
+    ::aura::config::test_unsetenv("AURA_MT_AUTODETECT");
 }
 
 static void ac3630_5_source_cite_and_no_invent() {

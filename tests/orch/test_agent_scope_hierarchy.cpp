@@ -8,6 +8,7 @@
 //   AC5: parent cancel → all descendant fibers observe cancel; no deadlock
 //   AC6: README short hierarchy example
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include <atomic>
@@ -477,8 +478,8 @@ static void ac3444_hard_deny_stub() {
         aura::compiler::typed_audit::note_production_defaults_active(on);
     };
     set_prod(true);
-    unsetenv("AURA_SANDBOX");
-    unsetenv("AURA_AGENT_SCOPE_CONCURRENT_ABORT");
+    ::aura::config::test_unsetenv("AURA_SANDBOX");
+    ::aura::config::test_unsetenv("AURA_AGENT_SCOPE_CONCURRENT_ABORT");
 
     Scheduler sched(2);
     SchedRunner runner(sched);

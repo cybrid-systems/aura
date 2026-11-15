@@ -37,6 +37,7 @@
 //                                       test hardens the metric
 //                                       path assertions)
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include "compiler/typed_mutation_audit.h"
@@ -1518,7 +1519,7 @@ int run_test_parallel_intend_pure_contract() {
               "3243 AC1: pure/single do not bump");
 
         std::println("\n--- #3243 AC4: AURA_PARALLEL_REQUIRE_REGION_KEYS deny ---");
-        ::setenv("AURA_PARALLEL_REQUIRE_REGION_KEYS", "1", 1);
+        ::aura::config::test_setenv("AURA_PARALLEL_REQUIRE_REGION_KEYS", "1", 1);
         auto denied = pcs.eval(kZeroKeys);
         CHECK(denied.has_value() && is_hash(*denied), "3243 AC4: env deny returns hash");
         CHECK(href_iso(pcs, kZeroKeys, "status") == "invalid", "ac3243_4_env_deny: status=invalid");
@@ -1526,7 +1527,7 @@ int run_test_parallel_intend_pure_contract() {
               "3243 AC4: deny reason");
         CHECK(href_iso(pcs, kTwoKeys, "isolation-level") == "region-concurrent",
               "3243 AC4: env deny does not block supplied keys");
-        ::unsetenv("AURA_PARALLEL_REQUIRE_REGION_KEYS");
+        ::aura::config::test_unsetenv("AURA_PARALLEL_REQUIRE_REGION_KEYS");
 
         std::println("\n--- #3243 AC5: source-cite + linter + no invent ---");
         CHECK(kParallelRegionKeyMissingIssue == 3243, "3243 stamp");
@@ -1674,10 +1675,10 @@ int run_test_parallel_intend_pure_contract() {
         CHECK(kMutateOverlapKeys != nullptr, "3299 AC4: overlap snippet present");
 
         std::println("\n--- #3299 AC5: require-keys=1 deny on mutate batch ---");
-        ::setenv("AURA_PARALLEL_REQUIRE_REGION_KEYS", "1", 1);
+        ::aura::config::test_setenv("AURA_PARALLEL_REQUIRE_REGION_KEYS", "1", 1);
         CHECK(aura::serve::parallel_orch::parallel_require_region_keys_env(),
               "3299 AC5: env deny mutate batch");
-        ::unsetenv("AURA_PARALLEL_REQUIRE_REGION_KEYS");
+        ::aura::config::test_unsetenv("AURA_PARALLEL_REQUIRE_REGION_KEYS");
 
         std::println("\n--- #3299 AC6: source-cite + README guidance ---");
         const auto md3299 = read_file("src/orch/README.md");
@@ -1694,18 +1695,18 @@ int run_test_parallel_intend_pure_contract() {
         using aura::serve::parallel_orch::parallel_require_region_keys_explicit_off;
 
         std::println("\n--- #3353 C++ deny helper ---");
-        ::unsetenv("AURA_PARALLEL_REQUIRE_REGION_KEYS");
+        ::aura::config::test_unsetenv("AURA_PARALLEL_REQUIRE_REGION_KEYS");
         CHECK(parallel_require_region_keys_deny(true, true),
               "ac3353_1_prod_mutate_deny: production+mutate deny when env unset");
         CHECK(!parallel_require_region_keys_deny(false, true), "3353 AC3: Soft does not deny");
-        ::setenv("AURA_PARALLEL_REQUIRE_REGION_KEYS", "0", 1);
+        ::aura::config::test_setenv("AURA_PARALLEL_REQUIRE_REGION_KEYS", "0", 1);
         CHECK(parallel_require_region_keys_explicit_off(), "3353 AC4: env=0 explicit off");
         CHECK(!parallel_require_region_keys_deny(true, true),
               "ac3353_4_env_off: explicit 0 admits");
-        ::setenv("AURA_PARALLEL_REQUIRE_REGION_KEYS", "1", 1);
+        ::aura::config::test_setenv("AURA_PARALLEL_REQUIRE_REGION_KEYS", "1", 1);
         CHECK(parallel_require_region_keys_deny(true, false),
               "3353 AC4: env=1 denies even non-mutate");
-        ::unsetenv("AURA_PARALLEL_REQUIRE_REGION_KEYS");
+        ::aura::config::test_unsetenv("AURA_PARALLEL_REQUIRE_REGION_KEYS");
 
         std::println("\n--- #3353 AC2: production + ≥2 distinct keys unchanged ---");
         CHECK(read_file("src/serve/parallel_orch.h").find("IsolationLevel::RegionConcurrent") !=

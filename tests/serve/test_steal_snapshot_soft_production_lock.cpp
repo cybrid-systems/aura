@@ -2,6 +2,7 @@
 // @reason: Issue #2372 — production hard-forbid AURA_STEAL_SNAPSHOT_SOFT
 // + require force-deopt ABI under production Soft lock.
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 #include "serve/fiber.h"
 #include "compiler/security_defaults.hh"
@@ -55,7 +56,7 @@ int run_test_steal_snapshot_soft_production_lock() {
     // AC1: production lock + Soft env → Soft ignored
     {
         std::println("\n--- AC1: production lock ignores Soft env ---");
-        ::setenv("AURA_STEAL_SNAPSHOT_SOFT", "1", 1);
+        ::aura::config::test_setenv("AURA_STEAL_SNAPSHOT_SOFT", "1", 1);
         aura::serve::reset_steal_snapshot_soft_for_test();
         aura::serve::set_steal_snapshot_soft_production_locked(true);
         CHECK(aura::serve::steal_snapshot_soft_production_locked(), "AC1: lock on");
@@ -64,7 +65,7 @@ int run_test_steal_snapshot_soft_production_lock() {
         // Unlock → Soft env takes effect again (sandbox=off path).
         aura::serve::set_steal_snapshot_soft_production_locked(false);
         CHECK(aura::serve::is_steal_snapshot_soft_mode(), "AC1: Soft env active when unlocked");
-        ::unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
+        ::aura::config::test_unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
         aura::serve::set_steal_snapshot_soft_production_locked(saved_lock);
     }
 
@@ -88,7 +89,7 @@ int run_test_steal_snapshot_soft_production_lock() {
     // AC3: test override wins over production lock (Soft usable for unit tests)
     {
         std::println("\n--- AC3: test override Soft under production lock ---");
-        ::setenv("AURA_STEAL_SNAPSHOT_SOFT", "0", 1);
+        ::aura::config::test_setenv("AURA_STEAL_SNAPSHOT_SOFT", "0", 1);
         aura::serve::set_steal_snapshot_soft_production_locked(true);
         aura::serve::set_steal_snapshot_soft_for_test(true);
         CHECK(aura::serve::is_steal_snapshot_soft_mode(),
@@ -100,15 +101,15 @@ int run_test_steal_snapshot_soft_production_lock() {
         CHECK(!aura::serve::is_steal_snapshot_soft_mode(),
               "AC3: reset + lock → not Soft even if env was set earlier");
         // Sandbox=off path: apply_production_security_defaults unlocks Soft.
-        ::setenv("AURA_SANDBOX", "off", 1);
-        ::setenv("AURA_STEAL_SNAPSHOT_SOFT", "1", 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
+        ::aura::config::test_setenv("AURA_STEAL_SNAPSHOT_SOFT", "1", 1);
         aura::compiler::security::apply_production_security_defaults();
         CHECK(!aura::serve::steal_snapshot_soft_production_locked(),
               "AC3: sandbox=off unlocks Soft production lock");
         CHECK(aura::serve::is_steal_snapshot_soft_mode(),
               "AC3: Soft usable under AURA_SANDBOX=off");
-        ::unsetenv("AURA_SANDBOX");
-        ::unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
+        ::aura::config::test_unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
         aura::serve::reset_steal_snapshot_soft_for_test();
         aura::serve::set_steal_snapshot_soft_production_locked(saved_lock);
     }
@@ -124,7 +125,7 @@ int run_test_steal_snapshot_soft_production_lock() {
         // Under production lock, Soft check returns false without needing Soft env.
         aura::serve::reset_steal_snapshot_soft_for_test();
         aura::serve::set_steal_snapshot_soft_production_locked(true);
-        ::unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
+        ::aura::config::test_unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
         CHECK(!aura::serve::is_steal_snapshot_soft_mode(), "AC4: lock-only Soft=false");
         aura::serve::set_steal_snapshot_soft_production_locked(saved_lock);
     }

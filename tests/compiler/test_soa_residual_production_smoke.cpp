@@ -8,6 +8,7 @@
 //   AC4: Source-cite #2520 / schema-2520 / #2618
 //   AC5: Soft/unit configs with intentional allow do not false-fail smoke
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include <cstdlib>
@@ -63,7 +64,7 @@ static std::int64_t href(CompilerService& cs, std::string_view key) {
 // Force production-like env for residual hard-assert path.
 static void force_production_bridge_denied() {
     reset_allow_aos_bridge_for_test();
-    ::unsetenv("AURA_ALLOW_AOS_BRIDGE");
+    ::aura::config::test_unsetenv("AURA_ALLOW_AOS_BRIDGE");
 }
 
 // Representative lower → eval path (production SoA-only).

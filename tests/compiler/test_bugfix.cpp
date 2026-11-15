@@ -1,6 +1,7 @@
 // Issue #957/#968/#982/#984 (#1978 renamed): issue# moved from filename to header.
 // test_bugfix_968_984.cpp — Issues #968–#984 bugfix regression
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include "compiler/value_tags.h" // Issue #4532: ffi closure id namespace helpers
@@ -388,19 +389,21 @@ int run_test_bugfix() {
     // this side of the call — gc-heap clears the string heap, so the suite
     // cannot keep evaluating Aura afterwards.
     {
-        ::unsetenv("AURA_4597_G");
+        ::aura::config::test_unsetenv("AURA_4597_G");
         CompilerService cs;
-        auto r = cs.eval("(begin (require \"std/ffi\" all:)"
-                         " (define setenv (c-func -1 \"setenv\" \"(String String Int) -> Int\"))"
-                         " (define strdup (c-func -1 \"strdup\" \"(String) -> Opaque\"))"
-                         " (define unsetenv (c-func -1 \"unsetenv\" \"(Opaque) -> Int\"))"
-                         " (setenv \"AURA_4597_G\" \"1\" 1)"
-                         " (define hg (c-handle (strdup \"AURA_4597_G\") unsetenv))"
-                         " (set! hg #f)"
-                         " (gc-heap))");
+        auto r = cs.eval(
+            "(begin (require \"std/ffi\" all:)"
+            " (define ::aura::config::test_setenv(c-func -1 \"setenv\" \"(String String Int) -> "
+            "Int\"))"
+            " (define strdup (c-func -1 \"strdup\" \"(String) -> Opaque\"))"
+            " (define ::aura::config::test_unsetenv(c-func -1 \"unsetenv\" \"(Opaque) -> Int\"))"
+            " (setenv \"AURA_4597_G\" \"1\" 1)"
+            " (define hg (c-handle (strdup \"AURA_4597_G\") unsetenv))"
+            " (set! hg #f)"
+            " (gc-heap))");
         CHECK(r && is_bool(*r) && as_bool(*r), "4597: gc-heap ran");
         CHECK(::getenv("AURA_4597_G") == nullptr, "4597: gc-heap ran the handle finalizer");
-        ::unsetenv("AURA_4597_G");
+        ::aura::config::test_unsetenv("AURA_4597_G");
     }
 
     if (::aura::test::g_failed)

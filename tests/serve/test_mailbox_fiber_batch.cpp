@@ -2,6 +2,7 @@
 // Stream S4: member filenames stripped of _NNNN issue suffixes where unique.
 // Members: run_<stem>(); standalones keep main via #ifndef AURA_ISSUE_BATCH_MEMBER.
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include "compiler/coercion_provenance_policy.hh"
@@ -28,7 +29,7 @@ static int isolate(const char* name, int (*fn)()) {
     // that latch — apply_production_security_defaults takes the dev path
     // while the env is off. Other members keep the dev face.
     if (std::strcmp(name, "test_chaos_soak_production_gate") == 0)
-        ::unsetenv("AURA_SANDBOX");
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
     aura::test::g_passed = 0;
     aura::test::g_failed = 0;
     const pid_t pid = ::fork();
@@ -75,8 +76,8 @@ static void reset_member_face() {
     aura::compiler::typed_audit::reset_for_test();
     aura::compiler::typed_audit::apply_dev_audit_defaults();
     aura::compiler::reset_coercion_provenance_miss_policy_for_test();
-    ::setenv("AURA_IR_DIRTY_BATCH_ONLY", "0", 1);
-    ::setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_IR_DIRTY_BATCH_ONLY", "0", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
 }
 
 extern int run_test_residual_gc_defer_assert();

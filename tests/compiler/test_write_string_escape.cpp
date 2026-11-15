@@ -8,6 +8,7 @@
 //   AC4: top-level TW write matches JIT define body
 //   AC5: source-cite + cmake + gate
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 #include "compiler/pipeline_policy.hh"
 
@@ -261,23 +262,23 @@ static void ac4468_vector_and_float_print() {
         aura::compiler::TreeWalkerFallbackPolicy policy;
         ~RestoreFace() {
             if (had_sb)
-                setenv("AURA_SANDBOX", sb.c_str(), 1);
+                ::aura::config::test_setenv("AURA_SANDBOX", sb.c_str(), 1);
             else
-                unsetenv("AURA_SANDBOX");
+                ::aura::config::test_unsetenv("AURA_SANDBOX");
             if (had_st)
-                setenv("AURA_PIPELINE_STRICT", st.c_str(), 1);
+                ::aura::config::test_setenv("AURA_PIPELINE_STRICT", st.c_str(), 1);
             else
-                unsetenv("AURA_PIPELINE_STRICT");
+                ::aura::config::test_unsetenv("AURA_PIPELINE_STRICT");
             aura::compiler::set_tree_walker_fallback_policy(policy);
         }
     } restore{saved_sb, saved_st, had_sb, had_st, prev_policy};
 
     auto face = [](const char* strict) {
-        setenv("AURA_SANDBOX", "off", 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
         if (strict && *strict)
-            setenv("AURA_PIPELINE_STRICT", strict, 1);
+            ::aura::config::test_setenv("AURA_PIPELINE_STRICT", strict, 1);
         else
-            unsetenv("AURA_PIPELINE_STRICT");
+            ::aura::config::test_unsetenv("AURA_PIPELINE_STRICT");
         aura::compiler::apply_pipeline_strict_defaults(true);
     };
 
@@ -382,26 +383,26 @@ static void ac4472_codepoints_and_radix() {
         aura::compiler::TreeWalkerFallbackPolicy policy;
         ~RestoreFace() {
             if (had_sb)
-                setenv("AURA_SANDBOX", sb.c_str(), 1);
+                ::aura::config::test_setenv("AURA_SANDBOX", sb.c_str(), 1);
             else
-                unsetenv("AURA_SANDBOX");
+                ::aura::config::test_unsetenv("AURA_SANDBOX");
             if (had_st)
-                setenv("AURA_PIPELINE_STRICT", st.c_str(), 1);
+                ::aura::config::test_setenv("AURA_PIPELINE_STRICT", st.c_str(), 1);
             else
-                unsetenv("AURA_PIPELINE_STRICT");
+                ::aura::config::test_unsetenv("AURA_PIPELINE_STRICT");
             if (had_path)
-                setenv("AURA_PATH", path.c_str(), 1);
+                ::aura::config::test_setenv("AURA_PATH", path.c_str(), 1);
             else
-                unsetenv("AURA_PATH");
+                ::aura::config::test_unsetenv("AURA_PATH");
             aura::compiler::set_tree_walker_fallback_policy(policy);
         }
     } restore{saved_sb, saved_st, saved_path, had_sb, had_st, had_path, prev_policy};
-    setenv("AURA_PATH", AURA_SOURCE_DIR "/lib", 1);
+    ::aura::config::test_setenv("AURA_PATH", AURA_SOURCE_DIR "/lib", 1);
 
     const char* faces[] = {"0", "force-soa"};
     for (const char* strict : faces) {
-        setenv("AURA_SANDBOX", "off", 1);
-        setenv("AURA_PIPELINE_STRICT", strict, 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
+        ::aura::config::test_setenv("AURA_PIPELINE_STRICT", strict, 1);
         aura::compiler::apply_pipeline_strict_defaults(true);
         const std::string tag = std::string("4472 ") + strict;
         CompilerService cs;

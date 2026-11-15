@@ -27,6 +27,7 @@
 //              sentinels reachable via query (kebab + snake aliases).
 //   AC_2339_4: source-cite RAII helpers + Issue #2339 cite in root_remap_pass.ixx.
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include <atomic>
@@ -97,13 +98,13 @@ struct MovingFlagGuard {
     const char* prev = nullptr;
     explicit MovingFlagGuard(int on) {
         prev = std::getenv("AURA_ARENA_MOVING_COMPACT");
-        setenv("AURA_ARENA_MOVING_COMPACT", on ? "1" : "0", 1);
+        ::aura::config::test_setenv("AURA_ARENA_MOVING_COMPACT", on ? "1" : "0", 1);
     }
     ~MovingFlagGuard() {
         if (prev)
-            setenv("AURA_ARENA_MOVING_COMPACT", prev, 1);
+            ::aura::config::test_setenv("AURA_ARENA_MOVING_COMPACT", prev, 1);
         else
-            unsetenv("AURA_ARENA_MOVING_COMPACT");
+            ::aura::config::test_unsetenv("AURA_ARENA_MOVING_COMPACT");
     }
 };
 

@@ -8,6 +8,7 @@
 //   AC4: additive schema-2561 + source-cite
 //   AC5: existing blame_commit_* / coercion_provenance_* remain authoritative
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 #include "compiler/typed_mutation_audit.h"
 #include "compiler/coercion_provenance_policy.hh"
@@ -132,7 +133,7 @@ static void ac1_recover_or_escalate() {
     reset_2561();
     set_strategy(AuditStrategy::Sampled);
     // Unset escalate env for pure Soft observe first.
-    unsetenv("AURA_BLAME_SOFT_ESCALATE");
+    ::aura::config::test_unsetenv("AURA_BLAME_SOFT_ESCALATE");
     CHECK(!blame_soft_escalate_enabled(), "AC1: Soft default escalate off");
     const auto fail1 = g_blame_soft_recover_fail_total.load();
     const auto esc1 = g_blame_soft_escalate_total.load();
@@ -146,7 +147,7 @@ static void ac1_recover_or_escalate() {
     CHECK(!blame_soft_escalate_pending_for_boundary(), "AC1: no escalate pending Soft default");
 
     // Escalate when env=1.
-    setenv("AURA_BLAME_SOFT_ESCALATE", "1", 1);
+    ::aura::config::test_setenv("AURA_BLAME_SOFT_ESCALATE", "1", 1);
     CHECK(blame_soft_escalate_enabled(), "AC1: env escalate on");
     const auto esc2 = g_blame_soft_escalate_total.load();
     const bool r3 =
@@ -156,14 +157,14 @@ static void ac1_recover_or_escalate() {
     CHECK(blame_soft_escalate_pending_for_boundary(), "AC1: escalate pending armed");
     CHECK(consume_blame_soft_escalate_for_boundary(), "AC1: consume one-shot escalate");
     CHECK(!blame_soft_escalate_pending_for_boundary(), "AC1: pending cleared after consume");
-    unsetenv("AURA_BLAME_SOFT_ESCALATE");
+    ::aura::config::test_unsetenv("AURA_BLAME_SOFT_ESCALATE");
 
     // production_defaults also escalate without env (Sampled host under prod).
     reset_2561();
     apply_production_audit_defaults();    // sets Full + production_defaults_active
     set_strategy(AuditStrategy::Sampled); // Soft path still Sampled; prod flags on
     CHECK(production_defaults_active(), "AC1: production defaults");
-    unsetenv("AURA_BLAME_SOFT_ESCALATE");
+    ::aura::config::test_unsetenv("AURA_BLAME_SOFT_ESCALATE");
     const auto esc3 = g_blame_soft_escalate_total.load();
     const bool r4 =
         maybe_soft_recover_or_escalate_blame(empty_log, /*mid=*/42, /*had_miss_signal=*/true);
@@ -203,7 +204,7 @@ static void ac2_complete_zero_work() {
 static void ac3_full_and_soft_observe() {
     std::println("\n--- #2561 AC3: Full hard path + Soft observe default ---");
     reset_2561();
-    unsetenv("AURA_BLAME_SOFT_ESCALATE");
+    ::aura::config::test_unsetenv("AURA_BLAME_SOFT_ESCALATE");
     CHECK(!blame_soft_escalate_enabled(), "AC3: Soft escalate default off");
 
     // Full strategy: Soft recover is a no-op (leave #2221 alone).
@@ -305,7 +306,7 @@ int run_test_blame_soft_recover() {
     ac5_existing_authoritative();
     apply_dev_audit_defaults();
     reset_2561();
-    unsetenv("AURA_BLAME_SOFT_ESCALATE");
+    ::aura::config::test_unsetenv("AURA_BLAME_SOFT_ESCALATE");
     std::println("\n=== #2561: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

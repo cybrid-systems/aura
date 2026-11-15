@@ -49,6 +49,7 @@
 //                                       + spawn-bp-admit-reject-total
 //                                       + schema-2228)
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include <filesystem>
@@ -162,7 +163,7 @@ int run_test_mailbox_starvation_scope_throttle_3775() {
     {
         std::println("\n--- #3775 AC1: A starvation does not throttle B ---");
         apply_production_audit_defaults();
-        unsetenv("AURA_SANDBOX");
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
         reset_all();
         CHECK(mailbox_starve_scoped_active(), "3775 AC1: production scoped mode on");
         note_mailbox_mutation_hold_defer("tenant-a-3775");
@@ -189,7 +190,7 @@ int run_test_mailbox_starvation_scope_throttle_3775() {
     {
         std::println("\n--- #3775 AC2: same-scope starve still denies ---");
         apply_production_audit_defaults();
-        unsetenv("AURA_SANDBOX");
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
         reset_all();
         note_mailbox_mutation_hold_defer("scope-same-3775");
         (void)drain_deferred_under_budget(/*budget_us=*/0, "scope-same-3775");
@@ -206,7 +207,7 @@ int run_test_mailbox_starvation_scope_throttle_3775() {
     {
         std::println("\n--- #3775 AC3: Soft/Off process-global ---");
         apply_dev_audit_defaults();
-        setenv("AURA_SANDBOX", "off", 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
         reset_all();
         CHECK(!mailbox_starve_scoped_active(), "3775 AC3: Soft/Off not scoped");
         const auto sz0 = scope_starve_map_size_for_test();
@@ -228,7 +229,7 @@ int run_test_mailbox_starvation_scope_throttle_3775() {
         // Drain process depth for hygiene.
         while (g_mf_mailbox_stats.mailbox_deferred_depth.load(std::memory_order_relaxed) > 0)
             note_mailbox_push_ok_drain_progress();
-        unsetenv("AURA_SANDBOX");
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
         apply_dev_audit_defaults();
         reset_all();
     }
@@ -237,7 +238,7 @@ int run_test_mailbox_starvation_scope_throttle_3775() {
     {
         std::println("\n--- #3775 AC4: overflow isolation ---");
         apply_production_audit_defaults();
-        unsetenv("AURA_SANDBOX");
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
         reset_all();
         // Fill map to cap with quiet tenants.
         for (std::size_t i = 0; i < kMailboxStarveScopeMapCap; ++i) {
@@ -299,7 +300,7 @@ int run_test_mailbox_starvation_scope_throttle_3775() {
         using aura::orch::make_security_schedule_input_live;
         using aura::serve::mf_mailbox::arm_scope_starve_throttle;
         apply_production_audit_defaults();
-        unsetenv("AURA_SANDBOX");
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
         reset_all();
         g_mf_mailbox_stats.mailbox_under_boundary_wait_us_p99.store(50'000,
                                                                     std::memory_order_relaxed);
@@ -313,7 +314,7 @@ int run_test_mailbox_starvation_scope_throttle_3775() {
         CHECK(!rej_b.has_value() || rej_b->find("mailbox-hold-slo") == std::string::npos,
               "3938: B named live input is not mailbox-hold-slo");
         apply_dev_audit_defaults();
-        setenv("AURA_SANDBOX", "off", 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
         const auto in_soft = make_security_schedule_input_live(/*sandbox=*/0, /*prod=*/false,
                                                                /*soft=*/true, "tenant-b-3938");
         CHECK(!admit_security_schedule(in_soft).has_value(),
@@ -324,7 +325,7 @@ int run_test_mailbox_starvation_scope_throttle_3775() {
         CHECK(prim.find("Issue #3938") != std::string::npos, "3938: parallel-intend cites #3938");
         CHECK(read_file("tests/orch/test_issue_3938.cpp").empty(), "3938: no test_issue_3938.cpp");
         g_mf_mailbox_stats.mailbox_under_boundary_wait_us_p99.store(0, std::memory_order_relaxed);
-        unsetenv("AURA_SANDBOX");
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
         apply_dev_audit_defaults();
         reset_all();
     }
@@ -341,14 +342,15 @@ int run_test_mailbox_bp_admit() {
     (void)cs;
 
     // Sanity: production default is mild threshold (#2535); env overrides.
-    unsetenv("AURA_ORCH_BP_ADMIT_THRESHOLD");
+    ::aura::config::test_unsetenv("AURA_ORCH_BP_ADMIT_THRESHOLD");
     CHECK(resolve_mailbox_bp_admit_threshold() == aura::orch::kMailboxBpAdmitThresholdDefault,
           "AC0: default threshold = kMailboxBpAdmitThresholdDefault (#2535)");
     CHECK(aura::orch::kMailboxBpAdmitThresholdDefault == 32, "AC0: default == 32");
-    setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "5", 1);
+    ::aura::config::test_setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "5", 1);
     CHECK(resolve_mailbox_bp_admit_threshold() == 5,
           "AC0: env override AURA_ORCH_BP_ADMIT_THRESHOLD=5 parsed");
-    setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "0", 1); // opt-out for remaining AC blocks
+    ::aura::config::test_setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "0",
+                                1); // opt-out for remaining AC blocks
 
     // ── AC1 + AC2: high-water fill → BP → spawn soft-reject + counters
     {
@@ -382,7 +384,7 @@ int run_test_mailbox_bp_admit() {
 
         // 2) Set threshold to a value that the bp_recent count
         //    exceeds, then try to spawn_agent_with_mailbox.
-        setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "1", 1);
+        ::aura::config::test_setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "1", 1);
         const auto spawn_bp_reject_before =
             g_orch_module_stats.spawn_bp_admit_reject_total.load(std::memory_order_relaxed);
         const auto spawn_failures_before =
@@ -467,7 +469,7 @@ int run_test_mailbox_bp_admit() {
         SchedRunner runner(sched);
 
         // Set threshold very high so no BP can possibly reject.
-        setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "1000000", 1);
+        ::aura::config::test_setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "1000000", 1);
 
         const auto spawn_failures_before =
             g_orch_module_stats.spawn_failures.load(std::memory_order_relaxed);
@@ -508,7 +510,7 @@ int run_test_mailbox_bp_admit() {
         SchedRunner runner(sched);
 
         // Threshold = 1 so any single BP event rejects subsequent spawns.
-        setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "1", 1);
+        ::aura::config::test_setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "1", 1);
 
         // Fill a mailbox to trigger one BP event.
         auto storm_mb = std::make_shared<MultiFiberMailbox>(/*high_water=*/8);
@@ -548,7 +550,7 @@ int run_test_mailbox_bp_admit() {
         // Drain: re-set threshold to 0 + clean BP counter (env test-only
         // path: we can't reset the counter directly, but the test
         // already proved the reject path works under sustained BP).
-        setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "0", 1);
+        ::aura::config::test_setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "0", 1);
     }
 
     // ── AC4: parallel_orch does NOT gate admit on result-mb BP ───
@@ -609,8 +611,8 @@ int run_test_mailbox_bp_admit() {
         SchedRunner runner(sched);
 
         // Short quiet window so the test does not wait 30s.
-        setenv("AURA_ORCH_BP_WINDOW_MS", "100", 1);
-        setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "1", 1);
+        ::aura::config::test_setenv("AURA_ORCH_BP_WINDOW_MS", "100", 1);
+        ::aura::config::test_setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "1", 1);
 
         const auto send_bp_before =
             g_orch_module_stats.send_backpressure_total.load(std::memory_order_relaxed);
@@ -664,8 +666,8 @@ int run_test_mailbox_bp_admit() {
                 h_ok.fiber->owner_sched()->reap_orphans_now();
             }
         }
-        setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "0", 1);
-        setenv("AURA_ORCH_BP_WINDOW_MS", "", 1);
+        ::aura::config::test_setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "0", 1);
+        ::aura::config::test_setenv("AURA_ORCH_BP_WINDOW_MS", "", 1);
     }
 
     {
@@ -683,8 +685,8 @@ int run_test_mailbox_bp_admit() {
             g_orch_module_stats.send_backpressure_total.load(std::memory_order_relaxed);
         CHECK(after >= before, "#2398 AC2: send_backpressure_total never decreases");
         // Quiet-period decay must NOT zero send_backpressure_total.
-        setenv("AURA_ORCH_BP_WINDOW_MS", "1", 1);
-        setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "1", 1);
+        ::aura::config::test_setenv("AURA_ORCH_BP_WINDOW_MS", "1", 1);
+        ::aura::config::test_setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "1", 1);
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
         Scheduler sched(1);
         SchedRunner runner(sched);
@@ -699,14 +701,14 @@ int run_test_mailbox_bp_admit() {
             g_orch_module_stats.send_backpressure_total.load(std::memory_order_relaxed);
         CHECK(after_decay >= after,
               "#2398 AC2: send_backpressure_total unchanged by quiet-period decay");
-        setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "0", 1);
-        setenv("AURA_ORCH_BP_WINDOW_MS", "", 1);
+        ::aura::config::test_setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "0", 1);
+        ::aura::config::test_setenv("AURA_ORCH_BP_WINDOW_MS", "", 1);
     }
 
     {
         std::println("\n--- #2398 AC3: threshold=0 → no BP admit reject ---");
-        setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "0", 1);
-        setenv("AURA_ORCH_BP_WINDOW_MS", "100", 1);
+        ::aura::config::test_setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "0", 1);
+        ::aura::config::test_setenv("AURA_ORCH_BP_WINDOW_MS", "100", 1);
         Scheduler sched(1);
         SchedRunner runner(sched);
         aura::orch::note_mailbox_bp_recent_event();
@@ -731,7 +733,7 @@ int run_test_mailbox_bp_admit() {
                 h.fiber->owner_sched()->reap_orphans_now();
             }
         }
-        setenv("AURA_ORCH_BP_WINDOW_MS", "", 1);
+        ::aura::config::test_setenv("AURA_ORCH_BP_WINDOW_MS", "", 1);
     }
 
     {
@@ -826,7 +828,7 @@ int run_test_mailbox_bp_admit() {
         // (#2778 LRU would also free a cold slot; explicit erase is
         // clearer for this unit check).
         (void)aura::orch::erase_scope_bp_gauge("decay-test");
-        setenv("AURA_ORCH_BP_WINDOW_MS", "50", 1);
+        ::aura::config::test_setenv("AURA_ORCH_BP_WINDOW_MS", "50", 1);
         // Storm on a fresh scope.
         for (int i = 0; i < 10; ++i)
             aura::orch::note_mailbox_bp_recent_event("decay-test");
@@ -848,7 +850,7 @@ int run_test_mailbox_bp_admit() {
             g_decay ? g_decay->recent.load(std::memory_order_relaxed) : 0;
         CHECK(recent_after_note == 1, "2633 AC4: post-decay note leaves recent == 1");
 
-        setenv("AURA_ORCH_BP_WINDOW_MS", "", 1);
+        ::aura::config::test_setenv("AURA_ORCH_BP_WINDOW_MS", "", 1);
     }
 
     // ── #2633 AC5: structured reject parity (#2155 / #2228) ────────────
@@ -954,7 +956,7 @@ int run_test_mailbox_bp_admit() {
     {
         std::println("\n--- #2780 ac2780_concurrent_note_decay: no silent loss ---");
         (void)aura::orch::reset_scope_bp_map_for_test();
-        setenv("AURA_ORCH_BP_WINDOW_MS", "5", 1);
+        ::aura::config::test_setenv("AURA_ORCH_BP_WINDOW_MS", "5", 1);
         // Seed a gauge so the map is non-empty, then wait past the
         // quiet window so maybe_decay becomes eligible.
         aura::orch::note_mailbox_bp_recent_event("race-x");
@@ -1001,14 +1003,14 @@ int run_test_mailbox_bp_admit() {
         CHECK(G <= T + 1, "ac2780_concurrent_note_decay: G <= T+1 (no double-count)");
 #endif
 
-        setenv("AURA_ORCH_BP_WINDOW_MS", "", 1);
+        ::aura::config::test_setenv("AURA_ORCH_BP_WINDOW_MS", "", 1);
         (void)aura::orch::reset_scope_bp_map_for_test();
     }
 
     {
         std::println("\n--- #2780 ac2780_skip_active: stormy peer survives decay ---");
         (void)aura::orch::reset_scope_bp_map_for_test();
-        setenv("AURA_ORCH_BP_WINDOW_MS", "30", 1);
+        ::aura::config::test_setenv("AURA_ORCH_BP_WINDOW_MS", "30", 1);
         // Quiet scope A and stormy scope B: after quiet on A only,
         // a global decay may fire if last process event is old — but
         // B stays active via last_event skip.
@@ -1051,7 +1053,7 @@ int run_test_mailbox_bp_admit() {
         CHECK(gb && gb->recent.load(std::memory_order_relaxed) == 11,
               "ac2780_skip_active: warm-window decay is no-op (recent preserved)");
 
-        setenv("AURA_ORCH_BP_WINDOW_MS", "", 1);
+        ::aura::config::test_setenv("AURA_ORCH_BP_WINDOW_MS", "", 1);
         (void)aura::orch::reset_scope_bp_map_for_test();
     }
 
@@ -1173,13 +1175,13 @@ int run_test_mailbox_bp_admit() {
                 std::memory_order_relaxed);
             h.producer_throttled = true;
             h.last_producer_bp_us = 1; // ancient
-            setenv("AURA_ORCH_BP_WINDOW_MS", "1", 1);
+            ::aura::config::test_setenv("AURA_ORCH_BP_WINDOW_MS", "1", 1);
             CHECK(maybe_clear_producer_throttle(h), "2925 AC3: quiet window clears throttle");
             CHECK(!h.producer_throttled, "2925 AC3: throttled false after quiet clear");
             CHECK(g_orch_module_stats.agent_producer_throttle_clear_total.load(
                       std::memory_order_relaxed) >= clear0 + 1,
                   "2925 AC3: clear_total bumped on quiet clear");
-            setenv("AURA_ORCH_BP_WINDOW_MS", "", 1);
+            ::aura::config::test_setenv("AURA_ORCH_BP_WINDOW_MS", "", 1);
         }
 
         std::println("\n--- #2925 AC4: no detach / no cancel (source-cite) ---");
@@ -1634,8 +1636,8 @@ int run_test_mailbox_bp_admit() {
 
         std::println("\n--- #3566 AC2: A storming does not freeze B quiet decay ---");
         (void)reset_scope_bp_map_for_test();
-        ::setenv("AURA_ORCH_BP_WINDOW_MS", "40", 1);
-        ::setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "1", 1);
+        ::aura::config::test_setenv("AURA_ORCH_BP_WINDOW_MS", "40", 1);
+        ::aura::config::test_setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "1", 1);
         for (int i = 0; i < 8; ++i)
             note_mailbox_bp_recent_event("tenant-b-3566");
         CHECK(load_mailbox_bp_recent("tenant-b-3566") >= 8, "3566 AC2: B primed");
@@ -1698,8 +1700,8 @@ int run_test_mailbox_bp_admit() {
               "3566 AC5: no test_issue_3566.cpp");
         CHECK(read_file("docs/design/3566-mailbox-bp-scope.md").empty(),
               "3566 AC5: no docs/design/3566-*");
-        ::unsetenv("AURA_ORCH_BP_WINDOW_MS");
-        ::unsetenv("AURA_ORCH_BP_ADMIT_THRESHOLD");
+        ::aura::config::test_unsetenv("AURA_ORCH_BP_WINDOW_MS");
+        ::aura::config::test_unsetenv("AURA_ORCH_BP_ADMIT_THRESHOLD");
         (void)reset_scope_bp_map_for_test();
         apply_dev_audit_defaults();
     }
@@ -1725,7 +1727,7 @@ int run_test_mailbox_bp_admit() {
         };
 
         std::println("\n--- #4563: same-scope agent_send charges the named gauge once ---");
-        ::unsetenv("AURA_SANDBOX");
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
         apply_production_audit_defaults();
         CHECK(aura::orch::production_defaults_active(), "4563: production probe on");
         (void)reset_scope_bp_map_for_test();
@@ -1802,7 +1804,7 @@ int run_test_mailbox_bp_admit() {
 
         std::println("\n--- #4563: Soft empty agent_send still moves the process bucket ---");
         apply_dev_audit_defaults();
-        ::setenv("AURA_SANDBOX", "off", 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
         CHECK(!aura::orch::production_defaults_active(), "4563: soft probe off");
         (void)reset_scope_bp_map_for_test();
         const auto proc3 =
@@ -1834,9 +1836,9 @@ int run_test_mailbox_bp_admit() {
         (void)reset_scope_bp_map_for_test();
         apply_dev_audit_defaults();
         if (had_sb)
-            ::setenv("AURA_SANDBOX", sb_prev_val.c_str(), 1);
+            ::aura::config::test_setenv("AURA_SANDBOX", sb_prev_val.c_str(), 1);
         else
-            ::unsetenv("AURA_SANDBOX");
+            ::aura::config::test_unsetenv("AURA_SANDBOX");
     }
 
     // ── Issue #3632: BP sender attribution sketch ──
@@ -1880,7 +1882,7 @@ int run_test_mailbox_bp_admit() {
         CHECK(aura::orch::scope_bp_map_size_for_test() == map_before,
               "3632 AC3: empty scope skips sketch (process bucket only)");
         // AC2b: quiet-window decay resets the sketch (window 1ms < sleep 3ms).
-        ::setenv("AURA_ORCH_BP_WINDOW_MS", "1", 1);
+        ::aura::config::test_setenv("AURA_ORCH_BP_WINDOW_MS", "1", 1);
         aura::orch::note_mailbox_bp_recent_event("B-decay", 55);
         std::this_thread::sleep_for(std::chrono::milliseconds(3));
         aura::orch::maybe_decay_mailbox_bp_recent();
@@ -1893,7 +1895,7 @@ int run_test_mailbox_bp_admit() {
                     sketch_zero =
                         sketch_zero && row.top_sender_fiber[i] == 0 && row.top_sender_bp[i] == 0;
         CHECK(sketch_zero, "3632 AC2: quiet window resets sketch");
-        ::unsetenv("AURA_ORCH_BP_WINDOW_MS");
+        ::aura::config::test_unsetenv("AURA_ORCH_BP_WINDOW_MS");
         (void)aura::orch::reset_scope_bp_map_for_test();
     }
 
@@ -1905,7 +1907,7 @@ int run_test_mailbox_bp_admit() {
         const char* sb_prev = getenv("AURA_SANDBOX");
         const bool had_sb = sb_prev != nullptr;
         const std::string sb_prev_val = had_sb ? sb_prev : "";
-        setenv("AURA_SANDBOX", "restricted", 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
         aura::compiler::typed_audit::apply_production_audit_defaults();
         CHECK(aura::orch::production_scope_bp_inherit(),
               "3672 setup: inherit armed under Restricted + production defaults");
@@ -1933,7 +1935,7 @@ int run_test_mailbox_bp_admit() {
         // same-tenant spawn soft-rejects (deny-class=bp-admit family:
         // quota_exceeded + mailbox-bp + AdmissionRejected) while tenant 9
         // (t:9, fresh gauge) still admits.
-        setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "1", 1);
+        ::aura::config::test_setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "1", 1);
         const auto scope_reject_before =
             g_orch_module_stats.spawn_bp_admit_reject_scope_total.load(std::memory_order_relaxed);
         aura::orch::note_mailbox_bp_recent_event("t:7", 4242);
@@ -1961,12 +1963,12 @@ int run_test_mailbox_bp_admit() {
         CHECK(h9.bp_scope_id == "t:9", "3672 AC2: tenant-9 key is t:9");
         CHECK(!h9.quota_exceeded, "3672 AC2: tenant-9 not rejected");
 
-        unsetenv("AURA_ORCH_BP_ADMIT_THRESHOLD");
+        ::aura::config::test_unsetenv("AURA_ORCH_BP_ADMIT_THRESHOLD");
         (void)aura::orch::reset_scope_bp_map_for_test();
         if (had_sb)
-            setenv("AURA_SANDBOX", sb_prev_val.c_str(), 1);
+            ::aura::config::test_setenv("AURA_SANDBOX", sb_prev_val.c_str(), 1);
         else
-            unsetenv("AURA_SANDBOX");
+            ::aura::config::test_unsetenv("AURA_SANDBOX");
         aura::compiler::typed_audit::apply_dev_audit_defaults();
     }
 
@@ -2036,7 +2038,7 @@ int run_test_mailbox_bp_admit() {
             // Storm overflow peer A (not in map) — bumps overflow observability.
             const auto thr_prev = ::getenv("AURA_ORCH_BP_ADMIT_THRESHOLD");
             const std::string thr_save = thr_prev ? thr_prev : "";
-            ::setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "1", 1);
+            ::aura::config::test_setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "1", 1);
             for (int i = 0; i < 64; ++i)
                 aura::orch::note_mailbox_bp_recent_event("storm-overflow-A");
             CHECK(aura::orch::lookup_scope_bp_gauge("storm-overflow-A") == nullptr,
@@ -2058,7 +2060,7 @@ int run_test_mailbox_bp_admit() {
             Scheduler sched(1);
             // Raise threshold so in-map recent=1 still admits; overflow cohort
             // still fail-closes regardless of recent (#3804 typed deny).
-            ::setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "32", 1);
+            ::aura::config::test_setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "32", 1);
             AgentSpec in_map;
             in_map.name = "3804-in-map-quiet";
             in_map.body = [] {};
@@ -2106,9 +2108,9 @@ int run_test_mailbox_bp_admit() {
                   "3804 AC1: storming overflow peer typed deny (not peer crosstalk)");
 
             if (thr_prev)
-                ::setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", thr_save.c_str(), 1);
+                ::aura::config::test_setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", thr_save.c_str(), 1);
             else
-                ::unsetenv("AURA_ORCH_BP_ADMIT_THRESHOLD");
+                ::aura::config::test_unsetenv("AURA_ORCH_BP_ADMIT_THRESHOLD");
         } else {
             CHECK(true, "3804: production_defaults_active=false; Soft AC3 above");
         }

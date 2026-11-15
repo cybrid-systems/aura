@@ -17,6 +17,7 @@
 //   AC6: sparse re-dirty early-exits (cascades_avoided grows)
 //   AC7: no docs/design/2904-*
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include <atomic>
@@ -71,7 +72,7 @@ static std::int64_t href(CompilerService& cs, std::string_view key) {
 // ── Issue #2904 ACs ──
 static void ac2904_1_columnar_default_no_legacy_walk() {
     std::println("\n--- #2904 AC1: mark_dirty_upward columnar; legacy env-gated ---");
-    unsetenv("AURA_DIRTY_LEGACY_TREE_WALK");
+    ::aura::config::test_unsetenv("AURA_DIRTY_LEGACY_TREE_WALK");
     FlatAST flat;
     for (int i = 0; i < 8; ++i)
         (void)flat.add_node(NodeTag::LiteralInt);
@@ -203,7 +204,7 @@ static void ac2904_5_query_and_atomics() {
 
 static void ac2904_6_sparse_early_exit() {
     std::println("\n--- #2904 AC6: sparse re-dirty early-exits (cascades avoided) ---");
-    unsetenv("AURA_DIRTY_LEGACY_TREE_WALK");
+    ::aura::config::test_unsetenv("AURA_DIRTY_LEGACY_TREE_WALK");
     FlatAST flat;
     for (int i = 0; i < 16; ++i)
         (void)flat.add_node(NodeTag::LiteralInt);

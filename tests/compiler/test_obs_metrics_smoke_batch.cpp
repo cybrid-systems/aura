@@ -2,6 +2,7 @@
 // Wave 26+ (#1957): fold thin tests/issues/*_observability and metrics probes
 // Prefer adding a section here over a new tests/issues binary.
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 #include "../support/service_module_source.hh"
 #include "compiler/aura_jit_bridge.h"
@@ -2496,13 +2497,13 @@ struct SavedEnv {
             had = true;
             value = v;
         }
-        unsetenv(key);
+        ::aura::config::test_unsetenv(key);
     }
     void restore() const {
         if (had)
-            setenv(key, value.c_str(), 1);
+            ::aura::config::test_setenv(key, value.c_str(), 1);
         else
-            unsetenv(key);
+            ::aura::config::test_unsetenv(key);
     }
 };
 

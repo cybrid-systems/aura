@@ -115,7 +115,7 @@ def _rows(
     )
 
     # AC4 — opt-out env parse lives next to the flag atoms.
-    must('"AURA_MT_AUTODETECT"', "AC4 opt-out env literal", prov)
+    must("AURA_MT_AUTODETECT", "AC4 opt-out env literal", prov)
 
     # AC5 — one posture SE, stable reason, appended kind.
     must("g_undeclared_mt_se_emitted().exchange", "AC5 SE once-guard", sec)

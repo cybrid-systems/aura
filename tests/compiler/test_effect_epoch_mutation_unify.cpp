@@ -19,6 +19,7 @@
 //   AC4: Soft/Off ring write still happens (epoch source only)
 //   AC5: ring.epoch + SE.mutation_id + grant.bound_mutation_id same vocab
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include "compiler/security_capabilities.h"
@@ -520,7 +521,7 @@ static void ac3594_isolation_deny_mid0() {
     std::println("[#3594] IsolationDeny epoch=0 carries mid=0 + live fiber");
     reset_all();
     aura::core::reset_mutation_epoch_for_test();
-    ::setenv("AURA_SANDBOX", "restricted", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
     aura::compiler::security::apply_production_security_defaults();
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
     auto& iso = aura::core::workspace_isolation::g_workspace_isolation();
@@ -554,7 +555,7 @@ static void ac3594_isolation_deny_mid0() {
     CHECK(!saw_iso_mid1, "AC: no phantom mid=1 IsolationDeny");
     CHECK(fiber == 777, "AC: fiber_id still resolved on deny (#3011 override)");
     aura::core::capability::set_effect_fiber_id_override(0);
-    ::setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
     reset_all();
 }
@@ -574,7 +575,7 @@ static void ac3594_mse_epoch0_fenced() {
                                       prov);
         aura::core::sandbox::set_mode(static_cast<aura::core::sandbox::SandboxMode>(prev));
     }
-    ::setenv("AURA_SANDBOX", "restricted", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
     aura::compiler::security::apply_production_security_defaults();
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
 
@@ -586,7 +587,7 @@ static void ac3594_mse_epoch0_fenced() {
     CHECK(!chk.allowed, "AC: epoch=0 production check fenced (no phantom join)");
     CHECK(std::string_view(chk.deny_reason).find("provenance fence") != std::string_view::npos,
           "AC: provenance-fence deny reason");
-    ::setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
     reset_all();
 }
@@ -627,7 +628,7 @@ int run_test_effect_epoch_mutation_unify() {
     // Issue #3594: the gc_defer production lock (#2598 residual arm) also
     // survives the driver reset — clear it for Soft members.
     ::aura::gc_hooks::set_gc_defer_production_locked(false);
-    ::setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
 
     std::println("\n=== #2149/#3335 effect+audit epoch unify: {} passed, {} failed ===", g_passed,

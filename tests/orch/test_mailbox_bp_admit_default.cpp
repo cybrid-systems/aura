@@ -8,6 +8,7 @@
 //   AC5: query keys schema-2535 + threshold-default
 //   AC6: source-cite + linter
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 #include "orch/sched_runner_test_helper.h"
 #include "orch/agent_spawn.h"
@@ -72,21 +73,22 @@ int run_test_mailbox_bp_admit_default() {
 
     {
         std::println("\n--- AC1: no env → default 32 ---");
-        unsetenv("AURA_ORCH_BP_ADMIT_THRESHOLD");
+        ::aura::config::test_unsetenv("AURA_ORCH_BP_ADMIT_THRESHOLD");
         CHECK(resolve_mailbox_bp_admit_threshold() == 32, "AC1: resolve == 32");
     }
     {
         std::println("\n--- AC2: env=0 disables ---");
-        setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "0", 1);
+        ::aura::config::test_setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "0", 1);
         CHECK(resolve_mailbox_bp_admit_threshold() == 0, "AC2: env=0");
-        unsetenv("AURA_ORCH_BP_ADMIT_THRESHOLD");
+        ::aura::config::test_unsetenv("AURA_ORCH_BP_ADMIT_THRESHOLD");
     }
     {
         std::println("\n--- AC3: BP >= default threshold → soft-reject ---");
         // Use low threshold via env for fast test (default 32 would need 32 BP events).
         // Contract of soft-reject path is same as #2228; default-on is AC1.
-        setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "1", 1);
-        setenv("AURA_ORCH_BP_WINDOW_MS", "60000", 1); // no quiet decay mid-test
+        ::aura::config::test_setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "1", 1);
+        ::aura::config::test_setenv("AURA_ORCH_BP_WINDOW_MS", "60000",
+                                    1); // no quiet decay mid-test
         Scheduler sched(1);
         SchedRunner runner(sched);
         MultiFiberMailbox mb(8);
@@ -116,13 +118,13 @@ int run_test_mailbox_bp_admit_default() {
         CHECK(g_orch_module_stats.spawn_bp_admit_reject_total.load(std::memory_order_relaxed) >
                   reject_before,
               "AC3: reject counter++");
-        setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "0", 1);
-        setenv("AURA_ORCH_BP_WINDOW_MS", "", 1);
+        ::aura::config::test_setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "0", 1);
+        ::aura::config::test_setenv("AURA_ORCH_BP_WINDOW_MS", "", 1);
     }
     {
         std::println("\n--- AC4: quiet-period re-admit (#2398) ---");
-        setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "1", 1);
-        setenv("AURA_ORCH_BP_WINDOW_MS", "5", 1);
+        ::aura::config::test_setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "1", 1);
+        ::aura::config::test_setenv("AURA_ORCH_BP_WINDOW_MS", "5", 1);
         aura::orch::note_mailbox_bp_recent_event();
         std::this_thread::sleep_for(std::chrono::milliseconds(30));
         Scheduler sched(1);
@@ -142,12 +144,12 @@ int run_test_mailbox_bp_admit_default() {
                 h.fiber->owner_sched()->reap_orphans_now();
             }
         }
-        unsetenv("AURA_ORCH_BP_ADMIT_THRESHOLD");
-        unsetenv("AURA_ORCH_BP_WINDOW_MS");
+        ::aura::config::test_unsetenv("AURA_ORCH_BP_ADMIT_THRESHOLD");
+        ::aura::config::test_unsetenv("AURA_ORCH_BP_WINDOW_MS");
     }
     {
         std::println("\n--- AC5: query keys ---");
-        unsetenv("AURA_ORCH_BP_ADMIT_THRESHOLD");
+        ::aura::config::test_unsetenv("AURA_ORCH_BP_ADMIT_THRESHOLD");
         CompilerService cs;
         CHECK(href(cs, "schema-2535") == 2535, "AC5: schema-2535");
         CHECK(href(cs, "issue-2535") == 2535, "AC5: issue-2535");

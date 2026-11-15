@@ -9,6 +9,7 @@
 //   AC5: schema-2621 additive
 //   AC6: high fan-out / production gate matrix
 
+#include "core/runtime_config.hh"
 #include "compiler/typed_mutation_audit.h"
 #include "test_harness.hpp"
 
@@ -109,8 +110,8 @@ static std::int64_t href_fidelity(CompilerService& cs, std::string_view key) {
 static void reset_2621() {
     apply_dev_audit_defaults();
     clear_partial_cone_truncate_for_test();
-    ::unsetenv("AURA_PARTIAL_CONE_COMMIT_HARD");
-    ::unsetenv("AURA_TRUNCATE_COMMIT_HARD");
+    ::aura::config::test_unsetenv("AURA_PARTIAL_CONE_COMMIT_HARD");
+    ::aura::config::test_unsetenv("AURA_TRUNCATE_COMMIT_HARD");
 }
 
 // ── AC1: Soft observe allow ──
@@ -161,14 +162,14 @@ static void ac2_production_deny() {
     // Env override under Soft forces hard too.
     reset_2621();
     apply_dev_audit_defaults();
-    ::setenv("AURA_PARTIAL_CONE_COMMIT_HARD", "1", 1);
+    ::aura::config::test_setenv("AURA_PARTIAL_CONE_COMMIT_HARD", "1", 1);
     CHECK(partial_cone_commit_hard_enabled(), "AC2: env forces hard");
     CommitReadinessInput in2;
     in2.partial_cone_truncated = true;
     in2.truncate_hard = true; // live policy would set this
     const auto cr2 = commit_readiness(in2);
     CHECK(!cr2.would_allow_commit, "AC2: env hard denies");
-    ::unsetenv("AURA_PARTIAL_CONE_COMMIT_HARD");
+    ::aura::config::test_unsetenv("AURA_PARTIAL_CONE_COMMIT_HARD");
 }
 
 // ── AC3: hard cap never silent ──

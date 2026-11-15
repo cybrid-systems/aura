@@ -8,6 +8,7 @@
 //   AC4: Pure evaluate priority residual > linear > type; chaos lineage
 //   AC5: Source-cite + linter + schema-2609
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include "core/gc_hooks.h"
@@ -94,14 +95,14 @@ static void set_env(const char* k, const char* v) {
 #if defined(_WIN32)
     _putenv_s(k, v);
 #else
-    setenv(k, v, 1);
+    ::aura::config::test_setenv(k, v, 1);
 #endif
 }
 static void clear_env(const char* k) {
 #if defined(_WIN32)
     _putenv_s(k, "");
 #else
-    unsetenv(k);
+    ::aura::config::test_unsetenv(k);
 #endif
 }
 
@@ -964,7 +965,7 @@ static void ac2854_1_production_densify_rebind_stamps_success_proof() {
     CHECK(q.find("ownership_rebind_last_had_rebind") != std::string::npos,
           "AC1: query exposes ownership_rebind_last_had_rebind (Quiet short-circuit sentinel)");
     modes_off();
-    unsetenv("AURA_SANDBOX");
+    ::aura::config::test_unsetenv("AURA_SANDBOX");
 }
 
 // AC2: inject densify scan mismatch under production → force rollback +
@@ -1019,7 +1020,7 @@ static void ac2854_2_production_mismatch_stamps_reject_proof() {
           "AC2: caller publishes the outcome sentinel (Reject on fail)");
     aura::compiler::clear_ownership_rebind_mismatch_for_test();
     modes_off();
-    unsetenv("AURA_SANDBOX");
+    ::aura::config::test_unsetenv("AURA_SANDBOX");
 }
 
 // AC3: Soft inject → observe path; no production lock regression.
@@ -1061,7 +1062,7 @@ static void ac2854_3_soft_inject_observes_with_stamped_proof() {
           "AC3: caller publishes Stamped outcome (no production lock regression)");
     aura::compiler::clear_ownership_rebind_mismatch_for_test();
     modes_off();
-    unsetenv("AURA_SANDBOX");
+    ::aura::config::test_unsetenv("AURA_SANDBOX");
 }
 
 // AC4: quiet (no linear roots) → zero-cost short-circuit preserved.
@@ -1091,7 +1092,7 @@ static void ac2854_4_quiet_path_zero_cost_short_circuit() {
         aura::compiler::typed_audit::type_linear_proof_stamped_after_rebind_total_v_read();
     CHECK(post_stamped == 0,
           "AC4: stamped_after_rebind_total=0 (no stamp on quiet path; AC4 #2723 preserved)");
-    unsetenv("AURA_SANDBOX");
+    ::aura::config::test_unsetenv("AURA_SANDBOX");
 }
 
 // AC5: query surface additive (schema-2854 / issue-2854 / counters).

@@ -8,6 +8,7 @@
 //   AC4: Explicit AURA_MUTATION_AUDIT_WAL wins over default dir
 //   AC5: kFlushEvery batching unchanged (still 32); schema-2150 Agent keys
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include "compiler/security_capabilities.h"
@@ -58,7 +59,7 @@ void clear_env(const char* k) {
 #if defined(_WIN32)
     _putenv_s(k, "");
 #else
-    unsetenv(k);
+    ::aura::config::test_unsetenv(k);
 #endif
 }
 
@@ -66,7 +67,7 @@ void set_env(const char* k, const char* v) {
 #if defined(_WIN32)
     _putenv_s(k, v);
 #else
-    setenv(k, v, 1);
+    ::aura::config::test_setenv(k, v, 1);
 #endif
 }
 

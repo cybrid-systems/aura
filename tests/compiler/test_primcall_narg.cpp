@@ -69,6 +69,7 @@
 //   AC25: module export keeps shadowing check across set-code + eval-current
 //   AC26: source + linter wiring
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 #include "../support/service_module_source.hh"
 
@@ -216,14 +217,14 @@ static void ac4_append4() {
 
 static void ac5_controls() {
     std::println("\n--- #2576 AC5: FORCE_IR + top-level ---");
-    setenv("AURA_FORCE_IR", "1", 1);
+    ::aura::config::test_setenv("AURA_FORCE_IR", "1", 1);
     CompilerService cs_ir;
     auto ir = with_stdout_capture([&] {
         (void)cs_ir.eval(R"((begin
   (define (f) (display (string-append "A" "B" "C")) (newline) #t)
   (f)))");
     });
-    unsetenv("AURA_FORCE_IR");
+    ::aura::config::test_unsetenv("AURA_FORCE_IR");
     CHECK(trim_nl(ir).find("ABC") != std::string::npos, "AC5: FORCE_IR ABC");
 
     CompilerService cs_top;
@@ -750,7 +751,7 @@ static void ac25_module_export_prim_shadow_4477() {
         out << "(export check)\n";
         out << "(define (check name ok) 43)\n";
     }
-    setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
     CompilerService cs;
     const auto req_src = "(require \"" + (tmp / "m.aura").string() + "\" all:)";
     auto req = cs.eval(req_src);

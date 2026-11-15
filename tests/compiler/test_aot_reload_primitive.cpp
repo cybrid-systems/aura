@@ -4,6 +4,7 @@
 //   AC7: foreign eval_ptr → reject + counter++; matching eval → success;
 //   null eval_ptr (process default) → happy path unchanged.
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 #include "compiler/aura_jit_bridge.h"
 #include "compiler/hot_update_registry.hh"
@@ -1362,7 +1363,7 @@ static void ac4433_live_mirror_refuses_stale_reload() {
 // Sibling aot:* masks stay kEffectNone. Soft/Off stays a no-op.
 struct Ac4452DevRestore {
     ~Ac4452DevRestore() {
-        ::setenv("AURA_SANDBOX", "off", 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
         aura::compiler::security::apply_production_security_defaults();
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
         aura::compiler::typed_audit::apply_dev_audit_defaults();
@@ -1400,7 +1401,7 @@ static void ac4452_aot_reload_ffi_choke() {
         Ac4452DevRestore restore;
         (void)restore;
         aura::core::capability::reset_capability_effects_for_test();
-        ::setenv("AURA_SANDBOX", "restricted", 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
         aura::compiler::security::apply_production_security_defaults();
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
         aura::core::bump_mutation_epoch(1);

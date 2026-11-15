@@ -8,6 +8,7 @@
 //   AC4: test opt-in (set_allow_aos_bridge_for_test / env) restores bridge
 //   AC5: observability marks residual bridge as test-only (schema-2520)
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 #include "../support/service_module_source.hh"
 
@@ -93,7 +94,7 @@ static void ac1_production_ban() {
 
     // Default: not allowed (unless env set in process — clear test override)
     reset_allow_aos_bridge_for_test();
-    ::unsetenv("AURA_ALLOW_AOS_BRIDGE");
+    ::aura::config::test_unsetenv("AURA_ALLOW_AOS_BRIDGE");
     CHECK(!aos_bridge_allowed(), "AC1: default aos_bridge not allowed");
 }
 
@@ -200,7 +201,7 @@ static void ac1_grep_production() {
 int run_test_soa_ban_residual_aos_bridge() {
     std::println("=== Issue #2520: ban residual AoS bridge under SoA-only ===");
     reset_allow_aos_bridge_for_test();
-    ::unsetenv("AURA_ALLOW_AOS_BRIDGE");
+    ::aura::config::test_unsetenv("AURA_ALLOW_AOS_BRIDGE");
     ac1_production_ban();
     ac1_grep_production();
     ac2_residual_zero();

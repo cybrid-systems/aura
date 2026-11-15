@@ -8,6 +8,7 @@
 //   AC4: Chaos soak surfaces hard signal; Agents can read the flag
 //   AC5: Source-cite next to #2511 / #2378; additive schema-2551
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include "compiler/mutation_hold_budget.h" // #2761 live regions_disjoint unit checks
@@ -105,10 +106,10 @@ static void drain_all_depth() {
 }
 
 static void strict_on() {
-    ::setenv("AURA_MUTATE_MAILBOX_STRICT", "1", 1);
+    ::aura::config::test_setenv("AURA_MUTATE_MAILBOX_STRICT", "1", 1);
 }
 static void strict_off() {
-    ::unsetenv("AURA_MUTATE_MAILBOX_STRICT");
+    ::aura::config::test_unsetenv("AURA_MUTATE_MAILBOX_STRICT");
 }
 
 // ── AC1: Strict + residual after budget → hard + flag ──
@@ -877,8 +878,8 @@ static void ac2932_1_force_safepoint_fail_closed() {
     using aura::compiler::Evaluator;
     using aura::serve::Fiber;
     using aura::serve::Scheduler;
-    ::unsetenv("AURA_SANDBOX");
-    ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+    ::aura::config::test_unsetenv("AURA_SANDBOX");
+    ::aura::config::test_unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
     aura::compiler::typed_audit::apply_production_audit_defaults();
     CHECK(aura::compiler::typed_audit::production_defaults_active(),
           "AC1: production_defaults_active for hard gate");
@@ -942,8 +943,8 @@ static void ac2932_2_soft_metric_only() {
     using aura::compiler::Evaluator;
     using aura::serve::Fiber;
     using aura::serve::Scheduler;
-    ::setenv("AURA_SANDBOX", "off", 1);
-    ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
     aura::compiler::typed_audit::apply_dev_audit_defaults();
     CHECK(!aura::compiler::typed_audit::production_defaults_active(),
           "AC2: production defaults cleared for Soft");
@@ -984,7 +985,7 @@ static void ac2932_2_soft_metric_only() {
     CHECK(ok_flag.load() == 1, "AC2: Soft does not force-fail outermost");
     CHECK(aura::compiler::mutation_hold_budget_forced_fail_closed_total_v_read() == forced0,
           "AC2: forced_fail_closed not advanced under Soft");
-    ::unsetenv("AURA_SANDBOX");
+    ::aura::config::test_unsetenv("AURA_SANDBOX");
     Evaluator::set_query_evaluator(nullptr);
 }
 
@@ -1075,8 +1076,8 @@ static void ac2999_1_dtor_consume_fail_closed() {
 
     using aura::compiler::Evaluator;
     using aura::serve::Scheduler;
-    ::unsetenv("AURA_SANDBOX");
-    ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+    ::aura::config::test_unsetenv("AURA_SANDBOX");
+    ::aura::config::test_unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
     aura::compiler::typed_audit::apply_production_audit_defaults();
     CHECK(aura::compiler::mutation_hold_budget_reject_enabled(),
           "AC1: reject_enabled under production");
@@ -1126,8 +1127,8 @@ static void ac2999_2_soft_observe_only() {
     std::println("\n--- #2999 AC2: Soft dtor observe-only ---");
     using aura::compiler::Evaluator;
     using aura::serve::Scheduler;
-    ::setenv("AURA_SANDBOX", "off", 1);
-    ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
     aura::compiler::typed_audit::apply_dev_audit_defaults();
     CHECK(!aura::compiler::mutation_hold_budget_reject_enabled(),
           "AC2: reject_enabled false under Soft");
@@ -1170,7 +1171,7 @@ static void ac2999_2_soft_observe_only() {
           "AC2: dtor-consume not advanced");
     CHECK(aura::compiler::mutation_hold_budget_soft_observe_total_v_read() > obs0,
           "AC2: soft observe bumped");
-    ::unsetenv("AURA_SANDBOX");
+    ::aura::config::test_unsetenv("AURA_SANDBOX");
     Evaluator::set_query_evaluator(nullptr);
 }
 
@@ -1181,8 +1182,8 @@ static void ac2999_3_nested_outermost_only() {
     CHECK(emb.find("is_outermost_") != std::string::npos, "AC3: dtor poll is outermost-only");
     using aura::compiler::Evaluator;
     using aura::serve::Scheduler;
-    ::unsetenv("AURA_SANDBOX");
-    ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+    ::aura::config::test_unsetenv("AURA_SANDBOX");
+    ::aura::config::test_unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
     aura::compiler::typed_audit::apply_production_audit_defaults();
     aura::compiler::clear_mutation_hold_budget_forced_fail_closed_for_test();
     CompilerService cs;
@@ -1286,8 +1287,8 @@ static void ac3035_1_forced_unlock_dual_restore() {
 
     using aura::compiler::Evaluator;
     using aura::serve::Scheduler;
-    ::unsetenv("AURA_SANDBOX");
-    ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+    ::aura::config::test_unsetenv("AURA_SANDBOX");
+    ::aura::config::test_unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
     aura::compiler::typed_audit::apply_production_audit_defaults();
     CHECK(aura::compiler::mutation_hold_budget_reject_enabled(),
           "AC1: reject_enabled under production");
@@ -1332,8 +1333,8 @@ static void ac3035_2_soft_metric_only() {
     std::println("\n--- #3035 AC2: Soft observe-only (no force) ---");
     using aura::compiler::Evaluator;
     using aura::serve::Scheduler;
-    ::setenv("AURA_SANDBOX", "off", 1);
-    ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
     aura::compiler::typed_audit::apply_dev_audit_defaults();
     CHECK(!aura::compiler::mutation_hold_budget_reject_enabled(),
           "AC2: reject_enabled false under Soft");
@@ -1371,7 +1372,7 @@ static void ac3035_2_soft_metric_only() {
           "AC2: forced-unlock not advanced");
     CHECK(aura::compiler::mutation_hold_budget_soft_observe_total_v_read() > obs0,
           "AC2: soft observe bumped");
-    ::unsetenv("AURA_SANDBOX");
+    ::aura::config::test_unsetenv("AURA_SANDBOX");
     Evaluator::set_query_evaluator(nullptr);
 }
 
@@ -1380,8 +1381,8 @@ static void ac3035_3_happy_path_zero_force() {
     std::println("\n--- #3035 AC3: happy path zero extra stores ---");
     using aura::compiler::Evaluator;
     using aura::serve::Scheduler;
-    ::setenv("AURA_SANDBOX", "off", 1);
-    ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
     aura::compiler::typed_audit::apply_dev_audit_defaults();
     aura::compiler::clear_mutation_hold_budget_forced_unlock_for_test();
     const auto unlock0 = aura::compiler::mutation_hold_budget_forced_unlock_total_v_read();
@@ -1483,9 +1484,9 @@ static void ac3071_1_production_inbody_window() {
     using aura::compiler::Evaluator;
     using aura::serve::Fiber;
     using aura::serve::Scheduler;
-    ::unsetenv("AURA_SANDBOX");
-    ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
-    ::setenv("AURA_HOLD_BUDGET_INBODY_BOUND_US", "1000", 1); // 1 ms
+    ::aura::config::test_unsetenv("AURA_SANDBOX");
+    ::aura::config::test_unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+    ::aura::config::test_setenv("AURA_HOLD_BUDGET_INBODY_BOUND_US", "1000", 1); // 1 ms
     aura::compiler::typed_audit::apply_production_audit_defaults();
     CHECK(aura::compiler::mutation_hold_budget_reject_enabled(),
           "AC1: reject_enabled under production");
@@ -1542,7 +1543,7 @@ static void ac3071_1_production_inbody_window() {
     CHECK(aura::compiler::mutation_hold_budget_forced_fail_closed_total_v_read() > forced0,
           "AC1: fail-closed advanced after cooperative edge");
     CHECK(aura::gc_hooks::defer_reasons_snapshot() == 0, "AC1: residual defer drained");
-    ::unsetenv("AURA_HOLD_BUDGET_INBODY_BOUND_US");
+    ::aura::config::test_unsetenv("AURA_HOLD_BUDGET_INBODY_BOUND_US");
     aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
     Evaluator::set_query_evaluator(nullptr);
 }
@@ -1559,9 +1560,9 @@ static void ac3071_2_no_unlock_soft_observe() {
 
     using aura::compiler::Evaluator;
     using aura::serve::Scheduler;
-    ::setenv("AURA_SANDBOX", "off", 1);
-    ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
-    ::setenv("AURA_HOLD_BUDGET_INBODY_BOUND_US", "1000", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+    ::aura::config::test_setenv("AURA_HOLD_BUDGET_INBODY_BOUND_US", "1000", 1);
     aura::compiler::typed_audit::apply_dev_audit_defaults();
     CHECK(!aura::compiler::mutation_hold_budget_reject_enabled(),
           "AC2: reject_enabled false under Soft");
@@ -1607,8 +1608,8 @@ static void ac3071_2_no_unlock_soft_observe() {
     io.join();
     CHECK(ran.load() == 1, "AC2: Soft fiber ran");
     CHECK(ok_flag.load() == 1, "AC2: Soft does not force-fail");
-    ::unsetenv("AURA_SANDBOX");
-    ::unsetenv("AURA_HOLD_BUDGET_INBODY_BOUND_US");
+    ::aura::config::test_unsetenv("AURA_SANDBOX");
+    ::aura::config::test_unsetenv("AURA_HOLD_BUDGET_INBODY_BOUND_US");
     aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
     Evaluator::set_query_evaluator(nullptr);
 }
@@ -1632,9 +1633,9 @@ static void ac3071_3_nested_and_happy() {
 
     using aura::compiler::Evaluator;
     using aura::serve::Scheduler;
-    ::unsetenv("AURA_SANDBOX");
-    ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
-    ::setenv("AURA_HOLD_BUDGET_INBODY_BOUND_US", "1000", 1);
+    ::aura::config::test_unsetenv("AURA_SANDBOX");
+    ::aura::config::test_unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+    ::aura::config::test_setenv("AURA_HOLD_BUDGET_INBODY_BOUND_US", "1000", 1);
     aura::compiler::typed_audit::apply_production_audit_defaults();
     aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
     CompilerService cs;
@@ -1676,7 +1677,7 @@ static void ac3071_3_nested_and_happy() {
     io.join();
     CHECK(ran.load() == 1, "AC3: nested fiber ran");
     CHECK(nested_pending.load() == 1, "AC3: inner did not consume cancel");
-    ::unsetenv("AURA_HOLD_BUDGET_INBODY_BOUND_US");
+    ::aura::config::test_unsetenv("AURA_HOLD_BUDGET_INBODY_BOUND_US");
     aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
     Evaluator::set_query_evaluator(nullptr);
 }
@@ -1741,8 +1742,8 @@ static void ac3118_1_force_unlock_depth_clear() {
     std::println("\n--- #3118 AC1: production cancel force-unlock + depth clear ---");
     using aura::compiler::Evaluator;
     using aura::serve::Scheduler;
-    ::unsetenv("AURA_SANDBOX");
-    ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+    ::aura::config::test_unsetenv("AURA_SANDBOX");
+    ::aura::config::test_unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
     aura::compiler::typed_audit::apply_production_audit_defaults();
     CHECK(aura::compiler::mutation_hold_budget_reject_enabled(),
           "3118 AC1: reject_enabled under production");
@@ -2769,7 +2770,7 @@ static void ac3485_1_p99_hot_held_over_budget() {
     clear_mutation_hold_budget_reject_for_test();
     g_mf_mailbox_stats.mailbox_under_boundary_wait_us_p99.store(0, std::memory_order_relaxed);
     g_mf_mailbox_stats.agent_throttle_for_mailbox_starvation.store(0, std::memory_order_relaxed);
-    ::setenv("AURA_MAILBOX_UNDER_BOUNDARY_WAIT_SLO_US", "1000", 1);
+    ::aura::config::test_setenv("AURA_MAILBOX_UNDER_BOUNDARY_WAIT_SLO_US", "1000", 1);
 
     constexpr std::uint64_t kHolder = 3485;
     mutation_hold_live_note_enter(kHolder, mutation_hold_steady_ns_now(), /*depth=*/1);
@@ -2793,7 +2794,7 @@ static void ac3485_1_p99_hot_held_over_budget() {
     mutation_hold_live_note_exit(kHolder);
     g_mf_mailbox_stats.mailbox_under_boundary_wait_us_p99.store(0, std::memory_order_relaxed);
     apply_dev_audit_defaults();
-    ::unsetenv("AURA_MAILBOX_UNDER_BOUNDARY_WAIT_SLO_US");
+    ::aura::config::test_unsetenv("AURA_MAILBOX_UNDER_BOUNDARY_WAIT_SLO_US");
     mutation_hold_live_reset_for_test();
     clear_mutation_hold_budget_reject_for_test();
 }
@@ -2815,7 +2816,7 @@ static void ac3485_2_soft_observe_only() {
     clear_mutation_hold_budget_reject_for_test();
     apply_dev_audit_defaults();
     CHECK(!mutation_hold_budget_reject_enabled(), "3485 AC2: Soft reject_enabled false");
-    ::setenv("AURA_MAILBOX_UNDER_BOUNDARY_WAIT_SLO_US", "1000", 1);
+    ::aura::config::test_setenv("AURA_MAILBOX_UNDER_BOUNDARY_WAIT_SLO_US", "1000", 1);
     constexpr std::uint64_t kHolder = 34852;
     mutation_hold_live_note_enter(kHolder, mutation_hold_steady_ns_now(), /*depth=*/1);
     g_mf_mailbox_stats.mailbox_under_boundary_wait_us_p99.store(50'000, std::memory_order_relaxed);
@@ -2827,7 +2828,7 @@ static void ac3485_2_soft_observe_only() {
     CHECK(mutation_hold_budget_soft_observe_total_v_read() > soft0, "3485 AC2: Soft observes");
     mutation_hold_live_note_exit(kHolder);
     g_mf_mailbox_stats.mailbox_under_boundary_wait_us_p99.store(0, std::memory_order_relaxed);
-    ::unsetenv("AURA_MAILBOX_UNDER_BOUNDARY_WAIT_SLO_US");
+    ::aura::config::test_unsetenv("AURA_MAILBOX_UNDER_BOUNDARY_WAIT_SLO_US");
     mutation_hold_live_reset_for_test();
     clear_mutation_hold_budget_reject_for_test();
 }
@@ -2892,10 +2893,10 @@ static void ac3588_1_busy_all_workers_edge_free() {
 
     using aura::compiler::Evaluator;
     using aura::serve::Scheduler;
-    ::unsetenv("AURA_SANDBOX");
-    ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
-    ::unsetenv("AURA_HOLD_BUDGET_INBODY_BOUND_US");
-    ::setenv("AURA_MUTATION_HOLD_SLO_US", "2000", 1); // 2 ms; 2×SLO = 4 ms
+    ::aura::config::test_unsetenv("AURA_SANDBOX");
+    ::aura::config::test_unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+    ::aura::config::test_unsetenv("AURA_HOLD_BUDGET_INBODY_BOUND_US");
+    ::aura::config::test_setenv("AURA_MUTATION_HOLD_SLO_US", "2000", 1); // 2 ms; 2×SLO = 4 ms
     aura::compiler::typed_audit::apply_production_audit_defaults();
     CHECK(aura::compiler::mutation_hold_budget_reject_enabled(),
           "3588 AC1: reject_enabled under production");
@@ -2948,8 +2949,8 @@ static void ac3588_1_busy_all_workers_edge_free() {
     CHECK(depth_after.load() == 0, "3588 AC1: depth slot == 0");
     Evaluator::set_query_evaluator(nullptr);
     aura::compiler::typed_audit::apply_dev_audit_defaults();
-    ::unsetenv("AURA_MUTATION_HOLD_SLO_US");
-    ::setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_unsetenv("AURA_MUTATION_HOLD_SLO_US");
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
     aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
 }
 
@@ -2962,7 +2963,7 @@ static void ac3588_2_happy_and_soft() {
           "3588 AC2: one snapshot on production face");
     CHECK(fc.find("slo * 2ULL") != std::string::npos, "3588 AC2: 2×SLO threshold");
     aura::compiler::typed_audit::apply_dev_audit_defaults();
-    ::setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
     CHECK(!aura::compiler::mutation_hold_budget_reject_enabled(),
           "3588 AC2: Soft reject_enabled false");
 }
@@ -3098,8 +3099,8 @@ static void ac3613_2_peer_send_still_defers() {
 static void ac3692_peer_recv_does_not_fail_holder() {
     std::println("\n--- #3692: peer recv ×8 does not fail-close holder Guard ---");
     aura::compiler::typed_audit::apply_production_audit_defaults();
-    ::setenv("AURA_MUTATE_MAILBOX_STRICT", "1", 1);
-    ::setenv("AURA_MUTATE_MAILBOX_REJECT_THRESHOLD", "8", 1);
+    ::aura::config::test_setenv("AURA_MUTATE_MAILBOX_STRICT", "1", 1);
+    ::aura::config::test_setenv("AURA_MUTATE_MAILBOX_REJECT_THRESHOLD", "8", 1);
     aura::serve::mf_mailbox::clear_recv_boundary_reject_window();
     aura::compiler::CompilerService cs;
     aura::compiler::Evaluator::set_query_evaluator(&cs.evaluator());
@@ -3149,8 +3150,8 @@ static void ac3692_peer_recv_does_not_fail_holder() {
               std::memory_order_relaxed) == force0,
           "3692: peer did not force-rollback holder");
     aura::compiler::Evaluator::set_query_evaluator(nullptr);
-    ::unsetenv("AURA_MUTATE_MAILBOX_STRICT");
-    ::unsetenv("AURA_MUTATE_MAILBOX_REJECT_THRESHOLD");
+    ::aura::config::test_unsetenv("AURA_MUTATE_MAILBOX_STRICT");
+    ::aura::config::test_unsetenv("AURA_MUTATE_MAILBOX_REJECT_THRESHOLD");
     aura::compiler::typed_audit::apply_dev_audit_defaults();
 }
 
@@ -3268,10 +3269,10 @@ static void ac3764_2_no_edge_holder_disposed() {
     using aura::serve::Fiber;
     using aura::serve::JoinStatus;
     using aura::serve::Scheduler;
-    ::unsetenv("AURA_SANDBOX");
-    ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
-    ::unsetenv("AURA_HOLD_BUDGET_INBODY_BOUND_US");
-    ::setenv("AURA_MUTATION_HOLD_SLO_US", "2000", 1);
+    ::aura::config::test_unsetenv("AURA_SANDBOX");
+    ::aura::config::test_unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+    ::aura::config::test_unsetenv("AURA_HOLD_BUDGET_INBODY_BOUND_US");
+    ::aura::config::test_setenv("AURA_MUTATION_HOLD_SLO_US", "2000", 1);
     aura::compiler::typed_audit::apply_production_audit_defaults();
     CHECK(aura::compiler::mutation_hold_budget_reject_enabled(),
           "3764 AC2: reject_enabled under production");
@@ -3335,8 +3336,8 @@ static void ac3764_2_no_edge_holder_disposed() {
     Evaluator::set_query_evaluator(nullptr);
     aura::serve::set_production_multi_worker_latched_for_test(false);
     aura::compiler::typed_audit::apply_dev_audit_defaults();
-    ::unsetenv("AURA_MUTATION_HOLD_SLO_US");
-    ::setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_unsetenv("AURA_MUTATION_HOLD_SLO_US");
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
     aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
     aura::compiler::clear_hold_budget_no_edge_force_for_test();
 }
@@ -3345,9 +3346,9 @@ static void ac3764_3_mutation_hold_released() {
     std::println("\n--- #3764 AC3: MutationHold defer clear after disposition ---");
     using aura::compiler::Evaluator;
     using aura::serve::Scheduler;
-    ::unsetenv("AURA_SANDBOX");
-    ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
-    ::setenv("AURA_MUTATION_HOLD_SLO_US", "2000", 1);
+    ::aura::config::test_unsetenv("AURA_SANDBOX");
+    ::aura::config::test_unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+    ::aura::config::test_setenv("AURA_MUTATION_HOLD_SLO_US", "2000", 1);
     aura::compiler::typed_audit::apply_production_audit_defaults();
     aura::serve::set_production_multi_worker_latched_for_test(true);
     aura::serve::clear_steal_safety_transaction_for_test(); // #3195: reset named residuals from
@@ -3389,14 +3390,14 @@ static void ac3764_3_mutation_hold_released() {
     Evaluator::set_query_evaluator(nullptr);
     aura::serve::set_production_multi_worker_latched_for_test(false);
     aura::compiler::typed_audit::apply_dev_audit_defaults();
-    ::unsetenv("AURA_MUTATION_HOLD_SLO_US");
-    ::setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_unsetenv("AURA_MUTATION_HOLD_SLO_US");
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
 }
 
 static void ac3764_4_soft_no_force() {
     std::println("\n--- #3764 AC4: Soft / Off no force path ---");
     aura::compiler::typed_audit::apply_dev_audit_defaults();
-    ::setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
     CHECK(!aura::compiler::mutation_hold_budget_reject_enabled(),
           "3764 AC4: Soft reject_enabled false");
     const auto fc = read_file("src/serve/fiber.cpp");
@@ -3428,10 +3429,10 @@ static void ac3826_1_edge_free_peer_poll_gate() {
     using aura::serve::Scheduler;
     using aura::serve::StealSafetyDecision;
     using aura::serve::YieldReason;
-    ::unsetenv("AURA_SANDBOX");
-    ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
-    ::unsetenv("AURA_HOLD_BUDGET_INBODY_BOUND_US");
-    ::setenv("AURA_MUTATION_HOLD_SLO_US", "2000", 1);
+    ::aura::config::test_unsetenv("AURA_SANDBOX");
+    ::aura::config::test_unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+    ::aura::config::test_unsetenv("AURA_HOLD_BUDGET_INBODY_BOUND_US");
+    ::aura::config::test_setenv("AURA_MUTATION_HOLD_SLO_US", "2000", 1);
     aura::compiler::typed_audit::apply_production_audit_defaults();
     CHECK(aura::compiler::mutation_hold_budget_reject_enabled(),
           "3826 AC1: reject_enabled under production");
@@ -3513,8 +3514,8 @@ static void ac3826_1_edge_free_peer_poll_gate() {
     aura::serve::set_production_multi_worker_latched_for_test(false);
     aura::serve::g_steal_safety_production_residual_sticky_fail.store(0, std::memory_order_relaxed);
     aura::compiler::typed_audit::apply_dev_audit_defaults();
-    ::unsetenv("AURA_MUTATION_HOLD_SLO_US");
-    ::setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_unsetenv("AURA_MUTATION_HOLD_SLO_US");
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
     aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
     aura::compiler::clear_hold_budget_no_edge_force_for_test();
 }
@@ -3523,9 +3524,9 @@ static void ac3826_2_defer_clear_after_body() {
     std::println("\n--- #3826 AC2: mutation_hold_defer_active()==0 after body exit ---");
     using aura::compiler::Evaluator;
     using aura::serve::Scheduler;
-    ::unsetenv("AURA_SANDBOX");
-    ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
-    ::setenv("AURA_MUTATION_HOLD_SLO_US", "2000", 1);
+    ::aura::config::test_unsetenv("AURA_SANDBOX");
+    ::aura::config::test_unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+    ::aura::config::test_setenv("AURA_MUTATION_HOLD_SLO_US", "2000", 1);
     aura::compiler::typed_audit::apply_production_audit_defaults();
     aura::serve::set_production_multi_worker_latched_for_test(true);
     aura::serve::clear_steal_safety_transaction_for_test(); // #3195: reset named residuals from
@@ -3564,14 +3565,14 @@ static void ac3826_2_defer_clear_after_body() {
     Evaluator::set_query_evaluator(nullptr);
     aura::serve::set_production_multi_worker_latched_for_test(false);
     aura::compiler::typed_audit::apply_dev_audit_defaults();
-    ::unsetenv("AURA_MUTATION_HOLD_SLO_US");
-    ::setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_unsetenv("AURA_MUTATION_HOLD_SLO_US");
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
 }
 
 static void ac3826_3_soft_and_source() {
     std::println("\n--- #3826 AC3: Soft metric-only + source gate cites ---");
     aura::compiler::typed_audit::apply_dev_audit_defaults();
-    ::setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
     CHECK(!aura::compiler::mutation_hold_budget_reject_enabled(),
           "3826 AC3: Soft reject_enabled false");
     const auto fc = read_file("src/serve/fiber.cpp");
@@ -3763,10 +3764,10 @@ static void ac3791_3_no_edge_holder_fail_closed() {
     using aura::serve::Fiber;
     using aura::serve::JoinStatus;
     using aura::serve::Scheduler;
-    ::unsetenv("AURA_SANDBOX");
-    ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
-    ::unsetenv("AURA_HOLD_BUDGET_INBODY_BOUND_US");
-    ::setenv("AURA_MUTATION_HOLD_SLO_US", "2000", 1);
+    ::aura::config::test_unsetenv("AURA_SANDBOX");
+    ::aura::config::test_unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+    ::aura::config::test_unsetenv("AURA_HOLD_BUDGET_INBODY_BOUND_US");
+    ::aura::config::test_setenv("AURA_MUTATION_HOLD_SLO_US", "2000", 1);
     aura::compiler::typed_audit::apply_production_audit_defaults();
     if (!aura::compiler::typed_audit::production_defaults_active())
         return; // Soft / Off: hard doors skip
@@ -3843,8 +3844,8 @@ static void ac3791_3_no_edge_holder_fail_closed() {
     aura::compiler::Evaluator::set_query_evaluator(nullptr);
     aura::serve::set_production_multi_worker_latched_for_test(false);
     aura::compiler::typed_audit::apply_dev_audit_defaults();
-    ::unsetenv("AURA_MUTATION_HOLD_SLO_US");
-    ::setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_unsetenv("AURA_MUTATION_HOLD_SLO_US");
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
     aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
     aura::compiler::clear_hold_budget_no_edge_force_for_test();
 }
@@ -3880,7 +3881,7 @@ static void ac3791_4_gate_source_and_linter() {
         rc = std::system("python3 ../scripts/check_mailbox_lock_audit_pairs_3791.py --self-test");
     CHECK(rc == 0, "3791 AC4: linter self-test passes");
     aura::compiler::typed_audit::apply_dev_audit_defaults();
-    ::setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
     CHECK(!aura::compiler::typed_audit::production_defaults_active(),
           "3791 AC4: Soft skips hard doors");
     CompilerService cs;
@@ -3979,10 +3980,10 @@ static void ac4032_1_exotic_no_poll_ready_or_reclaimed() {
     using aura::serve::Scheduler;
     using aura::serve::StealSafetyDecision;
     using aura::serve::YieldReason;
-    ::unsetenv("AURA_SANDBOX");
-    ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
-    ::unsetenv("AURA_HOLD_BUDGET_INBODY_BOUND_US");
-    ::setenv("AURA_MUTATION_HOLD_SLO_US", "2000", 1);
+    ::aura::config::test_unsetenv("AURA_SANDBOX");
+    ::aura::config::test_unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+    ::aura::config::test_unsetenv("AURA_HOLD_BUDGET_INBODY_BOUND_US");
+    ::aura::config::test_setenv("AURA_MUTATION_HOLD_SLO_US", "2000", 1);
     aura::compiler::typed_audit::apply_production_audit_defaults();
     CHECK(aura::compiler::mutation_hold_budget_reject_enabled(),
           "4032 AC2: reject_enabled under production");
@@ -4062,8 +4063,8 @@ static void ac4032_1_exotic_no_poll_ready_or_reclaimed() {
     aura::serve::set_production_multi_worker_latched_for_test(false);
     aura::serve::g_steal_safety_production_residual_sticky_fail.store(0, std::memory_order_relaxed);
     aura::compiler::typed_audit::apply_dev_audit_defaults();
-    ::unsetenv("AURA_MUTATION_HOLD_SLO_US");
-    ::setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_unsetenv("AURA_MUTATION_HOLD_SLO_US");
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
     aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
     aura::compiler::clear_hold_budget_no_edge_force_for_test();
 }
@@ -4073,8 +4074,8 @@ extern "C" int aura_jit_poll_hold_budget_safepoint() noexcept;
 static void ac4032_3_soft_zero_force_unlock() {
     std::println("\n--- #4032 AC3: Soft/Off zero force-unlock unchanged ---");
     aura::compiler::typed_audit::apply_dev_audit_defaults();
-    ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
-    ::setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
     CHECK(!aura::compiler::mutation_hold_budget_reject_enabled(),
           "4032 AC3: Soft reject_enabled false");
     const auto before = aura::compiler::mutation_hold_budget_forced_unlock_total_v_read();
@@ -4172,10 +4173,10 @@ static void ac4158_2_quarantine_dispose_runtime() {
     using aura::serve::Scheduler;
     using aura::serve::StealSafetyDecision;
     using aura::serve::YieldReason;
-    ::unsetenv("AURA_SANDBOX");
-    ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
-    ::unsetenv("AURA_HOLD_BUDGET_INBODY_BOUND_US");
-    ::setenv("AURA_MUTATION_HOLD_SLO_US", "2000", 1);
+    ::aura::config::test_unsetenv("AURA_SANDBOX");
+    ::aura::config::test_unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+    ::aura::config::test_unsetenv("AURA_HOLD_BUDGET_INBODY_BOUND_US");
+    ::aura::config::test_setenv("AURA_MUTATION_HOLD_SLO_US", "2000", 1);
     aura::compiler::typed_audit::apply_production_audit_defaults();
     CHECK(aura::compiler::mutation_hold_budget_reject_enabled(),
           "4158 AC2: reject_enabled under production");
@@ -4287,8 +4288,8 @@ static void ac4158_2_quarantine_dispose_runtime() {
     aura::serve::set_production_multi_worker_latched_for_test(false);
     aura::serve::g_steal_safety_production_residual_sticky_fail.store(0, std::memory_order_relaxed);
     aura::compiler::typed_audit::apply_dev_audit_defaults();
-    ::unsetenv("AURA_MUTATION_HOLD_SLO_US");
-    ::setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_unsetenv("AURA_MUTATION_HOLD_SLO_US");
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
     aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
     aura::compiler::clear_hold_budget_no_edge_force_for_test();
     aura::compiler::clear_hold_budget_no_edge_quarantine_for_test();
@@ -4300,10 +4301,10 @@ static void ac4158_3_admit_refuse_structured() {
     using aura::compiler::Evaluator;
     using aura::serve::Fiber;
     using aura::serve::Scheduler;
-    ::unsetenv("AURA_SANDBOX");
-    ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
-    ::unsetenv("AURA_HOLD_BUDGET_INBODY_BOUND_US");
-    ::setenv("AURA_MUTATION_HOLD_SLO_US", "2000", 1);
+    ::aura::config::test_unsetenv("AURA_SANDBOX");
+    ::aura::config::test_unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+    ::aura::config::test_unsetenv("AURA_HOLD_BUDGET_INBODY_BOUND_US");
+    ::aura::config::test_setenv("AURA_MUTATION_HOLD_SLO_US", "2000", 1);
     aura::compiler::typed_audit::apply_production_audit_defaults();
     aura::serve::set_production_multi_worker_latched_for_test(true);
     aura::serve::clear_steal_safety_transaction_for_test();
@@ -4401,8 +4402,8 @@ static void ac4158_3_admit_refuse_structured() {
     aura::serve::set_production_multi_worker_latched_for_test(false);
     aura::serve::g_steal_safety_production_residual_sticky_fail.store(0, std::memory_order_relaxed);
     aura::compiler::typed_audit::apply_dev_audit_defaults();
-    ::unsetenv("AURA_MUTATION_HOLD_SLO_US");
-    ::setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_unsetenv("AURA_MUTATION_HOLD_SLO_US");
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
     aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
     aura::compiler::clear_hold_budget_no_edge_force_for_test();
     aura::compiler::clear_hold_budget_no_edge_quarantine_for_test();
@@ -4492,10 +4493,10 @@ static void ac4160_2_face_bounds_holder_runtime() {
     using aura::serve::Scheduler;
     using aura::serve::StealSafetyDecision;
     using aura::serve::YieldReason;
-    ::unsetenv("AURA_SANDBOX");
-    ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
-    ::unsetenv("AURA_HOLD_BUDGET_INBODY_BOUND_US");
-    ::setenv("AURA_MUTATION_HOLD_SLO_US", "2000", 1);
+    ::aura::config::test_unsetenv("AURA_SANDBOX");
+    ::aura::config::test_unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+    ::aura::config::test_unsetenv("AURA_HOLD_BUDGET_INBODY_BOUND_US");
+    ::aura::config::test_setenv("AURA_MUTATION_HOLD_SLO_US", "2000", 1);
     aura::compiler::typed_audit::apply_production_audit_defaults();
     CHECK(aura::compiler::mutation_hold_budget_reject_enabled(),
           "4160 AC2: reject_enabled under production");
@@ -4598,8 +4599,8 @@ static void ac4160_2_face_bounds_holder_runtime() {
                                                                          std::memory_order_relaxed);
     aura::serve::g_steal_safety_production_residual_sticky_fail.store(0, std::memory_order_relaxed);
     aura::compiler::typed_audit::apply_dev_audit_defaults();
-    ::unsetenv("AURA_MUTATION_HOLD_SLO_US");
-    ::setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_unsetenv("AURA_MUTATION_HOLD_SLO_US");
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
     aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
     aura::compiler::clear_hold_budget_no_edge_force_for_test();
     aura::compiler::clear_hold_budget_no_edge_quarantine_for_test();
@@ -4612,10 +4613,10 @@ static void ac4160_3_no_latch_no_unlock_contract() {
     using aura::serve::Fiber;
     using aura::serve::JoinStatus;
     using aura::serve::Scheduler;
-    ::unsetenv("AURA_SANDBOX");
-    ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
-    ::unsetenv("AURA_HOLD_BUDGET_INBODY_BOUND_US");
-    ::setenv("AURA_MUTATION_HOLD_SLO_US", "2000", 1);
+    ::aura::config::test_unsetenv("AURA_SANDBOX");
+    ::aura::config::test_unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+    ::aura::config::test_unsetenv("AURA_HOLD_BUDGET_INBODY_BOUND_US");
+    ::aura::config::test_setenv("AURA_MUTATION_HOLD_SLO_US", "2000", 1);
     aura::compiler::typed_audit::apply_production_audit_defaults();
     CHECK(aura::compiler::mutation_hold_budget_reject_enabled(),
           "4160 AC3: reject_enabled under production");
@@ -4710,8 +4711,8 @@ static void ac4160_3_no_latch_no_unlock_contract() {
                                                                          std::memory_order_relaxed);
     aura::serve::g_steal_safety_production_residual_sticky_fail.store(0, std::memory_order_relaxed);
     aura::compiler::typed_audit::apply_dev_audit_defaults();
-    ::unsetenv("AURA_MUTATION_HOLD_SLO_US");
-    ::setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_unsetenv("AURA_MUTATION_HOLD_SLO_US");
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
     aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
     aura::compiler::clear_hold_budget_no_edge_force_for_test();
     aura::compiler::clear_hold_budget_no_edge_quarantine_for_test();
@@ -4723,10 +4724,10 @@ static void ac4160_4_quarantine_sticky_admit_tie() {
     using aura::serve::Fiber;
     using aura::serve::JoinStatus;
     using aura::serve::Scheduler;
-    ::unsetenv("AURA_SANDBOX");
-    ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
-    ::unsetenv("AURA_HOLD_BUDGET_INBODY_BOUND_US");
-    ::setenv("AURA_MUTATION_HOLD_SLO_US", "2000", 1);
+    ::aura::config::test_unsetenv("AURA_SANDBOX");
+    ::aura::config::test_unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+    ::aura::config::test_unsetenv("AURA_HOLD_BUDGET_INBODY_BOUND_US");
+    ::aura::config::test_setenv("AURA_MUTATION_HOLD_SLO_US", "2000", 1);
     aura::compiler::typed_audit::apply_production_audit_defaults();
     CHECK(aura::compiler::mutation_hold_budget_reject_enabled(),
           "4160 AC4: reject_enabled under production");
@@ -4813,8 +4814,8 @@ static void ac4160_4_quarantine_sticky_admit_tie() {
                                                                          std::memory_order_relaxed);
     aura::serve::g_steal_safety_production_residual_sticky_fail.store(0, std::memory_order_relaxed);
     aura::compiler::typed_audit::apply_dev_audit_defaults();
-    ::unsetenv("AURA_MUTATION_HOLD_SLO_US");
-    ::setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_unsetenv("AURA_MUTATION_HOLD_SLO_US");
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
     aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
     aura::compiler::clear_hold_budget_no_edge_force_for_test();
     aura::compiler::clear_hold_budget_no_edge_quarantine_for_test();
@@ -4822,7 +4823,7 @@ static void ac4160_4_quarantine_sticky_admit_tie() {
 
 static void ac4160_5_soft_and_linter_selftest() {
     std::println("\n--- #4160 AC5: Soft observe-only + gate linter self-test ---");
-    ::setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
     aura::compiler::typed_audit::apply_dev_audit_defaults();
     CHECK(!aura::compiler::mutation_hold_budget_reject_enabled(), "4160 AC5: Soft reject disabled");
     aura::serve::mf_mailbox::g_mailbox_defer_slo_hold_cancel_armed.store(0,
@@ -4872,8 +4873,8 @@ static void ac5274_1_heap_mutate_survives_foreign_hold() {
     // Sandbox off keeps the capability table from denying `mutate` in this
     // unit context; production defaults (and therefore the #2701 budget
     // reject) stay armed independently of the sandbox face.
-    ::setenv("AURA_SANDBOX", "off", 1);
-    ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
     // Build the evaluator on the Off sandbox face first (effect checks then
     // pass in this unit context), then arm production defaults so the #2701
     // budget reject stays live for the probe below.

@@ -21,6 +21,7 @@
 //   AC13a/b/c: reemit fail counter + keep + query (#2095)
 //   AC14: #2172 SpecJIT conservative gate + counter + StormLevel facade
 
+#include "core/runtime_config.hh"
 #include "compiler/aura_jit_bridge.h"
 #include "compiler/evaluator_primitives_query_shared.hh"
 #include "compiler/hot_update_registry.hh"
@@ -1126,8 +1127,8 @@ static void ac13a_reemit_fail_counter() {
     aura_set_aot_metrics(&metrics);
     aura_set_aot_emit_region_mask(0);
     // Disable keep-fail env so we can check the fail counter cleanly.
-    ::setenv("AURA_REEMIT_KEEP_FAIL", "0", 1);
-    ::setenv("AURA_REEMIT_KEEP_FAIL_N", "0", 1);
+    ::aura::config::test_setenv("AURA_REEMIT_KEEP_FAIL", "0", 1);
+    ::aura::config::test_setenv("AURA_REEMIT_KEEP_FAIL_N", "0", 1);
 
     const auto success_before =
         metrics.aot_incremental_llvm_emit_total.load(std::memory_order_relaxed);
@@ -1165,18 +1166,18 @@ static void ac13a_reemit_fail_counter() {
 static void ac13b_reemit_keep_fail() {
     std::println("\n--- AC13b: #2095 AURA_REEMIT_KEEP_FAIL keeps failed .o ---");
     // Unset: keep-fail disabled.
-    ::unsetenv("AURA_REEMIT_KEEP_FAIL");
-    ::unsetenv("AURA_REEMIT_KEEP_FAIL_N");
+    ::aura::config::test_unsetenv("AURA_REEMIT_KEEP_FAIL");
+    ::aura::config::test_unsetenv("AURA_REEMIT_KEEP_FAIL_N");
     CHECK(aura_reemit_keep_fail_enabled() == 0, "AC13b: keep-fail disabled by default");
 
     // Enable via AURA_REEMIT_KEEP_FAIL=1.
-    ::setenv("AURA_REEMIT_KEEP_FAIL", "1", 1);
+    ::aura::config::test_setenv("AURA_REEMIT_KEEP_FAIL", "1", 1);
     CHECK(aura_reemit_keep_fail_enabled() == 1,
           "AC13b: keep-fail enabled via AURA_REEMIT_KEEP_FAIL=1");
 
     // Enable via AURA_REEMIT_KEEP_FAIL_N=3 (any non-zero N).
-    ::unsetenv("AURA_REEMIT_KEEP_FAIL");
-    ::setenv("AURA_REEMIT_KEEP_FAIL_N", "3", 1);
+    ::aura::config::test_unsetenv("AURA_REEMIT_KEEP_FAIL");
+    ::aura::config::test_setenv("AURA_REEMIT_KEEP_FAIL_N", "3", 1);
     CHECK(aura_reemit_keep_fail_enabled() == 1,
           "AC13b: keep-fail enabled via AURA_REEMIT_KEEP_FAIL_N=3");
 
@@ -1193,8 +1194,8 @@ static void ac13b_reemit_keep_fail() {
     CHECK(std::ifstream(src).good() == false, "AC13b: source .o removed after keep");
 
     // Cleanup.
-    ::unsetenv("AURA_REEMIT_KEEP_FAIL");
-    ::unsetenv("AURA_REEMIT_KEEP_FAIL_N");
+    ::aura::config::test_unsetenv("AURA_REEMIT_KEEP_FAIL");
+    ::aura::config::test_unsetenv("AURA_REEMIT_KEEP_FAIL_N");
 }
 
 // Issue #2095 AC4: query:aot-incremental-reemit-stats surface exposes
@@ -3142,8 +3143,8 @@ int main() {
         const std::string cov_prev = cov_save ? cov_save : "";
         const char* sb_save = std::getenv("AURA_SANDBOX");
         const std::string sb_prev = sb_save ? sb_save : "";
-        ::setenv("AURA_COVERAGE_VERIFY_MIN_DIRTY", "1", 1);
-        ::unsetenv("AURA_SANDBOX");
+        ::aura::config::test_setenv("AURA_COVERAGE_VERIFY_MIN_DIRTY", "1", 1);
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
         ctr.production_defaults_active.store(1, std::memory_order_relaxed);
         reg.reset_coverage_verify_for_test();
         reg.reset_exhausted_min_dirty_retry_for_test();
@@ -3158,13 +3159,13 @@ int main() {
               "3445 AC3: uncovered Env retained after min-dirty seed");
         ctr.production_defaults_active.store(prod_save, std::memory_order_relaxed);
         if (cov_prev.empty())
-            ::unsetenv("AURA_COVERAGE_VERIFY_MIN_DIRTY");
+            ::aura::config::test_unsetenv("AURA_COVERAGE_VERIFY_MIN_DIRTY");
         else
-            ::setenv("AURA_COVERAGE_VERIFY_MIN_DIRTY", cov_prev.c_str(), 1);
+            ::aura::config::test_setenv("AURA_COVERAGE_VERIFY_MIN_DIRTY", cov_prev.c_str(), 1);
         if (sb_prev.empty())
-            ::unsetenv("AURA_SANDBOX");
+            ::aura::config::test_unsetenv("AURA_SANDBOX");
         else
-            ::setenv("AURA_SANDBOX", sb_prev.c_str(), 1);
+            ::aura::config::test_setenv("AURA_SANDBOX", sb_prev.c_str(), 1);
 
         std::println("\n--- #3445 AC4: relower success must not zero a different reason bit ---");
         reg.on_reload_success();
@@ -3317,8 +3318,8 @@ int main() {
         const std::string cov_prev = cov_save ? cov_save : "";
         const char* sb_save = std::getenv("AURA_SANDBOX");
         const std::string sb_prev = sb_save ? sb_save : "";
-        ::setenv("AURA_COVERAGE_VERIFY_MIN_DIRTY", "1", 1);
-        ::unsetenv("AURA_SANDBOX");
+        ::aura::config::test_setenv("AURA_COVERAGE_VERIFY_MIN_DIRTY", "1", 1);
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
         ctr.production_defaults_active.store(1, std::memory_order_relaxed);
         reg.reset_coverage_verify_for_test();
         reg.reset_exhausted_min_dirty_retry_for_test();
@@ -3333,13 +3334,13 @@ int main() {
               "3466 AC4: uncovered Env retained after min-dirty seed");
         ctr.production_defaults_active.store(prod_save, std::memory_order_relaxed);
         if (cov_prev.empty())
-            ::unsetenv("AURA_COVERAGE_VERIFY_MIN_DIRTY");
+            ::aura::config::test_unsetenv("AURA_COVERAGE_VERIFY_MIN_DIRTY");
         else
-            ::setenv("AURA_COVERAGE_VERIFY_MIN_DIRTY", cov_prev.c_str(), 1);
+            ::aura::config::test_setenv("AURA_COVERAGE_VERIFY_MIN_DIRTY", cov_prev.c_str(), 1);
         if (sb_prev.empty())
-            ::unsetenv("AURA_SANDBOX");
+            ::aura::config::test_unsetenv("AURA_SANDBOX");
         else
-            ::setenv("AURA_SANDBOX", sb_prev.c_str(), 1);
+            ::aura::config::test_setenv("AURA_SANDBOX", sb_prev.c_str(), 1);
 
         std::println("\n--- #3466 AC5: 3-candidate emit does not invent bit 0 from count ---");
         reg.on_reload_success();
@@ -3442,7 +3443,7 @@ int main() {
               "3447 AC3: owner-scoped does not force-bump table (#3300/#2841)");
 
         std::println("\n--- #3447 AC4: captured==0 + tracking stale; LEGACY_TRUST kept ---");
-        setenv("AURA_BRIDGE_EPOCH_LEGACY_TRUST", "0", 1);
+        ::aura::config::test_setenv("AURA_BRIDGE_EPOCH_LEGACY_TRUST", "0", 1);
         aura_set_current_bridge_epoch(t1 + 9);
         CHECK(!aura_is_jit_closure_fresh(0, defuse),
               "3447 AC4: captured==0 + C-bridge tracking is stale (#2930)");

@@ -8,6 +8,7 @@
 //   AC4: Soft disabled → hard on gen mismatch
 //   AC5: Additive query keys; #2505 breakdown extended (reason=7)
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include "compiler/aura_jit_bridge.h"
@@ -68,8 +69,8 @@ static std::int64_t href(CompilerService& cs, const char* key) {
 }
 
 static void clear_env() {
-    unsetenv("AURA_CROSS_COW_SOFT_MIGRATE");
-    unsetenv("AURA_CROSS_COW_SOFT_MIGRATE_MAX_DRIFT");
+    ::aura::config::test_unsetenv("AURA_CROSS_COW_SOFT_MIGRATE");
+    ::aura::config::test_unsetenv("AURA_CROSS_COW_SOFT_MIGRATE_MAX_DRIFT");
 }
 
 static std::int64_t alloc_stamped(const char* name) {
@@ -85,8 +86,8 @@ static std::int64_t alloc_stamped(const char* name) {
 static void ac1_same_gen_soft() {
     std::println("\n--- #2547 AC1: same cow_gen → soft-eligible ---");
     clear_env();
-    setenv("AURA_CROSS_COW_SOFT_MIGRATE", "1", 1);
-    setenv("AURA_CROSS_COW_SOFT_MIGRATE_MAX_DRIFT", "8", 1);
+    ::aura::config::test_setenv("AURA_CROSS_COW_SOFT_MIGRATE", "1", 1);
+    ::aura::config::test_setenv("AURA_CROSS_COW_SOFT_MIGRATE_MAX_DRIFT", "8", 1);
     CompilerMetrics metrics{};
     aura_set_aot_metrics(&metrics);
     aura_set_live_workspace_cow_gen(42);
@@ -126,8 +127,8 @@ static void ac1_same_gen_soft() {
 static void ac2_cross_gen_hard() {
     std::println("\n--- #2547 AC2: advance cow_gen → hard CowGenMismatch ---");
     clear_env();
-    setenv("AURA_CROSS_COW_SOFT_MIGRATE", "1", 1);
-    setenv("AURA_CROSS_COW_SOFT_MIGRATE_MAX_DRIFT", "64", 1);
+    ::aura::config::test_setenv("AURA_CROSS_COW_SOFT_MIGRATE", "1", 1);
+    ::aura::config::test_setenv("AURA_CROSS_COW_SOFT_MIGRATE_MAX_DRIFT", "64", 1);
     CompilerMetrics metrics{};
     aura_set_aot_metrics(&metrics);
     aura_test_reset_last_cross_workspace_reject_reason();
@@ -197,7 +198,7 @@ static void ac3_write_path_foreign() {
 static void ac4_soft_disabled() {
     std::println("\n--- #2547 AC4: soft disabled → hard on gen mismatch ---");
     clear_env();
-    setenv("AURA_CROSS_COW_SOFT_MIGRATE", "0", 1);
+    ::aura::config::test_setenv("AURA_CROSS_COW_SOFT_MIGRATE", "0", 1);
     CompilerMetrics metrics{};
     aura_set_aot_metrics(&metrics);
     aura_set_live_workspace_cow_gen(3);

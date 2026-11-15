@@ -9,6 +9,7 @@
 //   AC4: query:orchestration-steal-outermost-stats schema-2184
 //   AC5: unit asserts on snapshot fields (depth, held, yield reason)
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include "serve/fiber.h"
@@ -384,8 +385,8 @@ int run_test_mutation_safety_snapshot_steal() {
     {
         std::println("\n--- #2346 AC1: Soft mismatch → counter bump, fiber continues ---");
         // Default: no AURA_STEAL_SNAPSHOT_HARD, no production defaults → Soft.
-        ::unsetenv("AURA_STEAL_SNAPSHOT_HARD");
-        ::unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
+        ::aura::config::test_unsetenv("AURA_STEAL_SNAPSHOT_HARD");
+        ::aura::config::test_unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
         CHECK(!aura::serve::is_steal_snapshot_hard_mode(), "AC1: default Soft for resume");
         // Inject inconsistency under a live fiber (depth>0 + Explicit yield).
         Scheduler sched(2);
@@ -418,8 +419,8 @@ int run_test_mutation_safety_snapshot_steal() {
 
     {
         std::println("\n--- #2346 AC2: Hard mismatch → mark-failed, hard-fail +1 ---");
-        ::setenv("AURA_STEAL_SNAPSHOT_HARD", "1", 1);
-        ::unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
+        ::aura::config::test_setenv("AURA_STEAL_SNAPSHOT_HARD", "1", 1);
+        ::aura::config::test_unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
         CHECK(aura::serve::is_steal_snapshot_hard_mode(), "AC2: Hard mode on");
         Scheduler sched(2);
         std::atomic<bool> done{false};
@@ -449,12 +450,12 @@ int run_test_mutation_safety_snapshot_steal() {
         sched.stop();
         io.join();
         CHECK(done.load(), "AC2: body ran");
-        ::unsetenv("AURA_STEAL_SNAPSHOT_HARD");
+        ::aura::config::test_unsetenv("AURA_STEAL_SNAPSHOT_HARD");
     }
 
     {
         std::println("\n--- #2346 AC3: happy path → no hard-fail bump ---");
-        ::unsetenv("AURA_STEAL_SNAPSHOT_HARD");
+        ::aura::config::test_unsetenv("AURA_STEAL_SNAPSHOT_HARD");
         Scheduler sched(2);
         std::atomic<int> finished{0};
         constexpr int k = 3;
@@ -518,8 +519,8 @@ int run_test_mutation_safety_snapshot_steal() {
     // ── Issue #2956: outermost Guard / soft enter-exit mirror canary ──
     {
         std::println("\n--- #2956 AC1: Soft injected tear → soft_total (metric-only) ---");
-        ::setenv("AURA_STEAL_SNAPSHOT_SOFT", "1", 1);
-        ::unsetenv("AURA_STEAL_SNAPSHOT_HARD");
+        ::aura::config::test_setenv("AURA_STEAL_SNAPSHOT_SOFT", "1", 1);
+        ::aura::config::test_unsetenv("AURA_STEAL_SNAPSHOT_HARD");
         aura::serve::reset_steal_snapshot_soft_for_test();
         aura::serve::set_steal_snapshot_soft_for_test(true);
         CHECK(!aura::serve::is_steal_snapshot_hard_mode(), "2956 AC1: Soft mode");
@@ -548,13 +549,13 @@ int run_test_mutation_safety_snapshot_steal() {
         CHECK(aura_mutation_mirror_inconsistency_hard_total() == hard0,
               "2956 AC1: hard_total unchanged under Soft");
         aura::serve::reset_steal_snapshot_soft_for_test();
-        ::unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
+        ::aura::config::test_unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
     }
 
     {
         std::println("\n--- #2956 AC1b: Hard injected tear → hard_total ---");
-        ::setenv("AURA_STEAL_SNAPSHOT_HARD", "1", 1);
-        ::unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
+        ::aura::config::test_setenv("AURA_STEAL_SNAPSHOT_HARD", "1", 1);
+        ::aura::config::test_unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
         aura::serve::reset_steal_snapshot_soft_for_test();
         aura::serve::set_steal_snapshot_soft_for_test(false);
         CHECK(aura::serve::is_steal_snapshot_hard_mode(), "2956 AC1b: Hard mode");
@@ -585,12 +586,12 @@ int run_test_mutation_safety_snapshot_steal() {
         CHECK(aura_mutation_mirror_inconsistency_soft_total() == soft0,
               "2956 AC1b: soft_total unchanged under Hard");
         aura::serve::reset_steal_snapshot_soft_for_test();
-        ::unsetenv("AURA_STEAL_SNAPSHOT_HARD");
+        ::aura::config::test_unsetenv("AURA_STEAL_SNAPSHOT_HARD");
     }
 
     {
         std::println("\n--- #2956 AC2: nested (is_active=0) no canary cost ---");
-        ::setenv("AURA_STEAL_SNAPSHOT_SOFT", "1", 1);
+        ::aura::config::test_setenv("AURA_STEAL_SNAPSHOT_SOFT", "1", 1);
         aura::serve::set_steal_snapshot_soft_for_test(true);
         const auto soft0 = aura_mutation_mirror_inconsistency_soft_total();
         const auto hard0 = aura_mutation_mirror_inconsistency_hard_total();
@@ -602,7 +603,7 @@ int run_test_mutation_safety_snapshot_steal() {
         CHECK(aura_mutation_mirror_inconsistency_soft_total() == soft0, "2956 AC2: soft unchanged");
         CHECK(aura_mutation_mirror_inconsistency_hard_total() == hard0, "2956 AC2: hard unchanged");
         aura::serve::reset_steal_snapshot_soft_for_test();
-        ::unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
+        ::aura::config::test_unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
     }
 
     {
@@ -638,7 +639,7 @@ int run_test_mutation_safety_snapshot_steal() {
 
     {
         std::println("\n--- #2956 AC3: happy path post-publish (no counter bump) ---");
-        ::setenv("AURA_STEAL_SNAPSHOT_SOFT", "1", 1);
+        ::aura::config::test_setenv("AURA_STEAL_SNAPSHOT_SOFT", "1", 1);
         aura::serve::set_steal_snapshot_soft_for_test(true);
         const auto soft0 = aura_mutation_mirror_inconsistency_soft_total();
         const auto hard0 = aura_mutation_mirror_inconsistency_hard_total();
@@ -668,7 +669,7 @@ int run_test_mutation_safety_snapshot_steal() {
         CHECK(aura_mutation_mirror_inconsistency_hard_total() == hard0,
               "2956 happy: hard unchanged");
         aura::serve::reset_steal_snapshot_soft_for_test();
-        ::unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
+        ::aura::config::test_unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
     }
 
     // ── Issue #3384: dual depth authority → single SSOT (fiber stack on fiber, TLS slot off fiber)
