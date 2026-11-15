@@ -610,4 +610,141 @@ CompilerSnapshot CompilerService::snapshot() const {
     return s;
 }
 
+std::unique_ptr<CompilerService::TierJob4682>
+CompilerService::tier_snapshot_4682_(const aura::ir::IRModule& mod, types::EvalValue self_word,
+                                     TierSlot4682& slot, const std::string& name,
+                                     std::uint32_t mk_self_cell) {
+    using Op = aura::ir::IROpcode;
+    const aura::ir::IRFunction* fnp = nullptr;
+    for (const auto& f : mod.functions) {
+        if (f.id == mod.entry_function_id)
+            continue;
+        if (fnp)
+            return nullptr; // more than one body (nested lambdas): out of scope
+        fnp = &f;
+    }
+    if (!fnp || !fnp->free_vars.empty() || fnp->local_count == 0 ||
+        fnp->arg_count > fnp->local_count || fnp->marker == 1 || fnp->blocks.empty())
+        return nullptr;
+    const auto& f = *fnp;
+    std::uint32_t self_cell = UINT32_MAX;
+    std::uint64_t self_calls = 0;
+    std::vector<std::uint8_t> self_slot(f.local_count, 0);
+    for (const auto& blk : f.blocks) {
+        for (const auto& in : blk.instructions) {
+            if (in.source_marker == 1)
+                return nullptr;
+            switch (in.opcode) {
+                case Op::Nop:
+                case Op::ConstI64:
+                case Op::ConstBool:
+                case Op::Local:
+                case Op::Arg:
+                case Op::Add:
+                case Op::Sub:
+                case Op::Mul:
+                case Op::Eq:
+                case Op::Lt:
+                case Op::Gt:
+                case Op::Le:
+                case Op::Ge:
+                case Op::Not:
+                case Op::Branch:
+                case Op::Jump:
+                case Op::Return:
+                    break;
+                case Op::TopCellLoad:
+                    if (self_cell != UINT32_MAX && self_cell != in.operands[1])
+                        return nullptr;
+                    self_cell = in.operands[1];
+                    if (in.operands[0] >= f.local_count)
+                        return nullptr;
+                    self_slot[in.operands[0]] = 1;
+                    break;
+                case Op::IsError:
+                    break;
+                case Op::MakeClosure:
+                    // TW tier: the self reference is rewritten to a load
+                    // of a private cell holding the TW closure word.
+                    if (mk_self_cell == UINT32_MAX || in.operands[1] != f.id ||
+                        in.operands[2] != 0 || in.operands[0] >= f.local_count ||
+                        (self_cell != UINT32_MAX && self_cell != mk_self_cell))
+                        return nullptr;
+                    self_cell = mk_self_cell;
+                    self_slot[in.operands[0]] = 1;
+                    break;
+                case Op::Call:
+                    if (in.operands[0] >= f.local_count || !self_slot[in.operands[0]] ||
+                        in.operands[2] != f.arg_count)
+                        return nullptr;
+                    ++self_calls;
+                    break;
+                default:
+                    return nullptr;
+            }
+            // A slot written by anything but TopCellLoad is no longer
+            // the self word.
+            if (in.opcode != Op::TopCellLoad && in.opcode != Op::MakeClosure &&
+                in.opcode != Op::Call && in.opcode != Op::Branch && in.opcode != Op::Jump &&
+                in.opcode != Op::Return && in.opcode != Op::Nop && in.operands[0] < f.local_count)
+                self_slot[in.operands[0]] = 0;
+            if (in.opcode == Op::Call && in.operands[3] < f.local_count)
+                self_slot[in.operands[3]] = 0;
+        }
+    }
+    // The self cell must currently hold this binding's closure word, or
+    // the direct self-call guard would miss and leave native code.
+    if (self_cell != UINT32_MAX) {
+        if (self_cell >= evaluator_.cells().size() || evaluator_.cells()[self_cell] != self_word)
+            return nullptr;
+    }
+    auto job = std::make_unique<TierJob4682>();
+    static std::atomic<std::uint64_t> seq{0};
+    job->name =
+        "__tier4682__" + name + "#" + std::to_string(seq.fetch_add(1, std::memory_order_relaxed));
+    job->instrs.resize(f.blocks.size());
+    job->blocks.resize(f.blocks.size());
+    for (std::size_t bi = 0; bi < f.blocks.size(); ++bi) {
+        for (const auto& in0 : f.blocks[bi].instructions) {
+            auto in = in0;
+            if (in.opcode == Op::MakeClosure) {
+                in.opcode = Op::TopCellLoad;
+                in.operands[1] = mk_self_cell;
+                in.operands[2] = 0;
+                in.operands[3] = 0;
+            }
+            job->instrs[bi].push_back(
+                {static_cast<std::uint32_t>(in.opcode),
+                 {in.operands[0], in.operands[1], in.operands[2], in.operands[3]},
+                 0,
+                 in.narrow_evidence,
+                 in.type_id,
+                 in.linear_ownership_state,
+                 0,
+                 in.source_marker,
+                 in.provenance});
+        }
+        job->blocks[bi] = {f.blocks[bi].id, nullptr,
+                           static_cast<std::uint32_t>(job->instrs[bi].size())};
+    }
+    job->self_calls = self_calls;
+    job->fn.entry_block = f.entry_block;
+    job->fn.local_count = f.local_count;
+    job->fn.arg_count = f.arg_count;
+    job->fn.variadic = f.variadic;
+    job->fn.env_count = 0;
+    job->fn.func_id_map = nullptr;
+    job->fn.num_callees = 0;
+    job->fn.const_tags = nullptr;
+    job->fn.shape_map = nullptr;
+    job->fn.escape_map = nullptr;
+    job->fn.region = static_cast<std::uint8_t>(f.region);
+    job->fn.source_marker = 0;
+    job->fn.provenance = 0;
+    slot.local_count = f.local_count;
+    slot.arg_count = f.arg_count;
+    slot.self_cell = self_cell;
+    return job;
+}
+
 } // namespace aura::compiler
