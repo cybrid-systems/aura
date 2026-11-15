@@ -639,7 +639,7 @@ void RegSplitParts::register_math_integer_primitives(
 
     register_prim(
         add, ev, "modulo",
-        [&string_heap, &error_values, primitive_error_counter, safe_abs_i64,
+        [&ev, &string_heap, &error_values, primitive_error_counter, safe_abs_i64,
          i64_div_ok](std::span<const EvalValue> a) {
             if (a.size() < 2) {
                 return make_primitive_error(string_heap, error_values, "modulo: too few args",
@@ -654,8 +654,10 @@ void RegSplitParts::register_math_integer_primitives(
                                             primitive_error_counter);
             }
             if (divisor == 0) {
-                return make_primitive_error(string_heap, error_values, "modulo: division by zero",
-                                            primitive_error_counter);
+                auto err = make_primitive_error(
+                    string_heap, error_values, "modulo: division by zero", primitive_error_counter);
+                ev.mark_division_by_zero(err);
+                return err;
             }
             if (!i64_div_ok(n, divisor)) {
                 return make_primitive_error(string_heap, error_values,
@@ -671,7 +673,7 @@ void RegSplitParts::register_math_integer_primitives(
         pure_general(2, "(int int) -> int", "Floor modulo of two integers."));
     register_prim(
         add, ev, "mod",
-        [&string_heap, &error_values, primitive_error_counter, safe_abs_i64,
+        [&ev, &string_heap, &error_values, primitive_error_counter, safe_abs_i64,
          i64_div_ok](std::span<const EvalValue> a) {
             if (a.size() < 2) {
                 return make_primitive_error(string_heap, error_values, "mod: too few args",
@@ -686,8 +688,10 @@ void RegSplitParts::register_math_integer_primitives(
                                             primitive_error_counter);
             }
             if (divisor == 0) {
-                return make_primitive_error(string_heap, error_values, "mod: division by zero",
-                                            primitive_error_counter);
+                auto err = make_primitive_error(string_heap, error_values, "mod: division by zero",
+                                                primitive_error_counter);
+                ev.mark_division_by_zero(err);
+                return err;
             }
             if (!i64_div_ok(n, divisor)) {
                 return make_primitive_error(string_heap, error_values,
@@ -703,7 +707,7 @@ void RegSplitParts::register_math_integer_primitives(
         pure_general(2, "(int int) -> int", "Alias for modulo."));
     register_prim(
         add, ev, "quotient",
-        [&string_heap, &error_values, primitive_error_counter,
+        [&ev, &string_heap, &error_values, primitive_error_counter,
          i64_div_ok](std::span<const EvalValue> a) {
             if (a.size() < 2) {
                 return make_primitive_error(string_heap, error_values, "quotient: too few args",
@@ -718,8 +722,11 @@ void RegSplitParts::register_math_integer_primitives(
                                             primitive_error_counter);
             }
             if (divisor == 0) {
-                return make_primitive_error(string_heap, error_values, "quotient: division by zero",
-                                            primitive_error_counter);
+                auto err =
+                    make_primitive_error(string_heap, error_values, "quotient: division by zero",
+                                         primitive_error_counter);
+                ev.mark_division_by_zero(err);
+                return err;
             }
             if (!i64_div_ok(n, divisor)) {
                 return make_primitive_error(string_heap, error_values,
@@ -731,7 +738,7 @@ void RegSplitParts::register_math_integer_primitives(
         pure_general(2, "(int int) -> int", "Integer quotient toward zero."));
     register_prim(
         add, ev, "remainder",
-        [&string_heap, &error_values, primitive_error_counter,
+        [&ev, &string_heap, &error_values, primitive_error_counter,
          i64_div_ok](std::span<const EvalValue> a) {
             if (a.size() < 2) {
                 return make_primitive_error(string_heap, error_values, "remainder: too few args",
@@ -746,8 +753,11 @@ void RegSplitParts::register_math_integer_primitives(
                                             primitive_error_counter);
             }
             if (divisor == 0) {
-                return make_primitive_error(string_heap, error_values,
-                                            "remainder: division by zero", primitive_error_counter);
+                auto err =
+                    make_primitive_error(string_heap, error_values, "remainder: division by zero",
+                                         primitive_error_counter);
+                ev.mark_division_by_zero(err);
+                return err;
             }
             if (!i64_div_ok(n, divisor)) {
                 return make_primitive_error(string_heap, error_values,

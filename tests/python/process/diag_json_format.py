@@ -85,6 +85,17 @@ class DiagJson(unittest.TestCase):
         self.assertEqual(obj["message"], "x")
         self.assertEqual(obj["span"]["start"], {"line": 1, "column": 2})
 
+    def test_division_by_zero_has_its_own_code(self) -> None:
+        # #5241 batch 1: division by zero is typed at creation, not TypeError.
+        r = run(["--error-format=json", "-e", "(/ 1 0)"])
+        self.assertNotEqual(r.returncode, 0)
+        obj = last_json(r.stderr)
+        self.assertEqual(obj["code"], "DivisionByZero")
+        self.assertIn("division by zero", obj["message"])
+        for src in ("(modulo 1 0)", "(quotient 1 0)", "(remainder 1 0)"):
+            r = run(["--error-format=json", "-e", src])
+            self.assertEqual(last_json(r.stderr)["code"], "DivisionByZero", src)
+
     def test_exit_code_table(self) -> None:
         with tempfile.TemporaryDirectory() as d:
             p = Path(d) / "u.aura"
