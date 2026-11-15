@@ -31,6 +31,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <ctime>
 #include <fstream>
 #include <memory_resource>
 #include <optional>
@@ -1975,12 +1976,21 @@ static void ac4714r2_production_mint_no_lock() {
 #endif
     const auto pub_locks0 = ev.fiber_slab_publish_locks();
     const auto free0 = ev.string_heap_free_slots();
-    const auto tp0 = std::chrono::steady_clock::now();
+    // Thread CPU time, not wall time: this binary runs in the issue tier
+    // beside other binaries, and a descheduled stretch lands inside the
+    // publish window (quiet CI runs read 608-884 us; one contended run read
+    // 2018 us for the same work). CPU time does not count descheduled time,
+    // so contention cancels; a per-slot payload copy is real work and still
+    // shows in every window.
+    std::timespec tp0{};
+    ::clock_gettime(CLOCK_THREAD_CPUTIME_ID, &tp0);
     const auto published0 = ev.publish_fiber_slab(kBaseFid);
     const auto published1 = ev.publish_fiber_slab(kBaseFid + 1);
-    const auto publish_us = std::chrono::duration_cast<std::chrono::microseconds>(
-                                std::chrono::steady_clock::now() - tp0)
-                                .count();
+    std::timespec tp1{};
+    ::clock_gettime(CLOCK_THREAD_CPUTIME_ID, &tp1);
+    const auto publish_us =
+        (static_cast<long long>(tp1.tv_sec) - static_cast<long long>(tp0.tv_sec)) * 1'000'000LL +
+        (static_cast<long long>(tp1.tv_nsec) - static_cast<long long>(tp0.tv_nsec)) / 1'000LL;
     const auto free1 = ev.string_heap_free_slots();
     CHECK(!published0.empty() && !published1.empty(),
           "4714R2 AC2: publish returns the slots of the batch it closes");
@@ -1999,9 +2009,9 @@ static void ac4714r2_production_mint_no_lock() {
     CHECK(publish_us < kPublishBoundUs,
           "4714R2 AC2: publishing 2 x " + std::to_string(kWarm + kWindow) +
               " slot batches stays under the promotion bound (" + std::to_string(kPublishBoundUs) +
-              " us; measured " + std::to_string(publish_us) + " us, no copy)");
+              " us CPU; measured " + std::to_string(publish_us) + " us, no copy)");
     std::println("    4714R2: BEFORE {} locks / {} mints; AFTER {} locks / {} window mints; "
-                 "{} batch claims for {} warm mints; publish 2 x {} slots = {} us, "
+                 "{} batch claims for {} warm mints; publish 2 x {} slots = {} us CPU, "
                  "{} free slots returned",
                  locks_before, before_n, locks_after, want, claims_total, kWarm, kWarm + kWindow,
                  publish_us, free1 - free0);
