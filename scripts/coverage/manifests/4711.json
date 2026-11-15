@@ -8,11 +8,17 @@
       "path": "src/compiler/service.ixx",
       "contains": [
         "Issue #4711: eval-mutex (M1) release across a blocking wait",
-        "std::unique_lock<std::recursive_mutex> lock(eval_mutex_)",
-        "EvalMutexWaitPublishScope eval_mutex_wait_scope(eval_mutex_)",
         "eval_mutex_wait_release_impl",
         "eval_mutex_wait_reacquire_impl",
         "wire_eval_mutex_wait_hooks"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/service_eval.cpp",
+      "contains": [
+        "std::unique_lock<std::recursive_mutex> lock(eval_mutex_)",
+        "EvalMutexWaitPublishScope eval_mutex_wait_scope(eval_mutex_)"
       ]
     },
     {
