@@ -33,6 +33,11 @@ CASES = (
         "fiber_fastpath.FiberFastPath5066.test_worker_cap_keeps_checksum",
     ),
     (
+        5302,
+        "test_float_and_dead_pair_named_let",
+        "fiber_fastpath.FiberFastPath5066.test_float_and_dead_pair_named_let",
+    ),
+    (
         5116,
         "test_serve_async_sees_each_capture",
         "fiber_named_let.NamedLetReentrant5116.test_serve_async_sees_each_capture",

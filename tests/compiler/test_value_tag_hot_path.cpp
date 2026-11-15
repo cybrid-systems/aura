@@ -268,18 +268,17 @@ static void ac7_float_local_loop_4524() {
                         "    (let sum ((l snap) (t 0.0))"
                         "      (if (null? l) t (sum (cdr l) (+ t (car l)))))))";
 
-    // AC7.1 literal-intern + float-local step: the boxed baseline allocated
-    // a fresh pool slot for the 1.0 literal AND the step result every
-    // iteration (~2N); interning the literal and riding the raw step
-    // through the armed backedge fast path leaves ~1 materialization per
-    // iteration (the fresh immutable box bound in the loop env).
+    // AC7.1 (#5302): the named-let C++ loop keeps the float accumulator raw.
+    // The boxed baseline allocated a pool slot for the step every iteration
+    // (~2N). Entry literals, the first interpreted step, and the result are
+    // a handful of boxes. Per-step boxing would be ~1000 here.
     {
         const auto pre = float_pool_probe_pre(1234.5);
         auto r = cs.eval(floop);
         const auto allocs = float_pool_allocs_since(1234.5, pre);
         std::println("    floop 1000: aura_alloc_float count = {}", allocs);
         CHECK(r.has_value() && is_float(*r) && as_float(*r) == 1000.0, "floop sum 1000.0");
-        CHECK(allocs < 1500, "float loop churn below 1.5/iter (baseline ~2/iter)");
+        CHECK(allocs < 48, "named-let float loop boxes O(1), not one per step");
     }
 
     // AC7.2 results stay exact across + - * and mixed promotion.

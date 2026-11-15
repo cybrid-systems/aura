@@ -6445,11 +6445,195 @@ namespace {
                 return false;
             return types::fits_fixnum(flat.int_val(node));
         }
+        if (tag == aura::ast::NodeTag::LiteralFloat)
+            return true;
         if (tag == aura::ast::NodeTag::Variable)
             return param_index_5066(params, flat.sym_id(node)) >= 0;
         if (tag == aura::ast::NodeTag::Call)
             return find_fast_site_5066(flat, node) != nullptr;
         return false;
+    }
+
+    // #5302: `(car (list a …))` / `(car (cons a d))` in a numeric named let
+    // is the car. The pair does not escape, so the loop must not mint it
+    // (that mint takes the process-wide alloc lock and stops fiber scaling).
+    struct CarFold5066 {
+        aura::ast::NodeId call = aura::ast::NULL_NODE;
+        aura::ast::NodeId head = aura::ast::NULL_NODE;
+        std::array<aura::ast::NodeId, 6> extra{};
+        int nextra = 0;
+    };
+
+    const CarFold5066* find_car_fold_5066(std::span<const CarFold5066> folds,
+                                          aura::ast::NodeId node) noexcept {
+        for (const auto& f : folds) {
+            if (f.call == node)
+                return &f;
+        }
+        return nullptr;
+    }
+
+    bool callee_is_prim_5066(const aura::ast::FlatAST& flat, const aura::ast::StringPool& pool,
+                             const Env& env, aura::ast::NodeId callee, std::string_view name) {
+        if (callee >= flat.size() || flat.tag(callee) != aura::ast::NodeTag::Variable)
+            return false;
+        if (env.local_symid_last(flat.sym_id(callee)))
+            return false;
+        const std::string text(pool.resolve(flat.sym_id(callee)));
+        if (text != name)
+            return false;
+        auto* owner = env.owner();
+        if (owner == nullptr)
+            return false;
+        const auto bound = env.lookup(text);
+        if (!bound || !types::is_primitive(*bound))
+            return false;
+        const auto slot = types::as_primitive_slot(*bound);
+        return slot < owner->primitives().slot_count() &&
+               owner->primitives().name_for_slot(slot) == name;
+    }
+
+    std::optional<CarFold5066> match_car_fold_5066(const aura::ast::FlatAST& flat,
+                                                   const aura::ast::StringPool& pool,
+                                                   const Env& env, aura::ast::NodeId node) {
+        if (node >= flat.size() || flat.tag(node) != aura::ast::NodeTag::Call)
+            return std::nullopt;
+        const auto outer = flat.children(node);
+        if (outer.size() != 2)
+            return std::nullopt;
+        const auto car_callee = outer[0];
+        const auto inner = outer[1];
+        if (!callee_is_prim_5066(flat, pool, env, car_callee, "car"))
+            return std::nullopt;
+        if (inner >= flat.size() || flat.tag(inner) != aura::ast::NodeTag::Call)
+            return std::nullopt;
+        const auto inn = flat.children(inner);
+        if (inn.size() < 2 || inn.size() > 8)
+            return std::nullopt;
+        const auto ctor = inn[0];
+        const bool is_list = callee_is_prim_5066(flat, pool, env, ctor, "list");
+        const bool is_cons = !is_list && callee_is_prim_5066(flat, pool, env, ctor, "cons");
+        if (!is_list && !is_cons)
+            return std::nullopt;
+        if (is_cons && inn.size() != 3)
+            return std::nullopt;
+        CarFold5066 fold;
+        fold.call = node;
+        fold.head = inn[1];
+        for (std::size_t i = 2; i < inn.size(); ++i) {
+            if (fold.nextra >= static_cast<int>(fold.extra.size()))
+                return std::nullopt;
+            fold.extra[static_cast<std::size_t>(fold.nextra++)] = inn[i];
+        }
+        return fold;
+    }
+
+    // #5302: a float named-let accumulator stays a raw double for the whole
+    // C++ loop. Boxing it on every step took g_float_pool_mtx and made eight
+    // fibers share one lock. The result is boxed once, on the way out.
+    enum class NumKind5302 : std::uint8_t { Int, Float, Box };
+
+    struct Num5302 {
+        NumKind5302 k = NumKind5302::Int;
+        std::int64_t i = 0;
+        double d = 0.0;
+        types::EvalValue box{};
+    };
+
+    struct FreeNum5302 {
+        aura::ast::SymId sym = aura::ast::INVALID_SYM;
+        Num5302 num{};
+        std::uint64_t dgen = 0;
+    };
+
+    types::EvalValue box_num_5302(const Num5302& n) {
+        if (n.k == NumKind5302::Float)
+            return make_float(n.d);
+        if (n.k == NumKind5302::Box)
+            return n.box;
+        return make_int(n.i);
+    }
+
+    std::optional<Num5302> num_from_value_5302(const types::EvalValue& v) {
+        if (types::is_int(v))
+            return Num5302{NumKind5302::Int, types::as_int(v), 0.0, {}};
+        if (types::is_float(v))
+            return Num5302{NumKind5302::Float, 0, types::as_float(v), {}};
+        return Num5302{NumKind5302::Box, 0, 0.0, v};
+    }
+
+    // Same probe as read_free_int_5066, keeping a float instead of rejecting it.
+    std::optional<Num5302> read_free_num_5302(const aura::ast::StringPool& pool, const Env& env,
+                                              aura::ast::SymId sym) {
+        const std::string name(pool.resolve(sym));
+        std::optional<types::EvalValue> bound = env.lookup_by_symid(sym);
+        if (!bound && !name.empty()) {
+            if (auto ci = env.lookup_cell_index(name))
+                bound = make_cell(*ci);
+            else
+                bound = env.lookup(name);
+        }
+        if (bound && types::is_cell(*bound) && !name.empty())
+            bound = env.lookup(name);
+        if (!bound || types::is_cell(*bound))
+            return std::nullopt;
+        return num_from_value_5302(*bound);
+    }
+
+    double num_as_double_5302(const Num5302& n) noexcept {
+        return n.k == NumKind5302::Float ? n.d : static_cast<double>(n.i);
+    }
+
+    std::optional<Num5302> apply_num_op_5302(FastIOp op, const Num5302& a, const Num5302& b) {
+        if (a.k == NumKind5302::Box || b.k == NumKind5302::Box)
+            return std::nullopt;
+        const bool fp = a.k == NumKind5302::Float || b.k == NumKind5302::Float;
+        auto cmp = [&](auto fn_i, auto fn_f) -> std::optional<Num5302> {
+            const bool r = fp ? fn_f(num_as_double_5302(a), num_as_double_5302(b)) : fn_i(a.i, b.i);
+            return Num5302{NumKind5302::Box, 0, 0.0, make_bool(r)};
+        };
+        switch (op) {
+            case FastIOp::Ge:
+                return cmp([](std::int64_t x, std::int64_t y) { return x >= y; },
+                           [](double x, double y) { return x >= y; });
+            case FastIOp::Gt:
+                return cmp([](std::int64_t x, std::int64_t y) { return x > y; },
+                           [](double x, double y) { return x > y; });
+            case FastIOp::Le:
+                return cmp([](std::int64_t x, std::int64_t y) { return x <= y; },
+                           [](double x, double y) { return x <= y; });
+            case FastIOp::Lt:
+                return cmp([](std::int64_t x, std::int64_t y) { return x < y; },
+                           [](double x, double y) { return x < y; });
+            case FastIOp::Mod:
+            case FastIOp::Add:
+            case FastIOp::Sub:
+            case FastIOp::Mul:
+                break;
+        }
+        if (fp) {
+            if (op == FastIOp::Mod)
+                return std::nullopt;
+            // Same seed and order as the #4524 armed back-edge (bit-exact
+            // with arithmetic_sum/sub/mul_pure for two operands).
+            const double dx = num_as_double_5302(a);
+            const double dy = num_as_double_5302(b);
+            double r = 0.0;
+            if (op == FastIOp::Add) {
+                r = 0.0 + dx;
+                r = r + dy;
+            } else if (op == FastIOp::Mul) {
+                r = 1.0 * dx;
+                r = r * dy;
+            } else {
+                r = dx - dy;
+            }
+            return Num5302{NumKind5302::Float, 0, r, {}};
+        }
+        auto iv = eval_fast_iop_5066(op, a.i, b.i);
+        if (!iv || !types::is_int(*iv))
+            return std::nullopt;
+        return Num5302{NumKind5302::Int, types::as_int(*iv), 0.0, {}};
     }
 
     // Walk one recorded integer expression. A variable that is not a named-let
@@ -6458,9 +6642,22 @@ namespace {
     bool collect_free_int_5066(const aura::ast::FlatAST& flat, const aura::ast::StringPool& pool,
                                const Env& env, std::span<const aura::ast::SymId> params,
                                aura::ast::NodeId node, int depth, std::array<FreeInt5066, 8>& store,
-                               int& nfree, std::uint64_t store_gen) {
+                               int& nfree, std::uint64_t store_gen,
+                               std::span<const CarFold5066> folds = {}) {
         if (depth > 4 || node >= flat.size())
             return false;
+        if (const auto* fold = find_car_fold_5066(folds, node)) {
+            if (!collect_free_int_5066(flat, pool, env, params, fold->head, depth + 1, store, nfree,
+                                       store_gen, folds))
+                return false;
+            for (int i = 0; i < fold->nextra; ++i) {
+                if (!collect_free_int_5066(flat, pool, env, params,
+                                           fold->extra[static_cast<std::size_t>(i)], depth + 1,
+                                           store, nfree, store_gen, folds))
+                    return false;
+            }
+            return true;
+        }
         const auto tag = flat.tag(node);
         if (tag == aura::ast::NodeTag::LiteralInt) {
             const auto mark = flat.marker(node);
@@ -6492,9 +6689,176 @@ namespace {
         if (site == nullptr)
             return false;
         return collect_free_int_5066(flat, pool, env, params, site->arg0, depth + 1, store, nfree,
-                                     store_gen) &&
+                                     store_gen, folds) &&
                collect_free_int_5066(flat, pool, env, params, site->arg1, depth + 1, store, nfree,
-                                     store_gen);
+                                     store_gen, folds);
+    }
+
+    // #5302: raw numeric named-let. Floats stay unboxed until the loop
+    // returns; a failing step writes the slots back and the interpreter
+    // continues from that iteration.
+    std::optional<EvalValue> try_raw_num_loop_5302(
+        CompilerMetrics* metrics, const std::atomic<std::uint64_t>& top_gen, std::uint64_t tg,
+        Env& env, const aura::ast::FlatAST& flat, const aura::ast::StringPool& pool,
+        std::span<const aura::ast::SymId> params, FastISite* test, bool continue_when_truthy,
+        bool result_lit, bool result_float_lit, int result_param, std::int64_t result_k,
+        double result_d, std::span<const aura::ast::NodeId> arg_nodes,
+        std::span<const CarFold5066> folds) {
+        std::array<Num5302, 8> slots{};
+        for (std::size_t i = 0; i < params.size(); ++i) {
+            const auto loc = env.local_symid_last(params[i]);
+            if (!loc)
+                return std::nullopt;
+            auto num = num_from_value_5302(*loc);
+            if (!num)
+                return std::nullopt;
+            slots[i] = std::move(*num);
+        }
+        std::array<FreeNum5302, 8> snaps{};
+        int nsnap = 0;
+        const auto store_gen = g_cell_store_gen_5066.load(std::memory_order_acquire);
+        auto note_free = [&](this auto& self, aura::ast::NodeId node, int depth) -> bool {
+            if (depth > 6 || node >= flat.size())
+                return false;
+            if (const auto* fold = find_car_fold_5066(folds, node)) {
+                if (!self(fold->head, depth + 1))
+                    return false;
+                for (int i = 0; i < fold->nextra; ++i) {
+                    if (!self(fold->extra[static_cast<std::size_t>(i)], depth + 1))
+                        return false;
+                }
+                return true;
+            }
+            const auto tag = flat.tag(node);
+            if (tag == aura::ast::NodeTag::LiteralInt || tag == aura::ast::NodeTag::LiteralFloat)
+                return true;
+            if (tag == aura::ast::NodeTag::Variable) {
+                const auto sym = flat.sym_id(node);
+                if (param_index_5066(params, sym) >= 0)
+                    return true;
+                for (int i = 0; i < nsnap; ++i) {
+                    if (snaps[static_cast<std::size_t>(i)].sym == sym)
+                        return true;
+                }
+                if (nsnap >= static_cast<int>(snaps.size()))
+                    return false;
+                auto num = read_free_num_5302(pool, env, sym);
+                if (!num || num->k == NumKind5302::Box)
+                    return false;
+                snaps[static_cast<std::size_t>(nsnap++)] =
+                    FreeNum5302{sym, std::move(*num), store_gen};
+                return true;
+            }
+            if (tag != aura::ast::NodeTag::Call)
+                return false;
+            const FastISite* site = find_fast_site_5066(flat, node);
+            if (site == nullptr)
+                return false;
+            return self(site->arg0, depth + 1) && self(site->arg1, depth + 1);
+        };
+        if (!note_free(test->arg0, 0) || !note_free(test->arg1, 0))
+            return std::nullopt;
+        for (std::size_t i = 0; i < params.size(); ++i) {
+            if (!note_free(arg_nodes[i], 0))
+                return std::nullopt;
+        }
+        std::uint64_t steps = 0;
+        auto fail = [&]() -> std::optional<EvalValue> {
+            add_tw_closure_calls_5066(metrics, steps);
+            if (steps > 0) {
+                std::array<types::EvalValue, 8> back{};
+                for (std::size_t i = 0; i < params.size(); ++i)
+                    back[i] = box_num_5302(slots[i]);
+                (void)env.overwrite_param_slots(
+                    params, std::span<const types::EvalValue>(back.data(), params.size()));
+            }
+            return std::nullopt;
+        };
+        auto eval_num = [&](this auto& self, aura::ast::NodeId node, std::uint64_t defuse,
+                            int depth) -> std::optional<Num5302> {
+            if (depth > 6 || node >= flat.size())
+                return std::nullopt;
+            if (const auto* fold = find_car_fold_5066(folds, node)) {
+                auto head = self(fold->head, defuse, depth + 1);
+                if (!head)
+                    return std::nullopt;
+                for (int i = 0; i < fold->nextra; ++i) {
+                    if (!self(fold->extra[static_cast<std::size_t>(i)], defuse, depth + 1))
+                        return std::nullopt;
+                }
+                return head;
+            }
+            const auto tag = flat.tag(node);
+            if (tag == aura::ast::NodeTag::LiteralInt) {
+                const auto mark = flat.marker(node);
+                if (mark == aura::ast::SyntaxMarker::BoolLiteral ||
+                    mark == aura::ast::SyntaxMarker::EmptyList)
+                    return std::nullopt;
+                const auto k = flat.int_val(node);
+                if (!types::fits_fixnum(k))
+                    return std::nullopt;
+                return Num5302{NumKind5302::Int, k, 0.0, {}};
+            }
+            if (tag == aura::ast::NodeTag::LiteralFloat)
+                return Num5302{NumKind5302::Float, 0, flat.get(node).float_value, {}};
+            if (tag == aura::ast::NodeTag::Variable) {
+                const auto sym = flat.sym_id(node);
+                const int p = param_index_5066(params, sym);
+                if (p >= 0)
+                    return slots[static_cast<std::size_t>(p)];
+                for (int i = 0; i < nsnap; ++i) {
+                    const auto& fr = snaps[static_cast<std::size_t>(i)];
+                    if (fr.sym != sym)
+                        continue;
+                    if (fr.dgen != defuse)
+                        return std::nullopt;
+                    return fr.num;
+                }
+                return std::nullopt;
+            }
+            if (tag != aura::ast::NodeTag::Call)
+                return std::nullopt;
+            FastISite* site = find_fast_site_5066(flat, node);
+            if (site == nullptr || site->top_gen != top_gen.load(std::memory_order_acquire))
+                return std::nullopt;
+            if (env.local_symid_last(site->sym))
+                return std::nullopt;
+            auto x = self(site->arg0, defuse, depth + 1);
+            auto y = self(site->arg1, defuse, depth + 1);
+            if (!x || !y)
+                return std::nullopt;
+            return apply_num_op_5302(site->op, *x, *y);
+        };
+        while (true) {
+            if (top_gen.load(std::memory_order_acquire) != tg)
+                return fail();
+            const auto defuse = g_cell_store_gen_5066.load(std::memory_order_acquire);
+            auto bit = eval_num(test->node, defuse, 0);
+            if (!bit || bit->k != NumKind5302::Box)
+                return fail();
+            const bool cont = continue_when_truthy ? is_truthy(bit->box) : !is_truthy(bit->box);
+            if (!cont) {
+                add_tw_closure_calls_5066(metrics, steps);
+                if (result_float_lit)
+                    return make_float(result_d);
+                if (result_lit)
+                    return make_int(result_k);
+                if (result_param < 0)
+                    return std::nullopt;
+                return box_num_5302(slots[static_cast<std::size_t>(result_param)]);
+            }
+            std::array<Num5302, 8> next{};
+            for (std::size_t i = 0; i < params.size(); ++i) {
+                auto arg = eval_num(arg_nodes[i], defuse, 0);
+                if (!arg)
+                    return fail();
+                next[i] = std::move(*arg);
+            }
+            slots = next;
+            ++steps;
+            if ((steps & 255u) == 0)
+                tw_stw_safepoint();
+        }
     }
 
     // #5066: once a named-let body is an integer compare whose arms are a
@@ -6555,6 +6919,8 @@ namespace {
         const auto result_node = then_call ? kids[2] : kids[1];
         const auto call_node = then_call ? kids[1] : kids[2];
         const bool result_lit = flat.tag(result_node) == aura::ast::NodeTag::LiteralInt;
+        const bool result_float_lit =
+            !result_lit && flat.tag(result_node) == aura::ast::NodeTag::LiteralFloat;
         int result_param = -1;
         if (result_lit) {
             const auto mark = flat.marker(result_node);
@@ -6562,6 +6928,8 @@ namespace {
                 mark == aura::ast::SyntaxMarker::EmptyList ||
                 !types::fits_fixnum(flat.int_val(result_node)))
                 return reject();
+        } else if (result_float_lit) {
+            // A constant float result is one box on the way out (#5302).
         } else if (flat.tag(result_node) == aura::ast::NodeTag::Variable) {
             result_param = param_index_5066(params, flat.sym_id(result_node));
             if (result_param < 0)
@@ -6595,16 +6963,116 @@ namespace {
         if (!callee || !is_closure(*callee) || as_closure_id(*callee) != cid)
             return reject();
         std::array<aura::ast::NodeId, 8> arg_nodes{};
-        for (std::size_t i = 1; i < call.size(); ++i) {
-            if (!accel_arg_ok_5066(flat, call[i], params))
-                return reject();
+        for (std::size_t i = 1; i < call.size(); ++i)
             arg_nodes[i - 1] = call[i];
-        }
         // Own the node ids. children() borrows AST storage that another
         // fiber can rebuild; the loop must not keep that span.
+        // A dead `(car (list/cons …))` is folded so the pair is never minted
+        // (#5302). Capacity overflow is a shape failure. A nested call that
+        // is neither a fold nor a recorded arithmetic site is not latched
+        // here: collection returns nullopt and the interpreter retries.
+        std::array<CarFold5066, 8> fold_store{};
+        int nfold = 0;
+        auto record_folds = [&](this auto& self, aura::ast::NodeId node, int depth) -> bool {
+            if (depth > 6 || node >= flat.size())
+                return true;
+            if (auto fold = match_car_fold_5066(flat, pool, env, node)) {
+                if (nfold >= static_cast<int>(fold_store.size()))
+                    return false;
+                fold_store[static_cast<std::size_t>(nfold++)] = *fold;
+                if (!self(fold->head, depth + 1))
+                    return false;
+                for (int e = 0; e < fold->nextra; ++e) {
+                    if (!self(fold->extra[static_cast<std::size_t>(e)], depth + 1))
+                        return false;
+                }
+                return true;
+            }
+            if (flat.tag(node) == aura::ast::NodeTag::Call) {
+                if (FastISite* site = find_fast_site_5066(flat, node))
+                    return self(site->arg0, depth + 1) && self(site->arg1, depth + 1);
+            }
+            return true;
+        };
+        auto fold_span = [&]() {
+            return std::span<const CarFold5066>(fold_store.data(), static_cast<std::size_t>(nfold));
+        };
+        if (!record_folds(test->arg0, 0) || !record_folds(test->arg1, 0))
+            return reject();
+        for (std::size_t i = 0; i < params.size(); ++i) {
+            if (!record_folds(arg_nodes[i], 0))
+                return reject();
+            // Top-level arguments only. `(< i n)` is the test, so a free `n`
+            // is not a shape failure (#5297). A bare free var in argument
+            // position still is: the integer eval reads captures only from
+            // the snapshot taken below, and a bare arg is not a call site.
+            if (!accel_arg_ok_5066(flat, arg_nodes[i], params) &&
+                find_car_fold_5066(fold_span(), arg_nodes[i]) == nullptr)
+                return reject();
+        }
+        const auto folds = fold_span();
         const std::int64_t result_k = result_lit ? flat.int_val(result_node) : 0;
+        const double result_d = result_float_lit ? flat.get(result_node).float_value : 0.0;
         const auto result_sym = result_param >= 0 ? params[static_cast<std::size_t>(result_param)]
                                                   : aura::ast::INVALID_SYM;
+        // #5302: a live float (param, literal, or capture) stays raw for the
+        // rest of this call. Do not latch that choice — the next call may
+        // pass an int. A float result literal alone stays on the integer
+        // loop and is boxed once, at the exit.
+        bool seen_float = false;
+        for (const auto sym : params) {
+            if (seen_float)
+                break;
+            if (const auto loc = env.local_symid_last(sym); loc && is_float(*loc))
+                seen_float = true;
+        }
+        auto see_float = [&](this auto& self, aura::ast::NodeId node, int depth) -> void {
+            if (seen_float || depth > 6 || node >= flat.size())
+                return;
+            if (const auto* fold = find_car_fold_5066(folds, node)) {
+                self(fold->head, depth + 1);
+                for (int e = 0; e < fold->nextra; ++e)
+                    self(fold->extra[static_cast<std::size_t>(e)], depth + 1);
+                return;
+            }
+            const auto tag = flat.tag(node);
+            if (tag == aura::ast::NodeTag::LiteralFloat) {
+                seen_float = true;
+                return;
+            }
+            if (tag == aura::ast::NodeTag::LiteralInt)
+                return;
+            if (tag == aura::ast::NodeTag::Variable) {
+                const auto sym = flat.sym_id(node);
+                if (param_index_5066(params, sym) >= 0)
+                    return;
+                if (const auto num = read_free_num_5302(pool, env, sym);
+                    num && num->k == NumKind5302::Float)
+                    seen_float = true;
+                return;
+            }
+            if (tag != aura::ast::NodeTag::Call)
+                return;
+            if (FastISite* site = find_fast_site_5066(flat, node)) {
+                self(site->arg0, depth + 1);
+                self(site->arg1, depth + 1);
+            }
+        };
+        if (!seen_float) {
+            see_float(test->arg0, 0);
+            see_float(test->arg1, 0);
+            for (std::size_t i = 0; i < params.size(); ++i)
+                see_float(arg_nodes[i], 0);
+        }
+        if (seen_float) {
+            // nullopt is not a shape failure and must not fall through. The
+            // raw slots are the live values; the integer loop would either
+            // double-count or miss the write-back inside try_raw.
+            return try_raw_num_loop_5302(
+                metrics, top_gen, tg, env, flat, pool, params, test, continue_when_truthy,
+                result_lit, result_float_lit, result_param, result_k, result_d,
+                std::span<const aura::ast::NodeId>(arg_nodes.data(), params.size()), folds);
+        }
         // #5297: one lookup of each captured integer for this call. The
         // per-iteration name walk took every env-frame shard lock, so eight
         // fibers reading an outer parameter stalled near 1.5x.
@@ -6614,33 +7082,147 @@ namespace {
         // A missed capture is not a shape failure: do not latch, or one
         // transient lookup would keep this loop off the fast path.
         if (!collect_free_int_5066(flat, pool, env, params, test->arg0, 0, free_store, nfree,
-                                   store_gen) ||
+                                   store_gen, folds) ||
             !collect_free_int_5066(flat, pool, env, params, test->arg1, 0, free_store, nfree,
-                                   store_gen))
+                                   store_gen, folds))
             return std::nullopt;
         for (std::size_t i = 0; i < params.size(); ++i) {
             if (!collect_free_int_5066(flat, pool, env, params, arg_nodes[i], 0, free_store, nfree,
-                                       store_gen))
+                                       store_gen, folds))
                 return std::nullopt;
         }
         const auto frees =
             std::span<const FreeInt5066>(free_store.data(), static_cast<std::size_t>(nfree));
-        auto eval_arg = [&](aura::ast::NodeId node) -> std::optional<EvalValue> {
+        auto finish = [&](std::uint64_t steps) -> std::optional<EvalValue> {
+            add_tw_closure_calls_5066(metrics, steps);
+            if (result_float_lit)
+                return make_float(result_d);
+            if (result_lit)
+                return make_int(result_k);
+            auto loc = env.local_symid_last(result_sym);
+            if (!loc)
+                return std::nullopt;
+            return *loc;
+        };
+        // No folds: the recorded integer sites and their operand cache. This
+        // is the #5066 / #5297 loop; a fold would be invisible to that cache.
+        if (nfold == 0) {
+            auto eval_arg = [&](aura::ast::NodeId node) -> std::optional<EvalValue> {
+                const auto tag = flat.tag(node);
+                if (tag == aura::ast::NodeTag::LiteralInt)
+                    return make_int(flat.int_val(node));
+                if (tag == aura::ast::NodeTag::Variable) {
+                    const auto sym = flat.sym_id(node);
+                    if (param_index_5066(params, sym) < 0)
+                        return std::nullopt;
+                    return env.local_symid_last(sym);
+                }
+                FastISite* site = find_fast_site_5066(flat, node);
+                if (site == nullptr)
+                    return std::nullopt;
+                return eval_fast_site_5066(top_gen,
+                                           g_cell_store_gen_5066.load(std::memory_order_acquire),
+                                           flat, pool, env, *site, 0, frees);
+            };
+            std::uint64_t steps = 0;
+            while (true) {
+                if (top_gen.load(std::memory_order_acquire) != tg) {
+                    add_tw_closure_calls_5066(metrics, steps);
+                    return std::nullopt;
+                }
+                auto tv = eval_fast_site_5066(top_gen,
+                                              g_cell_store_gen_5066.load(std::memory_order_acquire),
+                                              flat, pool, env, *test, 0, frees);
+                if (!tv) {
+                    add_tw_closure_calls_5066(metrics, steps);
+                    return std::nullopt;
+                }
+                const bool cont = continue_when_truthy ? is_truthy(*tv) : !is_truthy(*tv);
+                if (!cont)
+                    return finish(steps);
+                std::array<EvalValue, 8> next{};
+                for (std::size_t i = 0; i < params.size(); ++i) {
+                    auto arg = eval_arg(arg_nodes[i]);
+                    if (!arg) {
+                        add_tw_closure_calls_5066(metrics, steps);
+                        return std::nullopt;
+                    }
+                    next[i] = std::move(*arg);
+                }
+                if (!env.overwrite_param_slots(
+                        params, std::span<const EvalValue>(next.data(), params.size()))) {
+                    add_tw_closure_calls_5066(metrics, steps);
+                    return std::nullopt;
+                }
+                ++steps;
+                // Let a collector park this body. The interpreter back-edge does
+                // this; a loop that never returns to it would miss the safepoint.
+                if ((steps & 255u) == 0)
+                    tw_stw_safepoint();
+            }
+        }
+        // Folded car/list/cons. Extras are evaluated so an overflow or other
+        // effect still runs; only the head becomes the value. A failed step
+        // does not overwrite the frame.
+        auto eval_folded = [&](this auto& self, aura::ast::NodeId node, std::uint64_t defuse,
+                               int depth, bool want_int) -> std::optional<EvalValue> {
+            if (depth > 6 || node >= flat.size())
+                return std::nullopt;
+            if (const auto* fold = find_car_fold_5066(folds, node)) {
+                auto head = self(fold->head, defuse, depth + 1, false);
+                if (!head)
+                    return std::nullopt;
+                for (int e = 0; e < fold->nextra; ++e) {
+                    if (!self(fold->extra[static_cast<std::size_t>(e)], defuse, depth + 1, false))
+                        return std::nullopt;
+                }
+                if (want_int && !is_int(*head))
+                    return std::nullopt;
+                return head;
+            }
             const auto tag = flat.tag(node);
-            if (tag == aura::ast::NodeTag::LiteralInt)
-                return make_int(flat.int_val(node));
+            if (tag == aura::ast::NodeTag::LiteralInt) {
+                const auto mark = flat.marker(node);
+                if (mark == aura::ast::SyntaxMarker::BoolLiteral ||
+                    mark == aura::ast::SyntaxMarker::EmptyList)
+                    return std::nullopt;
+                const auto k = flat.int_val(node);
+                if (!types::fits_fixnum(k))
+                    return std::nullopt;
+                return make_int(k);
+            }
             if (tag == aura::ast::NodeTag::Variable) {
                 const auto sym = flat.sym_id(node);
-                if (param_index_5066(params, sym) < 0)
-                    return std::nullopt;
-                return env.local_symid_last(sym);
-            }
-            FastISite* site = find_fast_site_5066(flat, node);
-            if (site == nullptr)
+                if (param_index_5066(params, sym) >= 0) {
+                    auto loc = env.local_symid_last(sym);
+                    if (!loc || (want_int && !is_int(*loc)))
+                        return std::nullopt;
+                    return *loc;
+                }
+                for (const auto& fr : frees) {
+                    if (fr.sym != sym)
+                        continue;
+                    if (fr.dgen != defuse)
+                        return std::nullopt;
+                    return make_int(fr.value);
+                }
                 return std::nullopt;
-            return eval_fast_site_5066(top_gen,
-                                       g_cell_store_gen_5066.load(std::memory_order_acquire), flat,
-                                       pool, env, *site, 0, frees);
+            }
+            if (tag != aura::ast::NodeTag::Call)
+                return std::nullopt;
+            FastISite* site = find_fast_site_5066(flat, node);
+            if (site == nullptr || site->top_gen != top_gen.load(std::memory_order_acquire))
+                return std::nullopt;
+            if (env.local_symid_last(site->sym))
+                return std::nullopt;
+            auto x = self(site->arg0, defuse, depth + 1, true);
+            auto y = self(site->arg1, defuse, depth + 1, true);
+            if (!x || !y)
+                return std::nullopt;
+            auto r = eval_fast_iop_5066(site->op, as_int(*x), as_int(*y));
+            if (!r || (want_int && !is_int(*r)))
+                return std::nullopt;
+            return r;
         };
         std::uint64_t steps = 0;
         while (true) {
@@ -6648,26 +7230,18 @@ namespace {
                 add_tw_closure_calls_5066(metrics, steps);
                 return std::nullopt;
             }
-            auto tv =
-                eval_fast_site_5066(top_gen, g_cell_store_gen_5066.load(std::memory_order_acquire),
-                                    flat, pool, env, *test, 0, frees);
+            const auto defuse = g_cell_store_gen_5066.load(std::memory_order_acquire);
+            auto tv = eval_folded(test->node, defuse, 0, false);
             if (!tv) {
                 add_tw_closure_calls_5066(metrics, steps);
                 return std::nullopt;
             }
             const bool cont = continue_when_truthy ? is_truthy(*tv) : !is_truthy(*tv);
-            if (!cont) {
-                add_tw_closure_calls_5066(metrics, steps);
-                if (result_lit)
-                    return make_int(result_k);
-                auto loc = env.local_symid_last(result_sym);
-                if (!loc)
-                    return std::nullopt;
-                return *loc;
-            }
+            if (!cont)
+                return finish(steps);
             std::array<EvalValue, 8> next{};
             for (std::size_t i = 0; i < params.size(); ++i) {
-                auto arg = eval_arg(arg_nodes[i]);
+                auto arg = eval_folded(arg_nodes[i], defuse, 0, false);
                 if (!arg) {
                     add_tw_closure_calls_5066(metrics, steps);
                     return std::nullopt;
@@ -6680,8 +7254,6 @@ namespace {
                 return std::nullopt;
             }
             ++steps;
-            // Let a collector park this body. The interpreter back-edge does
-            // this; a loop that never returns to it would miss the safepoint.
             if ((steps & 255u) == 0)
                 tw_stw_safepoint();
         }
