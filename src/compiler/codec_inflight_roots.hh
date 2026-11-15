@@ -20,7 +20,8 @@
 // This is the same provider shape as fiber_result_roots.hh (#4710) and
 // ir_inflight_roots.hh (#4617): a module import cannot express the
 // dependency, so a header carried by both sides states it.
-#pragma once
+#ifndef AURA_COMPILER_CODEC_INFLIGHT_ROOTS_HH_
+#define AURA_COMPILER_CODEC_INFLIGHT_ROOTS_HH_
 
 #include <array>
 #include <atomic>
@@ -39,13 +40,13 @@ namespace detail {
     // Recursive: a CreationGuard holds it across a mint and the push that
     // publishes the minted value, and push()/publish_result() re-enter it.
     inline std::recursive_mutex& registry_mutex() {
-        static std::recursive_mutex m;
-        return m;
+        static std::recursive_mutex mutex;
+        return mutex;
     }
 
     inline std::map<std::uint64_t, std::vector<std::int64_t>>& frames() {
-        static std::map<std::uint64_t, std::vector<std::int64_t>> f;
-        return f;
+        static std::map<std::uint64_t, std::vector<std::int64_t>> frame_map;
+        return frame_map;
     }
 
     inline std::atomic<std::uint64_t>& next_frame_id() {
@@ -64,15 +65,15 @@ namespace detail {
     // thread) saw neither root. Keeping the last returned value here covers the
     // gap; the next channel call replaces it, so retention stays bounded.
     inline std::vector<std::int64_t>& pending_results() {
-        static std::vector<std::int64_t> v;
-        return v;
+        static std::vector<std::int64_t> pending;
+        return pending;
     }
 
     // Issue #5294: hash slots the last published payload still names. A release
     // must not free a table the caller can still reach through a payload it just
     // received, even when the mark's pair walk did not reach it. Atomics only:
     // the release runs under the hash lock and must not take the registry mutex.
-    inline constexpr std::size_t kProtectedSlots = std::size_t{1} << 20;
+    inline constexpr std::size_t kProtectedSlots = std::size_t{1} << 20U;
 
     inline std::array<std::atomic<std::uint8_t>, kProtectedSlots>& protected_slots() {
         static std::array<std::atomic<std::uint8_t>, kProtectedSlots> flags{};
@@ -98,6 +99,7 @@ namespace detail {
 struct CreationGuard {
     CreationGuard()
         : lock_(detail::registry_mutex()) {}
+    ~CreationGuard() = default;
     CreationGuard(const CreationGuard&) = delete;
     CreationGuard& operator=(const CreationGuard&) = delete;
 
@@ -107,16 +109,15 @@ private:
 
 // One in-flight top-level decode. Nested decodes reuse the frame: a child
 // value must stay rooted while its parent attaches it.
-struct ScopedFrame {
-    const std::uint64_t frame_id = detail::next_frame_id().fetch_add(1, std::memory_order_relaxed);
-
+class ScopedFrame {
+public:
     ScopedFrame() {
         detail::active_count().fetch_add(1, std::memory_order_acq_rel);
-        std::scoped_lock<std::recursive_mutex> registry_lock(detail::registry_mutex());
+        const std::scoped_lock<std::recursive_mutex> registry_lock(detail::registry_mutex());
         detail::frames()[frame_id];
     }
     ~ScopedFrame() {
-        std::scoped_lock<std::recursive_mutex> registry_lock(detail::registry_mutex());
+        const std::scoped_lock<std::recursive_mutex> registry_lock(detail::registry_mutex());
         detail::frames().erase(frame_id);
         detail::frame_hash_slots().erase(frame_id);
         detail::active_count().fetch_sub(1, std::memory_order_acq_rel);
@@ -125,25 +126,30 @@ struct ScopedFrame {
     ScopedFrame& operator=(const ScopedFrame&) = delete;
     ScopedFrame(ScopedFrame&&) = delete;
     ScopedFrame& operator=(ScopedFrame&&) = delete;
+
+    [[nodiscard]] std::uint64_t id() const { return frame_id; }
+
+private:
+    const std::uint64_t frame_id = detail::next_frame_id().fetch_add(1, std::memory_order_relaxed);
 };
 
 // Raw EvalValue bit patterns (#907: one tagged int64); the evaluator wraps
 // them back into types::EvalValue, so the messaging partition and the
 // reclaim need no shared value type here.
 inline void push(std::uint64_t frame_id, std::int64_t raw) {
-    std::scoped_lock<std::recursive_mutex> registry_lock(detail::registry_mutex());
+    const std::scoped_lock<std::recursive_mutex> registry_lock(detail::registry_mutex());
     detail::frames()[frame_id].push_back(raw);
 }
 
 inline void push_hash_slot(std::uint64_t frame_id, std::uint64_t hidx) {
-    std::scoped_lock<std::recursive_mutex> registry_lock(detail::registry_mutex());
+    const std::scoped_lock<std::recursive_mutex> registry_lock(detail::registry_mutex());
     detail::frame_hash_slots()[frame_id].push_back(hidx);
 }
 
 [[nodiscard]] inline bool is_hash_slot_protected(std::uint64_t hidx) {
     if (hidx >= detail::kProtectedSlots)
         return false;
-    return detail::protected_slots()[hidx].load(std::memory_order_acquire) != 0;
+    return detail::protected_slots().at(hidx).load(std::memory_order_acquire) != 0;
 }
 
 // True while any decode is in flight. The automatic reclaims defer to the
@@ -156,7 +162,7 @@ inline bool active() {
 }
 
 inline void publish_result(std::int64_t raw) {
-    std::scoped_lock<std::recursive_mutex> registry_lock(detail::registry_mutex());
+    const std::scoped_lock<std::recursive_mutex> registry_lock(detail::registry_mutex());
     detail::pending_results().clear();
     detail::pending_results().push_back(raw);
 }
@@ -166,24 +172,24 @@ inline void publish_result(std::int64_t raw) {
 // through pair slots, and a walk that misses them there hands the caller an
 // empty table inside an otherwise intact list.
 inline void publish_frame(std::uint64_t frame_id) {
-    std::scoped_lock<std::recursive_mutex> registry_lock(detail::registry_mutex());
-    auto it = detail::frames().find(frame_id);
+    const std::scoped_lock<std::recursive_mutex> registry_lock(detail::registry_mutex());
+    const auto frame_it = detail::frames().find(frame_id);
     detail::pending_results().clear();
-    if (it != detail::frames().end())
-        detail::pending_results() = it->second;
+    if (frame_it != detail::frames().end())
+        detail::pending_results() = frame_it->second;
     // Hand the slot protection over to this payload: the previous payload's
     // tables stop being protected only now, so a value the caller received
     // one call ago stays alive through this call too.
     for (const auto old : detail::pending_hash_slots()) {
         if (old < detail::kProtectedSlots)
-            detail::protected_slots()[old].store(0, std::memory_order_release);
+            detail::protected_slots().at(old).store(0, std::memory_order_release);
     }
     detail::pending_hash_slots().clear();
-    auto hit = detail::frame_hash_slots().find(frame_id);
-    if (hit != detail::frame_hash_slots().end()) {
-        for (const auto hidx : hit->second) {
+    const auto slot_it = detail::frame_hash_slots().find(frame_id);
+    if (slot_it != detail::frame_hash_slots().end()) {
+        for (const auto hidx : slot_it->second) {
             if (hidx < detail::kProtectedSlots)
-                detail::protected_slots()[hidx].store(1, std::memory_order_release);
+                detail::protected_slots().at(hidx).store(1, std::memory_order_release);
             detail::pending_hash_slots().push_back(hidx);
         }
     }
@@ -192,7 +198,7 @@ inline void publish_frame(std::uint64_t frame_id) {
 // Appends every in-flight codec value to out. Returns how many were added
 // (0 = no decode is running anywhere in the process).
 inline std::size_t collect(std::vector<std::int64_t>& out) {
-    std::scoped_lock<std::recursive_mutex> registry_lock(detail::registry_mutex());
+    const std::scoped_lock<std::recursive_mutex> registry_lock(detail::registry_mutex());
     std::size_t added = 0;
     if (!detail::pending_results().empty()) {
         out.insert(out.end(), detail::pending_results().begin(), detail::pending_results().end());
@@ -207,3 +213,5 @@ inline std::size_t collect(std::vector<std::int64_t>& out) {
 }
 
 } // namespace aura::compiler::codec_inflight_roots
+
+#endif // AURA_COMPILER_CODEC_INFLIGHT_ROOTS_HH_
