@@ -70,13 +70,13 @@ int main() {
     // ── IROpcode via historical opcode_reflect aliases ───────
     {
         using E = aura::ir_pod::IROpcode;
-        static_assert(enum_count<E>() == 54);
+        static_assert(enum_count<E>() == 55);
         check(opcode_name<E>(5) == "Add", "opcode_name alias Add");
         check(enum_name(E::TopCellLoad) == "TopCellLoad", "enum_name TopCellLoad");
-        // dense == extent for sequential 0..53
+        // dense == extent for sequential 0..54
         check(enum_name_dense<E>(0) == "Nop", "dense Nop");
         constexpr auto names = list_opcodes<E>();
-        check(names.size() == 54 && names[0] == "Nop", "list_opcodes alias");
+        check(names.size() == 55 && names[0] == "Nop", "list_opcodes alias");
     }
 
     // ── extent table for sparse-style values ─────────────────
