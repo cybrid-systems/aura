@@ -46,7 +46,7 @@ int main() {
     using aura::ir::kIrOpcodeDisplayNames;
 
     constexpr auto N = aura::reflect::enum_count<E>();
-    static_assert(N == 54);
+    static_assert(N == 55);
     static_assert(N == kIrOpcodeDisplayNameCount);
     static_assert(aura::reflect::validate_enum<E>());
 
