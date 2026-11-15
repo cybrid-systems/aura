@@ -12,6 +12,7 @@
 
 module;
 
+#include "compiler/json_escape.hh" // #5234: shared RFC 8259 escaper
 #include "runtime_shared.h"
 #include "messaging_bridge.h" // Issue #4904: EvalMutexWaitLockGuard
 // Issue #444: CompilerMetrics is the central observability
@@ -708,38 +709,7 @@ namespace {
 
     // Issue #1236: JSON string escape for LLM payload construction.
     std::string json_escape(std::string_view s) {
-        std::string out;
-        out.reserve(s.size() + 8);
-        for (char c : s) {
-            switch (c) {
-                case '"':
-                    out += "\\\"";
-                    break;
-                case '\\':
-                    out += "\\\\";
-                    break;
-                case '\n':
-                    out += "\\n";
-                    break;
-                case '\r':
-                    out += "\\r";
-                    break;
-                case '\t':
-                    out += "\\t";
-                    break;
-                default:
-                    if (static_cast<unsigned char>(c) < 0x20) {
-                        std::array<char, 8> buf;
-                        std::snprintf(buf.data(), buf.size(), "\\u%04x",
-                                      static_cast<unsigned>(static_cast<unsigned char>(c)));
-                        out += buf.data();
-                    } else {
-                        out.push_back(c);
-                    }
-                    break;
-            }
-        }
-        return out;
+        return aura::json::escape(s);
     }
 
     // Issue #1249: bounds-checked string-heap load — never OOB-subscript.

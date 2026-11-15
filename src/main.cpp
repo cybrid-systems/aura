@@ -9,6 +9,7 @@
 #include "compiler/observability_metrics.h"
 #include "compiler/observability_logger.h" // for snapshot_to_json
 #include <unistd.h>
+#include "compiler/json_escape.hh" // #5234: one RFC 8259 escaper
 #include <signal.h>
 #include <stdlib.h>
 #if defined(__linux__) && !defined(__APPLE__)
@@ -149,29 +150,7 @@ static std::string fmt_val(const aura::compiler::types::EvalValue& v,
 
 // JSON helper: wrap a string value for JSON (escape quotes and backslashes)
 static std::string json_escape(std::string_view s) {
-    std::string out;
-    for (auto c : s) {
-        if (c == '"' || c == '\\') {
-            out += '\\';
-            out += c;
-        } else if (c == '\n') {
-            out += "\\n";
-        } else if (c == '\r') {
-            out += "\\r";
-        } else if (c == '\t') {
-            out += "\\t";
-        } else if (static_cast<unsigned char>(c) < 0x20) {
-            // #5234: every remaining control character must be escaped or the
-            // reply is not valid JSON.
-            out += "\\u00";
-            constexpr char kHex[] = "0123456789abcdef";
-            out += kHex[(static_cast<unsigned char>(c) >> 4) & 0xf];
-            out += kHex[static_cast<unsigned char>(c) & 0xf];
-        } else {
-            out += c;
-        }
-    }
-    return out;
+    return aura::json::escape(s);
 }
 
 // Issue #147: stringify InvariantStatus enum for JSON output.

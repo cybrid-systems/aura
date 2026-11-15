@@ -32,7 +32,8 @@
 // an audit trail like the security WAL, not a program file write.
 #pragma once
 
-#include "core/ownership.hh" // #4936 unique_file
+#include "compiler/json_escape.hh" // #5234: shared RFC 8259 escaper
+#include "core/ownership.hh"       // #4936 unique_file
 
 #include <atomic>
 #include <chrono>
@@ -108,31 +109,7 @@ inline std::string log_path() {
 
 inline void json_escape_into(std::string& out, std::string_view in) {
     out.push_back('"');
-    for (const unsigned char c : in) {
-        switch (c) {
-            case '"':
-                out += "\\\"";
-                break;
-            case '\\':
-                out += "\\\\";
-                break;
-            case '\n':
-                out += "\\n";
-                break;
-            case '\r':
-                out += "\\r";
-                break;
-            case '\t':
-                out += "\\t";
-                break;
-            default:
-                if (c < 0x20) {
-                    out += std::format("\\u{:04x}", static_cast<unsigned>(c));
-                } else {
-                    out.push_back(static_cast<char>(c));
-                }
-        }
-    }
+    aura::json::escape_into(out, in);
     out.push_back('"');
 }
 

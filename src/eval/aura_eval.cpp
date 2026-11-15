@@ -17,6 +17,7 @@
 
 #include "eval/aura_eval.h"
 
+#include "compiler/json_escape.hh" // #5234: shared RFC 8259 escaper
 #include "compiler/pipeline_policy.hh"
 #include "compiler/security_capabilities.h"
 #include "compiler/security_defaults.hh"
@@ -81,40 +82,7 @@ std::once_flag g_sandbox_once;
 
 void append_json_string(std::string& out, std::string_view s) {
     out.push_back('"');
-    for (const char ch : s) {
-        const auto c = static_cast<unsigned char>(ch);
-        switch (c) {
-            case '"':
-                out += "\\\"";
-                break;
-            case '\\':
-                out += "\\\\";
-                break;
-            case '\n':
-                out += "\\n";
-                break;
-            case '\r':
-                out += "\\r";
-                break;
-            case '\t':
-                out += "\\t";
-                break;
-            case '\b':
-                out += "\\b";
-                break;
-            case '\f':
-                out += "\\f";
-                break;
-            default:
-                if (c < 0x20) {
-                    char buf[8];
-                    std::snprintf(buf, sizeof buf, "\\u%04x", static_cast<unsigned>(c));
-                    out += buf;
-                } else {
-                    out.push_back(ch);
-                }
-        }
-    }
+    aura::json::escape_into(out, s);
     out.push_back('"');
 }
 

@@ -23,6 +23,7 @@
 #ifndef AURA_REFLECT_REFLECT_HH
 #define AURA_REFLECT_REFLECT_HH
 
+#include "compiler/json_escape.hh" // #5234: shared RFC 8259 escaper
 #include <meta>
 #include <string>
 #include <array>
@@ -319,29 +320,7 @@ consteval ModuleExports<T, MaxExports> module_exports() {
 // ── JSON escape ───────────────────────────────────────────────
 
 inline std::string json_escape(std::string_view s) {
-    std::string out;
-    for (auto c : s) {
-        switch (c) {
-            case '"':
-                out += "\\\"";
-                break;
-            case '\\':
-                out += "\\\\";
-                break;
-            case '\n':
-                out += "\\n";
-                break;
-            case '\r':
-                out += "\\r";
-                break;
-            case '\t':
-                out += "\\t";
-                break;
-            default:
-                out += c;
-        }
-    }
-    return out;
+    return aura::json::escape(s);
 }
 
 // ── Forward decl ──────────────────────────────────────────────
@@ -1531,27 +1510,7 @@ template <typename T> consteval auto get_data_members() {
 // Unlike auto_to_json, this properly handles vectors and nested structs.
 
 inline void json_escape_to(std::string& out, std::string_view s) {
-    for (auto c : s) {
-        switch (c) {
-            case '"':
-                out += "\\\"";
-                break;
-            case '\\':
-                out += "\\\\";
-                break;
-            case '\n':
-                out += "\\n";
-                break;
-            case '\r':
-                out += "\\r";
-                break;
-            case '\t':
-                out += "\\t";
-                break;
-            default:
-                out += c;
-        }
-    }
+    aura::json::escape_into(out, s);
 }
 
 template <typename T> void to_json_impl(std::string& out, const T& val);
