@@ -153,7 +153,12 @@ def main() -> int:
             "release_unreachable_string_slots(seen_string, free_at_mark)" in body,
             f"AC2: the {name} reclaim releases the unreachable string slots",
         )
-        must("seen_string(n_strings, 0)" in body, f"AC2: the {name} reclaim sizes the string mark")
+        # The tree-walker reuses its mark buffer across reclaims (assign),
+        # the file-mode path constructs it per sweep.
+        must(
+            "seen_string(n_strings, 0)" in body or "seen_string.assign(n_strings, 0)" in body,
+            f"AC2: the {name} reclaim sizes the string mark",
+        )
         must("free_slot_snapshot()" in body, f"AC2: the {name} reclaim snapshots the free slots")
         must("short_str_cache_" in body, f"AC2: the {name} reclaim roots the intern caches")
         must("live_strings" in body, f"AC2: the {name} reclaim counts the live string slots")
