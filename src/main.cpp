@@ -158,6 +158,33 @@ static std::string json_escape(std::string_view s) {
 // UTF-8 byte columns, end == start until the AST records an end.
 static bool g_diag_json = false;
 
+// #5240: CLI exit-code table (one-shot runs). 0 ok, 1 runtime,
+// 2 usage, 3 parse, 4 static (type/unbound/effect/module).
+static int g_run_exit_code = 1;
+
+static int exit_code_for_kind(aura::diag::ErrorKind k) {
+    using K = aura::diag::ErrorKind;
+    switch (k) {
+        case K::ParseError:
+        case K::UnexpectedToken:
+        case K::UnterminatedSExpr:
+            return 3;
+        case K::UnboundVariable:
+        // TypeError stays in the runtime bucket until #5241 types primitive
+        // errors at creation; a static TypeError is indistinguishable today.
+        case K::ArityMismatch:
+        case K::InvalidClosure:
+        case K::EffectDenied:
+        case K::ModuleError:
+        case K::MutationRefused:
+        case K::StaleWorkspace:
+            return 4;
+        default:
+            return 1;
+    }
+}
+
+
 static bool emit_diag_json(const aura::diag::Diagnostic& d, std::string_view source) {
     if (!g_diag_json)
         return false;
@@ -1191,6 +1218,8 @@ static void print_top_help_4935() {
     std::println("  A tool positional that exists as a file is that file;");
     std::println("  any other positional is source text.");
     std::println("  -V, --version      print version");
+    std::println("");
+    std::println("Exit codes (one-shot runs): 0 ok, 1 runtime, 2 usage, 3 parse, 4 static");
     std::println("");
     std::println("'aura help <command>' for details; 'aura help --all' for every option.");
 }
@@ -4174,6 +4203,7 @@ static void recover_oneshot_eval_error(aura::compiler::CompilerService& cs,
     if (macro_deny) {
         if (!emit_diag_json(diag, all_input))
             std::println(std::cerr, "error: {}", diag.format_with_source(all_input));
+        g_run_exit_code = exit_code_for_kind(diag.kind);
         err = true;
     }
     const bool parse_fail = diag.kind == aura::diag::ErrorKind::ParseError ||
@@ -4242,6 +4272,7 @@ static void recover_oneshot_eval_error(aura::compiler::CompilerService& cs,
     if (!walker_depth_resume && !parse_fail && !macro_deny && !entry_loc && !stamped_form.valid()) {
         if (!emit_diag_json(diag, all_input))
             std::println(std::cerr, "error: {}", diag.format_with_source(all_input));
+        g_run_exit_code = exit_code_for_kind(diag.kind);
         err = true;
         resume_at = exprs.size();
     }
@@ -4264,6 +4295,7 @@ static void recover_oneshot_eval_error(aura::compiler::CompilerService& cs,
             shown.location = stamped_form; // Issue #4909: never unlocated
         if (!emit_diag_json(shown, all_input))
             std::println(std::cerr, "error: {}", shown.format_with_source(all_input));
+        g_run_exit_code = exit_code_for_kind(shown.kind);
         if (resume_at > 0 && resume_at <= exprs.size() &&
             anchors[resume_at - 1].offset != std::string::npos) {
             const auto& a = anchors[resume_at - 1];
@@ -4300,10 +4332,12 @@ static void recover_oneshot_eval_error(aura::compiler::CompilerService& cs,
                 }
                 if (!emit_diag_json(d, all_input))
                     std::println(std::cerr, "error: {}", d.format_with_source(all_input));
+                g_run_exit_code = exit_code_for_kind(d.kind);
                 print_module_backtrace_4916(d.location, anchors[i].line, anchors[i].col, e);
             } else {
                 if (!emit_diag_json(r2.error(), e))
                     std::println(std::cerr, "error: {}", r2.error().format_with_source(e));
+                g_run_exit_code = exit_code_for_kind(r2.error().kind);
             }
             err = true;
             if (stop_first_4909) // Issue #4909: first error stops a file
@@ -4458,7 +4492,7 @@ static int run_oneshot_or_file(int argc, char** argv) {
         // Issue #2767: explicit stdin-only hint (was bare usage only).
         std::println(std::cerr, "error: no program source (stdin empty and no file/-e given)");
         std::println(std::cerr, "hint: 'aura --help' for usage");
-        return 1;
+        return 2;
     }
 
     // Issue #4575: mint only once we have a program. Refuse exits before
@@ -4538,7 +4572,9 @@ static int run_oneshot_or_file(int argc, char** argv) {
     aura::messaging::g_session_create = nullptr;
 
     // Issue #4497: an error consumed by display/write also fails the run.
-    return (err || aura_displayed_error_count() > 0) ? 1 : 0;
+    if (err)
+        return g_run_exit_code;
+    return aura_displayed_error_count() > 0 ? 1 : 0;
 }
 
 
