@@ -25,6 +25,7 @@ module;
 #include "core/moving_densify_health.hh" // Issue #3123 production auto-arm + clear reason
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 #include "core/ownership.hh" // Issue #4936: NoCopy
+#include "core/runtime_config.hh"
 export module aura.core.arena;
 import std;
 import aura.core.error;
@@ -944,7 +945,7 @@ export [[nodiscard]] inline int moving_compact_feature_enabled() noexcept {
     const int pref = g_moving_compact_enabled_pref.load(std::memory_order_acquire);
     if (pref == 0 || pref == 1)
         return pref;
-    if (const char* e = std::getenv("AURA_ARENA_MOVING_COMPACT")) {
+    if (const char* e = ::aura::config::raw(::aura::config::Key::AURA_ARENA_MOVING_COMPACT)) {
         if (e[0] == '1')
             return 1;
         if (e[0] == '0')
@@ -1339,7 +1340,7 @@ export inline std::atomic<int> g_production_auto_arm_moving_pref{-1};
 extern "C" int aura_production_defaults_active_probe() noexcept __attribute__((weak));
 
 [[nodiscard]] inline bool sandbox_dev_off_for_auto_arm() noexcept {
-    if (const char* e = std::getenv("AURA_SANDBOX"))
+    if (const char* e = ::aura::config::raw(::aura::config::Key::AURA_SANDBOX))
         return e[0] == 'o' && e[1] == 'f' && e[2] == 'f' && e[3] == '\0';
     return false;
 }

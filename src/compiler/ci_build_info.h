@@ -5,6 +5,7 @@
 #ifndef AURA_COMPILER_CI_BUILD_INFO_H
 #define AURA_COMPILER_CI_BUILD_INFO_H
 
+#include "core/runtime_config.hh"
 #include <cstdint>
 #include <cstdlib>
 #include <string>
@@ -38,7 +39,7 @@ inline bool reproducible_flags_active() noexcept {
 }
 
 inline const char* build_type_from_env() noexcept {
-    if (const char* bt = std::getenv("AURA_BUILD_TYPE"))
+    if (const char* bt = ::aura::config::raw(::aura::config::Key::AURA_BUILD_TYPE))
         return bt;
     return "unknown";
 }

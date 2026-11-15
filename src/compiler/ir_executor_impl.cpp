@@ -37,6 +37,7 @@ module;
 #include "compiler/type_feedback.h" // Issue #4568: relaxed per-site feedback
 #include "core/ownership.hh"        // #4936 c_alloc / c_free
 
+#include "core/runtime_config.hh"
 module aura.compiler.ir_executor;
 import std;
 import aura.compiler.value;
@@ -136,7 +137,7 @@ inline constexpr std::size_t kIrDefaultMaxCallDepth = 1048576;
 
 static std::size_t ir_max_call_depth() {
     static const std::size_t limit = [] {
-        const char* e = std::getenv("AURA_IR_MAX_CALL_DEPTH");
+        const char* e = ::aura::config::raw(::aura::config::Key::AURA_IR_MAX_CALL_DEPTH);
         if (!e || !*e)
             return kIrDefaultMaxCallDepth;
         char* end = nullptr;
@@ -402,7 +403,7 @@ static void record_linear_jit_safety(CompilerMetrics* metrics, IROpcode opcode) 
 // (perf: avoid a printf on every guard). Enable by setting
 // AURA_DEOPT_TRACE=1 in the env before launching the process.
 static const bool kDeoptTrace = []() noexcept {
-    const char* e = std::getenv("AURA_DEOPT_TRACE");
+    const char* e = ::aura::config::raw(::aura::config::Key::AURA_DEOPT_TRACE);
     return e && (e[0] == '1' || e[0] == 't' || e[0] == 'T');
 }();
 
@@ -663,7 +664,7 @@ EvalResult IRInterpreter::drain_call_stack(std::size_t base) {
                 if (pc.func == call_stack_.back().func) {
                     ++osr_tail_self;
                     static const std::uint64_t osr_threshold = [] {
-                        const char* e = std::getenv("AURA_JIT_OSR_N");
+                        const char* e = ::aura::config::raw(::aura::config::Key::AURA_JIT_OSR_N);
                         const long v = e && *e ? std::strtol(e, nullptr, 10) : 64;
                         return v > 0 ? static_cast<std::uint64_t>(v) : std::uint64_t{64};
                     }();
@@ -3774,7 +3775,7 @@ bool IRInterpreter::reclaim_unreachable_now() {
     // (Evaluator::maybe_reclaim_tw_unreachable) consults the same knob at the
     // same point; before #4768 it had no gate at all, which is why every
     // control arm that used this knob still ran the walker's collector.
-    if (std::getenv("AURA_GC_RECLAIM_OFF") != nullptr) {
+    if (::aura::config::raw(::aura::config::Key::AURA_GC_RECLAIM_OFF) != nullptr) {
         allocs_since_reclaim_ = 0;
         ev->reset_file_heap_allocs_since_reclaim();
         aura_gc_reclaim_off_note_ir_skip();

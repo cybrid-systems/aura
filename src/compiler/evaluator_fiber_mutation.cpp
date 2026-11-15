@@ -46,6 +46,7 @@ module;
 
 #include "hash_meta.h"       // FNV constants (#901)
 #include "core/ownership.hh" // #4936 immortal<T>
+#include "core/runtime_config.hh"
 module aura.compiler.evaluator;
 
 import std;
@@ -4227,7 +4228,8 @@ extern "C" void aura_orch_note_join_drain_reclaim_still_running_drop() {
 // Off metric-only mode (cancel still fires, force-safepoint skipped).
 extern "C" int aura_force_safepoint_on_orphan_enabled_default() {
     static const int cached = []() {
-        const char* e = std::getenv("AURA_FORCE_FIBER_SAFEPOINT_ON_ORPHAN");
+        const char* e =
+            ::aura::config::raw(::aura::config::Key::AURA_FORCE_FIBER_SAFEPOINT_ON_ORPHAN);
         if (!e || *e == '\0')
             return 1; // default = production (preserve #2533 behavior)
         const std::string s(e);

@@ -1,6 +1,7 @@
 // aura_jit_runtime.cpp — JIT runtime functions for closure/cell/pair/prim ops
 // These are compiled as regular C++ and registered in the ORC JIT as symbols.
 
+#include "core/runtime_config.hh"
 #include "compiler/ffi_addr.hh" // #4936 named JIT/FFI addresses
 #include <atomic> // std::memory_order_relaxed — lifetime_pin.hh uses std::atomic but doesn't include <atomic> itself (relies on transitive include from consumer TUs like render_primitives.cpp; we explicitly include it here since aura_jit_runtime.cpp doesn't pull it transitively).
 #include "core/atomic_fence_port.h"
@@ -157,7 +158,7 @@ static std::atomic<uint64_t> g_tl_arena_oom_total{0};
 static size_t tl_arena_resolve_capacity(size_t capacity) {
     if (capacity != 0)
         return capacity;
-    if (const char* env = std::getenv("AURA_TL_ARENA_INITIAL_MB")) {
+    if (const char* env = ::aura::config::raw(::aura::config::Key::AURA_TL_ARENA_INITIAL_MB)) {
         char* end = nullptr;
         const long mb = std::strtol(env, &end, 10);
         if (end != env && mb > 0 && mb <= 1024)
@@ -655,7 +656,7 @@ extern "C" int aura_get_require_stable_id_for_aot(void) noexcept {
 // comparison via inline fold-comparison (avoid POSIX strcasecmp
 // dependency for portability).
 extern "C" void aura_apply_require_stable_id_for_aot_env(void) noexcept {
-    const char* env = std::getenv("AURA_REQUIRE_STABLE_ID_FOR_AOT");
+    const char* env = ::aura::config::raw(::aura::config::Key::AURA_REQUIRE_STABLE_ID_FOR_AOT);
     int mode = 0;
     if (env != nullptr && env[0] != '\0') {
         const auto ieq = [](const char* a, const char* b) -> bool {
@@ -1562,7 +1563,7 @@ enum class CrossCowHardReject : std::uint8_t {
 };
 
 static bool cross_cow_soft_migrate_enabled_() noexcept {
-    if (const char* e = std::getenv("AURA_CROSS_COW_SOFT_MIGRATE"))
+    if (const char* e = ::aura::config::raw(::aura::config::Key::AURA_CROSS_COW_SOFT_MIGRATE))
         return e[0] != '0' && e[0] != '\0';
     return true;
 }
@@ -1571,7 +1572,8 @@ static bool cross_cow_soft_migrate_enabled_() noexcept {
 // Far-behind stamps hard-reject (COW clone long detached from live gen).
 // Override: AURA_CROSS_COW_SOFT_MIGRATE_MAX_DRIFT=<N>.
 static std::uint64_t cross_cow_soft_migrate_max_drift_() noexcept {
-    if (const char* e = std::getenv("AURA_CROSS_COW_SOFT_MIGRATE_MAX_DRIFT")) {
+    if (const char* e =
+            ::aura::config::raw(::aura::config::Key::AURA_CROSS_COW_SOFT_MIGRATE_MAX_DRIFT)) {
         char* end = nullptr;
         const auto v = std::strtoull(e, &end, 10);
         if (end != e)
@@ -2639,7 +2641,7 @@ extern "C" void aura_sync_remount_named_live_closures(std::uint64_t* ok_count,
 // (preserve #2637 AC1).
 extern "C" int aura_sync_remount_anon_enabled_default() {
     static const int cached = []() {
-        const char* e = std::getenv("AURA_SYNC_REMOUNT_ANON");
+        const char* e = ::aura::config::raw(::aura::config::Key::AURA_SYNC_REMOUNT_ANON);
         if (e && *e) {
             // Issue #2637: explicit env always wins (operator override).
             const std::string s(e);
@@ -2663,7 +2665,7 @@ extern "C" int aura_sync_remount_anon_enabled_default() {
 // on first call so the env lookup runs at most once per process.
 extern "C" std::uint64_t aura_residual_sid0_cap_default() {
     static const std::uint64_t cached = []() -> std::uint64_t {
-        const char* e = std::getenv("AURA_RESIDUAL_SID0_CAP");
+        const char* e = ::aura::config::raw(::aura::config::Key::AURA_RESIDUAL_SID0_CAP);
         if (!e || *e == '\0')
             return 256; // production-safe default per AC1
         const std::string s(e);
@@ -2828,7 +2830,7 @@ extern "C" void aura_sync_remount_anon_captured_live_closures(std::uint64_t* ok_
 // shrink back under storm throttle. Env exact value wins; unset →
 // production 64 / Soft 0 (the #2850 fixed semantics).
 extern "C" std::uint64_t aura_sync_remount_pure_anon_budget_base() noexcept {
-    const char* e = std::getenv("AURA_SYNC_REMOUNT_PURE_ANON_BUDGET");
+    const char* e = ::aura::config::raw(::aura::config::Key::AURA_SYNC_REMOUNT_PURE_ANON_BUDGET);
     if (e && *e) {
         const std::string s(e);
         if (s == "0" || s == "off" || s == "false" || s == "Off" || s == "OFF")
@@ -2864,7 +2866,7 @@ static std::atomic<std::uint64_t> g_pure_anon_budget_current{0};
 // budget=0 remains zero-cost. Env exact value still forces fixed.
 extern "C" std::uint64_t aura_sync_remount_pure_anon_budget_default() {
     // Env override wins (exact value forces fixed — AC2 no adaptation).
-    const char* e = std::getenv("AURA_SYNC_REMOUNT_PURE_ANON_BUDGET");
+    const char* e = ::aura::config::raw(::aura::config::Key::AURA_SYNC_REMOUNT_PURE_ANON_BUDGET);
     if (e && *e) {
         const std::string s(e);
         if (s == "0" || s == "off" || s == "false" || s == "Off" || s == "OFF")
@@ -3444,7 +3446,7 @@ extern "C" std::uint64_t aura_residual_remount_budget_default() noexcept {
     const auto ov = g_residual_remount_budget_override.load(std::memory_order_relaxed);
     if (ov != UINT64_MAX)
         return ov;
-    const char* e = std::getenv("AURA_RESIDUAL_REMOUNT_BUDGET");
+    const char* e = ::aura::config::raw(::aura::config::Key::AURA_RESIDUAL_REMOUNT_BUDGET);
     if (e && *e) {
         std::uint64_t v = 0;
         for (const char* p = e; *p >= '0' && *p <= '9'; ++p)
@@ -3783,7 +3785,7 @@ extern "C" std::uint64_t aura_reemit_success_sync_covered_cap_default() noexcept
     const auto ov = g_reemit_success_sync_covered_cap_override.load(std::memory_order_relaxed);
     if (ov != UINT64_MAX)
         return ov;
-    const char* e = std::getenv("AURA_REEMIT_SUCCESS_SYNC_COVERED_CAP");
+    const char* e = ::aura::config::raw(::aura::config::Key::AURA_REEMIT_SUCCESS_SYNC_COVERED_CAP);
     if (e && *e) {
         std::uint64_t v = 0;
         for (const char* p = e; *p >= '0' && *p <= '9'; ++p)
@@ -4260,7 +4262,8 @@ extern "C" std::uint64_t aura_remap_live_closures_after_reemit(const std::uint32
                 // the flag off. AURA_NAMED_NAME_FALLBACK_HARD=1 refuses
                 // invent entirely (Full strategy fail-closed).
                 static const bool hard = [] {
-                    const char* e = std::getenv("AURA_NAMED_NAME_FALLBACK_HARD");
+                    const char* e =
+                        ::aura::config::raw(::aura::config::Key::AURA_NAMED_NAME_FALLBACK_HARD);
                     return e != nullptr && e[0] == '1' && e[1] == '\0';
                 }();
                 if (name_fallback && !hard) {

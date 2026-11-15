@@ -33,6 +33,7 @@ module;
 #include "core/ownership.hh"                  // #4936 immortal<T>
 
 
+#include "core/runtime_config.hh"
 module aura.compiler.evaluator;
 
 import std;
@@ -1657,7 +1658,7 @@ extern "C" int aura_tw_plain_parked_now() noexcept {
 // is what lets the sweeps run. Read once, like AURA_GC_RECLAIM_OFF.
 static bool tw_plain_park_disabled() noexcept {
     static const bool off = [] {
-        const char* e = std::getenv("AURA_TW_PLAIN_PARK_OFF");
+        const char* e = ::aura::config::raw(::aura::config::Key::AURA_TW_PLAIN_PARK_OFF);
         return e != nullptr && *e != 0 && *e != '0';
     }();
     return off;
@@ -1799,7 +1800,7 @@ bool Evaluator::reclaim_tw_unreachable_now() {
     // trigger and after the stand-down checks. Both halves now mean what the
     // knob says they mean; the skip counters are the probe that BOTH were
     // disarmed (query:reclaim-off-skips).
-    if (std::getenv("AURA_GC_RECLAIM_OFF") != nullptr) {
+    if (::aura::config::raw(::aura::config::Key::AURA_GC_RECLAIM_OFF) != nullptr) {
         tw_closure_allocs_.store(0, std::memory_order_relaxed);
         reset_file_heap_allocs_since_reclaim();
         aura_gc_reclaim_off_note_tw_skip();

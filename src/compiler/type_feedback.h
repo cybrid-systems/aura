@@ -18,6 +18,7 @@
 #ifndef AURA_COMPILER_TYPE_FEEDBACK_H
 #define AURA_COMPILER_TYPE_FEEDBACK_H
 
+#include "core/runtime_config.hh"
 #include "core/address_bits.hh" // Issue #4936: anonymous site key is address bits
 
 #include <algorithm>
@@ -181,8 +182,8 @@ namespace detail {
         return t;
     }
 
-    inline std::uint32_t read_budget(const char* env, std::uint32_t fallback) noexcept {
-        const char* v = std::getenv(env);
+    inline std::uint32_t read_budget(::aura::config::Key env, std::uint32_t fallback) noexcept {
+        const char* v = ::aura::config::raw(env);
         if (!v || !*v)
             return fallback;
         char* end = nullptr;
@@ -193,12 +194,14 @@ namespace detail {
     }
 
     inline std::uint32_t back_edge_budget() noexcept {
-        static const std::uint32_t v = read_budget("AURA_FEEDBACK_BACK_EDGES", kDefaultBackEdges);
+        static const std::uint32_t v =
+            read_budget(::aura::config::Key::AURA_FEEDBACK_BACK_EDGES, kDefaultBackEdges);
         return v;
     }
 
     inline std::uint32_t entry_budget() noexcept {
-        static const std::uint32_t v = read_budget("AURA_FEEDBACK_ENTRIES", kDefaultEntries);
+        static const std::uint32_t v =
+            read_budget(::aura::config::Key::AURA_FEEDBACK_ENTRIES, kDefaultEntries);
         return v;
     }
 

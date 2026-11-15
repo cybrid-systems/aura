@@ -39,6 +39,7 @@ module;
 #include "hash_meta.h"                     // FNV constants (#901)
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
+#include "core/runtime_config.hh"
 export module aura.compiler.ir_cache_pure;
 
 import aura.core.ast;
@@ -1794,7 +1795,7 @@ inline AdaptiveThrPolicy& adaptive_thr_policy_singleton() noexcept {
 
 // Issue #2248 AC3: env override AURA_ADAPTIVE_THR=0 freezes at base.
 inline bool adaptive_thr_frozen() noexcept {
-    const char* env = std::getenv("AURA_ADAPTIVE_THR");
+    const char* env = ::aura::config::raw(::aura::config::Key::AURA_ADAPTIVE_THR);
     return env != nullptr && env[0] == '0';
 }
 

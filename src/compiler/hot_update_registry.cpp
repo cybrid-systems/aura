@@ -1,6 +1,7 @@
 // hot_update_registry.cpp — Issue #1956 / #2014 / #2114
 // Process-wide HotUpdateRegistry singleton.
 
+#include "core/runtime_config.hh"
 #include "compiler/hot_update_registry.hh"
 
 #include "compiler/aot_reload_consistency_proof.h" // Issue #2845: fail-proof stamp on force-JIT
@@ -524,12 +525,12 @@ void HotUpdateRegistry::reset_storm_clear_health_pass_for_test() noexcept {
 //   4. production_defaults_active → on
 //   5. else off
 bool HotUpdateRegistry::resolve_coverage_verify_min_dirty_enabled() const noexcept {
-    const char* e = std::getenv("AURA_COVERAGE_VERIFY_MIN_DIRTY");
+    const char* e = ::aura::config::raw(::aura::config::Key::AURA_COVERAGE_VERIFY_MIN_DIRTY);
     if (e != nullptr && e[0] == '0' && e[1] == '\0')
         return false;
     if (e != nullptr && e[0] == '1' && e[1] == '\0')
         return true;
-    const char* sb = std::getenv("AURA_SANDBOX");
+    const char* sb = ::aura::config::raw(::aura::config::Key::AURA_SANDBOX);
     if (sb != nullptr && sb[0] != '\0' && std::strcmp(sb, "off") == 0)
         return false;
     if (aura_production_defaults_active_probe() != 0)
@@ -1303,7 +1304,7 @@ void HotUpdateRegistry::note_reemit_success_coverage(
 //   5. production_defaults_active → only_covered (#2949)
 //   6. else wholesale
 bool HotUpdateRegistry::resolve_force_jit_repromote_only_covered() const noexcept {
-    const char* e = std::getenv("AURA_FORCE_JIT_REPROMOTE_ONLY_COVERED");
+    const char* e = ::aura::config::raw(::aura::config::Key::AURA_FORCE_JIT_REPROMOTE_ONLY_COVERED);
     if (e != nullptr && e[0] == '0' && e[1] == '\0')
         return false;
     if (e != nullptr && e[0] == '1' && e[1] == '\0')
@@ -1311,7 +1312,7 @@ bool HotUpdateRegistry::resolve_force_jit_repromote_only_covered() const noexcep
     if (force_jit_repromote_only_covered_override_.load(std::memory_order_relaxed) != 0) {
         return force_jit_repromote_only_covered_bits_.load(std::memory_order_relaxed) != 0;
     }
-    const char* sb = std::getenv("AURA_SANDBOX");
+    const char* sb = ::aura::config::raw(::aura::config::Key::AURA_SANDBOX);
     if (sb != nullptr && sb[0] != '\0' && std::strcmp(sb, "off") == 0)
         return false;
     if (aura_production_defaults_active_probe() != 0)
@@ -2570,7 +2571,8 @@ std::uint64_t HotUpdateRegistry::deferred_reemit_age_ms() const noexcept {
             .count());
     const auto age = (now_ms >= since) ? (now_ms - since) : 0;
     // Issue #2748 AC4: optional deadline env (metric only — no force drain).
-    if (const char* e = std::getenv("AURA_DEFERRED_REEMIT_DEADLINE_MS"); e && *e) {
+    if (const char* e = ::aura::config::raw(::aura::config::Key::AURA_DEFERRED_REEMIT_DEADLINE_MS);
+        e && *e) {
         const auto deadline = static_cast<std::uint64_t>(std::strtoull(e, nullptr, 10));
         if (deadline > 0 && age > deadline) {
             // Best-effort bump; may overcount under concurrent readers — OK
@@ -2596,7 +2598,9 @@ std::uint64_t HotUpdateRegistry::force_drain_deadline_ms() noexcept {
     // Default 0 = disabled (no force drain body).
     if (!g_force_drain_deadline_loaded_.load(std::memory_order_acquire)) {
         std::uint64_t v = 0;
-        if (const char* e = std::getenv("AURA_REEMIT_FORCE_DRAIN_DEADLINE_MS"); e && *e)
+        if (const char* e =
+                ::aura::config::raw(::aura::config::Key::AURA_REEMIT_FORCE_DRAIN_DEADLINE_MS);
+            e && *e)
             v = static_cast<std::uint64_t>(std::strtoull(e, nullptr, 10));
         g_force_drain_deadline_cached_.store(v, std::memory_order_relaxed);
         g_force_drain_deadline_loaded_.store(true, std::memory_order_release);
@@ -3347,7 +3351,7 @@ extern "C" std::uint64_t aura_get_deopt_storm_region_overflow_total(void) {
 // "eval" / "per-eval". Invalid values fall back to Global (preserves
 // backwards compat with a typo).
 extern "C" void aura_apply_storm_isolation_env(void) noexcept {
-    const char* env = std::getenv("AURA_STORM_ISOLATION");
+    const char* env = ::aura::config::raw(::aura::config::Key::AURA_STORM_ISOLATION);
     auto mode = aura::compiler::HotUpdateRegistry::StormIsolation::Global;
     if (env != nullptr) {
         if (std::strcmp(env, "region") == 0 || std::strcmp(env, "per-region") == 0)

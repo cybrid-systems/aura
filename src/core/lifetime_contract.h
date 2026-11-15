@@ -20,6 +20,7 @@
 #ifndef AURA_CORE_LIFETIME_CONTRACT_H
 #define AURA_CORE_LIFETIME_CONTRACT_H
 
+#include "core/runtime_config.hh"
 #include <cstdint>
 #include <cstdlib>
 #include <string_view>
@@ -33,13 +34,13 @@ inline constexpr int kLifetimeContractIssue = 2300;
 // residual-defer-policy: 0=soft, 1=clear (production default), 2=hard
 // Matches query:mutation-boundary-hold-stats residual-defer-policy (#2269).
 [[nodiscard]] inline int residual_defer_policy_from_env() noexcept {
-    const char* sandbox_e = std::getenv("AURA_SANDBOX");
+    const char* sandbox_e = ::aura::config::raw(::aura::config::Key::AURA_SANDBOX);
     const bool dev_off = sandbox_e && *sandbox_e && std::string_view(sandbox_e) == "off";
     if (dev_off)
         return 0; // Soft
-    const char* policy_e = std::getenv("AURA_RESIDUAL_DEFER_POLICY");
+    const char* policy_e = ::aura::config::raw(::aura::config::Key::AURA_RESIDUAL_DEFER_POLICY);
     const bool policy_hard_env = policy_e && *policy_e && std::string_view(policy_e) == "hard";
-    const char* legacy_e = std::getenv("AURA_HARD_RESIDUAL_DEFER");
+    const char* legacy_e = ::aura::config::raw(::aura::config::Key::AURA_HARD_RESIDUAL_DEFER);
     const bool legacy_hard = legacy_e && *legacy_e && legacy_e[0] != '0';
     if (policy_hard_env || legacy_hard)
         return 2; // Hard
@@ -49,7 +50,7 @@ inline constexpr int kLifetimeContractIssue = 2300;
 // moving-compact-enabled preference: 1 when env/pref on, 0 off, -1 unset→default off
 // for Agent dashboards (arena.ixx default remains env-driven at densify site).
 [[nodiscard]] inline int moving_compact_enabled_from_env() noexcept {
-    const char* e = std::getenv("AURA_ARENA_MOVING_COMPACT");
+    const char* e = ::aura::config::raw(::aura::config::Key::AURA_ARENA_MOVING_COMPACT);
     if (!e || !*e)
         return 0;
     if (e[0] == '0' && e[1] == '\0')

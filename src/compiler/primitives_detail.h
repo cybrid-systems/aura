@@ -21,6 +21,7 @@
 #ifndef AURA_COMPILER_PRIMITIVES_DETAIL_H
 #define AURA_COMPILER_PRIMITIVES_DETAIL_H
 
+#include "core/runtime_config.hh"
 #include "observability_metrics.h"
 #include "primitives_meta.h"
 #include "runtime_shared.h"
@@ -92,7 +93,7 @@ namespace primitives_detail {
     // P2a/P2b: full vs s0 registration. Default full (compat).
     // AURA_PRIMITIVES=s0|minimal or AURA_FULL_PRIMITIVES=0 → s0.
     inline bool full_primitives_enabled() noexcept {
-        if (const char* p = std::getenv("AURA_PRIMITIVES")) {
+        if (const char* p = ::aura::config::raw(::aura::config::Key::AURA_PRIMITIVES)) {
             // strcmp-free tiny checks
             if ((p[0] == 's' || p[0] == 'S') && p[1] == '0')
                 return false;
@@ -101,7 +102,7 @@ namespace primitives_detail {
             if ((p[0] == 'f' || p[0] == 'F') && (p[1] == 'u' || p[1] == 'U'))
                 return true; // full
         }
-        if (const char* f = std::getenv("AURA_FULL_PRIMITIVES")) {
+        if (const char* f = ::aura::config::raw(::aura::config::Key::AURA_FULL_PRIMITIVES)) {
             if (f[0] == '0' || f[0] == 'n' || f[0] == 'N' || f[0] == 'f' || f[0] == 'F')
                 return false;
         }

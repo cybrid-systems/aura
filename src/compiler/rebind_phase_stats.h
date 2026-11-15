@@ -4,6 +4,7 @@
 // Read via (engine:metrics "query:incremental-relower-stats") keys
 // "phase-<name>-ns" / "phase-<name>-count".
 #pragma once
+#include "core/runtime_config.hh"
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -46,7 +47,7 @@ inline std::atomic<std::uint64_t> g_count[kCount]{};
 
 inline bool enabled() noexcept {
     static const bool on = [] {
-        const char* e = std::getenv("AURA_PHASE_STATS");
+        const char* e = ::aura::config::raw(::aura::config::Key::AURA_PHASE_STATS);
         return e && e[0] == '1';
     }();
     return on;

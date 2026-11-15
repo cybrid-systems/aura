@@ -2,6 +2,7 @@
 #ifndef AURA_COMPILER_RUNTIME_PATHS_H
 #define AURA_COMPILER_RUNTIME_PATHS_H
 
+#include "core/runtime_config.hh"
 #include <array>
 #include <cstdlib>
 #include <cstddef>
@@ -15,8 +16,6 @@ namespace aura::compiler::paths {
 inline constexpr const char* kRuntimeRel = "lib/runtime.c";
 inline constexpr const char* kStdlibRel = "lib/std/";
 inline constexpr const char* kInstallRuntime = "/usr/local/share/aura/runtime.c";
-inline constexpr const char* kEnvRuntimeDir = "AURA_RUNTIME_DIR";
-inline constexpr const char* kEnvStdlibDir = "AURA_STDLIB_DIR";
 
 [[nodiscard]] inline bool readable(const std::string& path) noexcept {
     return ::access(path.c_str(), R_OK) == 0;
@@ -24,7 +23,7 @@ inline constexpr const char* kEnvStdlibDir = "AURA_STDLIB_DIR";
 
 // Resolve path to runtime.c: AURA_RUNTIME_DIR, CWD relatives, install path.
 [[nodiscard]] inline std::string resolve_runtime_c() {
-    if (const char* dir = std::getenv(kEnvRuntimeDir)) {
+    if (const char* dir = ::aura::config::raw(::aura::config::Key::AURA_RUNTIME_DIR)) {
         std::string base = dir;
         while (!base.empty() && (base.back() == '/' || base.back() == '\\'))
             base.pop_back();
@@ -44,7 +43,7 @@ inline constexpr const char* kEnvStdlibDir = "AURA_STDLIB_DIR";
 
 // Resolve stdlib root directory (trailing slash).
 [[nodiscard]] inline std::string resolve_stdlib_root() {
-    if (const char* dir = std::getenv(kEnvStdlibDir)) {
+    if (const char* dir = ::aura::config::raw(::aura::config::Key::AURA_STDLIB_DIR)) {
         std::string base = dir;
         if (!base.empty() && base.back() != '/')
             base.push_back('/');
@@ -70,7 +69,8 @@ inline constexpr const char* kEnvStdlibDir = "AURA_STDLIB_DIR";
 }
 
 [[nodiscard]] inline std::string resolve_self_executable(const char* argv0 = nullptr) {
-    if (const char* self = std::getenv("AURA_SELF"); executable_file(self))
+    if (const char* self = ::aura::config::raw(::aura::config::Key::AURA_SELF);
+        executable_file(self))
         return std::string(self);
 #if defined(__linux__)
     {
@@ -83,7 +83,8 @@ inline constexpr const char* kEnvStdlibDir = "AURA_STDLIB_DIR";
             const std::string base = slash == std::string::npos ? path : path.substr(slash + 1);
             if (base != "ld.so")
                 return path;
-            if (const char* bin = std::getenv("AURA_BIN"); executable_file(bin))
+            if (const char* bin = ::aura::config::raw(::aura::config::Key::AURA_BIN);
+                executable_file(bin))
                 return std::string(bin);
             if (argv0 && argv0[0] != '\0') {
                 std::error_code error_code;
@@ -104,7 +105,7 @@ inline constexpr const char* kEnvStdlibDir = "AURA_STDLIB_DIR";
             return rp.string();
         return std::string(argv0);
     }
-    if (const char* e = std::getenv("AURA_BIN"); e && e[0] != '\0')
+    if (const char* e = ::aura::config::raw(::aura::config::Key::AURA_BIN); e && e[0] != '\0')
         return std::string(e);
     return {};
 }
@@ -115,12 +116,16 @@ inline constexpr const char* kEnvStdlibDir = "AURA_STDLIB_DIR";
 // AURA_BIN=… without export hit exit 127 on multi-process denseness.
 // Returns the value now in the environment (empty if unresolved).
 inline std::string ensure_aura_bin_environ(const char* argv0 = nullptr) {
-    if (const char* e = std::getenv("AURA_BIN"); e && e[0] != '\0')
+    if (const char* e = ::aura::config::raw(::aura::config::Key::AURA_BIN); e && e[0] != '\0')
         return std::string(e);
     const std::string self = resolve_self_executable(argv0);
-    if (!self.empty())
+    if (!self.empty()) {
         ::setenv("AURA_BIN", self.c_str(), /*overwrite=*/0);
-    if (const char* e = std::getenv("AURA_BIN"); e && e[0] != '\0')
+        // Issue #5245: refresh the shared snapshot so in-process readers see
+        // the seeded path as they did when they called getenv themselves.
+        ::aura::config::reload();
+    }
+    if (const char* e = ::aura::config::raw(::aura::config::Key::AURA_BIN); e && e[0] != '\0')
         return std::string(e);
     return self;
 }

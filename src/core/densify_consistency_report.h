@@ -37,6 +37,7 @@
 #ifndef AURA_CORE_DENSIFY_CONSISTENCY_REPORT_H
 #define AURA_CORE_DENSIFY_CONSISTENCY_REPORT_H
 
+#include "core/runtime_config.hh"
 #include "core/address_bits.hh" // Issue #4936: eval-id hash is address bits, not a slot
 
 #include <array>
@@ -652,7 +653,7 @@ inline void note_last_densify_remap_pairing_forced(bool forced) noexcept {
 // Returns true when production security defaults demand hard abort on
 // !overall_ok (aligns RootRemap hard_contract_enabled at #2294).
 [[nodiscard]] inline bool densify_consistency_hard_contract_enabled() noexcept {
-    const char* env = std::getenv("AURA_DENSIFY_CONTRACT");
+    const char* env = ::aura::config::raw(::aura::config::Key::AURA_DENSIFY_CONTRACT);
     return env != nullptr && *env != '\0' && std::string_view(env) == "hard";
 }
 

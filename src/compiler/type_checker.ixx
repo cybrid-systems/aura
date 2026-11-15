@@ -16,6 +16,7 @@ module;
 #include "compiler/observability_metrics.h" // Issue #2262: g_partial_cs_* atomics
 #include "compiler/typed_mutation_audit.h" // Issue #2277: TypedMutationAuditCounters delta_timeout_*
 
+#include "core/runtime_config.hh"
 export module aura.compiler.type_checker;
 
 import std;
@@ -151,7 +152,7 @@ export inline constexpr std::size_t kTypeDepBucketCap = 256;
 // AURA_MUTATION_HOLD_STRICT pattern in this codebase).
 [[nodiscard]] inline std::uint64_t delta_truncate_streak_threshold() noexcept {
     static const std::uint64_t cached = []() noexcept -> std::uint64_t {
-        const char* e = std::getenv("AURA_DELTA_TRUNCATE_STREAK_FULL");
+        const char* e = ::aura::config::raw(::aura::config::Key::AURA_DELTA_TRUNCATE_STREAK_FULL);
         if (e == nullptr || e[0] == '\0')
             return 2ULL; // default 2 consecutive truncates → force full solve
         std::uint64_t v = 0;
@@ -228,7 +229,7 @@ export inline GradualPermissiveness parse_gradual_permissiveness(std::string_vie
 }
 
 export inline GradualPermissiveness gradual_permissiveness_from_env() noexcept {
-    const char* e = std::getenv("AURA_GRADUAL_PERMISSIVENESS");
+    const char* e = ::aura::config::raw(::aura::config::Key::AURA_GRADUAL_PERMISSIVENESS);
     if (e == nullptr || e[0] == '\0')
         return GradualPermissiveness::Balanced;
     return parse_gradual_permissiveness(e);
@@ -273,7 +274,7 @@ export inline TypecheckMetricsTier parse_typecheck_metrics_tier(std::string_view
 }
 
 export inline TypecheckMetricsTier typecheck_metrics_tier_from_env() noexcept {
-    const char* e = std::getenv("AURA_TYPECHECK_METRICS");
+    const char* e = ::aura::config::raw(::aura::config::Key::AURA_TYPECHECK_METRICS);
     if (e == nullptr || e[0] == '\0')
         return TypecheckMetricsTier::Minimal;
     return parse_typecheck_metrics_tier(e);

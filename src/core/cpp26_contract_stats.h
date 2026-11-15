@@ -73,6 +73,7 @@ extern "C" int aura_production_defaults_active_probe() noexcept;
 #ifndef AURA_CORE_CPP26_CONTRACT_STATS_H
 #define AURA_CORE_CPP26_CONTRACT_STATS_H
 
+#include "core/runtime_config.hh"
 #include <atomic>
 #include <cstdint>
 #include <cstdlib>
@@ -324,7 +325,7 @@ inline void record_hotpath_invariant_hit_sampled() noexcept {
     if (v >= 0)
         return v != 0;
     int parsed = 0;
-    if (const char* e = std::getenv("AURA_HOT_HARDEN")) {
+    if (const char* e = ::aura::config::raw(::aura::config::Key::AURA_HOT_HARDEN)) {
         if (std::strcmp(e, "1") == 0 || std::strcmp(e, "on") == 0 || std::strcmp(e, "true") == 0 ||
             std::strcmp(e, "ON") == 0 || std::strcmp(e, "TRUE") == 0 || std::strcmp(e, "On") == 0 ||
             std::strcmp(e, "True") == 0)
@@ -352,7 +353,7 @@ inline void record_hotpath_invariant_hit_sampled() noexcept {
     if (v >= 0)
         return v;
     int parsed = kHotModeOff;
-    if (const char* e = std::getenv("AURA_CONTRACTS_HOT_MODE")) {
+    if (const char* e = ::aura::config::raw(::aura::config::Key::AURA_CONTRACTS_HOT_MODE)) {
         if (std::strcmp(e, "soft") == 0 || std::strcmp(e, "observe") == 0 ||
             std::strcmp(e, "SOFT") == 0 || std::strcmp(e, "OBSERVE") == 0)
             parsed = kHotModeObserve;

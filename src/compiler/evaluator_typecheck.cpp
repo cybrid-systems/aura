@@ -18,6 +18,7 @@ module;
 #include "match_scan_bound.h"
 #include "core/ownership.hh" // #4936 opaque_ptr
 
+#include "core/runtime_config.hh"
 module aura.compiler.evaluator;
 
 import std;
@@ -923,7 +924,7 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
 // Issue #2563: reuse #2560 soft cone default for cross-closure discovery cap.
 // Env AURA_PARTIAL_CONE_SOFT when set; else 256. Zero-cost empty dirty path.
 static std::size_t partial_cone_soft_cap_for_linear() noexcept {
-    const char* e = std::getenv("AURA_PARTIAL_CONE_SOFT");
+    const char* e = ::aura::config::raw(::aura::config::Key::AURA_PARTIAL_CONE_SOFT);
     if (e && *e) {
         char* end = nullptr;
         const auto n = std::strtoull(e, &end, 10);

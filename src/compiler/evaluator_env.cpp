@@ -18,6 +18,7 @@ module;
 
 #include <cstdlib> // Issue #2930: getenv AURA_BRIDGE_EPOCH_LEGACY_TRUST
 
+#include "core/runtime_config.hh"
 module aura.compiler.evaluator;
 
 import std;
@@ -223,7 +224,8 @@ bool Evaluator::is_bridge_stale(std::uint64_t bridge_epoch, std::uint64_t curren
         // not refreshed. Late setenv after first call is ignored —
         // tests that need trust must set the env var at process start.
         static const bool legacy_trust = []() noexcept {
-            if (const char* e = std::getenv("AURA_BRIDGE_EPOCH_LEGACY_TRUST"))
+            if (const char* e =
+                    ::aura::config::raw(::aura::config::Key::AURA_BRIDGE_EPOCH_LEGACY_TRUST))
                 return e[0] != '0' && e[0] != '\0';
             return false;
         }();
@@ -2257,7 +2259,8 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
         // Issue #4109 EXPERIMENT: behind frames always take the empty
         // fallback — body_live is not a proof the capture is current.
         if (terminal || behind) {
-            static const char* verbose_env = std::getenv("AURA_VERBOSE_ENVFRAME");
+            static const char* verbose_env =
+                ::aura::config::raw(::aura::config::Key::AURA_VERBOSE_ENVFRAME);
             if (verbose_env && verbose_env[0] != '0' && verbose_env[0] != '\0') {
                 if (terminal) {
                     std::println(std::cerr,
@@ -3013,7 +3016,7 @@ bool Evaluator::run_post_densify_linear_type_revalidate(bool had_moving_densify)
     // Step 3: production dual-path type/ownership scan when linear present.
     bool type_ok = true;
     const bool production = [&]() noexcept {
-        const char* sandbox = std::getenv("AURA_SANDBOX");
+        const char* sandbox = ::aura::config::raw(::aura::config::Key::AURA_SANDBOX);
         if (sandbox && sandbox[0] != '\0' && std::string_view(sandbox) == "off")
             return false;
         return true; // production default (same Soft table as residual Clear)
@@ -3065,7 +3068,8 @@ void Evaluator::refresh_stale_frame_in_walk(EnvId id, const char* site) const {
     // distinct [#356 warning], not bump version_ + log a
     // stale-refresh that would imply the frame is safe to use.
     if (fr.version_ == INVALID_VERSION) {
-        static const char* verbose_env = std::getenv("AURA_VERBOSE_ENVFRAME");
+        static const char* verbose_env =
+            ::aura::config::raw(::aura::config::Key::AURA_VERBOSE_ENVFRAME);
         if (verbose_env && verbose_env[0] != '0' && verbose_env[0] != '\0') {
             std::println(std::cerr,
                          "[#356 warning] {}: post-rollback EnvFrame id={} "
@@ -3085,7 +3089,8 @@ void Evaluator::refresh_stale_frame_in_walk(EnvId id, const char* site) const {
     // Optional stderr warning, gated behind AURA_VERBOSE_ENVFRAME
     // (same env var as materialize_call_env uses, so operators
     // can opt into all staleness diagnostics at once).
-    static const char* verbose_env = std::getenv("AURA_VERBOSE_ENVFRAME");
+    static const char* verbose_env =
+        ::aura::config::raw(::aura::config::Key::AURA_VERBOSE_ENVFRAME);
     if (verbose_env && verbose_env[0] != '0' && verbose_env[0] != '\0') {
         std::println(std::cerr,
                      "[#242 warning] {}: stale EnvFrame id={} "

@@ -26,6 +26,7 @@ module;
 
 #include "prim_registrar_scaffold.hh" // Issue #2996
 
+#include "core/runtime_config.hh"
 module aura.compiler.evaluator;
 
 import std;
@@ -125,7 +126,7 @@ namespace {
     // the interpreter fiber is not stuck in catastrophic backtracking.
     [[nodiscard]] int regex_timeout_ms_cfg() noexcept {
         static const int v = [] {
-            if (const char* e = std::getenv("AURA_REGEX_TIMEOUT_MS")) {
+            if (const char* e = ::aura::config::raw(::aura::config::Key::AURA_REGEX_TIMEOUT_MS)) {
                 const int n = std::atoi(e);
                 if (n > 0)
                     return n;
@@ -139,7 +140,7 @@ namespace {
     // Env AURA_REGEX_MAX_INPUT (default 1 MiB).
     [[nodiscard]] std::size_t regex_max_input_cfg() noexcept {
         static const std::size_t v = [] {
-            if (const char* e = std::getenv("AURA_REGEX_MAX_INPUT")) {
+            if (const char* e = ::aura::config::raw(::aura::config::Key::AURA_REGEX_MAX_INPUT)) {
                 const long n = std::strtol(e, nullptr, 10);
                 if (n > 0)
                     return static_cast<std::size_t>(n);

@@ -29,6 +29,7 @@
 #ifndef AURA_CORE_WAL_APPEND_FAIL_SLO_H
 #define AURA_CORE_WAL_APPEND_FAIL_SLO_H
 
+#include "core/runtime_config.hh"
 #include <atomic>
 #include <cstdint>
 #include <cstdlib>
@@ -46,7 +47,7 @@ inline constexpr int kWalAppendFailSloIssue = 3056;
 // Consecutive-fail SLO. Default 3 (small conservative window).
 [[nodiscard]] inline std::uint64_t wal_append_fail_slo_consecutive() noexcept {
     static const std::uint64_t cached = []() noexcept -> std::uint64_t {
-        const char* e = std::getenv("AURA_WAL_APPEND_FAIL_SLO");
+        const char* e = ::aura::config::raw(::aura::config::Key::AURA_WAL_APPEND_FAIL_SLO);
         if (e == nullptr || e[0] == '\0')
             return 3;
         std::uint64_t v = 0;
@@ -62,7 +63,7 @@ inline constexpr int kWalAppendFailSloIssue = 3056;
 // Rate SLO in basis points. Default 500 = 5% (matches #2594).
 [[nodiscard]] inline std::uint64_t wal_append_fail_slo_bp() noexcept {
     static const std::uint64_t cached = []() noexcept -> std::uint64_t {
-        const char* e = std::getenv("AURA_WAL_APPEND_FAIL_SLO_BP");
+        const char* e = ::aura::config::raw(::aura::config::Key::AURA_WAL_APPEND_FAIL_SLO_BP);
         if (e == nullptr || e[0] == '\0')
             return 500;
         std::uint64_t v = 0;
@@ -325,8 +326,8 @@ inline constexpr int kSeWalForceWalEnableFailClosedIssue = 3965;
 // wal-append-fail-breach (#3056/#3211) and audit-durable-gap (#3375).
 inline constexpr int kWalForceWalEnableFailIssue = 4005;
 
-[[nodiscard]] inline bool wal_env_flag_truthy(const char* name) noexcept {
-    const char* e = std::getenv(name);
+[[nodiscard]] inline bool wal_env_flag_truthy(::aura::config::Key name) noexcept {
+    const char* e = ::aura::config::raw(name);
     if (e == nullptr || e[0] == '\0')
         return false;
     return std::strcmp(e, "1") == 0 || std::strcmp(e, "true") == 0 || std::strcmp(e, "on") == 0 ||
@@ -339,9 +340,9 @@ inline constexpr int kWalForceWalEnableFailIssue = 4005;
     // Soft / no production_defaults: fail-closed never active (AC1).
     if (aura_production_defaults_active_probe() == 0)
         return false;
-    if (wal_env_flag_truthy("AURA_WAL_APPEND_FAIL_OPEN"))
+    if (wal_env_flag_truthy(::aura::config::Key::AURA_WAL_APPEND_FAIL_OPEN))
         return false; // #3302 explicit opt-out
-    if (wal_env_flag_truthy("AURA_WAL_APPEND_FAIL_CLOSED"))
+    if (wal_env_flag_truthy(::aura::config::Key::AURA_WAL_APPEND_FAIL_CLOSED))
         return true; // #3109 explicit opt-in (AC4)
     // #3302: force_wal arm sets this process flag in security_defaults.
     return wal_fail_closed_defaulted_by_force_wal() != 0;
@@ -366,7 +367,7 @@ inline void note_wal_enable_failed() noexcept {
 // Issue #4005: loud posture + fail-closed admission unless FAIL_OPEN.
 inline void arm_force_wal_enable_fail() noexcept {
     note_wal_enable_failed();
-    if (!wal_env_flag_truthy("AURA_WAL_APPEND_FAIL_OPEN"))
+    if (!wal_env_flag_truthy(::aura::config::Key::AURA_WAL_APPEND_FAIL_OPEN))
         set_force_wal_enable_failed(true);
 }
 
@@ -385,8 +386,9 @@ inline constexpr int kWalMidLookupWindowIssue = 3338;
 inline constexpr std::uint32_t kWalMidLookupSegmentsSoft = 2;
 inline constexpr std::uint32_t kWalMidLookupSegmentsProduction = 8;
 
-[[nodiscard]] inline std::uint32_t wal_env_u32(const char* name, std::uint32_t fallback) noexcept {
-    const char* e = std::getenv(name);
+[[nodiscard]] inline std::uint32_t wal_env_u32(::aura::config::Key name,
+                                               std::uint32_t fallback) noexcept {
+    const char* e = ::aura::config::raw(name);
     if (e == nullptr || e[0] == '\0')
         return fallback;
     std::uint64_t v = 0;
@@ -403,7 +405,7 @@ inline constexpr std::uint32_t kWalMidLookupSegmentsProduction = 8;
 }
 
 [[nodiscard]] inline std::uint32_t wal_mid_lookup_segments() noexcept {
-    const auto env = wal_env_u32("AURA_WAL_MID_LOOKUP_SEGMENTS", 0);
+    const auto env = wal_env_u32(::aura::config::Key::AURA_WAL_MID_LOOKUP_SEGMENTS, 0);
     if (env > 0)
         return env;
     return aura_production_defaults_active_probe() != 0 ? kWalMidLookupSegmentsProduction
@@ -425,7 +427,7 @@ inline constexpr std::uint32_t kWalDefaultMaxSegments = 16;
 // Default kWalDefaultMaxSegments (#4520; was 0 = no prune); env
 // AURA_WAL_MAX_SEGMENTS overrides (sizing) or opts out (=0).
 [[nodiscard]] inline std::uint32_t wal_max_segments_retention() noexcept {
-    return wal_env_u32("AURA_WAL_MAX_SEGMENTS", kWalDefaultMaxSegments);
+    return wal_env_u32(::aura::config::Key::AURA_WAL_MAX_SEGMENTS, kWalDefaultMaxSegments);
 }
 
 // Issue #3970: production/Full explicit-mid continuation past the cheap

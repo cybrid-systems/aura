@@ -5,6 +5,7 @@
 // NOT a C++ module — uses traditional header to avoid C++ module
 // recursive type issues.
 //
+#include "core/runtime_config.hh"
 #include "shape_profiler.h"
 #include "shape_jit_pass_closedloop_stats.h"
 #include "value_tags.h"
@@ -28,7 +29,7 @@ extern "C" __attribute__((weak)) int aura_get_storm_isolation_mode(void) noexcep
     // HighMutation preset no longer cross-invalidate via process-global
     // shape_version bump. Env override AURA_SHAPE_STORM_ISOLATION=global
     // restores the legacy process-global bump for experiments / soak tests.
-    if (const char* e = std::getenv("AURA_SHAPE_STORM_ISOLATION")) {
+    if (const char* e = ::aura::config::raw(::aura::config::Key::AURA_SHAPE_STORM_ISOLATION)) {
         if (e[0] == 'g' || e[0] == 'G')
             return 0; // StormIsolation::Global (legacy)
     }
@@ -322,7 +323,7 @@ ShapeProfiler::ShapeProfiler() {
     // window/threshold knobs actually take effect without env.
     if (shape_high_mutation_default_enabled())
         apply_preset(kHighMutationPreset);
-    if (const char* e = std::getenv("AURA_SHAPE_TLS_MERGE"))
+    if (const char* e = ::aura::config::raw(::aura::config::Key::AURA_SHAPE_TLS_MERGE))
         tls_merge_enabled_ = e[0] != '0';
 }
 
@@ -442,7 +443,7 @@ void ShapeProfiler::apply_preset(Preset p) {
     // compact-dominated + stable). AURA_SHAPE_STORM_ADAPTIVE_BOOST=0
     // disables raise; N sets explicit boost.
     std::uint32_t boost = p.deopt_storm_threshold;
-    if (const char* e = std::getenv("AURA_SHAPE_STORM_ADAPTIVE_BOOST")) {
+    if (const char* e = ::aura::config::raw(::aura::config::Key::AURA_SHAPE_STORM_ADAPTIVE_BOOST)) {
         if (e[0] == '0' && e[1] == '\0')
             boost = 0;
         else {

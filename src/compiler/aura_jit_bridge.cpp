@@ -7,6 +7,7 @@
 // pipeline: host-wired LLVM emit callback + process-stable name→func_id
 // map across mutation epochs (see docs/hot-update.md).
 
+#include "core/runtime_config.hh"
 #include "compiler/ffi_addr.hh" // #4936 named JIT/FFI addresses
 #include "aura_jit.h"
 #include "core/atomic_fence_port.h"
@@ -552,11 +553,11 @@ extern "C" std::uint64_t aura_long_mutation_scheduler_hook_calls_total(void) {
 // being removed. Agent can then inspect with llvm-objdump /
 // llvm-dis to diagnose the actual failure. #5213: not a fixed /tmp name.
 extern "C" int aura_reemit_keep_fail_enabled(void) {
-    if (const char* e = std::getenv("AURA_REEMIT_KEEP_FAIL")) {
+    if (const char* e = ::aura::config::raw(::aura::config::Key::AURA_REEMIT_KEEP_FAIL)) {
         if (e[0] == '1' || e[0] == 't' || e[0] == 'T' || e[0] == 'y' || e[0] == 'Y')
             return 1;
     }
-    if (const char* n = std::getenv("AURA_REEMIT_KEEP_FAIL_N")) {
+    if (const char* n = ::aura::config::raw(::aura::config::Key::AURA_REEMIT_KEEP_FAIL_N)) {
         if (n[0] != '\0' && n[0] != '0')
             return 1;
     }
@@ -695,7 +696,8 @@ static void aot_seed_force_env_linear_suffix_from_env() {
     if (!g_aot_force_env_linear_suffix_env_seeded.compare_exchange_strong(
             expected, true, std::memory_order_acq_rel))
         return;
-    if (const char* e = ::getenv("AURA_AOT_FORCE_ENV_LINEAR_SUFFIX")) {
+    if (const char* e =
+            ::aura::config::raw(::aura::config::Key::AURA_AOT_FORCE_ENV_LINEAR_SUFFIX)) {
         const bool on = (e[0] == '1' || e[0] == 't' || e[0] == 'T' || e[0] == 'y' || e[0] == 'Y' ||
                          e[0] == 'o' || e[0] == 'O');
         aura::compiler::aot_set_force_env_linear_suffix(on);
@@ -2129,7 +2131,7 @@ extern "C" void aura_bump_cross_eval_sid_owner_mismatch_total() {
 // production (mirrors other AOT hard prefs).
 [[nodiscard]] static bool aot_hard_pref() noexcept {
     static const bool hard = []() noexcept -> bool {
-        if (const char* e = std::getenv("AURA_AOT_CROSS_EVAL_SID_HARD"))
+        if (const char* e = ::aura::config::raw(::aura::config::Key::AURA_AOT_CROSS_EVAL_SID_HARD))
             return e[0] != '0';
         return true;
     }();
@@ -2283,7 +2285,8 @@ extern "C" bool aura_is_jit_closure_fresh(std::uint64_t captured_bridge_epoch,
     const std::uint64_t cur_defuse = g_aot_defuse_version;
 
     static const bool legacy_trust = []() noexcept {
-        if (const char* e = std::getenv("AURA_BRIDGE_EPOCH_LEGACY_TRUST"))
+        if (const char* e =
+                ::aura::config::raw(::aura::config::Key::AURA_BRIDGE_EPOCH_LEGACY_TRUST))
             return e[0] != '0' && e[0] != '\0';
         return false;
     }();
@@ -2529,7 +2532,8 @@ namespace {
     // Issue #2841 AC4 / #2744: Soft / sandbox=off → only when env
     // explicitly armed. Production multi-eval cascade default = on
     // (owner-scoped; no peer force-stale of joint table epoch).
-    if (const char* e = std::getenv("AURA_CROSS_EVAL_EPOCH_THROTTLE"); e && *e) {
+    if (const char* e = ::aura::config::raw(::aura::config::Key::AURA_CROSS_EVAL_EPOCH_THROTTLE);
+        e && *e) {
         if (e[0] == '1' || e[0] == 't' || e[0] == 'T' || e[0] == 'y' || e[0] == 'Y')
             return true;
         if (e[0] == '0' || e[0] == 'f' || e[0] == 'F' || e[0] == 'n' || e[0] == 'N')
@@ -2543,13 +2547,14 @@ namespace {
 // #2841 Soft ergonomics). Env AURA_CROSS_EVAL_HARD_OWNER_SCOPED=0/1
 // overrides. When true, invalidate_function does not note force-bump.
 [[nodiscard]] bool cross_eval_hard_owner_scoped_armed() noexcept {
-    if (const char* e = std::getenv("AURA_CROSS_EVAL_HARD_OWNER_SCOPED"); e && *e) {
+    if (const char* e = ::aura::config::raw(::aura::config::Key::AURA_CROSS_EVAL_HARD_OWNER_SCOPED);
+        e && *e) {
         if (e[0] == '1' || e[0] == 't' || e[0] == 'T' || e[0] == 'y' || e[0] == 'Y')
             return true;
         if (e[0] == '0' || e[0] == 'f' || e[0] == 'F' || e[0] == 'n' || e[0] == 'N')
             return false;
     }
-    const char* sb = std::getenv("AURA_SANDBOX");
+    const char* sb = ::aura::config::raw(::aura::config::Key::AURA_SANDBOX);
     if (sb != nullptr && sb[0] != '\0' && std::strcmp(sb, "off") == 0)
         return false;
     return aura::compiler::typed_audit::production_defaults_active();
@@ -3737,7 +3742,7 @@ aura_jit_osr_fn g_osr_host = nullptr;
 // decline path; AURA_JIT_OSR=0 disables the escape entirely.
 int osr_enabled_env() noexcept {
     static const int on = [] {
-        const char* v = std::getenv("AURA_JIT_OSR");
+        const char* v = ::aura::config::raw(::aura::config::Key::AURA_JIT_OSR);
         return !(v && v[0] == '0');
     }();
     return on;
@@ -4153,7 +4158,7 @@ extern "C" int aura_aot_reload_auto_retry_enabled(void) {
     const int pref = g_aot_reload_auto_retry_pref.load(std::memory_order_acquire);
     if (pref == 0 || pref == 1)
         return pref;
-    if (const char* e = std::getenv("AURA_AOT_RELOAD_AUTO_RETRY")) {
+    if (const char* e = ::aura::config::raw(::aura::config::Key::AURA_AOT_RELOAD_AUTO_RETRY)) {
         if (e[0] == '0')
             return 0;
         if (e[0] == '1')
@@ -6072,7 +6077,7 @@ static bool generate_registration_c(const aura::jit::FlatFunction* functions,
 // error instead of silently failing later in cc).
 static std::string find_runtime_c() {
     // (1) AURA_RUNTIME_DIR env override
-    if (auto* env = ::getenv("AURA_RUNTIME_DIR")) {
+    if (auto* env = ::aura::config::raw(::aura::config::Key::AURA_RUNTIME_DIR)) {
         std::string p = std::string(env) + "/runtime.c";
         if (::aura::core::open_file(p.c_str(), "r")) {
             return p;
@@ -6641,7 +6646,7 @@ static void aot_clear_slot_for_test_impl(std::int64_t func_id) {
 namespace {
 struct EpochInvariantEnvInit {
     EpochInvariantEnvInit() noexcept {
-        if (const char* e = std::getenv("AURA_EPOCH_INVARIANT")) {
+        if (const char* e = ::aura::config::raw(::aura::config::Key::AURA_EPOCH_INVARIANT)) {
             const std::string v(e);
             if (v == "hard")
                 aura_set_epoch_invariant_mode(2);
@@ -6756,7 +6761,8 @@ extern "C" void aura_reset_epoch_invariant_periodic_for_test(void) {
 namespace {
 struct EpochInvariantPeriodEnvInit {
     EpochInvariantPeriodEnvInit() noexcept {
-        if (const char* e = std::getenv("AURA_EPOCH_INVARIANT_PERIOD_MS")) {
+        if (const char* e =
+                ::aura::config::raw(::aura::config::Key::AURA_EPOCH_INVARIANT_PERIOD_MS)) {
             const long long v = std::atoll(e);
             if (v >= 0 && v <= 3600000) { // cap at 1h for sanity
                 g_epoch_invariant_periodic_period_ms.store(static_cast<std::uint64_t>(v),
@@ -6831,7 +6837,8 @@ extern "C" int aura_get_epoch_invariant_soft_fuse_k(void) {
 namespace {
 struct EpochInvariantSoftFuseKEnvInit {
     EpochInvariantSoftFuseKEnvInit() noexcept {
-        if (const char* e = std::getenv("AURA_EPOCH_INVARIANT_SOFT_FUSE_K")) {
+        if (const char* e =
+                ::aura::config::raw(::aura::config::Key::AURA_EPOCH_INVARIANT_SOFT_FUSE_K)) {
             const long long v = std::atoll(e);
             if (v >= 0 && v <= 1000) { // cap at 1000 for sanity
                 g_2693_soft_fuse_k.store(static_cast<int>(v), std::memory_order_relaxed);
@@ -7103,7 +7110,7 @@ extern "C" bool aura_emit_native_file(const char* source, const char* out_path,
         fprintf(stderr, "AOT: LLVM pipeline failed, falling back to shell wrapper\n");
         // Issue #62 Iter 2: structured JSON log of the AOT fallback
         // event (gated by AURA_OBS_LOG=1).
-        if (const char* e = std::getenv("AURA_OBS_LOG");
+        if (const char* e = ::aura::config::raw(::aura::config::Key::AURA_OBS_LOG);
             e && (e[0] == '1' || e[0] == 't' || e[0] == 'T')) {
             std::fprintf(stderr,
                          "{\"event\":\"aot_fallback\",\"fields\":{"

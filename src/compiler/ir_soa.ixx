@@ -74,6 +74,7 @@ module;
 
 #include "core/cpp26_contract_stats.h"
 
+#include "core/runtime_config.hh"
 export module aura.compiler.ir_soa;
 
 import std;
@@ -153,7 +154,7 @@ export [[nodiscard]] inline bool aos_bridge_allowed() noexcept {
 #else
     if (g_allow_aos_bridge_for_test().load(std::memory_order_acquire) != 0)
         return true;
-    const char* e = std::getenv("AURA_ALLOW_AOS_BRIDGE");
+    const char* e = ::aura::config::raw(::aura::config::Key::AURA_ALLOW_AOS_BRIDGE);
     return e != nullptr && e[0] == '1';
 #endif
 }
@@ -255,7 +256,7 @@ export [[nodiscard]] inline std::uint64_t ir_dirty_batch_only_production_smoke_w
 //   unset → production_defaults_active (Full pack default-on, #3201).
 // Quiet path never calls this (streak==1 / batch clears).
 export [[nodiscard]] inline bool ir_dirty_batch_only_hard() noexcept {
-    if (const char* e = std::getenv("AURA_IR_DIRTY_BATCH_ONLY")) {
+    if (const char* e = ::aura::config::raw(::aura::config::Key::AURA_IR_DIRTY_BATCH_ONLY)) {
         if (e[0] == '0')
             return false;
         if (e[0] == '1')

@@ -46,6 +46,7 @@
 #ifndef AURA_COMPILER_MUTATE_TYPE_GATE_HH
 #define AURA_COMPILER_MUTATE_TYPE_GATE_HH
 
+#include "core/runtime_config.hh"
 #include <cstdio>
 #include <atomic>
 #include <cstdint>
@@ -122,7 +123,7 @@ inline void bump_soft_in_production_alarm() noexcept {
 
 // Apply AURA_MUTATE_TYPE_GATE env when set; returns true if env applied.
 inline bool apply_env_override() noexcept {
-    const char* e = std::getenv("AURA_MUTATE_TYPE_GATE");
+    const char* e = ::aura::config::raw(::aura::config::Key::AURA_MUTATE_TYPE_GATE);
     if (!e || !*e)
         return false;
     std::string_view v(e);
@@ -139,7 +140,7 @@ inline bool apply_env_override() noexcept {
 
 // Read AURA_ALLOW_SOFT_TYPE_GATE; returns true if set to a truthy value.
 [[nodiscard]] inline bool read_allow_soft_override_env() noexcept {
-    const char* e = std::getenv("AURA_ALLOW_SOFT_TYPE_GATE");
+    const char* e = ::aura::config::raw(::aura::config::Key::AURA_ALLOW_SOFT_TYPE_GATE);
     if (!e || !*e)
         return false;
     std::string_view v(e);
@@ -148,7 +149,7 @@ inline bool apply_env_override() noexcept {
 
 // Read AURA_HARD_TYPE_GATE_ABORT; returns true if set to a truthy value.
 [[nodiscard]] inline bool read_hard_type_gate_abort_env() noexcept {
-    const char* e = std::getenv("AURA_HARD_TYPE_GATE_ABORT");
+    const char* e = ::aura::config::raw(::aura::config::Key::AURA_HARD_TYPE_GATE_ABORT);
     if (!e || !*e)
         return false;
     std::string_view v(e);

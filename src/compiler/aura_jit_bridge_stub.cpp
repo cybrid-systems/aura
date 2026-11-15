@@ -14,6 +14,7 @@
 // aura_jit_bridge.cpp can't be linked because it uses `import std;`
 // and is part of the aura compiler module.
 
+#include "core/runtime_config.hh"
 #include "aura_jit_bridge.h"
 #include "core/atomic_fence_port.h"
 #include "hot_update_registry.hh"
@@ -924,13 +925,14 @@ aura_cross_cow_last_hard_reject_reason(void) noexcept {
     return m ? m->cross_cow_last_hard_reject_reason.load(std::memory_order_relaxed) : 0;
 }
 extern "C" __attribute__((weak)) int aura_cross_cow_soft_migrate_enabled(void) noexcept {
-    if (const char* e = std::getenv("AURA_CROSS_COW_SOFT_MIGRATE"))
+    if (const char* e = ::aura::config::raw(::aura::config::Key::AURA_CROSS_COW_SOFT_MIGRATE))
         return (e[0] != '0' && e[0] != '\0') ? 1 : 0;
     return 1;
 }
 extern "C" __attribute__((weak)) std::uint64_t
 aura_cross_cow_soft_migrate_max_drift(void) noexcept {
-    if (const char* e = std::getenv("AURA_CROSS_COW_SOFT_MIGRATE_MAX_DRIFT")) {
+    if (const char* e =
+            ::aura::config::raw(::aura::config::Key::AURA_CROSS_COW_SOFT_MIGRATE_MAX_DRIFT)) {
         char* end = nullptr;
         const auto v = std::strtoull(e, &end, 10);
         if (end != e)

@@ -8,6 +8,7 @@
 #ifndef AURA_CORE_RESOURCE_QUOTA_HH
 #define AURA_CORE_RESOURCE_QUOTA_HH
 
+#include "core/runtime_config.hh"
 #include <array>
 #include <atomic>
 #include <cstdint>
@@ -79,13 +80,13 @@ inline void clear_quota_per_tenant_test_override() noexcept {
     if (cached >= 0)
         return cached != 0;
     // AC3: Soft / AURA_SANDBOX=off never arms the map.
-    const char* sandbox = std::getenv("AURA_SANDBOX");
+    const char* sandbox = ::aura::config::raw(::aura::config::Key::AURA_SANDBOX);
     if (sandbox && sandbox[0] != '\0' && std::string_view(sandbox) == "off") {
         g_quota_per_tenant_cached.store(0, std::memory_order_release);
         return false;
     }
-    auto env_on = [](const char* name) noexcept -> bool {
-        const char* v = std::getenv(name);
+    auto env_on = [](::aura::config::Key name) noexcept -> bool {
+        const char* v = ::aura::config::raw(name);
         if (!v || !*v)
             return false;
         const std::string_view sv(v);
@@ -94,7 +95,8 @@ inline void clear_quota_per_tenant_test_override() noexcept {
     // Explicit arm, or production multi-tenant profile (#3049 AC1).
     // Issue #3630: the #3630 autodetect arm (per-Evaluator principal
     // authority lighting set_multi_tenant_env_active) also arms the map.
-    const bool on = env_on("AURA_QUOTA_PER_TENANT") || env_on("AURA_MULTI_TENANT") ||
+    const bool on = env_on(::aura::config::Key::AURA_QUOTA_PER_TENANT) ||
+                    env_on(::aura::config::Key::AURA_MULTI_TENANT) ||
                     aura::core::provenance::multi_tenant_env_active();
     g_quota_per_tenant_cached.store(on ? 1 : 0, std::memory_order_release);
     return on;

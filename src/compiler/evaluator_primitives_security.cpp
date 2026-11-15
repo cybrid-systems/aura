@@ -32,6 +32,7 @@ module;
 #include "orch/security_schedule_gate.h" // #2590: g_orch_security_schedule_counters (query:security-schedule-gate)
 #include "core/moving_densify_health.hh" // #3114 densify-ok fold
 
+#include "core/runtime_config.hh"
 module aura.compiler.evaluator;
 
 import std;
@@ -369,7 +370,7 @@ static EvolutionAuditDecisionFace load_evolution_audit_memory_face(Ev& ev, const
         const auto mut = snapshot_audit_wal_stats();
         const auto se = snapshot_security_event_wal_stats();
         const bool prod = production_defaults_active();
-        const char* sb = std::getenv("AURA_SANDBOX");
+        const char* sb = ::aura::config::raw(::aura::config::Key::AURA_SANDBOX);
         const bool sandbox_off = sb && sb[0] && (sb[0] == 'o' || sb[0] == 'O') &&
                                  (sb[1] == 'f' || sb[1] == 'F' || sb[1] == '\0');
         const auto d = evaluate_wal_append_fail_slo(make_wal_append_fail_slo_input(
@@ -1163,7 +1164,7 @@ void register_query_audit_mid_fallback_slo(PrimRegistrar add, Evaluator& ev) {
             // Soft mode = !production_defaults OR AURA_SANDBOX=off
             // (mirrors #2590 soft_mode definition; test-only override
             // AURA_SANDBOX=off keeps the gate observe-only).
-            const char* sb = std::getenv("AURA_SANDBOX");
+            const char* sb = ::aura::config::raw(::aura::config::Key::AURA_SANDBOX);
             const bool sandbox_off = sb && sb[0] && (sb[0] == 'o' || sb[0] == 'O') &&
                                      (sb[1] == 'f' || sb[1] == 'F' || sb[1] == '\0');
             in.soft_mode = !in.production_defaults || sandbox_off;
@@ -2120,7 +2121,7 @@ void register_security_set_tenant_principal(PrimRegistrar add, Evaluator& ev) {
     ObservabilityPrims::register_stats_impl(
         "query:deployment-stats", [&ev](const auto&) -> EvalValue {
             const int http_port = aura::serve::http::port_from_env();
-            const char* runtime_dir = std::getenv("AURA_RUNTIME_DIR");
+            const char* runtime_dir = ::aura::config::raw(::aura::config::Key::AURA_RUNTIME_DIR);
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
                 auto* ht = FlatHashTable::create(query_hash_capacity_for(11));
@@ -5441,7 +5442,7 @@ void register_query_audit_wal_stats(PrimRegistrar add, Evaluator& ev) {
                 using ::aura::core::wal_slo::kWalAppendFailSloIssue;
                 using ::aura::core::wal_slo::make_wal_append_fail_slo_input;
                 const auto se = snapshot_security_event_wal_stats();
-                const char* sb = std::getenv("AURA_SANDBOX");
+                const char* sb = ::aura::config::raw(::aura::config::Key::AURA_SANDBOX);
                 const bool sandbox_off = sb && sb[0] && (sb[0] == 'o' || sb[0] == 'O') &&
                                          (sb[1] == 'f' || sb[1] == 'F' || sb[1] == '\0');
                 const bool prod = production_defaults_active();
@@ -6434,7 +6435,7 @@ static void publish_security_posture_wal_gate(Evaluator& ev, const Cap& cap, con
         using ::aura::core::wal_slo::make_wal_append_fail_slo_input;
         const auto mut = snapshot_audit_wal_stats();
         const auto se = snapshot_security_event_wal_stats();
-        const char* sb = std::getenv("AURA_SANDBOX");
+        const char* sb = ::aura::config::raw(::aura::config::Key::AURA_SANDBOX);
         const bool sandbox_off = sb && sb[0] && (sb[0] == 'o' || sb[0] == 'O') &&
                                  (sb[1] == 'f' || sb[1] == 'F' || sb[1] == '\0');
         const bool prod = production_defaults_active();
@@ -6579,7 +6580,7 @@ static void publish_security_posture_durability(Evaluator& ev, const Cap& cap, c
                   static_cast<std::int64_t>(wal_snap.replay_truncated));
         insert_kv("schema-4660", 4660);
         insert_kv("issue-4660", 4660);
-        const char* sb = std::getenv("AURA_SANDBOX");
+        const char* sb = ::aura::config::raw(::aura::config::Key::AURA_SANDBOX);
         const bool sandbox_off = sb && sb[0] && (sb[0] == 'o' || sb[0] == 'O') &&
                                  (sb[1] == 'f' || sb[1] == 'F' || sb[1] == '\0');
         const bool prod = production_defaults_active();

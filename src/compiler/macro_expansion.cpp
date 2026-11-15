@@ -19,6 +19,7 @@ module;
 #include "core/ownership.hh"            // Issue #4936: NoCopy
 #include "compiler/hygiene_builtins.hh" // Issue #4936 B4: constexpr reserved names
 
+#include "core/runtime_config.hh"
 module aura.compiler.macro_expansion;
 
 import std;
@@ -214,7 +215,7 @@ namespace detail {
     // advance; set AURA_VERBOSE=1 for operator diagnostics.
     [[nodiscard]] inline bool macro_self_evo_verbose() noexcept {
         static const bool on = [] {
-            const char* e = std::getenv("AURA_VERBOSE");
+            const char* e = ::aura::config::raw(::aura::config::Key::AURA_VERBOSE);
             return e != nullptr && e[0] != '\0' && e[0] != '0';
         }();
         return on;
@@ -378,13 +379,13 @@ static void ensure_runtime_caps_env_loaded() noexcept {
     if (!g_runtime_caps_env_loaded.compare_exchange_strong(expected, true,
                                                            std::memory_order_acq_rel))
         return;
-    if (const char* env = std::getenv("AURA_MACRO_HYGIENE_DEPTH_CAP")) {
+    if (const char* env = ::aura::config::raw(::aura::config::Key::AURA_MACRO_HYGIENE_DEPTH_CAP)) {
         char* end = nullptr;
         long v = std::strtol(env, &end, 10);
         if (end != env && v >= 1 && v <= MAX_HYGIENE_DEPTH)
             g_runtime_hygiene_depth_cap.store(static_cast<int>(v), std::memory_order_relaxed);
     }
-    if (const char* env = std::getenv("AURA_MACRO_HYGIENE_PASS_CAP")) {
+    if (const char* env = ::aura::config::raw(::aura::config::Key::AURA_MACRO_HYGIENE_PASS_CAP)) {
         char* end = nullptr;
         long v = std::strtol(env, &end, 10);
         if (end != env && v >= 0 && v <= 1'000'000)

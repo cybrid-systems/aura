@@ -20,6 +20,7 @@ module;
 #include "compiler/chunk_io.hh"             // #4936 std::array file chunks
 #include "compiler/form_split.hh"           // #5239: single form splitter
 
+#include "core/runtime_config.hh"
 module aura.compiler.evaluator;
 
 import std;
@@ -1448,7 +1449,8 @@ void RegSplitParts::register_eval_current_primitive(PrimRegistrar add, Evaluator
     // the suite is green both ways).
     static auto eval_current_jit_incremental_6a = []() -> bool {
         static const bool on = [] {
-            const char* e = std::getenv("AURA_EVAL_CURRENT_JIT_INCREMENTAL");
+            const char* e =
+                ::aura::config::raw(::aura::config::Key::AURA_EVAL_CURRENT_JIT_INCREMENTAL);
             return e && e[0] == '1';
         }();
         return on;

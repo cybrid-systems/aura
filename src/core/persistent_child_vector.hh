@@ -82,6 +82,7 @@
 #ifndef AURA_CORE_PERSISTENT_CHILD_VECTOR_HH
 #define AURA_CORE_PERSISTENT_CHILD_VECTOR_HH
 
+#include "core/runtime_config.hh"
 #include <algorithm>
 #include <atomic>
 #include "core/fiber_context.hh" // Issue #4716: fiber-local execution context
@@ -266,7 +267,7 @@ inline constexpr std::uint32_t kPcvSpanNoOwner = std::numeric_limits<std::uint32
 // Cross-fiber steal: non-owner thread deletes, does not recycle (AC3).
 [[nodiscard]] inline bool pcv_tls_scratch_enabled() noexcept {
     static const bool on = [] {
-        if (const char* e = std::getenv("AURA_PCV_TLS")) {
+        if (const char* e = ::aura::config::raw(::aura::config::Key::AURA_PCV_TLS)) {
             if (e[0] == '\0')
                 return true; // empty → production default
             if (e[0] == '0' || e[0] == 'f' || e[0] == 'F' || e[0] == 'n' || e[0] == 'N')

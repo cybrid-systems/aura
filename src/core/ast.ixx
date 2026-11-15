@@ -38,6 +38,7 @@ module;
 #include <contracts>
 #include <shared_mutex>
 
+#include "core/runtime_config.hh"
 export module aura.core.ast;
 import std;
 import aura.core.consts; // module-owned numeric constants (#901/#905)
@@ -3347,7 +3348,7 @@ public:
         }
         std::sort(out.begin(), out.end());
         static const bool check = [] {
-            const char* e = std::getenv("AURA_DEFINE_INDEX_CHECK");
+            const char* e = ::aura::config::raw(::aura::config::Key::AURA_DEFINE_INDEX_CHECK);
             return e && e[0] == '1';
         }();
         if (check) {

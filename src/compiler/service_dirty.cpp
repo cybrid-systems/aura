@@ -37,6 +37,7 @@ module;
 #include <utility>
 #include <vector>
 
+#include "core/runtime_config.hh"
 module aura.compiler.service;
 
 import std;
@@ -1929,7 +1930,8 @@ void CompilerService::invalidate_function(const std::string& name) {
             const auto insts = metrics_.soa_instructions_visited.load(std::memory_order_relaxed);
             const auto dens = (emitted * 10000ULL) / std::max<std::uint64_t>(1ULL, insts);
             std::uint64_t budget = 1500ULL;
-            if (const char* env = std::getenv("AURA_CASTOP_DENSITY_BUDGET_BP")) {
+            if (const char* env =
+                    ::aura::config::raw(::aura::config::Key::AURA_CASTOP_DENSITY_BUDGET_BP)) {
                 char* end = nullptr;
                 const unsigned long val = std::strtoull(env, &end, 10);
                 if (end != env && val > 0)

@@ -74,6 +74,7 @@ module;
 #include "ir_cache_boundary_restamp.hh" // Issue #4377: boundary-exit defuse restamp
 #include "jit_assumptions.hh"           // Issue #4569: assumption-based JIT invalidation
 
+#include "core/runtime_config.hh"
 export module aura.compiler.service;
 import std;
 import aura.core.consts; // module-owned numeric constants (#901/#905)
@@ -6319,14 +6320,14 @@ public:
     static bool tier_jit_enabled_4682_() noexcept {
         static const bool on = [] {
             // Default-on (#4679); AURA_TIER_JIT=0 opts out.
-            const char* e = std::getenv("AURA_TIER_JIT");
+            const char* e = ::aura::config::raw(::aura::config::Key::AURA_TIER_JIT);
             return !(e && e[0] == '0');
         }();
         return on;
     }
     static std::uint64_t tier_jit_hot_4682_() noexcept {
         static const std::uint64_t n = [] {
-            const char* e = std::getenv("AURA_TIER_JIT_HOT");
+            const char* e = ::aura::config::raw(::aura::config::Key::AURA_TIER_JIT_HOT);
             if (!e || !e[0])
                 return std::uint64_t{2};
             const long long v = std::atoll(e);
@@ -6338,14 +6339,14 @@ public:
         // AURA_TIER_JIT_SYNC=1: wait for the worker right after queueing
         // (deterministic tests; the compile still runs on the worker thread).
         static const bool on = [] {
-            const char* e = std::getenv("AURA_TIER_JIT_SYNC");
+            const char* e = ::aura::config::raw(::aura::config::Key::AURA_TIER_JIT_SYNC);
             return e && e[0] == '1';
         }();
         return on;
     }
     static bool tier_jit_trace_4682_() noexcept {
         static const bool on = [] {
-            const char* e = std::getenv("AURA_TIER_JIT_TRACE");
+            const char* e = ::aura::config::raw(::aura::config::Key::AURA_TIER_JIT_TRACE);
             return e && e[0] == '1';
         }();
         return on;
@@ -6386,7 +6387,7 @@ public:
     // AURA_DEFINE_LOOKUP_INDEX=0 restores the per-name O(N) scan.
     static bool define_lookup_enabled_4681_() noexcept {
         static const bool on = [] {
-            const char* e = std::getenv("AURA_DEFINE_LOOKUP_INDEX");
+            const char* e = ::aura::config::raw(::aura::config::Key::AURA_DEFINE_LOOKUP_INDEX);
             return !(e && e[0] == '0');
         }();
         return on;
@@ -6480,7 +6481,7 @@ public:
     static bool call_slots_enabled_4681_() noexcept {
         static const bool on = [] {
             // Default on since the #4681 flip; AURA_CALL_SLOTS=0 opts out.
-            const char* e = std::getenv("AURA_CALL_SLOTS");
+            const char* e = ::aura::config::raw(::aura::config::Key::AURA_CALL_SLOTS);
             return !(e && e[0] == '0');
         }();
         return on;
@@ -11756,7 +11757,7 @@ public:
 
     static bool jit_reuse_lowering_enabled() {
         static const bool on = [] {
-            const char* v = std::getenv("AURA_JIT_REUSE_LOWERING");
+            const char* v = ::aura::config::raw(::aura::config::Key::AURA_JIT_REUSE_LOWERING);
             return !(v && v[0] == '0');
         }();
         return on;

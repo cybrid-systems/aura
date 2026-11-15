@@ -32,6 +32,7 @@
 // an audit trail like the security WAL, not a program file write.
 #pragma once
 
+#include "core/runtime_config.hh"
 #include "compiler/json_escape.hh" // #5234: shared RFC 8259 escaper
 #include "core/ownership.hh"       // #4936 unique_file
 
@@ -72,7 +73,7 @@ inline std::atomic<int>& log_flag() noexcept {
 }
 
 inline std::string default_run_id() {
-    if (const char* r = std::getenv("AURA_EVO_RUN"); r && *r)
+    if (const char* r = ::aura::config::raw(::aura::config::Key::AURA_EVO_RUN); r && *r)
         return r;
     const std::time_t t = std::time(nullptr);
     std::tm tm{};
@@ -89,7 +90,7 @@ inline bool log_enabled() noexcept {
     std::scoped_lock lk(s.mu);
     f = log_flag().load(std::memory_order_relaxed);
     if (f < 0) {
-        const char* p = std::getenv("AURA_EVO_LOG");
+        const char* p = ::aura::config::raw(::aura::config::Key::AURA_EVO_LOG);
         s.path = (p && *p) ? p : "";
         if (!s.path.empty())
             s.run = default_run_id();

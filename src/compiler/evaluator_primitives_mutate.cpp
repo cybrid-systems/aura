@@ -30,6 +30,7 @@ module;
 #include "compiler/evo_log_4910.hh"        // Issue #4910: evolution log (worldline)
 #include "compiler/aura_snapshot_abi.hh"   // Issue #5237: single-source C ABI snapshots
 
+#include "core/runtime_config.hh"
 module aura.compiler.evaluator;
 
 import std;
@@ -12195,7 +12196,7 @@ void Evaluator::clear_cascade_bfs_invalidate() noexcept {
 // Define/closure). AURA_MUTATE_INVALIDATE_COARSE=1 is the coarse fallback
 // (mark_define_dirty only — no enqueue_cascade_bfs_invalidate).
 [[nodiscard]] static bool mutate_invalidate_precise_enabled() noexcept {
-    const char* e = std::getenv("AURA_MUTATE_INVALIDATE_COARSE");
+    const char* e = ::aura::config::raw(::aura::config::Key::AURA_MUTATE_INVALIDATE_COARSE);
     if (e && e[0] == '1')
         return false;
     return true;
@@ -12335,7 +12336,7 @@ void Evaluator::push_post_mutate_incremental_cascade(std::uint64_t mutation_log_
         std::unordered_map<aura::ast::SymId, std::vector<aura::ast::NodeId>> define_by_sym;
         // #4680: seed from the Define tag index (AURA_DEFINE_TAG_INDEX=0: scan).
         static const bool use_tag_index = [] {
-            const char* e = std::getenv("AURA_DEFINE_TAG_INDEX");
+            const char* e = ::aura::config::raw(::aura::config::Key::AURA_DEFINE_TAG_INDEX);
             return !(e && e[0] == '0');
         }();
         define_by_sym.reserve(std::max<std::size_t>(16, flat.size() / 8));

@@ -29,6 +29,7 @@ module;
 #include "hash_meta.h"            // #5190: live hash slots while sealing a table
 #include "runtime_shared.h"       // #5190: g_hash_tables + local-hash reachability C ABI
 
+#include "core/runtime_config.hh"
 module aura.compiler.evaluator;
 
 import std;
@@ -1391,7 +1392,7 @@ namespace {
 
 void Evaluator::apply_production_security_defaults_for_test() noexcept {
     auto& snap = security_pref_snap_4438();
-    const char* sb = std::getenv("AURA_SANDBOX");
+    const char* sb = ::aura::config::raw(::aura::config::Key::AURA_SANDBOX);
     const bool dev_off = sb != nullptr && std::string_view(sb) == "off";
     if (!dev_off && !snap.valid) {
         snap.moving = aura::ast::g_moving_untracked_hard_abort_pref.load(std::memory_order_relaxed);
@@ -1999,7 +2000,7 @@ void Evaluator::grant_effect_durable_sticky(std::uint64_t tenant_id, std::string
             // under production (Restricted/Strict). Deny otherwise with the
             // same deny counter + a dedicated SE reason so dashboards can
             // distinguish sticky-needs-env from sticky-granted-with-env.
-            const char* env = std::getenv("AURA_ALLOW_DURABLE_STICKY");
+            const char* env = ::aura::config::raw(::aura::config::Key::AURA_ALLOW_DURABLE_STICKY);
             const bool env_ok = env != nullptr && env[0] == '1';
             if (!env_ok) {
                 g_capability_effect_metrics().capability_durable_grant_deny_total.fetch_add(

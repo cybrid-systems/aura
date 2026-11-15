@@ -23,6 +23,7 @@
 #ifndef AURA_COMPILER_OBSERVABILITY_LOGGER_H
 #define AURA_COMPILER_OBSERVABILITY_LOGGER_H
 
+#include "core/runtime_config.hh"
 #include <cstdio>
 #include <cstdlib>
 #include <string>
@@ -37,7 +38,7 @@ namespace aura::compiler {
 inline void log_event_deopt(const char* fn, std::uint32_t expected_shape,
                             std::uint32_t actual_shape, std::uint32_t generic_block) {
     static const bool enabled = []() {
-        const char* e = std::getenv("AURA_OBS_LOG");
+        const char* e = ::aura::config::raw(::aura::config::Key::AURA_OBS_LOG);
         return e && (e[0] == '1' || e[0] == 't' || e[0] == 'T');
     }();
     if (!enabled)

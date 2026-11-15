@@ -15,6 +15,7 @@
 #ifndef AURA_CORE_MOVING_DENSIFY_HEALTH_HH
 #define AURA_CORE_MOVING_DENSIFY_HEALTH_HH
 
+#include "core/runtime_config.hh"
 #include "core/arena_auto_policy_stats.h"
 
 #include <atomic>
@@ -205,7 +206,7 @@ struct MovingDensifyHealthSnapshot {
 // Env / pref for Moving compact on (arena.ixx also has moving_compact_enabled;
 // we duplicate a soft probe via env to avoid module import from this header).
 [[nodiscard]] inline bool moving_compact_enabled_probe() noexcept {
-    const char* e = std::getenv("AURA_ARENA_MOVING_COMPACT");
+    const char* e = ::aura::config::raw(::aura::config::Key::AURA_ARENA_MOVING_COMPACT);
     if (e != nullptr) {
         if (e[0] == '0')
             return false;

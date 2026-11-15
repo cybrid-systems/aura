@@ -24,6 +24,7 @@
 #ifndef AURA_COMPILER_TYPE_SYSTEM_HEALTH_HH
 #define AURA_COMPILER_TYPE_SYSTEM_HEALTH_HH
 
+#include "core/runtime_config.hh"
 #include "compiler/observability_metrics.h"
 #include "basis_points.h"
 
@@ -181,7 +182,7 @@ decide_type_system_next_action(const TypeSystemNextActionInput& in) noexcept {
 
 // Default budget 8000 bp (80%). Override: AURA_TYPE_SYSTEM_HEALTH_BUDGET_BP.
 [[nodiscard]] inline std::uint64_t type_system_health_budget_bp() noexcept {
-    const char* e = std::getenv("AURA_TYPE_SYSTEM_HEALTH_BUDGET_BP");
+    const char* e = ::aura::config::raw(::aura::config::Key::AURA_TYPE_SYSTEM_HEALTH_BUDGET_BP);
     if (e == nullptr || e[0] == '\0')
         return 8000;
     std::uint64_t v = 0;
