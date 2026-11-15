@@ -57,7 +57,13 @@ def main() -> int:
         "load_module_file(ev.string_heap_[" not in mod,
         "AC3: no bare string_heap_ into load_module_file",
     )
-    must("push_string_heap" in mod, "AC3: error strings via locked push")
+    # #5241: the import failure value is created with its kind through
+    # make_typed_error, which mints the cause on the same locked heap as
+    # push_string_heap. Either creation path satisfies "no bare push".
+    must(
+        "push_string_heap" in mod or "make_typed_error" in mod,
+        "AC3: error strings via locked push",
+    )
 
     must("test_module_path_refuse" in cmake, "AC4: cmake")
     must("check_module_path_refuse_2653" in wired_text, "AC4: linter")
