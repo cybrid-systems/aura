@@ -357,4 +357,130 @@ namespace aura::compiler {
     return file_mode_statement_error_4899(std::move(result), *flat_ptr, expanded_root);
 }
 
+bool CompilerService::specialize_one_lambda_via_ir(const std::string& name) {
+    IrCacheGate ir_gate(ir_cache_gate_); // #4717 shared IR/closure cache
+    auto src_it = function_sources_.find(name);
+    if (src_it == function_sources_.end() || src_it->second.empty())
+        return false;
+    const std::string source = src_it->second;
+    // Issue #4583: this parse dies with the function. arena_ is
+    // monotonic, so one FlatAST per mutate:rebind never returned.
+    std::pmr::monotonic_buffer_resource scratch;
+    const auto alloc = std::pmr::polymorphic_allocator<std::byte>{&scratch};
+    aura::ast::StringPool pool(alloc);
+    aura::ast::FlatAST flat(alloc);
+    auto pr = aura::parser::parse_to_flat(source, flat, pool);
+    if (!pr.success || pr.root == aura::ast::NULL_NODE)
+        return false;
+    flat.root = pr.root;
+    // Issue #4621: a define with a rest parameter keeps the tree-walker
+    // closure eval-current bound. The IR closure binds the rest slot
+    // to the argument as-is (not as a pair list), so specialising it
+    // silently changed the define's arity. The tree walker binds the
+    // rest as a pair list - the same semantics a file define has.
+    if (define_body_has_rest_param_4621(flat, pr.root))
+        return false;
+    // Issue #4618: a body whose set! targets a non-local cannot be
+    // lowered to IR - lowering_impl.cpp's Set has no store for a
+    // top-level cell and returns the value with the store dropped.
+    // cache_define refuses such a body (#3927); this pass re-lowered it
+    // and rebound the define to the IR closure, so a set! of a
+    // workspace or host global was a silent no-op after
+    // (eval-current). Keep the tree-walker closure eval-current bound,
+    // the same refusal shape #4372 uses for a lambda-form while.
+    if (define_body_sets_nonlocal_4618(flat, pool, pr.root, name))
+        return false;
+    // Issue #4372: lambda-form while applies its closures from the
+    // primitive. Those ids are not this define's IR closure, so the
+    // bridge never observes set! of the let cell and the call returns
+    // the value from before the loop. Leave the tree-walker closure
+    // that eval-current just bound.
+    struct LambdaWhile {
+        const aura::ast::FlatAST& f;
+        const aura::ast::StringPool& p;
+        bool hit = false;
+        void walk(aura::ast::NodeId id) {
+            if (hit || id == aura::ast::NULL_NODE || id >= f.size() || f.is_free_slot(id))
+                return;
+            auto nv = f.get(id);
+            if (nv.tag == aura::ast::NodeTag::Quote)
+                return;
+            if (nv.tag == aura::ast::NodeTag::Call && nv.children.size() >= 3) {
+                auto callee_id = nv.child(0);
+                if (callee_id < f.size()) {
+                    auto cal = f.get(callee_id);
+                    if (cal.tag == aura::ast::NodeTag::Variable &&
+                        p.resolve(cal.sym_id) == "while") {
+                        const bool arm1 = nv.child(1) < f.size() &&
+                                          f.get(nv.child(1)).tag == aura::ast::NodeTag::Lambda;
+                        const bool arm2 = nv.child(2) < f.size() &&
+                                          f.get(nv.child(2)).tag == aura::ast::NodeTag::Lambda;
+                        if (arm1 || arm2)
+                            hit = true;
+                    }
+                }
+            }
+            if (hit)
+                return;
+            for (auto c : nv.children)
+                walk(c);
+        }
+    } lambda_while{flat, pool};
+    lambda_while.walk(pr.root);
+    if (lambda_while.hit)
+        return false;
+    // Issue #4587: a free name the lowerer cannot resolve becomes
+    // ConstI64 0, and an Add of that 0 hides the unbound error.
+    // Host cells and cached callees are real loads. Anything else
+    // stays on the tree walker, which reports unbound. Checked
+    // before the erase so a refused define keeps its TW cell.
+    if (workspace_lambda_free_name_unresolved(flat, pool, pr.root, name))
+        return false;
+    // Value-cell rows point at the tree-walker closure from eval_flat.
+    // Drop this name before lowering so a later caller copies the
+    // specialised body instead of TopCellLoad of that closure.
+    // Issue #4372 / #4587 keep the row when the body stays on the walker.
+    ir_value_cell_bindings_.erase(name);
+    auto cache_ptr = ir_cache_.empty() ? nullptr : &ir_cache_;
+    auto cache_bridge_ptr = ir_cache_bridge_.empty() ? nullptr : &ir_cache_bridge_;
+    auto cache_strings_ptr = ir_cache_strings_.empty() ? nullptr : &ir_cache_strings_;
+    auto ir_mod = lower_to_ir_with_cache_tracked(
+        flat, pool, arena_, cache_ptr, nullptr, &evaluator_.primitives(), cache_bridge_ptr,
+        cache_strings_ptr, &name, &type_registry_, value_cells_for_lowering());
+    // Issue #4630: hash-cons the inlined callee copies (one copy per
+    // callee instead of one per call site) so the specialised bundle
+    // stays O(depth) instead of 2^depth.
+    (void)hash_cons_module_functions_4630(ir_mod);
+    if (ir_mod.functions.empty())
+        return false;
+    std::vector<aura::ir::IRFunction> bundle;
+    bundle.reserve(ir_mod.functions.size());
+    std::size_t own_pos = 0;
+    for (const auto& func : ir_mod.functions) {
+        if (func.id == ir_mod.entry_function_id)
+            continue;
+        auto copy = func;
+        // Same stable name cache_define uses, so a caller lower copies
+        // this body instead of emitting a zero for an unknown variable.
+        if (copy.name.empty() || copy.name == "__lambda__")
+            copy.name = name + "#" + std::to_string(own_pos++);
+        bundle.push_back(std::move(copy));
+    }
+    if (!bundle.empty()) {
+        ir_cache_[name] = bundle;
+        ir_cache_strings_[name] = ir_mod.string_pool;
+        if (auto vit = ir_cache_v2_.find(name); vit != ir_cache_v2_.end()) {
+            // The interpreter just took this body. A dirty v2 row would
+            // report 'full' for a let-loop even though the bind is clean.
+            vit->second.irs = std::move(bundle);
+            vit->second.invalidate_irs_layout_(); // Issue #4615
+            vit->second.init_block_dirty_from_irs();
+            vit->second.clear_all_block_dirty();
+            vit->second.dirty = false;
+        }
+    }
+    function_sources_[name] = source;
+    return bind_function_define_via_ir(ir_mod, name);
+}
+
 } // namespace aura::compiler
