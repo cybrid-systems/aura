@@ -2794,7 +2794,7 @@ static void ac3485_1_p99_hot_held_over_budget() {
     mutation_hold_live_note_exit(kHolder);
     g_mf_mailbox_stats.mailbox_under_boundary_wait_us_p99.store(0, std::memory_order_relaxed);
     apply_dev_audit_defaults();
-    unsetenv("AURA_MAILBOX_UNDER_BOUNDARY_WAIT_SLO_US");
+    ::aura::config::test_unsetenv("AURA_MAILBOX_UNDER_BOUNDARY_WAIT_SLO_US");
     mutation_hold_live_reset_for_test();
     clear_mutation_hold_budget_reject_for_test();
 }
@@ -2816,7 +2816,7 @@ static void ac3485_2_soft_observe_only() {
     clear_mutation_hold_budget_reject_for_test();
     apply_dev_audit_defaults();
     CHECK(!mutation_hold_budget_reject_enabled(), "3485 AC2: Soft reject_enabled false");
-    setenv("AURA_MAILBOX_UNDER_BOUNDARY_WAIT_SLO_US", "1000", 1);
+    ::aura::config::test_setenv("AURA_MAILBOX_UNDER_BOUNDARY_WAIT_SLO_US", "1000", 1);
     constexpr std::uint64_t kHolder = 34852;
     mutation_hold_live_note_enter(kHolder, mutation_hold_steady_ns_now(), /*depth=*/1);
     g_mf_mailbox_stats.mailbox_under_boundary_wait_us_p99.store(50'000, std::memory_order_relaxed);

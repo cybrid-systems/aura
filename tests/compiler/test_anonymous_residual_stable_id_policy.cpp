@@ -376,7 +376,7 @@ static void ac2637_schema_and_source_cite() {
 //   AC5: Query keys + schema + wired sentinel; #2605 axes preserved
 //   AC6: src-aligned soak (no residual growth under normal) + inject-over-cap test + coverage gate
 //
-// Note: setenv("AURA_RESIDUAL_SID0_CAP", "2", 1) is called at start of
+// Note: ::aura::config::test_setenv("AURA_RESIDUAL_SID0_CAP", "2", 1) is called at start of
 // main() BEFORE any aura_* call, so the resolver caches cap=2 for all
 // tests. This lets the same binary exercise both below-cap (1 residual
 // backfills) and above-cap (3 residuals → 3rd hits cap) paths.
