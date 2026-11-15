@@ -70,7 +70,11 @@ class TestIssue5168ServeEditLoop(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, blob)
         self.assertIn(DEV_CAPS, proc.stderr)
         self.assertIn('{"status":"ok","value":"#t"}', proc.stdout)
-        self.assertIn('1{"status":"ok","value":"()"}', proc.stdout)
+        self.assertIn('{"status":"ok","value":"()"}', proc.stdout)
+        # #5234: program stdout is captured and forwarded to stderr; replies
+        # stay one JSON object per line.
+        self.assertIn("1", proc.stderr)
+        self.assertNotIn('1{"status"', proc.stdout)
         self.assertNotIn(INTERNAL, blob)
         self.assertNotIn(FORBIDDEN, blob)
         self.assertNotIn(KIND10, proc.stdout)
@@ -80,7 +84,9 @@ class TestIssue5168ServeEditLoop(unittest.TestCase):
         proc = serve(["--serve"], "(display 1)\n")
         blob = proc.stdout + proc.stderr
         self.assertEqual(proc.returncode, 0, blob)
-        self.assertIn('1{"status":"ok","value":"()"}', proc.stdout)
+        self.assertIn('{"status":"ok","value":"()"}', proc.stdout)
+        self.assertIn("1", proc.stderr)
+        self.assertNotIn('1{"status"', proc.stdout)
         self.assertNotIn(INTERNAL, blob)
         self.assertNotIn(KIND10, proc.stdout)
 

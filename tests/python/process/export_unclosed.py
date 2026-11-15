@@ -71,7 +71,8 @@ class TestUnclosedList5199(unittest.TestCase):
         # error: 4:1: parse error: unclosed list: missing ')' before end of file
         p = _run(PAREN_SEMI, load=False)
         self.assertNotEqual(p.returncode, 0, p.stdout)
-        self.assertIn("error: 1:1:", p.stderr)
+        # #5239: the file face now names the file before line:col.
+        self.assertIn(":1:1:", p.stderr)
         self.assertIn("unclosed list opened at line 1", p.stderr)
         self.assertIn("column 1", p.stderr)
         self.assertIn(HINT, p.stderr)

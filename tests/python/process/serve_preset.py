@@ -64,7 +64,9 @@ class TestIssue5167ServePreset(unittest.TestCase):
         blob = proc.stdout + proc.stderr
         self.assertEqual(proc.returncode, 0, blob)
         self.assertIn(DEV_CAPS, proc.stderr)
-        self.assertIn("#t", proc.stdout)
+        # #5234: display output is forwarded to stderr, not glued to JSON.
+        self.assertIn("#t", proc.stderr)
+        self.assertIn('{"status":"ok","value":"()"}', proc.stdout)
         self.assertNotIn(DENIED, blob)
         self.assertNotIn("AURA CRASH", blob)
 

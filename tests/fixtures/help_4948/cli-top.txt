@@ -18,9 +18,12 @@ Commands:
 Common options:
   -e, --eval EXPR    evaluate EXPR
   --preset dev|ci|prod, --grant CAPS, --deny CAPS   capabilities
+  --error-format json|text   one JSON diagnostic object (file runs)
   --fmt, --typecheck, --query Q, --inspect           tools
   A tool positional that exists as a file is that file;
   any other positional is source text.
   -V, --version      print version
+
+Exit codes (one-shot runs): 0 ok, 1 runtime, 2 usage, 3 parse, 4 static
 
 'aura help <command>' for details; 'aura help --all' for every option.
