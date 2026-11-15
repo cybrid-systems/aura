@@ -147,6 +147,7 @@ set(AURA_SERVICE_SOURCE_FILES
     src/compiler/service_jit.cpp
     src/compiler/service_relower.cpp
     src/compiler/service_snapshot.cpp
+    src/compiler/service_typed_mutate.cpp
 )
 set(CMAKE_CXX_STANDARD 26)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
