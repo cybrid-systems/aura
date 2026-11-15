@@ -2,6 +2,7 @@
 #ifndef AURA_SERVE_SERVE_ASYNC_H
 #define AURA_SERVE_SERVE_ASYNC_H
 
+#include "compiler/json_escape.hh" // #5234: shared RFC 8259 escaper
 #include <cctype>
 #include <cstdint>
 #include <optional>
@@ -56,42 +57,9 @@ std::string prometheus_scheduler_metrics();
 // `"k": "v"` and `"k":"v"` variants.
 namespace detail {
 
-    // Issue #473 §5: escape all control chars (RFC 8259 §7).
+    // Issue #473 §5 / #5234: one RFC 8259 escaper for the whole tree.
     inline std::string json_escape(std::string_view s) {
-        std::string out;
-        out.reserve(s.size() + 16);
-        for (auto c : s) {
-            const auto u = static_cast<unsigned char>(c);
-            switch (c) {
-                case '"':
-                    out += "\\\"";
-                    break;
-                case '\\':
-                    out += "\\\\";
-                    break;
-                case '\n':
-                    out += "\\n";
-                    break;
-                case '\r':
-                    out += "\\r";
-                    break;
-                case '\t':
-                    out += "\\t";
-                    break;
-                default:
-                    if (u < 0x20) {
-                        // RFC 8259 §7: escape all U+0000–U+001F as \uXXXX
-                        static constexpr char hex[] = "0123456789abcdef";
-                        out += "\\u00";
-                        out += hex[(u >> 4) & 0xF];
-                        out += hex[u & 0xF];
-                    } else {
-                        out += c;
-                    }
-                    break;
-            }
-        }
-        return out;
+        return aura::json::escape(s);
     }
 
     // Extract a top-level string field from a flat JSON object.

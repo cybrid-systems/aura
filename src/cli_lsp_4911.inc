@@ -195,32 +195,7 @@ struct Parser {
 };
 
 inline std::string q(std::string_view s) {
-    std::string o = "\"";
-    for (unsigned char c : s) {
-        switch (c) {
-            case '"':
-                o += "\\\"";
-                break;
-            case '\\':
-                o += "\\\\";
-                break;
-            case '\n':
-                o += "\\n";
-                break;
-            case '\r':
-                o += "\\r";
-                break;
-            case '\t':
-                o += "\\t";
-                break;
-            default:
-                if (c < 0x20)
-                    o += std::format("\\u{:04x}", static_cast<unsigned>(c));
-                else
-                    o += static_cast<char>(c);
-        }
-    }
-    return o + "\"";
+    return "\"" + aura::json::escape(s) + "\"";
 }
 
 // Re-encode a parsed id (number or string) for the response.
