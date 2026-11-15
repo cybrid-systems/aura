@@ -21,6 +21,7 @@ import aura.compiler.evaluator;
 import aura.compiler.service;
 import aura.compiler.value;
 import aura.core.error;
+import aura.diag;
 
 namespace aura_issues_809_817 {
 
@@ -30,7 +31,7 @@ using aura::compiler::types::is_bool;
 using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
 using aura::core::AuraErrorKind;
-using aura::core::map_kind_name;
+using aura::diag::ErrorKind;
 
 static std::int64_t href(CompilerService& cs, std::string_view q, std::string_view key) {
     auto r = cs.eval(std::format("(hash-ref {} \'{}\')", aura::test::aura_call_expr(q), key));
@@ -52,7 +53,8 @@ static void run_matrix(CompilerService& cs) {
     check_schema(cs, "query:error-handling-policy-stats", 809);
     CHECK(href(cs, "query:error-handling-policy-stats", "policy-doc-active") == 1,
           "policy-doc-active");
-    CHECK(map_kind_name("type error") == AuraErrorKind::TypeError, "map_kind_name still works");
+    CHECK(CompilerService::core_kind_of(ErrorKind::TypeError) == AuraErrorKind::TypeError,
+          "diag kind → AuraErrorKind (#5241)");
     const auto interop0 = href(cs, "query:error-handling-policy-stats", "interop-conversions");
     (void)cs.eval_as_aura_result("(+ 1 1)");
     CHECK(href(cs, "query:error-handling-policy-stats", "interop-conversions") >= interop0 + 1,

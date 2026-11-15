@@ -2,7 +2,7 @@
 // Exception policy + AuraResult interop for Evaluator/CompilerService.
 //
 // #807 ACs:
-//   - AC1: map_kind_name / make_unexpected_from_kind_name work
+//   - AC1 (#5241): structured diag kind → AuraErrorKind, no name parsing
 //   - AC2: exception policy doc reachable (compile-time presence via kinds)
 //   - AC3: hot-path classification: InternalContractFailure kind exists
 //
@@ -22,6 +22,7 @@ import std;
 import aura.core.error;
 import aura.compiler.service;
 import aura.compiler.value;
+import aura.diag;
 
 namespace aura_issue_807_808_detail {
 
@@ -29,18 +30,37 @@ using aura::compiler::CompilerService;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
 using aura::core::AuraErrorKind;
-using aura::core::make_unexpected_from_kind_name;
-using aura::core::map_kind_name;
+using aura::diag::ErrorKind;
 
 static void run_matrix(CompilerService& cs) {
-    std::println("\n--- AC1: map_kind_name / make_unexpected_from_kind_name ---");
-    CHECK(map_kind_name("type error") == AuraErrorKind::TypeError, "map type error");
-    CHECK(map_kind_name("unbound variable") == AuraErrorKind::UnboundVariable, "map unbound");
-    CHECK(map_kind_name("not-a-real-kind") == AuraErrorKind::EvalError,
-          "unknown kind → EvalError fallback");
-    auto u = make_unexpected_from_kind_name("division by zero", "x/0");
+    std::println("\n--- AC1: structured diag kind → AuraErrorKind ---");
+    // #5241: the conversion is a switch on diag::ErrorKind. No display
+    // phrase takes part, so the core tag cannot drift with the wording.
+    CHECK(CompilerService::core_kind_of(ErrorKind::TypeError) == AuraErrorKind::TypeError,
+          "type error kind");
+    CHECK(CompilerService::core_kind_of(ErrorKind::UnboundVariable) ==
+              AuraErrorKind::UnboundVariable,
+          "unbound kind");
+    CHECK(CompilerService::core_kind_of(ErrorKind::DivisionByZero) == AuraErrorKind::DivisionByZero,
+          "division kind");
+    CHECK(CompilerService::core_kind_of(ErrorKind::InternalError) ==
+              AuraErrorKind::InternalInvariantViolation,
+          "internal kind");
+    auto u = aura::core::make_unexpected(AuraErrorKind::DivisionByZero, "x/0");
     CHECK(u.error().kind == AuraErrorKind::DivisionByZero, "unexpected carries mapped kind");
     CHECK(u.error().message == "x/0", "unexpected carries message");
+
+    std::println("\n--- AC1b: the kind an error value reports is the one creation set ---");
+    {
+        // #5241: text that names another category does not change the
+        // kind, and a phrase does not upgrade a type mismatch.
+        auto err = cs.evaluator().make_typed_error("car: not a pair", ErrorKind::ModuleError);
+        CHECK(cs.evaluator().error_value_kind(err) == ErrorKind::ModuleError,
+              "message text does not decide the kind");
+        auto plain = cs.evaluator().make_typed_error("division by zero", ErrorKind::TypeError);
+        CHECK(cs.evaluator().error_value_kind(plain) == ErrorKind::TypeError,
+              "a phrase does not upgrade a bare type error");
+    }
 
     std::println("\n--- AC2–AC3: policy kinds present ---");
     CHECK(aura::core::AuraError::kind_name(AuraErrorKind::InternalContractFailure) ==

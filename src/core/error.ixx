@@ -19,10 +19,14 @@
 // boundary rules. This module ships the FOUNDATION for
 // unification:
 //
-//   1. AuraErrorKind — flat enum of all error categories
-//      (subsumes compiler::diag::ErrorKind for the
-//      category tag, plus a new MutationError category
-//      that absorbs aura::ast::MutationError).
+//   1. AuraErrorKind — flat enum of the categories core-owned
+//      APIs return (mutation, arena, fiber, quota, plus the
+//      compiler categories that have a core equivalent). It
+//      does NOT replace compiler::diag::ErrorKind: diag is the
+//      diagnostic wire taxonomy (kind_ident / JSON code / LSP
+//      code), AuraErrorKind is the in-process AuraResult tag.
+//      The only conversion is CompilerService::core_kind_of, a
+//      switch on the enum — no name or message parsing (#5241).
 //   2. AuraError — flat struct with kind + message +
 //      source_location + (optional) generation tag.
 //      The struct is trivially copyable when message is
@@ -33,9 +37,10 @@
 //   5. make_unexpected(kind, msg, loc) — convenience
 //      builder.
 //
-// Phase 1 (next issue) migrates hot-path APIs to
-// AuraResult. Phase 2 spreads to upper modules.
-// Phase 3 handles boundaries (REPL/fiber/COW).
+// Nothing migrates wholesale any more: hot paths keep EvalResult
+// (std::expected<T, Diagnostic>), and AuraResult is the shape for
+// new core-facing APIs. Both are std::expected, so a boundary
+// converts without throwing.
 //
 // Why std::expected, not exceptions:
 //   - AI Agent control loop needs predictable state.
@@ -208,9 +213,11 @@ make_unexpected(AuraErrorKind k, std::string msg,
                 std::source_location loc = std::source_location::current(), std::uint64_t gen = 0);
 
 // ── Issue #807: interop helpers (core-side, no Diagnostic dependency) ──
-// Full Diagnostic ↔ AuraError conversion lives in compiler
-// (aura_error_bridge) because Diagnostic is aura.diag. Core only
-// ships builders that both layers can share.
+// The Diagnostic → AuraError conversion lives at the compiler boundary
+// (CompilerService::core_kind_of): a switch on diag::ErrorKind, because
+// Diagnostic is aura.diag and core must not import it. There is no
+// kind-name table any more — #5241 removed the unused bridge header and
+// the phrase parsing that went with it.
 //
 // Policy (see docs/design/core/exception_policy.md):
 //   - Hot paths return AuraResult / VoidResult (or EvalResult during
@@ -220,16 +227,6 @@ make_aura_error(AuraErrorKind k, std::string msg,
                 std::source_location loc = std::source_location::current(), std::uint64_t gen = 0) {
     return AuraError{k, std::move(msg), loc, gen};
 }
-
-// Build unexpected from a free-form kind name (e.g. diag kind_name()).
-// Unknown names map to EvalError so callers never throw on bad tags.
-export [[nodiscard]] inline std::unexpected<AuraError>
-make_unexpected_from_kind_name(std::string_view kind_name, std::string msg,
-                               std::source_location loc = std::source_location::current(),
-                               std::uint64_t gen = 0);
-
-// Map a small set of well-known diagnostic kind names → AuraErrorKind.
-export [[nodiscard]] inline AuraErrorKind map_kind_name(std::string_view name) noexcept;
 
 } // namespace aura::core
 
@@ -248,40 +245,6 @@ inline std::string_view AuraError::kind_name(AuraErrorKind k) noexcept {
 inline std::unexpected<AuraError> make_unexpected(AuraErrorKind k, std::string msg,
                                                   std::source_location loc, std::uint64_t gen) {
     return std::unexpected<AuraError>(AuraError{k, std::move(msg), loc, gen});
-}
-
-inline AuraErrorKind map_kind_name(std::string_view name) noexcept {
-    // Keep this table small and stable — used by #807/#808 interop.
-    if (name == "parse error" || name == "ParseError")
-        return AuraErrorKind::ParseError;
-    if (name == "unexpected token" || name == "UnexpectedToken")
-        return AuraErrorKind::UnexpectedToken;
-    if (name == "unterminated s-expr" || name == "UnterminatedSExpr")
-        return AuraErrorKind::UnterminatedSExpr;
-    if (name == "unbound variable" || name == "UnboundVariable")
-        return AuraErrorKind::UnboundVariable;
-    if (name == "division by zero" || name == "DivisionByZero")
-        return AuraErrorKind::DivisionByZero;
-    if (name == "invalid closure" || name == "InvalidClosure")
-        return AuraErrorKind::InvalidClosure;
-    if (name == "arity mismatch" || name == "ArityMismatch")
-        return AuraErrorKind::ArityMismatch;
-    if (name == "type error" || name == "TypeError")
-        return AuraErrorKind::TypeError;
-    if (name == "out of memory" || name == "OutOfMemory")
-        return AuraErrorKind::ArenaOutOfMemory;
-    if (name == "internal error" || name == "InternalError")
-        return AuraErrorKind::InternalInvariantViolation;
-    if (name == "uncaught exception" || name == "UncaughtException")
-        return AuraErrorKind::EvalError;
-    return AuraErrorKind::EvalError;
-}
-
-inline std::unexpected<AuraError> make_unexpected_from_kind_name(std::string_view kind_name,
-                                                                 std::string msg,
-                                                                 std::source_location loc,
-                                                                 std::uint64_t gen) {
-    return make_unexpected(map_kind_name(kind_name), std::move(msg), loc, gen);
 }
 
 } // namespace aura::core
