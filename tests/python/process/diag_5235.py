@@ -109,6 +109,16 @@ class Diag5235(unittest.TestCase):
             self.assertNotEqual(r.returncode, 0)
             self.assertIn("b.aura:1:24: unbound variable: zz", r.stderr)
 
+    def test_set_code_type_warning_names_workspace_source(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "probe.aura"
+            p.write_text('(define src "(: x Int \\"s\\")")\n(set-code src)\n(display (typecheck-current))\n')
+            r = run([str(p)], cwd=d, sandbox="off")
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn("workspace.aura:1:10", r.stdout)
+            self.assertIn("expected Int, got String", r.stdout)
+            self.assertNotIn("probe.aura:1:10", r.stdout)
+
     def test_typecheck_memq_hint_matches_runtime(self) -> None:
         with tempfile.TemporaryDirectory() as d:
             p = Path(d) / "q.aura"

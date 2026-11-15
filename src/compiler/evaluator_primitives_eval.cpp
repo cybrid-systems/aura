@@ -326,6 +326,12 @@ std::optional<EvalValue> RegSplitParts::set_code_install_workspace(
         return mev("parse", err);
     }
     flat_ptr->root = pr.root;
+    // #5235: bind the installed workspace source so type diagnostics name the
+    // set-code buffer's own line, not the outer probe file (file id 0). The
+    // previous flat stays bound: it is not freed on set-code and its macro
+    // bodies may still be expanded.
+    aura::diag::bind_flat_to_source_file(flat_ptr,
+                                         aura::diag::register_source_file("workspace.aura", src));
     ev.workspace_flat_ = flat_ptr;
     ev.workspace_pool_ = pool_ptr;
     // Issue #2220: set-code replaces workspace — drop long-lived
