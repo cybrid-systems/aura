@@ -21317,10 +21317,10 @@ namespace primitives_detail {
     public:
         // EvLike mirrors query_hash_finish: the stats faces hand the evaluator
         // in as a reference or as a pointer, so normalize before storing.
-        StatsKvTable(EvLike& ev, Heap& heap, FlatHashTable* ht) noexcept
-            : ev_(as_evaluator(ev))
+        StatsKvTable(EvLike& evaluator_in, Heap& heap, FlatHashTable* table) noexcept
+            : ev_(as_evaluator(evaluator_in))
             , heap_(heap)
-            , ht_(ht) {}
+            , ht_(table) {}
 
         // Issue #3018/#3020: capacity miss is reported through ok(), so a
         // caller keeps its own fail-soft return (void / partial hash / int).
@@ -21338,8 +21338,9 @@ namespace primitives_detail {
                 return;
             }
             std::uint64_t hash = ::aura::core::consts::kFnvOffsetBasis;
-            for (char ch : std::string_view(key_text))
-                hash = (hash ^ static_cast<std::uint8_t>(ch)) * ::aura::core::consts::kFnvPrime;
+            for (const char character : std::string_view(key_text))
+                hash =
+                    (hash ^ static_cast<std::uint8_t>(character)) * ::aura::core::consts::kFnvPrime;
             auto meta = std::span(ht_->metadata(), static_cast<std::size_t>(ht_->capacity));
             auto keys = std::span(ht_->keys(), static_cast<std::size_t>(ht_->capacity));
             auto vals = std::span(ht_->values(), static_cast<std::size_t>(ht_->capacity));
@@ -21367,11 +21368,11 @@ namespace primitives_detail {
         }
 
     private:
-        template <class E> [[nodiscard]] static Evaluator& as_evaluator(E& ev) noexcept {
+        template <class E> [[nodiscard]] static Evaluator& as_evaluator(E& evaluator_in) noexcept {
             if constexpr (std::is_pointer_v<std::remove_cvref_t<E>>)
-                return *ev;
+                return *evaluator_in;
             else
-                return ev;
+                return evaluator_in;
         }
 
         Evaluator& ev_;
@@ -21390,21 +21391,22 @@ namespace primitives_detail {
 
     template <class Heap>
     types::EvalValue
-    stats_hash_from_pairs(Evaluator& ev, Heap& heap, std::size_t capacity_hint,
+    stats_hash_from_pairs(Evaluator& evaluator_in, Heap& heap, std::size_t capacity_hint,
                           std::span<const std::pair<std::string, types::EvalValue>> pairs,
                           StatsHashOverflow on_overflow = StatsHashOverflow::kStamp) {
-        auto* ht = FlatHashTable::create(capacity_hint);
-        if (!ht)
+        auto* table = FlatHashTable::create(capacity_hint);
+        if (table == nullptr)
             return types::make_void();
         bool overflowed = false;
-        auto meta = std::span(ht->metadata(), static_cast<std::size_t>(ht->capacity));
-        auto keys = std::span(ht->keys(), static_cast<std::size_t>(ht->capacity));
-        auto vals = std::span(ht->values(), static_cast<std::size_t>(ht->capacity));
-        const auto cap = ht->capacity;
+        auto const meta = std::span(table->metadata(), static_cast<std::size_t>(table->capacity));
+        auto const keys = std::span(table->keys(), static_cast<std::size_t>(table->capacity));
+        auto const vals = std::span(table->values(), static_cast<std::size_t>(table->capacity));
+        const auto cap = table->capacity;
         for (auto& [key, value] : pairs) {
             std::uint64_t hash = ::aura::core::consts::kFnvOffsetBasis;
-            for (char ch : key)
-                hash = (hash ^ static_cast<std::uint8_t>(ch)) * ::aura::core::consts::kFnvPrime;
+            for (const char character : key)
+                hash =
+                    (hash ^ static_cast<std::uint8_t>(character)) * ::aura::core::consts::kFnvPrime;
             const auto fingerprint = ::aura::core::consts::fingerprint(hash);
             const auto key_index = heap.mint(key);
             const auto key_ev = types::make_string(static_cast<std::uint64_t>(key_index));
@@ -21415,21 +21417,21 @@ namespace primitives_detail {
                     meta[slot_index] = fingerprint;
                     keys[slot_index] = key_ev.val;
                     vals[slot_index] = value.val;
-                    ht->size++;
+                    table->size++;
                     inserted = true;
                     break;
                 }
             }
             if (!inserted) {
                 if (on_overflow == StatsHashOverflow::kDrop) {
-                    FlatHashTable::destroy(ht);
+                    FlatHashTable::destroy(table);
                     return types::make_void();
                 }
                 overflowed = true;
                 break;
             }
         }
-        return query_hash_finish(ht, heap, overflowed, ev);
+        return query_hash_finish(table, heap, overflowed, evaluator_in);
     }
 } // namespace primitives_detail
 
