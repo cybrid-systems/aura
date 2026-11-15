@@ -43,7 +43,9 @@ sys.path.insert(0, str(ROOT / "tests" / "python"))
 
 from _aura_harness import AURA_BIN  # noqa: E402
 
-BATCHES = 6
+# 12 batches, not 6: see the budget note below. The probe is a few
+# milliseconds per batch, so the extra samples are free.
+BATCHES = 12
 WARMUP = 50
 
 # The VmRSS probe from #4854 (tests/python/process/test_orch_rss.py) — the
@@ -118,9 +120,28 @@ _BIG_LAMBDA_EVAL_BODY = "(let ((c (eval '(lambda (x) (+ x " + _NUMBERS + "))))) 
 # numbers are the allocator high-water steps of the per-eval
 # allocate/free churn (they also show up when the eval'd program builds
 # NO closure at all), so they are bounded and bursty.
-_SMALL_LAMBDA_BUDGET_KB = 4096
-_BIG_LAMBDA_BUDGET_KB = 12288
-_BIG_LAMBDA_BATCH_BUDGET_KB = 6144
+#
+# Issue #5292 raised those high-water steps: the reclaim window now
+# includes the dead slots a mark still scans, so fewer automatic marks
+# fire between the explicit gc-heaps and the heap arrays reach a larger
+# capacity. Re-measured on the fixed tree after #5292:
+#
+#   probe   batches   post-warmup growth (KB)     mean per batch
+#   small   12        5112, 5104                   465
+#   small   20        7816                         411
+#   big     12        13096, 11472, 12744          1190
+#   big     20        22184                        1108
+#   small   6 (CI)    6144 (three 2 MB steps)     1229
+#
+# The steps arrive as 2 MB allocator quanta, so one or two of them can
+# land in any window. 6 batches left the small budget (4096) inside that
+# step noise. 12 batches amortize the steps while a linear leak stays at
+# its per-batch rate: pre-#5292 the leak was ~2050 KB/batch (small) and
+# ~9566 KB/batch (big), i.e. 22550 / 105226 KB over 11 post-warmup
+# batches, well above the budgets below.
+_SMALL_LAMBDA_BUDGET_KB = 13200  # 1200 KB/batch over 11 post-warmup batches
+_BIG_LAMBDA_BUDGET_KB = 27500  # 2500 KB/batch over 11 post-warmup batches
+_BIG_LAMBDA_BATCH_BUDGET_KB = 8192
 
 
 def _render(body: str, size: int) -> str:
