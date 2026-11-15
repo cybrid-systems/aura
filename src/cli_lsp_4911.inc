@@ -389,29 +389,35 @@ struct Server {
         return ok;
     }
 
-    bool keep_diag(const std::string& msg, const std::unordered_set<std::string>& defined) {
-        if (msg.starts_with("type error"))
+    // #5240: classify on the structured kind, not on the formatted prefix.
+    bool keep_diag(aura::diag::ErrorKind kind, const std::string& raw,
+                   const std::unordered_set<std::string>& defined) {
+        using K = aura::diag::ErrorKind;
+        if (kind == K::TypeError)
             return false;
         // The static signature table lags runtime primitives with optional
         // arguments (mutate :rebind name src [reason]); trust the runtime for
         // callees the project does not define itself.
-        static constexpr std::string_view kArity = "arity mismatch: call '";
-        if (msg.starts_with(kArity)) {
-            const auto rest = msg.substr(kArity.size());
-            const auto callee = rest.substr(0, rest.find('\''));
+        if (kind == K::ArityMismatch) {
+            static constexpr std::string_view kCall = "call '";
+            const auto at = std::string_view(raw).find(kCall);
+            if (at == std::string_view::npos)
+                return true;
+            const auto rest = std::string_view(raw).substr(at + kCall.size());
+            const auto callee = std::string(rest.substr(0, rest.find('\'')));
             return defined.contains(callee) || !runtime_bound(callee);
         }
-        static constexpr std::string_view kUnbound = "unbound variable: ";
-        if (!msg.starts_with(kUnbound))
+        if (kind != K::UnboundVariable)
             return true;
-        auto name = msg.substr(kUnbound.size());
-        name = name.substr(0, name.find('\n'));
+        auto name = raw.substr(0, raw.find('\n'));
         return !defined.contains(name) && !runtime_bound(name);
     }
 
     struct Diag {
         int line = 0, col = 0; // 0-based
-        std::string msg;
+        aura::diag::ErrorKind kind = aura::diag::ErrorKind::InternalError;
+        std::string raw; // structured message, before the human prefix
+        std::string msg; // wire text (kept stable for LSP clients)
     };
 
     void diagnose(const std::string& uri) {
@@ -463,13 +469,13 @@ struct Server {
             // Keep the first diagnostic per file (CLI default: first error stops).
             if (!v.empty())
                 continue;
-            // keep_diag() keys on the same "kind: message" text the old
-            // formatted output carried.
+            // #5240: keep_diag() now keys on the structured kind and the
+            // raw message; the composed text is wire-only.
             std::string msg = std::string(aura::diag::kind_name(d.kind)) + ": " + d.message;
             if (!d.suggestion.empty())
                 msg += "\n" + d.suggestion;
             v.push_back({gl - seg->first, std::max(0, static_cast<int>(d.location.column) - 1),
-                         std::move(msg)});
+                         d.kind, d.message, std::move(msg)});
         }
         // The static checker is stricter than the runtime: type errors on
         // dynamically typed code and "unbound" for runtime primitives / std
@@ -480,7 +486,7 @@ struct Server {
             for (auto& n : top_level_names(text_of(f)))
                 defined.insert(n);
         for (auto& [path, diags] : by_file)
-            std::erase_if(diags, [&](const Diag& d) { return !keep_diag(d.msg, defined); });
+            std::erase_if(diags, [&](const Diag& d) { return !keep_diag(d.kind, d.raw, defined); });
         for (auto& [path, diags] : by_file) {
             const std::string furi = path_to_uri(path);
             if (diags.empty() && !published.contains(furi) && furi != uri)
@@ -508,8 +514,9 @@ struct Server {
                 if (!arr.empty())
                     arr += ',';
                 arr += std::format(
-                    R"({{"range":{{"start":{{"line":{},"character":{}}},"end":{{"line":{},"character":{}}}}},"severity":1,"source":"aura","message":{}}})",
-                    d.line, d.col, d.line, end, q(d.msg));
+                    R"({{"range":{{"start":{{"line":{},"character":{}}},"end":{{"line":{},"character":{}}}}},"severity":1,"source":"aura","code":{},"message":{}}})",
+                    d.line, d.col, d.line, end, q(std::string(aura::diag::kind_ident(d.kind))),
+                    q(d.msg));
             }
             if (diags.empty())
                 published.erase(furi);
