@@ -20,11 +20,13 @@ for a ground mismatch:
 
 Fix shape (no new constraint kind, no metrics field, consistent_unify and
 the soft gradual join untouched):
-  - lub: Int/Float promotion, both Dynamic arms, and the soft dynamic
-    fallback unchanged. Under production_hard_face_active() ||
-    production_defaults_active() a type variable still returns so a later
-    unify can bind it; any other pair of distinct grounds reports a hard
-    TypeError and returns void_type() — never a successful Dynamic.
+  - lub: Int/Float promotion and the soft dynamic fallback unchanged.
+    Under production_hard_face_active() || production_defaults_active()
+    a variable joined with a scalar stays a remembered join variable
+    (#5300) so a later same-ground branch solves; var ∪ Dynamic still
+    returns Dynamic so a later ground hits the gate (#4684). Any other
+    pair of distinct grounds reports a hard TypeError and returns
+    void_type() — never a successful Dynamic.
   - synthesize_flat_call_arith: the Int/Float and var-unify arms are
     unchanged. Under the production face two ground non-numeric operands,
     or one ground non-numeric operand, take the same TypeError and return
@@ -36,8 +38,9 @@ the soft gradual join untouched):
 
 Contract (one row per AC):
   AC1  lub under the production face: distinct grounds → TypeError +
-       void_type(); Int/Float promotion, Dynamic arms, var fallback, and
-       the soft dynamic fallback unchanged
+       void_type(); Int/Float promotion and the soft dynamic fallback
+       unchanged. A scalar join of a variable stays a remembered join
+       variable (#5300). A real Dynamic arm stays Dynamic (#4684).
   AC2  arith peel, two ground non-numeric operands: production TypeError +
        void_type(); soft runtime-coerce Int retained; Dynamic operand
        escape retained
@@ -97,8 +100,14 @@ def main() -> int:
     must("Issue #4107", "AC1 cites the issue", lub)
     must("production_hard_face_active()", "AC1 hard-face gate", lub)
     must("production_defaults_active()", "AC1 production-defaults gate", lub)
-    must("reg_.is_var(a) || reg_.is_var(b)", "AC1 type variable still returns", lub)
-    must("return reg_.dynamic_type(); // later unify binds the variable", "AC1 var fallback so later unify binds", lub)
+    must("const bool a_var = reg_.is_var(a);", "AC1 type variable still classified", lub)
+    must("const bool b_var = reg_.is_var(b);", "AC1 type variable still classified", lub)
+    must("return remember(*tag);", "AC1 scalar join stays a variable (#5300)", lub)
+    must(
+        "// var ∪ Dynamic stays Dynamic, so a later ground join still hits #4684.",
+        "AC1 real Dynamic arm still Dynamic",
+        lub,
+    )
     must("ErrorKind::TypeError", "AC1 hard TypeError", lub)
     must('"incompatible ground types: if branches join "', "AC1 diagnostic names the join", lub)
     must("return reg_.void_type();", "AC1 void result, not a Dynamic", lub)
@@ -111,7 +120,12 @@ def main() -> int:
         "AC1 pre-normalize Dynamic early return removed (#4684)",
         lub,
     )
-    must('a == reg_.int_type() && b == reg_.lookup_type("Float")', "AC1 Int/Float promotion unchanged", lub)
+    must(
+        "(a == int_ty && b == float_ty) || (a == float_ty && b == int_ty)",
+        "AC1 Int/Float promotion unchanged",
+        lub,
+    )
+    must("return float_ty;", "AC1 Int/Float promotion result", lub)
     must("return reg_.dynamic_type(); // safe fallback", "AC1 soft fallback retained", lub)
     absent("Constraint::GROUND", "AC1 no new constraint kind", lub)
 
