@@ -183,6 +183,25 @@ class DiagJson(unittest.TestCase):
         self.assertIn("type error: car: not a pair", run(["-e", "(car 5)"]).stderr)
         self.assertIn("type error: car: not a pair", wrapped_text.stderr)
 
+    def test_module_failure_is_module_error_on_both_faces(self) -> None:
+        # #5241 batch 4: a module that could not load is ModuleError from
+        # creation. An import that returns the load failure as a value used
+        # to reach the face as TypeError; the direct face now names the
+        # category in the JSON code, --load in the human prefix.
+        imported = run(["--error-format=json", "-e", '(import "./no-such-module-5241")'])
+        self.assertNotEqual(imported.returncode, 0)
+        self.assertEqual(last_json(imported.stderr)["code"], "ModuleError", imported.stderr)
+        src = '(require "no-such-module-5241")\n'
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "m.aura"
+            p.write_text(src)
+            direct = run(["--error-format=json", str(p)], cwd=d)
+            self.assertNotEqual(direct.returncode, 0)
+            self.assertEqual(last_json(direct.stderr)["code"], "ModuleError", direct.stderr)
+            loaded = run(["--load", str(p)], cwd=d)
+            self.assertNotEqual(loaded.returncode, 0)
+            self.assertIn("module error: require: cannot resolve", loaded.stderr)
+
     def test_exit_code_table(self) -> None:
         with tempfile.TemporaryDirectory() as d:
             p = Path(d) / "u.aura"
