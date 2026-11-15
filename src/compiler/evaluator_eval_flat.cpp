@@ -6120,6 +6120,24 @@ namespace {
         std::uint8_t arg_miss = 0;  // not a fast int; don't lock again this gen
     };
 
+    // #5297: one captured integer for THIS named-let call. The site table
+    // must not keep it (#5116: the next call's frame is a different value).
+    // dgen is the cell-store generation at the snapshot. A later set! makes
+    // the load miss so the interpreter re-reads the live binding.
+    struct FreeInt5066 {
+        aura::ast::SymId sym = aura::ast::INVALID_SYM;
+        std::int64_t value = 0;
+        std::uint64_t dgen = 0;
+    };
+
+    enum class FreeReadKind : std::uint8_t { Int, Cell, Other };
+
+    struct FreeRead5066 {
+        FreeReadKind kind = FreeReadKind::Other;
+        std::int64_t value = 0;
+        bool top_cell = false;
+    };
+
     // Bumped by set! (eval_flat_on_set). Not defuse_version_: that epoch
     // also gates self-TCO frame reuse.
     std::atomic<std::uint64_t> g_cell_store_gen_5066{1};
@@ -6155,14 +6173,17 @@ namespace {
     bool load_fast_operand_5066(const std::atomic<std::uint64_t>& top_gen, std::uint64_t defuse,
                                 const aura::ast::FlatAST& flat, const aura::ast::StringPool& pool,
                                 const Env& env, FastISite& site, int which, std::int64_t& out,
-                                int depth);
+                                int depth, std::span<const FreeInt5066> frees = {});
     std::optional<EvalValue> eval_fast_iop_5066(FastIOp op, std::int64_t x, std::int64_t y);
+    std::optional<FreeRead5066> read_free_int_5066(const aura::ast::StringPool& pool,
+                                                   const Env& env, aura::ast::SymId sym);
 
     std::optional<EvalValue> eval_fast_site_5066(const std::atomic<std::uint64_t>& top_gen,
                                                  std::uint64_t defuse,
                                                  const aura::ast::FlatAST& flat,
                                                  const aura::ast::StringPool& pool, const Env& env,
-                                                 FastISite& site, int depth) {
+                                                 FastISite& site, int depth,
+                                                 std::span<const FreeInt5066> frees = {}) {
         if (depth > 4)
             return std::nullopt;
         if (site.top_gen != top_gen.load(std::memory_order_acquire))
@@ -6171,16 +6192,47 @@ namespace {
         if (env.local_symid_last(site.sym))
             return std::nullopt;
         std::int64_t x = 0, y = 0;
-        if (!load_fast_operand_5066(top_gen, defuse, flat, pool, env, site, 0, x, depth) ||
-            !load_fast_operand_5066(top_gen, defuse, flat, pool, env, site, 1, y, depth))
+        if (!load_fast_operand_5066(top_gen, defuse, flat, pool, env, site, 0, x, depth, frees) ||
+            !load_fast_operand_5066(top_gen, defuse, flat, pool, env, site, 1, y, depth, frees))
             return std::nullopt;
         return eval_fast_iop_5066(site.op, x, y);
+    }
+
+    std::optional<FreeRead5066> read_free_int_5066(const aura::ast::StringPool& pool,
+                                                   const Env& env, aura::ast::SymId sym) {
+        // Same probe as the slow Variable path. A captured parameter is not
+        // a local of the named-let frame, so the SymId miss falls through to
+        // the name. Do not cache the integer on the site: the next call has
+        // another frame (#5116).
+        const std::string name(pool.resolve(sym));
+        std::optional<EvalValue> bound = env.lookup_by_symid(sym);
+        if (!bound && !name.empty()) {
+            if (auto ci = env.lookup_cell_index(name))
+                bound = make_cell(*ci);
+            else
+                bound = env.lookup(name);
+        }
+        bool top_cell = false;
+        if (bound && types::is_cell(*bound) && !name.empty()) {
+            const auto seen = as_cell_id(*bound);
+            if (auto* ev = env.owner()) {
+                if (auto top_ci = ev->top_env().lookup_cell_index(name))
+                    top_cell = *top_ci == seen;
+            }
+            // Deref through Env::lookup. Never hold a pointer into cells_.
+            bound = env.lookup(name);
+        }
+        if (!bound || types::is_cell(*bound))
+            return FreeRead5066{FreeReadKind::Cell, 0, false};
+        if (!types::is_int(*bound))
+            return FreeRead5066{FreeReadKind::Other, 0, false};
+        return FreeRead5066{FreeReadKind::Int, types::as_int(*bound), top_cell};
     }
 
     bool load_fast_operand_5066(const std::atomic<std::uint64_t>& top_gen, std::uint64_t defuse,
                                 const aura::ast::FlatAST& flat, const aura::ast::StringPool& pool,
                                 const Env& env, FastISite& site, int which, std::int64_t& out,
-                                int depth) {
+                                int depth, std::span<const FreeInt5066> frees) {
         const auto node = which == 0 ? site.arg0 : site.arg1;
         if (node >= flat.size())
             return false;
@@ -6200,7 +6252,8 @@ namespace {
                 if (inner.flat != &flat || inner.node != node ||
                     inner.flat_gen != flat.generation())
                     continue;
-                auto v = eval_fast_site_5066(top_gen, defuse, flat, pool, env, inner, depth + 1);
+                auto v =
+                    eval_fast_site_5066(top_gen, defuse, flat, pool, env, inner, depth + 1, frees);
                 if (!v || !types::is_int(*v))
                     return false;
                 out = types::as_int(*v);
@@ -6223,6 +6276,17 @@ namespace {
                 return true;
             }
             return false;
+        }
+        // #5297: this call's captured integer. Checked before the top-cell
+        // cache so a per-call frame is not stored on the site (#5116). A
+        // set! moves defuse and the miss resumes the interpreter.
+        for (const auto& fr : frees) {
+            if (fr.sym != sym)
+                continue;
+            if (fr.dgen != defuse)
+                return false;
+            out = fr.value;
+            return true;
         }
         const auto bit = static_cast<std::uint8_t>(1u << which);
         const auto gen1 = top_gen.load(std::memory_order_acquire);
@@ -6250,28 +6314,9 @@ namespace {
         // `(>= i n)`) is a per-call frame. The closure id and the
         // top/set! generations do not move between `(sum 3)` and
         // `(sum 7)`, so a copy keyed only by those generations replayed
-        // the first call's `n`.
-        const std::string name(pool.resolve(sym));
-        std::optional<EvalValue> bound = env.lookup_by_symid(sym);
-        if (!bound && !name.empty()) {
-            if (auto ci = env.lookup_cell_index(name))
-                bound = make_cell(*ci);
-            else
-                bound = env.lookup(name);
-        }
-        bool top_cell = false;
-        if (bound && types::is_cell(*bound) && !name.empty()) {
-            const auto seen = as_cell_id(*bound);
-            if (auto* ev = env.owner()) {
-                if (auto top_ci = ev->top_env().lookup_cell_index(name))
-                    top_cell = *top_ci == seen;
-            }
-            // Copy the current integer out through Env::lookup (the same
-            // deref the slow path uses). Never hold a pointer into cells_
-            // — alloc_cell reallocates it. set! bumps the cell-store
-            // generation and the next hit re-copies.
-            bound = env.lookup(name);
-        }
+        // the first call's `n`. The #5297 snapshot is per call and is
+        // not written here.
+        const auto read = read_free_int_5066(pool, env, sym);
         const auto gen2 = top_gen.load(std::memory_order_acquire);
         const bool stable = gen1 == gen2;
         auto store_slot = [&](std::int64_t slot) {
@@ -6282,7 +6327,7 @@ namespace {
             site.cgen = gen2;
             site.dgen[which] = defuse;
         };
-        if (!bound || types::is_cell(*bound)) {
+        if (!read || read->kind == FreeReadKind::Cell) {
             if (stable) {
                 site.arg_miss = static_cast<std::uint8_t>(site.arg_miss | bit);
                 site.arg_const =
@@ -6292,7 +6337,7 @@ namespace {
             }
             return false;
         }
-        if (!types::is_int(*bound)) {
+        if (read->kind != FreeReadKind::Int) {
             if (stable) {
                 site.arg_miss = static_cast<std::uint8_t>(site.arg_miss | bit);
                 site.arg_const =
@@ -6301,8 +6346,8 @@ namespace {
             }
             return false;
         }
-        out = types::as_int(*bound);
-        if (stable && top_cell) {
+        out = read->value;
+        if (stable && read->top_cell) {
             store_slot(out);
             site.arg_const = static_cast<std::uint8_t>(site.arg_const | bit);
         } else if (stable) {
@@ -6406,12 +6451,60 @@ namespace {
         return false;
     }
 
-    // #5066: once a named-let body is `(if (<cmp> ...) <param> (self <int-args>...))`
-    // and the integer sites have been recorded, run the rest of the loop without
-    // re-entering eval_flat. A miss (shadowed operator, overflow, shape that is
-    // not this loop) returns nullopt and the caller continues in the interpreter,
-    // which re-reads a per-call captured integer (#5116). Scheduler fibers stay
-    // on that interpreter; this is the CLI / thread-backend path only.
+    // Walk one recorded integer expression. A variable that is not a named-let
+    // parameter is a capture: read it once into `store` (#5297). The site
+    // table must not keep that integer (#5116).
+    bool collect_free_int_5066(const aura::ast::FlatAST& flat, const aura::ast::StringPool& pool,
+                               const Env& env, std::span<const aura::ast::SymId> params,
+                               aura::ast::NodeId node, int depth, std::array<FreeInt5066, 8>& store,
+                               int& nfree, std::uint64_t store_gen) {
+        if (depth > 4 || node >= flat.size())
+            return false;
+        const auto tag = flat.tag(node);
+        if (tag == aura::ast::NodeTag::LiteralInt) {
+            const auto mark = flat.marker(node);
+            if (mark == aura::ast::SyntaxMarker::BoolLiteral ||
+                mark == aura::ast::SyntaxMarker::EmptyList)
+                return false;
+            return types::fits_fixnum(flat.int_val(node));
+        }
+        if (tag == aura::ast::NodeTag::Variable) {
+            const auto sym = flat.sym_id(node);
+            if (param_index_5066(params, sym) >= 0)
+                return true;
+            for (int i = 0; i < nfree; ++i) {
+                if (store[static_cast<std::size_t>(i)].sym == sym)
+                    return true;
+            }
+            if (nfree >= 8)
+                return false;
+            const auto read = read_free_int_5066(pool, env, sym);
+            if (!read || read->kind != FreeReadKind::Int)
+                return false;
+            store[static_cast<std::size_t>(nfree)] = FreeInt5066{sym, read->value, store_gen};
+            ++nfree;
+            return true;
+        }
+        if (tag != aura::ast::NodeTag::Call)
+            return false;
+        const FastISite* site = find_fast_site_5066(flat, node);
+        if (site == nullptr)
+            return false;
+        return collect_free_int_5066(flat, pool, env, params, site->arg0, depth + 1, store, nfree,
+                                     store_gen) &&
+               collect_free_int_5066(flat, pool, env, params, site->arg1, depth + 1, store, nfree,
+                                     store_gen);
+    }
+
+    // #5066: once a named-let body is an integer compare whose arms are a
+    // result (param or literal) and `(self <int-args>...)`, in either order,
+    // and the integer sites have been recorded, run the rest of the loop
+    // without re-entering eval_flat. Captured integers are snapshotted for
+    // this call (#5297). A miss (shadowed operator, overflow, a shape that is
+    // not this loop, or a set! that moved the cell-store generation) returns nullopt
+    // and the caller continues in the interpreter, which re-reads that frame
+    // (#5116). Scheduler fibers stay on that interpreter; this is the CLI /
+    // thread-backend path only.
     struct AccelLatch5066 {
         const aura::ast::FlatAST* flat = nullptr;
         aura::ast::NodeId body = aura::ast::NULL_NODE;
@@ -6451,24 +6544,31 @@ namespace {
         if (test->op != FastIOp::Ge && test->op != FastIOp::Gt && test->op != FastIOp::Le &&
             test->op != FastIOp::Lt)
             return reject();
-        const bool then_lit = flat.tag(kids[1]) == aura::ast::NodeTag::LiteralInt;
-        int then_param = -1;
-        if (then_lit) {
-            const auto mark = flat.marker(kids[1]);
+        // `(if (>= i n) s (loop ...))` returns from the then arm.
+        // `(if (< i n) (loop ...) s)` returns from the else arm (#5297).
+        const bool then_call = flat.tag(kids[1]) == aura::ast::NodeTag::Call;
+        const bool else_call = flat.tag(kids[2]) == aura::ast::NodeTag::Call;
+        if (then_call == else_call)
+            return reject();
+        const bool continue_when_truthy = then_call;
+        const auto result_node = then_call ? kids[2] : kids[1];
+        const auto call_node = then_call ? kids[1] : kids[2];
+        const bool result_lit = flat.tag(result_node) == aura::ast::NodeTag::LiteralInt;
+        int result_param = -1;
+        if (result_lit) {
+            const auto mark = flat.marker(result_node);
             if (mark == aura::ast::SyntaxMarker::BoolLiteral ||
                 mark == aura::ast::SyntaxMarker::EmptyList ||
-                !types::fits_fixnum(flat.int_val(kids[1])))
+                !types::fits_fixnum(flat.int_val(result_node)))
                 return reject();
-        } else if (flat.tag(kids[1]) == aura::ast::NodeTag::Variable) {
-            then_param = param_index_5066(params, flat.sym_id(kids[1]));
-            if (then_param < 0)
+        } else if (flat.tag(result_node) == aura::ast::NodeTag::Variable) {
+            result_param = param_index_5066(params, flat.sym_id(result_node));
+            if (result_param < 0)
                 return reject();
         } else {
             return reject();
         }
-        if (flat.tag(kids[2]) != aura::ast::NodeTag::Call)
-            return reject();
-        const auto call = flat.children(kids[2]);
+        const auto call = flat.children(call_node);
         if (call.size() != params.size() + 1 || flat.tag(call[0]) != aura::ast::NodeTag::Variable)
             return reject();
         const std::string callee_name(pool.resolve(flat.sym_id(call[0])));
@@ -6501,9 +6601,29 @@ namespace {
         }
         // Own the node ids. children() borrows AST storage that another
         // fiber can rebuild; the loop must not keep that span.
-        const std::int64_t then_k = then_lit ? flat.int_val(kids[1]) : 0;
-        const auto then_sym =
-            then_param >= 0 ? params[static_cast<std::size_t>(then_param)] : aura::ast::INVALID_SYM;
+        const std::int64_t result_k = result_lit ? flat.int_val(result_node) : 0;
+        const auto result_sym = result_param >= 0 ? params[static_cast<std::size_t>(result_param)]
+                                                  : aura::ast::INVALID_SYM;
+        // #5297: one lookup of each captured integer for this call. The
+        // per-iteration name walk took every env-frame shard lock, so eight
+        // fibers reading an outer parameter stalled near 1.5x.
+        std::array<FreeInt5066, 8> free_store{};
+        int nfree = 0;
+        const auto store_gen = g_cell_store_gen_5066.load(std::memory_order_acquire);
+        // A missed capture is not a shape failure: do not latch, or one
+        // transient lookup would keep this loop off the fast path.
+        if (!collect_free_int_5066(flat, pool, env, params, test->arg0, 0, free_store, nfree,
+                                   store_gen) ||
+            !collect_free_int_5066(flat, pool, env, params, test->arg1, 0, free_store, nfree,
+                                   store_gen))
+            return std::nullopt;
+        for (std::size_t i = 0; i < params.size(); ++i) {
+            if (!collect_free_int_5066(flat, pool, env, params, arg_nodes[i], 0, free_store, nfree,
+                                       store_gen))
+                return std::nullopt;
+        }
+        const auto frees =
+            std::span<const FreeInt5066>(free_store.data(), static_cast<std::size_t>(nfree));
         auto eval_arg = [&](aura::ast::NodeId node) -> std::optional<EvalValue> {
             const auto tag = flat.tag(node);
             if (tag == aura::ast::NodeTag::LiteralInt)
@@ -6519,7 +6639,7 @@ namespace {
                 return std::nullopt;
             return eval_fast_site_5066(top_gen,
                                        g_cell_store_gen_5066.load(std::memory_order_acquire), flat,
-                                       pool, env, *site, 0);
+                                       pool, env, *site, 0, frees);
         };
         std::uint64_t steps = 0;
         while (true) {
@@ -6529,16 +6649,17 @@ namespace {
             }
             auto tv =
                 eval_fast_site_5066(top_gen, g_cell_store_gen_5066.load(std::memory_order_acquire),
-                                    flat, pool, env, *test, 0);
+                                    flat, pool, env, *test, 0, frees);
             if (!tv) {
                 add_tw_closure_calls_5066(metrics, steps);
                 return std::nullopt;
             }
-            if (is_truthy(*tv)) {
+            const bool cont = continue_when_truthy ? is_truthy(*tv) : !is_truthy(*tv);
+            if (!cont) {
                 add_tw_closure_calls_5066(metrics, steps);
-                if (then_lit)
-                    return make_int(then_k);
-                auto loc = env.local_symid_last(then_sym);
+                if (result_lit)
+                    return make_int(result_k);
+                auto loc = env.local_symid_last(result_sym);
                 if (!loc)
                     return std::nullopt;
                 return *loc;
@@ -9222,9 +9343,10 @@ Evaluator::FlatStep Evaluator::eval_flat_on_closure(EvalFlatCursor& cur,
         }
         // Issue #5066: a recorded integer named-let stays in a C++ loop.
         // Reused means one interpreter iteration already filled the sites
-        // and this frame is the loop frame. A miss keeps the TCO continue
-        // below, so a captured free var is re-read (#5116) and a shadowed
-        // operator never runs as the primitive.
+        // and this frame is the loop frame. The loop snapshots captured
+        // integers for this call (#5297). A miss keeps the TCO continue
+        // below, so the next iteration re-reads the live frame (#5116)
+        // and a shadowed operator never runs as the primitive.
         if (reused && aura::serve::g_current_fiber == nullptr && !cl.dotted &&
             cl.body_id != aura::ast::NULL_NODE && cl.flat != nullptr && tail_env.has_value()) {
             const auto* accel_pool = cl.pool != nullptr ? cl.pool : p;
