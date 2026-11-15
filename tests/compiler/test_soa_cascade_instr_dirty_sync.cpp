@@ -12,6 +12,7 @@
 //   AC6: service smoke — dual-emit define/eval + mutate; metric grows
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 #include "compiler/observability_metrics.h"
 #include "compiler/jit_typed_mutation_stats.h"
 
@@ -76,7 +77,7 @@ static IRModuleV2 make_two_block_mod() {
 static void ac1_source() {
     std::println("\n--- AC1: source cites #2034 ---");
     auto soa = read_file("src/compiler/ir_soa.ixx");
-    auto svc = read_file("src/compiler/service.ixx");
+    auto svc = aura_test::service_module_source();
     auto dirty = read_file("src/compiler/service_dirty.cpp");
     auto low = read_file("src/compiler/lowering_impl.cpp");
     auto met = read_file("src/compiler/observability_metrics.h");

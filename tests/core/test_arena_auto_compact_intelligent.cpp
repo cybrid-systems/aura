@@ -13,6 +13,7 @@
 //   AC8: #1621 lineage schema retained
 
 #include "arena_nonalloc_hooks.hpp"
+#include "../support/service_module_source.hh"
 #include "test_harness.hpp"
 #include "core/arena_auto_policy_stats.h"
 
@@ -198,11 +199,7 @@ static void ac6_source_wiring() {
         if (!mut.empty())
             break;
     }
-    for (const char* p : {"src/compiler/service.ixx", "../src/compiler/service.ixx"}) {
-        svc = read_file(p);
-        if (!svc.empty())
-            break;
-    }
+    svc = aura_test::service_module_source();
     for (const char* p :
          {"src/core/arena_auto_policy_stats.h", "../src/core/arena_auto_policy_stats.h"}) {
         pol = read_file(p);

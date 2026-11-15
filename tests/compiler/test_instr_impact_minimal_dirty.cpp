@@ -10,6 +10,7 @@
 //   AC5: existing dirty_delta / cascade smoke still green via this harness
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 #include "compiler/observability_metrics.h"
 
 #include <cstdint>
@@ -64,7 +65,7 @@ int run_test_instr_impact_minimal_dirty() {
     {
         std::println("\n--- AC4: source wiring ---");
         auto dirty = read_file("src/compiler/service_dirty.cpp");
-        auto svc = read_file("src/compiler/service.ixx");
+        auto svc = aura_test::service_module_source();
         auto met = read_file("src/compiler/observability_metrics.h");
         auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
         CHECK(!dirty.empty() && dirty.find("Issue #2126") != std::string::npos,

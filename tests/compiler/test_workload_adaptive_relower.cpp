@@ -9,6 +9,7 @@
 //   AC5: #2112 cost adaptive + pure should_partial_relower still work
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 #include "compiler/hot_update_registry.hh"
 #include "compiler/typed_mutation_audit.h"
 
@@ -206,7 +207,7 @@ int run_test_workload_adaptive_relower() {
         std::println("\n--- AC5: source + lineage ---");
         auto pure = read_file("src/compiler/ir_cache_pure.ixx");
         auto dirty = read_file("src/compiler/service_dirty.cpp");
-        auto svc = read_file("src/compiler/service.ixx");
+        auto svc = aura_test::service_module_source();
         CHECK(pure.find("Issue #2127") != std::string::npos, "ir_cache_pure #2127");
         CHECK(pure.find("AdaptiveRelowerPolicy") != std::string::npos, "AdaptiveRelowerPolicy");
         CHECK(pure.find("decide_workload_adaptive_partial_relower") != std::string::npos,

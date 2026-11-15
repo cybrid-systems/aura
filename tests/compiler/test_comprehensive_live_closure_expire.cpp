@@ -11,6 +11,7 @@
 // AC8: query surface / wire flags for Agent dashboards (schema-2042)
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 
 #include "compiler/observability_metrics.h"
 #include "core/workspace_epoch.hh"
@@ -55,7 +56,7 @@ std::string read_file(const char* path) {
 
 void ac1_source() {
     std::println("\n--- AC1: source cites #2042 ---");
-    auto svc = read_file("src/compiler/service.ixx");
+    auto svc = aura_test::service_module_source();
     auto dirty = read_file("src/compiler/service_dirty.cpp");
     auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
     auto sh = read_file("src/compiler/runtime_shared.h");

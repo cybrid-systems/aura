@@ -9,6 +9,7 @@
 //   AC5: already-synced happy path still partial-capable
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 #include "compiler/observability_metrics.h"
 #include "compiler/jit_typed_mutation_stats.h"
 
@@ -85,8 +86,7 @@ int run_test_soa_partial_desync_gate() {
     // ── AC1: source wiring ──
     {
         std::println("\n--- AC1: source cites 2181 ---");
-        const auto svc =
-            read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
+        const auto svc = aura_test::service_module_source();
         const auto met = read_file("src/compiler/observability_metrics.h");
         const auto q = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
         CHECK(svc.find("2181") != std::string::npos, "service cites 2181");

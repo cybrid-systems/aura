@@ -22,6 +22,9 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from service_source import service_source  # #5242: interface + implementation units
+
 ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -39,7 +42,7 @@ def main() -> int:
 
     hh = _read("src/compiler/shape_profiler.h")
     cpp = _read("src/compiler/shape_profiler.cpp")
-    svc = _read("src/compiler/service.ixx")
+    svc = service_source()
     test = _read("tests/compiler/test_shape_profiler_concurrency.cpp")
     build = _read("build.py")
     l3270 = _read("scripts/coverage/checks/check_primid_drift_3270.py")

@@ -50,6 +50,7 @@
 // full for the cone via the #3283 shape.
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 
 #include <fstream>
 #include <print>
@@ -96,8 +97,7 @@ int run_test_incremental_facade_dirty_names_snapshot() {
                  "caller union at peel entry ===");
     CHECK(true, "ac3381: issue stamp");
 
-    auto ixx =
-        read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
+    auto ixx = aura_test::service_module_source();
     auto dir = read_file("src/compiler/service_dirty.cpp");
     auto cache = read_file("src/compiler/ir_cache_pure.ixx");
     auto hot = read_file("src/compiler/hot_update_registry.cpp");

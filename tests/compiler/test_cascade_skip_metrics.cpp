@@ -16,6 +16,7 @@
 //   #3264 AC5: linter after #3263; no invent
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 
 #include "compiler/typed_mutation_audit.h"
 
@@ -200,7 +201,7 @@ static void ac6_source_wiring() {
               dirty.find("#2106") != std::string::npos,
           "cites #2106");
 
-    auto svc = read_file("src/compiler/service.ixx");
+    auto svc = aura_test::service_module_source();
     CHECK(svc.find("set_cascade_skip_subtree_metrics") != std::string::npos, "service wires sink");
 
     auto opt = read_file("src/compiler/optimization_passes.ixx");

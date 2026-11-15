@@ -9,6 +9,7 @@
 //   AC5: happy-path typed eval + generation-only stale detection
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 #include "compiler/observability_metrics.h"
 
 #include <cstdint>
@@ -121,7 +122,7 @@ static void ac2_should_relower_generation() {
 
 static void ac3_bump_with_consistency_path() {
     std::println("\n--- AC3: generation bump with cascade/dirty sync ---");
-    auto svc = read_file("src/compiler/service.ixx");
+    auto svc = aura_test::service_module_source();
     CHECK(svc.find("bump_soa_generation") != std::string::npos, "entry bump helper");
     CHECK(svc.find("soa_generation_bump_total") != std::string::npos ||
               svc.find("finish_cascade_soa_dirty_sync_") != std::string::npos,

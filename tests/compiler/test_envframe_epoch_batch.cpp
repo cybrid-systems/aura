@@ -21,6 +21,7 @@
 // Source: cmake/AuraDomainTests.cmake · all_test_issue_targets.
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 #include "compiler/aura_jit_bridge.h"
 #include "compiler/hot_update_registry.hh"
 #include "compiler/observability_metrics.h"
@@ -1040,7 +1041,7 @@ static void run_3680_compact_owner_scope() {
     // before any bump.
     {
         std::println("\n--- #3680 AC-source: hook shape + facade parity ---");
-        const auto svc = read_file("src/compiler/service.ixx");
+        const auto svc = aura_test::service_module_source();
         const auto reg = read_file("src/compiler/hot_update_registry.cpp");
         CHECK(!svc.empty(), "3680: service.ixx readable");
         CHECK(svc.find("Issue #3680") != std::string::npos, "3680: hook cites #3680");

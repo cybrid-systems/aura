@@ -13,6 +13,7 @@
 //   AC6: query:soa-dirty-stats schema-2109 + new counters
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 #include "compiler/observability_metrics.h"
 #include "core/transparent_string_hash.hh"
 
@@ -104,8 +105,7 @@ static void ac1_impact_scope_instrs() {
 
 static void ac2_partial_instr_skip_metrics() {
     std::println("\n--- AC2: partial re-emit skip metrics ---");
-    auto svc =
-        read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
+    auto svc = aura_test::service_module_source();
     CHECK(svc.find("relower_partial_insts_saved_total") != std::string::npos, "insts_saved metric");
     CHECK(svc.find("relower_instruction_skip_total") != std::string::npos, "skip metric");
     CHECK(svc.find("can_peel_instr") != std::string::npos ||
@@ -145,8 +145,7 @@ static void ac3_should_partial_consulted() {
     CHECK(!should_partial_relower(get_partial_relower_threshold()), "at threshold → full");
     auto low = read_file("src/compiler/lowering_impl.cpp");
     auto pass = read_file("src/compiler/pass_pipeline_core.ixx");
-    auto svc =
-        read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
+    auto svc = aura_test::service_module_source();
     CHECK(low.find("should_partial_relower") != std::string::npos,
           "lower_to_ir_with_cache consults");
     CHECK(pass.find("should_partial_relower") != std::string::npos, "DirtyAware consults");

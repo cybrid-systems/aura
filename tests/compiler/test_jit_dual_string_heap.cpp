@@ -11,6 +11,7 @@
 //   AC6: source-cite + cmake + gate
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 
 #include <cstdio>
 #include <cstdlib>
@@ -178,7 +179,7 @@ static void ac5_arg_append() {
 
 static void ac6_source_gate() {
     std::println("\n--- #2575 AC6: source-cite + gate ---");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc = aura_test::service_module_source();
     CHECK(svc.find("#2575") != std::string::npos, "AC6: service cites #2575");
     CHECK(svc.find("convert_str_for_jit") != std::string::npos, "AC6: eval→JIT re-intern");
     CHECK(svc.find("convert_str_for_eval") != std::string::npos, "AC6: JIT→eval args");

@@ -9,6 +9,7 @@
 //   AC5: None → default threshold behavior
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 #include "compiler/hot_update_registry.hh"
 #include "compiler/typed_mutation_audit.h"
 
@@ -367,7 +368,7 @@ int run_test_partial_relower_storm_gate() {
     {
         std::println("\n--- source wiring ---");
         auto pure = read_file("src/compiler/ir_cache_pure.ixx");
-        auto svc = read_file("src/compiler/service.ixx");
+        auto svc = aura_test::service_module_source();
         auto dirty = read_file("src/compiler/service_dirty.cpp");
         // #2524: storm-aware consult lives in pass_pipeline_core (dirty pipeline).
         auto pm = read_file("src/compiler/pass_manager.ixx") +
@@ -684,7 +685,7 @@ int run_test_partial_relower_storm_gate() {
 
         // AC4: source-cite — decl + all three rewrite sites cite #3869.
         const auto pp = read_file("src/compiler/pass_pipeline_core.ixx");
-        const auto sv = read_file("src/compiler/service.ixx");
+        const auto sv = aura_test::service_module_source();
         const auto pi = read_file("src/compiler/pass_impls.ixx");
         CHECK(pp.find("dirty_aware_storm_force_full_total{0}") != std::string::npos,
               "3869 AC4: counter declared in pass_pipeline_core.ixx");

@@ -49,6 +49,7 @@
 //   - tests/compiler/test_coercion_map_abort_rewind.cpp (#3102)
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 
 #include "compiler/typed_mutation_audit.h"
 #include "compiler/aura_jit_bridge.h"
@@ -156,7 +157,7 @@ static void ac1_2_three_abort_sites_ordering() {
 // the cache walk. Source-cite in service.ixx.
 static void ac3_in_progress_flag_lifecycle() {
     std::println("\n--- #3159 AC3: abort_force_in_progress_ flag lifecycle ---");
-    const auto service_ixx = read_file("src/compiler/service.ixx");
+    const auto service_ixx = aura_test::service_module_source();
     CHECK(!service_ixx.empty(), "AC3: service.ixx readable");
 
     // AC3: begin_abort_ir_cache_force_fence sets abort_force_in_progress_ = 1.
@@ -194,7 +195,7 @@ static void ac3_in_progress_flag_lifecycle() {
 // busy-waits on it. Allows injecting concurrent lookup during walk.
 static void ac4_test_only_hold_mechanism() {
     std::println("\n--- #3159 AC4: abort_force_hold_ test-only mechanism ---");
-    const auto service_ixx = read_file("src/compiler/service.ixx");
+    const auto service_ixx = aura_test::service_module_source();
     CHECK(!service_ixx.empty(), "AC4: service.ixx readable");
 
     // AC4: abort_force_hold_ atomic field present.
@@ -241,7 +242,7 @@ static void ac5_soft_off_zero_cost() {
 // abort_ir_cache_force_dirty_total. No g_3159_* atomic introduced.
 static void ac6_no_new_metrics_counters() {
     std::println("\n--- #3159 AC6: no new middle-of-metrics counters ---");
-    const auto service_ixx = read_file("src/compiler/service.ixx");
+    const auto service_ixx = aura_test::service_module_source();
     const auto boundary_cpp = read_file("src/compiler/evaluator_mutation_boundary.cpp");
     const auto audit_h = read_file("src/compiler/typed_mutation_audit.h");
 
@@ -356,7 +357,7 @@ static void ac3258_2_store_acks_clean_hit() {
 
 static void ac3258_3_soft_gen0_zero_extra() {
     std::println("\n--- #3258 AC3: gen==0 short-circuit (never aborted) ---");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc = aura_test::service_module_source();
     CHECK(svc.find("abort_force_rejects_clean_hit_") != std::string::npos,
           "3258 AC3: helper present");
     auto hpos = svc.find("bool abort_force_rejects_clean_hit_");
@@ -373,7 +374,7 @@ static void ac3258_3_soft_gen0_zero_extra() {
 
 static void ac3258_4_prepare_refuses_during_abort() {
     std::println("\n--- #3258 AC4: prepare_source_to_ir_map refuses during abort ---");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc = aura_test::service_module_source();
     auto ppos = svc.find("bool prepare_source_to_ir_map_for_partial_");
     CHECK(ppos != std::string::npos, "3258 AC4: prepare present");
     auto pwin = svc.substr(ppos, 800);
@@ -395,7 +396,7 @@ static void ac3258_5_source_and_linter() {
           "3258 AC5: no test_issue_3258.cpp");
     CHECK(read_file("tests/issues/test_issue_3258.cpp").empty(),
           "3258 AC5: no tests/issues/test_issue_3258.cpp");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc = aura_test::service_module_source();
     auto fence = svc.find("void begin_abort_ir_cache_force_fence()");
     CHECK(fence != std::string::npos, "3258 AC5: fence");
     auto fwin = svc.substr(fence, 600);
@@ -459,8 +460,7 @@ static void ac3324_2_map_not_green_with_preabort_ids() {
 
 static void ac3324_3_relower_skips_partial() {
     std::println("\n--- #3324 AC3: relower_define_blocks skips partial on abort_map_invalid ---");
-    const auto svc =
-        read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
+    const auto svc = aura_test::service_module_source();
     CHECK(svc.find("Issue #3324") != std::string::npos, "3324 AC3: service cites #3324");
     CHECK(svc.find("if (it->second.abort_map_invalid)") != std::string::npos,
           "3324 AC3: lookup consults abort_map_invalid");
@@ -495,7 +495,7 @@ static void ac3324_5_source_and_linter() {
           "3324 AC5: no tests/issues/test_issue_3324.cpp");
     CHECK(read_file("docs/design/3324-abort-restore-stale-map.md").empty(),
           "3324 AC5: no docs/design/");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc = aura_test::service_module_source();
     CHECK(svc.find("schema-3324") == std::string::npos, "3324 AC5: no schema-3324");
     CHECK(svc.find("g_3324_") == std::string::npos, "3324 AC5: no g_3324_*");
 }
@@ -581,7 +581,7 @@ static void ac3551_3_soft_observe_only() {
 
 static void ac3551_4_source_cite_no_invent() {
     std::println("\n--- #3551 AC5: source-cite + no invent / no new query ---");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc = aura_test::service_module_source();
     const auto pure = read_file("src/compiler/ir_cache_pure.ixx");
     const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
     const auto t = read_file("tests/compiler/test_abort_ir_cache_fence_first.cpp");
@@ -815,7 +815,7 @@ static void ac3852_2_soft_abort_aot_untouched() {
 
 static void ac3852_3_source_and_linter() {
     std::println("\n--- #3852 AC4: source-cite + linter / grandfather / no invent ---");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc = aura_test::service_module_source();
     const auto t = read_file("tests/compiler/test_abort_ir_cache_fence_first.cpp");
     const auto build = read_file("build.py");
     const auto gf = read_file("scripts/coverage/simple_check_grandfather.txt");
@@ -904,7 +904,7 @@ static void ac4084_3_prologue_zero_is_not_success() {
     CHECK(aura_jit_deopt_to_interpreter("f4084") == 0, "4084 AC3: deopt still returns fixnum 0");
     CHECK(aura_jit_take_prologue_deopt_sentinel() == 1, "4084 AC3: take sees the prologue deopt");
     CHECK(aura_jit_take_prologue_deopt_sentinel() == 0, "4084 AC3: take clears the sentinel");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc = aura_test::service_module_source();
     const auto fence = svc.find("Issue #4084: abort does not bump the mutation epoch");
     CHECK(fence != std::string::npos, "4084 AC3: abort fence cites the cache erase");
     if (fence != std::string::npos) {

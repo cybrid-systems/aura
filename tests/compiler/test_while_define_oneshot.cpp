@@ -9,6 +9,7 @@
 //   AC4: education warning path + language note + gate
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 
 #include "compiler/pipeline_policy.hh"
 
@@ -288,7 +289,7 @@ static void ac4372_while_set_in_define() {
                 "4372: string-replace");
     eval_int_eq(file_cs, R"((if (string-contains? "hello" "ell") 1 0))", 1,
                 "4372: string-contains?");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc = aura_test::service_module_source();
     CHECK(svc.find("Issue #4372") != std::string::npos, "4372: cite");
 }
 
@@ -401,8 +402,7 @@ static void ac4466_while_multi_body() {
           "4466: primitive cite");
     CHECK(read_file("src/compiler/lowering_impl.cpp").find("#4466") != std::string::npos,
           "4466: lowering cite");
-    CHECK(read_file("src/compiler/service.ixx").find("callee_name == \"while\"") !=
-              std::string::npos,
+    CHECK(aura_test::service_module_source().find("callee_name == \"while\"") != std::string::npos,
           "4466: while still needs the walker fallback");
 
     const char* bare = "(let ((i 0) (s 0)) (while (< i 3) (set! i (+ i 1)) (set! s (+ s i))) s)";
@@ -694,7 +694,7 @@ static void ac5281_foreach_set_after_set_code() {
     CHECK(reb.has_value(), "5281: rebind returns");
     eval_int_eq(rebind_cs, R"((if (equal? (collect '(1 2 3)) '(1 2 3)) 1 0))", 1,
                 "5281: rebind for-each set! is (1 2 3)");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc = aura_test::service_module_source();
     CHECK(svc.find("Issue #5281") != std::string::npos, "5281: cite");
 }
 

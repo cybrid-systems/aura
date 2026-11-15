@@ -3,6 +3,7 @@
 // Prefer adding a section here over a new tests/issues binary.
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 #include "compiler/aura_jit_bridge.h"
 #include "compiler/observability_metrics.h"
 #include "compiler/prim_registrar_scaffold.hh"
@@ -2564,7 +2565,7 @@ int run_4395_epoch_pack() {
           "4395: cache-size independent of epoch bits 32-47");
     CHECK(metric_int(cs, "compile:dep-edges") >= 0, "4395: dep-edges lane still an int");
 
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc = aura_test::service_module_source();
     const auto hook = svc.find("set_get_incremental_stats_fn");
     const std::string pack = hook == std::string::npos ? std::string{} : svc.substr(hook, 2500);
     CHECK(pack.find("Issue #4395") != std::string::npos, "4395: pack cites the issue");

@@ -17,6 +17,7 @@
 //   #2894 AC5: source-cite all fail axes stamp reason
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 
 #include "compiler/aura_jit_bridge.h"
 #include "compiler/observability_metrics.h"
@@ -950,7 +951,7 @@ static void ac4080_4_source_cite() {
               std::string::npos,
           "4080 AC4: live stamp reads the latch before retire");
     const auto gc = read_file("src/compiler/evaluator_gc.cpp");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc = aura_test::service_module_source();
     CHECK(gc.find("rebind_linear_proof_after_root_migration()") != std::string::npos,
           "4080 AC4: GC compact hook rebinds");
     CHECK(svc.find("on_arena_compact_notify") != std::string::npos &&

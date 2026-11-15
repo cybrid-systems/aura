@@ -9,6 +9,7 @@
 //   AC5: Soft / no-compact path: soft_skip only (no ir_sync required)
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 
 #include "core/post_compact_lifecycle.hh"
 #include "core/layout_stamp.hh"
@@ -78,7 +79,7 @@ int run_test_post_compact_lifecycle() {
         auto hh = read_file("src/core/post_compact_lifecycle.hh");
         auto dens = read_file("src/core/densify_consistency_report.h");
         auto mut = read_file("src/compiler/evaluator_mutation_boundary.cpp");
-        auto svc = read_file("src/compiler/service.ixx");
+        auto svc = aura_test::service_module_source();
         CHECK(hh.find("Canonical post-compact lifecycle") != std::string::npos ||
                   hh.find("canonical post-compact lifecycle") != std::string::npos ||
                   hh.find("Canonical post-compact") != std::string::npos,

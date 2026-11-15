@@ -27,6 +27,7 @@
 //              production/Full face; false-attribute under partial).
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 #include "core/densify_consistency_report.h"
 #include "compiler/typed_mutation_audit.h"
 #include "compiler/dce_elided_deopt_meta.h"
@@ -369,8 +370,7 @@ static void ac3007_3_schema_and_source() {
     std::println("\n--- #3007 AC3: schema-3007 + source-cite ---");
     CHECK(kDeadCoercionHotResidualIssue == 3007, "3007 AC3: issue constant");
     const auto opt = read_file("src/compiler/optimization_passes.ixx");
-    const auto svc =
-        read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
+    const auto svc = aura_test::service_module_source();
     const auto ev = read_file("src/compiler/evaluator_typecheck.cpp");
     const auto q = read_file("src/compiler/evaluator_primitives_query.cpp") +
                    read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
@@ -1017,8 +1017,7 @@ static void ac3347_4_linter_no_invent() {
 static void ac3349_1_relower_remirrors_before_impact_ub() {
     std::println("\n--- #3349 AC1: remirror before impact_ub / partial commit ---");
     CHECK(kDeadCoercionPersistBeforePartialIssue == 3349, "3349 AC1: issue stamp");
-    const auto sixx =
-        read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
+    const auto sixx = aura_test::service_module_source();
     const auto dirtyf = read_file("src/compiler/service_dirty.cpp");
     CHECK(sixx.find("Issue #3349") != std::string::npos, "3349 AC1: service.ixx cites #3349");
     CHECK(sixx.find("mark_entry_from_dead_coercion_persist_") != std::string::npos,
@@ -1047,8 +1046,7 @@ static void ac3349_2_soft_quiet() {
     note_residual_castop_sites(one, {});
     CHECK(residual_castop_persist_size() == 0, "3349 AC2: Soft does not persist");
     CHECK(force_residual_castop_undermark_into_cone() == 0, "3349 AC2: Soft remirror 0");
-    const auto sixx =
-        read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
+    const auto sixx = aura_test::service_module_source();
     CHECK(sixx.find("empty persist") != std::string::npos ||
               sixx.find("Soft / empty persist") != std::string::npos,
           "3349 AC2: zero-extra documented");
@@ -1088,8 +1086,7 @@ static void ac3349_3_production_persist_marks_or_force_full() {
     CHECK(cs.metrics().partial_forced_full_by_impact_total.load(std::memory_order_relaxed) >=
               forced0,
           "3349 AC3: force-full distinguisher non-decreasing");
-    const auto sixx =
-        read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
+    const auto sixx = aura_test::service_module_source();
     CHECK(sixx.find("mark_entry_from_dead_coercion_persist_") != std::string::npos,
           "3349 AC3: mark-or-full helper");
     CHECK(sixx.find("partial_forced_full_by_impact_total") != std::string::npos,
@@ -1115,8 +1112,7 @@ static void ac3618_persist_attribution_forces_full() {
     auto save =
         g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
 
-    const auto sixx =
-        read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
+    const auto sixx = aura_test::service_module_source();
     CHECK(sixx.find("Issue #3618") != std::string::npos, "3618 AC1: gate cites #3618");
     // Windowed: the #3349 tail gate must key on !persist_attributed WITHOUT
     // the source_to_ir_map.empty() conjunct (#3618).
@@ -1239,8 +1235,7 @@ static void ac3986_shape_partial_attributed_and_typechange_soak() {
     using aura::compiler::kShapeStormEmptyPersistIssue;
 
     CHECK(kShapeStormEmptyPersistIssue == 3986, "3986: stamp");
-    const auto svc =
-        read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
+    const auto svc = aura_test::service_module_source();
     CHECK(svc.find("Issue #3986") != std::string::npos, "3986: consult cites");
     CHECK(svc.find("schema-3986") == std::string::npos, "3986: no new query key");
 
@@ -1632,8 +1627,7 @@ static void ac3689_partial_peel_aos_dce_uses_mask() {
     using aura::compiler::typed_audit::apply_production_audit_defaults;
     using aura::compiler::typed_audit::production_hard_face_active;
 
-    const auto svc =
-        read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
+    const auto svc = aura_test::service_module_source();
     CHECK(svc.find("Issue #3689") != std::string::npos, "3689: suite cites #3689");
     const auto suite_pos = svc.find("std::size_t run_incremental_dirty_pass_suite_");
     // Brace-matched run_incremental_dirty_pass_suite_ body: #4254 pushed the
@@ -2018,8 +2012,7 @@ static void ac4155_3_empty_persist_and_soft_zero_cost() {
 static void ac4155_4_source_cite_and_wiring() {
     std::println("\n--- #4155 AC4: source-cite + wiring, prior faces intact ---");
     const auto dirty = read_file("src/compiler/dirty_propagation.ixx");
-    const auto svc =
-        read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
+    const auto svc = aura_test::service_module_source();
     const auto t = read_file("tests/compiler/test_dead_coercion_dirty_cone.cpp");
     const auto lint = read_file("scripts/check_residual_castop_densify_clear_4155.py");
     const auto build = read_file("build.py");
@@ -2271,8 +2264,7 @@ static void ac4172_6_schema_and_source() {
           "4172 AC6: issue constant");
     const auto pol = read_file("src/compiler/castop_density_policy.hh");
     const auto opt = read_file("src/compiler/optimization_passes.ixx");
-    const auto svc =
-        read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
+    const auto svc = aura_test::service_module_source();
     CHECK(pol.find("note_residual_undermark_hard_reject") != std::string::npos,
           "4172 AC6: policy reject helper");
     CHECK(pol.find("g_density_gate_reject_pending.store(1, std::memory_order_release)") !=

@@ -23,6 +23,7 @@
 //   #2911 AC6: decision table + linter; no docs/design/*
 
 #include "compiler/coercion_provenance_policy.hh"
+#include "../support/service_module_source.hh"
 #include "compiler/mutation_concurrency_health.hh"
 #include "compiler/type_linear_commit_health.hh"
 #include "core/densify_consistency_report.h"
@@ -1183,7 +1184,7 @@ static void ac2984_5_schema() {
 static void ac2984_6_source_and_linter() {
     std::println("\n--- #2984 AC6: source-cite compact hooks + linter ---");
     const auto gc = read_file("src/compiler/evaluator_gc.cpp");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc = aura_test::service_module_source();
     const auto tma = read_file("src/compiler/typed_mutation_audit.h");
     const auto t = read_file("tests/compiler/test_type_linear_commit_health.cpp");
     const auto lint =
@@ -1290,7 +1291,7 @@ static void ac3227_4_source_and_linter() {
     std::println("\n--- #3227 AC4: source-cite + linter ---");
     const auto tma = read_file("src/compiler/typed_mutation_audit.h");
     const auto gc = read_file("src/compiler/evaluator_gc.cpp");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc = aura_test::service_module_source();
     const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
     const auto t = read_file("tests/compiler/test_type_linear_commit_health.cpp");
     const auto lint = read_file("scripts/coverage/manifests/3227.json");

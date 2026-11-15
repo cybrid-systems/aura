@@ -26,6 +26,7 @@
 //   AC5: CK SoA entry analyzes dirty opcodes (compute_kind_instructions)
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 #include "compiler/jit_typed_mutation_stats.h"
 #include "compiler/typed_mutation_audit.h"
 
@@ -185,7 +186,7 @@ static void ac3583_1b_aot_emit_has_no_inline_pass() {
     std::println("\n--- #3583 AC1: AOT emit / production pack has no InlinePass ---");
     const auto impls = read_file("src/compiler/pass_impls.ixx");
     const auto core = read_file("src/compiler/pass_pipeline_core.ixx");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc = aura_test::service_module_source();
     const auto jit = read_file("src/compiler/aura_jit.cpp");
     const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
     const auto br = read_file("src/compiler/aura_jit_bridge.cpp");
@@ -478,7 +479,7 @@ int run_test_soa_dirty_aware_pipeline() {
         std::println("\n--- #2907 AC1: zero bridge in production packs ---");
         const auto impls = read_file("src/compiler/pass_impls.ixx");
         const auto core = read_file("src/compiler/pass_pipeline_core.ixx");
-        const auto svc = read_file("src/compiler/service.ixx");
+        const auto svc = aura_test::service_module_source();
         CHECK(impls.find("kTestOnlyAosBridge") != std::string::npos,
               "AC1: kTestOnlyAosBridge on bridge");
         CHECK(impls.find("kAosBridgeSunsetIssue = 2907") != std::string::npos ||
@@ -585,7 +586,7 @@ int run_test_soa_dirty_aware_pipeline() {
 
         const auto impls = read_file("src/compiler/pass_impls.ixx");
         const auto core = read_file("src/compiler/pass_pipeline_core.ixx");
-        const auto svc = read_file("src/compiler/service.ixx");
+        const auto svc = aura_test::service_module_source();
         CHECK(core.find("run_production_soa_pure_wrap_pack") != std::string::npos,
               "3488 AC2: production SoA PureWrap pack fold");
         CHECK(core.find("check_production_pure_wrap_pack") != std::string::npos,
@@ -655,7 +656,7 @@ int run_test_soa_dirty_aware_pipeline() {
 
         const auto opt = read_file("src/compiler/optimization_passes.ixx");
         const auto core = read_file("src/compiler/pass_pipeline_core.ixx");
-        const auto svc = read_file("src/compiler/service.ixx");
+        const auto svc = aura_test::service_module_source();
         const auto impls = read_file("src/compiler/pass_impls.ixx");
         CHECK(opt.find("kProductionSoaFactoryIssue = 4007") != std::string::npos,
               "4007 AC2: stamp");
@@ -689,7 +690,7 @@ int run_test_soa_dirty_aware_pipeline() {
         CHECK(static_cast<bool>(DirtySoAEntryPass<EscapeAnalysisWrap>),
               "3701 AC3 / 3795 AC2: Soft DirtySoAEntryPass grandfather kept");
 
-        const auto svc = read_file("src/compiler/service.ixx");
+        const auto svc = aura_test::service_module_source();
         const auto prod = svc.find("const bool prod_soa");
         CHECK(prod != std::string::npos, "3701: prod_soa");
         const auto win = svc.substr(prod, 2800);
@@ -774,7 +775,7 @@ int run_test_soa_dirty_aware_pipeline() {
 
         std::println("\n=== Issue #4262: SoA escape zero FlatInstruction materialize ===");
         {
-            const auto svc = read_file("src/compiler/service.ixx");
+            const auto svc = aura_test::service_module_source();
             CHECK(svc.find("kEscapeSoaNoFlatMaterializeIssue = 4262") != std::string::npos,
                   "4262 AC1: issue stamp");
             CHECK(svc.find("run_escape_on_soa_fn") != std::string::npos,
@@ -849,7 +850,7 @@ int run_test_soa_dirty_aware_pipeline() {
     // ── Issue #3689: SoA dirty pack DCE does not walk clean-block CastOp ──
     {
         std::println("\n=== Issue #3689: partial peel SoA/AoS DCE uses dirty mask ===");
-        const auto svc = read_file("src/compiler/service.ixx");
+        const auto svc = aura_test::service_module_source();
         CHECK(svc.find("Issue #3689") != std::string::npos, "3689: suite cites #3689");
         CHECK(svc.find("run_coercion_elim_on_function(func, db)") != std::string::npos,
               "3689 AC1: AoS DCE peels dirty blocks");
@@ -890,7 +891,7 @@ int run_test_soa_dirty_aware_pipeline() {
     // ── Issue #3822: prod_soa hot pack + SoA→AoS dirty sync before writeback ──
     {
         std::println("\n=== Issue #3822: SoA PureWrap sync into AoS writeback SSOT ===");
-        const auto svc = read_file("src/compiler/service.ixx");
+        const auto svc = aura_test::service_module_source();
         const auto soa = read_file("src/compiler/ir_soa.ixx");
         CHECK(svc.find("Issue #3822") != std::string::npos, "3822: suite cites #3822");
         CHECK(soa.find("sync_soa_dirty_blocks_into_aos") != std::string::npos,

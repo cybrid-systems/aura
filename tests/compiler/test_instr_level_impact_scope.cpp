@@ -11,6 +11,7 @@
 //   AC7: service smoke — define/eval; metrics non-decreasing under mutate
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 #include "compiler/observability_metrics.h"
 
 #include <cstdint>
@@ -70,7 +71,7 @@ static std::int64_t href(CompilerService& cs, std::string_view key) {
 static void ac1_source() {
     std::println("\n--- AC1: source cites #2031 ---");
     auto pure = read_file("src/compiler/ir_cache_pure.ixx");
-    auto svc = read_file("src/compiler/service.ixx");
+    auto svc = aura_test::service_module_source();
     auto dirty = read_file("src/compiler/service_dirty.cpp");
     auto met = read_file("src/compiler/observability_metrics.h");
     auto q = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");

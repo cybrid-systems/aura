@@ -10,6 +10,7 @@
 //   AC7: service store/lookup path — define/eval; stamp counters non-decreasing
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 #include "compiler/observability_metrics.h"
 
 #include <cstdint>
@@ -62,7 +63,7 @@ static std::int64_t href(CompilerService& cs, std::string_view key) {
 static void ac1_source() {
     std::println("\n--- AC1: source cites #2033 ---");
     auto pure = read_file("src/compiler/ir_cache_pure.ixx");
-    auto svc = read_file("src/compiler/service.ixx");
+    auto svc = aura_test::service_module_source();
     auto met = read_file("src/compiler/observability_metrics.h");
     auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
     CHECK(!pure.empty() && pure.find("#2033") != std::string::npos, "ir_cache_pure #2033");

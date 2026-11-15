@@ -8,6 +8,7 @@
 //   AC4: source-cite + cmake + gate
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 #include "compiler/hash_meta.h"
 #include "compiler/runtime_shared.h"
 #include "compiler/value_tags.h"
@@ -116,7 +117,7 @@ static void ac4_source_gate() {
     const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
     CHECK(rt.find("#2577") != std::string::npos, "AC4: runtime cites #2577");
     CHECK(rt.find("g_string_intern") != std::string::npos, "AC4: JIT content intern map");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc = aura_test::service_module_source();
     CHECK(svc.find("#2577") != std::string::npos, "AC4: service cites #2577");
     CHECK(svc.find("g_jit_idx_to_eval_idx") != std::string::npos, "AC4: jit→eval idx cache");
     const auto cmake = read_file("CMakeLists.txt");

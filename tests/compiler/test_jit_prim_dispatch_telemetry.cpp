@@ -22,6 +22,7 @@
 // telemetry; same-class wrap-or-note follow-up.
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 
 #include "compiler/security_capabilities.h"
 #include "compiler/security_defaults.hh"
@@ -243,7 +244,7 @@ int run_test_jit_prim_dispatch_telemetry() {
     // ── AC5: source-cite — routing + stub-link contract ──
     {
         std::println("\n--- AC5: source-cite (routing + fail-closed stub link) ---");
-        const auto svc = read_file("src/compiler/service.ixx");
+        const auto svc = aura_test::service_module_source();
         CHECK(svc.find("Issue #3593: route through the same Evaluator choke point") !=
                   std::string::npos,
               "AC5: dispatch cites #3593 telemetry routing");

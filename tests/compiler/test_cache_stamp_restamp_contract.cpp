@@ -27,6 +27,7 @@
 //   #3513 AC5: extend this suite; no test_issue_3513 / docs/design / new query
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 #include "compiler/aot_reload_consistency_proof.h"
 #include "compiler/hot_update_registry.hh"
 #include "compiler/observability_metrics.h"
@@ -98,7 +99,7 @@ int run_test_cache_stamp_restamp_contract() {
         CHECK(s.mutation_count == 11 && s.bridge_epoch == 21, "restamp overwrites");
 
         const auto pure = read_file("src/compiler/ir_cache_pure.ixx");
-        const auto svc = read_file("src/compiler/service.ixx");
+        const auto svc = aura_test::service_module_source();
         const auto dirty = read_file("src/compiler/service_dirty.cpp");
         const auto aot = read_file("src/compiler/aot_mangle.h");
         CHECK(pure.find("2183") != std::string::npos, "pure cites 2183");
@@ -327,8 +328,7 @@ int run_test_cache_stamp_restamp_contract() {
 
     {
         std::println("\n--- #3481 AC2: instr peel does not content-restamp ---");
-        const auto svc =
-            read_file("src/compiler/service.ixx") + read_file("src/compiler/service_relower.cpp");
+        const auto svc = aura_test::service_module_source();
         const auto peel = svc.find("bool relower_affected_instrs_");
         CHECK(peel != std::string::npos, "3481 AC2: instr peel exists");
         const auto relower = svc.find("bool CompilerService::relower_define_blocks(");
@@ -409,7 +409,7 @@ int run_test_cache_stamp_restamp_contract() {
         CHECK(peeled && peeled->abort_map_invalid, "3481 AC5: abort latch survives restamp");
         CHECK(cs.lookup_define_v2("a3481", peeled->source_hash) == 1,
               "3481 AC5: post-abort AOT/restamp must not clean-hit");
-        const auto svc = read_file("src/compiler/service.ixx");
+        const auto svc = aura_test::service_module_source();
         const auto fd = svc.find("void force_ir_cache_dirty_after_abort()");
         CHECK(fd != std::string::npos, "3481 AC5: abort force-dirty present");
         const auto fd_win = svc.substr(fd, 3200);
@@ -442,7 +442,7 @@ int run_test_cache_stamp_restamp_contract() {
               "3481 AC6: no invent test_issue_3481");
         CHECK(read_file("tests/issues/test_issue_3481.cpp").empty(),
               "3481 AC6: no tests/issues/test_issue_3481");
-        const auto svc = read_file("src/compiler/service.ixx");
+        const auto svc = aura_test::service_module_source();
         CHECK(svc.find("schema-3481") == std::string::npos, "3481 AC6: no schema-3481");
         CHECK(svc.find("g_3481_") == std::string::npos, "3481 AC6: no g_3481_*");
         CHECK(svc.find("query:content-stored") == std::string::npos, "3481 AC6: no new query key");
@@ -525,7 +525,7 @@ int run_test_cache_stamp_restamp_contract() {
 
     {
         std::println("\n--- #3513 AC4: store clears latch; Soft no extra ---");
-        const auto svc = read_file("src/compiler/service.ixx");
+        const auto svc = aura_test::service_module_source();
         const auto store = svc.find("void store_define_v2(");
         CHECK(store != std::string::npos, "3513 AC4: store_define_v2");
         const auto store_win = svc.substr(store, 3500);
@@ -553,7 +553,7 @@ int run_test_cache_stamp_restamp_contract() {
               "3513 AC5: no invent test_issue_3513");
         CHECK(read_file("tests/issues/test_issue_3513.cpp").empty(),
               "3513 AC5: no tests/issues/test_issue_3513");
-        const auto svc = read_file("src/compiler/service.ixx");
+        const auto svc = aura_test::service_module_source();
         CHECK(svc.find("schema-3513") == std::string::npos, "3513 AC5: no schema-3513");
         CHECK(svc.find("query:ir-content-untrusted") == std::string::npos,
               "3513 AC5: no new query key");

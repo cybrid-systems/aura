@@ -9,6 +9,7 @@
 //   AC5: schema-2560 on type-dep-partial-merge-stats + source-cite
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 #include "compiler/observability_metrics.h"
 #include "compiler/typed_mutation_audit.h"
 
@@ -186,7 +187,7 @@ static void ac3189_partial_impact_upper_bound_unified() {
         "\n--- #3189: production partial decision sites all consult impact-checked helper ---");
 
     const auto svc = read_file("src/compiler/service_dirty.cpp");
-    const auto sixx = read_file("src/compiler/service.ixx");
+    const auto sixx = aura_test::service_module_source();
     const auto ixx = read_file("src/compiler/ir_cache_pure.ixx");
     const auto obs = read_file("src/compiler/observability_metrics.h");
 

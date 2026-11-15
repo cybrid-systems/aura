@@ -11,6 +11,7 @@
 //   AC6: #1605 lineage keys present
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 #include "compiler/observability_metrics.h"
 
 #include <cstdint>
@@ -238,7 +239,7 @@ static void ac3892_2_skip_does_not_bump() {
 
 static void ac3892_3_fail_closed_full_unchanged() {
     std::println("\n--- #3892 AC3: fail-closed full still uses existing distinguisher ---");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc = aura_test::service_module_source();
     const auto cite = svc.find("Issue #3892");
     CHECK(cite != std::string::npos, "3892 AC3: #3892 cite");
     if (cite != std::string::npos) {

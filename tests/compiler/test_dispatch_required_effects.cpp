@@ -27,6 +27,7 @@
 //        behavioral deny/allow/TA matrix + Soft zero-extra.
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 
 #include "compiler/ffi_hot_path.hh"
 #include "compiler/runtime_shared.h" // #4036: aura_alloc_closure / aura_closure_is_freed / aura_free_closure_checked
@@ -773,7 +774,7 @@ static void ac4093_source_cite() {
           "4093 cite: hash prim no longer stamps the JIT owner (#4296)");
     CHECK(ag.find("g_hash_tenants[hidx] = ev.capability_tenant_id();") != std::string::npos,
           "4093 cite: agent hash alloc sites stamp the executing evaluator (#4296)");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc = aura_test::service_module_source();
     CHECK(svc.find("aura_jit_owner_sandbox_mode") != std::string::npos &&
               svc.find("owner->effect_sandbox_mode()") != std::string::npos,
           "4093 cite: strong sandbox hook");
@@ -1492,7 +1493,7 @@ static void ac4110_4_unarmed_face_no_tenant_load() {
 static void ac4134_source_cite() {
     std::println(
         "\n--- #4134 cite: fail-closed isolation hook (strong + stub), zero-cost intact ---");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc = aura_test::service_module_source();
     const auto iso = svc.find("extern \"C\" int aura_jit_owner_check_isolation(");
     CHECK(iso != std::string::npos, "4134 cite: strong isolation hook present");
     if (iso != std::string::npos) {
@@ -4713,7 +4714,7 @@ int run_test_dispatch_required_effects() {
             CHECK(reqp != std::string::npos && (lockp == std::string::npos || reqp < lockp),
                   "3720 AC3: choke before write lock");
         }
-        const auto svc = read_file("src/compiler/service.ixx");
+        const auto svc = aura_test::service_module_source();
         CHECK(svc.find("aura_jit_owner_require_effect") != std::string::npos,
               "3720 AC3: strong owner def");
         CHECK(svc.find("owner->require_effect") != std::string::npos,

@@ -8,6 +8,7 @@
 //   AC4: schema-2823 query; this suite + linter; no docs/design/2823-*
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 
 #include <atomic>
 #include <cstdint>
@@ -98,7 +99,7 @@ int run_test_run_one_yield_hook_actual() {
     {
         std::println("\n--- AC1: policy vs action split in source ---");
         auto core = read_file("src/compiler/pass_pipeline_core.ixx");
-        auto svc = read_file("src/compiler/service.ixx");
+        auto svc = aura_test::service_module_source();
         CHECK(!core.empty(), "AC1: pass_pipeline_core readable");
         auto pos = core.find("execute a single pass");
         if (pos == std::string::npos)

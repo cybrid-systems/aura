@@ -11,6 +11,7 @@
 //   AC5: schema-2139 on query:soa-dirty-stats
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 #include "compiler/observability_metrics.h"
 
 #include <cstdint>
@@ -110,7 +111,7 @@ int run_test_soa_single_entry_dirty_sync() {
     {
         std::println("\n--- AC1: single entry ---");
         auto soa = read_file("src/compiler/ir_soa.ixx");
-        auto svc = read_file("src/compiler/service.ixx");
+        auto svc = aura_test::service_module_source();
         auto dirty = read_file("src/compiler/service_dirty.cpp");
         auto low = read_file("src/compiler/lowering_impl.cpp");
         CHECK(soa.find("#2139") != std::string::npos, "ir_soa #2139");

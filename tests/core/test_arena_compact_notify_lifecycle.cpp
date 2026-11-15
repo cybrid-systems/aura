@@ -8,6 +8,7 @@
 //   AC4: After clear, notify is no-op; re-install still works
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 
 #include "core/gc_hooks.h"
 #include "compiler/messaging_bridge.h"
@@ -67,7 +68,7 @@ int run_test_arena_compact_notify_lifecycle() {
     // ── AC2: dtor wires clear before g_current null ────────────────
     {
         std::println("\n--- #2438 AC2: CompilerService dtor order ---");
-        auto svc = read_file("src/compiler/service.ixx");
+        auto svc = aura_test::service_module_source();
         CHECK(svc.find("clear_arena_compact_notify_hooks") != std::string::npos,
               "AC2: dtor calls clear");
         const auto clear_pos = svc.find("clear_arena_compact_notify_hooks");

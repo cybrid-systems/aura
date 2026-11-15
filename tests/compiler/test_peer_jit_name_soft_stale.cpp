@@ -26,6 +26,7 @@
 //        g_aot_table_epoch unchanged.
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 #include "compiler/aura_jit_bridge.h"
 #include "compiler/hot_update_registry.hh"
 
@@ -219,7 +220,7 @@ static void ac7_no_design_doc() {
 // ── Issue #3351: peer IR-cache must not clean-hit after owner-scoped ──
 static void ac3351_1_lookup_probes_before_clean_hit() {
     std::println("\n--- #3351 AC1: lookup_define_v2 last-look peer IR gen ---");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc = aura_test::service_module_source();
     const auto dirty = read_file("src/compiler/service_dirty.cpp");
     const auto bridge = read_file("src/compiler/aura_jit_bridge.cpp");
     const auto header = read_file("src/compiler/aura_jit_bridge.h");

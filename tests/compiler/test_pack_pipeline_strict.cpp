@@ -8,6 +8,7 @@
 // Allow, #2213 AC2).
 
 #include "compiler/pipeline_policy.hh"
+#include "../support/service_module_source.hh"
 #include "core/cpp26_contract_stats.h"
 
 #include <cstdint>
@@ -272,7 +273,7 @@ void ac4007_pack_deletes_aos_factory() {
           "4007: V2 factory overload present");
     CHECK(opt.find("run_production_soa_pure_wrap_pack") != std::string::npos,
           "4007: factory is PureWrap pack");
-    auto svc = read_file("src/compiler/service.ixx");
+    auto svc = aura_test::service_module_source();
     auto lowering = read_file("src/compiler/lowering_impl.cpp");
     auto impls = read_file("src/compiler/pass_impls.ixx");
     CHECK(count_substr(svc, "run_default_optimization_pipeline(") == 0,

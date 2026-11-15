@@ -14,6 +14,7 @@
 //   AC8: source-cite composite_txn_commit + commit_cs_has_work + schema-2345
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 #include "compiler/typed_mutation_audit.h"
 #include "compiler/observability_metrics.h" // g_partial_cs_hard_empty_miss / wired
 #include "core/sandbox.hh"
@@ -218,7 +219,7 @@ static void ac4_schema_source() {
     CHECK(impl.find("import_delta_marks_from") != std::string::npos, "import call");
     const auto ixx = read_file("src/compiler/type_checker.ixx");
     CHECK(ixx.find("g_partial_cs_import_total") != std::string::npos, "ixx metrics");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc = aura_test::service_module_source();
     CHECK(svc.find("Issue #2262") != std::string::npos ||
               svc.find("stash_partial_constraint_state") != std::string::npos,
           "service stash on partial paths");

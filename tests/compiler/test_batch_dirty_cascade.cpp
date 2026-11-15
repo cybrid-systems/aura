@@ -9,6 +9,7 @@
 //   AC5: finish_dirty_sync still holds instruction_dirty_synced_with_blocks
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 
 #include <cstdint>
 #include <fstream>
@@ -230,7 +231,7 @@ static void ac5_finish_dirty_sync() {
     CHECK(href(cs, "schema-2139") == 2139, "AC5: retain 2139 lineage");
 
     // Production routing cites
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc = aura_test::service_module_source();
     CHECK(svc.find("mark_blocks_dirty") != std::string::npos, "AC5: service batch API");
     CHECK(svc.find("Issue #2522") != std::string::npos || svc.find("#2522") != std::string::npos,
           "AC5: service cites #2522");

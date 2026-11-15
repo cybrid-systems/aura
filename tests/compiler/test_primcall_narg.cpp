@@ -70,6 +70,7 @@
 //   AC26: source + linter wiring
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 
 #include <cstdio>
 #include <cstdlib>
@@ -326,7 +327,7 @@ static void ac11_source_gate() {
     CHECK(jit.find("PrimStringGt = 44") != std::string::npos, "AC11: jit PrimStringGt 44");
     CHECK(jit.find("PrimStringGe = 45") != std::string::npos, "AC11: jit PrimStringGe 45");
     CHECK(jit.find("PrimStringLe = 46") != std::string::npos, "AC11: jit PrimStringLe 46");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc = aura_test::service_module_source();
     CHECK(svc.find("\"string>=?\"") != std::string::npos, "AC11: kPrimNameTable string>=?");
     const auto lowering = read_file("src/compiler/lowering_impl.cpp");
     CHECK(lowering.find("{\"string<=?\", PrimId::StringLe}") != std::string::npos,

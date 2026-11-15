@@ -20,6 +20,7 @@
 //                  run_pipeline unchanged; source-cite + linter wired
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 
 #include <cstdint>
 #include <fstream>
@@ -295,7 +296,7 @@ int run_test_hot_pass_hard_dod() {
                   read_file("src/compiler/pass_pipeline_core.ixx") +
                   read_file("src/compiler/pass_impls.ixx") +
                   read_file("src/compiler/optimization_passes.ixx") +
-                  read_file("src/compiler/service.ixx");
+                  aura_test::service_module_source();
         CHECK(pm.find("set_block_dirty_fn(std::function") == std::string::npos,
               "3042 AC1: no std::function block dirty setter");
         CHECK(pm.find("set_instruction_dirty_fn(std::function") == std::string::npos,
@@ -500,7 +501,7 @@ int run_test_hot_pass_hard_dod() {
         std::println("\n--- #3329 AC4/AC5: source-cite + zero extra atomics ---");
         auto core = read_file("src/compiler/pass_pipeline_core.ixx");
         auto cc = read_file("src/core/concept_constraints.ixx");
-        auto svc = read_file("src/compiler/service.ixx");
+        auto svc = aura_test::service_module_source();
         auto opt = read_file("src/compiler/optimization_passes.ixx");
         auto build = read_file("build.py");
         CHECK(cc.find("ProductionPipelinePass") != std::string::npos, "3329 AC4: concept");
@@ -578,7 +579,7 @@ int run_test_hot_pass_hard_dod() {
         std::println("\n--- #4007 AC1: named factory is V2 PureWrap pack ---");
         auto opt = read_file("src/compiler/optimization_passes.ixx");
         auto core = read_file("src/compiler/pass_pipeline_core.ixx");
-        auto svc = read_file("src/compiler/service.ixx");
+        auto svc = aura_test::service_module_source();
         auto impls = read_file("src/compiler/pass_impls.ixx");
         CHECK(opt.find("kProductionSoaFactoryIssue = 4007") != std::string::npos,
               "4007 AC1: stamp");

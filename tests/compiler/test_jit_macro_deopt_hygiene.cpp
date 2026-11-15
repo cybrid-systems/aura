@@ -27,6 +27,7 @@
 //   #3263 AC5: linter after #3262; no invent
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 #include "compiler/aura_jit.h"
 #include "compiler/typed_mutation_audit.h"
 
@@ -297,7 +298,7 @@ static void ac6_source_wiring() {
     std::println("\n--- AC6: source wiring #2100 ---");
     auto low = read_file("src/compiler/lowering.ixx");
     auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
-    auto svc = read_file("src/compiler/service.ixx");
+    auto svc = aura_test::service_module_source();
     auto q = ::aura::test::aura_query_prims_source();
     CHECK(!low.empty() && low.find("source_marker") != std::string::npos, "lowering stamps marker");
     CHECK(low.find("provenance") != std::string::npos, "lowering stamps provenance");

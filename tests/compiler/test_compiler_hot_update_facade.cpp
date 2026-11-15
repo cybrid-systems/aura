@@ -22,6 +22,7 @@
 //        under the facade (no regression in the C ABI path).
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 #include "compiler/hot_update_registry.hh"
 #include "compiler/typed_mutation_audit.h"
 
@@ -547,7 +548,7 @@ static void ac3219_eval_core_joint_after_production_facade() {
     std::println("\n--- #3219: Evaluator/core joint after production facade ---");
 
     const auto svc = read_file("src/compiler/service_dirty.cpp");
-    const auto ixx = read_file("src/compiler/service.ixx");
+    const auto ixx = aura_test::service_module_source();
     const auto hur = read_file("src/compiler/hot_update_registry.cpp");
     const auto build = read_file("build.py");
 
@@ -755,7 +756,7 @@ static void ac3345_production_hybrid_depth1_fanout() {
     std::println("\n--- #3345: production hybrid depth-1 called_by IR dirty ---");
 
     const auto svc = read_file("src/compiler/service_dirty.cpp");
-    const auto ixx = read_file("src/compiler/service.ixx");
+    const auto ixx = aura_test::service_module_source();
     const auto build = read_file("build.py");
 
     CHECK(ixx.find("mark_direct_hybrid_dependents_body_dirty_") != std::string::npos,
@@ -856,7 +857,7 @@ static void ac3474_production_called_by_cone() {
     std::println("\n--- #3474: production FIFO called_by cone IR dirty ---");
 
     const auto svc = read_file("src/compiler/service_dirty.cpp");
-    const auto ixx = read_file("src/compiler/service.ixx");
+    const auto ixx = aura_test::service_module_source();
     const auto build = read_file("build.py");
 
     CHECK(ixx.find("mark_called_by_cone_body_dirty_") != std::string::npos,
@@ -989,7 +990,7 @@ static void ac3474_production_called_by_cone() {
 static void ac3823_production_node_dep_mark_union() {
     std::println("\n--- #3823: Production mark-time node-dep body-dirty union ---");
     const auto svc = read_file("src/compiler/service_dirty.cpp");
-    const auto ixx = read_file("src/compiler/service.ixx");
+    const auto ixx = aura_test::service_module_source();
     const auto build = read_file("build.py");
     CHECK(ixx.find("mark_node_dep_dependents_body_dirty_") != std::string::npos,
           "3823: helper declared");
@@ -1043,7 +1044,7 @@ static void ac3605_owner_scope_clock_isolation() {
 
     const auto hur = read_file("src/compiler/hot_update_registry.cpp");
     const auto bridge = read_file("src/compiler/aura_jit_bridge.cpp");
-    const auto ixx = read_file("src/compiler/service.ixx");
+    const auto ixx = aura_test::service_module_source();
     const auto build = read_file("build.py");
 
     // Source-cite: facade prediction + skip guard; probe; scope flag.
@@ -1133,7 +1134,7 @@ static void ac3605_owner_scope_clock_isolation() {
 static void ac3749_production_facade_evicts_jit_cache() {
     std::println("\n--- #3749: production facade evicts jit_cache_ ---");
     const auto svc = read_file("src/compiler/service_dirty.cpp");
-    const auto ixx = read_file("src/compiler/service.ixx");
+    const auto ixx = aura_test::service_module_source();
     const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
 
     CHECK(ixx.find("evict_jit_cache_after_production_facade_") != std::string::npos,
@@ -1255,7 +1256,7 @@ static int64_t ac4521_fn_b(int64_t* locals, uint32_t argc) {
 
 static void ac4521_facade_bundle_erase_predrop_publish() {
     std::println("\n--- #4521: facade bundle-row erase + pre-drop publish posture ---");
-    const auto ixx = read_file("src/compiler/service.ixx");
+    const auto ixx = aura_test::service_module_source();
     const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
     const auto jit = read_file("src/compiler/aura_jit.cpp");
     const auto svc = read_file("src/compiler/service_dirty.cpp");
@@ -1454,7 +1455,7 @@ static void ac4521_facade_bundle_erase_predrop_publish() {
 // dual-fresh stays green. Soft/Off unchanged. No new query key.
 static void ac3975_owner_scoped_expire_must_deopt_tw() {
     std::println("\n--- #3975: owner-scoped expire MustDeopt TW/IR ---");
-    const auto ixx = read_file("src/compiler/service.ixx");
+    const auto ixx = aura_test::service_module_source();
     CHECK(ixx.find("Issue #3975") != std::string::npos, "3975: service.ixx cites #3975");
     CHECK(ixx.find("must_deopt_owner_live_closures_for_define_") != std::string::npos,
           "3975 AC: name-precise MustDeopt helper");
@@ -1767,7 +1768,7 @@ static void ac4405_func_id_only_leaves_native() {
 // eviction is not what drops this entry.
 static void ac4073_stale_epoch_try_jit_does_not_invoke() {
     std::println("\n--- #4073: stale mutation epoch is not a jit cache hit ---");
-    const auto ixx = read_file("src/compiler/service.ixx");
+    const auto ixx = aura_test::service_module_source();
     CHECK(ixx.find("Issue #4073") != std::string::npos, "4073: service.ixx cites");
     CHECK(ixx.find("public_try_jit_stale_epoch_scalar_invokes_for_test") != std::string::npos,
           "4073: stale-epoch probe");
@@ -1787,7 +1788,7 @@ static void ac4073_stale_epoch_try_jit_does_not_invoke() {
 // jit_sample_epoch, and the #4073 consumption contract stays intact.
 static void ac4338_sampled_epoch_stamp() {
     std::println("\n--- #4338: jit cache stamps the sampled mutation epoch ---");
-    const auto ixx = read_file("src/compiler/service.ixx") +
+    const auto ixx = aura_test::service_module_source() +
                      read_file("src/compiler/service_jit.cpp") +
                      read_file("src/compiler/service_exec_jit.cpp");
     CHECK(ixx.find("Issue #4338") != std::string::npos, "4338: jit TUs cite the sampled epoch");
@@ -1832,7 +1833,7 @@ static void ac4338_sampled_epoch_stamp() {
 // native, and the hit must not republish or invoke that pointer.
 static void ac4388_cache_hit_refuses_after_facade_skip() {
     std::println("\n--- #4388: cache hit does not republish a dropped ScalarFn ---");
-    const auto ixx = read_file("src/compiler/service.ixx");
+    const auto ixx = aura_test::service_module_source();
     const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
     CHECK(ixx.find("Issue #4388") != std::string::npos, "4388: service.ixx cites");
     CHECK(rt.find("Issue #4388") != std::string::npos, "4388: runtime cites");
@@ -1881,7 +1882,7 @@ static void ac4388_cache_hit_refuses_after_facade_skip() {
 // never revive pre-mutate IR as a clean hit.
 static void ac4341_sampled_epoch_restamp() {
     std::println("\n--- #4341: cache restamps stamp the sampled mutation epoch ---");
-    const auto ixx = read_file("src/compiler/service.ixx");
+    const auto ixx = aura_test::service_module_source();
     const auto dirty = read_file("src/compiler/service_dirty.cpp");
     CHECK(ixx.find("Issue #4341") != std::string::npos, "4341: service.ixx cites");
     CHECK(dirty.find("Issue #4341") != std::string::npos, "4341: service_dirty.cpp cites");
@@ -1936,7 +1937,7 @@ static void ac4341_sampled_epoch_restamp() {
 static void ac4146_production_facade_cone_jit_drop() {
     std::println("\n--- #4146: production facade cone JIT drop ---");
     const auto svc = read_file("src/compiler/service_dirty.cpp");
-    const auto ixx = read_file("src/compiler/service.ixx");
+    const auto ixx = aura_test::service_module_source();
     CHECK(ixx.find("Issue #4146") != std::string::npos, "4146: service.ixx cites #4146");
     CHECK(ixx.find("drop_cone_jit_after_production_facade_") != std::string::npos,
           "4146 AC1: cone drop helper declared");

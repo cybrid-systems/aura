@@ -20,6 +20,7 @@
 //   #2937 AC6: coverage linter + no docs/design/
 
 #include "test_harness.hpp"
+#include "../support/service_module_source.hh"
 
 #include "compiler/shape_profiler.h"
 #include "compiler/shape.h"
@@ -280,7 +281,7 @@ static void ac3271_5_source_and_linter() {
     std::println("\n--- #3271 AC5/AC6: source-cite + linter + no invent ---");
     const auto hh = read_file("src/compiler/shape_profiler.h");
     const auto cpp = read_file("src/compiler/shape_profiler.cpp");
-    const auto svc = read_file("src/compiler/service.ixx");
+    const auto svc = aura_test::service_module_source();
     const auto t = read_file("tests/compiler/test_shape_profiler_concurrency.cpp");
     const auto lint =
         read_file("scripts/coverage/checks/check_shape_dirty_hook_no_std_function_3271.py");
