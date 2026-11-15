@@ -11,7 +11,7 @@
     },
     {
       "ac": "AC1",
-      "path": "src/compiler/service.ixx",
+      "path": "src/compiler/service_soft_parity.cpp",
       "contains": [
         "Issue #3891",
         "cone_has_node_only_hole"

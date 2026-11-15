@@ -21,9 +21,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 SVC = "src/compiler/service.ixx"
 SVC_RELOWER = "src/compiler/service_relower.cpp"
@@ -67,7 +67,7 @@ def _rows(svc: str, health: str, build: str, query: str, obs: str, allow: str) -
         # header comment (which contains "Issue #3615" cite) plus the
         # function body. The comment block is ~15 lines × ~70 chars.
         start = cone_pos - 1500 if cone_pos > 1500 else 0
-        win = svc[start : cone_pos + 6500]
+        win = svc[start : cone_pos + 9000]
     must(SITE, "AC1 cone helper cite", win)
     must("graphs_consistent", "AC1 cone helper parity check", win)
     must("node_dep_graph_.dependents", "AC1 Soft-erased hole check", win)
@@ -166,7 +166,9 @@ def main() -> int:
         print("self-test: ok")
         return 0
 
-    svc = _read(SVC) + _read(SVC_RELOWER)
+    # Implementation unit first: find(CONE) must land on the definition, not
+    # the in-class declaration.
+    svc = _read("src/compiler/service_soft_parity.cpp") + _read(SVC) + _read(SVC_RELOWER)
     fails = _rows(svc, _read(HEALTH), wired_text, _read(QUERY), _read(OBS), _read(ALLOW))
     if fails:
         for f in fails:
