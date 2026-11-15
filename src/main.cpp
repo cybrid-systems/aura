@@ -156,6 +156,17 @@ static std::string json_escape(std::string_view s) {
             out += c;
         } else if (c == '\n') {
             out += "\\n";
+        } else if (c == '\r') {
+            out += "\\r";
+        } else if (c == '\t') {
+            out += "\\t";
+        } else if (static_cast<unsigned char>(c) < 0x20) {
+            // #5234: every remaining control character must be escaped or the
+            // reply is not valid JSON.
+            out += "\\u00";
+            constexpr char kHex[] = "0123456789abcdef";
+            out += kHex[(static_cast<unsigned char>(c) >> 4) & 0xf];
+            out += kHex[static_cast<unsigned char>(c) & 0xf];
         } else {
             out += c;
         }
@@ -1924,6 +1935,57 @@ static void serve_user_level_walker_policy(aura::diag::Diagnostic& d) {
 // drop the cause. The s-expression arm already turns that value into the
 // sync error line (#5168). A string is not an error value, so a program
 // that returns the text "<error>" stays status=ok.
+// #5234: serve replies are one JSON object per line. Program stdout used to
+// land in front of it ("still{\"status\":…}"). Capture the request's stdout
+// into a temp file, restore fd 1 before the reply, and forward the captured
+// text to stderr.
+class ScopedServeStdout {
+public:
+    ScopedServeStdout() {
+        std::fflush(stdout);
+        tmp_ = std::tmpfile();
+        if (tmp_ == nullptr)
+            return;
+        saved_ = ::dup(STDOUT_FILENO);
+        if (saved_ < 0) {
+            std::fclose(tmp_);
+            tmp_ = nullptr;
+            return;
+        }
+        ::dup2(::fileno(tmp_), STDOUT_FILENO);
+    }
+    ScopedServeStdout(const ScopedServeStdout&) = delete;
+    ScopedServeStdout& operator=(const ScopedServeStdout&) = delete;
+    std::string finish() {
+        if (saved_ < 0 || tmp_ == nullptr)
+            return {};
+        std::fflush(stdout);
+        ::dup2(saved_, STDOUT_FILENO);
+        ::close(saved_);
+        saved_ = -1;
+        std::string out;
+        std::rewind(tmp_);
+        char buf[4096];
+        std::size_t n = 0;
+        while ((n = std::fread(buf, 1, sizeof buf, tmp_)) > 0)
+            out.append(buf, n);
+        std::fclose(tmp_);
+        tmp_ = nullptr;
+        return out;
+    }
+    ~ScopedServeStdout() {
+        const std::string rest = finish();
+        if (!rest.empty()) {
+            std::fwrite(rest.data(), 1, rest.size(), stderr);
+            std::fflush(stderr);
+        }
+    }
+
+private:
+    int saved_ = -1;
+    FILE* tmp_ = nullptr;
+};
+
 static bool serve_reply_error_value(aura::compiler::CompilerService& cs,
                                     const aura::compiler::types::EvalValue& v) {
     if (!aura::compiler::types::is_error(v) || aura::compiler::types::is_string(v))
@@ -1990,11 +2052,18 @@ static void serve_json_code(aura::compiler::CompilerService& cs, ServeCmd& cmd,
             timeout_sec =
                 aura::core::parse_leading_int<int>(timeout_it->second).value_or(timeout_sec);
         }
+        const auto displayed_before = aura_displayed_error_count();
+        ScopedServeStdout out_cap;
         auto future = std::async(std::launch::async, [&]() {
             return aura::serve::detail::eval_top_level_forms(
                 split.forms, [&](std::string_view form) { return cs.exec_with_cache(form); });
         });
         auto status = future.wait_for(std::chrono::seconds(timeout_sec));
+        const std::string printed = out_cap.finish();
+        if (!printed.empty()) {
+            std::fwrite(printed.data(), 1, printed.size(), stderr);
+            std::fflush(stderr);
+        }
         if (status == std::future_status::timeout) {
             std::println("{{\"status\":\"timeout\",\"msg\":\"exec timed out ({}s)\"}}",
                          timeout_sec);
@@ -2013,6 +2082,13 @@ static void serve_json_code(aura::compiler::CompilerService& cs, ServeCmd& cmd,
                     auto& v = **result;
                     // Issue #5172: an error value is status=error, not "<error>".
                     if (!serve_reply_error_value(cs, v)) {
+                        // #5234: a displayed error value is a failure even
+                        // when the form's value is ().
+                        if (aura_displayed_error_count() > displayed_before) {
+                            std::println("{{\"status\":\"error\",\"msg\":\"runtime error: an error "
+                                         "value was displayed (see stderr)\"}}");
+                            return;
+                        }
                         if (aura::compiler::types::is_closure(v)) {
                             std::println("{{\"status\":\"closure\",\"value\":\"#<"
                                          "procedure>\"}}");
@@ -2312,11 +2388,25 @@ static int run_sync_serve(const OneshotLaunch& launch) {
             // ── Plain S-expression (backward compatible) ────────
             auto& cs = st.resolve();
             aura::messaging::g_current_compiler_service = &cs;
+            const auto displayed_before = aura_displayed_error_count();
+            ScopedServeStdout out_cap;
             auto r = cs.eval(line);
+            const std::string printed = out_cap.finish();
+            if (!printed.empty()) {
+                std::fwrite(printed.data(), 1, printed.size(), stderr);
+                std::fflush(stderr);
+            }
             // Issue #5168 / #5172: a top-level error value printed as
             // status=ok "<error>" and hid the cause (#4273).
             if (r && serve_reply_error_value(cs, *r))
                 continue;
+            // #5234: display/write consumed an error value outside try. File
+            // mode exits 1; serve must not report the () result as success.
+            if (aura_displayed_error_count() > displayed_before) {
+                std::println("{{\"status\":\"error\",\"msg\":\"runtime error: an error value was "
+                             "displayed (see stderr)\"}}");
+                continue;
+            }
             if (r) {
                 std::println("{{\"status\":\"ok\",\"value\":\"{}\"}}",
                              json_escape(fmt_val(*r, cs)));
