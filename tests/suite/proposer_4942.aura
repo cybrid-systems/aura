@@ -81,6 +81,53 @@
 (assert! (string=? "protected: eval-current"
                    (prop:scope-check "(define (eval-current x) x)" ctx-prot))
          "protected define refused")
+; Issue #5291: the guard has to see a protected write inside the body,
+; including one that only runs because eval (or the same kind of rewrite)
+; executes it. A quoted set! that nobody evaluates stays data.
+(define ctx-risk
+  (prop:ctx (hash "defines" (list "rule-entry")
+                  "protected" (list "risk-max-pos" "risk-max-dd")
+                  "max-nodes" 400)))
+(define (risk-check g)
+  (prop:check-proposal (hash "genome" g "thought" "t") ctx-risk))
+(assert! (string=? "protected: risk-max-pos"
+                   (risk-check "(define (rule-entry t i prev) (begin (set! risk-max-pos (lambda () 99)) 1))"))
+         "set! of a protected name inside the body is refused")
+(assert! (string=? "protected: risk-max-pos"
+                   (risk-check "(define (rule-entry t i prev) (eval (quote (set! risk-max-pos 1))))"))
+         "eval of a set! of a protected name is refused")
+(assert! (string=? "protected: risk-max-pos"
+                   (risk-check "(define (rule-entry t i prev) (eval \"(set! risk-max-pos 1)\"))"))
+         "eval of a string that set!s a protected name is refused")
+(assert! (eq? #f (risk-check "(define (rule-entry t i prev) 1)"))
+         "a body that does not touch a protected name passes")
+(assert! (string=? "protected: risk-max-pos"
+                   (risk-check "(define (risk-max-pos) 1000000)"))
+         "top-level redefine of a protected name is refused")
+(assert! (string=? "protected: risk-max-dd"
+                   (risk-check "(define (rule-entry t i prev) 1)\n(define (risk-max-dd) 99999)"))
+         "a later protected define is refused")
+(assert! (eq? #f (risk-check "(define (rule-entry t i prev) (quote (set! risk-max-pos 1)))"))
+         "a quoted set! that is not evaluated passes")
+(assert! (eq? #f (risk-check "(define (rule-entry t i prev) (set! score 1))"))
+         "set! of a name that is not protected passes")
+(assert! (eq? #f (risk-check "(define (rule-entry t i prev) (eval (quote (+ 1 2))))"))
+         "eval that does not write a protected name passes")
+(assert! (string=? "protected: eval-current"
+                   (risk-check "(define (rule-entry t i prev) (eval-current))"))
+         "eval-current can rewrite a protected binding")
+(assert! (string=? "protected: load"
+                   (risk-check "(define (rule-entry t i prev) (load \"other.aura\"))"))
+         "load can rewrite a protected binding")
+(assert! (string=? "protected: risk-max-pos"
+                   (risk-check "(define (rule-entry t i prev) (set-code \"(set! risk-max-pos 1)\"))"))
+         "set-code of a protected assignment is refused")
+(assert! (string=? "protected: risk-max-pos"
+                   (risk-check "(define (rule-entry t i prev) (mutate:rebind \"risk-max-pos\" \"1\" \"t\"))"))
+         "mutate:rebind of a protected name is refused")
+(assert! (string=? "protected: risk-max-pos"
+                   (risk-check "(define (rule-entry t i prev) (define (risk-max-pos) 1))"))
+         "a nested define of a protected name is refused")
 (define ctx-mac (prop:ctx (hash "defines" (list "foo"))))
 (assert! (string-prefix? (prop:scope-check "(define-syntax foo (syntax-rules () ((_) 1)))" ctx-mac) "macro:")
          "define-syntax refused")
