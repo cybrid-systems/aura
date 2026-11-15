@@ -47,6 +47,7 @@
 //   #4252 AC2: a peer eval bound as the TLS TC is NOT cleared; TLS fallback kept
 //   #4252 AC3: Soft no extra work + source-cite / linter / allowlist
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include "compiler/lock_order_audit.h"
@@ -145,7 +146,7 @@ static void ac2_soft_zero_writes() {
     std::println("\n--- #2608 AC2: soft / no env → zero persist writes ---");
     // Ensure soft path: unset force-on, Sampled + production defaults off
     // (#2896 also enables under Full — force Soft explicitly).
-    unsetenv("AURA_OCCURRENCE_PERSIST");
+    ::aura::config::test_unsetenv("AURA_OCCURRENCE_PERSIST");
     apply_dev_audit_defaults();
     UnitCs u;
     u.cs.set_current_epoch(1);
@@ -166,7 +167,7 @@ static void ac2_soft_zero_writes() {
 // ── AC1: persist + prune + rehydrate ──
 static void ac1_persist_prune_rehydrate() {
     std::println("\n--- #2608 AC1: persist + epoch prune + rehydrate ---");
-    setenv("AURA_OCCURRENCE_PERSIST", "1", 1);
+    ::aura::config::test_setenv("AURA_OCCURRENCE_PERSIST", "1", 1);
     UnitCs u;
     u.cs.set_current_epoch(5);
     auto v1 = u.cs.fresh_var();
@@ -203,14 +204,14 @@ static void ac1_persist_prune_rehydrate() {
               u.cs.occurrence_priority_roots_size() >= 0,
           "AC1: solve_delta_occurrence path defined with rehydrated goals");
 
-    unsetenv("AURA_OCCURRENCE_PERSIST");
+    ::aura::config::test_unsetenv("AURA_OCCURRENCE_PERSIST");
 }
 
 // ── AC3: cap truncates ──
 static void ac3_cap_truncates() {
     std::println("\n--- #2608 AC3: cap truncates excess goals ---");
-    setenv("AURA_OCCURRENCE_PERSIST", "1", 1);
-    setenv("AURA_OCCURRENCE_PERSIST_CAP", "4", 1);
+    ::aura::config::test_setenv("AURA_OCCURRENCE_PERSIST", "1", 1);
+    ::aura::config::test_setenv("AURA_OCCURRENCE_PERSIST_CAP", "4", 1);
     // Cap is read once (static) — may already be 256 from prior test in
     // same process. Still exercise truncate by filling past cap via
     // repeated appends that drop oldest when size >= cap.
@@ -239,7 +240,7 @@ static void ac3_cap_truncates() {
     }
     CHECK(true, "AC3: cap discipline held");
 
-    unsetenv("AURA_OCCURRENCE_PERSIST");
+    ::aura::config::test_unsetenv("AURA_OCCURRENCE_PERSIST");
     // Do not unset CAP if already read — process static is fine.
 }
 
@@ -523,7 +524,7 @@ static void ac3170_6_source_and_linter() {
 
 static void ac3193_1_prod_hold_blocks_rehydrate() {
     std::println("\n--- #3193 AC1: production hold blocks rehydrate until persist+proof clear ---");
-    unsetenv("AURA_OCCURRENCE_PERSIST");
+    ::aura::config::test_unsetenv("AURA_OCCURRENCE_PERSIST");
     apply_production_audit_defaults();
     typed_audit::reset_abort_authority_hold_for_test();
     typed_audit::reset_rehydrate_miss_invalidate_for_test();
@@ -688,7 +689,7 @@ static void ac3193_4_source_and_linter() {
 
 static void ac3232_1_nested_hold_keeps_block() {
     std::println("\n--- #3232 AC1: nested hold keeps rehydrate blocked until last end ---");
-    unsetenv("AURA_OCCURRENCE_PERSIST");
+    ::aura::config::test_unsetenv("AURA_OCCURRENCE_PERSIST");
     apply_production_audit_defaults();
     typed_audit::reset_abort_authority_hold_for_test();
     typed_audit::reset_rehydrate_miss_invalidate_for_test();
@@ -813,7 +814,7 @@ static void ac3232_3_source_cite_dual_restore_rehydrate() {
 //   AC4 Soft/Off zero extra; no new query key / g_3346_* / invent / docs
 
 static void ac3346_reset_faces() {
-    unsetenv("AURA_OCCURRENCE_PERSIST");
+    ::aura::config::test_unsetenv("AURA_OCCURRENCE_PERSIST");
     typed_audit::clear_stamp_last_look_tc();
     typed_audit::reset_mid_abort_authority_for_test();
     typed_audit::reset_rehydrate_miss_invalidate_for_test();
@@ -1090,7 +1091,7 @@ static void ac3418_source_and_linter() {
 // ── #2896 AC1: production + non-empty goals → append without env ──
 static void ac2896_1_production_persist_without_env() {
     std::println("\n--- #2896 AC1: production + goals → append without env ---");
-    unsetenv("AURA_OCCURRENCE_PERSIST");
+    ::aura::config::test_unsetenv("AURA_OCCURRENCE_PERSIST");
     apply_production_audit_defaults();
     clear_occurrence_empty_after_fence_for_test();
     CHECK(ConstraintSystem::occurrence_persist_enabled(),
@@ -1110,7 +1111,7 @@ static void ac2896_1_production_persist_without_env() {
 // ── #2896 AC2: Soft / empty goals → zero cost ──
 static void ac2896_2_soft_zero_cost() {
     std::println("\n--- #2896 AC2: Soft / empty goals → zero persist ---");
-    unsetenv("AURA_OCCURRENCE_PERSIST");
+    ::aura::config::test_unsetenv("AURA_OCCURRENCE_PERSIST");
     apply_dev_audit_defaults();
     CHECK(!ConstraintSystem::occurrence_persist_enabled(),
           "2896 AC2: Soft + env unset → persist disabled");
@@ -1132,7 +1133,7 @@ static void ac2896_2_soft_zero_cost() {
 // ── #2896 AC3: fence prune + rehydrate restore OR #2704 face on miss ──
 static void ac2896_3_fence_rehydrate_or_face() {
     std::println("\n--- #2896 AC3: fence rehydrate restore / face on miss ---");
-    unsetenv("AURA_OCCURRENCE_PERSIST");
+    ::aura::config::test_unsetenv("AURA_OCCURRENCE_PERSIST");
     apply_production_audit_defaults();
     clear_occurrence_empty_after_fence_for_test();
 
@@ -1175,7 +1176,7 @@ static void ac2896_3_fence_rehydrate_or_face() {
 // ── #2896 AC4: after rehydrate, goal count non-zero for #2842 stamp shape ──
 static void ac2896_4_goal_truth_after_rehydrate() {
     std::println("\n--- #2896 AC4: rehydrate → non-zero live_goal_count for #2842 ---");
-    unsetenv("AURA_OCCURRENCE_PERSIST");
+    ::aura::config::test_unsetenv("AURA_OCCURRENCE_PERSIST");
     apply_production_audit_defaults();
     UnitCs u;
     u.cs.set_current_epoch(8);
@@ -1243,7 +1244,7 @@ static void ac2896_5_query_and_source() {
 // ── #2910: densify/steal stamp after rehydrate + production always-on ──
 static void ac2910_1_production_always_persist() {
     std::println("\n--- #2910 AC1: production + goals → always persist without env ---");
-    unsetenv("AURA_OCCURRENCE_PERSIST");
+    ::aura::config::test_unsetenv("AURA_OCCURRENCE_PERSIST");
     apply_production_audit_defaults();
     CHECK(ConstraintSystem::occurrence_persist_enabled(),
           "2910 AC1: persist enabled under production without env");
@@ -1260,7 +1261,7 @@ static void ac2910_1_production_always_persist() {
 
 static void ac2910_2_soft_zero_cost() {
     std::println("\n--- #2910 AC2: Soft / empty → zero cost ---");
-    unsetenv("AURA_OCCURRENCE_PERSIST");
+    ::aura::config::test_unsetenv("AURA_OCCURRENCE_PERSIST");
     apply_dev_audit_defaults();
     CHECK(!ConstraintSystem::occurrence_persist_enabled(), "2910 AC2: Soft default OFF");
     UnitCs u;
@@ -1293,7 +1294,7 @@ static void ac2910_3_stamp_after_rehydrate_order() {
 
 static void ac2910_4_goal_truth_after_rehydrate() {
     std::println("\n--- #2910 AC4: rehydrate → non-zero live_goal_count for stamp ---");
-    unsetenv("AURA_OCCURRENCE_PERSIST");
+    ::aura::config::test_unsetenv("AURA_OCCURRENCE_PERSIST");
     apply_production_audit_defaults();
     UnitCs u;
     u.cs.set_current_epoch(5);
@@ -1350,7 +1351,7 @@ static void ac2910_6_linter_and_decision_table() {
 static void ac2938_1_production_commit_snapshot_and_post_persist_stamp() {
     std::println("\n--- #2938 AC1: production success → snapshot + post-persist proof ---");
     CHECK(kOccurrenceCommitSnapshotIssue == 2938, "AC1: issue stamp 2938");
-    unsetenv("AURA_OCCURRENCE_PERSIST");
+    ::aura::config::test_unsetenv("AURA_OCCURRENCE_PERSIST");
     apply_production_audit_defaults();
     reset_occurrence_commit_snapshot_for_test();
     UnitCs u;
@@ -1383,7 +1384,7 @@ static void ac2938_1_production_commit_snapshot_and_post_persist_stamp() {
 
 static void ac2938_2_soft_empty_zero() {
     std::println("\n--- #2938 AC2: Soft + empty → zero commit counters ---");
-    unsetenv("AURA_OCCURRENCE_PERSIST");
+    ::aura::config::test_unsetenv("AURA_OCCURRENCE_PERSIST");
     apply_dev_audit_defaults();
     reset_occurrence_commit_snapshot_for_test();
     UnitCs u;
@@ -1416,7 +1417,7 @@ static void ac2938_3_reject_never_writes() {
 
 static void ac2938_4_fence_after_snapshot() {
     std::println("\n--- #2938 AC4: fence after snapshotted commit → rehydrate or face ---");
-    unsetenv("AURA_OCCURRENCE_PERSIST");
+    ::aura::config::test_unsetenv("AURA_OCCURRENCE_PERSIST");
     apply_production_audit_defaults();
     UnitCs u;
     u.cs.set_current_epoch(5);
@@ -1508,7 +1509,7 @@ static void ac3004_1_authority_after_persist() {
 
 static void ac3004_2_soft_no_durable() {
     std::println("\n--- #3004 AC2: Soft no durable persist ---");
-    unsetenv("AURA_OCCURRENCE_PERSIST");
+    ::aura::config::test_unsetenv("AURA_OCCURRENCE_PERSIST");
     apply_dev_audit_defaults();
     reset_occurrence_provisional_discard_for_test();
     UnitCs u;
@@ -1522,7 +1523,7 @@ static void ac3004_2_soft_no_durable() {
 
 static void ac3004_3_discard_provisional_on_fail() {
     std::println("\n--- #3004 AC3: fail discards provisional live goals ---");
-    unsetenv("AURA_OCCURRENCE_PERSIST");
+    ::aura::config::test_unsetenv("AURA_OCCURRENCE_PERSIST");
     apply_production_audit_defaults();
     reset_occurrence_provisional_discard_for_test();
     UnitCs u;
@@ -1622,7 +1623,7 @@ static void ac3082_1_nested_success_never_persists() {
     CHECK(mb.find("Issue #3082") != std::string::npos, "AC1: dtor cites #3082");
     CHECK(mb.find("note_type_export_inflight") != std::string::npos,
           "AC1: nested path stamps inflight");
-    unsetenv("AURA_OCCURRENCE_PERSIST");
+    ::aura::config::test_unsetenv("AURA_OCCURRENCE_PERSIST");
     aura::compiler::lock_order::reset_tls_for_test();
     typed_audit::clear_stamp_last_look_tc();
     typed_audit::clear_type_linear_proof_outcome_for_test();
@@ -1651,7 +1652,7 @@ static void ac3082_1_nested_success_never_persists() {
 static void ac3082_2_nested_query_inflight() {
     std::println("\n--- #3082 AC2: nested open / nested success → query in-flight ---");
     aura::compiler::lock_order::reset_tls_for_test();
-    unsetenv("AURA_OCCURRENCE_PERSIST");
+    ::aura::config::test_unsetenv("AURA_OCCURRENCE_PERSIST");
     apply_dev_audit_defaults();
     CompilerService svc;
     CHECK(svc.eval("(+ 1 1)").has_value(), "AC2: warm");
@@ -1720,7 +1721,7 @@ static void ac3082_3_outermost_persist_unchanged() {
 
 static void ac3082_4_soft_no_nested_zero_extra() {
     std::println("\n--- #3082 AC4: Soft empty / no nested → zero extra persist ---");
-    unsetenv("AURA_OCCURRENCE_PERSIST");
+    ::aura::config::test_unsetenv("AURA_OCCURRENCE_PERSIST");
     apply_dev_audit_defaults();
     reset_occurrence_commit_snapshot_for_test();
     reset_occurrence_provisional_discard_for_test();
@@ -1750,7 +1751,7 @@ static void ac3082_4_soft_no_nested_zero_extra() {
 
 static void ac3082_5_nested_fail_inflight_outer_abort_discards() {
     std::println("\n--- #3082 AC5: nested fail inflight; outermost abort still discards ---");
-    unsetenv("AURA_OCCURRENCE_PERSIST");
+    ::aura::config::test_unsetenv("AURA_OCCURRENCE_PERSIST");
     apply_dev_audit_defaults();
     CompilerService svc;
     CHECK(svc.eval("(+ 1 1)").has_value(), "AC5: warm");
@@ -1810,7 +1811,7 @@ static void ac3082_6_schema_and_linter() {
 
 static void ac2981_1_prod_miss_rejects_proof() {
     std::println("\n--- #2981 AC1: production + rehydrate miss → proof would_allow=false ---");
-    unsetenv("AURA_OCCURRENCE_PERSIST");
+    ::aura::config::test_unsetenv("AURA_OCCURRENCE_PERSIST");
     apply_production_audit_defaults();
     clear_occurrence_empty_after_fence_for_test();
     typed_audit::reset_type_linear_proof_reject_empty_after_fence_for_test();
@@ -1863,7 +1864,7 @@ static void ac2981_1_prod_miss_rejects_proof() {
 // Mutation epoch. The #3778 join mid stays a mid, not that stamp.
 static void ac4564_epoch_axis_is_mutation_epoch() {
     std::println("\n--- #4564: proof epoch is the Mutation epoch ---");
-    unsetenv("AURA_OCCURRENCE_PERSIST");
+    ::aura::config::test_unsetenv("AURA_OCCURRENCE_PERSIST");
     apply_production_audit_defaults();
     typed_audit::set_strategy(typed_audit::AuditStrategy::Full);
     clear_occurrence_empty_after_fence_for_test();
@@ -1925,7 +1926,7 @@ static void ac4564_epoch_axis_is_mutation_epoch() {
 
 static void ac2981_2_soft_observe_only() {
     std::println("\n--- #2981 AC2: Soft + miss → soft counter; proof may allow ---");
-    unsetenv("AURA_OCCURRENCE_PERSIST");
+    ::aura::config::test_unsetenv("AURA_OCCURRENCE_PERSIST");
     apply_dev_audit_defaults();
     clear_occurrence_empty_after_fence_for_test();
     typed_audit::reset_type_linear_proof_reject_empty_after_fence_for_test();
@@ -1941,7 +1942,7 @@ static void ac2981_2_soft_observe_only() {
 
 static void ac2981_3_quiet_zero_extra() {
     std::println("\n--- #2981 AC3: quiet (no prune / rehydrate success) → no extra reject ---");
-    unsetenv("AURA_OCCURRENCE_PERSIST");
+    ::aura::config::test_unsetenv("AURA_OCCURRENCE_PERSIST");
     apply_production_audit_defaults();
     clear_occurrence_empty_after_fence_for_test();
     typed_audit::reset_type_linear_proof_reject_empty_after_fence_for_test();
@@ -2010,7 +2011,7 @@ static void ac2981_6_source_and_linter() {
 
 static void ac3032_1_prod_miss_invalidates_fast_path() {
     std::println("\n--- #3032 AC1: production miss → !linear_fast_path_ok + deopt ---");
-    unsetenv("AURA_OCCURRENCE_PERSIST");
+    ::aura::config::test_unsetenv("AURA_OCCURRENCE_PERSIST");
     apply_production_audit_defaults();
     clear_occurrence_empty_after_fence_for_test();
     typed_audit::reset_rehydrate_miss_invalidate_for_test();
@@ -3383,7 +3384,7 @@ static void ac3225_occurrence_persist_seqlock() {
     }
 
     {
-        unsetenv("AURA_OCCURRENCE_PERSIST");
+        ::aura::config::test_unsetenv("AURA_OCCURRENCE_PERSIST");
         apply_production_audit_defaults();
         typed_audit::reset_occurrence_persist_seq_for_test();
         clear_occurrence_empty_after_fence_for_test();
@@ -3422,7 +3423,7 @@ static void ac3225_occurrence_persist_seqlock() {
     }
 
     {
-        unsetenv("AURA_OCCURRENCE_PERSIST");
+        ::aura::config::test_unsetenv("AURA_OCCURRENCE_PERSIST");
         apply_dev_audit_defaults();
         typed_audit::reset_occurrence_persist_seq_for_test();
         const auto impl = read_file("src/compiler/type_checker_impl.cpp");
@@ -3432,7 +3433,7 @@ static void ac3225_occurrence_persist_seqlock() {
         const auto tma = read_file("src/compiler/typed_mutation_audit.h");
         CHECK(tma.find("if (occurrence_persist_seq_hard())") != std::string::npos,
               "3225 AC3: Soft skips seq bump");
-        setenv("AURA_OCCURRENCE_PERSIST", "1", 1);
+        ::aura::config::test_setenv("AURA_OCCURRENCE_PERSIST", "1", 1);
         UnitCs u;
         u.cs.set_current_epoch(1);
         auto v = u.cs.fresh_var();
@@ -3447,7 +3448,7 @@ static void ac3225_occurrence_persist_seqlock() {
         typed_audit::bump_occurrence_persist_seq_for_test();
         const auto rh = u.cs.rehydrate_occurrence_from_persist(0);
         CHECK(rh >= 1, "3225 AC3: Soft ignores odd seq");
-        unsetenv("AURA_OCCURRENCE_PERSIST");
+        ::aura::config::test_unsetenv("AURA_OCCURRENCE_PERSIST");
         typed_audit::reset_occurrence_persist_seq_for_test();
         apply_dev_audit_defaults();
     }
@@ -3597,7 +3598,7 @@ static void ac3085_5_schema_and_linter() {
 
 static void ac2995_1_soft_empty_pure_loads() {
     std::println("\n--- #2995 AC1: Soft + empty → pure loads, no persist/recover ---");
-    unsetenv("AURA_OCCURRENCE_PERSIST");
+    ::aura::config::test_unsetenv("AURA_OCCURRENCE_PERSIST");
     apply_dev_audit_defaults();
     reset_occurrence_commit_health_for_test();
     reset_occurrence_commit_snapshot_for_test();
@@ -3659,7 +3660,7 @@ static void ac2995_2_production_face_one_shot_recover() {
 // inside maybe_persist_occurrence_snapshot.
 static void ac4533_restamp_persist_mid() {
     std::println("\n--- AC4533: occurrence rows join the session mid ---");
-    unsetenv("AURA_OCCURRENCE_PERSIST");
+    ::aura::config::test_unsetenv("AURA_OCCURRENCE_PERSIST");
     apply_production_audit_defaults();
     TypeRegistry reg;
     TypeChecker tc(reg);
@@ -3694,7 +3695,7 @@ static void ac4533_restamp_persist_mid() {
 static void ac2995_4_fingerprint_after_persist() {
     std::println("\n--- #2995 AC4: post-persist fingerprint matches live goals ---");
     aura::compiler::lock_order::reset_tls_for_test();
-    unsetenv("AURA_OCCURRENCE_PERSIST");
+    ::aura::config::test_unsetenv("AURA_OCCURRENCE_PERSIST");
     apply_production_audit_defaults();
     reset_occurrence_commit_health_for_test();
     TypeRegistry reg;
@@ -3722,7 +3723,7 @@ static void ac2995_4_fingerprint_after_persist() {
 
 static void ac2995_5_fence_same_ensure() {
     std::println("\n--- #2995 AC5: fence health + same ensure entry ---");
-    unsetenv("AURA_OCCURRENCE_PERSIST");
+    ::aura::config::test_unsetenv("AURA_OCCURRENCE_PERSIST");
     apply_production_audit_defaults();
     reset_occurrence_commit_health_for_test();
     clear_occurrence_empty_after_fence_for_test();
@@ -3816,7 +3817,7 @@ static void ac3512_stage_and_empty_live_clear() {
     CHECK(read_file("docs/design/3512-expected-fp-stage.md").empty(), "3512 AC5: no docs/design");
     CHECK(read_file("tests/compiler/test_issue_3512.cpp").empty(), "3512 AC5: no invent");
 
-    setenv("AURA_OCCURRENCE_PERSIST", "1", 1);
+    ::aura::config::test_setenv("AURA_OCCURRENCE_PERSIST", "1", 1);
     apply_production_audit_defaults();
     UnitCs u;
     u.cs.set_current_epoch(1);
@@ -3831,7 +3832,7 @@ static void ac3512_stage_and_empty_live_clear() {
     CHECK(u.cs.occurrence_persist_log_size() == 0, "3512 AC4: production cleared prior log");
 
     apply_dev_audit_defaults();
-    setenv("AURA_OCCURRENCE_PERSIST", "1", 1);
+    ::aura::config::test_setenv("AURA_OCCURRENCE_PERSIST", "1", 1);
     UnitCs soft;
     soft.cs.set_current_epoch(1);
     auto vs = soft.cs.fresh_var();
@@ -3843,7 +3844,7 @@ static void ac3512_stage_and_empty_live_clear() {
         CHECK(soft.cs.append_occurrence_snapshot(11) == 0, "3512 AC5: Soft empty write 0");
         CHECK(soft.cs.occurrence_persist_log_size() == 1, "3512 AC5: Soft keeps observe log");
     }
-    unsetenv("AURA_OCCURRENCE_PERSIST");
+    ::aura::config::test_unsetenv("AURA_OCCURRENCE_PERSIST");
     apply_dev_audit_defaults();
 }
 

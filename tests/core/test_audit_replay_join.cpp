@@ -56,6 +56,7 @@
 //        records, and the legacy oversized-dir upgrade prune; env
 //        override (=size, 0 = opt-out) intact; no new query key.
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include "compiler/security_capabilities.h"
@@ -849,8 +850,8 @@ static void ac13_emit_wal_miss_overflow_join_3734() {
     aura::core::wal_slo::reset_wal_append_fail_slo_for_test();
     const char* prev_sb = std::getenv("AURA_SANDBOX");
     const std::string prev_sb_s = prev_sb ? prev_sb : "";
-    ::setenv("AURA_SANDBOX", "restricted", 1);
-    ::setenv("AURA_WAL_APPEND_FAIL_CLOSED", "1", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
+    ::aura::config::test_setenv("AURA_WAL_APPEND_FAIL_CLOSED", "1", 1);
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
     aura::compiler::typed_audit::apply_production_audit_defaults();
     CHECK(aura::core::wal_slo::wal_append_fail_closed_active(),
@@ -860,7 +861,7 @@ static void ac13_emit_wal_miss_overflow_join_3734() {
     auto& ev_a = cs_a.evaluator();
     aura::compiler::typed_audit::apply_production_audit_defaults();
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
-    ::setenv("AURA_WAL_APPEND_FAIL_CLOSED", "1", 1);
+    ::aura::config::test_setenv("AURA_WAL_APPEND_FAIL_CLOSED", "1", 1);
     ev_a.set_capability_tenant_id(7);
     aura::compiler::typed_audit::reset_for_test();
     aura::compiler::typed_audit::apply_production_audit_defaults();
@@ -919,7 +920,7 @@ static void ac13_emit_wal_miss_overflow_join_3734() {
     // production (AURA_SANDBOX=off skips force_wal — mutation WAL stays
     // on the inject-miss dir). Same shape as AC11.
     ev_a.disable_security_event_wal();
-    ::setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
     aura::compiler::typed_audit::apply_production_audit_defaults();
     CompilerService cs_q;
@@ -957,13 +958,13 @@ static void ac13_emit_wal_miss_overflow_join_3734() {
     aura::core::wal_slo::g_wal_append_fail_slo_counters.inject_fail_remaining.store(
         0, std::memory_order_relaxed);
     aura::core::security_event_wal::wal_overflow_ring_clear_for_test();
-    ::unsetenv("AURA_WAL_APPEND_FAIL_CLOSED");
+    ::aura::config::test_unsetenv("AURA_WAL_APPEND_FAIL_CLOSED");
     aura::compiler::typed_audit::apply_dev_audit_defaults();
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
     if (!prev_sb_s.empty())
-        ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
     else
-        ::unsetenv("AURA_SANDBOX");
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
 }
 
 // ── AC14 (#3734 / #3780): effect-gate fail-closed before body unchanged ──
@@ -1047,7 +1048,7 @@ static void ac16_mid0_refuse_fold_3738() {
     aura::compiler::typed_audit::clear_boundary_audit_mid();
     aura::compiler::typed_audit::clear_type_linear_commit_proof_for_test();
     aura::core::reset_mutation_epoch_for_test();
-    ::setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
     CompilerService cs;
     aura::compiler::typed_audit::apply_production_audit_defaults();
@@ -1119,8 +1120,8 @@ static void ac17_pre_persist_wal_miss_fail_closed_3780() {
     reset_all();
     aura::core::security_event_wal::wal_overflow_ring_clear_for_test();
     aura::core::wal_slo::reset_wal_append_fail_slo_for_test();
-    ::setenv("AURA_SANDBOX", "restricted", 1);
-    ::setenv("AURA_WAL_APPEND_FAIL_CLOSED", "1", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
+    ::aura::config::test_setenv("AURA_WAL_APPEND_FAIL_CLOSED", "1", 1);
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
     aura::compiler::typed_audit::apply_production_audit_defaults();
     CompilerService cs;
@@ -1143,8 +1144,8 @@ static void ac17_pre_persist_wal_miss_fail_closed_3780() {
     CHECK(ovr && ovr->reason == "mutation_wal_append_miss", "3780 AC4: reason string stable");
     ev.disable_mutation_audit_wal();
     std::filesystem::remove_all(dir);
-    ::unsetenv("AURA_WAL_APPEND_FAIL_CLOSED");
-    ::setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_unsetenv("AURA_WAL_APPEND_FAIL_CLOSED");
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
     aura::compiler::typed_audit::apply_dev_audit_defaults();
     aura::core::security_event_wal::wal_overflow_ring_clear_for_test();
@@ -1398,8 +1399,8 @@ static void ac20_se_wal_overflow_mid_join_4118() {
     // the compensating SE. Helpers + stats must join overflow-only.
     aura::core::security_event_wal::wal_overflow_ring_clear_for_test();
     aura::core::wal_slo::reset_wal_append_fail_slo_for_test();
-    ::setenv("AURA_SANDBOX", "restricted", 1);
-    ::setenv("AURA_WAL_APPEND_FAIL_CLOSED", "1", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
+    ::aura::config::test_setenv("AURA_WAL_APPEND_FAIL_CLOSED", "1", 1);
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
     aura::compiler::typed_audit::apply_production_audit_defaults();
     ev.set_capability_tenant_id(7);
@@ -1443,8 +1444,8 @@ static void ac20_se_wal_overflow_mid_join_4118() {
     ev.disable_mutation_audit_wal();
     std::filesystem::remove_all(mdir);
     std::filesystem::remove_all(dir);
-    ::unsetenv("AURA_WAL_APPEND_FAIL_CLOSED");
-    ::setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_unsetenv("AURA_WAL_APPEND_FAIL_CLOSED");
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
     aura::compiler::typed_audit::apply_dev_audit_defaults();
     aura::core::security_event_wal::wal_overflow_ring_clear_for_test();
@@ -1456,7 +1457,7 @@ static void ac21_replay_mid_last_stamped_4120() {
     std::println("\n--- #4120: empty-arg capability-effect-stats replay-mid = last_stamped ---");
     reset_all();
     aura::core::security_event_wal::wal_overflow_ring_clear_for_test();
-    ::setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
     aura::compiler::typed_audit::apply_production_audit_defaults();
     aura::compiler::typed_audit::clear_boundary_audit_mid();
@@ -1606,7 +1607,7 @@ static void ac23_wal_miss_refuse_next_4142() {
     reset_all();
     aura::core::security_event_wal::wal_overflow_ring_clear_for_test();
     aura::core::wal_slo::reset_wal_append_fail_slo_for_test();
-    ::setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
     aura::compiler::typed_audit::apply_production_audit_defaults();
     CompilerService cs;
@@ -1670,8 +1671,8 @@ static void ac23_wal_miss_refuse_next_4142() {
     // #3838 wrap-refuse bumps the counter, older overflow mids are
     // preserved, and the refused new mid keeps ONLY the compensating SE
     // (ring observe ≠ full WAL row — the thinning).
-    ::setenv("AURA_SANDBOX", "restricted", 1);
-    ::setenv("AURA_WAL_APPEND_FAIL_CLOSED", "1", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
+    ::aura::config::test_setenv("AURA_WAL_APPEND_FAIL_CLOSED", "1", 1);
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
     aura::compiler::typed_audit::apply_production_audit_defaults();
     // #4018: under the Restricted hard face the tenant-filtered queries
@@ -1763,8 +1764,8 @@ static void ac23_wal_miss_refuse_next_4142() {
     // all-green fold stays Ok; mid=0 wins even with the bit set.
     ev.disable_security_event_wal();
     std::filesystem::remove_all(dir4142);
-    ::unsetenv("AURA_WAL_APPEND_FAIL_CLOSED");
-    ::setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_unsetenv("AURA_WAL_APPEND_FAIL_CLOSED");
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
     aura::compiler::typed_audit::apply_dev_audit_defaults();
     {
@@ -1847,8 +1848,8 @@ static std::optional<std::int64_t> decision_int(CompilerService& cs, const std::
 // deny-storm left by earlier members. Those gates are not this bug.
 // production_defaults is the face that emits mid-fallback-refused.
 static void quiet_production_admit_for_4302() {
-    ::setenv("AURA_DENY_STORM_THRESHOLD", "0", 1);
-    ::setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_DENY_STORM_THRESHOLD", "0", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
     aura::core::wal_slo::reset_wal_append_fail_slo_for_test();
     aura::core::moving_densify_health::reset_moving_densify_health_for_test();
@@ -2028,7 +2029,7 @@ static void ac4302_completed_mid0_refuse_join() {
     {
         const auto seq_before =
             aura::core::security_event::g_security_event_ring().seq.load(std::memory_order_relaxed);
-        ::setenv("AURA_SANDBOX", "off", 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
         aura::compiler::typed_audit::apply_dev_audit_defaults();
         CompilerService cs;
@@ -2046,9 +2047,9 @@ static void ac4302_completed_mid0_refuse_join() {
               "4302: Soft query emits no SE");
     }
     aura::compiler::typed_audit::apply_dev_audit_defaults();
-    ::setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
-    ::unsetenv("AURA_DENY_STORM_THRESHOLD");
+    ::aura::config::test_unsetenv("AURA_DENY_STORM_THRESHOLD");
     aura::core::reset_mutation_epoch_for_test();
 }
 
@@ -2222,8 +2223,8 @@ static void ac4508_overflow_fill_keeps_op() {
     reset_all();
     aura::core::security_event_wal::wal_overflow_ring_clear_for_test();
     aura::core::wal_slo::reset_wal_append_fail_slo_for_test();
-    ::setenv("AURA_SANDBOX", "restricted", 1);
-    ::setenv("AURA_WAL_APPEND_FAIL_CLOSED", "1", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
+    ::aura::config::test_setenv("AURA_WAL_APPEND_FAIL_CLOSED", "1", 1);
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
     aura::compiler::typed_audit::apply_production_audit_defaults();
     CompilerService cs;
@@ -2253,7 +2254,7 @@ static void ac4508_overflow_fill_keeps_op() {
           "4508 AC3: compensating SE dropped (fold must answer from overflow)");
     // Query face: Off sandbox + fresh evaluator (AURA_SANDBOX=off skips
     // force_wal), mutation WAL still enabled — same shape as AC13.
-    ::setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
     aura::compiler::typed_audit::apply_production_audit_defaults();
     CompilerService cs_q;
@@ -2285,7 +2286,7 @@ static void ac4508_overflow_fill_keeps_op() {
     aura::core::wal_slo::g_wal_append_fail_slo_counters.inject_fail_remaining.store(
         0, std::memory_order_relaxed);
     aura::core::security_event_wal::wal_overflow_ring_clear_for_test();
-    ::unsetenv("AURA_WAL_APPEND_FAIL_CLOSED");
+    ::aura::config::test_unsetenv("AURA_WAL_APPEND_FAIL_CLOSED");
     aura::compiler::typed_audit::apply_dev_audit_defaults();
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
 }
@@ -2416,12 +2417,12 @@ static void ac4520_default_retention_bounded_replay() {
     // AC1: unset AURA_WAL_MAX_SEGMENTS now defaults to the cap; env
     // override (sizing) and opt-out (=0) stay.
     reset_all();
-    ::unsetenv("AURA_WAL_MAX_SEGMENTS");
+    ::aura::config::test_unsetenv("AURA_WAL_MAX_SEGMENTS");
     CHECK(wal_max_segments_retention() == kWalDefaultMaxSegments,
           "4520 AC1: unset retention = default cap (was 0 = no prune)");
-    ::setenv("AURA_WAL_MAX_SEGMENTS", "0", 1);
+    ::aura::config::test_setenv("AURA_WAL_MAX_SEGMENTS", "0", 1);
     CHECK(wal_max_segments_retention() == 0, "4520 AC1: env =0 opts out (legacy unbounded)");
-    ::unsetenv("AURA_WAL_MAX_SEGMENTS");
+    ::aura::config::test_unsetenv("AURA_WAL_MAX_SEGMENTS");
 
     // AC2: default-face writes keep the dir at the cap; prune counter bumps.
     reset_all();
@@ -2454,7 +2455,7 @@ static void ac4520_default_retention_bounded_replay() {
     // dir (2000 synthetic segments × 8 records; newest record must be
     // the last replayed row and the dir must end at the cap).
     reset_all();
-    ::unsetenv("AURA_WAL_MAX_SEGMENTS");
+    ::aura::config::test_unsetenv("AURA_WAL_MAX_SEGMENTS");
     const auto dir2 = fresh_wal_dir_3603("4520-replay");
     constexpr std::uint32_t kLegacySegments = 2000;
     constexpr std::uint64_t kRecsPerSeg = 8;
@@ -2515,7 +2516,7 @@ static void ac4520_default_retention_bounded_replay() {
 
     // AC4: mutation audit writer prunes by default too (lockstep).
     reset_all();
-    ::unsetenv("AURA_WAL_MAX_SEGMENTS");
+    ::aura::config::test_unsetenv("AURA_WAL_MAX_SEGMENTS");
     const auto dir3 = fresh_wal_dir_3603("4520-mut");
     CHECK(ev.enable_mutation_audit_wal(dir3.string()), "4520 AC4: enable mutation WAL");
     aura::core::audit_wal::g_mutation_audit_wal().set_rotate_bytes(
@@ -2540,7 +2541,7 @@ static void ac4520_default_retention_bounded_replay() {
     aura::core::audit_wal::g_mutation_audit_wal().set_rotate_bytes(
         aura::core::audit_wal::kDefaultRotateBytes);
     fs::remove_all(dir3, fs_ec);
-    ::unsetenv("AURA_WAL_MAX_SEGMENTS");
+    ::aura::config::test_unsetenv("AURA_WAL_MAX_SEGMENTS");
 
     // Source-cite: default cap + bounded replay named at the fix sites.
     const auto slo4520 = read_file("src/core/wal_append_fail_slo.h");
@@ -2588,13 +2589,13 @@ static void ac4695_se_wal_miss_class_and_truncated_replay() {
         aura::core::security_event_wal::g_security_event_wal().disable();
         aura::core::audit_wal::g_mutation_audit_wal().disable();
         if (prev_sb_s.empty())
-            ::unsetenv("AURA_SANDBOX");
+            ::aura::config::test_unsetenv("AURA_SANDBOX");
         else
-            ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+            ::aura::config::test_setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
         if (prev_fc_s.empty())
-            ::unsetenv("AURA_WAL_APPEND_FAIL_CLOSED");
+            ::aura::config::test_unsetenv("AURA_WAL_APPEND_FAIL_CLOSED");
         else
-            ::setenv("AURA_WAL_APPEND_FAIL_CLOSED", prev_fc_s.c_str(), 1);
+            ::aura::config::test_setenv("AURA_WAL_APPEND_FAIL_CLOSED", prev_fc_s.c_str(), 1);
         aura::compiler::typed_audit::apply_dev_audit_defaults();
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
         reset_security_event_ring_for_test();
@@ -2605,8 +2606,8 @@ static void ac4695_se_wal_miss_class_and_truncated_replay() {
     aura::core::workspace_isolation::reset_tenant_isolation_for_test();
     aura::core::security_event_wal::wal_overflow_ring_clear_for_test();
     aura::core::wal_slo::reset_wal_append_fail_slo_for_test();
-    ::setenv("AURA_SANDBOX", "restricted", 1);
-    ::setenv("AURA_WAL_APPEND_FAIL_CLOSED", "1", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
+    ::aura::config::test_setenv("AURA_WAL_APPEND_FAIL_CLOSED", "1", 1);
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
     aura::compiler::typed_audit::apply_production_audit_defaults();
     CompilerService cs;

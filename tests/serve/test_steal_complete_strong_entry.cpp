@@ -2,6 +2,7 @@
 // @reason: Issue #2377 — force single steal-complete entry (no weak
 // legacy residual-less path under production).
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include "compiler/mutation_hold_budget.h"
@@ -422,7 +423,7 @@ int run_test_steal_complete_strong_entry() {
             clear_production_abi_selfcheck_for_test();
             aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
                 .store(0, std::memory_order_relaxed);
-            unsetenv("AURA_SANDBOX");
+            ::aura::config::test_unsetenv("AURA_SANDBOX");
             CHECK(!production_abi_selfcheck_required(), "2955 AC2: Soft not required");
             const auto fail0 =
                 g_production_abi_selfcheck_fail_total.load(std::memory_order_relaxed);
@@ -436,10 +437,10 @@ int run_test_steal_complete_strong_entry() {
             std::println("\n--- #2955 AC2: sandbox=off opts out ---");
             aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
                 .store(1, std::memory_order_relaxed);
-            setenv("AURA_SANDBOX", "off", 1);
+            ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
             CHECK(!production_abi_selfcheck_required(), "2955 AC2: sandbox=off not required");
             CHECK(aura_runtime_require_production_abi(), "2955 AC2: sandbox=off require ok");
-            unsetenv("AURA_SANDBOX");
+            ::aura::config::test_unsetenv("AURA_SANDBOX");
             aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
                 .store(0, std::memory_order_relaxed);
         }
@@ -449,7 +450,7 @@ int run_test_steal_complete_strong_entry() {
         {
             std::println("\n--- #2955 AC3: full link self-check ok ---");
             clear_production_abi_selfcheck_for_test();
-            unsetenv("AURA_SANDBOX");
+            ::aura::config::test_unsetenv("AURA_SANDBOX");
             aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
                 .store(1, std::memory_order_relaxed);
             CHECK(production_abi_selfcheck_required(), "2955 AC3: production requires check");
@@ -541,7 +542,7 @@ int run_test_steal_complete_strong_entry() {
                 std::println("\n--- #3098 AC2: production multi-worker ok path ---");
                 aura::serve::clear_steal_safety_transaction_for_test();
                 clear_production_abi_selfcheck_for_test();
-                unsetenv("AURA_SANDBOX");
+                ::aura::config::test_unsetenv("AURA_SANDBOX");
                 aura::compiler::typed_audit::g_typed_mutation_audit_counters
                     .production_defaults_active.store(1, std::memory_order_relaxed);
                 const auto ok0 =
@@ -632,12 +633,12 @@ int run_test_steal_complete_strong_entry() {
             // AC2: production_abi_selfcheck_required is false under Soft.
             {
                 std::println("\n--- #4047 AC2: Soft selfcheck not required ---");
-                setenv("AURA_SANDBOX", "off", 1);
+                ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
                 aura::compiler::typed_audit::g_typed_mutation_audit_counters
                     .production_defaults_active.store(0, std::memory_order_relaxed);
                 CHECK(!aura::serve::production_abi_selfcheck_required(),
                       "4047 AC2: Soft + !defaults → selfcheck not required");
-                unsetenv("AURA_SANDBOX");
+                ::aura::config::test_unsetenv("AURA_SANDBOX");
             }
 
             // AC3: header documents Soft Ready must not call multi_worker under Soft.
@@ -711,7 +712,7 @@ int run_test_steal_complete_strong_entry() {
                 const pid_t pid = ::fork();
                 if (pid == 0) {
                     ::alarm(10);
-                    ::unsetenv("AURA_SANDBOX");
+                    ::aura::config::test_unsetenv("AURA_SANDBOX");
                     aura::compiler::typed_audit::g_typed_mutation_audit_counters
                         .production_defaults_active.store(0, std::memory_order_relaxed);
                     aura::serve::Scheduler gate_only(2);
@@ -725,7 +726,7 @@ int run_test_steal_complete_strong_entry() {
                       "3476 AC1: unarmed multi-worker start gate refuses before "
                       "WorkerThread::start");
                 if (!prev_sb_s.empty())
-                    ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+                    ::aura::config::test_setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
             }
 
             // AC3 live: single-worker Soft does not abort (require_production_abi).
@@ -747,7 +748,7 @@ int run_test_steal_complete_strong_entry() {
                 std::println("\n--- #3476 AC2: production multi-worker run latches ---");
                 aura::serve::clear_steal_safety_transaction_for_test();
                 aura::serve::clear_production_abi_selfcheck_for_test();
-                unsetenv("AURA_SANDBOX");
+                ::aura::config::test_unsetenv("AURA_SANDBOX");
                 aura::compiler::typed_audit::apply_production_audit_defaults();
                 aura::serve::Scheduler many(2);
                 std::thread t([&many]() { many.run(); });
@@ -824,7 +825,7 @@ int run_test_steal_complete_strong_entry() {
                     (void)!::dup2(fds[1], 2);
                     ::close(fds[1]);
                     ::alarm(30);
-                    ::unsetenv("AURA_SANDBOX");
+                    ::aura::config::test_unsetenv("AURA_SANDBOX");
                     aura::serve::clear_steal_safety_transaction_for_test();
                     aura::serve::clear_production_abi_selfcheck_for_test();
                     note_hot_contract_harden_armed(false);
@@ -850,9 +851,9 @@ int run_test_steal_complete_strong_entry() {
                       "4752 AC3: refusal reports fail_bits=0x200");
                 note_production_defaults_active(prev_prod);
                 if (!prev_sb_s.empty())
-                    ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+                    ::aura::config::test_setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
                 else
-                    ::unsetenv("AURA_SANDBOX");
+                    ::aura::config::test_unsetenv("AURA_SANDBOX");
             }
 
             // AC4: the contract path (writer) reaches multi-worker Ready
@@ -865,7 +866,7 @@ int run_test_steal_complete_strong_entry() {
                 const pid_t pid = ::fork();
                 if (pid == 0) {
                     ::alarm(30);
-                    ::unsetenv("AURA_SANDBOX");
+                    ::aura::config::test_unsetenv("AURA_SANDBOX");
                     aura::serve::clear_steal_safety_transaction_for_test();
                     aura::serve::clear_production_abi_selfcheck_for_test();
                     note_production_defaults_active(true);
@@ -892,9 +893,9 @@ int run_test_steal_complete_strong_entry() {
                       "4752 AC4: contract path Ready clean (no env override)");
                 apply_dev_audit_defaults();
                 if (!prev_sb_s.empty())
-                    ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+                    ::aura::config::test_setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
                 else
-                    ::unsetenv("AURA_SANDBOX");
+                    ::aura::config::test_unsetenv("AURA_SANDBOX");
                 (void)prev_prod;
             }
 
@@ -909,7 +910,7 @@ int run_test_steal_complete_strong_entry() {
                 const pid_t pid = ::fork();
                 if (pid == 0) {
                     ::alarm(30);
-                    ::unsetenv("AURA_SANDBOX");
+                    ::aura::config::test_unsetenv("AURA_SANDBOX");
                     aura::serve::clear_steal_safety_transaction_for_test();
                     aura::serve::clear_production_abi_selfcheck_for_test();
                     note_production_defaults_active(true);
@@ -928,9 +929,9 @@ int run_test_steal_complete_strong_entry() {
                       "4752 AC5: disarmed face Ready stays clean (no 0x200)");
                 apply_dev_audit_defaults();
                 if (!prev_sb_s.empty())
-                    ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+                    ::aura::config::test_setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
                 else
-                    ::unsetenv("AURA_SANDBOX");
+                    ::aura::config::test_unsetenv("AURA_SANDBOX");
             }
         }
 
@@ -964,7 +965,7 @@ int run_test_steal_complete_strong_entry() {
                 std::println("\n--- #3195 AC1: latched residual fail-closed ---");
                 clear_steal_safety_transaction_for_test();
                 clear_production_abi_selfcheck_for_test();
-                unsetenv("AURA_SANDBOX");
+                ::aura::config::test_unsetenv("AURA_SANDBOX");
                 aura::compiler::typed_audit::g_typed_mutation_audit_counters
                     .production_defaults_active.store(1, std::memory_order_relaxed);
                 aura::core::cpp26::note_hot_contract_harden_armed(true);

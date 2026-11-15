@@ -21,6 +21,7 @@
 // JIT-inlined OpHashSet (aura_jit.cpp) is a heap write that also bypasses
 // telemetry; same-class wrap-or-note follow-up.
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 #include "../support/service_module_source.hh"
 
@@ -102,19 +103,19 @@ struct ProdFace {
             had_mt = true;
             prev_mt = e;
         }
-        ::setenv("AURA_SANDBOX", "restricted", 1);
-        ::setenv("AURA_MULTI_TENANT", "1", 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
+        ::aura::config::test_setenv("AURA_MULTI_TENANT", "1", 1);
         aura::compiler::security::apply_production_security_defaults();
     }
     ~ProdFace() {
         if (had_sandbox)
-            ::setenv("AURA_SANDBOX", prev_sandbox.c_str(), 1);
+            ::aura::config::test_setenv("AURA_SANDBOX", prev_sandbox.c_str(), 1);
         else
-            ::unsetenv("AURA_SANDBOX");
+            ::aura::config::test_unsetenv("AURA_SANDBOX");
         if (had_mt)
-            ::setenv("AURA_MULTI_TENANT", prev_mt.c_str(), 1);
+            ::aura::config::test_setenv("AURA_MULTI_TENANT", prev_mt.c_str(), 1);
         else
-            ::unsetenv("AURA_MULTI_TENANT");
+            ::aura::config::test_unsetenv("AURA_MULTI_TENANT");
         aura::core::provenance::set_multi_tenant_env_active(false);
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
         aura::core::capability::reset_capability_effects_for_test();
@@ -220,7 +221,7 @@ int run_test_jit_prim_dispatch_telemetry() {
     // ── AC4: Soft/Off — JIT path still executes the stub ──
     {
         std::println("\n--- AC4: Off sandbox — gate is a no-op, stub executes ---");
-        ::setenv("AURA_SANDBOX", "off", 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
         const bool probe =
             ev.require_effect(static_cast<std::uint16_t>(kEffectMutate), "ac4-probe");

@@ -10,6 +10,7 @@
 //   AC5: (display (string-append x "!")) with arg still works
 //   AC6: source-cite + cmake + gate
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 #include "../support/service_module_source.hh"
 
@@ -142,7 +143,7 @@ static void ac3_write_string_append() {
 
 static void ac4_controls() {
     std::println("\n--- #2575 AC4: FORCE_IR + top-level controls ---");
-    setenv("AURA_FORCE_IR", "1", 1);
+    ::aura::config::test_setenv("AURA_FORCE_IR", "1", 1);
     CompilerService cs_ir;
     std::string ir = with_stdout_capture([&] {
         (void)cs_ir.eval(R"((begin
@@ -152,7 +153,7 @@ static void ac4_controls() {
     #t)
   (f)))");
     });
-    unsetenv("AURA_FORCE_IR");
+    ::aura::config::test_unsetenv("AURA_FORCE_IR");
     CHECK(trim_nl(ir).find("AB") != std::string::npos, "AC4: FORCE_IR still AB");
 
     CompilerService cs_top;

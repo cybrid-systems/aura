@@ -9,6 +9,7 @@
 //   AC5: DCE with meta present still correct (#2556 lineage)
 //   AC6: schema-2624 additive; Phase B/C out of scope; source-cite
 
+#include "core/runtime_config.hh"
 #include "compiler/castop_typed_meta.h"
 #include "compiler/typed_mutation_audit.h"
 #include "test_harness.hpp"
@@ -324,8 +325,8 @@ static void ac4426_int_to_float_keeps_cast() {
     const char* sb = std::getenv("AURA_SANDBOX");
     const std::string sb_saved = sb ? sb : "";
     const bool sb_had = sb != nullptr;
-    setenv("AURA_FORCE_IR", "1", 1);
-    setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_FORCE_IR", "1", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
     auto face = [](const char* name) {
         const std::string prefix = std::string("4426 ") + name + ": ";
         CompilerService cs;
@@ -359,13 +360,13 @@ static void ac4426_int_to_float_keeps_cast() {
     face("production");
     apply_dev_audit_defaults();
     if (had)
-        setenv("AURA_FORCE_IR", saved.c_str(), 1);
+        ::aura::config::test_setenv("AURA_FORCE_IR", saved.c_str(), 1);
     else
-        unsetenv("AURA_FORCE_IR");
+        ::aura::config::test_unsetenv("AURA_FORCE_IR");
     if (sb_had)
-        setenv("AURA_SANDBOX", sb_saved.c_str(), 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", sb_saved.c_str(), 1);
     else
-        unsetenv("AURA_SANDBOX");
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
 }
 
 } // namespace

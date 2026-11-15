@@ -3,6 +3,7 @@
 // append/rotate, full effect/tenant/epoch fields, replay into ring,
 // query:audit-wal-stats + filtered mutation-audit-log, overhead smoke.
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include "compiler/security_capabilities.h"
@@ -327,7 +328,7 @@ void ac4641_audit_persist_dir_production_gate() {
     // Tenant root base for the host-path gate (#3802).
     const auto tenant_base = (base / "tenants").string();
     fs::create_directories(tenant_base, ec);
-    ::setenv("AURA_TENANT_FS_ROOT", tenant_base.c_str(), 1);
+    ::aura::config::test_setenv("AURA_TENANT_FS_ROOT", tenant_base.c_str(), 1);
     const auto tenant_root = (fs::path(tenant_base) / "t-4642").string();
 
     auto se_reason_seen = [&](std::string_view want, std::uint64_t from_seq) {
@@ -523,7 +524,7 @@ void ac4641_audit_persist_dir_production_gate() {
         CompilerService cs;
         cs.evaluator().set_effect_sandbox_mode(0);
     }
-    ::unsetenv("AURA_TENANT_FS_ROOT");
+    ::aura::config::test_unsetenv("AURA_TENANT_FS_ROOT");
     fs::remove_all(base, ec);
     reset_all();
 }
@@ -791,7 +792,7 @@ void ac4646_se_wal_append_miss_denies_mutate() {
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
         apply_production_audit_defaults();
         slo::set_wal_fail_closed_defaulted_by_force_wal(true);
-        ::setenv("AURA_WAL_APPEND_FAIL_OPEN", "1", 1);
+        ::aura::config::test_setenv("AURA_WAL_APPEND_FAIL_OPEN", "1", 1);
         CHECK(!slo::wal_append_fail_closed_active(), "4646 AC4: FAIL_OPEN opts out");
 
         CompilerService cs;
@@ -820,7 +821,7 @@ void ac4646_se_wal_append_miss_denies_mutate() {
         const auto consecutive =
             slo::g_wal_append_fail_slo_counters.consecutive.load(std::memory_order_relaxed);
         CHECK(consecutive == 0, "4646 AC4: FAIL_OPEN keeps the old streak behaviour");
-        ::unsetenv("AURA_WAL_APPEND_FAIL_OPEN");
+        ::aura::config::test_unsetenv("AURA_WAL_APPEND_FAIL_OPEN");
     }
 
     // ── AC5: source cites + no new query key ───────────────────────────
@@ -853,7 +854,7 @@ void ac4646_se_wal_append_miss_denies_mutate() {
     }
 
     // Cleanup: restore the faces the other members of this binary share.
-    ::unsetenv("AURA_WAL_APPEND_FAIL_OPEN");
+    ::aura::config::test_unsetenv("AURA_WAL_APPEND_FAIL_OPEN");
     restore_mode();
     aura::core::reset_mutation_epoch_for_test();
     apply_dev_audit_defaults();
@@ -1220,7 +1221,7 @@ int main() {
         // Arm the LIBRARY-side audit defaults (#3640 per-TU TLS: the test
         // TU's copy is distinct from the dispatch gate's).
         ev.arm_production_audit_defaults_for_test();
-        ::setenv("AURA_WAL_APPEND_FAIL_CLOSED", "1", 1); // #3109 explicit opt-in
+        ::aura::config::test_setenv("AURA_WAL_APPEND_FAIL_CLOSED", "1", 1); // #3109 explicit opt-in
         // Pin the #3066 composite join so the mid is deterministic.
         aura::compiler::typed_audit::g_tls_composite_batch_join_mid = 0x3856;
         aura::core::security_event_wal::wal_overflow_ring_clear_for_test();
@@ -1262,7 +1263,7 @@ int main() {
             }
         }
         CHECK(sec.find("Issue #3907") != std::string::npos, "3907 AC2: emit_mutation_audit cites");
-        ::unsetenv("AURA_WAL_APPEND_FAIL_CLOSED");
+        ::aura::config::test_unsetenv("AURA_WAL_APPEND_FAIL_CLOSED");
         aura::compiler::typed_audit::g_tls_composite_batch_join_mid = 0;
     }
 

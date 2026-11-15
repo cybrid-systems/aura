@@ -12,6 +12,7 @@
 //   AC4: Soft / no fail path → zero extra min-dirty work.
 //   AC5: Additive metrics + schema-2544; #2502 / #2367 surfaces compatible.
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include "compiler/aura_jit_bridge.h"
@@ -1177,8 +1178,8 @@ int run_test_exhausted_min_dirty_reemit() {
         reg.reset_coverage_verify_for_test();
         reg.reset_storm_clear_health_pass_for_test();
         reg.set_shape_storm_active(false);
-        unsetenv("AURA_COVERAGE_VERIFY_MIN_DIRTY");
-        unsetenv("AURA_SANDBOX");
+        ::aura::config::test_unsetenv("AURA_COVERAGE_VERIFY_MIN_DIRTY");
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
 
         // AC2: Soft / no production → residual observe only, no schedule
         {
@@ -1219,8 +1220,8 @@ int run_test_exhausted_min_dirty_reemit() {
         {
             aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
                 .store(1, std::memory_order_relaxed);
-            unsetenv("AURA_SANDBOX");
-            unsetenv("AURA_COVERAGE_VERIFY_MIN_DIRTY");
+            ::aura::config::test_unsetenv("AURA_SANDBOX");
+            ::aura::config::test_unsetenv("AURA_COVERAGE_VERIFY_MIN_DIRTY");
             reg.on_reload_success();
             reg.reset_coverage_verify_for_test();
             reg.reset_exhausted_min_dirty_retry_for_test();
@@ -1356,8 +1357,8 @@ int run_test_exhausted_min_dirty_reemit() {
             reg.on_reload_success();
             reg.reset_coverage_verify_for_test();
             reg.reset_exhausted_min_dirty_retry_for_test();
-            unsetenv("AURA_COVERAGE_VERIFY_MIN_DIRTY");
-            unsetenv("AURA_SANDBOX");
+            ::aura::config::test_unsetenv("AURA_COVERAGE_VERIFY_MIN_DIRTY");
+            ::aura::config::test_unsetenv("AURA_SANDBOX");
 
             // AC1 + AC2: production + residual + storm enter → skip; exit
             // edge → coverage-verify fires without 256 BoundaryExits.
@@ -1440,8 +1441,8 @@ int run_test_exhausted_min_dirty_reemit() {
         // Restore Soft for subsequent suites / process exit.
         aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
             .store(0, std::memory_order_relaxed);
-        unsetenv("AURA_COVERAGE_VERIFY_MIN_DIRTY");
-        unsetenv("AURA_SANDBOX");
+        ::aura::config::test_unsetenv("AURA_COVERAGE_VERIFY_MIN_DIRTY");
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
         reg.on_reload_success();
         reg.reset_coverage_verify_for_test();
         reg.set_shape_storm_active(false);

@@ -22,6 +22,7 @@
 //   #2911 AC5: extend this suite (#81967)
 //   #2911 AC6: decision table + linter; no docs/design/*
 
+#include "core/runtime_config.hh"
 #include "compiler/coercion_provenance_policy.hh"
 #include "../support/service_module_source.hh"
 #include "compiler/mutation_concurrency_health.hh"
@@ -1798,8 +1799,8 @@ static void ac4044_post_persist_deny_amends_audit() {
     const std::string prev_closed_s = prev_closed ? prev_closed : "";
     const char* prev_open = std::getenv("AURA_WAL_APPEND_FAIL_OPEN");
     const std::string prev_open_s = prev_open ? prev_open : "";
-    ::unsetenv("AURA_WAL_APPEND_FAIL_OPEN");
-    ::setenv("AURA_WAL_APPEND_FAIL_CLOSED", "1", 1);
+    ::aura::config::test_unsetenv("AURA_WAL_APPEND_FAIL_OPEN");
+    ::aura::config::test_setenv("AURA_WAL_APPEND_FAIL_CLOSED", "1", 1);
     aura::core::wal_slo::set_wal_fail_closed_defaulted_by_force_wal(true);
     namespace fs = std::filesystem;
     const auto dir = fs::temp_directory_path() / "aura-4044-audit";
@@ -1857,13 +1858,13 @@ static void ac4044_post_persist_deny_amends_audit() {
     ev.clear_boundary_audit_mid_for_test();
     fs::remove_all(dir);
     if (prev_closed)
-        ::setenv("AURA_WAL_APPEND_FAIL_CLOSED", prev_closed_s.c_str(), 1);
+        ::aura::config::test_setenv("AURA_WAL_APPEND_FAIL_CLOSED", prev_closed_s.c_str(), 1);
     else
-        ::unsetenv("AURA_WAL_APPEND_FAIL_CLOSED");
+        ::aura::config::test_unsetenv("AURA_WAL_APPEND_FAIL_CLOSED");
     if (prev_open)
-        ::setenv("AURA_WAL_APPEND_FAIL_OPEN", prev_open_s.c_str(), 1);
+        ::aura::config::test_setenv("AURA_WAL_APPEND_FAIL_OPEN", prev_open_s.c_str(), 1);
     else
-        ::unsetenv("AURA_WAL_APPEND_FAIL_OPEN");
+        ::aura::config::test_unsetenv("AURA_WAL_APPEND_FAIL_OPEN");
     aura::core::wal_slo::set_wal_fail_closed_defaulted_by_force_wal(false);
     apply_dev_audit_defaults();
     reset_for_test();
@@ -1877,8 +1878,8 @@ static void ac4063_post_persist_deny_wal_reason() {
     const std::string prev_closed_s = prev_closed ? prev_closed : "";
     const char* prev_open = std::getenv("AURA_WAL_APPEND_FAIL_OPEN");
     const std::string prev_open_s = prev_open ? prev_open : "";
-    ::unsetenv("AURA_WAL_APPEND_FAIL_OPEN");
-    ::setenv("AURA_WAL_APPEND_FAIL_CLOSED", "1", 1);
+    ::aura::config::test_unsetenv("AURA_WAL_APPEND_FAIL_OPEN");
+    ::aura::config::test_setenv("AURA_WAL_APPEND_FAIL_CLOSED", "1", 1);
     aura::core::wal_slo::set_wal_fail_closed_defaulted_by_force_wal(true);
     namespace fs = std::filesystem;
     const auto dir = fs::temp_directory_path() / "aura-4063-audit";
@@ -2102,13 +2103,13 @@ static void ac4063_post_persist_deny_wal_reason() {
     aura::core::audit_wal::reset_audit_wal_for_test();
     fs::remove_all(dir);
     if (prev_closed)
-        ::setenv("AURA_WAL_APPEND_FAIL_CLOSED", prev_closed_s.c_str(), 1);
+        ::aura::config::test_setenv("AURA_WAL_APPEND_FAIL_CLOSED", prev_closed_s.c_str(), 1);
     else
-        ::unsetenv("AURA_WAL_APPEND_FAIL_CLOSED");
+        ::aura::config::test_unsetenv("AURA_WAL_APPEND_FAIL_CLOSED");
     if (prev_open)
-        ::setenv("AURA_WAL_APPEND_FAIL_OPEN", prev_open_s.c_str(), 1);
+        ::aura::config::test_setenv("AURA_WAL_APPEND_FAIL_OPEN", prev_open_s.c_str(), 1);
     else
-        ::unsetenv("AURA_WAL_APPEND_FAIL_OPEN");
+        ::aura::config::test_unsetenv("AURA_WAL_APPEND_FAIL_OPEN");
     aura::core::wal_slo::set_wal_fail_closed_defaulted_by_force_wal(false);
     apply_dev_audit_defaults();
     reset_for_test();

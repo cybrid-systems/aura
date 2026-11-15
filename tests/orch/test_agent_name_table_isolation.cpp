@@ -21,6 +21,7 @@
 // AC5 (existing agent_primitives_2011.aura + fiber_orch tests remain
 // green) are linter/integration checks; not duplicated here.
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include <cstdint>
@@ -62,7 +63,7 @@ using aura::test::g_passed;
 static void ac3727_set_prod(bool on) {
     // Multi-worker orch scheduler (#3586) FATALs unless AURA_SANDBOX=off
     // or production bootstrap is latched before Scheduler::run.
-    ::setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
     // Issue #4752: face + derived harden memo move together (a later
     // Scheduler(2) under a restored sandbox face must not see face=1/memo=0).
@@ -916,9 +917,9 @@ static void ac4280_name_table_region_key_admit() {
         }
         ~RkeysGuard() {
             if (had)
-                ::setenv("AURA_PARALLEL_REQUIRE_REGION_KEYS", prev.c_str(), 1);
+                ::aura::config::test_setenv("AURA_PARALLEL_REQUIRE_REGION_KEYS", prev.c_str(), 1);
             else
-                ::unsetenv("AURA_PARALLEL_REQUIRE_REGION_KEYS");
+                ::aura::config::test_unsetenv("AURA_PARALLEL_REQUIRE_REGION_KEYS");
         }
     } rkeys_guard;
     (void)rkeys_guard;
@@ -931,7 +932,7 @@ static void ac4280_name_table_region_key_admit() {
     {
         reset_all_agent_scopes_for_test();
         ac3727_set_prod(false);
-        ::unsetenv("AURA_PARALLEL_REQUIRE_REGION_KEYS");
+        ::aura::config::test_unsetenv("AURA_PARALLEL_REQUIRE_REGION_KEYS");
         CompilerService cs;
         const auto m0 = miss_total();
         auto a = cs.eval(R"((hash-ref (orch:spawn-agent "4280-soft-a" (lambda () 1)) "ok"))");
@@ -950,7 +951,7 @@ static void ac4280_name_table_region_key_admit() {
     {
         reset_all_agent_scopes_for_test();
         ac3727_set_prod(true);
-        ::unsetenv("AURA_PARALLEL_REQUIRE_REGION_KEYS");
+        ::aura::config::test_unsetenv("AURA_PARALLEL_REQUIRE_REGION_KEYS");
         CompilerService cs;
         const auto m0 = miss_total();
         auto r = cs.eval(R"ac2(
@@ -982,7 +983,7 @@ static void ac4280_name_table_region_key_admit() {
     {
         reset_all_agent_scopes_for_test();
         ac3727_set_prod(true);
-        ::setenv("AURA_PARALLEL_REQUIRE_REGION_KEYS", "0", 1);
+        ::aura::config::test_setenv("AURA_PARALLEL_REQUIRE_REGION_KEYS", "0", 1);
         CompilerService cs;
         const auto m0 = miss_total();
         auto a = cs.eval(R"((hash-ref (orch:spawn-agent "4280-esc-a" (lambda () 1)) "ok"))");
@@ -992,7 +993,7 @@ static void ac4280_name_table_region_key_admit() {
         CHECK(miss_total() == m0, "4280 AC3: escape does not bump the deny counter");
         (void)cs.eval(R"((orch:agent-join "4280-esc-a" :timeout-ms 2000))");
         (void)cs.eval(R"((orch:agent-join "4280-esc-b" :timeout-ms 2000))");
-        ::unsetenv("AURA_PARALLEL_REQUIRE_REGION_KEYS");
+        ::aura::config::test_unsetenv("AURA_PARALLEL_REQUIRE_REGION_KEYS");
         ac3727_set_prod(false);
         reset_all_agent_scopes_for_test();
     }
@@ -1002,7 +1003,7 @@ static void ac4280_name_table_region_key_admit() {
     {
         reset_all_agent_scopes_for_test();
         ac3727_set_prod(true);
-        ::unsetenv("AURA_PARALLEL_REQUIRE_REGION_KEYS");
+        ::aura::config::test_unsetenv("AURA_PARALLEL_REQUIRE_REGION_KEYS");
         CompilerService cs;
         const auto m0 = miss_total();
         auto a = cs.eval(
@@ -1036,7 +1037,7 @@ static void ac4280_name_table_region_key_admit() {
     {
         reset_all_agent_scopes_for_test();
         ac3727_set_prod(true);
-        ::unsetenv("AURA_PARALLEL_REQUIRE_REGION_KEYS");
+        ::aura::config::test_unsetenv("AURA_PARALLEL_REQUIRE_REGION_KEYS");
         CompilerService cs;
         auto r = cs.eval(R"(
             (begin

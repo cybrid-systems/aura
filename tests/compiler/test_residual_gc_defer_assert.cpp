@@ -23,6 +23,7 @@
 //   AC4: Hard/Soft unchanged (#2269).
 //   AC5: Query correlation keys + decision table + source-cite.
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include "compiler/observability_metrics.h"
@@ -269,9 +270,9 @@ void ac2269_residual_defer_policy(CompilerService& cs) {
         drain_known_defer();
         const char* prev_sandbox = std::getenv("AURA_SANDBOX");
         std::string prev_sandbox_str = prev_sandbox ? prev_sandbox : "";
-        ::setenv("AURA_SANDBOX", "off", 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
         // Unset policy so dev_off selects Soft deterministically.
-        ::unsetenv("AURA_RESIDUAL_DEFER_POLICY");
+        ::aura::config::test_unsetenv("AURA_RESIDUAL_DEFER_POLICY");
         CompilerService local;
         auto& ev = local.evaluator();
         auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
@@ -296,9 +297,9 @@ void ac2269_residual_defer_policy(CompilerService& cs) {
         CHECK(hf1 == hf0, "AC5-soft: hard-fail counter unchanged under soft policy");
         // Restore env.
         if (!prev_sandbox_str.empty())
-            ::setenv("AURA_SANDBOX", prev_sandbox_str.c_str(), 1);
+            ::aura::config::test_setenv("AURA_SANDBOX", prev_sandbox_str.c_str(), 1);
         else
-            ::unsetenv("AURA_SANDBOX");
+            ::aura::config::test_unsetenv("AURA_SANDBOX");
         drain_known_defer();
     }
     {
@@ -306,9 +307,9 @@ void ac2269_residual_defer_policy(CompilerService& cs) {
         // default selects Clear. Inject residual → expect residual
         // counter + forced-clear counter both bump, hard-fail unchanged.
         drain_known_defer();
-        ::unsetenv("AURA_SANDBOX");
-        ::unsetenv("AURA_RESIDUAL_DEFER_POLICY");
-        ::unsetenv("AURA_HARD_RESIDUAL_DEFER");
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
+        ::aura::config::test_unsetenv("AURA_RESIDUAL_DEFER_POLICY");
+        ::aura::config::test_unsetenv("AURA_HARD_RESIDUAL_DEFER");
         CompilerService local;
         auto& ev = local.evaluator();
         auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
@@ -376,8 +377,8 @@ void ac2296_multi_eval_residual_clear(CompilerService& cs) {
     // AC3: happy path — no residual, no clear work (counter unchanged)
     {
         drain_known_defer();
-        ::unsetenv("AURA_SANDBOX");
-        ::unsetenv("AURA_RESIDUAL_DEFER_POLICY");
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
+        ::aura::config::test_unsetenv("AURA_RESIDUAL_DEFER_POLICY");
         CompilerService local;
         auto& ev = local.evaluator();
         auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
@@ -404,9 +405,9 @@ void ac2296_multi_eval_residual_clear(CompilerService& cs) {
     //     still enters residual block and reconciles the bit.
     {
         drain_known_defer();
-        ::unsetenv("AURA_SANDBOX");
-        ::unsetenv("AURA_RESIDUAL_DEFER_POLICY");
-        ::unsetenv("AURA_HARD_RESIDUAL_DEFER");
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
+        ::aura::config::test_unsetenv("AURA_RESIDUAL_DEFER_POLICY");
+        ::aura::config::test_unsetenv("AURA_HARD_RESIDUAL_DEFER");
         CompilerService local;
         auto& ev = local.evaluator();
         auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
@@ -496,8 +497,8 @@ void ac2296_multi_eval_residual_clear(CompilerService& cs) {
         CHECK(mb.find("AURA_SANDBOX") != std::string::npos, "AC4: Soft via AURA_SANDBOX retained");
         // Soft smoke (same as #2269): residual bumps, no forced clear
         drain_known_defer();
-        ::setenv("AURA_SANDBOX", "off", 1);
-        ::unsetenv("AURA_RESIDUAL_DEFER_POLICY");
+        ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
+        ::aura::config::test_unsetenv("AURA_RESIDUAL_DEFER_POLICY");
         CompilerService local;
         auto& ev = local.evaluator();
         auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
@@ -511,7 +512,7 @@ void ac2296_multi_eval_residual_clear(CompilerService& cs) {
         CHECK(m->mutation_boundary_residual_defer_forced_clear_total.load(
                   std::memory_order_relaxed) == fc0,
               "AC4-soft: forced-clear unchanged");
-        ::unsetenv("AURA_SANDBOX");
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
         drain_known_defer();
     }
 }
@@ -524,9 +525,9 @@ void ac2296_multi_eval_residual_clear(CompilerService& cs) {
 static void ac2846_1_success_clear_drains_residual() {
     std::println("\n--- #2846 AC1: outermost success Clear drains residual ---");
     drain_known_defer();
-    ::unsetenv("AURA_SANDBOX");
-    ::unsetenv("AURA_RESIDUAL_DEFER_POLICY");
-    ::unsetenv("AURA_HARD_RESIDUAL_DEFER");
+    ::aura::config::test_unsetenv("AURA_SANDBOX");
+    ::aura::config::test_unsetenv("AURA_RESIDUAL_DEFER_POLICY");
+    ::aura::config::test_unsetenv("AURA_HARD_RESIDUAL_DEFER");
     aura::serve::reset_residual_defer_soft_for_test();
     CompilerService cs;
     auto& ev = cs.evaluator();
@@ -559,8 +560,8 @@ static void ac2846_1_success_clear_drains_residual() {
 static void ac2846_2_soft_observes_after_exit() {
     std::println("\n--- #2846 AC2: Soft observe — no clear, no detection bump (#2931) ---");
     drain_known_defer();
-    ::setenv("AURA_SANDBOX", "off", 1);
-    ::unsetenv("AURA_RESIDUAL_DEFER_POLICY");
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_unsetenv("AURA_RESIDUAL_DEFER_POLICY");
     CompilerService cs;
     auto& ev = cs.evaluator();
     auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
@@ -582,15 +583,15 @@ static void ac2846_2_soft_observes_after_exit() {
           "AC2: Soft does not force-clear");
     // Soft leaves residual armed; visibility comes from the legacy #2211
     // metric. Drain for next tests.
-    ::unsetenv("AURA_SANDBOX");
+    ::aura::config::test_unsetenv("AURA_SANDBOX");
     drain_known_defer();
 }
 
 static void ac2846_3_failure_exit_clears_under_production() {
     std::println("\n--- #2846 AC3: outermost failure Clear drains residual ---");
     drain_known_defer();
-    ::unsetenv("AURA_SANDBOX");
-    ::unsetenv("AURA_RESIDUAL_DEFER_POLICY");
+    ::aura::config::test_unsetenv("AURA_SANDBOX");
+    ::aura::config::test_unsetenv("AURA_RESIDUAL_DEFER_POLICY");
     aura::serve::reset_residual_defer_soft_for_test();
     CompilerService cs;
     auto& ev = cs.evaluator();

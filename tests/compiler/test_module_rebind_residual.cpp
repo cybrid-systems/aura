@@ -15,6 +15,7 @@
 //   AC7 (#4109): rebind of the captured name — call never evals the pre-mutate cell
 //   AC8 (#4109): source-cite + wiring (linter, ride-up, behind arm shape)
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 #include "../support/service_module_source.hh"
 
@@ -76,7 +77,7 @@ static bool eval_bool(CompilerService& cs, std::string_view e) {
 
 static void ac1_multidefine_call_init() {
     std::println("\n--- #2579 AC1: multi-define (define g (f)) call init ---");
-    setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
     CompilerService cs;
     CHECK(eval_ok(cs, "(set-code \"(define (f) 1) (define g (f))\")"), "set-code multi");
     CHECK(eval_ok(cs, "(eval-current)"), "eval-current");
@@ -123,8 +124,8 @@ static void ac2_split_module_rebind() {
 )";
     }
     const auto path = lib.string() + ":" + tmp.string();
-    setenv("AURA_PATH", path.c_str(), 1);
-    setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_PATH", path.c_str(), 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
 
     CompilerService cs;
     CHECK(eval_ok(cs, "(require \"aether-stats\" all:)"), "require stats");
@@ -161,8 +162,8 @@ static void ac3_large_trailing_export() {
             out << "  (set! acc (+ acc " << i << "))\n";
         out << "  (+ acc x))\n";
     }
-    setenv("AURA_PATH", (lib.string() + ":" + tmp.string()).c_str(), 1);
-    setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_PATH", (lib.string() + ":" + tmp.string()).c_str(), 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
     CompilerService cs;
     CHECK(eval_ok(cs, "(require \"bigmod\" all:)"), "require bigmod");
     CHECK(eval_bool(cs, "(procedure? e1)"), "e1 export");
@@ -176,7 +177,7 @@ static void ac3_large_trailing_export() {
 
 static void ac4_define_after_rebind() {
     std::println("\n--- #2579 AC4: define after rebind ---");
-    setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
     CompilerService cs;
     CHECK(eval_ok(cs, "(set-code \"(define (score x) (* x 2))\")"), "set-code");
     CHECK(eval_ok(cs, "(eval-current)"), "eval");
@@ -225,8 +226,8 @@ static void ac6_module_capture_rides_up_4109() {
   (hash-ref *aether-stats* "rounds" 0))
 )";
     }
-    setenv("AURA_PATH", (lib.string() + ":" + tmp.string()).c_str(), 1);
-    setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_PATH", (lib.string() + ":" + tmp.string()).c_str(), 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
     CompilerService cs;
     CHECK(eval_ok(cs, "(require \"aether-4109\" all:)"), "AC6: require module");
     CHECK(eval_int_eq(cs, "(bump4109)", 1), "AC6: bump 1");
@@ -238,7 +239,7 @@ static void ac6_module_capture_rides_up_4109() {
 
 static void ac7_rebind_never_pre_mutate_4109() {
     std::println("\n--- #4109 AC7: rebind of captured name is never the pre-mutate value ---");
-    setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
     CompilerService cs;
     CHECK(eval_ok(cs, "(set-code \"(define v4109 41) (define (get-v4109) v4109)\")"),
           "AC7: set-code v4109 + getter");

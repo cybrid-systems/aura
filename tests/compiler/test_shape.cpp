@@ -3,6 +3,7 @@
 // Tests: ShapeID, inline_shape_of, compute_shape_id, ShapeProfiler
 //        (stability, invalidation, metrics, edge cases)
 //
+#include "core/runtime_config.hh"
 #include "compiler/value_tags.h" // #4502: AURA_MAKE_FLOAT / AURA_MAKE_STRING
 #include "../src/compiler/shape.h"
 #include "../src/compiler/shape_profiler.h"
@@ -93,7 +94,7 @@ int main() {
     // 2000) when the env is unset, but sections 4-6 pin the kDefaultPreset
     // knobs (ratio 0.90, window 1000). Pin the unit-test face explicitly —
     // the harness convention from shape_profiler.h is env=0 in main().
-    ::setenv("AURA_SHAPE_HIGH_MUTATION", "0", 1);
+    ::aura::config::test_setenv("AURA_SHAPE_HIGH_MUTATION", "0", 1);
 
     // ═══════════════════════════════════════════════════════════
     // Section 1: ShapeID constants

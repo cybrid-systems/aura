@@ -13,6 +13,7 @@
 //   AC5: Light binaries still link (weak stub in fiber_bridge.cpp)
 //   AC6: Does not duplicate #2184 snapshot logic (clear+metric only)
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include "compiler/mutation_hold_budget.h"
@@ -667,7 +668,7 @@ static void ac3617_eval_keyed_residual() {
     // lever the gate itself reads (member runs isolated in a fork — the env
     // stays local to this child). Soft override still wins for AC3 (checked
     // first inside the gate).
-    ::setenv("AURA_STEAL_SNAPSHOT_HARD", "1", 1);
+    ::aura::config::test_setenv("AURA_STEAL_SNAPSHOT_HARD", "1", 1);
     aura::serve::set_steal_snapshot_soft_for_test(false);
     const auto bits1 =
         aura::serve::evaluate_residual_hard_and_bits(&f1, f1.mutation_safety_snapshot(), false);
@@ -690,7 +691,7 @@ static void ac3617_eval_keyed_residual() {
     CHECK((bits3 & m_lifetime) == 0 && (bits3 & m_envframe) == 0,
           "3617 AC3: no evaluator_id → quiet skip (zero extra)");
     aura::serve::reset_steal_snapshot_soft_for_test();
-    ::unsetenv("AURA_STEAL_SNAPSHOT_HARD");
+    ::aura::config::test_unsetenv("AURA_STEAL_SNAPSHOT_HARD");
 
     CHECK(read_file("docs/design/3617-steal-eval-keyed-residual.md").empty(),
           "3617: no docs/design");

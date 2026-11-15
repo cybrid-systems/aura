@@ -8,6 +8,7 @@
 //   AC4: Aura spawn/join + query schema-2158 surface green.
 //   AC5: try_acquire reject skips body (apply lock not required for reject).
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include "compiler/typed_mutation_audit.h"
@@ -171,13 +172,13 @@ struct MemberSandboxOff {
             had = true;
             prev = e;
         }
-        ::setenv("AURA_SANDBOX", "off", 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
     }
     ~MemberSandboxOff() {
         if (had)
-            ::setenv("AURA_SANDBOX", prev.c_str(), 1);
+            ::aura::config::test_setenv("AURA_SANDBOX", prev.c_str(), 1);
         else
-            ::unsetenv("AURA_SANDBOX");
+            ::aura::config::test_unsetenv("AURA_SANDBOX");
     }
 };
 

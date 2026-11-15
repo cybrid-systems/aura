@@ -5,9 +5,10 @@
 // debug-info quality loss is acceptable for a test binary.
 #pragma GCC optimize("no-var-tracking-assignments")
 
+#include "core/runtime_config.hh"
 #include "compiler/observability_metrics.h"
 #include "compiler/typed_mutation_audit.h"
-#include <cstdlib>  // setenv / unsetenv (#4321), mkdtemp (#5213)
+#include <cstdlib>  // setenv / ::aura::config::test_unsetenv(#4321), mkdtemp (#5213)
 #include <stdlib.h> // mkdtemp
 #include <fstream>  // #5051 source-cite
 #include <iterator> // #5051 source-cite
@@ -443,13 +444,13 @@ bool test_keyword_intern_reuses_table_slot() {
 bool test_force_soa_keyword_literal_4321() {
     struct EnvGuard {
         EnvGuard() {
-            setenv("AURA_PIPELINE_STRICT", "force-soa", 1);
-            setenv("AURA_SANDBOX", "off", 1);
+            ::aura::config::test_setenv("AURA_PIPELINE_STRICT", "force-soa", 1);
+            ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
         }
         ~EnvGuard() {
-            unsetenv("AURA_PIPELINE_STRICT");
-            unsetenv("AURA_SANDBOX");
-            unsetenv("AURA_FORCE_IR");
+            ::aura::config::test_unsetenv("AURA_PIPELINE_STRICT");
+            ::aura::config::test_unsetenv("AURA_SANDBOX");
+            ::aura::config::test_unsetenv("AURA_FORCE_IR");
         }
     } guard;
 
@@ -470,9 +471,9 @@ bool test_force_soa_keyword_literal_4321() {
 
     auto check_one = [&](const char* force_ir) -> bool {
         if (force_ir)
-            setenv("AURA_FORCE_IR", force_ir, 1);
+            ::aura::config::test_setenv("AURA_FORCE_IR", force_ir, 1);
         else
-            unsetenv("AURA_FORCE_IR");
+            ::aura::config::test_unsetenv("AURA_FORCE_IR");
         const char* label = force_ir ? "interpreter" : "default";
         aura::compiler::CompilerService cs;
         auto& kt = cs.evaluator().keyword_table();
@@ -976,8 +977,8 @@ static bool test_module_cache_untrusted_5213() {
         const std::string saved_xdg = xdg ? xdg : "";
         const bool had_home = home != nullptr;
         const bool had_xdg = xdg != nullptr;
-        ::unsetenv("HOME");
-        ::unsetenv("XDG_CACHE_HOME");
+        ::aura::config::test_unsetenv("HOME");
+        ::aura::config::test_unsetenv("XDG_CACHE_HOME");
         const bool existed = std::filesystem::exists("/tmp/aura-cache");
         aura::compiler::CompilerService cs;
         auto compiled =
@@ -990,9 +991,9 @@ static bool test_module_cache_untrusted_5213() {
             expect(!std::filesystem::exists("/tmp/aura-cache/modules/aura5213_no_tmp.abfc"),
                    "HOME unset does not write the shared cache name");
         if (had_home)
-            ::setenv("HOME", saved_home.c_str(), 1);
+            ::aura::config::test_setenv("HOME", saved_home.c_str(), 1);
         if (had_xdg)
-            ::setenv("XDG_CACHE_HOME", saved_xdg.c_str(), 1);
+            ::aura::config::test_setenv("XDG_CACHE_HOME", saved_xdg.c_str(), 1);
     }
 
     std::filesystem::remove_all(dir);

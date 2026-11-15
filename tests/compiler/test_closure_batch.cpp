@@ -36,6 +36,7 @@
 //                  params/name/arity + remake after params growth
 //                  (supported pattern)
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 #include "compiler/aura_jit_bridge.h"
 #include "compiler/observability_metrics.h"
@@ -245,7 +246,7 @@ static void run_1626_apply_after_mutate() {
 
 static void run_1626_jit_dual() {
     std::println("\n--- AC3 (#1626): JIT aura_closure_call dual_check ---");
-    setenv("AURA_BRIDGE_EPOCH_LEGACY_TRUST", "0", 1);
+    ::aura::config::test_setenv("AURA_BRIDGE_EPOCH_LEGACY_TRUST", "0", 1);
     aura_set_aot_defuse_version(50);
     aura_aot_bump_func_table_epoch();
     const auto dual0 = aura_jit_closure_dual_check_total();

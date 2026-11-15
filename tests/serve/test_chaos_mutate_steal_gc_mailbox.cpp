@@ -73,6 +73,7 @@
 //   Soft steal (AURA_STEAL_SNAPSHOT_SOFT=1) is FORBIDDEN under production / PR /
 //   #2902 release-blocker gates
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include "compiler/lock_order_audit.h"
@@ -361,7 +362,7 @@ static long run_chaos_pass(const char* label, int workers, int n_fibers, int dur
     // (Phrase "Soft steal forbidden under production" is #2722 AC5 cite.)
     if (prod_gate || pr_gate || release_blocker || sustained) {
         // Ensure Soft env cannot soft-continue mismatches this run.
-        unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
+        ::aura::config::test_unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
         aura::serve::reset_steal_snapshot_soft_for_test();
         CHECK(!aura::serve::is_steal_snapshot_soft_mode(),
               "#2380/#2554/#2902: Soft steal forbidden under production / hard-fail gate");
@@ -972,7 +973,7 @@ static void ac2_inject_residual_panic() {
 // ── AC3: snapshot mismatch injection under Hard ──
 static void ac3_inject_snapshot_mismatch() {
     std::println("\n--- AC3: inject snapshot mismatch under Hard ---");
-    setenv("AURA_STEAL_SNAPSHOT_HARD", "1", 1);
+    ::aura::config::test_setenv("AURA_STEAL_SNAPSHOT_HARD", "1", 1);
     // Live getenv for hard mode (#2346).
     const bool hard =
         aura::serve::is_steal_snapshot_hard_mode() || aura::serve::is_steal_snapshot_hard_abort();
@@ -987,7 +988,7 @@ static void ac3_inject_snapshot_mismatch() {
     } else {
         CHECK(delta != 0, "AC3: mismatch inject detectable (Hard env may be weak-linked)");
     }
-    unsetenv("AURA_STEAL_SNAPSHOT_HARD");
+    ::aura::config::test_unsetenv("AURA_STEAL_SNAPSHOT_HARD");
 }
 
 // ── AC4/AC5: hang_detect env documents watchdog; source-cite ──
@@ -1102,9 +1103,9 @@ static void ac2554_pr_gate_short() {
     }
     std::println("\n--- #2554: short PR chaos (hard-fail counters as deployment gate) ---");
     // Production-like defaults: Soft off, Hard on, fixed seed, short wall.
-    unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
+    ::aura::config::test_unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
     aura::serve::reset_steal_snapshot_soft_for_test();
-    setenv("AURA_STEAL_SNAPSHOT_HARD", "1", 1);
+    ::aura::config::test_setenv("AURA_STEAL_SNAPSHOT_HARD", "1", 1);
     // Defaults for PR: 4 workers / 16 fibers / 3s (override via env).
     const int workers = k_int_env("AURA_CHAOS_WORKERS", 4);
     const int fibers = k_int_env("AURA_CHAOS_FIBERS", 16);
@@ -1112,7 +1113,7 @@ static void ac2554_pr_gate_short() {
     CHECK(workers >= 2 && fibers >= 8 && dur >= 1, "#2554 AC2: short profile configured");
     const auto wall = run_chaos_pass("AC2554-pr-gate", workers, fibers, dur, /*steps_cap=*/200000);
     CHECK(wall >= 0, "#2554 AC2: clean short chaos completed under hard-fail invariants");
-    unsetenv("AURA_STEAL_SNAPSHOT_HARD");
+    ::aura::config::test_unsetenv("AURA_STEAL_SNAPSHOT_HARD");
 }
 
 // ── Issue #2554 AC4/AC5: gate docs + source-cite ──

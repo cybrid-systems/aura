@@ -40,6 +40,7 @@
 // a runtime scan because the JIT enum and IROpcode are
 // separately declared).
 
+#include "core/runtime_config.hh"
 #include <cstdio>
 #include <iostream>
 #include <print>
@@ -366,13 +367,13 @@ static AuraCli run_aura_cli(const std::string& bin, const std::string& runtime,
         ::close(errp[1]);
         if (::chdir(dir) != 0)
             _exit(127);
-        ::unsetenv("AURA_SANDBOX");
-        ::unsetenv("AURA_PRESET");
-        ::unsetenv("AURA_KEEP_GOING");
-        ::unsetenv("AURA_PIPELINE_STRICT");
-        ::setenv("AURA_RUNTIME_DIR", runtime.c_str(), 1);
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
+        ::aura::config::test_unsetenv("AURA_PRESET");
+        ::aura::config::test_unsetenv("AURA_KEEP_GOING");
+        ::aura::config::test_unsetenv("AURA_PIPELINE_STRICT");
+        ::aura::config::test_setenv("AURA_RUNTIME_DIR", runtime.c_str(), 1);
         if (extra_key != nullptr && extra_val != nullptr)
-            ::setenv(extra_key, extra_val, 1);
+            ::aura::config::test_setenv(extra_key, extra_val, 1);
         ::execv(bin.c_str(), argv.data());
         _exit(127);
     }

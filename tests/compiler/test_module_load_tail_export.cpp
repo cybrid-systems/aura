@@ -7,6 +7,7 @@
 //   AC3: nested require of missing module fails outer load
 //   AC4: source-cite + cmake + gate
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 #include "compiler/pipeline_policy.hh"
 
@@ -71,7 +72,7 @@ static void ac1_tail_exports() {
 (define (late:fn) 2)
 )"),
           "write tail.aura");
-    setenv("AURA_PATH", dir.c_str(), 1);
+    ::aura::config::test_setenv("AURA_PATH", dir.c_str(), 1);
     CompilerService cs;
     auto req = cs.eval("(require \"tail\" all:)");
     CHECK(req.has_value() && !(is_error(*req) && !is_string(*req)), "require succeeds");
@@ -79,7 +80,7 @@ static void ac1_tail_exports() {
     CHECK(r1 && is_int(*r1) && as_int(*r1) == 1, "early:fn");
     auto r2 = cs.eval("(late:fn)");
     CHECK(r2 && is_int(*r2) && as_int(*r2) == 2, "AC1: late:fn tail export");
-    unsetenv("AURA_PATH");
+    ::aura::config::test_unsetenv("AURA_PATH");
 }
 
 static void ac2_mid_error_fail_closed() {
@@ -92,7 +93,7 @@ static void ac2_mid_error_fail_closed() {
 (define (late:fn) 2)
 )"),
           "write partial.aura");
-    setenv("AURA_PATH", dir.c_str(), 1);
+    ::aura::config::test_setenv("AURA_PATH", dir.c_str(), 1);
     CompilerService cs;
     auto req = cs.eval("(require \"partial\" all:)");
     CHECK(req.has_value(), "require returns a value");
@@ -102,7 +103,7 @@ static void ac2_mid_error_fail_closed() {
     CHECK(early && is_bool(*early) && !as_bool(*early), "AC2: early not injected");
     auto late = cs.eval("(try (late:fn) (catch (e) #f))");
     CHECK(late && is_bool(*late) && !as_bool(*late), "AC2: late not injected");
-    unsetenv("AURA_PATH");
+    ::aura::config::test_unsetenv("AURA_PATH");
 }
 
 static void ac3_nested_require_fail() {
@@ -115,13 +116,13 @@ static void ac3_nested_require_fail() {
 (define (outer:late) 2)
 )"),
           "write outer.aura");
-    setenv("AURA_PATH", dir.c_str(), 1);
+    ::aura::config::test_setenv("AURA_PATH", dir.c_str(), 1);
     CompilerService cs;
     auto req = cs.eval("(require \"outer\" all:)");
     CHECK(req.has_value() && is_error(*req) && !is_string(*req), "AC3: outer require fails");
     auto ok = cs.eval("(try (outer:ok) (catch (e) #f))");
     CHECK(ok && is_bool(*ok) && !as_bool(*ok), "AC3: no half-inject outer:ok");
-    unsetenv("AURA_PATH");
+    ::aura::config::test_unsetenv("AURA_PATH");
 }
 
 static void ac4_source_gate() {
@@ -159,7 +160,7 @@ static void ac5_prim_reexport_math() {
 (define (my-sq x) (* x x))
 )"),
           "write reexport.aura");
-    setenv("AURA_PATH", dir.c_str(), 1);
+    ::aura::config::test_setenv("AURA_PATH", dir.c_str(), 1);
     CompilerService cs;
     auto req = cs.eval("(require \"reexport\" all:)");
     CHECK(req.has_value() && !(is_error(*req) && !is_string(*req)), "AC5: reexport require");
@@ -171,7 +172,7 @@ static void ac5_prim_reexport_math() {
     CHECK(t && is_float(*t) && as_float(*t) == 3.0, "AC5: trunc → 3.0");
     auto sq = cs.eval("(my-sq 5)");
     CHECK(sq && is_int(*sq) && as_int(*sq) == 25, "AC5: non-prim define still works");
-    unsetenv("AURA_PATH");
+    ::aura::config::test_unsetenv("AURA_PATH");
 
     // std/math must load (was failing: export ceil/asin void; missing trunc).
     CompilerService cs2;
@@ -560,23 +561,23 @@ static void ac4467_user_call_arity() {
         aura::compiler::TreeWalkerFallbackPolicy policy;
         ~RestoreFace() {
             if (had_sb)
-                setenv("AURA_SANDBOX", sb.c_str(), 1);
+                ::aura::config::test_setenv("AURA_SANDBOX", sb.c_str(), 1);
             else
-                unsetenv("AURA_SANDBOX");
+                ::aura::config::test_unsetenv("AURA_SANDBOX");
             if (had_st)
-                setenv("AURA_PIPELINE_STRICT", st.c_str(), 1);
+                ::aura::config::test_setenv("AURA_PIPELINE_STRICT", st.c_str(), 1);
             else
-                unsetenv("AURA_PIPELINE_STRICT");
+                ::aura::config::test_unsetenv("AURA_PIPELINE_STRICT");
             aura::compiler::set_tree_walker_fallback_policy(policy);
         }
     } restore{saved_sb, saved_st, had_sb, had_st, prev_policy};
 
     auto face = [](const char* strict) {
-        setenv("AURA_SANDBOX", "off", 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
         if (strict && *strict)
-            setenv("AURA_PIPELINE_STRICT", strict, 1);
+            ::aura::config::test_setenv("AURA_PIPELINE_STRICT", strict, 1);
         else
-            unsetenv("AURA_PIPELINE_STRICT");
+            ::aura::config::test_unsetenv("AURA_PIPELINE_STRICT");
         aura::compiler::apply_pipeline_strict_defaults(true);
     };
     auto expect_arity = [](const char* src, const char* phrase, const char* tag) {

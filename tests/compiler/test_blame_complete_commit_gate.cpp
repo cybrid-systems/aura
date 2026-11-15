@@ -11,6 +11,7 @@
 //   AC4: schema-2221 on fidelity + typed-mutation-audit-trail surfaces
 //   AC5: complete-chain happy path commits; complete counter stable
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include "compiler/coercion_provenance_policy.hh"
@@ -87,7 +88,7 @@ static void clear_env(const char* k) {
 #if defined(_WIN32)
     _putenv_s(k, "");
 #else
-    unsetenv(k);
+    ::aura::config::test_unsetenv(k);
 #endif
 }
 
@@ -95,7 +96,7 @@ static void set_env(const char* k, const char* v) {
 #if defined(_WIN32)
     _putenv_s(k, v);
 #else
-    setenv(k, v, 1);
+    ::aura::config::test_setenv(k, v, 1);
 #endif
 }
 

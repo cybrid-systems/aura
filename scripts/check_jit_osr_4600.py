@@ -99,7 +99,7 @@ def main() -> int:
         "aura_jit_osr_fn" in brh and "aura_jit_osr_enter" in brh and "aura_jit_set_osr_host" in brh,
         "AC1: header declares the OSR C ABI",
     )
-    must('std::getenv("AURA_JIT_OSR")' in br, "AC1: AURA_JIT_OSR=0 door at the bridge")
+    must("::aura::config::Key::AURA_JIT_OSR)" in br, "AC1: AURA_JIT_OSR=0 door at the bridge")
     drain_block = br[br.find("aura_jit_osr_enter(const char* fn_name") :]
     must("osr_tail_fires.fetch_add" in drain_block, "AC1: handled host call bumps osr_tail_fires")
     must(
@@ -111,7 +111,7 @@ def main() -> int:
     )
 
     # ── AC2: drain hook ─────────────────────────────────────────────
-    must('std::getenv("AURA_JIT_OSR_N")' in iei, "AC2: AURA_JIT_OSR_N threshold door")
+    must("::aura::config::Key::AURA_JIT_OSR_N)" in iei, "AC2: AURA_JIT_OSR_N threshold door")
     drain_fn = iei[iei.find("EvalResult IRInterpreter::drain_call_stack") :]
     drain_fn = drain_fn[: drain_fn.find("\nEvalResult")]
     must(

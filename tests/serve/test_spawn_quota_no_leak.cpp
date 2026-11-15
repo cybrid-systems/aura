@@ -9,6 +9,7 @@
 //   AC4: 10k reject storm restores agent_arena_usage_bytes + fibers_used
 //   AC5: Structured hash still has quota-dimension / used / limit / retry
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include "compiler/agent_name_table.h"
@@ -409,7 +410,7 @@ int run_test_spawn_quota_no_leak() {
         CHECK(pq.tenant_used(7, Dimension::Memory) == 0, "3731 AC1: join released tenant 7");
 
         std::println("\n--- #3731 AC1 Aura: orch:spawn-agent :tenant-id 7 ---");
-        ::setenv("AURA_SANDBOX", "off", 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
         ac3731_arm_per_tenant(); // override still arms the map under sandbox=off
         {
@@ -425,7 +426,7 @@ int run_test_spawn_quota_no_leak() {
 
         std::println("\n--- #3731 AC2: BP admit key is t:7 ---");
         {
-            ::unsetenv("AURA_SANDBOX");
+            ::aura::config::test_unsetenv("AURA_SANDBOX");
             ac3731_arm_per_tenant();
             CHECK(aura::orch::production_scope_bp_inherit(), "3731 AC2: inherit armed");
             AgentSpec spec_bp;
@@ -441,7 +442,7 @@ int run_test_spawn_quota_no_leak() {
 
         std::println("\n--- #3731 AC3: quota deny still no put, reserved=0 ---");
         {
-            ::setenv("AURA_SANDBOX", "off", 1);
+            ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
             aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
             ac3731_arm_per_tenant();
             pq.set_tenant_limit(7, Dimension::Memory, 100);
@@ -466,7 +467,7 @@ int run_test_spawn_quota_no_leak() {
 
         std::println("\n--- #3731 AC4: Soft/Off TLS 0 stays process-global ---");
         ac3731_disarm_per_tenant();
-        ::setenv("AURA_SANDBOX", "off", 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
         aura::core::resource_quota::set_quota_per_tenant_enabled_for_test(false);
         aura::core::resource_quota::refresh_quota_per_tenant_cache();

@@ -7,6 +7,7 @@
 //   AC3: recursive IR loop (display "tick") still produces correct output
 //   AC4: source-cite + cmake + gate
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include <cstdlib>
@@ -43,7 +44,7 @@ static std::string read_file(const char* path) {
 // Issue #2573 AC1: N iterations of ConstString "tick" must not add ~N strings.
 static void ac1_loop_heap_growth_bounded() {
     std::println("\n--- #2573 AC1: ConstString loop heap growth O(1) ---");
-    setenv("AURA_FORCE_IR", "1", 1);
+    ::aura::config::test_setenv("AURA_FORCE_IR", "1", 1);
     CompilerService cs;
     // Warm: define loop once (may allocate some strings for names/etc).
     auto def = cs.eval(R"((define (loop n)
@@ -64,13 +65,13 @@ static void ac1_loop_heap_growth_bounded() {
     CHECK(growth < 50, "AC1: heap growth << iterations (interned ConstString)");
     if (growth >= 50)
         std::println(stderr, "  heap0={} heap1={} growth={}", heap0, heap1, growth);
-    unsetenv("AURA_FORCE_IR");
+    ::aura::config::test_unsetenv("AURA_FORCE_IR");
 }
 
 // Distinct body literals must not collapse.
 static void ac2_distinct_literals() {
     std::println("\n--- #2573 AC2: distinct ConstString literals ---");
-    setenv("AURA_FORCE_IR", "1", 1);
+    ::aura::config::test_setenv("AURA_FORCE_IR", "1", 1);
     CompilerService cs;
     auto r = cs.eval(R"((begin
   (define (f)
@@ -82,13 +83,13 @@ static void ac2_distinct_literals() {
   (f)
   1))");
     CHECK(r && is_int(*r) && as_int(*r) == 1, "AC2: two distinct lits + two calls ok");
-    unsetenv("AURA_FORCE_IR");
+    ::aura::config::test_unsetenv("AURA_FORCE_IR");
 }
 
 // Correctness under recursion (output path still works with intern).
 static void ac3_recursive_display_ok() {
     std::println("\n--- #2573 AC3: recursive display still works ---");
-    setenv("AURA_FORCE_IR", "1", 1);
+    ::aura::config::test_setenv("AURA_FORCE_IR", "1", 1);
     CompilerService cs;
     auto r = cs.eval(R"((begin
   (define (loop n)
@@ -100,7 +101,7 @@ static void ac3_recursive_display_ok() {
   (loop 3)
   42))");
     CHECK(r && is_int(*r) && as_int(*r) == 42, "AC3: recursive ConstString display");
-    unsetenv("AURA_FORCE_IR");
+    ::aura::config::test_unsetenv("AURA_FORCE_IR");
 }
 
 static void ac4_source_gate() {

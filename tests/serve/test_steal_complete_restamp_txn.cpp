@@ -8,6 +8,7 @@
 //   AC4: forced stamp drift inject → mismatch hard-fail; match → restamp +1
 //   AC5: light stress (N steals, no silent Ready after hard-fail)
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include "compiler/observability_metrics.h"
@@ -101,8 +102,8 @@ static void ac1_sole_restamp_entry() {
 // ── AC2: hard mismatch → cancel + Done ──
 static void ac2_hard_mismatch_fail() {
     std::println("\n--- #2510 AC2: LayoutStamp mismatch under Hard → hard-fail ---");
-    ::setenv("AURA_STEAL_SNAPSHOT_HARD", "1", 1);
-    ::unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
+    ::aura::config::test_setenv("AURA_STEAL_SNAPSHOT_HARD", "1", 1);
+    ::aura::config::test_unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
     aura::serve::reset_steal_snapshot_soft_for_test();
     CHECK(aura::serve::is_steal_snapshot_hard_mode(), "AC2: hard mode");
 
@@ -133,15 +134,15 @@ static void ac2_hard_mismatch_fail() {
     CHECK(metrics.steal_complete_restamp_total.load() == rest0, "AC2: no restamp after hard-fail");
 
     ev.set_compiler_metrics(nullptr);
-    ::unsetenv("AURA_STEAL_SNAPSHOT_HARD");
+    ::aura::config::test_unsetenv("AURA_STEAL_SNAPSHOT_HARD");
     aura::serve::reset_steal_snapshot_soft_for_test();
 }
 
 // ── AC3: Soft continues; production Soft ignored (source + soft path) ──
 static void ac3_soft_and_production() {
     std::println("\n--- #2510 AC3: Soft metric-only; hard_fail observable ---");
-    ::setenv("AURA_STEAL_SNAPSHOT_SOFT", "1", 1);
-    ::unsetenv("AURA_STEAL_SNAPSHOT_HARD");
+    ::aura::config::test_setenv("AURA_STEAL_SNAPSHOT_SOFT", "1", 1);
+    ::aura::config::test_unsetenv("AURA_STEAL_SNAPSHOT_HARD");
     aura::serve::reset_steal_snapshot_soft_for_test();
     CHECK(aura::serve::is_steal_snapshot_soft_mode(), "AC3: soft mode");
     CHECK(!aura::serve::is_steal_snapshot_hard_mode(), "AC3: hard off under Soft");
@@ -176,15 +177,15 @@ static void ac3_soft_and_production() {
           "AC3: hard_fail queryable (or layout hard-fail key)");
 
     ev.set_compiler_metrics(nullptr);
-    ::unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
+    ::aura::config::test_unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
     aura::serve::reset_steal_snapshot_soft_for_test();
 }
 
 // ── AC4: match → restamp; soft mismatch still dual-check ──
 static void ac4_match_restamp_and_drift() {
     std::println("\n--- #2510 AC4: match restamp + soft drift inject ---");
-    ::unsetenv("AURA_STEAL_SNAPSHOT_HARD");
-    ::unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
+    ::aura::config::test_unsetenv("AURA_STEAL_SNAPSHOT_HARD");
+    ::aura::config::test_unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
     aura::serve::reset_steal_snapshot_soft_for_test();
 
     CompilerService cs;
@@ -228,8 +229,8 @@ static void ac4_match_restamp_and_drift() {
 // ── AC5: stress N steals, hard-fail never Ready ──
 static void ac5_stress() {
     std::println("\n--- #2510 AC5: N-iter stamp inject stress ---");
-    ::setenv("AURA_STEAL_SNAPSHOT_HARD", "1", 1);
-    ::unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
+    ::aura::config::test_setenv("AURA_STEAL_SNAPSHOT_HARD", "1", 1);
+    ::aura::config::test_unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
     aura::serve::reset_steal_snapshot_soft_for_test();
 
     CompilerService cs;
@@ -263,7 +264,7 @@ static void ac5_stress() {
           "AC5: hard-fail counter covers injects");
 
     ev.set_compiler_metrics(nullptr);
-    ::unsetenv("AURA_STEAL_SNAPSHOT_HARD");
+    ::aura::config::test_unsetenv("AURA_STEAL_SNAPSHOT_HARD");
     aura::serve::reset_steal_snapshot_soft_for_test();
 }
 
@@ -1686,8 +1687,8 @@ static void ac2957_1_production_negative_proof_rejects() {
     CHECK(lcp::last_lifetime_consistency_proof_present(), "2957 AC1: proof present");
     CHECK(!lcp::last_lifetime_consistency_would_allow(), "2957 AC1: would_allow false");
 
-    ::setenv("AURA_STEAL_SNAPSHOT_HARD", "1", 1);
-    ::unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
+    ::aura::config::test_setenv("AURA_STEAL_SNAPSHOT_HARD", "1", 1);
+    ::aura::config::test_unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
     aura::serve::reset_steal_snapshot_soft_for_test();
     aura::serve::set_steal_snapshot_soft_for_test(false);
     CHECK(aura::serve::is_steal_snapshot_hard_mode(), "2957 AC1: Hard/production mode");
@@ -1711,7 +1712,7 @@ static void ac2957_1_production_negative_proof_rejects() {
     CHECK(!f.has_resume_safety_ticket(), "2957 AC1: no ticket stamp on RejectHard");
 
     aura::serve::reset_steal_snapshot_soft_for_test();
-    ::unsetenv("AURA_STEAL_SNAPSHOT_HARD");
+    ::aura::config::test_unsetenv("AURA_STEAL_SNAPSHOT_HARD");
     lcp::reset_lifetime_consistency_proof_for_test();
     clear_steal_safety_transaction_for_test();
 }
@@ -1730,8 +1731,8 @@ static void ac2957_2_soft_and_quiet_no_reject() {
     aura::core::densify_consistency::note_last_densify_dual_epoch_ok(true);
 
     // Soft: even with negative proof + densify seq, arm is skipped.
-    ::setenv("AURA_STEAL_SNAPSHOT_SOFT", "1", 1);
-    ::unsetenv("AURA_STEAL_SNAPSHOT_HARD");
+    ::aura::config::test_setenv("AURA_STEAL_SNAPSHOT_SOFT", "1", 1);
+    ::aura::config::test_unsetenv("AURA_STEAL_SNAPSHOT_HARD");
     aura::serve::set_steal_snapshot_soft_for_test(true);
     CHECK(!aura::serve::is_steal_snapshot_hard_mode(), "2957 AC2: Soft mode");
     stamp_negative_lifetime_proof_for_test();
@@ -1745,8 +1746,8 @@ static void ac2957_2_soft_and_quiet_no_reject() {
 
     // Quiet production (hard): no proof present → one present-bit load, no reject.
     aura::serve::set_steal_snapshot_soft_for_test(false);
-    ::unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
-    ::setenv("AURA_STEAL_SNAPSHOT_HARD", "1", 1);
+    ::aura::config::test_unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
+    ::aura::config::test_setenv("AURA_STEAL_SNAPSHOT_HARD", "1", 1);
     lcp::reset_lifetime_consistency_proof_for_test(); // stamped_total=0
     CHECK(!lcp::last_lifetime_consistency_proof_present(), "2957 AC2: proof unset");
     const auto r1 =
@@ -1768,7 +1769,7 @@ static void ac2957_2_soft_and_quiet_no_reject() {
           "2957 AC2: would_allow → no lifetime_proof reject");
 
     aura::serve::reset_steal_snapshot_soft_for_test();
-    ::unsetenv("AURA_STEAL_SNAPSHOT_HARD");
+    ::aura::config::test_unsetenv("AURA_STEAL_SNAPSHOT_HARD");
     lcp::reset_lifetime_consistency_proof_for_test();
     clear_steal_safety_transaction_for_test();
 }
@@ -1864,8 +1865,8 @@ static void ac3001_1_hook_inject_negative_proof_rejects() {
     aura::core::densify_consistency::note_last_densify_envframe_ok(true);
     aura::core::densify_consistency::note_last_densify_dual_epoch_ok(true);
 
-    ::setenv("AURA_STEAL_SNAPSHOT_HARD", "1", 1);
-    ::unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
+    ::aura::config::test_setenv("AURA_STEAL_SNAPSHOT_HARD", "1", 1);
+    ::aura::config::test_unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
     aura::serve::reset_steal_snapshot_soft_for_test();
     aura::serve::set_steal_snapshot_soft_for_test(false);
     CHECK(aura::serve::is_steal_snapshot_hard_mode(), "3001 AC2: Hard/production mode");
@@ -1905,7 +1906,7 @@ static void ac3001_1_hook_inject_negative_proof_rejects() {
           "3001 AC1: last_reject_invariant_bits covers LifetimeProofOk");
 
     aura::serve::reset_steal_snapshot_soft_for_test();
-    ::unsetenv("AURA_STEAL_SNAPSHOT_HARD");
+    ::aura::config::test_unsetenv("AURA_STEAL_SNAPSHOT_HARD");
     lcp::reset_lifetime_consistency_proof_for_test();
     clear_steal_safety_transaction_for_test();
 }
@@ -1920,8 +1921,8 @@ static void ac3001_2_soft_metric_only() {
 
     clear_steal_safety_transaction_for_test();
     lcp::reset_lifetime_consistency_proof_for_test();
-    ::setenv("AURA_STEAL_SNAPSHOT_SOFT", "1", 1);
-    ::unsetenv("AURA_STEAL_SNAPSHOT_HARD");
+    ::aura::config::test_setenv("AURA_STEAL_SNAPSHOT_SOFT", "1", 1);
+    ::aura::config::test_unsetenv("AURA_STEAL_SNAPSHOT_HARD");
     aura::serve::set_steal_snapshot_soft_for_test(true);
     CHECK(!aura::serve::is_steal_snapshot_hard_mode(), "3001 AC2: Soft mode");
 
@@ -1938,7 +1939,7 @@ static void ac3001_2_soft_metric_only() {
           "3001 AC2: Soft does not bump lifetime_proof reject (metric-only, no abort)");
 
     aura::serve::reset_steal_snapshot_soft_for_test();
-    ::unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
+    ::aura::config::test_unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
     lcp::reset_lifetime_consistency_proof_for_test();
     clear_steal_safety_transaction_for_test();
 }

@@ -9,6 +9,7 @@
 //   AC5: additive metrics + schema-2543; #2506 query still works
 //   AC6: source-cite
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include "compiler/aot_hot_update_health.hh"
@@ -48,14 +49,14 @@ void set_env(const char* k, const char* v) {
 #if defined(_WIN32)
     _putenv_s(k, v);
 #else
-    setenv(k, v, 1);
+    ::aura::config::test_setenv(k, v, 1);
 #endif
 }
 void clear_env(const char* k) {
 #if defined(_WIN32)
     _putenv_s(k, "");
 #else
-    unsetenv(k);
+    ::aura::config::test_unsetenv(k);
 #endif
 }
 

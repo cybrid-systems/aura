@@ -9,6 +9,7 @@
 //   AC4: SecurityEvent on require_effect path has mutation_id != 0
 //   AC5: Source-cite + tests + gate registration
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include "compiler/pipeline_policy.hh"
@@ -657,7 +658,7 @@ static void ac3594_1_production_epoch0_refuses() {
     std::println("\n--- #3594 AC1: production epoch=0 → refuse, no phantom mid=1 ---");
     reset_all();
     aura::core::reset_mutation_epoch_for_test();
-    ::setenv("AURA_SANDBOX", "restricted", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
     aura::compiler::security::apply_production_security_defaults();
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
     CompilerService cs;
@@ -679,7 +680,7 @@ static void ac3594_1_production_epoch0_refuses() {
     CHECK(count_refuse_rows() == refuse_before,
           "AC1: probe emits zero mid-fallback-refused rows (#4241 read-style)");
 
-    ::setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
 }
 
@@ -731,7 +732,7 @@ static void ac3594_4_dual_refuse_join_mid0() {
     std::println("\n--- #3594 AC4: grant refuse + effect refuse join at mid=0 ---");
     reset_all();
     aura::core::reset_mutation_epoch_for_test();
-    ::setenv("AURA_SANDBOX", "restricted", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
     aura::compiler::security::apply_production_security_defaults();
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
     CompilerService cs;
@@ -754,7 +755,7 @@ static void ac3594_4_dual_refuse_join_mid0() {
     CHECK(count_mid0_deny_rows() == mid0_after_grant,
           "AC4: probe adds zero mid=0 rows (#4241 read-style refuse)");
 
-    ::setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
 }
 
@@ -764,7 +765,7 @@ static void ac4241_1_probe_zero_side_effect() {
     std::println("\n--- #4241 AC1: pre-Guard probes fail closed with zero refuse SE ---");
     reset_all();
     aura::compiler::typed_audit::reset_for_test();
-    ::setenv("AURA_SANDBOX", "restricted", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
     aura::compiler::security::apply_production_security_defaults();
     aura::compiler::typed_audit::apply_production_audit_defaults();
     set_mode(SandboxMode::Restricted);
@@ -785,7 +786,7 @@ static void ac4241_1_probe_zero_side_effect() {
     CHECK(count_refuse_rows() == refuse0,
           "4241 AC1: N probes emit ZERO mid-fallback-refused rows (zero-side-effect decide)");
     aura::compiler::typed_audit::apply_dev_audit_defaults();
-    ::setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
     aura::core::sandbox::set_mode(SandboxMode::Off);
 }
 
@@ -851,7 +852,7 @@ static void ac4241_4_soft_off_no_refuse_branch() {
     reset_all();
     aura::compiler::typed_audit::reset_for_test();
     aura::compiler::typed_audit::apply_dev_audit_defaults();
-    ::setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
     set_mode(SandboxMode::Off);
     aura::core::sandbox::set_mode(SandboxMode::Off);
     aura::core::reset_mutation_epoch_for_test();

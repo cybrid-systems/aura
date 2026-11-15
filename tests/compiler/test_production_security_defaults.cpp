@@ -11,6 +11,7 @@
 //   AC7: schema-2053 keys on capability-effect-stats + typed-mutation-audit-stats
 //   AC8: Full audit captures every should_audit id (no under-sample)
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include "compiler/pipeline_policy.hh"
@@ -90,7 +91,7 @@ void clear_env(const char* k) {
 #if defined(_WIN32)
     _putenv_s(k, "");
 #else
-    unsetenv(k);
+    ::aura::config::test_unsetenv(k);
 #endif
 }
 
@@ -98,7 +99,7 @@ void set_env(const char* k, const char* v) {
 #if defined(_WIN32)
     _putenv_s(k, v);
 #else
-    setenv(k, v, 1);
+    ::aura::config::test_setenv(k, v, 1);
 #endif
 }
 

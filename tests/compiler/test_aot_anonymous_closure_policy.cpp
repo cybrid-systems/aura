@@ -23,6 +23,7 @@
 //        (verified via the underlying C-linkage readers the kv list
 //        reads from)
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 #include "compiler/aura_jit_bridge.h"
 
@@ -143,26 +144,26 @@ static void ac_env_resolver() {
     std::println("\n--- AC5: env resolver AURA_REQUIRE_STABLE_ID_FOR_AOT ---");
     AnonPolicyGuard g;
     // setenv / unsetenv are POSIX (or stdlib on Windows).
-    ::setenv("AURA_REQUIRE_STABLE_ID_FOR_AOT", "1", /*overwrite=*/1);
+    ::aura::config::test_setenv("AURA_REQUIRE_STABLE_ID_FOR_AOT", "1", /*overwrite=*/1);
     aura_apply_require_stable_id_for_aot_env();
     CHECK(aura_get_require_stable_id_for_aot() == 1, "AC5: env \"1\" → policy=1");
-    ::setenv("AURA_REQUIRE_STABLE_ID_FOR_AOT", "yes", /*overwrite=*/1);
+    ::aura::config::test_setenv("AURA_REQUIRE_STABLE_ID_FOR_AOT", "yes", /*overwrite=*/1);
     aura_apply_require_stable_id_for_aot_env();
     CHECK(aura_get_require_stable_id_for_aot() == 1, "AC5: env \"yes\" → policy=1");
-    ::setenv("AURA_REQUIRE_STABLE_ID_FOR_AOT", "true", /*overwrite=*/1);
+    ::aura::config::test_setenv("AURA_REQUIRE_STABLE_ID_FOR_AOT", "true", /*overwrite=*/1);
     aura_apply_require_stable_id_for_aot_env();
     CHECK(aura_get_require_stable_id_for_aot() == 1, "AC5: env \"true\" → policy=1");
-    ::setenv("AURA_REQUIRE_STABLE_ID_FOR_AOT", "0", /*overwrite=*/1);
+    ::aura::config::test_setenv("AURA_REQUIRE_STABLE_ID_FOR_AOT", "0", /*overwrite=*/1);
     aura_apply_require_stable_id_for_aot_env();
     CHECK(aura_get_require_stable_id_for_aot() == 0, "AC5: env \"0\" → policy=0");
-    ::setenv("AURA_REQUIRE_STABLE_ID_FOR_AOT", "off", /*overwrite=*/1);
+    ::aura::config::test_setenv("AURA_REQUIRE_STABLE_ID_FOR_AOT", "off", /*overwrite=*/1);
     aura_apply_require_stable_id_for_aot_env();
     CHECK(aura_get_require_stable_id_for_aot() == 0, "AC5: env \"off\" → policy=0");
-    ::setenv("AURA_REQUIRE_STABLE_ID_FOR_AOT", "garbage", /*overwrite=*/1);
+    ::aura::config::test_setenv("AURA_REQUIRE_STABLE_ID_FOR_AOT", "garbage", /*overwrite=*/1);
     aura_apply_require_stable_id_for_aot_env();
     CHECK(aura_get_require_stable_id_for_aot() == 0,
           "AC5: env invalid → policy=0 (typo-safe fallback)");
-    ::unsetenv("AURA_REQUIRE_STABLE_ID_FOR_AOT");
+    ::aura::config::test_unsetenv("AURA_REQUIRE_STABLE_ID_FOR_AOT");
 }
 
 // AC6: query:closure-stats exposes 5 new keys + schema-2238. Verified

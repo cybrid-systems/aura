@@ -8,6 +8,7 @@
 //   AC3: preferred outer define + set! yields 6
 //   AC4: education warning path + language note + gate
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 #include "../support/service_module_source.hh"
 
@@ -70,7 +71,7 @@ static bool eval_int_eq(CompilerService& cs, const char* src, std::int64_t want,
 // Expected: 3 outer × 2 inner = 6 (not 2 / freeze).
 static void ac1_define_in_while() {
     std::println("\n--- #2571 AC1: define x inside while ---");
-    setenv("AURA_PIPELINE_STRICT", "0", 1);
+    ::aura::config::test_setenv("AURA_PIPELINE_STRICT", "0", 1);
     CompilerService cs;
     eval_int_eq(cs,
                 R"((begin
@@ -86,14 +87,14 @@ static void ac1_define_in_while() {
       (set! z (+ z 1))))
   count))",
                 6, "AC1: count=6 with define-in-while");
-    unsetenv("AURA_PIPELINE_STRICT");
+    ::aura::config::test_unsetenv("AURA_PIPELINE_STRICT");
 }
 
 // Multi-define begin inside while previously stacked cells; set! hit the
 // oldest cell while Variable read the newest → hang or freeze.
 static void ac2_multi_define_in_while() {
     std::println("\n--- #2571 AC2: multi-define in while body ---");
-    setenv("AURA_PIPELINE_STRICT", "0", 1);
+    ::aura::config::test_setenv("AURA_PIPELINE_STRICT", "0", 1);
     CompilerService cs;
     eval_int_eq(cs,
                 R"((begin
@@ -111,12 +112,12 @@ static void ac2_multi_define_in_while() {
       (set! z (+ z 1))))
   count))",
                 6, "AC2: multi-define count=6 (no hang/freeze)");
-    unsetenv("AURA_PIPELINE_STRICT");
+    ::aura::config::test_unsetenv("AURA_PIPELINE_STRICT");
 }
 
 static void ac3_preferred_outer_set() {
     std::println("\n--- #2571 AC3: outer define + set! ---");
-    setenv("AURA_PIPELINE_STRICT", "0", 1);
+    ::aura::config::test_setenv("AURA_PIPELINE_STRICT", "0", 1);
     CompilerService cs;
     eval_int_eq(cs,
                 R"((begin
@@ -133,7 +134,7 @@ static void ac3_preferred_outer_set() {
       (set! z (+ z 1))))
   count))",
                 6, "AC3: preferred pattern count=6");
-    unsetenv("AURA_PIPELINE_STRICT");
+    ::aura::config::test_unsetenv("AURA_PIPELINE_STRICT");
 }
 
 static void ac4_source_gate() {
@@ -167,8 +168,8 @@ static void ac4_source_gate() {
 // the same while-thunk shape and must return.
 static void ac4350_capture_snapshot_set() {
     std::println("\n--- #4350: set! writes the shared capture cell ---");
-    setenv("AURA_SANDBOX", "off", 1);
-    setenv("AURA_PIPELINE_STRICT", "0", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_PIPELINE_STRICT", "0", 1);
     CompilerService cs;
     eval_int_eq(cs,
                 R"((begin
@@ -208,20 +209,20 @@ static void ac4350_capture_snapshot_set() {
     const auto env = read_file("src/compiler/evaluator_env.cpp");
     CHECK(env.find("Issue #4350: set! writes the capture-snapshot cell") != std::string::npos,
           "4350: set! consults the capture snapshot");
-    unsetenv("AURA_SANDBOX");
-    unsetenv("AURA_PIPELINE_STRICT");
+    ::aura::config::test_unsetenv("AURA_SANDBOX");
+    ::aura::config::test_unsetenv("AURA_PIPELINE_STRICT");
 }
 
 // Issue #4372: eval-current installs an IR closure for a workspace lambda.
 // while + set! of a let binding must still be visible on the next iteration.
 static void ac4372_while_set_in_define() {
     std::println("\n--- #4372: while + set! inside a define ---");
-    setenv("AURA_SANDBOX", "off", 1);
-    setenv("AURA_PIPELINE_STRICT", "0", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_PIPELINE_STRICT", "0", 1);
     struct RestoreEnv {
         ~RestoreEnv() {
-            unsetenv("AURA_SANDBOX");
-            unsetenv("AURA_PIPELINE_STRICT");
+            ::aura::config::test_unsetenv("AURA_SANDBOX");
+            ::aura::config::test_unsetenv("AURA_PIPELINE_STRICT");
         }
     } restore_env;
     const char* sj = R"((define (sj strs sep)
@@ -298,12 +299,12 @@ static void ac4372_while_set_in_define() {
 // closures, so the loop did not run and the let cell stayed at its init.
 static void ac4379_ir_while_lambda_set() {
     std::println("\n--- #4379: IR while-lambda set! ---");
-    setenv("AURA_SANDBOX", "off", 1);
-    setenv("AURA_PIPELINE_STRICT", "0", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_PIPELINE_STRICT", "0", 1);
     struct RestoreEnv {
         ~RestoreEnv() {
-            unsetenv("AURA_SANDBOX");
-            unsetenv("AURA_PIPELINE_STRICT");
+            ::aura::config::test_unsetenv("AURA_SANDBOX");
+            ::aura::config::test_unsetenv("AURA_PIPELINE_STRICT");
         }
     } restore_env;
     CompilerService cs;
@@ -415,8 +416,8 @@ static void ac4466_while_multi_body() {
                       "(set! s (+ s i)))) s)";
 
     auto face = [&](const char* strict, const char* tag) {
-        setenv("AURA_SANDBOX", "off", 1);
-        setenv("AURA_PIPELINE_STRICT", strict, 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
+        ::aura::config::test_setenv("AURA_PIPELINE_STRICT", strict, 1);
         apply_pipeline_strict_defaults(/*dev_sandbox_off=*/true);
         CompilerService cs;
         eval_int_eq(cs, bare, 6, (std::string(tag) + " bare").c_str());
@@ -426,8 +427,8 @@ static void ac4466_while_multi_body() {
     };
     face("0", "4466 walker");
     face("force-soa", "4466 ir");
-    unsetenv("AURA_SANDBOX");
-    unsetenv("AURA_PIPELINE_STRICT");
+    ::aura::config::test_unsetenv("AURA_SANDBOX");
+    ::aura::config::test_unsetenv("AURA_PIPELINE_STRICT");
     reset_tree_walker_fallback_policy_for_test();
 
     const auto bin = aura_binary_4466();
@@ -532,8 +533,8 @@ static void ac4690_closure_while_keeps_diagnostic() {
         return;
     }
     if (pid == 0) {
-        setenv("AURA_SANDBOX", "off", 1);
-        setenv("AURA_PIPELINE_STRICT", "force-soa", 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
+        ::aura::config::test_setenv("AURA_PIPELINE_STRICT", "force-soa", 1);
         apply_pipeline_strict_defaults(/*dev_sandbox_off=*/true);
         const std::string out_path =
             std::format("/tmp/aura-4690-{}.out", static_cast<long>(::getpid()));
@@ -631,12 +632,12 @@ static void ac4690_closure_while_keeps_diagnostic() {
 // tree walker and were already correct.
 static void ac5281_foreach_set_after_set_code() {
     std::println("\n--- #5281: for-each set! after set-code, sandbox off ---");
-    setenv("AURA_SANDBOX", "off", 1);
-    setenv("AURA_PIPELINE_STRICT", "0", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_PIPELINE_STRICT", "0", 1);
     struct RestoreEnv {
         ~RestoreEnv() {
-            unsetenv("AURA_SANDBOX");
-            unsetenv("AURA_PIPELINE_STRICT");
+            ::aura::config::test_unsetenv("AURA_SANDBOX");
+            ::aura::config::test_unsetenv("AURA_PIPELINE_STRICT");
         }
     } restore_env;
 
@@ -704,12 +705,12 @@ static void ac5281_foreach_set_after_set_code() {
 // stays in the pre-trial band (the walker path was about 1.6x).
 static void ac5282_discarded_trial_keeps_inline() {
     std::println("\n--- #5282: discarded evo:trial keeps the inlined loop ---");
-    setenv("AURA_SANDBOX", "off", 1);
-    setenv("AURA_PIPELINE_STRICT", "0", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_PIPELINE_STRICT", "0", 1);
     struct RestoreEnv {
         ~RestoreEnv() {
-            unsetenv("AURA_SANDBOX");
-            unsetenv("AURA_PIPELINE_STRICT");
+            ::aura::config::test_unsetenv("AURA_SANDBOX");
+            ::aura::config::test_unsetenv("AURA_PIPELINE_STRICT");
         }
     } restore_env;
 

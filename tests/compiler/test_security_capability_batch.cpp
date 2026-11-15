@@ -2,6 +2,7 @@
 // Stream S4: member filenames stripped of _NNNN issue suffixes where unique.
 // Members: run_<stem>(); standalones keep main via #ifndef AURA_ISSUE_BATCH_MEMBER.
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include "compiler/pipeline_policy.hh"
@@ -19,8 +20,8 @@
 import std;
 
 static void reset_member_face() {
-    ::setenv("AURA_SANDBOX", "off", 1);
-    ::setenv("AURA_IR_DIRTY_BATCH_ONLY", "0", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_IR_DIRTY_BATCH_ONLY", "0", 1);
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
     aura::core::capability::reset_capability_effects_for_test();
     aura::core::security_event::reset_security_event_ring_for_test();

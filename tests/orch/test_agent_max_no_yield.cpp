@@ -21,6 +21,7 @@
 //   AC5: README + schema document default + opt-out (source-cite)
 //   AC6: agent-no-yield-default-applied-total metric surface (query)
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 #include "orch/sched_runner_test_helper.h"
 
@@ -94,14 +95,14 @@ void clear_env(const char* k) {
 #if defined(_WIN32)
     _putenv_s(k, "");
 #else
-    unsetenv(k);
+    ::aura::config::test_unsetenv(k);
 #endif
 }
 void set_env(const char* k, const char* v) {
 #if defined(_WIN32)
     _putenv_s(k, v);
 #else
-    setenv(k, v, 1);
+    ::aura::config::test_setenv(k, v, 1);
 #endif
 }
 
@@ -115,8 +116,8 @@ int run_test_agent_max_no_yield() {
     // ── AC1: max_no_yield_ms==0 zero cost ───────────────────────
     {
         std::println("\n--- AC1: max_no_yield_ms==0 zero extra yield ---");
-        ::setenv("AURA_SANDBOX", "off", 1);
-        ::setenv("AURA_AGENT_MAX_NO_YIELD_MS", "0", 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
+        ::aura::config::test_setenv("AURA_AGENT_MAX_NO_YIELD_MS", "0", 1);
         Scheduler sched(1);
         SchedRunner runner(sched);
         const auto y0 =

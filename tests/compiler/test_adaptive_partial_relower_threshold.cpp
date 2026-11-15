@@ -8,6 +8,7 @@
 //   AC4: test hook forces threshold; decision changes at boundary
 //   AC5: no regression on pure overloads / default suites
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 #include "../support/service_module_source.hh"
 
@@ -382,10 +383,10 @@ void ac4156_adaptive_thr_feeds_peel_inverted() {
     aura::compiler::inject_adaptive_thr_bad_for_test(3);
     CHECK(aura::compiler::current_adaptive_partial_thr() < base_thr,
           "4156 AC4: face narrowed before freeze");
-    ::setenv("AURA_ADAPTIVE_THR", "0", /*overwrite*/ 1);
+    ::aura::config::test_setenv("AURA_ADAPTIVE_THR", "0", /*overwrite*/ 1);
     aura::compiler::note_relower_fallback_for_adaptive(/*Ok*/ 0);
     const auto frozen = aura::compiler::decide_workload_adaptive_partial_relower(5, 64);
-    ::unsetenv("AURA_ADAPTIVE_THR");
+    ::aura::config::test_unsetenv("AURA_ADAPTIVE_THR");
     CHECK(frozen.want_partial && frozen.effective_threshold == neutral.effective_threshold,
           "4156 AC4: frozen env keeps the neutral peel window");
     // Restore for downstream tests.

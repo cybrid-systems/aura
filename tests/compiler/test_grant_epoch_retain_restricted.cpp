@@ -10,6 +10,7 @@
 //   AC5: Restricted bump epoch >K → old grant provenance_ok false + fence++
 //   AC6: source-cite + linter
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 #include "compiler/security_defaults.hh"
 #include "core/capability_model.hh"
@@ -48,14 +49,14 @@ void clear_env(const char* k) {
 #if defined(_WIN32)
     _putenv_s(k, "");
 #else
-    unsetenv(k);
+    ::aura::config::test_unsetenv(k);
 #endif
 }
 void set_env(const char* k, const char* v) {
 #if defined(_WIN32)
     _putenv_s(k, v);
 #else
-    setenv(k, v, 1);
+    ::aura::config::test_setenv(k, v, 1);
 #endif
 }
 void reset_all() {

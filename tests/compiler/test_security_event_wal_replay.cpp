@@ -25,6 +25,7 @@
 //   src/compiler/evaluator_security.cpp:423-424 auto-pair in
 //                                                enable_mutation_audit_wal
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include "compiler/security_capabilities.h"
@@ -540,7 +541,7 @@ int run_test_security_event_wal_replay() {
         reset_all();
         reset_wal_append_fail_slo_for_test();
         aura::core::security_event_wal::wal_overflow_ring_clear_for_test();
-        ::setenv("AURA_WAL_APPEND_FAIL_CLOSED", "1", 1);
+        ::aura::config::test_setenv("AURA_WAL_APPEND_FAIL_CLOSED", "1", 1);
         apply_production_audit_defaults();
 
         const auto dir_3178 = fresh_wal_dir("3178-ac1");
@@ -596,7 +597,7 @@ int run_test_security_event_wal_replay() {
         // AC2: Soft / no-env → overflow ring never written.
         reset_all();
         aura::core::security_event_wal::wal_overflow_ring_clear_for_test();
-        ::unsetenv("AURA_WAL_APPEND_FAIL_CLOSED");
+        ::aura::config::test_unsetenv("AURA_WAL_APPEND_FAIL_CLOSED");
         const auto dir_soft_3178 = fresh_wal_dir("3178-soft");
         CHECK(ev.enable_security_event_wal(dir_soft_3178.string()),
               "AC2: enable SE WAL under Soft");
@@ -628,8 +629,8 @@ int run_test_security_event_wal_replay() {
 
         std::println("\n--- #3338 AC1: Soft / WAL-off zero cost ---");
         reset_all();
-        ::unsetenv("AURA_WAL_MID_LOOKUP_SEGMENTS");
-        ::unsetenv("AURA_WAL_MAX_SEGMENTS");
+        ::aura::config::test_unsetenv("AURA_WAL_MID_LOOKUP_SEGMENTS");
+        ::aura::config::test_unsetenv("AURA_WAL_MAX_SEGMENTS");
         CHECK(kWalMidLookupWindowIssue == 3338, "3338 AC: issue stamp");
         CHECK(wal_mid_lookup_segments() == kWalMidLookupSegmentsSoft,
               "3338 AC1: Soft lookup default 2");
@@ -657,8 +658,8 @@ int run_test_security_event_wal_replay() {
         std::println("\n--- #3338 AC2: rotate ≥3, lookup window still hits ---");
         reset_all();
         apply_production_audit_defaults();
-        ::unsetenv("AURA_WAL_MAX_SEGMENTS");
-        ::setenv("AURA_WAL_MID_LOOKUP_SEGMENTS", "8", 1);
+        ::aura::config::test_unsetenv("AURA_WAL_MAX_SEGMENTS");
+        ::aura::config::test_setenv("AURA_WAL_MID_LOOKUP_SEGMENTS", "8", 1);
         CHECK(wal_mid_lookup_segments() == 8, "3338 AC2: env lookup 8");
         CHECK(href_posture(cs, "wal-mid-lookup-segments") == 8, "3338 AC2: posture env window");
         const auto dir_ac2 = fresh_wal_dir("3338-ac2");
@@ -695,8 +696,8 @@ int run_test_security_event_wal_replay() {
         std::println("\n--- #3338 AC3: AURA_WAL_MAX_SEGMENTS=4 prunes ---");
         reset_all();
         apply_production_audit_defaults();
-        ::setenv("AURA_WAL_MAX_SEGMENTS", "4", 1);
-        ::setenv("AURA_WAL_MID_LOOKUP_SEGMENTS", "8", 1);
+        ::aura::config::test_setenv("AURA_WAL_MAX_SEGMENTS", "4", 1);
+        ::aura::config::test_setenv("AURA_WAL_MID_LOOKUP_SEGMENTS", "8", 1);
         CHECK(wal_max_segments_retention() == 4, "3338 AC3: retention 4");
         CHECK(href_posture(cs, "wal-max-segments-retention") == 4, "3338 AC3: posture retention");
         const auto dir_ac3 = fresh_wal_dir("3338-ac3");
@@ -722,7 +723,7 @@ int run_test_security_event_wal_replay() {
         std::println("\n--- #3338 AC3 mutation WAL prune lockstep ---");
         reset_all();
         apply_production_audit_defaults();
-        ::setenv("AURA_WAL_MAX_SEGMENTS", "4", 1);
+        ::aura::config::test_setenv("AURA_WAL_MAX_SEGMENTS", "4", 1);
         const auto dir_mut = fresh_wal_dir("3338-mut");
         CHECK(ev.enable_mutation_audit_wal(dir_mut.string()), "3338 AC3: enable mutation WAL");
         g_mutation_audit_wal().set_rotate_bytes(sizeof(AuditWalRecord) * 4);
@@ -748,8 +749,8 @@ int run_test_security_event_wal_replay() {
         std::println("\n--- #3338 AC5: production default window 8; no invent ---");
         reset_all();
         apply_production_audit_defaults();
-        ::unsetenv("AURA_WAL_MID_LOOKUP_SEGMENTS");
-        ::unsetenv("AURA_WAL_MAX_SEGMENTS");
+        ::aura::config::test_unsetenv("AURA_WAL_MID_LOOKUP_SEGMENTS");
+        ::aura::config::test_unsetenv("AURA_WAL_MAX_SEGMENTS");
         CHECK(wal_mid_lookup_segments() == kWalMidLookupSegmentsProduction,
               "3338 AC5: production default lookup 8");
         CHECK(href_posture(cs, "wal-overflow-ring-depth") >= 0, "3338 AC4: #3109 key retained");
@@ -766,8 +767,8 @@ int run_test_security_event_wal_replay() {
         CHECK(read_repo_file("tests/compiler/test_issue_3338.cpp").empty(),
               "3338 AC5: no test_issue_3338.cpp");
         apply_dev_audit_defaults();
-        ::unsetenv("AURA_WAL_MID_LOOKUP_SEGMENTS");
-        ::unsetenv("AURA_WAL_MAX_SEGMENTS");
+        ::aura::config::test_unsetenv("AURA_WAL_MID_LOOKUP_SEGMENTS");
+        ::aura::config::test_unsetenv("AURA_WAL_MAX_SEGMENTS");
     }
 
     // ── Issue #3465: mutation WAL → SE rebuild must not rewrite reason ──
@@ -921,8 +922,8 @@ int run_test_security_event_wal_replay() {
         reset_security_event_ring_for_test();
         CHECK(g_security_event_ring().seq.load(std::memory_order_relaxed) == 0,
               "3500 AC1: ring empty after restart sim");
-        ::setenv("AURA_MUTATION_AUDIT_WAL", dir.string().c_str(), 1);
-        ::unsetenv("AURA_SANDBOX");
+        ::aura::config::test_setenv("AURA_MUTATION_AUDIT_WAL", dir.string().c_str(), 1);
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
         set_mode(SandboxMode::Restricted);
         aura::compiler::security::apply_production_security_defaults();
         const auto seq = g_security_event_ring().seq.load(std::memory_order_relaxed);
@@ -935,18 +936,18 @@ int run_test_security_event_wal_replay() {
         CHECK(hit && std::string_view(hit->reason).find("3500-reason") != std::string::npos,
               "3500 AC1: reason restored");
         CHECK(g_security_event_wal().is_enabled(), "3500 AC1: SE WAL enabled");
-        ::unsetenv("AURA_MUTATION_AUDIT_WAL");
+        ::aura::config::test_unsetenv("AURA_MUTATION_AUDIT_WAL");
         ev.disable_security_event_wal();
         fs::remove_all(dir);
 
         std::println("\n--- #3500 AC3: Soft / sandbox=off does not hydrate ---");
         reset_all();
-        ::setenv("AURA_SANDBOX", "off", 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
         set_mode(SandboxMode::Off);
         apply_dev_audit_defaults();
         aura::compiler::security::apply_production_security_defaults();
         CHECK(!g_security_event_wal().is_enabled(), "3500 AC3: Soft does not enable SE WAL");
-        ::unsetenv("AURA_SANDBOX");
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
         reset_all();
 
         const auto def = read_repo_file("src/compiler/security_defaults.hh");
@@ -1051,7 +1052,7 @@ int run_test_security_event_wal_replay() {
               "3806 AC2: audit-wal-stats wrap face");
 
         // Inject path also bumps wrap once ring is full (production fail-closed).
-        ::setenv("AURA_WAL_APPEND_FAIL_CLOSED", "1", 1);
+        ::aura::config::test_setenv("AURA_WAL_APPEND_FAIL_CLOSED", "1", 1);
         apply_production_audit_defaults();
         const auto dir = fresh_wal_dir("3806-inject");
         CHECK(cs.evaluator().enable_security_event_wal(dir.string()), "3806: enable SE WAL");
@@ -1067,7 +1068,7 @@ int run_test_security_event_wal_replay() {
               "3806 AC1: inject full-ring bumps wrap");
         cs.evaluator().disable_security_event_wal();
         fs::remove_all(dir);
-        ::unsetenv("AURA_WAL_APPEND_FAIL_CLOSED");
+        ::aura::config::test_unsetenv("AURA_WAL_APPEND_FAIL_CLOSED");
 
         // Source-cite / no-invent.
         const auto sew = read_repo_file("src/core/security_event_wal.hh");
@@ -1141,7 +1142,7 @@ int run_test_security_event_wal_replay() {
         wal_overflow_ring_clear_for_test();
 
         // Production fail-closed: fill → refuse on wrap (no silent mid loss).
-        ::setenv("AURA_WAL_APPEND_FAIL_CLOSED", "1", 1);
+        ::aura::config::test_setenv("AURA_WAL_APPEND_FAIL_CLOSED", "1", 1);
         apply_production_audit_defaults();
         CHECK(aura::core::wal_slo::wal_append_fail_closed_active(), "3838: fail-closed active");
 
@@ -1245,7 +1246,7 @@ int run_test_security_event_wal_replay() {
 
         cs.evaluator().disable_security_event_wal();
         fs::remove_all(dir);
-        ::unsetenv("AURA_WAL_APPEND_FAIL_CLOSED");
+        ::aura::config::test_unsetenv("AURA_WAL_APPEND_FAIL_CLOSED");
 
         // Source-cite / no-invent.
         const auto sew = read_repo_file("src/core/security_event_wal.hh");
@@ -1279,17 +1280,17 @@ int run_test_security_event_wal_replay() {
 
         std::println("\n--- #4520 AC1: retention defaults on; env override intact ---");
         reset_all();
-        ::unsetenv("AURA_WAL_MAX_SEGMENTS");
-        ::unsetenv("AURA_MUTATION_AUDIT_WAL");
+        ::aura::config::test_unsetenv("AURA_WAL_MAX_SEGMENTS");
+        ::aura::config::test_unsetenv("AURA_MUTATION_AUDIT_WAL");
         CHECK(kWalDefaultMaxSegments >= 2 * aura::core::wal_slo::kWalMidLookupSegmentsProduction,
               "4520 AC1: default cap keeps ≥ 2× the #3338 production lookup window");
         CHECK(wal_max_segments_retention() == kWalDefaultMaxSegments,
               "4520 AC1: unset AURA_WAL_MAX_SEGMENTS → default cap (was 0 = no prune)");
-        ::setenv("AURA_WAL_MAX_SEGMENTS", "4", 1);
+        ::aura::config::test_setenv("AURA_WAL_MAX_SEGMENTS", "4", 1);
         CHECK(wal_max_segments_retention() == 4, "4520 AC1: env sizing override");
-        ::setenv("AURA_WAL_MAX_SEGMENTS", "0", 1);
+        ::aura::config::test_setenv("AURA_WAL_MAX_SEGMENTS", "0", 1);
         CHECK(wal_max_segments_retention() == 0, "4520 AC1: env =0 opts out (legacy unbounded)");
-        ::unsetenv("AURA_WAL_MAX_SEGMENTS");
+        ::aura::config::test_unsetenv("AURA_WAL_MAX_SEGMENTS");
         CHECK(href_posture(cs, "wal-max-segments-retention") ==
                   static_cast<std::int64_t>(kWalDefaultMaxSegments),
               "4520 AC1: posture surfaces the default cap");
@@ -1297,7 +1298,7 @@ int run_test_security_event_wal_replay() {
         std::println("\n--- #4520 AC2: default-face rotate keeps the dir at the cap ---");
         reset_all();
         apply_production_audit_defaults();
-        ::unsetenv("AURA_WAL_MAX_SEGMENTS");
+        ::aura::config::test_unsetenv("AURA_WAL_MAX_SEGMENTS");
         const auto dir_4520a = fresh_wal_dir("4520-rotate");
         CHECK(ev.enable_security_event_wal(dir_4520a.string()), "4520 AC2: enable SE WAL");
         g_security_event_wal().set_rotate_bytes(sizeof(se_wal_ns::SecurityEventWalRecord) * 4);
@@ -1318,7 +1319,7 @@ int run_test_security_event_wal_replay() {
         std::println("\n--- #4520 AC3: mutation audit writer default prune (lockstep) ---");
         reset_all();
         apply_production_audit_defaults();
-        ::unsetenv("AURA_WAL_MAX_SEGMENTS");
+        ::aura::config::test_unsetenv("AURA_WAL_MAX_SEGMENTS");
         const auto dir_4520b = fresh_wal_dir("4520-mut");
         CHECK(ev.enable_mutation_audit_wal(dir_4520b.string()), "4520 AC3: enable mutation WAL");
         g_mutation_audit_wal().set_rotate_bytes(sizeof(AuditWalRecord) * 4);
@@ -1338,7 +1339,7 @@ int run_test_security_event_wal_replay() {
 
         std::println("\n--- #4520 AC4: bounded startup replay + upgrade prune ---");
         reset_all();
-        ::unsetenv("AURA_WAL_MAX_SEGMENTS");
+        ::aura::config::test_unsetenv("AURA_WAL_MAX_SEGMENTS");
         const auto dir_4520c = fresh_wal_dir("4520-replay");
         // Legacy oversized dir: 2000 synthetic segments × 8 records
         // (16000 records ≫ kSecurityEventRingSize). Replay must collect
@@ -1392,7 +1393,7 @@ int run_test_security_event_wal_replay() {
               "4520 AC4: newest legacy record hydrates into the SE ring");
         g_security_event_wal().disable();
         fs::remove_all(dir_4520c);
-        ::unsetenv("AURA_WAL_MAX_SEGMENTS");
+        ::aura::config::test_unsetenv("AURA_WAL_MAX_SEGMENTS");
         reset_all();
     }
 

@@ -2,6 +2,7 @@
 // Stream S4: member filenames stripped of _NNNN issue suffixes where unique.
 // Members: run_<stem>(); standalones keep main via #ifndef AURA_ISSUE_BATCH_MEMBER.
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include "compiler/coercion_provenance_policy.hh"
@@ -26,8 +27,8 @@ static void reset_member_face() {
     // without join UAF leftover scheduler fibers (flaky SIGSEGV).
     // Do not force AURA_SANDBOX=off here: #3179/#3147 production
     // auto-fill of bp_scope_id keys off AURA_SANDBOX != off.
-    ::setenv("AURA_IR_DIRTY_BATCH_ONLY", "0", 1);
-    ::setenv("AURA_AGENT_MAX_NO_YIELD_MS", "0", 1);
+    ::aura::config::test_setenv("AURA_IR_DIRTY_BATCH_ONLY", "0", 1);
+    ::aura::config::test_setenv("AURA_AGENT_MAX_NO_YIELD_MS", "0", 1);
     aura::compiler::reset_tree_walker_fallback_policy_for_test();
     aura::compiler::typed_audit::reset_for_test();
     aura::compiler::typed_audit::apply_dev_audit_defaults();

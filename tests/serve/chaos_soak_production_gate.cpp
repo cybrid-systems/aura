@@ -43,6 +43,7 @@
 //   - scheduler.cpp:44    g_eventfd_wake_force_safepoint_total (#3553)
 //   - provenance_tracker.hh:63  fiber_id_mismatch_total (#3552)
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include "compiler/lock_order_audit.h"
@@ -171,7 +172,7 @@ static void ac3586_unarmed_multi_worker_refuses() {
     const std::string prev_sb_s = prev_sb ? prev_sb : "";
     aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active.store(
         0, std::memory_order_relaxed);
-    ::unsetenv("AURA_SANDBOX");
+    ::aura::config::test_unsetenv("AURA_SANDBOX");
     const pid_t pid = ::fork();
     if (pid == 0) {
         ::alarm(2);
@@ -187,9 +188,9 @@ static void ac3586_unarmed_multi_worker_refuses() {
     aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active.store(
         prev_prod, std::memory_order_relaxed);
     if (!prev_sb_s.empty())
-        ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
     else
-        ::setenv("AURA_SANDBOX", "off", 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
 }
 
 static bool query_epoch_strict_env_on() noexcept {
@@ -215,7 +216,7 @@ static void ac3590_query_epoch_strict_joins_bootstrap_gate() {
     CHECK(aura_production_defaults_active_probe() != 0, "3590: armed probe");
     if (was_prod == 0) {
         apply_dev_audit_defaults();
-        ::setenv("AURA_SANDBOX", "off", 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
     }
 
     // Scenario 2: dual unarmed process (observe-only is contract, gate-visible).
@@ -229,13 +230,13 @@ static void ac3590_query_epoch_strict_joins_bootstrap_gate() {
     if (pid == 0) {
         ::alarm(2);
         apply_dev_audit_defaults();
-        ::unsetenv("AURA_QUERY_EPOCH_STRICT");
+        ::aura::config::test_unsetenv("AURA_QUERY_EPOCH_STRICT");
         set_query_epoch_strict(false);
         if (aura_production_defaults_active_probe() != 0)
             ::_exit(2);
         if (query_epoch_strict())
             ::_exit(3);
-        ::setenv("AURA_QUERY_EPOCH_STRICT", "1", 1);
+        ::aura::config::test_setenv("AURA_QUERY_EPOCH_STRICT", "1", 1);
         set_query_epoch_strict(true);
         if (!query_epoch_strict())
             ::_exit(4);
@@ -297,7 +298,7 @@ static void ac3592_unify_strict_joins_bootstrap_gate() {
     CHECK(aura_production_defaults_active_probe() != 0, "3592: armed probe");
     if (was_prod == 0) {
         apply_dev_audit_defaults();
-        ::setenv("AURA_SANDBOX", "off", 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
     }
 
     if (aura_production_defaults_active_probe() == 0 && !gradual_strict_env_on()) {
@@ -311,7 +312,7 @@ static void ac3592_unify_strict_joins_bootstrap_gate() {
     if (pid == 0) {
         ::alarm(2);
         apply_dev_audit_defaults();
-        ::unsetenv("AURA_GRADUAL_PERMISSIVENESS");
+        ::aura::config::test_unsetenv("AURA_GRADUAL_PERMISSIVENESS");
         {
             TypeRegistry reg;
             TypeChecker tc(reg);
@@ -320,7 +321,7 @@ static void ac3592_unify_strict_joins_bootstrap_gate() {
             if (tc.effective_gradual_permissiveness() == GradualPermissiveness::Strict)
                 ::_exit(3);
         }
-        ::setenv("AURA_GRADUAL_PERMISSIVENESS", "strict", 1);
+        ::aura::config::test_setenv("AURA_GRADUAL_PERMISSIVENESS", "strict", 1);
         {
             TypeRegistry reg;
             TypeChecker tc(reg);
@@ -471,7 +472,7 @@ int run_test_chaos_soak_production_gate() {
     if (!entered_sandbox_off) {
         // apply_production_security_defaults reads AURA_SANDBOX and takes
         // the dev path while it is off. Leave Restricted first.
-        ::unsetenv("AURA_SANDBOX");
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
         aura::compiler::security::apply_production_security_defaults();
         production = aura::compiler::typed_audit::production_defaults_active() != 0;
@@ -486,7 +487,7 @@ int run_test_chaos_soak_production_gate() {
     // Soft soak still needs an explicit off latch so Scheduler::run
     // does not FATAL (#3586) after the death test unset the env.
     if (!production && !sandbox_is_off())
-        ::setenv("AURA_SANDBOX", "off", 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
 
     // CompilerService first so per-Evaluator tenant_isolation_denials
     // (#3555 AC2.3) is reachable from read_snapshot.

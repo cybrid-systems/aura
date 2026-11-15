@@ -17,6 +17,7 @@
 //   #2895 AC4: storm active → no repromote (existing guards)
 //   #2895 AC5: source-cite coverage + knobs
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include "compiler/aura_jit_bridge.h"
@@ -450,8 +451,8 @@ static void ac2949_production_only_covered_default() {
     std::println("\n--- #2949 AC1–AC6: production default only_covered ---");
     auto& reg = aura::compiler::hot_update_registry();
     clear_idle(reg);
-    unsetenv("AURA_FORCE_JIT_REPROMOTE_ONLY_COVERED");
-    unsetenv("AURA_SANDBOX");
+    ::aura::config::test_unsetenv("AURA_FORCE_JIT_REPROMOTE_ONLY_COVERED");
+    ::aura::config::test_unsetenv("AURA_SANDBOX");
 
     // AC2: Soft / no production → wholesale default (auto)
     {
@@ -467,17 +468,17 @@ static void ac2949_production_only_covered_default() {
     {
         aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
             .store(1, std::memory_order_relaxed);
-        setenv("AURA_SANDBOX", "off", 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
         CHECK(!reg.resolve_force_jit_repromote_only_covered(), "2949 AC2: sandbox=off → wholesale");
-        unsetenv("AURA_SANDBOX");
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
     }
 
     // AC1: production → only_covered default; multi-bit partial clear
     {
         aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
             .store(1, std::memory_order_relaxed);
-        unsetenv("AURA_SANDBOX");
-        unsetenv("AURA_FORCE_JIT_REPROMOTE_ONLY_COVERED");
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
+        ::aura::config::test_unsetenv("AURA_FORCE_JIT_REPROMOTE_ONLY_COVERED");
         clear_idle(reg); // clears sticky override → auto
         CHECK(reg.resolve_force_jit_repromote_only_covered(),
               "2949 AC1: production auto → only_covered ON");
@@ -508,11 +509,11 @@ static void ac2949_production_only_covered_default() {
     {
         aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
             .store(1, std::memory_order_relaxed);
-        setenv("AURA_FORCE_JIT_REPROMOTE_ONLY_COVERED", "0", 1);
+        ::aura::config::test_setenv("AURA_FORCE_JIT_REPROMOTE_ONLY_COVERED", "0", 1);
         clear_idle(reg);
         CHECK(!reg.resolve_force_jit_repromote_only_covered(),
               "2949 AC2: env=0 forces wholesale under production");
-        unsetenv("AURA_FORCE_JIT_REPROMOTE_ONLY_COVERED");
+        ::aura::config::test_unsetenv("AURA_FORCE_JIT_REPROMOTE_ONLY_COVERED");
     }
 
     // AC: sticky false under production → wholesale
@@ -608,8 +609,8 @@ static void ac2949_production_only_covered_default() {
     // Restore soft for subsequent suites.
     aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active.store(
         0, std::memory_order_relaxed);
-    unsetenv("AURA_FORCE_JIT_REPROMOTE_ONLY_COVERED");
-    unsetenv("AURA_SANDBOX");
+    ::aura::config::test_unsetenv("AURA_FORCE_JIT_REPROMOTE_ONLY_COVERED");
+    ::aura::config::test_unsetenv("AURA_SANDBOX");
     clear_idle(reg);
 }
 
@@ -747,7 +748,7 @@ static void ac4290_peer_slot_heal_nudge() {
     const char* old_cv = std::getenv("AURA_COVERAGE_VERIFY_MIN_DIRTY");
     const bool had_cv = old_cv != nullptr;
     const std::string saved_cv = had_cv ? std::string(old_cv) : std::string();
-    setenv("AURA_COVERAGE_VERIFY_MIN_DIRTY", "1", 1);
+    ::aura::config::test_setenv("AURA_COVERAGE_VERIFY_MIN_DIRTY", "1", 1);
 
     reg.reset_residual_force_observe_for_test();
     reg.reset_deopt_storm_state_for_test();
@@ -818,9 +819,9 @@ static void ac4290_peer_slot_heal_nudge() {
     CHECK(read_file("tests/compiler/test_issue_4290.cpp").empty(), "4290: no new test file");
 
     if (had_cv)
-        setenv("AURA_COVERAGE_VERIFY_MIN_DIRTY", saved_cv.c_str(), 1);
+        ::aura::config::test_setenv("AURA_COVERAGE_VERIFY_MIN_DIRTY", saved_cv.c_str(), 1);
     else
-        unsetenv("AURA_COVERAGE_VERIFY_MIN_DIRTY");
+        ::aura::config::test_unsetenv("AURA_COVERAGE_VERIFY_MIN_DIRTY");
     prod.store(prev_prod, std::memory_order_relaxed);
     clear_idle(reg);
 }

@@ -35,6 +35,7 @@
 //   #3919 AC4: source-cite ensure_std_host_prims llm + aura-llm-call try
 //   #3919 AC5: no test_issue_3919.cpp; no docs/design/3919-*
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include <cstdlib>
@@ -109,8 +110,8 @@ static void ac1_module_freevar_parity() {
     }
 
     const auto path = lib.string() + ":" + tmp.string();
-    setenv("AURA_PATH", path.c_str(), 1);
-    setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_PATH", path.c_str(), 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
 
     CompilerService cs;
     // Top-level probe first.
@@ -130,8 +131,8 @@ static void ac2_toplevel_inject() {
     CHECK(!lib.empty(), "AC2: lib found");
     if (lib.empty())
         return;
-    setenv("AURA_PATH", lib.string().c_str(), 1);
-    setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_PATH", lib.string().c_str(), 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
     CompilerService cs;
     CHECK(eval_bool(cs, "(begin (require \"std/mutate\" all:) "
                         "(procedure? mutate:boundary-safe?))"),
@@ -199,9 +200,9 @@ static void ac2766_1_require_before_export_private_cell() {
     }
 
     const auto path = lib.string() + ":" + tmp.string();
-    setenv("AURA_PATH", path.c_str(), 1);
-    setenv("AURA_SANDBOX", "off", 1);
-    setenv("AURA_PIPELINE_STRICT", "0", 1);
+    ::aura::config::test_setenv("AURA_PATH", path.c_str(), 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_PIPELINE_STRICT", "0", 1);
 
     CompilerService cs;
     auto r1 = cs.eval("(begin (require \"bad-order\" all:) (bad:get))");
@@ -233,8 +234,8 @@ static void ac2766_2_export_before_require_parity() {
     }
 
     const auto path = lib.string() + ":" + tmp.string();
-    setenv("AURA_PATH", path.c_str(), 1);
-    setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_PATH", path.c_str(), 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
 
     CompilerService cs;
     auto r1 = cs.eval("(begin (require \"good-order\" all:) (good:get))");
@@ -253,9 +254,9 @@ static void ac2766_3_orchestrator_agent_registry() {
     CHECK(!lib.empty(), "AC3: lib found");
     if (lib.empty())
         return;
-    setenv("AURA_PATH", lib.string().c_str(), 1);
-    setenv("AURA_SANDBOX", "off", 1);
-    setenv("AURA_PIPELINE_STRICT", "0", 1);
+    ::aura::config::test_setenv("AURA_PATH", lib.string().c_str(), 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_PIPELINE_STRICT", "0", 1);
 
     CompilerService cs;
     // Full official agent surface under stdin denseness host.
@@ -340,9 +341,9 @@ static void ac2768_2_spawn_ask_list_epoch() {
     CHECK(!lib.empty(), "AC2: lib found");
     if (lib.empty())
         return;
-    setenv("AURA_PATH", lib.string().c_str(), 1);
-    setenv("AURA_SANDBOX", "off", 1);
-    setenv("AURA_PIPELINE_STRICT", "0", 1);
+    ::aura::config::test_setenv("AURA_PATH", lib.string().c_str(), 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_PIPELINE_STRICT", "0", 1);
 
     CompilerService cs;
     CHECK(cs.eval("(require \"std/orch\" all:)").has_value(), "AC2: require std/orch");
@@ -363,9 +364,9 @@ static void ac2768_3_status_stop_restart() {
     CHECK(!lib.empty(), "AC3: lib found");
     if (lib.empty())
         return;
-    setenv("AURA_PATH", lib.string().c_str(), 1);
-    setenv("AURA_SANDBOX", "off", 1);
-    setenv("AURA_PIPELINE_STRICT", "0", 1);
+    ::aura::config::test_setenv("AURA_PATH", lib.string().c_str(), 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_PIPELINE_STRICT", "0", 1);
 
     CompilerService cs;
     CHECK(cs.eval("(require \"std/orch\" all:)").has_value(), "AC3: require");
@@ -385,9 +386,9 @@ static void ac2768_4_parallel_with_yield_smoke() {
     CHECK(!lib.empty(), "AC4: lib found");
     if (lib.empty())
         return;
-    setenv("AURA_PATH", lib.string().c_str(), 1);
-    setenv("AURA_SANDBOX", "off", 1);
-    setenv("AURA_PIPELINE_STRICT", "0", 1);
+    ::aura::config::test_setenv("AURA_PATH", lib.string().c_str(), 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_PIPELINE_STRICT", "0", 1);
 
     CompilerService cs;
     CHECK(cs.eval("(require \"std/orch\" all:)").has_value(), "AC4: require");
@@ -470,9 +471,9 @@ static void ac2769_2_denseness_paths_green() {
     CHECK(!lib.empty(), "AC2: lib found");
     if (lib.empty())
         return;
-    setenv("AURA_PATH", lib.string().c_str(), 1);
-    setenv("AURA_SANDBOX", "off", 1);
-    setenv("AURA_PIPELINE_STRICT", "0", 1);
+    ::aura::config::test_setenv("AURA_PATH", lib.string().c_str(), 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_PIPELINE_STRICT", "0", 1);
 
     CompilerService cs;
     // llm rate-limit cell free-vars
@@ -578,10 +579,10 @@ static void ac3919_1_llm_installs_http_post() {
     CHECK(!lib.empty(), "AC1: lib found");
     if (lib.empty())
         return;
-    setenv("AURA_PATH", lib.string().c_str(), 1);
-    setenv("AURA_SANDBOX", "off", 1);
-    setenv("AURA_PIPELINE_STRICT", "0", 1);
-    unsetenv("LLM_API_KEY");
+    ::aura::config::test_setenv("AURA_PATH", lib.string().c_str(), 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_PIPELINE_STRICT", "0", 1);
+    ::aura::config::test_unsetenv("LLM_API_KEY");
 
     CompilerService cs;
     CHECK(!eval_bool(cs, "(try (procedure? http-post) (catch (e) #f))"),
@@ -596,10 +597,10 @@ static void ac3919_2_agent_llm_ask_no_unbound() {
     CHECK(!lib.empty(), "AC2: lib found");
     if (lib.empty())
         return;
-    setenv("AURA_PATH", lib.string().c_str(), 1);
-    setenv("AURA_SANDBOX", "off", 1);
-    setenv("AURA_PIPELINE_STRICT", "0", 1);
-    unsetenv("LLM_API_KEY");
+    ::aura::config::test_setenv("AURA_PATH", lib.string().c_str(), 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_PIPELINE_STRICT", "0", 1);
+    ::aura::config::test_unsetenv("LLM_API_KEY");
 
     CompilerService cs;
     CHECK(cs.eval("(require \"std/agent\" all:)").has_value(), "AC2: require std/agent");
@@ -615,10 +616,10 @@ static void ac3919_3_sandbox_no_unbound() {
     CHECK(!lib.empty(), "AC3: lib found");
     if (lib.empty())
         return;
-    setenv("AURA_PATH", lib.string().c_str(), 1);
-    setenv("AURA_SANDBOX", "off", 1);
-    setenv("AURA_PIPELINE_STRICT", "0", 1);
-    setenv("LLM_API_KEY", "dummy-3919", 1);
+    ::aura::config::test_setenv("AURA_PATH", lib.string().c_str(), 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_PIPELINE_STRICT", "0", 1);
+    ::aura::config::test_setenv("LLM_API_KEY", "dummy-3919", 1);
 
     CompilerService cs;
     cs.evaluator().set_sandbox_mode(true);
@@ -632,7 +633,7 @@ static void ac3919_3_sandbox_no_unbound() {
     CHECK(eval_bool(cs, "(try (procedure? http-post) (catch (e) #f))") == false,
           "AC3: http-post stays uninstalled without network grant");
 
-    unsetenv("LLM_API_KEY");
+    ::aura::config::test_unsetenv("LLM_API_KEY");
 }
 
 static void ac3919_4_source_cite() {

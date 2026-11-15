@@ -8,6 +8,7 @@
 //   AC4: AURA_MUTATION_HOLD_SLO_US=0 disables; query schema-2349 keys
 //   AC5: Tests + decision table + source-cite
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include "compiler/mutation_hold_budget.h"
@@ -70,9 +71,9 @@ static void spin_us(std::int64_t min_us) {
 static void ac1_production_force_fail() {
     std::println("\n--- AC1: Production + hold > SLO → force-fail ---");
     // Force production path (not Soft).
-    unsetenv("AURA_MUTATION_HOLD_SLO_SOFT");
-    unsetenv("AURA_SANDBOX");
-    setenv("AURA_MUTATION_HOLD_SLO_US", "2000", 1); // 2ms SLO
+    ::aura::config::test_unsetenv("AURA_MUTATION_HOLD_SLO_SOFT");
+    ::aura::config::test_unsetenv("AURA_SANDBOX");
+    ::aura::config::test_setenv("AURA_MUTATION_HOLD_SLO_US", "2000", 1); // 2ms SLO
 
     CompilerService cs;
     CompilerMetrics metrics;
@@ -93,14 +94,14 @@ static void ac1_production_force_fail() {
           "AC1: rollback path on success=false");
 
     cs.evaluator().set_compiler_metrics(nullptr);
-    unsetenv("AURA_MUTATION_HOLD_SLO_US");
+    ::aura::config::test_unsetenv("AURA_MUTATION_HOLD_SLO_US");
 }
 
 // ── AC2: Soft metric-only ──
 static void ac2_soft_metric_only() {
     std::println("\n--- AC2: Soft/sandbox → metric only ---");
-    setenv("AURA_MUTATION_HOLD_SLO_SOFT", "1", 1);
-    setenv("AURA_MUTATION_HOLD_SLO_US", "2000", 1);
+    ::aura::config::test_setenv("AURA_MUTATION_HOLD_SLO_SOFT", "1", 1);
+    ::aura::config::test_setenv("AURA_MUTATION_HOLD_SLO_US", "2000", 1);
     CHECK(mutation_hold_slo_soft_mode(), "AC2: soft mode active");
 
     CompilerService cs;
@@ -118,16 +119,16 @@ static void ac2_soft_metric_only() {
           "AC2: violation counter still bumps");
 
     cs.evaluator().set_compiler_metrics(nullptr);
-    unsetenv("AURA_MUTATION_HOLD_SLO_SOFT");
-    unsetenv("AURA_MUTATION_HOLD_SLO_US");
+    ::aura::config::test_unsetenv("AURA_MUTATION_HOLD_SLO_SOFT");
+    ::aura::config::test_unsetenv("AURA_MUTATION_HOLD_SLO_US");
 }
 
 // ── AC3: under SLO zero force ──
 static void ac3_under_slo_no_force() {
     std::println("\n--- AC3: hold ≤ SLO → no force-fail ---");
-    unsetenv("AURA_MUTATION_HOLD_SLO_SOFT");
-    unsetenv("AURA_SANDBOX");
-    setenv("AURA_MUTATION_HOLD_SLO_US", "50000", 1); // 50ms
+    ::aura::config::test_unsetenv("AURA_MUTATION_HOLD_SLO_SOFT");
+    ::aura::config::test_unsetenv("AURA_SANDBOX");
+    ::aura::config::test_setenv("AURA_MUTATION_HOLD_SLO_US", "50000", 1); // 50ms
 
     CompilerService cs;
     CompilerMetrics metrics;
@@ -145,17 +146,17 @@ static void ac3_under_slo_no_force() {
     CHECK(metrics.mutation_boundary_holds_total.load() >= 1, "AC3: hold sample still recorded");
 
     cs.evaluator().set_compiler_metrics(nullptr);
-    unsetenv("AURA_MUTATION_HOLD_SLO_US");
+    ::aura::config::test_unsetenv("AURA_MUTATION_HOLD_SLO_US");
 }
 
 // ── AC4: disable + query keys ──
 static void ac4_disable_and_query() {
     std::println("\n--- AC4: SLO=0 disables; query schema-2349 ---");
-    setenv("AURA_MUTATION_HOLD_SLO_US", "0", 1);
+    ::aura::config::test_setenv("AURA_MUTATION_HOLD_SLO_US", "0", 1);
     CHECK(mutation_hold_slo_us() == 0, "AC4: SLO 0 disables circuit");
 
-    unsetenv("AURA_MUTATION_HOLD_SLO_SOFT");
-    unsetenv("AURA_SANDBOX");
+    ::aura::config::test_unsetenv("AURA_MUTATION_HOLD_SLO_SOFT");
+    ::aura::config::test_unsetenv("AURA_SANDBOX");
 
     CompilerService cs;
     CompilerMetrics metrics;
@@ -183,7 +184,7 @@ static void ac4_disable_and_query() {
     CHECK(href(cs, "schema-2199") == 2199, "schema-2199 retained");
 
     cs.evaluator().set_compiler_metrics(nullptr);
-    unsetenv("AURA_MUTATION_HOLD_SLO_US");
+    ::aura::config::test_unsetenv("AURA_MUTATION_HOLD_SLO_US");
 }
 
 // ── AC5: source-cite + decision table ──
@@ -215,9 +216,9 @@ static void ac5_source_cite() {
 // ── AC6 (#5275): the SLO refusal names its gate; success clears it ──
 static void ac6_deny_gate_named() {
     std::println("\n--- AC6: hold-SLO deny is named, not anonymous (#5275) ---");
-    unsetenv("AURA_MUTATION_HOLD_SLO_SOFT");
-    unsetenv("AURA_SANDBOX");
-    setenv("AURA_MUTATION_HOLD_SLO_US", "2000", 1); // 2ms SLO
+    ::aura::config::test_unsetenv("AURA_MUTATION_HOLD_SLO_SOFT");
+    ::aura::config::test_unsetenv("AURA_SANDBOX");
+    ::aura::config::test_setenv("AURA_MUTATION_HOLD_SLO_US", "2000", 1); // 2ms SLO
     aura::compiler::typed_audit::clear_boundary_deny_op();
     aura::compiler::typed_audit::clear_last_boundary_deny_op();
 
@@ -238,7 +239,7 @@ static void ac6_deny_gate_named() {
 
     // A committed boundary must not leave a token for the next one: the
     // wrapper would otherwise label an unrelated refusal with this gate.
-    setenv("AURA_MUTATION_HOLD_SLO_US", "50000", 1); // 50ms, stay under
+    ::aura::config::test_setenv("AURA_MUTATION_HOLD_SLO_US", "50000", 1); // 50ms, stay under
     ok = true;
     {
         Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
@@ -248,7 +249,7 @@ static void ac6_deny_gate_named() {
           "AC6: a committed boundary leaves no deny token behind");
 
     cs.evaluator().set_compiler_metrics(nullptr);
-    unsetenv("AURA_MUTATION_HOLD_SLO_US");
+    ::aura::config::test_unsetenv("AURA_MUTATION_HOLD_SLO_US");
 }
 
 // ── AC7 (#5275): the wrapper names the gate in the returned error ──
@@ -268,9 +269,9 @@ static void ac7_wrapper_names_gate() {
 // ── AC8 (#5275): an observe boundary is not force-failed ──
 static void ac8_rebind_observe_not_failed() {
     std::println("\n--- AC8: observe boundary past SLO is not failed (#5275) ---");
-    unsetenv("AURA_MUTATION_HOLD_SLO_SOFT");
-    unsetenv("AURA_SANDBOX");
-    setenv("AURA_MUTATION_HOLD_SLO_US", "2000", 1); // 2ms SLO
+    ::aura::config::test_unsetenv("AURA_MUTATION_HOLD_SLO_SOFT");
+    ::aura::config::test_unsetenv("AURA_SANDBOX");
+    ::aura::config::test_setenv("AURA_MUTATION_HOLD_SLO_US", "2000", 1); // 2ms SLO
 
     CompilerService cs;
     CompilerMetrics metrics;
@@ -288,7 +289,7 @@ static void ac8_rebind_observe_not_failed() {
           "AC8: the slow commit is still counted");
 
     cs.evaluator().set_compiler_metrics(nullptr);
-    unsetenv("AURA_MUTATION_HOLD_SLO_US");
+    ::aura::config::test_unsetenv("AURA_MUTATION_HOLD_SLO_US");
 }
 
 } // namespace

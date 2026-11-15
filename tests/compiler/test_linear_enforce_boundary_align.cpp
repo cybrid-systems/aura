@@ -9,6 +9,7 @@
 //   AC4: #2108 composite escape hard-block source wiring retained.
 //   AC5: schema-2222 + forced_boundary_total + tests under tests/compiler/
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include "compiler/security_defaults.hh"
@@ -72,7 +73,7 @@ static void clear_env(const char* k) {
 #if defined(_WIN32)
     _putenv_s(k, "");
 #else
-    unsetenv(k);
+    ::aura::config::test_unsetenv(k);
 #endif
 }
 
@@ -80,7 +81,7 @@ static void set_env(const char* k, const char* v) {
 #if defined(_WIN32)
     _putenv_s(k, v);
 #else
-    setenv(k, v, 1);
+    ::aura::config::test_setenv(k, v, 1);
 #endif
 }
 

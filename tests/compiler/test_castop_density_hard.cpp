@@ -8,6 +8,7 @@
 //   AC4: dens ≤ budget → zero hard action
 //   AC5: schema-2358 additive; #2287/#2319 keys preserved; source-cite
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include "compiler/castop_density_policy.hh"
@@ -671,7 +672,7 @@ static void ac4403_deny_belt_keeps_gate_op() {
 
     reset_for_test();
     apply_dev_audit_defaults();
-    ::setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
     // Production enter mints a session mid (epoch XOR Evaluator*) when the
     // resolved mid equals the Mutation epoch. query:evolution-audit-decision
@@ -754,7 +755,7 @@ static void ac4403_deny_belt_keeps_gate_op() {
     CHECK(decision_op_is(cs, "density-streak"), "4403: arm last-se-op is density-streak");
 
     apply_dev_audit_defaults();
-    ::setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
     CHECK(!production_defaults_active(), "4403: soft face");
     CHECK(get_strategy() != AuditStrategy::Full, "4403: soft strategy is not Full");

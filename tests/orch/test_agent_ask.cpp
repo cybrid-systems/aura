@@ -17,6 +17,7 @@
 //                                   orch:agent-ask + orch:agent-reply
 //   src/orch/README.md              agent-ask / agent-reply section
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 #include "orch/sched_runner_test_helper.h"
 
@@ -106,13 +107,13 @@ struct MemberSandboxOff {
             had = true;
             prev = e;
         }
-        ::setenv("AURA_SANDBOX", "off", 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
     }
     ~MemberSandboxOff() {
         if (had)
-            ::setenv("AURA_SANDBOX", prev.c_str(), 1);
+            ::aura::config::test_setenv("AURA_SANDBOX", prev.c_str(), 1);
         else
-            ::unsetenv("AURA_SANDBOX");
+            ::aura::config::test_unsetenv("AURA_SANDBOX");
     }
 };
 

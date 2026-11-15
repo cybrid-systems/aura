@@ -29,6 +29,7 @@
 // //
 // // No docs/design/ per #1655 / #81967.
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include "compiler/agent_name_table.h"
@@ -77,15 +78,15 @@ struct SandboxRestore {
         const char* p = std::getenv("AURA_SANDBOX");
         prev = p ? p : "";
         if (set_to)
-            ::setenv("AURA_SANDBOX", set_to, 1);
+            ::aura::config::test_setenv("AURA_SANDBOX", set_to, 1);
         else
-            ::unsetenv("AURA_SANDBOX");
+            ::aura::config::test_unsetenv("AURA_SANDBOX");
     }
     ~SandboxRestore() {
         if (!prev.empty())
-            ::setenv("AURA_SANDBOX", prev.c_str(), 1);
+            ::aura::config::test_setenv("AURA_SANDBOX", prev.c_str(), 1);
         else
-            ::unsetenv("AURA_SANDBOX");
+            ::aura::config::test_unsetenv("AURA_SANDBOX");
     }
 };
 

@@ -30,6 +30,7 @@
 // Soft AURA_STEAL_SNAPSHOT_SOFT=1: metric-only, no abort.
 // PR default remains EXCLUDE_FROM_ALL + env gate (#2931 AC3).
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include "core/densify_consistency_report.h"
@@ -257,7 +258,7 @@ static void run_chaos_matrix() {
     // needs production bootstrap"); every nightly since 10-07 died here in
     // 0.2 s. Arm production defaults (Restricted) like chaos_soak_production_gate.
     if (workers > 1 && aura::compiler::typed_audit::production_defaults_active() == 0) {
-        ::unsetenv("AURA_SANDBOX");
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
         aura::compiler::security::apply_production_security_defaults();
         CHECK(aura::compiler::typed_audit::production_defaults_active() != 0,
@@ -497,8 +498,8 @@ static void ac3001_inject_negative_proof() {
     aura::core::densify_consistency::note_last_densify_dual_epoch_ok(true);
 
     if (!soft) {
-        ::setenv("AURA_STEAL_SNAPSHOT_HARD", "1", 1);
-        ::unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
+        ::aura::config::test_setenv("AURA_STEAL_SNAPSHOT_HARD", "1", 1);
+        ::aura::config::test_unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
         aura::serve::reset_steal_snapshot_soft_for_test();
         aura::serve::set_steal_snapshot_soft_for_test(false);
     }
@@ -534,7 +535,7 @@ static void ac3001_inject_negative_proof() {
         const auto bits = g_steal_safety_last_reject_invariant_bits.load(std::memory_order_relaxed);
         CHECK((bits & steal_invariant_mask(StealInvariant::LifetimeProofOk)) != 0,
               "#3001: last_reject_invariant_bits covers LifetimeProofOk");
-        ::unsetenv("AURA_STEAL_SNAPSHOT_HARD");
+        ::aura::config::test_unsetenv("AURA_STEAL_SNAPSHOT_HARD");
         aura::serve::reset_steal_snapshot_soft_for_test();
     }
     lcp::reset_lifetime_consistency_proof_for_test();

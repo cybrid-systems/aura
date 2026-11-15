@@ -42,6 +42,7 @@
 //   AC12 (Issue #3195): Soft / single-worker / unit-test: zero behavioural
 //        change (latch unset → existing Soft pass-through). No new counters.
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include "compiler/typed_mutation_audit.h"
@@ -691,11 +692,11 @@ int run_test_steal_safety_production_residual_zero() {
         apply_production_audit_defaults();
         CHECK(query_epoch_strict(), "epoch strict must be armed under production defaults (#3075)");
         apply_dev_audit_defaults();
-        ::setenv("AURA_QUERY_EPOCH_STRICT", "1", 1);
+        ::aura::config::test_setenv("AURA_QUERY_EPOCH_STRICT", "1", 1);
         set_query_epoch_strict(true);
         CHECK(production_defaults_active() == 0, "3590 AC2: unarmed");
         CHECK(query_epoch_strict(), "3590 AC2: AURA_QUERY_EPOCH_STRICT override");
-        ::unsetenv("AURA_QUERY_EPOCH_STRICT");
+        ::aura::config::test_unsetenv("AURA_QUERY_EPOCH_STRICT");
         set_query_epoch_strict(false);
         apply_dev_audit_defaults();
 
@@ -729,7 +730,7 @@ int run_test_steal_safety_production_residual_zero() {
         using aura::core::TypeRegistry;
 
         apply_dev_audit_defaults();
-        ::unsetenv("AURA_GRADUAL_PERMISSIVENESS");
+        ::aura::config::test_unsetenv("AURA_GRADUAL_PERMISSIVENESS");
         {
             TypeRegistry reg;
             TypeChecker tc(reg);
@@ -747,7 +748,7 @@ int run_test_steal_safety_production_residual_zero() {
                   "3592 AC3: production explicit downgrade stays Strict");
         }
         apply_dev_audit_defaults();
-        ::setenv("AURA_GRADUAL_PERMISSIVENESS", "strict", 1);
+        ::aura::config::test_setenv("AURA_GRADUAL_PERMISSIVENESS", "strict", 1);
         {
             TypeRegistry reg;
             TypeChecker tc(reg);
@@ -755,7 +756,7 @@ int run_test_steal_safety_production_residual_zero() {
             CHECK(tc.effective_gradual_permissiveness() == GradualPermissiveness::Strict,
                   "3592 AC2: AURA_GRADUAL_PERMISSIVENESS override");
         }
-        ::unsetenv("AURA_GRADUAL_PERMISSIVENESS");
+        ::aura::config::test_unsetenv("AURA_GRADUAL_PERMISSIVENESS");
         apply_dev_audit_defaults();
 
         const auto gate = read_file("tests/serve/chaos_soak_production_gate.cpp");
@@ -871,7 +872,7 @@ int run_test_steal_safety_production_residual_zero() {
         clear_production_abi_selfcheck_for_test();
         g_steal_safety_production_residual_sticky_fail.store(0, std::memory_order_relaxed);
         set_production_multi_worker_latched_for_test(false);
-        ::setenv("AURA_CHAOS_SOAK_HARD_GATE", "1", 1);
+        ::aura::config::test_setenv("AURA_CHAOS_SOAK_HARD_GATE", "1", 1);
 
         // (a) Soft-green soak: unlatched + soak armed + residuals 0 → 0.
         CHECK(steal_safety_production_concurrency_ready_gate_v_read() == 0,
@@ -879,12 +880,12 @@ int run_test_steal_safety_production_residual_zero() {
 
         // (b) Latched but NO soak arm → 0 (deploy cannot skip the soak term).
         set_production_multi_worker_latched_for_test(true);
-        ::unsetenv("AURA_CHAOS_SOAK_HARD_GATE");
+        ::aura::config::test_unsetenv("AURA_CHAOS_SOAK_HARD_GATE");
         CHECK(steal_safety_production_concurrency_ready_gate_v_read() == 0,
               "AC18: deploy cannot skip the SOAK hard-gate arm");
 
         // (c) Full AND green: latch ∧ soak arm ∧ residual-zero ∧ sticky-clear.
-        ::setenv("AURA_CHAOS_SOAK_HARD_GATE", "1", 1);
+        ::aura::config::test_setenv("AURA_CHAOS_SOAK_HARD_GATE", "1", 1);
         CHECK(steal_safety_production_concurrency_ready_gate_v_read() == 1,
               "AC18: full deploy AND green under the latched face + armed soak env");
 
@@ -903,7 +904,7 @@ int run_test_steal_safety_production_residual_zero() {
               "AC18: sticky cleared by the SSOT readiness poll");
 
         // Cleanup: restore process state for any later AC / re-run.
-        ::unsetenv("AURA_CHAOS_SOAK_HARD_GATE");
+        ::aura::config::test_unsetenv("AURA_CHAOS_SOAK_HARD_GATE");
         g_steal_safety_production_residual_sticky_fail.store(0, std::memory_order_relaxed);
         set_production_multi_worker_latched_for_test(false);
         clear_steal_safety_transaction_for_test();

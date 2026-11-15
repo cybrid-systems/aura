@@ -2,6 +2,7 @@
 // @reason: Issue #2346 — resume MutationSafetySnapshot hard-invariant
 // (fail-closed canary). Soft: mismatch metric only. Hard: mark-failed.
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 #include "serve/fiber.h"
 #include "serve/scheduler.h"
@@ -164,8 +165,8 @@ int run_test_steal_snapshot_hard_invariant() {
     // AC1 Soft — force SOFT=1
     {
         std::println("\n--- AC1: Soft mismatch → counter, continue ---");
-        ::setenv("AURA_STEAL_SNAPSHOT_SOFT", "1", 1);
-        ::unsetenv("AURA_STEAL_SNAPSHOT_HARD");
+        ::aura::config::test_setenv("AURA_STEAL_SNAPSHOT_SOFT", "1", 1);
+        ::aura::config::test_unsetenv("AURA_STEAL_SNAPSHOT_HARD");
         CHECK(!aura::serve::is_steal_snapshot_hard_mode(), "AC1: Soft mode");
         const auto miss0 = aura_fiber_static_mutation_steal_snapshot_mismatch_total();
         const auto hard0 = aura_fiber_static_steal_snapshot_hard_fail_total();
@@ -182,14 +183,14 @@ int run_test_steal_snapshot_hard_invariant() {
                   "AC1: hard-fail unchanged");
             aura_evaluator_test_pop_mutation_checkpoint();
         });
-        ::unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
+        ::aura::config::test_unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
     }
 
     // AC2 Hard via env
     {
         std::println("\n--- AC2: Hard mismatch → mark-failed ---");
-        ::setenv("AURA_STEAL_SNAPSHOT_HARD", "1", 1);
-        ::unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
+        ::aura::config::test_setenv("AURA_STEAL_SNAPSHOT_HARD", "1", 1);
+        ::aura::config::test_unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
         CHECK(aura::serve::is_steal_snapshot_hard_mode(), "AC2: Hard on");
         const auto miss0 = aura_fiber_static_mutation_steal_snapshot_mismatch_total();
         const auto hard0 = aura_fiber_static_steal_snapshot_hard_fail_total();
@@ -207,14 +208,14 @@ int run_test_steal_snapshot_hard_invariant() {
             CHECK(aura_fiber_static_steal_snapshot_hard_fail_total() > hard0, "AC2: hard-fail +1");
             aura_evaluator_test_pop_mutation_checkpoint();
         });
-        ::unsetenv("AURA_STEAL_SNAPSHOT_HARD");
+        ::aura::config::test_unsetenv("AURA_STEAL_SNAPSHOT_HARD");
     }
 
     // AC3 happy path under Soft
     {
         std::println("\n--- AC3: happy path ---");
-        ::setenv("AURA_STEAL_SNAPSHOT_SOFT", "1", 1);
-        ::unsetenv("AURA_STEAL_SNAPSHOT_HARD");
+        ::aura::config::test_setenv("AURA_STEAL_SNAPSHOT_SOFT", "1", 1);
+        ::aura::config::test_unsetenv("AURA_STEAL_SNAPSHOT_HARD");
         const auto hard0 = aura_fiber_static_steal_snapshot_hard_fail_total();
         const auto miss0 = aura_fiber_static_mutation_steal_snapshot_mismatch_total();
         run_on_fiber([&]() {
@@ -225,7 +226,7 @@ int run_test_steal_snapshot_hard_invariant() {
         CHECK(aura_fiber_static_steal_snapshot_hard_fail_total() == hard0, "AC3: no hard-fail");
         CHECK(aura_fiber_static_mutation_steal_snapshot_mismatch_total() == miss0,
               "AC3: no mismatch");
-        ::unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
+        ::aura::config::test_unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
     }
 
     // AC4 query

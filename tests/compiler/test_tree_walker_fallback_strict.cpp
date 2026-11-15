@@ -24,6 +24,7 @@
 //        oracle returned growth=0 → vacuous PASS); Allow → walker
 //        computes the real value (legacy routing preserved).
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 #include "../support/service_module_source.hh"
 
@@ -254,11 +255,11 @@ static void ac4_happy_path_and_source() {
     CHECK(sec.find("AURA_PIPELINE_STRICT") != std::string::npos, "env documented");
 
     // Production defaults with sandbox off → Allow
-    setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
     aura::compiler::security::apply_production_security_defaults();
     CHECK(tree_walker_fallback_policy() == TreeWalkerFallbackPolicy::Allow,
           "AC4: sandbox=off → Allow");
-    unsetenv("AURA_SANDBOX");
+    ::aura::config::test_unsetenv("AURA_SANDBOX");
     // Explicit Forbidden via setter for isolation
     set_production_pipeline_strict(true);
     CHECK(production_pipeline_strict(), "setter strict");
@@ -275,8 +276,8 @@ static void ac4_happy_path_and_source() {
 // production aura binary).
 static void ac5_issue_3627_nonpack_binding() {
     std::println("\n=== Issue #3627: pack binding — non-pack face stays Soft ===");
-    unsetenv("AURA_PIPELINE_STRICT");
-    unsetenv("AURA_SANDBOX");
+    ::aura::config::test_unsetenv("AURA_PIPELINE_STRICT");
+    ::aura::config::test_unsetenv("AURA_SANDBOX");
     apply_pipeline_strict_defaults(/*dev_sandbox_off=*/true);
     CHECK(tree_walker_fallback_policy() == TreeWalkerFallbackPolicy::Allow,
           "3627 AC2: non-pack sandbox=off env unset → Allow (#2213 AC2 kept)");
@@ -284,15 +285,15 @@ static void ac5_issue_3627_nonpack_binding() {
           "3627 AC2: non-pack needs → TakeWalker (dev ergonomics)");
 
     // Operator override precedes everything on this face too.
-    setenv("AURA_PIPELINE_STRICT", "allow", 1);
+    ::aura::config::test_setenv("AURA_PIPELINE_STRICT", "allow", 1);
     apply_pipeline_strict_defaults(/*dev_sandbox_off=*/true);
     CHECK(tree_walker_fallback_policy() == TreeWalkerFallbackPolicy::Allow,
           "3627 AC3: env allow wins (non-pack)");
-    setenv("AURA_PIPELINE_STRICT", "1", 1);
+    ::aura::config::test_setenv("AURA_PIPELINE_STRICT", "1", 1);
     apply_pipeline_strict_defaults(/*dev_sandbox_off=*/true);
     CHECK(tree_walker_fallback_policy() == TreeWalkerFallbackPolicy::Forbidden,
           "3627 AC3: env 1 → Forbidden (non-pack)");
-    unsetenv("AURA_PIPELINE_STRICT");
+    ::aura::config::test_unsetenv("AURA_PIPELINE_STRICT");
 
     // Source-cite: the pack arm exists in the header, binds Forbidden,
     // never stores Allow, and the env parse precedes it (operator wins).

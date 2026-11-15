@@ -7,6 +7,7 @@
 // AC4: by-name lookup still works (or void under s0)
 // AC5: schema == 2; top-level group key snapshot
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include "compiler/typed_mutation_audit.h"
@@ -1174,13 +1175,13 @@ int main() {
         const char* prev_sandbox = std::getenv("AURA_SANDBOX");
         const std::string prev = prev_sandbox ? prev_sandbox : "";
         const bool had = prev_sandbox != nullptr;
-        ::setenv("AURA_SANDBOX", "off", 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
         // The CLI orch scheduler is created on the first orch use.
         auto spawn = cs.eval("(orch:spawn-agent \"obs5054\" (lambda () 1))");
         if (had)
-            ::setenv("AURA_SANDBOX", prev.c_str(), 1);
+            ::aura::config::test_setenv("AURA_SANDBOX", prev.c_str(), 1);
         else
-            ::unsetenv("AURA_SANDBOX");
+            ::aura::config::test_unsetenv("AURA_SANDBOX");
         CHECK(spawn.has_value(), "5054: spawn evaluated");
         auto is_void = cs.eval("(void? (stats:get \"orch:metrics\"))");
         CHECK(is_void && is_bool(*is_void) && !as_bool(*is_void),

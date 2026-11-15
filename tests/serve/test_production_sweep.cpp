@@ -1,5 +1,6 @@
 // test_production_sweep.cpp — fiber production sweep (standalone; SIGSEGV in batch)
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include "compiler/typed_mutation_audit.h"
@@ -48,8 +49,8 @@ static void ac3590_bootstrap_order_matrix() {
 
     // Unarmed: observe-only is the contract.
     apply_dev_audit_defaults();
-    ::setenv("AURA_SANDBOX", "off", 1);
-    ::unsetenv("AURA_QUERY_EPOCH_STRICT");
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_unsetenv("AURA_QUERY_EPOCH_STRICT");
     CHECK(production_defaults_active() == 0, "3590: unarmed probe");
     CHECK(!query_epoch_strict(), "unbootstrapped process must not report strict armed");
 
@@ -60,7 +61,7 @@ static void ac3590_bootstrap_order_matrix() {
 
     // Restore Soft, then arm-before-start: apply production then a fresh service.
     apply_dev_audit_defaults();
-    ::setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
     apply_production_audit_defaults();
     {
         CompilerService armed;
@@ -70,15 +71,15 @@ static void ac3590_bootstrap_order_matrix() {
 
     // AC2: explicit AURA_QUERY_EPOCH_STRICT override wins over unarmed default.
     apply_dev_audit_defaults();
-    ::setenv("AURA_SANDBOX", "off", 1);
-    ::setenv("AURA_QUERY_EPOCH_STRICT", "1", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_QUERY_EPOCH_STRICT", "1", 1);
     set_query_epoch_strict(true);
     CHECK(production_defaults_active() == 0, "3590 AC2: still unarmed");
     CHECK(query_epoch_strict(), "3590 AC2: AURA_QUERY_EPOCH_STRICT override arms strict");
-    ::unsetenv("AURA_QUERY_EPOCH_STRICT");
+    ::aura::config::test_unsetenv("AURA_QUERY_EPOCH_STRICT");
     set_query_epoch_strict(false);
     apply_dev_audit_defaults();
-    ::setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
 }
 
 // Issue #3592: bootstrap order matrix for effective Strict unify (#3430 x #3586).
@@ -93,8 +94,8 @@ static void ac3592_bootstrap_order_matrix() {
     std::println("\n--- #3592: bootstrap order matrix (start-then-arm / unarmed / override) ---");
 
     apply_dev_audit_defaults();
-    ::setenv("AURA_SANDBOX", "off", 1);
-    ::unsetenv("AURA_GRADUAL_PERMISSIVENESS");
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_unsetenv("AURA_GRADUAL_PERMISSIVENESS");
     CHECK(production_defaults_active() == 0, "3592: unarmed probe");
     {
         TypeRegistry reg;
@@ -115,7 +116,7 @@ static void ac3592_bootstrap_order_matrix() {
     }
 
     apply_dev_audit_defaults();
-    ::setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
     apply_production_audit_defaults();
     {
         TypeRegistry reg;
@@ -125,8 +126,8 @@ static void ac3592_bootstrap_order_matrix() {
     }
 
     apply_dev_audit_defaults();
-    ::setenv("AURA_SANDBOX", "off", 1);
-    ::setenv("AURA_GRADUAL_PERMISSIVENESS", "strict", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_GRADUAL_PERMISSIVENESS", "strict", 1);
     {
         TypeRegistry reg;
         TypeChecker tc(reg);
@@ -134,9 +135,9 @@ static void ac3592_bootstrap_order_matrix() {
         CHECK(tc.effective_gradual_permissiveness() == GradualPermissiveness::Strict,
               "3592 AC2: AURA_GRADUAL_PERMISSIVENESS override arms Strict");
     }
-    ::unsetenv("AURA_GRADUAL_PERMISSIVENESS");
+    ::aura::config::test_unsetenv("AURA_GRADUAL_PERMISSIVENESS");
     apply_dev_audit_defaults();
-    ::setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
 }
 
 } // namespace

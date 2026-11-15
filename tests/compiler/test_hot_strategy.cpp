@@ -9,6 +9,7 @@
 //   AC4: INDEX + design doc + cmake
 //   AC5: mutate:rebind bumps dirty + lifetime jit counters (#2684)
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include <cstdlib>
@@ -59,7 +60,7 @@ static bool eval_bool(CompilerService& cs, std::string_view e) {
 
 static void ac1_swap() {
     std::println("\n--- #2582 AC1: hot-strategy:swap! ---");
-    setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
     CompilerService cs;
     CHECK(eval_ok(cs, "(require \"std/hot-strategy\" all:)"), "require hot-strategy");
     CHECK(eval_ok(cs, "(set-code \"(define (strat x) (* x 2))\")"), "set-code strat");
@@ -74,7 +75,7 @@ static void ac1_swap() {
 
 static void ac2_heal() {
     std::println("\n--- #2582 AC2: hot-strategy:heal! ---");
-    setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
     CompilerService cs;
     CHECK(eval_ok(cs, "(require \"std/hot-strategy\" all:)"), "require");
     CHECK(eval_ok(cs, "(set-code \"(define (strat x) (+ x 1))\")"), "set-code");
@@ -98,7 +99,7 @@ static void ac2_heal() {
 
 static void ac3_aot_flag_docs() {
     std::println("\n--- #2582 AC3: aot? flag + docs ---");
-    setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
     CompilerService cs;
     CHECK(eval_ok(cs, "(require \"std/hot-strategy\" all:)"), "require");
     CHECK(eval_bool(cs, "(not (hot-strategy:aot?))"), "AC3: hot-strategy:aot? → #f");
@@ -127,7 +128,7 @@ static void ac4_index_design_cmake() {
 // compile:block-dirty-count and compile:jit-stats alias are wired.
 static void ac5_rebind_dirty_observability() {
     std::println("\n--- #2684 AC5: rebind dirty + jit-stats observability ---");
-    setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
     CompilerService cs;
     CHECK(eval_ok(cs, "(require \"std/mutate\" all:)"), "require mutate");
     CHECK(eval_ok(cs, "(set-code \"(define sum-kernel (lambda (n) "

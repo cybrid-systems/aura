@@ -6,6 +6,7 @@
 //   AC3: copy_fd reproduces those bytes
 //   AC4: resolve_self_executable reads /proc/self/exe into a std::array
 
+#include "core/runtime_config.hh"
 #include "compiler/chunk_io.hh"
 #include "compiler/generic_error_words.hh"
 #include "compiler/runtime_paths.h"
@@ -81,17 +82,17 @@ int main() {
     {
         const char* prev = std::getenv("AURA_SELF");
         const std::string saved = prev ? prev : std::string();
-        ::setenv("AURA_SELF", "/tmp/aura-self-missing", 1);
+        ::aura::config::test_setenv("AURA_SELF", "/tmp/aura-self-missing", 1);
         const auto ignored = aura::compiler::paths::resolve_self_executable();
         expect(ignored != "/tmp/aura-self-missing",
                "5087: a non-executable AURA_SELF does not replace /proc/self/exe");
-        ::setenv("AURA_SELF", self.c_str(), 1);
+        ::aura::config::test_setenv("AURA_SELF", self.c_str(), 1);
         const auto via = aura::compiler::paths::resolve_self_executable();
         expect(via == self, "5087: an executable AURA_SELF is the re-exec path");
         if (saved.empty())
-            ::unsetenv("AURA_SELF");
+            ::aura::config::test_unsetenv("AURA_SELF");
         else
-            ::setenv("AURA_SELF", saved.c_str(), 1);
+            ::aura::config::test_setenv("AURA_SELF", saved.c_str(), 1);
     }
 
     std::string kept = "KEEP";

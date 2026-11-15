@@ -8,6 +8,7 @@
 //   AC4: single atomic load cost path; no extra data race under TSan shape
 //   AC5: extend steal safety / resume invariant tests
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 #include "serve/fiber.h"
 #include "serve/scheduler.h"
@@ -88,8 +89,8 @@ static void run_on_fiber(std::function<void()> body) {
 // ── AC1: ticket on snapshot; matching ticket ok ──
 static void ac1_ticket_match_ok() {
     std::println("\n--- AC1: snapshot ticket + matching resume ok ---");
-    ::setenv("AURA_STEAL_SNAPSHOT_HARD", "1", 1);
-    ::unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
+    ::aura::config::test_setenv("AURA_STEAL_SNAPSHOT_HARD", "1", 1);
+    ::aura::config::test_unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
     run_on_fiber([&]() {
         auto* fb = aura::serve::g_current_fiber;
         CHECK(fb != nullptr, "AC1: current fiber");
@@ -104,14 +105,14 @@ static void ac1_ticket_match_ok() {
         CHECK(fb->state() != FiberState::Done || !fb->is_cancel_requested(),
               "AC1: not hard-failed on match");
     });
-    ::unsetenv("AURA_STEAL_SNAPSHOT_HARD");
+    ::aura::config::test_unsetenv("AURA_STEAL_SNAPSHOT_HARD");
 }
 
 // ── AC2: inject mid-window publish → mismatch hard-fail ──
 static void ac2_inject_mid_window() {
     std::println("\n--- AC2: inject Guard publish mid-window → hard-fail ---");
-    ::setenv("AURA_STEAL_SNAPSHOT_HARD", "1", 1);
-    ::unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
+    ::aura::config::test_setenv("AURA_STEAL_SNAPSHOT_HARD", "1", 1);
+    ::aura::config::test_unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
     const auto miss0 = aura_fiber_static_steal_safety_ticket_mismatch_total();
     const auto hard0 = aura_fiber_static_steal_snapshot_hard_fail_total();
     const auto obs0 = aura_fiber_static_mutation_steal_snapshot_mismatch_total();
@@ -132,14 +133,14 @@ static void ac2_inject_mid_window() {
           "AC2: ticket mismatch +1");
     CHECK(aura_fiber_static_steal_snapshot_hard_fail_total() > hard0, "AC2: hard-fail +1");
     CHECK(aura_fiber_static_mutation_steal_snapshot_mismatch_total() > obs0, "AC2: observed +1");
-    ::unsetenv("AURA_STEAL_SNAPSHOT_HARD");
+    ::aura::config::test_unsetenv("AURA_STEAL_SNAPSHOT_HARD");
 }
 
 // Soft: ticket miss continues
 static void ac2_soft_ticket_miss() {
     std::println("\n--- AC2b: Soft ticket miss → metric, continue ---");
-    ::setenv("AURA_STEAL_SNAPSHOT_SOFT", "1", 1);
-    ::unsetenv("AURA_STEAL_SNAPSHOT_HARD");
+    ::aura::config::test_setenv("AURA_STEAL_SNAPSHOT_SOFT", "1", 1);
+    ::aura::config::test_unsetenv("AURA_STEAL_SNAPSHOT_HARD");
     const auto miss0 = aura_fiber_static_steal_safety_ticket_mismatch_total();
     const auto hard0 = aura_fiber_static_steal_snapshot_hard_fail_total();
     run_on_fiber([&]() {
@@ -153,7 +154,7 @@ static void ac2_soft_ticket_miss() {
     });
     CHECK(aura_fiber_static_steal_safety_ticket_mismatch_total() > miss0, "AC2b: ticket miss +1");
     CHECK(aura_fiber_static_steal_snapshot_hard_fail_total() == hard0, "AC2b: hard-fail unchanged");
-    ::unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
+    ::aura::config::test_unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
 }
 
 // ── AC3: #2510 coexist ──
@@ -423,8 +424,8 @@ int run_test_steal_safety_ticket() {
     ac2779_3_query_keys();
     ac2779_4_source_and_no_design();
     // Leave process Soft-clean for subsequent tests in same binary (none).
-    ::unsetenv("AURA_STEAL_SNAPSHOT_HARD");
-    ::unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
+    ::aura::config::test_unsetenv("AURA_STEAL_SNAPSHOT_HARD");
+    ::aura::config::test_unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
     std::println("\n=== #2518 + #2702 + #2779: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }

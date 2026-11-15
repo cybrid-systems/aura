@@ -8,6 +8,7 @@
 //   AC4: multi-fiber chaos (N concurrent defers + drain)
 //   AC5: no pending defer → single relaxed load (zero extra spin)
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include "serve/multi_fiber_mailbox.h"
@@ -102,7 +103,7 @@ static void ac2_hold_then_drain() {
     CHECK(g_mf_mailbox_stats.mailbox_deferred_depth.load(std::memory_order_relaxed) >= 2,
           "AC2: depth open");
     // budget 0 → immediate deadline → starvation (Soft keeps depth).
-    ::setenv("AURA_MAILBOX_HOLD_DRAIN_BUDGET_US", "0", 1);
+    ::aura::config::test_setenv("AURA_MAILBOX_HOLD_DRAIN_BUDGET_US", "0", 1);
     // budget is cached static — force use explicit budget arg.
     auto r = drain_deferred_under_budget(/*budget_us=*/0);
     CHECK(r.had_open_defer, "AC2: had open defer");
@@ -117,7 +118,7 @@ static void ac2_hold_then_drain() {
     }
     // Soft: depth may remain — close for next test.
     drain_all_depth();
-    ::unsetenv("AURA_MAILBOX_HOLD_DRAIN_BUDGET_US");
+    ::aura::config::test_unsetenv("AURA_MAILBOX_HOLD_DRAIN_BUDGET_US");
 }
 
 // ── AC3: budget + health ──

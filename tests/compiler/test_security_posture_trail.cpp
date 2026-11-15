@@ -8,6 +8,7 @@
 //   AC5: security-health still works
 //   AC6: source-cite
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 #include "compiler/security_capabilities.h"
 #include "compiler/security_defaults.hh"
@@ -178,30 +179,31 @@ int run_test_security_posture_trail() {
         const std::string prev_closed_s = prev_closed ? prev_closed : "";
         auto restore_env = [&] {
             if (prev_sb_s.empty())
-                ::unsetenv("AURA_SANDBOX");
+                ::aura::config::test_unsetenv("AURA_SANDBOX");
             else
-                ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+                ::aura::config::test_setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
             if (prev_open_s.empty())
-                ::unsetenv("AURA_WAL_APPEND_FAIL_OPEN");
+                ::aura::config::test_unsetenv("AURA_WAL_APPEND_FAIL_OPEN");
             else
-                ::setenv("AURA_WAL_APPEND_FAIL_OPEN", prev_open_s.c_str(), 1);
+                ::aura::config::test_setenv("AURA_WAL_APPEND_FAIL_OPEN", prev_open_s.c_str(), 1);
             if (prev_closed_s.empty())
-                ::unsetenv("AURA_WAL_APPEND_FAIL_CLOSED");
+                ::aura::config::test_unsetenv("AURA_WAL_APPEND_FAIL_CLOSED");
             else
-                ::setenv("AURA_WAL_APPEND_FAIL_CLOSED", prev_closed_s.c_str(), 1);
+                ::aura::config::test_setenv("AURA_WAL_APPEND_FAIL_CLOSED", prev_closed_s.c_str(),
+                                            1);
             apply_dev_audit_defaults();
             aura::core::wal_slo::reset_wal_append_fail_slo_for_test();
             aura::core::security_event_wal::wal_overflow_ring_clear_for_test();
             aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
         };
 
-        ::unsetenv("AURA_WAL_APPEND_FAIL_OPEN");
-        ::unsetenv("AURA_WAL_APPEND_FAIL_CLOSED");
+        ::aura::config::test_unsetenv("AURA_WAL_APPEND_FAIL_OPEN");
+        ::aura::config::test_unsetenv("AURA_WAL_APPEND_FAIL_CLOSED");
         aura::core::security_event_wal::wal_overflow_ring_clear_for_test();
         aura::core::wal_slo::reset_wal_append_fail_slo_for_test();
 
         // AC1: Soft / sandbox=off never arms fail-closed.
-        ::setenv("AURA_SANDBOX", "off", 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
         apply_production_security_defaults();
         CHECK(!aura::core::wal_slo::wal_append_fail_closed_active(),
               "3302 AC1: Soft fail-closed inactive");
@@ -212,7 +214,7 @@ int run_test_security_posture_trail() {
               "3302 AC1: query defaulted=0");
 
         // AC2: Restricted force_wal (no FAIL_OPEN) default-arms fail-closed.
-        ::setenv("AURA_SANDBOX", "restricted", 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
         apply_production_security_defaults();
         CHECK(aura::core::wal_slo::wal_fail_closed_defaulted_by_force_wal() != 0,
@@ -242,7 +244,7 @@ int run_test_security_posture_trail() {
 
         // AC3: explicit FAIL_OPEN restores fail-open (no overflow push).
         aura::core::security_event_wal::wal_overflow_ring_clear_for_test();
-        ::setenv("AURA_WAL_APPEND_FAIL_OPEN", "1", 1);
+        ::aura::config::test_setenv("AURA_WAL_APPEND_FAIL_OPEN", "1", 1);
         CHECK(!aura::core::wal_slo::wal_append_fail_closed_active(),
               "3302 AC3: FAIL_OPEN opts out");
         CHECK(aura::core::wal_slo::wal_fail_closed_defaulted_by_force_wal() != 0,
@@ -263,21 +265,21 @@ int run_test_security_posture_trail() {
             ev.disable_security_event_wal();
             fs::remove_all(dir);
         }
-        ::unsetenv("AURA_WAL_APPEND_FAIL_OPEN");
+        ::aura::config::test_unsetenv("AURA_WAL_APPEND_FAIL_OPEN");
 
         // AC4: explicit FAIL_CLOSED still forces on without force_wal flag.
         apply_dev_audit_defaults();
         aura::core::wal_slo::set_wal_fail_closed_defaulted_by_force_wal(false);
-        ::setenv("AURA_WAL_APPEND_FAIL_CLOSED", "1", 1);
+        ::aura::config::test_setenv("AURA_WAL_APPEND_FAIL_CLOSED", "1", 1);
         apply_production_audit_defaults();
         CHECK(aura::core::wal_slo::wal_fail_closed_defaulted_by_force_wal() == 0,
               "3302 AC4: explicit CLOSED is not force_wal-defaulted");
         CHECK(aura::core::wal_slo::wal_append_fail_closed_active(),
               "3302 AC4: FAIL_CLOSED=1 still forces on");
-        ::unsetenv("AURA_WAL_APPEND_FAIL_CLOSED");
+        ::aura::config::test_unsetenv("AURA_WAL_APPEND_FAIL_CLOSED");
 
         // AC5: Strict + overflow full → require_effect deny (#3109 path).
-        ::setenv("AURA_SANDBOX", "strict", 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", "strict", 1);
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
         apply_production_security_defaults();
         aura::core::security_event_wal::wal_overflow_ring_clear_for_test();
@@ -296,7 +298,7 @@ int run_test_security_posture_trail() {
               "3302 AC5: require_effect denies when overflow full");
 
         // #3493: Restricted + overflow full also denies (not Strict-only).
-        ::setenv("AURA_SANDBOX", "restricted", 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
         apply_production_security_defaults();
         CHECK(aura::core::security_event_wal::wal_overflow_ring_full(),
@@ -327,7 +329,7 @@ int run_test_security_posture_trail() {
             CHECK(g_capability_registry().grant(7, "mut-3639", Effect::Mutate, gprov),
                   "3639 setup: Mutate grant (tenant 7)");
             ev.set_capability_tenant_id(7);
-            ::setenv("AURA_SANDBOX", "restricted", 1);
+            ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
             aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
             apply_production_security_defaults();
             // Deterministic inject: park the SE side-car so the #3056
@@ -368,7 +370,7 @@ int run_test_security_posture_trail() {
             aura::core::security_event_wal::wal_overflow_ring_clear_for_test();
 
             // AC3: Soft / production_defaults off keeps #3056 fail-open.
-            ::setenv("AURA_SANDBOX", "off", 1);
+            ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
             aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
             apply_production_security_defaults();
             CHECK(!aura::core::wal_slo::wal_append_fail_closed_active(),
@@ -379,17 +381,17 @@ int run_test_security_posture_trail() {
                   "3639 AC3: Soft append miss stays fail-open");
 
             // AC4: explicit FAIL_OPEN restores fail-open under force_wal.
-            ::setenv("AURA_SANDBOX", "restricted", 1);
+            ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
             aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
             apply_production_security_defaults();
-            ::setenv("AURA_WAL_APPEND_FAIL_OPEN", "1", 1);
+            ::aura::config::test_setenv("AURA_WAL_APPEND_FAIL_OPEN", "1", 1);
             CHECK(!aura::core::wal_slo::wal_append_fail_closed_active(),
                   "3639 AC4: FAIL_OPEN opts out");
             aura::core::wal_slo::g_wal_append_fail_slo_counters.inject_fail_remaining.store(
                 1, std::memory_order_relaxed);
             CHECK(ev.require_effect(kEffectMutate, "test:3639-ac4", 0),
                   "3639 AC4: FAIL_OPEN append miss stays fail-open");
-            ::unsetenv("AURA_WAL_APPEND_FAIL_OPEN");
+            ::aura::config::test_unsetenv("AURA_WAL_APPEND_FAIL_OPEN");
 
             // AC5: #3211 next-outermost schedule-gate untouched — this
             // ticket only extends fail-closed to the same mutate.

@@ -34,6 +34,7 @@
 //
 // No docs/design/ per #1655 / #1485.
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include "orch/agent_spawn.h"
@@ -916,7 +917,7 @@ int run_test_orch_scope() {
         CHECK(href(cs, "schema-3216") == 3216, "#3216 facade: schema-3216");
         CHECK(href(cs, "identity-plane-wired") == 1, "#3216 facade: identity-plane-wired");
 
-        ::setenv("AURA_SANDBOX", "restricted", 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
         apply_production_audit_defaults();
         auto plane_miss = cs.eval(
             R"((let ((r (orch:scope-resolve "no-such-ac3216-scope")))
@@ -938,7 +939,7 @@ int run_test_orch_scope() {
         CHECK(dir_schema && is_int(*dir_schema) && as_int(*dir_schema) == 3216,
               "ac3216_dir: schema-3216");
 
-        ::setenv("AURA_SANDBOX", "off", 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
         apply_dev_audit_defaults();
         auto soft_scope = cs.eval(
             R"((hash-has-key? (orch:scope-resolve "no-such-ac3216-soft") "identity-plane"))");
@@ -949,9 +950,9 @@ int run_test_orch_scope() {
               "ac3216_dir: Soft directory has no identity-plane");
 
         if (prev_sb_s.empty())
-            ::unsetenv("AURA_SANDBOX");
+            ::aura::config::test_unsetenv("AURA_SANDBOX");
         else
-            ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+            ::aura::config::test_setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
         apply_dev_audit_defaults();
     }
 
@@ -971,7 +972,7 @@ int run_test_orch_scope() {
               "3442 AC7: no test_issue_3442.cpp");
 
         reset_all();
-        unsetenv("AURA_ORCH_BP_ADMIT_THRESHOLD");
+        ::aura::config::test_unsetenv("AURA_ORCH_BP_ADMIT_THRESHOLD");
         reset_process_resource_quota_for_test();
         g_orch_module_stats.mailbox_bp_recent_total.store(0, std::memory_order_relaxed);
         (void)aura::orch::reset_scope_bp_map_for_test();
@@ -1197,7 +1198,7 @@ int run_test_orch_scope() {
         const std::string prev_sb_s = prev_sb ? prev_sb : "";
         reset_all();
         CompilerService cs;
-        ::setenv("AURA_SANDBOX", "restricted", 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", "restricted", 1);
         apply_production_audit_defaults();
         cs.eval(R"((orch:scope-spawn "ac4115-a"))");
         CHECK(hash_int(cs, R"((orch:scope-join-all :timeout-ms 20 :drain-ms 20))", "schema-4115") ==
@@ -1215,7 +1216,7 @@ int run_test_orch_scope() {
         CHECK(hash_int(cs, R"((orch:scope-join-all :timeout-ms 20 :drain-ms 20))",
                        "join-all-sweep-reclaimed-wired") == 1,
               "ac4115_scope: wired sentinel");
-        ::setenv("AURA_SANDBOX", "off", 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
         apply_dev_audit_defaults();
         cs.eval(R"((orch:scope-spawn "ac4115-soft-a"))");
         CHECK(hash_int(cs, R"((orch:scope-join-all :timeout-ms 20 :drain-ms 20))",
@@ -1232,9 +1233,9 @@ int run_test_orch_scope() {
               "4115: prim publishes swept-still-pending");
         CHECK(prim_src.find("query:4115") == std::string::npos, "4115: no new query key");
         if (prev_sb_s.empty())
-            ::unsetenv("AURA_SANDBOX");
+            ::aura::config::test_unsetenv("AURA_SANDBOX");
         else
-            ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+            ::aura::config::test_setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
         reset_all();
     }
 

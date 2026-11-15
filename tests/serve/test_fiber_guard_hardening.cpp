@@ -5,6 +5,7 @@
 // assumption, mprotect failure must fail the spawn instead of running
 // unprotected, and worker threads need an alternate signal stack.
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include "core/crash_handler.hh"
@@ -63,7 +64,7 @@ void test_guard_size() {
 
 // AC2: a failed mprotect must throw and must not leave a usable stack.
 void test_mprotect_failure_is_fatal() {
-    ::setenv("AURA_TEST_FIBER_MPROTECT_FAIL", "1", 1);
+    ::aura::config::test_setenv("AURA_TEST_FIBER_MPROTECT_FAIL", "1", 1);
     bool threw = false;
     std::string what;
     try {
@@ -72,7 +73,7 @@ void test_mprotect_failure_is_fatal() {
         threw = true;
         what = e.what();
     }
-    ::unsetenv("AURA_TEST_FIBER_MPROTECT_FAIL");
+    ::aura::config::test_unsetenv("AURA_TEST_FIBER_MPROTECT_FAIL");
     CHECK(threw, "guard mprotect failure throws");
     CHECK(what.find("mprotect guard") != std::string::npos,
           "error names the failed guard mprotect");

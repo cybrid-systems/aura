@@ -1,4 +1,5 @@
 // test_fiber_concurrent_unit_batch.cpp — light concurrent units
+#include "core/runtime_config.hh"
 #include "compiler/observability_metrics.h"
 // Heavy/flaky: set_arena, stress_alloc, terminal_concurrent, self_heal, production_sweep
 // remain standalone under tests/fiber/.
@@ -2222,7 +2223,7 @@ int run_4768_reclaim_off_both_sweeps() {
 
     // AC2: knob set -> BOTH sweeps observed to skip, and the walker's
     // collector does not run (the counter the old experiments trusted).
-    ::setenv("AURA_GC_RECLAIM_OFF", "1", 1);
+    ::aura::config::test_setenv("AURA_GC_RECLAIM_OFF", "1", 1);
     auto& ev = cs.evaluator();
     const auto ir0 = aura_gc_reclaim_off_skips_ir_total();
     const auto tw0 = aura_gc_reclaim_off_skips_tw_total();
@@ -2246,7 +2247,7 @@ int run_4768_reclaim_off_both_sweeps() {
 
     // AC3: control - knob cleared, the walker's collector runs and the skip
     // counter freezes. This is what makes AC2's counter meaningful.
-    ::unsetenv("AURA_GC_RECLAIM_OFF");
+    ::aura::config::test_unsetenv("AURA_GC_RECLAIM_OFF");
     const auto sk_tw0 = aura_gc_reclaim_off_skips_tw_total();
     CHECK(cs.eval(kTwLoop4768).has_value(), "#4768 AC3 TW workload (knob off)");
     const auto sk_tw1 = aura_gc_reclaim_off_skips_tw_total();

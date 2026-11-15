@@ -42,7 +42,7 @@ OBS = "src/compiler/observability_metrics.h"
 LINTER = "check_pack_pipeline_strict_3627"
 FN = "apply_pipeline_strict_defaults(bool dev_sandbox_off)"
 GUARD = "#if defined(AURA_PRODUCTION_PACK)"
-ENV_PARSE = 'std::getenv("AURA_PIPELINE_STRICT")'
+ENV_PARSE = "::aura::config::Key::AURA_PIPELINE_STRICT"
 CITE = "#3627"
 
 
@@ -165,7 +165,7 @@ def _self_test() -> int:
         "inline std::atomic<std::uint32_t>& g_tree_walker_fallback_policy_atomic()"
         " noexcept { static std::atomic<std::uint32_t> p{0}; return p; }\n"
         "inline void apply_pipeline_strict_defaults(bool dev_sandbox_off) noexcept {\n"
-        '    const char* e = std::getenv("AURA_PIPELINE_STRICT");\n'
+        "    const char* e = ::aura::config::raw(::aura::config::Key::AURA_PIPELINE_STRICT);\n"
         "    if (e && *e) { return; }\n"
         "#if defined(AURA_PRODUCTION_PACK)\n"
         "    set_tree_walker_fallback_policy(TreeWalkerFallbackPolicy::Forbidden);\n"

@@ -8,6 +8,7 @@
 //   AC4: AURA_PANIC_CONTRACT=hard documented; counters queryable
 //   AC5: Phase 5 wires audit + query schema-2364 + source-cite
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include "compiler/observability_metrics.h"
@@ -120,14 +121,14 @@ static void ac4_hard_and_query() {
     std::println("\n--- AC4: hard contract helper + query schema-2364 ---");
     // Hard path aborts — only verify the policy detector, not abort itself.
     const char* prev = std::getenv("AURA_PANIC_CONTRACT");
-    ::setenv("AURA_PANIC_CONTRACT", "hard", 1);
+    ::aura::config::test_setenv("AURA_PANIC_CONTRACT", "hard", 1);
     CHECK(aura::gc_hooks::panic_contract_hard_enabled(), "AC4: hard enabled when env=hard");
-    ::setenv("AURA_PANIC_CONTRACT", "soft", 1);
+    ::aura::config::test_setenv("AURA_PANIC_CONTRACT", "soft", 1);
     CHECK(!aura::gc_hooks::panic_contract_hard_enabled(), "AC4: hard off when env=soft");
     if (prev)
-        ::setenv("AURA_PANIC_CONTRACT", prev, 1);
+        ::aura::config::test_setenv("AURA_PANIC_CONTRACT", prev, 1);
     else
-        ::unsetenv("AURA_PANIC_CONTRACT");
+        ::aura::config::test_unsetenv("AURA_PANIC_CONTRACT");
 
     CompilerService cs;
     CHECK(cs.eval("(+ 1 1)").has_value(), "warm");

@@ -29,6 +29,7 @@
 //   AC15: char-ready? denied without io-read; neither polls nor consumes
 //   AC16: source cites #4517 + deny_io(kCapIoRead) in all three prims
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include "compiler/pipeline_policy.hh"
@@ -303,7 +304,7 @@ static void ac7_production_getenv_allowed_with_grant() {
     grant_io_cap(cs, kCapIoRead);
 
     const std::string sentinel(72, 'z');
-    ::setenv("AURA_4504_SENTINEL", sentinel.c_str(), /*overwrite=*/1);
+    ::aura::config::test_setenv("AURA_4504_SENTINEL", sentinel.c_str(), /*overwrite=*/1);
     const auto den0 = ev.capability_denial_count();
     auto r = invoke_getenv(cs, "AURA_4504_SENTINEL");
     CHECK(r.has_value() && is_string(*r), "AC7: value returned with io-read");
@@ -313,7 +314,7 @@ static void ac7_production_getenv_allowed_with_grant() {
         CHECK(idx < heap.size() && heap[idx] == sentinel, "AC7: sentinel value matches");
     }
     CHECK(ev.capability_denial_count() == den0, "AC7: no denial bump");
-    ::unsetenv("AURA_4504_SENTINEL");
+    ::aura::config::test_unsetenv("AURA_4504_SENTINEL");
     disarm_multi_tenant_env();
 }
 
@@ -637,10 +638,10 @@ int run_test_command_line_cap_io_read() {
     // Soft linear/mutate gates, K=0 retain window. Then clear the registry
     // rows this member granted.
     disarm_multi_tenant_env();
-    ::setenv("AURA_SANDBOX", "off", /*overwrite=*/1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", /*overwrite=*/1);
     aura::compiler::security::apply_production_security_defaults();
-    ::unsetenv("AURA_SANDBOX");
-    ::unsetenv("AURA_MULTI_TENANT");
+    ::aura::config::test_unsetenv("AURA_SANDBOX");
+    ::aura::config::test_unsetenv("AURA_MULTI_TENANT");
     aura::core::capability::reset_capability_effects_for_test();
 
     std::println("\n=== #2478 + #4504 + #4517 results: {} passed, {} failed ===", g_passed,

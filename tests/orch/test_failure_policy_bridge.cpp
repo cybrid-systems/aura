@@ -20,6 +20,7 @@
 //   AC5: README + source-cite; no docs/design/
 //   AC6: MVP scope linter still green
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include "compiler/typed_mutation_audit.h"
@@ -1735,7 +1736,7 @@ static void ac3969_4_missing_keys_invalid() {
     using aura::serve::parallel_orch::TaskResult;
     using aura::serve::parallel_orch::TaskSpec;
     ac3206_set_prod(true);
-    ::unsetenv("AURA_PARALLEL_REQUIRE_REGION_KEYS");
+    ::aura::config::test_unsetenv("AURA_PARALLEL_REQUIRE_REGION_KEYS");
     Scheduler sched(1);
     AgentScope scope(sched);
     TaskSpec tasks[2];
@@ -1972,18 +1973,18 @@ struct Ac4050CoopEnv {
             had_no_yield = true;
             no_yield = v;
         }
-        ::setenv("AURA_SANDBOX", "", 1);
-        ::unsetenv("AURA_AGENT_MAX_NO_YIELD_MS");
+        ::aura::config::test_setenv("AURA_SANDBOX", "", 1);
+        ::aura::config::test_unsetenv("AURA_AGENT_MAX_NO_YIELD_MS");
     }
     ~Ac4050CoopEnv() {
         if (had_sandbox)
-            ::setenv("AURA_SANDBOX", sandbox.c_str(), 1);
+            ::aura::config::test_setenv("AURA_SANDBOX", sandbox.c_str(), 1);
         else
-            ::unsetenv("AURA_SANDBOX");
+            ::aura::config::test_unsetenv("AURA_SANDBOX");
         if (had_no_yield)
-            ::setenv("AURA_AGENT_MAX_NO_YIELD_MS", no_yield.c_str(), 1);
+            ::aura::config::test_setenv("AURA_AGENT_MAX_NO_YIELD_MS", no_yield.c_str(), 1);
         else
-            ::unsetenv("AURA_AGENT_MAX_NO_YIELD_MS");
+            ::aura::config::test_unsetenv("AURA_AGENT_MAX_NO_YIELD_MS");
     }
 };
 
@@ -1998,13 +1999,13 @@ struct Ac4050SoftEnv {
             had_sandbox = true;
             sandbox = v;
         }
-        ::setenv("AURA_SANDBOX", "off", 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
     }
     ~Ac4050SoftEnv() {
         if (had_sandbox)
-            ::setenv("AURA_SANDBOX", sandbox.c_str(), 1);
+            ::aura::config::test_setenv("AURA_SANDBOX", sandbox.c_str(), 1);
         else
-            ::unsetenv("AURA_SANDBOX");
+            ::aura::config::test_unsetenv("AURA_SANDBOX");
     }
 };
 
@@ -2169,7 +2170,7 @@ static void ac4050_3_coop_off_no_skip() {
     aura::core::provenance::set_multi_tenant_env_active(false);
     const char* prev_opt = std::getenv("AURA_AGENT_MAX_NO_YIELD_MS");
     const std::string prev_opt_s = prev_opt ? prev_opt : "";
-    ::setenv("AURA_AGENT_MAX_NO_YIELD_MS", "0", 1);
+    ::aura::config::test_setenv("AURA_AGENT_MAX_NO_YIELD_MS", "0", 1);
     CompilerService cs;
     ac4050_set_prod(true);
     Ac3726KeepaliveS s;
@@ -2195,9 +2196,9 @@ static void ac4050_3_coop_off_no_skip() {
     ac3726_disarm(s);
     ac4050_set_prod(false);
     if (prev_opt)
-        ::setenv("AURA_AGENT_MAX_NO_YIELD_MS", prev_opt_s.c_str(), 1);
+        ::aura::config::test_setenv("AURA_AGENT_MAX_NO_YIELD_MS", prev_opt_s.c_str(), 1);
     else
-        ::unsetenv("AURA_AGENT_MAX_NO_YIELD_MS");
+        ::aura::config::test_unsetenv("AURA_AGENT_MAX_NO_YIELD_MS");
     reset_all_agent_scopes_for_test();
 }
 
@@ -2759,7 +2760,7 @@ struct Ac4401ParkedS {
 static void ac4401_face_off() {
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
     aura::core::provenance::set_multi_tenant_env_active(false);
-    ::unsetenv("AURA_PARALLEL_REQUIRE_REGION_KEYS");
+    ::aura::config::test_unsetenv("AURA_PARALLEL_REQUIRE_REGION_KEYS");
     ac3206_set_prod(false);
 }
 
@@ -2823,7 +2824,7 @@ static void ac4401_1_outer_ok_tracks_stage_status() {
     ac4401_face_off();
     CompilerService cs;
     ac3206_set_prod(true);
-    ::unsetenv("AURA_PARALLEL_REQUIRE_REGION_KEYS");
+    ::aura::config::test_unsetenv("AURA_PARALLEL_REQUIRE_REGION_KEYS");
     auto invalid = cs.eval(R"(
         (let ((h (hash "tasks" (list (lambda () 1) (lambda () 2)))))
           (let ((w (orch:run-workflow (list h))))

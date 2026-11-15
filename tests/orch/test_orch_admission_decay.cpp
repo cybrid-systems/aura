@@ -25,6 +25,7 @@
 // capture at AC start + restore at AC end (same pattern as
 // test_mailbox_bp_admit.cpp).
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 #include "orch/sched_runner_test_helper.h"
 
@@ -114,21 +115,21 @@ int main() {
         CHECK(kMailboxBpDecayMsDefault == 30000,
               "AC5: kMailboxBpDecayMsDefault == 30000 (matches kJoinDrainResidualHardMsDefault)");
 
-        setenv("AURA_ORCH_BP_DECAY_MS", "", 1);
+        ::aura::config::test_setenv("AURA_ORCH_BP_DECAY_MS", "", 1);
         CHECK(resolve_mailbox_bp_decay_ms() == 30000, "AC5: unset env falls back to 30000");
 
-        setenv("AURA_ORCH_BP_DECAY_MS", "100", 1);
+        ::aura::config::test_setenv("AURA_ORCH_BP_DECAY_MS", "100", 1);
         CHECK(resolve_mailbox_bp_decay_ms() == 100, "AC5: env=100 parses to 100");
 
-        setenv("AURA_ORCH_BP_DECAY_MS", "0", 1);
+        ::aura::config::test_setenv("AURA_ORCH_BP_DECAY_MS", "0", 1);
         CHECK(resolve_mailbox_bp_decay_ms() == 0, "AC5: env=0 disables decay");
 
-        setenv("AURA_ORCH_BP_DECAY_MS", "garbage", 1);
+        ::aura::config::test_setenv("AURA_ORCH_BP_DECAY_MS", "garbage", 1);
         CHECK(resolve_mailbox_bp_decay_ms() == 30000, "AC5: invalid env falls back to 30000");
 
         // Restore default so later ACs see the production default unless
         // explicitly overridden.
-        setenv("AURA_ORCH_BP_DECAY_MS", "", 1);
+        ::aura::config::test_setenv("AURA_ORCH_BP_DECAY_MS", "", 1);
     }
 
     // ── AC1: BP event → counter > 0 → spawn denied ───────────────
@@ -136,8 +137,8 @@ int main() {
         std::println("\n--- AC1: BP event → counter > 0 → spawn denied ---");
         ScopedOrchRestore restore;
 
-        setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "1", 1);
-        setenv("AURA_ORCH_BP_DECAY_MS", "100", 1);
+        ::aura::config::test_setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "1", 1);
+        ::aura::config::test_setenv("AURA_ORCH_BP_DECAY_MS", "100", 1);
 
         Scheduler sched(1);
         SchedRunner runner(sched);
@@ -169,7 +170,7 @@ int main() {
               "AC1: no arena leak on BP reject (no-leak parity with #2155)");
 
         // Restore env.
-        setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "0", 1);
+        ::aura::config::test_setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "0", 1);
     }
 
     // ── AC2: after quiet-period window — counter resets → spawn admitted
@@ -180,8 +181,8 @@ int main() {
         std::println("\n--- AC2: after quiet-period window — counter resets, spawn admitted ---");
         ScopedOrchRestore restore;
 
-        setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "1", 1);
-        setenv("AURA_ORCH_BP_DECAY_MS", "100", 1);
+        ::aura::config::test_setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "1", 1);
+        ::aura::config::test_setenv("AURA_ORCH_BP_DECAY_MS", "100", 1);
 
         Scheduler sched(1);
         SchedRunner runner(sched);
@@ -217,8 +218,8 @@ int main() {
         }
 
         // Restore env.
-        setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "0", 1);
-        setenv("AURA_ORCH_BP_DECAY_MS", "", 1);
+        ::aura::config::test_setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "0", 1);
+        ::aura::config::test_setenv("AURA_ORCH_BP_DECAY_MS", "", 1);
     }
 
     // ── AC4: decay_ms=0 disables decay (diagnostic-only mode) ─────
@@ -226,8 +227,8 @@ int main() {
         std::println("\n--- AC4: decay_ms=0 disables decay ---");
         ScopedOrchRestore restore;
 
-        setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "1", 1);
-        setenv("AURA_ORCH_BP_DECAY_MS", "0", 1);
+        ::aura::config::test_setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "1", 1);
+        ::aura::config::test_setenv("AURA_ORCH_BP_DECAY_MS", "0", 1);
 
         Scheduler sched(1);
         SchedRunner runner(sched);
@@ -246,8 +247,8 @@ int main() {
         CHECK(!h_still_denied.ok, "AC4: spawn still denied after 200ms when decay disabled");
 
         // Restore env.
-        setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "0", 1);
-        setenv("AURA_ORCH_BP_DECAY_MS", "", 1);
+        ::aura::config::test_setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "0", 1);
+        ::aura::config::test_setenv("AURA_ORCH_BP_DECAY_MS", "", 1);
     }
 
     // ── AC2 multi-cycle: BP / quiet / BP / quiet (regression) ─────
@@ -255,8 +256,8 @@ int main() {
         std::println("\n--- AC2 multi-cycle: BP / quiet / BP / quiet ---");
         ScopedOrchRestore restore;
 
-        setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "1", 1);
-        setenv("AURA_ORCH_BP_DECAY_MS", "100", 1);
+        ::aura::config::test_setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "1", 1);
+        ::aura::config::test_setenv("AURA_ORCH_BP_DECAY_MS", "100", 1);
 
         Scheduler sched(1);
         SchedRunner runner(sched);
@@ -279,8 +280,8 @@ int main() {
         }
 
         // Restore env.
-        setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "0", 1);
-        setenv("AURA_ORCH_BP_DECAY_MS", "", 1);
+        ::aura::config::test_setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "0", 1);
+        ::aura::config::test_setenv("AURA_ORCH_BP_DECAY_MS", "", 1);
     }
 
     std::println("\n=== Issue #2465: decay window ACs complete ===");

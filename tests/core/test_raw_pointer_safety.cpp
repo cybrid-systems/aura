@@ -11,6 +11,7 @@
 //   AC5: pin_compiler_service revalidate happy path
 //   AC6: set_compiler_service bumps generation
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 #include "compiler/observability_metrics.h"
 #include "compiler/source_contract.hpp"
@@ -182,7 +183,7 @@ static void ac4404_type_registry_compact_fence() {
 
     if (const char* e = std::getenv("AURA_SANDBOX")) {
         if (std::string_view(e) == "off")
-            ::unsetenv("AURA_SANDBOX");
+            ::aura::config::test_unsetenv("AURA_SANDBOX");
     }
     aura::compiler::security::apply_production_security_defaults();
     const auto mode = aura::core::sandbox::g_sandbox_mode_atomic().load(std::memory_order_acquire);

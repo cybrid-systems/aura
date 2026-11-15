@@ -8,6 +8,7 @@
 //   AC4: apply path and let-bound arg still correct
 //   AC5: source-cite — cache_module persists ir_cache_strings_ + gate
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 #include "../support/service_module_source.hh"
 
@@ -102,7 +103,7 @@ static void ac1_exported_multi_display() {
   #t)
 )"),
           "write badlog.aura");
-    setenv("AURA_PATH", dir.c_str(), 1);
+    ::aura::config::test_setenv("AURA_PATH", dir.c_str(), 1);
     CompilerService cs;
     std::string out = with_stdout_capture([&] {
         auto req = cs.eval("(require \"badlog\" all:)");
@@ -116,7 +117,7 @@ static void ac1_exported_multi_display() {
     CHECK(ok, "AC1: [flux] hello-once (not garbled msgmsg)");
     if (!ok)
         std::println(stderr, "  captured stdout: '{}'", out);
-    unsetenv("AURA_PATH");
+    ::aura::config::test_unsetenv("AURA_PATH");
 }
 
 // Body-only multi ConstString (no parameter) — was blank when pool missing.
@@ -132,7 +133,7 @@ static void ac2_body_only_literals() {
   #t)
 )"),
           "write lit.aura");
-    setenv("AURA_PATH", dir.c_str(), 1);
+    ::aura::config::test_setenv("AURA_PATH", dir.c_str(), 1);
     CompilerService cs;
     std::string out = with_stdout_capture([&] {
         auto req = cs.eval("(require \"lit\" all:)");
@@ -143,7 +144,7 @@ static void ac2_body_only_literals() {
     CHECK(out.find("AAABBB") != std::string::npos, "AC2: AAABBB from body ConstStrings");
     if (out.find("AAABBB") == std::string::npos)
         std::println(stderr, "  captured stdout: '{}'", out);
-    unsetenv("AURA_PATH");
+    ::aura::config::test_unsetenv("AURA_PATH");
 }
 
 // Control: same body in main (not via require) — always worked.
@@ -175,8 +176,8 @@ static void ac4_apply_and_let() {
   #t)
 )"),
           "write badlog.aura");
-    setenv("AURA_PATH", dir.c_str(), 1);
-    setenv("AURA_PIPELINE_STRICT", "0", 1);
+    ::aura::config::test_setenv("AURA_PATH", dir.c_str(), 1);
+    ::aura::config::test_setenv("AURA_PIPELINE_STRICT", "0", 1);
     CompilerService cs;
     std::string out = with_stdout_capture([&] {
         auto req = cs.eval("(require \"badlog\" all:)");
@@ -187,8 +188,8 @@ static void ac4_apply_and_let() {
     });
     CHECK(out.find("[flux] via-apply") != std::string::npos, "AC4: apply path");
     CHECK(out.find("[flux] via-let") != std::string::npos, "AC4: let-arg path");
-    unsetenv("AURA_PIPELINE_STRICT");
-    unsetenv("AURA_PATH");
+    ::aura::config::test_unsetenv("AURA_PIPELINE_STRICT");
+    ::aura::config::test_unsetenv("AURA_PATH");
 }
 
 static void ac5_source_gate() {

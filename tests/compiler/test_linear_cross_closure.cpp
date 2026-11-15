@@ -6,6 +6,7 @@
 // @reason: Consolidated linear cross-closure family. Prefer extending THIS file
 //          for related ACs; do not add test_linear_cross_closure_<issue>.cpp.
 
+#include "core/runtime_config.hh"
 #include "compiler/typed_mutation_audit.h"
 #include "test_harness.hpp"
 
@@ -67,8 +68,8 @@ static void reset_2563() {
     reset_for_test();
     apply_dev_audit_defaults();
     set_strategy(AuditStrategy::Sampled);
-    unsetenv("AURA_LINEAR_CROSS_CLOSURE_HARD");
-    unsetenv("AURA_PARTIAL_CONE_SOFT");
+    ::aura::config::test_unsetenv("AURA_LINEAR_CROSS_CLOSURE_HARD");
+    ::aura::config::test_unsetenv("AURA_PARTIAL_CONE_SOFT");
 }
 
 // Build: (lambda (p) x) where x is free dirty linear name.
@@ -109,9 +110,9 @@ static void ac1_discover_hard_soft() {
 
     // Soft hard_enabled default off under Sampled.
     CHECK(!linear_cross_closure_hard_enabled(), "AC1: Soft Sampled hard off");
-    setenv("AURA_LINEAR_CROSS_CLOSURE_HARD", "1", 1);
+    ::aura::config::test_setenv("AURA_LINEAR_CROSS_CLOSURE_HARD", "1", 1);
     CHECK(linear_cross_closure_hard_enabled(), "AC1: env hard on");
-    unsetenv("AURA_LINEAR_CROSS_CLOSURE_HARD");
+    ::aura::config::test_unsetenv("AURA_LINEAR_CROSS_CLOSURE_HARD");
     apply_production_audit_defaults();
     CHECK(linear_cross_closure_hard_enabled(), "AC1: production hard on");
     apply_dev_audit_defaults();
@@ -284,9 +285,9 @@ static void reset_2612() {
     reset_for_test();
     apply_dev_audit_defaults();
     set_strategy(AuditStrategy::Sampled);
-    unsetenv("AURA_LINEAR_CROSS_CLOSURE_HARD");
-    unsetenv("AURA_LINEAR_CROSS_CLOSURE_DEPTH");
-    unsetenv("AURA_PARTIAL_CONE_SOFT");
+    ::aura::config::test_unsetenv("AURA_LINEAR_CROSS_CLOSURE_HARD");
+    ::aura::config::test_unsetenv("AURA_LINEAR_CROSS_CLOSURE_DEPTH");
+    ::aura::config::test_unsetenv("AURA_PARTIAL_CONE_SOFT");
 }
 
 // Outer Lambda at low id; nested Lambda free-captures dirty linear "lin".
@@ -361,7 +362,7 @@ static void ac1_default_depth1() {
 static void ac2_depth2_discover_hard() {
     std::println("\n--- #2612 AC2: depth 2 nested free-capture + hard force ---");
     reset_2612();
-    setenv("AURA_LINEAR_CROSS_CLOSURE_DEPTH", "2", 1);
+    ::aura::config::test_setenv("AURA_LINEAR_CROSS_CLOSURE_DEPTH", "2", 1);
     CHECK(linear_cross_closure_depth_cap() == 2, "AC2: env depth 2");
 
     StringPool pool;
@@ -403,14 +404,14 @@ static void ac2_depth2_discover_hard() {
           "AC2: hard force total advanced under production");
 
     apply_dev_audit_defaults();
-    unsetenv("AURA_LINEAR_CROSS_CLOSURE_DEPTH");
+    ::aura::config::test_unsetenv("AURA_LINEAR_CROSS_CLOSURE_DEPTH");
 }
 
 // ── AC3: cone trunc; no O(workspace) ──
 static void ac3_cone_trunc() {
     std::println("\n--- #2612 AC3: cone truncation still counted under depth 2 ---");
     reset_2612();
-    setenv("AURA_LINEAR_CROSS_CLOSURE_DEPTH", "2", 1);
+    ::aura::config::test_setenv("AURA_LINEAR_CROSS_CLOSURE_DEPTH", "2", 1);
 
     StringPool pool;
     auto flat = make_nested_free_capture(pool);
@@ -429,14 +430,14 @@ static void ac3_cone_trunc() {
               tcpp.find("linear_cross_closure_depth_cap") != std::string::npos,
           "AC3: depth_cap wired in discover");
 
-    unsetenv("AURA_LINEAR_CROSS_CLOSURE_DEPTH");
+    ::aura::config::test_unsetenv("AURA_LINEAR_CROSS_CLOSURE_DEPTH");
 }
 
 // ── AC4: Soft + depth 2 + hard off → observe only ──
 static void ac4_soft_observe() {
     std::println("\n--- #2612 AC4: Soft + depth 2 + hard off → observe only ---");
     reset_2612();
-    setenv("AURA_LINEAR_CROSS_CLOSURE_DEPTH", "2", 1);
+    ::aura::config::test_setenv("AURA_LINEAR_CROSS_CLOSURE_DEPTH", "2", 1);
     set_strategy(AuditStrategy::Sampled);
     CHECK(linear_cross_closure_depth_cap() == 2, "AC4: depth 2");
     CHECK(!linear_cross_closure_hard_enabled(), "AC4: hard off under Soft Sampled");
@@ -472,7 +473,7 @@ static void ac4_soft_observe() {
               std::memory_order_relaxed) > obs0,
           "AC4: observe_total advanced");
 
-    unsetenv("AURA_LINEAR_CROSS_CLOSURE_DEPTH");
+    ::aura::config::test_unsetenv("AURA_LINEAR_CROSS_CLOSURE_DEPTH");
 }
 
 // ── AC5: schema + source-cite + no docs ──
@@ -487,9 +488,9 @@ static void ac5_schema_source() {
     CHECK(href(cs, "schema-2563") == 2563, "AC5: #2563 lineage retained");
     CHECK(href(cs, "linear-cross-closure-wired") == 1, "AC5: #2563 wired retained");
 
-    setenv("AURA_LINEAR_CROSS_CLOSURE_DEPTH", "2", 1);
+    ::aura::config::test_setenv("AURA_LINEAR_CROSS_CLOSURE_DEPTH", "2", 1);
     CHECK(href(cs, "linear-cross-closure-depth-cap") == 2, "AC5: query reflects env depth 2");
-    unsetenv("AURA_LINEAR_CROSS_CLOSURE_DEPTH");
+    ::aura::config::test_unsetenv("AURA_LINEAR_CROSS_CLOSURE_DEPTH");
 
     const auto aud = read_file("src/compiler/typed_mutation_audit.h");
     const auto tci = read_file("src/compiler/type_checker.ixx");
@@ -565,9 +566,9 @@ static void reset_2623() {
     reset_for_test();
     apply_dev_audit_defaults();
     set_strategy(AuditStrategy::Sampled);
-    unsetenv("AURA_LINEAR_CROSS_CLOSURE_HARD");
-    unsetenv("AURA_LINEAR_CROSS_CLOSURE_DEPTH");
-    unsetenv("AURA_PARTIAL_CONE_SOFT");
+    ::aura::config::test_unsetenv("AURA_LINEAR_CROSS_CLOSURE_HARD");
+    ::aura::config::test_unsetenv("AURA_LINEAR_CROSS_CLOSURE_DEPTH");
+    ::aura::config::test_unsetenv("AURA_PARTIAL_CONE_SOFT");
 }
 
 // One-level free capture (#2563 baseline).
@@ -643,7 +644,7 @@ static void ac1_one_level_soft_prod() {
     CHECK(linear_cross_closure_hard_enabled(), "AC1: production hard on");
     // Production default depth is 2 when env unset (#2623).
     CHECK(linear_cross_closure_depth_cap() == 2, "AC1: production default depth 2");
-    setenv("AURA_LINEAR_CROSS_CLOSURE_DEPTH", "1", 1);
+    ::aura::config::test_setenv("AURA_LINEAR_CROSS_CLOSURE_DEPTH", "1", 1);
     CHECK(linear_cross_closure_depth_cap() == 1, "AC1: env can pin depth 1 under prod");
     const auto force1 = g_typed_mutation_audit_counters.linear_cross_closure_force_total.load(
         std::memory_order_relaxed);
@@ -654,7 +655,7 @@ static void ac1_one_level_soft_prod() {
     CHECK(g_typed_mutation_audit_counters.linear_cross_closure_force_total.load(
               std::memory_order_relaxed) > force1,
           "AC1: production force advances");
-    unsetenv("AURA_LINEAR_CROSS_CLOSURE_DEPTH");
+    ::aura::config::test_unsetenv("AURA_LINEAR_CROSS_CLOSURE_DEPTH");
     apply_dev_audit_defaults();
 }
 
@@ -663,7 +664,7 @@ static void ac2_nested_depth2_prod() {
     std::println("\n--- #2623 AC2: nested free-capture depth≥2 + production force ---");
     reset_2623();
     // Soft: must set depth 2 explicitly.
-    setenv("AURA_LINEAR_CROSS_CLOSURE_DEPTH", "2", 1);
+    ::aura::config::test_setenv("AURA_LINEAR_CROSS_CLOSURE_DEPTH", "2", 1);
     CHECK(linear_cross_closure_depth_cap() == 2, "AC2: env depth 2");
 
     StringPool pool;
@@ -679,13 +680,13 @@ static void ac2_nested_depth2_prod() {
     CHECK(out.depth2_escape_sites >= 1, "AC2: depth2_escape_sites");
 
     // Depth 3 hard max accepted.
-    setenv("AURA_LINEAR_CROSS_CLOSURE_DEPTH", "3", 1);
+    ::aura::config::test_setenv("AURA_LINEAR_CROSS_CLOSURE_DEPTH", "3", 1);
     CHECK(linear_cross_closure_depth_cap() == 3, "AC2: depth 3 allowed");
-    setenv("AURA_LINEAR_CROSS_CLOSURE_DEPTH", "9", 1);
+    ::aura::config::test_setenv("AURA_LINEAR_CROSS_CLOSURE_DEPTH", "9", 1);
     CHECK(linear_cross_closure_depth_cap() == 3, "AC2: depth >3 clamps to 3");
 
     // Production default depth 2 without env.
-    unsetenv("AURA_LINEAR_CROSS_CLOSURE_DEPTH");
+    ::aura::config::test_unsetenv("AURA_LINEAR_CROSS_CLOSURE_DEPTH");
     apply_production_audit_defaults();
     CHECK(linear_cross_closure_depth_cap() == 2, "AC2: prod default depth 2");
     CHECK(linear_cross_closure_hard_enabled(), "AC2: prod hard on");
@@ -820,16 +821,16 @@ static void ac4_soft_trunc_observe() {
           "AC4: trunc_force unchanged under Soft");
 
     // HARD env under Soft strategy still forces trunc fail-closed.
-    setenv("AURA_LINEAR_CROSS_CLOSURE_HARD", "1", 1);
+    ::aura::config::test_setenv("AURA_LINEAR_CROSS_CLOSURE_HARD", "1", 1);
     CHECK(linear_cross_closure_hard_enabled(), "AC4: HARD env forces hard on");
-    unsetenv("AURA_LINEAR_CROSS_CLOSURE_HARD");
+    ::aura::config::test_unsetenv("AURA_LINEAR_CROSS_CLOSURE_HARD");
 }
 
 // ── AC5: depth 0 disable ──
 static void ac5_depth0_disable() {
     std::println("\n--- #2623 AC5: DEPTH=0 disables discovery ---");
     reset_2623();
-    setenv("AURA_LINEAR_CROSS_CLOSURE_DEPTH", "0", 1);
+    ::aura::config::test_setenv("AURA_LINEAR_CROSS_CLOSURE_DEPTH", "0", 1);
     CHECK(linear_cross_closure_depth_cap() == 0, "AC5: depth_cap == 0");
 
     StringPool pool;
@@ -843,7 +844,7 @@ static void ac5_depth0_disable() {
     CHECK(out.nodes_scanned == 0, "AC5: zero nodes_scanned");
     CHECK(out.depth_cap == 0, "AC5: result depth_cap 0");
 
-    unsetenv("AURA_LINEAR_CROSS_CLOSURE_DEPTH");
+    ::aura::config::test_unsetenv("AURA_LINEAR_CROSS_CLOSURE_DEPTH");
 }
 
 // ── AC6: schema + source-cite ──

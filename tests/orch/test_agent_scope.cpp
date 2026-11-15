@@ -21,6 +21,7 @@
 //   AC6: Design note in src/orch/README.md (default root + semantics).
 //   #2161 AC1–AC5: watch_all batch liveness + stall cancel.
 
+#include "core/runtime_config.hh"
 #include "test_harness.hpp"
 
 #include <algorithm>
@@ -86,9 +87,9 @@ struct RestoreSandbox {
     }
     ~RestoreSandbox() {
         if (had)
-            ::setenv("AURA_SANDBOX", prev.c_str(), 1);
+            ::aura::config::test_setenv("AURA_SANDBOX", prev.c_str(), 1);
         else
-            ::unsetenv("AURA_SANDBOX");
+            ::aura::config::test_unsetenv("AURA_SANDBOX");
         // Issue #3866: multi-worker Ready self-check requires hot contracts
         // armed when production is latched. Disarm with the latch so a
         // later Scheduler(2) under the restored Soft face stays Quiet.
@@ -640,8 +641,8 @@ static void ac2946_production_hard_deny() {
     // AC2: Soft / no production → SoftMetric
     {
         set_prod(false);
-        unsetenv("AURA_AGENT_SCOPE_CONCURRENT_ABORT");
-        unsetenv("AURA_SANDBOX");
+        ::aura::config::test_unsetenv("AURA_AGENT_SCOPE_CONCURRENT_ABORT");
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
         CHECK(!aura::orch::agent_scope_concurrent_hard_deny_enabled(),
               "2946 AC2: Soft → hard deny OFF");
         CHECK(aura::orch::resolve_agent_scope_concurrent_policy() ==
@@ -652,18 +653,18 @@ static void ac2946_production_hard_deny() {
     // AC2b: sandbox=off → SoftMetric even with production flag
     {
         set_prod(true);
-        setenv("AURA_SANDBOX", "off", 1);
+        ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
         CHECK(aura::orch::resolve_agent_scope_concurrent_policy() ==
                   aura::orch::AgentScopeConcurrentPolicy::SoftMetric,
               "2946 AC2: sandbox=off → SoftMetric");
-        unsetenv("AURA_SANDBOX");
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
     }
 
     // AC1: production → HardDeny; concurrent spawn does not mutate handles_
     {
         set_prod(true);
-        unsetenv("AURA_SANDBOX");
-        unsetenv("AURA_AGENT_SCOPE_CONCURRENT_ABORT");
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
+        ::aura::config::test_unsetenv("AURA_AGENT_SCOPE_CONCURRENT_ABORT");
         CHECK(aura::orch::resolve_agent_scope_concurrent_policy() ==
                   aura::orch::AgentScopeConcurrentPolicy::HardDeny,
               "2946 AC1: production → HardDeny");
@@ -759,20 +760,20 @@ static void ac2946_production_hard_deny() {
     // AC: env=0 opt-out under production → SoftMetric
     {
         set_prod(true);
-        unsetenv("AURA_SANDBOX");
-        setenv("AURA_AGENT_SCOPE_CONCURRENT_ABORT", "0", 1);
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
+        ::aura::config::test_setenv("AURA_AGENT_SCOPE_CONCURRENT_ABORT", "0", 1);
         CHECK(aura::orch::resolve_agent_scope_concurrent_policy() ==
                   aura::orch::AgentScopeConcurrentPolicy::SoftMetric,
               "2946 AC2: env=0 forces SoftMetric under production");
-        unsetenv("AURA_AGENT_SCOPE_CONCURRENT_ABORT");
+        ::aura::config::test_unsetenv("AURA_AGENT_SCOPE_CONCURRENT_ABORT");
         set_prod(false);
     }
 
     // AC3: single-thread under production → hard deny stays 0
     {
         set_prod(true);
-        unsetenv("AURA_SANDBOX");
-        unsetenv("AURA_AGENT_SCOPE_CONCURRENT_ABORT");
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
+        ::aura::config::test_unsetenv("AURA_AGENT_SCOPE_CONCURRENT_ABORT");
         const auto hd0 = g_orch_module_stats.agent_scope_concurrent_hard_deny_total.load(
             std::memory_order_relaxed);
         Scheduler sched(1);
@@ -977,8 +978,8 @@ static void ac3216_handoff_directory_hard_deny() {
 
     {
         set_prod(true);
-        unsetenv("AURA_SANDBOX");
-        unsetenv("AURA_AGENT_SCOPE_CONCURRENT_ABORT");
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
+        ::aura::config::test_unsetenv("AURA_AGENT_SCOPE_CONCURRENT_ABORT");
         CHECK(aura::orch::resolve_agent_scope_concurrent_policy() ==
                   aura::orch::AgentScopeConcurrentPolicy::HardDeny,
               "ac3216: production → HardDeny");
@@ -1531,7 +1532,7 @@ static void ac3125_cross_scope_directory() {
 // typed reject fields populated when spawn_agent_with_mailbox denies.
 static void ac3366_1_bp_deny_failed_handle_has_typed_reject_fields() {
     std::println("\n--- #3366 AC1: AgentScope::spawn BP-deny returns typed reject handle ---");
-    setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "1", 1);
+    ::aura::config::test_setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "1", 1);
     auto trigger_mb =
         std::make_shared<aura::serve::mf_mailbox::MultiFiberMailbox>(/*high_water=*/16);
     for (std::uint64_t i = 0; i < 64; ++i) {
@@ -1566,7 +1567,7 @@ static void ac3366_1_bp_deny_failed_handle_has_typed_reject_fields() {
     CHECK(handle.retry_after_ms > 0, "AC1: handle.retry_after_ms > 0");
     CHECK(scope.size() == 1, "AC1: failed handle is in scope (1 slot, not joinable)");
 
-    unsetenv("AURA_ORCH_BP_ADMIT_THRESHOLD");
+    ::aura::config::test_unsetenv("AURA_ORCH_BP_ADMIT_THRESHOLD");
     reset_process_resource_quota_for_test();
 }
 
@@ -1588,7 +1589,7 @@ static void ac3442_scope_message_resolve() {
 
     // Prior members / #3366 leave mailbox_bp_recent >= default 32, which
     // BP-denies attach_mailbox spawn. Zero the gauge + quota for this AC.
-    unsetenv("AURA_ORCH_BP_ADMIT_THRESHOLD");
+    ::aura::config::test_unsetenv("AURA_ORCH_BP_ADMIT_THRESHOLD");
     reset_process_resource_quota_for_test();
     g_orch_module_stats.mailbox_bp_recent_total.store(0, std::memory_order_relaxed);
     (void)aura::orch::reset_scope_bp_map_for_test();
@@ -1650,9 +1651,9 @@ struct RkeysEnvGuard4238 {
     }
     ~RkeysEnvGuard4238() {
         if (had)
-            ::setenv("AURA_PARALLEL_REQUIRE_REGION_KEYS", prev.c_str(), 1);
+            ::aura::config::test_setenv("AURA_PARALLEL_REQUIRE_REGION_KEYS", prev.c_str(), 1);
         else
-            ::unsetenv("AURA_PARALLEL_REQUIRE_REGION_KEYS");
+            ::aura::config::test_unsetenv("AURA_PARALLEL_REQUIRE_REGION_KEYS");
     }
 };
 
@@ -1690,8 +1691,8 @@ static void ac4238_region_key_admit_deny() {
     // zero-cost observation-only).
     {
         set_prod(false);
-        ::unsetenv("AURA_SANDBOX");
-        ::unsetenv("AURA_PARALLEL_REQUIRE_REGION_KEYS");
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
+        ::aura::config::test_unsetenv("AURA_PARALLEL_REQUIRE_REGION_KEYS");
         Scheduler sched(1);
         SchedRunner runner(sched);
         AgentScope scope(sched);
@@ -1716,8 +1717,8 @@ static void ac4238_region_key_admit_deny() {
     // #3803 observation face stays consistent at agent_count=1).
     {
         set_prod(true);
-        ::unsetenv("AURA_SANDBOX");
-        ::unsetenv("AURA_PARALLEL_REQUIRE_REGION_KEYS");
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
+        ::aura::config::test_unsetenv("AURA_PARALLEL_REQUIRE_REGION_KEYS");
         Scheduler sched(1);
         SchedRunner runner(sched);
         AgentScope scope(sched);
@@ -1756,8 +1757,8 @@ static void ac4238_region_key_admit_deny() {
     // escape admits; the #3803 observation face still flags missing keys.
     {
         set_prod(true);
-        ::unsetenv("AURA_SANDBOX");
-        ::setenv("AURA_PARALLEL_REQUIRE_REGION_KEYS", "0", 1);
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
+        ::aura::config::test_setenv("AURA_PARALLEL_REQUIRE_REGION_KEYS", "0", 1);
         Scheduler sched(1);
         SchedRunner runner(sched);
         AgentScope scope(sched);
@@ -1780,7 +1781,7 @@ static void ac4238_region_key_admit_deny() {
         CHECK(obs.region_key_missing,
               "4238 AC3: observation still flags region-key-missing after escape admit");
         drain(scope, stop);
-        ::unsetenv("AURA_PARALLEL_REQUIRE_REGION_KEYS");
+        ::aura::config::test_unsetenv("AURA_PARALLEL_REQUIRE_REGION_KEYS");
         set_prod(false);
     }
 
@@ -1788,8 +1789,8 @@ static void ac4238_region_key_admit_deny() {
     // RegionConcurrent-eligible, observation clean.
     {
         set_prod(true);
-        ::unsetenv("AURA_SANDBOX");
-        ::unsetenv("AURA_PARALLEL_REQUIRE_REGION_KEYS");
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
+        ::aura::config::test_unsetenv("AURA_PARALLEL_REQUIRE_REGION_KEYS");
         Scheduler sched(1);
         SchedRunner runner(sched);
         AgentScope scope(sched);
@@ -1822,8 +1823,8 @@ static void ac4238_region_key_admit_deny() {
     // (mutation_boundary=false) stays admitted (deny needs ≥2 mutate).
     {
         set_prod(true);
-        ::unsetenv("AURA_SANDBOX");
-        ::unsetenv("AURA_PARALLEL_REQUIRE_REGION_KEYS");
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
+        ::aura::config::test_unsetenv("AURA_PARALLEL_REQUIRE_REGION_KEYS");
         Scheduler sched(1);
         SchedRunner runner(sched);
         AgentScope scope(sched);
@@ -1853,8 +1854,8 @@ static void ac4238_region_key_admit_deny() {
     // helper exits before the env read — zero-cost contract kept).
     {
         set_prod(false);
-        ::unsetenv("AURA_SANDBOX");
-        ::setenv("AURA_PARALLEL_REQUIRE_REGION_KEYS", "1", 1);
+        ::aura::config::test_unsetenv("AURA_SANDBOX");
+        ::aura::config::test_setenv("AURA_PARALLEL_REQUIRE_REGION_KEYS", "1", 1);
         Scheduler sched(1);
         SchedRunner runner(sched);
         AgentScope scope(sched);
@@ -1868,7 +1869,7 @@ static void ac4238_region_key_admit_deny() {
             CHECK(h.ok, std::format("4238 AC6: Soft env=1 spawn {} admits", i));
         }
         CHECK(miss_total() == m0, "4238 AC6: no deny counter bump in Soft");
-        ::unsetenv("AURA_PARALLEL_REQUIRE_REGION_KEYS");
+        ::aura::config::test_unsetenv("AURA_PARALLEL_REQUIRE_REGION_KEYS");
     }
 
     // AC7: source-cite — admit gate reuses the decide_isolation SSOT, no
@@ -1979,8 +1980,8 @@ static void ac4281_restart_region_key_recheck() {
                        std::uint64_t k1, const char* n0, const char* n1) {
         WatchFacts f;
         set_prod(prod_at_spawn);
-        ::setenv("AURA_SANDBOX", "off", 1);
-        ::unsetenv("AURA_PARALLEL_REQUIRE_REGION_KEYS");
+        ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
+        ::aura::config::test_unsetenv("AURA_PARALLEL_REQUIRE_REGION_KEYS");
         // Two workers so a production drain can observe cancel on every
         // stalled body. Scheduler(1) often defers the second fiber (#4003).
         Scheduler sched(2);
@@ -2288,7 +2289,7 @@ int run_test_agent_scope() {
     // the sandbox=off escape for the whole member and restore the inherited
     // face on exit. ac2946 manages its own production posture internally.
     RestoreSandbox member_sandbox_face;
-    ::setenv("AURA_SANDBOX", "off", 1);
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
     std::println("=== Issue #2083 / #2161: AgentScope + watch_all ===");
     ac4_linter_and_source();
     ac2161_flag_and_linter_surface();
