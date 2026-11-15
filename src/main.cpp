@@ -2333,6 +2333,16 @@ static int run_sync_serve(const OneshotLaunch& launch) {
             aura::compiler::Evaluator::destroy_workspace_tree(st.shared_workspace_tree);
             return soft_rc;
         }
+        // #5234: a oneshot program gets the std prelude (list/string/hash/
+        // math); the sync serve session did not, so the same program that
+        // runs as a file reported "unbound variable: make-hash" here.
+        if (auto pre = default_cs.eval("(require \"std/list\" all:)"
+                                       "(require \"std/string\" all:)"
+                                       "(require \"std/hash\" all:)"
+                                       "(require \"std/math\" all:)");
+            !pre) {
+            std::println(std::cerr, "aura: serve std prelude failed: {}", pre.error().format());
+        }
     }
     // Issue #5168: same walker face as a file run (#4864) unless
     // AURA_PIPELINE_STRICT pins one. The production default forbade

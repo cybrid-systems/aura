@@ -369,7 +369,11 @@ namespace detail {
                             break;
                         }
                     }
-                    if (!only_prefix || !is_prefix)
+                    // #5234: whitespace (or a lone ' quote prefix) before the
+                    // next form is that form's leading text. It carries the
+                    // absolute line number; dropping it reported 1:L for a
+                    // form on chunk line L.
+                    if (!only_prefix)
                         push_form();
                 }
                 if (depth == 0) {

@@ -24,6 +24,8 @@
 #include <unistd.h>
 
 import std;
+// #5234: display/write consumed an error value (file mode exits 1).
+extern "C" std::uint64_t aura_displayed_error_count() noexcept;
 #if AURA_HAVE_EPOLL
 #include <sys/epoll.h>
 #endif
@@ -991,6 +993,7 @@ namespace {
                     // rejected before anything runs (it used to be
                     // accepted silently and to swallow the forms
                     // after it).
+                    const auto displayed_before = aura_displayed_error_count();
                     auto split = detail::split_top_level_forms(code);
                     if (!split.ok()) {
                         emit_status_line(status_line_error(nsid, split.error, ""));
@@ -1017,6 +1020,11 @@ namespace {
                             } else if (!*r) {
                                 emit_status_line(
                                     status_line_error(nsid, (*r).error().format(), display));
+                            } else if (aura_displayed_error_count() > displayed_before) {
+                                // A displayed error value is a failure even
+                                // when the form's value is ().
+                                emit_status_line(status_line_error(
+                                    nsid, "runtime error: an error value was displayed", display));
                             } else {
                                 emit_exec_result(nsid, **r, display, cs);
                             }
@@ -1145,6 +1153,7 @@ namespace {
                 // the session env. An unbalanced chunk is rejected
                 // before anything runs (it used to be accepted
                 // silently and to swallow the forms after it).
+                const auto displayed_before = aura_displayed_error_count();
                 auto split = detail::split_top_level_forms(code);
                 if (!split.ok()) {
                     emit_status_line(status_line_error(sid, split.error, ""));
@@ -1188,6 +1197,10 @@ namespace {
                                             "}",
                                             json_escape(sid), json_escape(display)));
                                     }
+                                } else if (aura_displayed_error_count() > displayed_before) {
+                                    emit_status_line(status_line_error(
+                                        sid, "runtime error: an error value was displayed",
+                                        display));
                                 } else {
                                     emit_exec_result(sid, v, display, cs);
                                 }
@@ -1303,6 +1316,12 @@ namespace {
 // ── run_serve_async ─────────────────────────────────────
 
 void run_serve_async(int num_workers) {
+    // #5234: same walker face as a file run (and sync --serve, #5168). The
+    // production pack default (Forbidden) turned an ordinary unbound name
+    // into "internal error: tree-walker fallback forbidden …".
+    if (const char* strict = std::getenv("AURA_PIPELINE_STRICT"); !(strict && *strict))
+        aura::compiler::set_tree_walker_fallback_policy(
+            aura::compiler::TreeWalkerFallbackPolicy::Allow);
     // Issue #4231: serve-async writes protocol status lines to stdout for
     // the lifetime of the session. A client-side reader close (host
     // restart thrash, timed-out reader) turns the next ::write into
