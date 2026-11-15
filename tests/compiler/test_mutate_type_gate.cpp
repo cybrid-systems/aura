@@ -161,6 +161,75 @@ static void rejection_leaves_sibling_callable_5280() {
           "5280 old body stays and the next rebind commits");
 }
 
+// Issue #5300: a cond (or nested if) of two integer literals plus a
+// parameter, and an integer joined with a host call that returns a
+// parameter or its negation, must pass the production rebind gate.
+// Int joined with String still fails and names the two grounds.
+static void rebind_int_param_join_5300() {
+    const auto binary = aura_sibling_binary();
+    CHECK(!binary.empty(), "5300 aura binary");
+    if (binary.empty())
+        return;
+    const char* path = "/tmp/aura-5300-rebind.aura";
+    {
+        std::ofstream script(path);
+        script << R"aura((require "std/mutate" all:)
+(define (g x lots) (if (> x 0) lots (- lots)))
+(set-code "(define (f x prev) 0)")
+(eval-current)
+(define (try-g label s)
+  (let ((r (mutate :rebind "f" s "t")))
+    (display (if (eq? r #t) "OK   " "FAIL "))
+    (display label)
+    (newline)
+    (when (not (eq? r #t))
+      (display "     ") (write r) (newline))))
+(try-g "one-lit" "(define (f x prev) (cond ((> x 1.5) 1) (else prev)))")
+(try-g "two-lit" "(define (f x prev) (cond ((> x 1.5) 1) ((< x -1.5) -1) (else prev)))")
+(display (f 2 9)) (newline)
+(display (f -2 9)) (newline)
+(display (f 0 9)) (newline)
+(try-g "two-lit-0" "(define (f x prev) (cond ((> x 1.5) 1) ((< x -1.5) -1) (else 0)))")
+(try-g "nested-if" "(define (f x prev) (if (> x 1.5) 1 (if (< x -1.5) -1 prev)))")
+(try-g "plus-zero" "(define (f x prev) (cond ((> x 1.5) 1) ((< x -1.5) -1) (else (+ prev 0))))")
+(try-g "let-hold" "(define (f x prev) (let ((hold prev)) (cond ((> x 1.5) 1) ((< x -1.5) -1) (else hold))))")
+(try-g "g-two" "(define (f x prev) (cond ((> x 1.5) 1) ((< x -1.5) -1) (else (g x 1))))")
+(display (f 2 0)) (newline)
+(display (f -2 0)) (newline)
+(display (f 0 0)) (newline)
+(try-g "g-one" "(define (f x prev) (cond ((> x 1.5) 1) (else (g x 1))))")
+(try-g "g-plus" "(define (f x prev) (cond ((> x 1.5) (+ prev 0)) (else (g x 1))))")
+(try-g "grounds" "(define (f x prev) (cond ((> x 1.5) 1) (else \"a\")))")
+)aura";
+    }
+    const std::string command = "timeout 30 env -u AURA_SANDBOX -u AURA_HOT_HARDEN '" + binary +
+                                "' --preset dev --quiet '" + path +
+                                "' > /tmp/aura-5300-out.txt 2> /tmp/aura-5300-err.txt";
+    const int status = std::system(command.c_str());
+    std::ifstream out_file("/tmp/aura-5300-out.txt");
+    const std::string output((std::istreambuf_iterator<char>(out_file)), {});
+    std::ifstream err_file("/tmp/aura-5300-err.txt");
+    const std::string error((std::istreambuf_iterator<char>(err_file)), {});
+    const bool clean_exit = status >= 0 && WIFEXITED(status) && WEXITSTATUS(status) == 0;
+    CHECK(clean_exit, "5300 cli exit");
+    CHECK(error.find("SIGABRT") == std::string::npos &&
+              error.find("AURA CRASH") == std::string::npos,
+          "5300 cli did not crash");
+    CHECK(output.find("FAIL") == std::string::npos ||
+              output.find("FAIL grounds") != std::string::npos,
+          output);
+    for (const char* label : {"one-lit", "two-lit", "two-lit-0", "nested-if", "plus-zero",
+                              "let-hold", "g-two", "g-one", "g-plus"}) {
+        CHECK(output.find(std::string("OK   ") + label) != std::string::npos, label);
+    }
+    CHECK(output.find("\n1\n-1\n9\n") != std::string::npos, "5300 two-lit runtime");
+    CHECK(output.find("\n1\n-1\n-1\n") != std::string::npos, "5300 g runtime");
+    CHECK(output.find("FAIL grounds") != std::string::npos, "5300 distinct grounds still fail");
+    CHECK(output.find("incompatible ground types") != std::string::npos, output);
+    CHECK(output.find("Int") != std::string::npos && output.find("String") != std::string::npos,
+          output);
+}
+
 // Issue #4557: register_* dedup goes through an intern index instead of a
 // linear scan. Identity must not change: structurally equal types return
 // the first-registered TypeId, distinct ones stay distinct, and compact()
@@ -1465,6 +1534,7 @@ int run_test_mutate_type_gate() {
     }
 
     rejection_leaves_sibling_callable_5280();
+    rebind_int_param_join_5300();
 
     reset_for_test();
     std::println("=== #2219 + #2279 done: {} passed, {} failed ===", g_passed, g_failed);

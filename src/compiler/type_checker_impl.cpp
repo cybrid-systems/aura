@@ -419,6 +419,22 @@ bool TypeEnv::is_bound(const std::string& name) const {
     return host_fallback_ && host_fallback_->contains(name);
 }
 
+bool TypeEnv::is_host_fallback_name(const std::string& name) const {
+    for (auto it = scopes_.rbegin(); it != scopes_.rend(); ++it)
+        if (it->contains(name))
+            return false;
+    if (base_ && base_->contains(name))
+        return false;
+    return host_fallback_ && host_fallback_->contains(name);
+}
+
+bool TypeEnv::bound_in_inner_scope(const std::string& name) const {
+    for (std::size_t i = 1; i < scopes_.size(); ++i)
+        if (scopes_[i].contains(name))
+            return true;
+    return false;
+}
+
 void TypeEnv::collect_names(std::vector<std::string>& out) const {
     for (auto it = scopes_.rbegin(); it != scopes_.rend(); ++it)
         for (auto& [name, _] : *it)
@@ -4197,6 +4213,10 @@ void InferenceEngine::seed_workspace_value_defines(FlatAST& flat, StringPool& po
         if (env_.is_bound(host_name))
             continue;
         env_.bind(host_name, reg_.dynamic_type());
+        // Issue #5300: remember the seed so a later call is an unknown
+        // helper (fresh var), not the #4684 Any ground. The full recheck
+        // binds here instead of installing host_fallback_.
+        seeded_host_dyn_.insert(host_name);
     }
 }
 
@@ -4977,10 +4997,11 @@ TypeId InferenceEngine::lub(TypeId a, TypeId b) {
     last_join_gate_error_ = false;
     if (a == b)
         return a;
-    // Int → Float promotion
-    if ((a == reg_.int_type() && b == reg_.lookup_type("Float")) ||
-        (a == reg_.lookup_type("Float") && b == reg_.int_type()))
-        return reg_.lookup_type("Float");
+    const auto int_ty = reg_.int_type();
+    const auto float_ty = reg_.lookup_type("Float");
+    // Int → Float promotion for two grounds already in hand.
+    if ((a == int_ty && b == float_ty) || (a == float_ty && b == int_ty))
+        return float_ty;
     // Issue #4107: under the production face a pair of distinct grounds
     // reaching synthesize_flat_if's join must not publish a solved
     // Dynamic (the authoritative-Dynamic hole behind `(if p 1 "a")`).
@@ -4993,50 +5014,125 @@ TypeId InferenceEngine::lub(TypeId a, TypeId b) {
     // system first — find_var returns binding_[root] — so a bound
     // representative takes the ground gate exactly like the arithmetic
     // peel's normalize-before-gate order. An id still a variable after
-    // normalization is genuinely unbound and returns so a later unify
-    // can bind it; any other pair of distinct grounds reports a hard
+    // normalization is genuinely unbound. A variable joined with a scalar
+    // stays a variable that remembers that scalar (#5300): publishing
+    // Dynamic made the next integer branch look like Dynamic~Int and
+    // fail-closed solve_delta. A different ground still reports a hard
     // TypeError and yields void_type() — never a successful Dynamic.
     // infer_flat demotes the type-export authority when that error was
     // reported (last_type_export_authoritative_).
-    if (aura::compiler::typed_audit::production_hard_face_active() ||
-        aura::compiler::typed_audit::production_defaults_active()) {
-        a = cs_.normalize(a);
-        b = cs_.normalize(b);
-        if (a == b)
-            return a;
-        if (reg_.is_var(a) || reg_.is_var(b)) {
-            // Issue #5279: car/cdr results are named list-elem vars. Joining
-            // one with a ground must stay a variable, or the outer if sees
-            // Dynamic and trips the #4684 gate. A lambda parameter is not
-            // named list-elem and still returns Dynamic (#4684 AC4).
-            const bool elem_a = reg_.is_var(a) && reg_.name_of(a) == "list-elem";
-            const bool elem_b = reg_.is_var(b) && reg_.name_of(b) == "list-elem";
-            if (elem_a || elem_b)
-                return cs_.fresh_var();
-            return reg_.dynamic_type(); // later unify binds the variable
+    if (!(aura::compiler::typed_audit::production_hard_face_active() ||
+          aura::compiler::typed_audit::production_defaults_active()))
+        return reg_.dynamic_type();
+
+    a = cs_.normalize(a);
+    b = cs_.normalize(b);
+    if (a == b)
+        return a;
+
+    const auto dyn_ty = reg_.dynamic_type();
+    auto project = [&](TypeId t) -> TypeId {
+        if (!reg_.is_var(t))
+            return t;
+        const auto it = join_ground_.find(t.index);
+        if (it == join_ground_.end())
+            return t;
+        switch (it->second) {
+            case aura::core::TypeTag::INT:
+                return int_ty;
+            case aura::core::TypeTag::BOOL:
+                return reg_.bool_type();
+            case aura::core::TypeTag::STRING:
+                return reg_.string_type();
+            case aura::core::TypeTag::FLOAT:
+                return float_ty;
+            case aura::core::TypeTag::VOID:
+                return reg_.void_type();
+            default:
+                return t;
         }
-        // Issue #4684: a branch whose synthesized TypeId is already
-        // dynamic_type() used to leave this gate above (the pre-normalize
-        // early return) and publish a solved Dynamic for e.g.
-        // `(if #t d 1)` with d bound to a Dynamic-returning call.
-        // Dynamic is not a variable and consistent_unify's hard face
-        // refuses Dynamic~ground (see
-        // 2044-2054), so the pair falls through to the same ground gate
-        // below. The is_var branch above still covers #4515's genuinely
-        // unbound union-find rep joined with Dynamic. infer_flat demotes
-        // the type-export authority on the reported TypeError, and
-        // synthesize_flat's IfExpr arm leaves the node dirty/uncached.
+    };
+    const TypeId pa = project(a);
+    const TypeId pb = project(b);
+    auto remember = [&](aura::core::TypeTag tag) -> TypeId {
+        const auto v = cs_.fresh_var();
+        join_ground_.emplace(v.index, tag);
+        return v;
+    };
+    auto scalar_tag = [&](TypeId t) -> std::optional<aura::core::TypeTag> {
+        if (!t.valid() || reg_.is_var(t) || t == dyn_ty)
+            return std::nullopt;
+        switch (reg_.tag_of(t)) {
+            case aura::core::TypeTag::INT:
+            case aura::core::TypeTag::BOOL:
+            case aura::core::TypeTag::STRING:
+            case aura::core::TypeTag::FLOAT:
+            case aura::core::TypeTag::VOID:
+                return reg_.tag_of(t);
+            default:
+                return std::nullopt;
+        }
+    };
+    const bool a_var = reg_.is_var(a);
+    const bool b_var = reg_.is_var(b);
+
+    // A remembered numeric join promotes the same way two grounds do.
+    // The variable side stays a float-join so the parameter is not collapsed.
+    if ((pa == int_ty && pb == float_ty) || (pa == float_ty && pb == int_ty)) {
+        if (a_var || b_var)
+            return remember(aura::core::TypeTag::FLOAT);
+        return float_ty;
+    }
+
+    const bool pa_var = reg_.is_var(pa);
+    const bool pb_var = reg_.is_var(pb);
+    // Different concrete grounds, including a join var whose remembered
+    // ground disagrees and a real Dynamic joined with a ground (#4684).
+    if (!pa_var && !pb_var && pa != pb) {
         last_join_gate_error_ = true;
         diag_.report(
             Diagnostic(ErrorKind::TypeError,
-                       "incompatible ground types: if branches join " + reg_.format_type(a) +
-                           " and " + reg_.format_type(b) + " under production typing",
+                       "incompatible ground types: if branches join " + reg_.format_type(pa) +
+                           " and " + reg_.format_type(pb) + " under production typing",
                        cur_loc_)
                 .with_blame(BlameInfo{BlameParty::Implicit, "", "compile"})
                 .with_suggestion("add explicit type annotations so both if branches agree"));
         return reg_.void_type();
     }
-    return reg_.dynamic_type(); // safe fallback
+
+    // Same concrete type, but one side is still a variable (a parameter
+    // or a prior join of one). Stay gradual instead of publishing Dynamic.
+    if (pa == pb && (a_var || b_var)) {
+        if (const auto tag = scalar_tag(pa))
+            return remember(*tag);
+        if (pa == dyn_ty)
+            return dyn_ty;
+        return cs_.fresh_var();
+    }
+    if (pa == pb)
+        return pa;
+
+    // Issue #5279: car/cdr results are named list-elem vars. Joining one
+    // with a ground must stay an unconstrained variable, or the outer if
+    // sees Dynamic and trips the #4684 gate.
+    const auto list_elem = [&](TypeId t) {
+        return reg_.is_var(t) && reg_.name_of(t) == "list-elem";
+    };
+    if (list_elem(a) || list_elem(b) || list_elem(pa) || list_elem(pb))
+        return cs_.fresh_var();
+
+    // var ∪ Dynamic stays Dynamic, so a later ground join still hits #4684.
+    if (pa == dyn_ty || pb == dyn_ty)
+        return dyn_ty;
+    if (const auto tag = scalar_tag(pa))
+        return remember(*tag);
+    if (const auto tag = scalar_tag(pb))
+        return remember(*tag);
+    // Two unbound variables stay a variable. A non-scalar ground (a
+    // function type) stays Dynamic so the next branch cannot hide it.
+    if (pa_var && pb_var)
+        return cs_.fresh_var();
+    return dyn_ty;
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -6835,6 +6931,26 @@ TypeId InferenceEngine::synthesize_flat_call(FlatAST& flat, StringPool& pool, No
         // (#4316 AC2; type_checker.ixx: "var ~ Dynamic still binds Any").
         if (reg_.is_var(func_type) && call_is_letrec_forward_ref(flat, pool, v.id, func_id))
             return cs_.fresh_var();
+    }
+    // Issue #5300: a host helper is seeded Dynamic so the name is not
+    // unbound (#4587). That Dynamic is an unknown return, not the #4684
+    // Any ground. Publishing it made `(if p 1 (g x))` fail the production
+    // join while the same g, loaded in the file, returns a parameter or
+    // its negation. A fresh var keeps the join gradual. An explicit Any
+    // annotation or a parameter that shadows the name is an inner binding
+    // and still returns Dynamic (#4316 AC2). The full recheck binds the
+    // seed in the outermost scope, so the fallback predicate alone misses
+    // it; seeded_host_dyn_ is that binding.
+    if ((func_type == reg_.dynamic_type() ||
+         (!reg_.is_var(func_type) && reg_.tag_of(func_type) == aura::core::TypeTag::DYNAMIC)) &&
+        func_id != NULL_NODE && func_id < flat.size()) {
+        const auto callee = flat.get(func_id);
+        if (callee.tag == NodeTag::Variable && callee.sym_id != INVALID_SYM) {
+            const auto name = std::string(pool.resolve(callee.sym_id));
+            if (!env_.bound_in_inner_scope(name) &&
+                (env_.is_host_fallback_name(name) || seeded_host_dyn_.contains(name)))
+                return cs_.fresh_var();
+        }
     }
     return reg_.dynamic_type();
 }
