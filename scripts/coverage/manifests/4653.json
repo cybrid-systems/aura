@@ -5,7 +5,7 @@
   "checks": [
     {
       "ac": "AC1-refusal-aware-commit-arg",
-      "path": "src/compiler/service.ixx",
+      "path": "src/compiler/service_relower.cpp",
       "contains": [
         "Issue #4653",
         "commit_per_fn_partial_4653",

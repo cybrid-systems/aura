@@ -23,6 +23,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 SVC = "src/compiler/service.ixx"
+SVC_RELOWER = "src/compiler/service_relower.cpp"
 HEALTH = "tests/compiler/test_dep_graph_hybrid_cascade.cpp"
 BUILD = "build.py"
 QUERY = "src/compiler/evaluator_primitives_obs_eval.cpp"
@@ -76,7 +77,11 @@ def _rows(svc: str, health: str, build: str, query: str, obs: str, allow: str) -
     must(PROD, "AC1 production gate", win)
     must(FULL, "AC1 Full gate", win)
 
-    rel_pos = svc.find("std::size_t relower_dirty_defines_from_workspace()")
+    # #5242: the body lives in service_relower.cpp; prefer the out-of-class
+    # definition marker so the window covers the body, not the declaration.
+    rel_pos = svc.find("std::size_t CompilerService::relower_dirty_defines_from_workspace()")
+    if rel_pos == -1:
+        rel_pos = svc.find("std::size_t relower_dirty_defines_from_workspace()")
     if rel_pos == -1:
         fails.append("AC1: relower function missing")
         rel_win = ""
@@ -158,7 +163,8 @@ def main() -> int:
         print("self-test: ok")
         return 0
 
-    fails = _rows(_read(SVC), _read(HEALTH), _read(BUILD), _read(QUERY), _read(OBS), _read(ALLOW))
+    svc = _read(SVC) + _read(SVC_RELOWER)
+    fails = _rows(svc, _read(HEALTH), _read(BUILD), _read(QUERY), _read(OBS), _read(ALLOW))
     if fails:
         for f in fails:
             print(f"FAIL {f}")

@@ -47,7 +47,7 @@ def main() -> int:
         if n not in hay:
             fails.append(f"{label}: missing {n!r}")
 
-    ixx = _read("src/compiler/service.ixx")
+    ixx = _read("src/compiler/service.ixx") + _read("src/compiler/service_relower.cpp")
     test = _read("tests/compiler/test_cascade_decision_residual_atomic.cpp")
 
     # ── AC1: cascade_decision_mtx_ + record_dependency reject lock ──
@@ -85,7 +85,7 @@ def main() -> int:
             )
 
     # relower_dirty_defines_from_workspace: critical section + re-check.
-    rel_pos = ixx.find("std::size_t relower_dirty_defines_from_workspace()")
+    rel_pos = ixx.find("std::size_t CompilerService::relower_dirty_defines_from_workspace()")
     if rel_pos == -1:
         fails.append("AC1: relower_dirty_defines_from_workspace not found")
     else:

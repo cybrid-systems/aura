@@ -51,7 +51,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 
 DEFAULT_TARGETS: tuple[str, ...] = (
     "src/compiler/observability_metrics.h",
-    "src/compiler/service.ixx",
+    "src/compiler/service_relower.cpp",
     "tests/compiler/test_cascade_decision_residual_atomic.cpp",
 )
 
@@ -71,70 +71,70 @@ INFRA_REQUIRED: tuple[tuple[str, str, str], ...] = (
     # Snapshot block — must sit AFTER the cascade_decision_mtx_ lock
     # acquisition so Soft/Off + clean (need_lock==false) skips it (AC2).
     (
-        "src/compiler/service.ixx",
+        "src/compiler/service_relower.cpp",
         r"Issue #3168: snapshot deferred_hybrid_edges_\.size\(\)",
         "service: snapshot block cites #3168",
     ),
     (
-        "src/compiler/service.ixx",
+        "src/compiler/service_relower.cpp",
         r"initial_deferred_edges_size\s*=\s*deferred_hybrid_edges_\.size\(\)",
         "service: initial_deferred_edges_size snapshotted",
     ),
     (
-        "src/compiler/service.ixx",
+        "src/compiler/service_relower.cpp",
         r"OrderedSharedLock<std::shared_mutex>\s+read\(\s*dep_graph_mtx_",
         "service: snapshot uses dep_graph_mtx_ shared lock",
     ),
     # Attribution block.
     (
-        "src/compiler/service.ixx",
+        "src/compiler/service_relower.cpp",
         r"Issue #3168: prefer new-edge-only mark over full fallback",
         "service: attribution block cites #3168",
     ),
     (
-        "src/compiler/service.ixx",
+        "src/compiler/service_relower.cpp",
         r"new_edges_snapshot\.push_back\(deferred_hybrid_edges_\[idx\]\)",
         "service: new-edge range walked under shared dep_graph_mtx_",
     ),
     (
-        "src/compiler/service.ixx",
+        "src/compiler/service_relower.cpp",
         r"it->second\.mark_blocks_dirty\(fi,\ ids\)",
         "service: one mark_blocks_dirty span per function (#4411)",
     ),
     (
-        "src/compiler/service.ixx",
+        "src/compiler/service_relower.cpp",
         r"metrics_\.cascade_rearm_new_edge_only_total\.fetch_add\(\s*1",
         "service: counter bumped in attribution block",
     ),
     # Defensive fallback preserves #3097 semantics.
     (
-        "src/compiler/service.ixx",
+        "src/compiler/service_relower.cpp",
         r"//\s*Defensive last-resort: new-edge set empty or",
         "service: defensive fallback comment",
     ),
     (
-        "src/compiler/service.ixx",
+        "src/compiler/service_relower.cpp",
         r"metrics_\.partial_forced_full_by_impact_total\.fetch_add\(\s*1",
         "service: defensive fallback bumps #3097 counter",
     ),
     # Existing cascade / dep-graph / mutate contracts preserved.
     (
-        "src/compiler/service.ixx",
+        "src/compiler/service_relower.cpp",
         r"drain_deferred_hybrid_cascade_\(\)",
         "service: #3067 drain at entry preserved",
     ),
     (
-        "src/compiler/service.ixx",
+        "src/compiler/service_relower.cpp",
         r"impact_upper_bound_for_entry_\(",
         "service: #3097 impact_ub consult preserved",
     ),
     (
-        "src/compiler/service.ixx",
+        "src/compiler/service_relower.cpp",
         r"cascade_decision_mtx_",
         "service: #3135 cascade_decision_mtx_ preserved",
     ),
     (
-        "src/compiler/service.ixx",
+        "src/compiler/service_relower.cpp",
         r"graph_grew_mid_loop",
         "service: #3161 graph_grew_mid_loop observation preserved",
     ),

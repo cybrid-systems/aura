@@ -68,7 +68,7 @@ def read(rel: str) -> str:
 
 def main() -> int:
     print("=== #3283 deferred-hybrid re-arm lag linter ===")
-    svc = read("src/compiler/service.ixx")
+    svc = read("src/compiler/service.ixx") + read("src/compiler/service_relower.cpp")
     test = read("tests/compiler/test_cascade_decision_residual_atomic.cpp")
     build = read("build.py")
 
@@ -96,8 +96,8 @@ def main() -> int:
     )
 
     # G4: gen0 snapshot after the size snapshot in relower
-    rel = svc[svc.find("std::size_t relower_dirty_defines_from_workspace()") :]
-    rel = rel[: rel.find("void clear_define_cache_v2")]
+    rel = svc[svc.find("std::size_t CompilerService::relower_dirty_defines_from_workspace()") :]
+    rel = rel[:60000]
     must("gen0 = deferred_hybrid_gen_.load" in rel, "G4: gen0 snapshot under lock")
 
     # G5: pre-peel re-check + force full

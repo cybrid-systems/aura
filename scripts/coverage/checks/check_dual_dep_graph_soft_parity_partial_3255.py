@@ -49,7 +49,7 @@ def main() -> int:
         if n not in hay:
             fails.append(f"{label}: missing {n!r}")
 
-    svc = _read("src/compiler/service.ixx")
+    svc = _read("src/compiler/service.ixx") + _read("src/compiler/service_relower.cpp")
     obs = _read("src/compiler/observability_metrics.h")
     q_obs = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
     q_std = _read("src/compiler/evaluator_primitives_stdlib_review.cpp")
@@ -58,7 +58,7 @@ def main() -> int:
 
     helper_pos = svc.find("fail_closed_soft_dual_graph_parity_before_partial_")
     helper_win = svc[max(0, helper_pos - 2000) : helper_pos + 3500] if helper_pos >= 0 else ""
-    rel_pos = svc.find("std::size_t relower_dirty_defines_from_workspace()")
+    rel_pos = svc.find("std::size_t CompilerService::relower_dirty_defines_from_workspace()")
     # Window expanded after #3381/#3484 grew the peel body (caller union
     # + zero-mask fail-closed before want_partial / prepare_source_to_ir).
     # #3975-#3988 wave grew it again: prepare_source_to_ir_map_for_partial_

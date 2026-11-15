@@ -51,7 +51,7 @@ def main() -> int:
             fails.append(f"{label}: forbidden {n!r}")
 
     svc = _read("src/compiler/service_dirty.cpp")
-    ixx = _read("src/compiler/service.ixx")
+    ixx = _read("src/compiler/service.ixx") + _read("src/compiler/service_relower.cpp")
     test_facade = _read("tests/compiler/test_compiler_hot_update_facade.cpp")
     test_peel = _read("tests/compiler/test_incremental_facade_dirty_names_snapshot.cpp")
     build = _read("build.py")
@@ -81,7 +81,7 @@ def main() -> int:
     if soft < 0 or cone > soft:
         fails.append("AC3: cone helper must be before Soft BFS body")
 
-    rel_pos = ixx.find("std::size_t relower_dirty_defines_from_workspace()")
+    rel_pos = ixx.find("std::size_t CompilerService::relower_dirty_defines_from_workspace()")
     peel = ixx[rel_pos : rel_pos + 18000] if rel_pos >= 0 else ""
     b3381 = peel.find("Issue #3381")
     block = peel[b3381 : b3381 + 9000] if b3381 >= 0 else ""

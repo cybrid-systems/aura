@@ -42,7 +42,7 @@ def main() -> int:
         if n in hay:
             fails.append(f"{label}: forbidden {n!r}")
 
-    ixx = _read("src/compiler/service.ixx")
+    ixx = _read("src/compiler/service.ixx") + _read("src/compiler/service_relower.cpp")
     dirty = _read("src/compiler/dirty_propagation.ixx")
     t = _read("tests/compiler/test_dep_graph_hybrid_cascade.cpp")
     build = _read("build.py")
@@ -59,7 +59,7 @@ def main() -> int:
     nwin = ixx[ninj : ninj + 700] if ninj >= 0 else ""
     must("mirror_fn_dep_edge_unlocked_", "AC1 node-only mirrors", nwin)
 
-    rel = ixx.find("std::size_t relower_dirty_defines_from_workspace()")
+    rel = ixx.find("std::size_t CompilerService::relower_dirty_defines_from_workspace()")
     peel = ixx[rel : rel + 20000] if rel >= 0 else ""
     must("Issue #3486", "AC1 peel cite", peel)
     must("fail_closed_soft_dual_graph_parity_before_partial_", "AC1 reuses #3255", peel)

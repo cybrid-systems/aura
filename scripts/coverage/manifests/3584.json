@@ -14,7 +14,7 @@
     },
     {
       "ac": "AC1-src",
-      "path": "src/compiler/service.ixx",
+      "path": "src/compiler/service_relower.cpp",
       "contains": [
         "#3584",
         "Do not merge-add"

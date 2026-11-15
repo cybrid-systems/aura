@@ -4,11 +4,17 @@
   "checks": [
     {
       "ac": "AC1",
+      "path": "src/compiler/service_relower.cpp",
+      "contains": [
+        "fail_closed_soft_dual_graph_parity_before_partial_cone_"
+      ]
+    },
+    {
+      "ac": "AC1",
       "path": "src/compiler/service.ixx",
       "contains": [
         "Issue #3891",
-        "cone_has_node_only_hole",
-        "fail_closed_soft_dual_graph_parity_before_partial_cone_"
+        "cone_has_node_only_hole"
       ]
     },
     {

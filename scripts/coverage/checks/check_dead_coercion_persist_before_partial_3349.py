@@ -41,7 +41,7 @@ def main() -> int:
         if n not in hay:
             fails.append(f"{label}: missing {n!r}")
 
-    svc = _read("src/compiler/service.ixx")
+    svc = _read("src/compiler/service.ixx") + _read("src/compiler/service_relower.cpp")
     dirty_cpp = _read("src/compiler/service_dirty.cpp")
     dirty = _read("src/compiler/dirty_propagation.ixx")
     t = _read("tests/compiler/test_dead_coercion_dirty_cone.cpp")
