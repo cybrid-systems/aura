@@ -127,6 +127,15 @@ int main() {
     aura::evo::log_reset_for_test();
     ::unsetenv("AURA_EVO_LOG");
 
+    // #5234: one shared escaper now feeds the evo log, reflect, the LSP
+    // writer and the LLM payload builder. Pin the control-character shape.
+    expect(aura::json::escape("a\tb") == "a\\tb", "shared escaper keeps a tab escaped");
+    std::string ctrl("a");
+    ctrl.push_back('\x01');
+    ctrl += "b";
+    expect(aura::json::escape(ctrl) == "a\\u0001b", "shared escaper escapes U+0001");
+    expect(aura::json::escape("q\"\\") == "q\\\"\\\\", "shared escaper quotes and slashes");
+
     using aura::core::resource_quota::Dimension;
     using aura::core::resource_quota::ResourceQuota;
     aura::core::resource_quota::set_quota_per_tenant_enabled_for_test(true);
