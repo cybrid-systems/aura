@@ -42,4 +42,22 @@
   (check (frames-ok?))
   (check= 1 (fiber:join (fiber:spawn (lambda () (if (frames-ok?) 1 0))))))
 
+; #5297: a long named-let that reads an outer parameter must keep THIS
+; call's value. The integer loop snapshots the capture once per call.
+; A copy shared across calls would make the second call, and every
+; fiber, return the first k.
+(define (w5297 k)
+  (let loop ((i 0) (s 0))
+    (if (>= i 1000) s (loop (+ i 1) (+ s k)))))
+
+(test-case "captured parameter stays per call under fibers" (hash "issue" 5297)
+  (check= 3000 (w5297 3))
+  (check= 5000 (w5297 5))
+  (define ids (list (fiber:spawn (lambda () (w5297 3)))
+                    (fiber:spawn (lambda () (w5297 5)))
+                    (fiber:spawn (lambda () (w5297 7)))))
+  (check= 3000 (fiber:join (car ids)))
+  (check= 5000 (fiber:join (car (cdr ids))))
+  (check= 7000 (fiber:join (car (cdr (cdr ids))))))
+
 (test-finish)
