@@ -1,6 +1,7 @@
 // @category: unit
 // @reason: Issue #2529 — Restricted single-tenant grant_epoch_retain K=16.
 //          Issue #3774 — MSE production session rows arm live_session_grants.
+//          Issue #5289 — live soft-auto-grant survives the retain window.
 //
 //   AC1: Restricted + no multi-tenant → K==16
 //   AC2: multi-tenant or Strict → still 64
@@ -227,6 +228,67 @@ int run_test_mse_session_live_grants_3774_member() {
     g_passed = 0;
     g_failed = 0;
     return run_test_mse_session_live_grants_3774();
+}
+
+// Issue #5289: --preset dev's soft-auto-grant is session posture.
+// Three child-workspace rebinds advance Mutation epoch past K=16
+// and used to drop io-read. A one-shot grant still expires.
+// Does not reset g_passed / g_failed — the batch member wrapper does.
+int run_test_soft_session_retain_5289() {
+    std::println("\n--- #5289: live soft session survives the retain window ---");
+    reset_all();
+    set_env("AURA_SANDBOX", "restricted");
+    apply_production_security_defaults();
+    set_mode(SandboxMode::Restricted);
+    bump_mutation_epoch();
+    const auto mid = current_mutation_epoch();
+    EffectProvenance prov;
+    prov.mutation_id = mid;
+    prov.epoch = mid;
+    prov.workspace_id = 0;
+    const auto bits = static_cast<Effect>(static_cast<std::uint16_t>(Effect::Mutate) |
+                                          static_cast<std::uint16_t>(Effect::Read) |
+                                          static_cast<std::uint16_t>(Effect::Write));
+    CHECK(g_capability_registry().begin_soft_session(0, /*workspace_id=*/0, bits, prov),
+          "5289: mint soft session");
+    EffectProvenance sticky;
+    sticky.mutation_id = mid;
+    sticky.epoch = mid;
+    CHECK(g_capability_registry().grant(0, "net", Effect::Network, sticky),
+          "5289: one-shot Network");
+    CHECK(has_effect(g_capability_registry().effects_effective_for(0), Effect::Read),
+          "5289: soft Read before retain");
+    CHECK(has_effect(g_capability_registry().effects_effective_for(0), Effect::Network),
+          "5289: one-shot Network before retain");
+    bump_mutation_epoch(100);
+    CHECK(g_capability_registry().grant_min_valid_epoch() > mid,
+          "5289: window moved past the mint");
+    CHECK(has_effect(g_capability_registry().effects_effective_for(0), Effect::Read),
+          "5289: soft Read survives retain");
+    CHECK(has_effect(g_capability_registry().effects_effective_for(0), Effect::Mutate),
+          "5289: soft Mutate survives retain");
+    CHECK(has_effect(g_capability_registry().effects_effective_for_locked(0, /*caller_mid=*/0),
+                     Effect::Read),
+          "5289: locked effective keeps soft Read");
+    CHECK(!has_effect(g_capability_registry().effects_effective_for(0), Effect::Network),
+          "5289: one-shot Network still expires");
+    EffectProvenance call;
+    call.mutation_id = mid;
+    call.epoch = current_mutation_epoch();
+    call.workspace_id = 0;
+    CHECK(g_capability_registry().provenance_ok(0, call, Effect::Read),
+          "5289: soft session is not retain-fenced");
+    CHECK(!g_capability_registry().provenance_ok(0, call, Effect::Network),
+          "5289: one-shot Network is still fenced");
+    g_capability_registry().revoke(0, aura::core::capability::kSoftAutoGrantName,
+                                   current_mutation_epoch());
+    CHECK(!has_effect(g_capability_registry().effects_effective_for(0), Effect::Read),
+          "5289: explicit revoke drops Read");
+    CHECK(!has_effect(g_capability_registry().effects_effective_for(0), Effect::Mutate),
+          "5289: explicit revoke drops Mutate");
+    CHECK(read_file("src/core/capability_model.hh").find("Issue #5289") != std::string::npos,
+          "5289: registry cites the exemption");
+    return g_failed ? 1 : 0;
 }
 
 int run_test_grant_epoch_retain_restricted() {
@@ -490,6 +552,11 @@ int run_test_grant_epoch_retain_restricted() {
               "3721: production mid=0 refuse before any write");
     }
 
+
+    // Issue #5289 lives in run_test_soft_session_retain_5289 (batch member).
+    // The full #2529 body stays available for a standalone binary; the
+    // capability batch skips this function and calls the slice directly.
+    (void)run_test_soft_session_retain_5289();
 
     // #3774 ACs live in run_test_mse_session_live_grants_3774 (batch member).
     (void)run_test_mse_session_live_grants_3774();

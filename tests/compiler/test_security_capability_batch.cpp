@@ -46,6 +46,7 @@ extern int run_test_grant_bound_mid_force();
 extern int run_test_grant_epoch_fiber_bind();
 extern int run_test_grant_epoch_invalidation();
 extern int run_test_grant_epoch_retain_restricted();
+extern int run_test_soft_session_retain_5289();
 extern int run_test_grant_epoch_retain_window();
 extern int run_test_grant_macro_self_evo_stamp();
 extern int run_test_hard_fiber_isolation();
@@ -91,7 +92,7 @@ int main() {
     using aura::test::g_passed;
     int members_failed = 0;
     int members_passed = 0;
-    std::println("=== test_security_capability_batch (41 members) ===");
+    std::println("=== test_security_capability_batch (50 members) ===");
 
     std::println("\n──── test_audit_mid_fallback_slo ────");
     reset_member_face();
@@ -211,6 +212,20 @@ int main() {
     CHECK(true, "skip leftover retain-restricted Full AC");
     ++members_passed;
     std::println("OK member test_grant_epoch_retain_restricted (skip leftover AC)");
+
+    // Issue #5289: the full retain AC stays skipped. This slice is the
+    // live soft-auto-grant, which child rebind used to age out of K.
+    std::println("\n──── test_soft_session_retain_5289 ────");
+    reset_member_face();
+    g_passed = 0;
+    g_failed = 0;
+    if (run_test_soft_session_retain_5289() != 0 || g_failed != 0) {
+        ++members_failed;
+        std::println("FAIL member test_soft_session_retain_5289 ({}/{})", g_passed, g_failed);
+    } else {
+        ++members_passed;
+        std::println("OK member test_soft_session_retain_5289 ({} checks)", g_passed);
+    }
 
     std::println("\n──── test_mse_session_live_grants_3774 ────");
     reset_member_face();

@@ -1585,6 +1585,10 @@ struct CapabilityRegistry {
     // (the retain fence that provenance_ok already applies). Soft/Off:
     // min_valid==0 and sandbox Off → identical to effects_for (no extra
     // retain load). require_effect stays effects_for + provenance_ok.
+    // Issue #5289: the live soft-auto-grant is the session posture
+    // (--preset dev). Child-workspace rebind advances Mutation epoch
+    // without rearming that row, and this fence used to drop io-read
+    // after three evo:trial cycles. Explicit revoke still clears it.
     [[nodiscard]] Effect effects_effective_for(TenantId tenant) const {
         Effect acc = Effect::None;
         auto it = by_tenant.find(tenant);
@@ -1600,7 +1604,9 @@ struct CapabilityRegistry {
             if (g.revoked || g.stolen)
                 continue;
             // Issue #3876: retain-expired grants do not contribute posture bits.
-            if (g.grant_epoch != 0 && min_valid != 0 && g.grant_epoch < min_valid)
+            // Issue #5289: the live soft session is not a one-shot grant.
+            if (g.grant_epoch != 0 && min_valid != 0 && g.grant_epoch < min_valid &&
+                !(g.soft_session && soft_session_active_))
                 continue;
             acc = acc | g.effects;
             if (mode != EffectSandboxMode::Off) {
@@ -1655,7 +1661,9 @@ struct CapabilityRegistry {
         for (const auto& g : it->second) {
             if (g.revoked || g.stolen)
                 continue;
-            if (g.grant_epoch != 0 && min_valid != 0 && g.grant_epoch < min_valid)
+            // Issue #5289: same soft-session exemption as effects_effective_for.
+            if (g.grant_epoch != 0 && min_valid != 0 && g.grant_epoch < min_valid &&
+                !(g.soft_session && soft_session_active_))
                 continue;
             // Issue #4038: epoch-0 cannot cycle the retain window on the hard face.
             if (min_valid != 0 && hard_fiber && g.grant_epoch == 0)
@@ -1823,7 +1831,9 @@ struct CapabilityRegistry {
                     1, std::memory_order_relaxed);
                 return false;
             }
-            if (g.grant_epoch != 0 && min_valid != 0 && g.grant_epoch < min_valid) {
+            // Issue #5289: a live soft session stays inside the window.
+            if (g.grant_epoch != 0 && min_valid != 0 && g.grant_epoch < min_valid &&
+                !(g.soft_session && soft_session_active_)) {
                 g_capability_effect_metrics().capability_epoch_fence_hit_total.fetch_add(
                     1, std::memory_order_relaxed);
                 return false;
@@ -1900,7 +1910,9 @@ struct CapabilityRegistry {
                     1, std::memory_order_relaxed);
                 return false;
             }
-            if (g.grant_epoch != 0 && min_valid != 0 && g.grant_epoch < min_valid) {
+            // Issue #5289: locked twin — live soft session is not retain-fenced.
+            if (g.grant_epoch != 0 && min_valid != 0 && g.grant_epoch < min_valid &&
+                !(g.soft_session && soft_session_active_)) {
                 g_capability_effect_metrics().capability_epoch_fence_hit_total.fetch_add(
                     1, std::memory_order_relaxed);
                 return false;
