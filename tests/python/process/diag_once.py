@@ -66,6 +66,21 @@ class ReportedOnceWithLocation(unittest.TestCase):
     def test_displayed_error_in_body_located(self) -> None:
         self.check("(define (g) (display (car 5)) 7)\n(display (g))\n", "not a pair", "1:23")
 
+    def test_pair_error_kind_same_in_display_and_define(self) -> None:
+        # Issue #5241: one error, one category. Before, the display face
+        # printed the bare cause while the define face printed it as a
+        # type error.
+        for mode, extra in MODES.items():
+            with self.subTest(mode=mode):
+                shown = run("(display (car 5))\n", extra)
+                lines = [ln for ln in shown.stderr.splitlines() if "car: not a pair" in ln]
+                self.assertEqual(len(lines), 1, shown.stderr)
+                self.assertIn("error: p.aura:1:11: type error: car: not a pair", lines[0])
+                wrapped = run("(define r (car 5))\n(display r)\n", extra)
+                lines = [ln for ln in wrapped.stderr.splitlines() if "car: not a pair" in ln]
+                self.assertEqual(len(lines), 1, wrapped.stderr)
+                self.assertIn("type error: car: not a pair", lines[0])
+
 
 if __name__ == "__main__":
     unittest.main()

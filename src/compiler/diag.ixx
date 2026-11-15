@@ -382,6 +382,22 @@ export struct Diagnostic {
         return kind;
     }
 
+    // Issue #5241: the "kind: message" head, shared by the located
+    // diagnostic line and the bare display/write error line so one error
+    // carries one category prefix on every face. The kind comes from the
+    // structured classification (display_kind), not from the message text.
+    std::string format_head() const {
+        const auto shown = display_kind();
+        std::string out(kind_name(shown));
+        if (shown == ErrorKind::EffectDenied && message.starts_with("effect-denied: "))
+            out += ": " + message.substr(std::string_view("effect-denied: ").size());
+        else if (shown == ErrorKind::MutationRefused)
+            out += ": " + message.substr(std::string_view("naked mutate: ").size());
+        else
+            out += ": " + message;
+        return out;
+    }
+
     std::string format() const {
         std::string out;
         if (location.valid())
@@ -390,13 +406,7 @@ export struct Diagnostic {
             out += std::format("node[{}]: ", node_id);
 
         const auto shown = display_kind();
-        out += std::string(kind_name(shown));
-        if (shown == ErrorKind::EffectDenied && message.starts_with("effect-denied: "))
-            out += ": " + message.substr(std::string_view("effect-denied: ").size());
-        else if (shown == ErrorKind::MutationRefused)
-            out += ": " + message.substr(std::string_view("naked mutate: ").size());
-        else
-            out += ": " + message;
+        out += format_head();
 
         // Blame info (design §6.3)
         if (blame) {
