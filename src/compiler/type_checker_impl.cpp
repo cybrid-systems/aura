@@ -7077,9 +7077,10 @@ std::optional<TypeId> InferenceEngine::synthesize_flat_call_arith(FlatAST& flat,
     // Issue #4762: a string LITERAL operand of a numeric primitive can never
     // succeed — the runtime raises "expected Int, got String" (#4735) — so it
     // is a type error in every face, not only the production hard face. Only
-    // the literal node is inspected (no synthesis), so a comparison still
-    // takes the generic call path below and nothing is reported twice. A
-    // Dynamic / unknown operand keeps the gradual escape.
+    // the literal node is inspected (no synthesis), so nothing is reported
+    // twice. A Dynamic / unknown operand keeps the gradual escape. A
+    // comparison whose binding is still the primitive then takes the #5303
+    // peel below; a shadowed name falls through to the generic call.
     const bool is_arith = is_arith_prim_name(fname);
     // The production hard face already rejects every ground non-numeric
     // arith operand below (#4107, "incompatible ground types"); keep that
@@ -7103,6 +7104,50 @@ std::optional<TypeId> InferenceEngine::synthesize_flat_call_arith(FlatAST& flat,
                              .with_blame(BlameInfo{BlameParty::Implicit, "", "compile"})
                              .with_suggestion("use a numeric literal (or string->number)"));
             return is_arith ? reg_.void_type() : reg_.bool_type();
+        }
+    }
+    // Issue #5303: `=` `<` `>` `<=` `>=` are numeric-only at runtime, but the
+    // primitive table types them as {Dynamic, Dynamic} -> Bool. The generic
+    // call unifies a type-variable operand with that Dynamic parameter, which
+    // binds the variable to Any. A branch that returns the same parameter then
+    // joins Int with Any and the production rebind gate fail-closes. Peel only
+    // that primitive: synthesize every operand (the runtime form is variadic,
+    // so a free name past the registered pair is still visited) and return
+    // Bool, without unifying a variable operand with Dynamic.
+    //
+    // Do not bind the variable to Int or Float either. A ground binding emits
+    // a checked CastOp at the operand, and two such rebinds in one process arm
+    // the production density streak (#3699, threshold 2) so the next rebind is
+    // rejected even though its join is fine. An unbound variable joined with
+    // the integer branch takes the #5300 remembered-scalar path instead.
+    // A shadowed or user `=` whose binding is not this {Dynamic…}->Bool
+    // primitive keeps the generic path. A non-numeric ground operand is not a
+    // new rejection (a string literal already returned above).
+    if (!is_arith && is_numeric_cmp_prim_name(fname)) {
+        const auto bound = env_.lookup(std::string(fname));
+        std::vector<TypeId> prim_args;
+        TypeId prim_ret{};
+        if (bound.valid()) {
+            // Copy before synthesis. register_func can reallocate and
+            // invalidate a func_of pointer.
+            if (const auto* prim = reg_.func_of(cs_.find(bound))) {
+                prim_args = prim->args;
+                prim_ret = prim->ret;
+            }
+        }
+        bool dyn_bool = !prim_args.empty() && cs_.find(prim_ret) == reg_.bool_type();
+        for (auto arg : prim_args) {
+            if (cs_.find(arg) != reg_.dynamic_type())
+                dyn_bool = false;
+        }
+        if (dyn_bool) {
+            for (std::size_t i = 1; i < v.children.size(); ++i) {
+                const auto aid = v.child(i);
+                if (aid == NULL_NODE || aid >= flat.size())
+                    continue;
+                (void)synthesize_flat(flat, pool, aid, flat.get(aid));
+            }
+            return reg_.bool_type();
         }
     }
     if (!is_arith)

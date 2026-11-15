@@ -230,6 +230,94 @@ static void rebind_int_param_join_5300() {
           output);
 }
 
+// Issue #5303: comparing the returned parameter with = / > / <= / >= must
+// not bind it to Any, so the production rebind gate accepts the integer
+// join. Several of those rebinds in one process must all commit: binding
+// the parameter to a ground leaves a CastOp and the density streak rejects
+// the next one. A same-file helper that compares its own parameter must
+// not push Any back onto the caller. Int joined with String still fails
+// and names both grounds.
+static void rebind_cmp_param_join_5303() {
+    const auto binary = aura_sibling_binary();
+    CHECK(!binary.empty(), "5303 aura binary");
+    if (binary.empty())
+        return;
+    const char* path = "/tmp/aura-5303-rebind.aura";
+    {
+        std::ofstream script(path);
+        script << R"aura((require "std/mutate" all:)
+(define (rule-switch t i prev a b c d e) (if (> t 0) 1 0))
+(set-code "(define (f x prev) 0)")
+(eval-current)
+(define (try-g label s)
+  (let ((r (mutate :rebind "f" s "t")))
+    (display (if (eq? r #t) "OK   " "FAIL "))
+    (display label)
+    (newline)
+    (when (not (eq? r #t))
+      (display "     ") (write r) (newline))))
+(try-g "eq-prev" "(define (f x prev) (if (= prev 1) 1 prev))")
+(display (f 0 1)) (newline)
+(display (f 0 4)) (newline)
+(try-g "gt-prev" "(define (f x prev) (if (> prev 0) 1 prev))")
+(try-g "lt-prev" "(define (f x prev) (if (< prev 0) 1 prev))")
+(try-g "le-prev" "(define (f x prev) (if (<= prev 0) 1 prev))")
+(try-g "ge-prev" "(define (f x prev) (if (>= prev 0) 1 prev))")
+(try-g "cond-prev" "(define (f x prev) (cond ((= prev 1) 1) ((> x 1) -1) (else prev)))")
+(display (f 2 1)) (newline)
+(display (f 2 3)) (newline)
+(display (f 0 3)) (newline)
+(try-g "nested-cond" "(define (f x prev) (cond ((= prev 1) (cond ((> x 1) 1) (else 0))) (else prev)))")
+(try-g "both-var" "(define (f x prev) (if (= prev x) 1 prev))")
+(display (f 3 3)) (newline)
+(display (f 3 4)) (newline)
+(try-g "eq-float" "(define (f x prev) (if (= prev 1.5) 1 prev))")
+(try-g "eq-chain" "(define (f x prev) (if (= 1 prev 1.5) 1 prev))")
+(try-g "helper" "(define (f t i prev) (let ((rule-switch (lambda (t i p a b c d e) (if (= p 1) 1 0)))) (let ((signal (rule-switch t i prev 7 3.84 2 10 1))) (cond ((and (= signal 1) (> t 0)) 1) (else prev)))))")
+(display (f 2 1 1)) (newline)
+(display (f 2 1 4)) (newline)
+(try-g "host-helper" "(define (f t i prev) (let ((signal (rule-switch t i prev 7 3.84 2 10 1))) (cond ((and (= signal 1) (> t 0)) 1) (else prev))))")
+(display (f 2 1 9)) (newline)
+(display (f 0 1 9)) (newline)
+(try-g "grounds" "(define (f x prev) (if (= prev 1) 1 \"a\"))")
+)aura";
+    }
+    const std::string command = "timeout 30 env -u AURA_SANDBOX -u AURA_HOT_HARDEN '" + binary +
+                                "' --preset dev --quiet '" + path +
+                                "' > /tmp/aura-5303-out.txt 2> /tmp/aura-5303-err.txt";
+    const int status = std::system(command.c_str());
+    std::ifstream out_file("/tmp/aura-5303-out.txt");
+    const std::string output((std::istreambuf_iterator<char>(out_file)), {});
+    std::ifstream err_file("/tmp/aura-5303-err.txt");
+    const std::string error((std::istreambuf_iterator<char>(err_file)), {});
+    const bool clean_exit = status >= 0 && WIFEXITED(status) && WEXITSTATUS(status) == 0;
+    CHECK(clean_exit, "5303 cli exit");
+    CHECK(error.find("SIGABRT") == std::string::npos &&
+              error.find("AURA CRASH") == std::string::npos,
+          "5303 cli did not crash");
+    CHECK(output.find("FAIL") == std::string::npos ||
+              output.find("FAIL grounds") != std::string::npos,
+          output);
+    for (const char* label :
+         {"eq-prev", "gt-prev", "lt-prev", "le-prev", "ge-prev", "cond-prev", "nested-cond",
+          "both-var", "eq-float", "eq-chain", "helper", "host-helper"}) {
+        CHECK(output.find(std::string("OK   ") + label) != std::string::npos, label);
+    }
+    CHECK(output.find("OK   eq-prev\n1\n4\nOK   gt-prev\n") != std::string::npos,
+          "5303 eq-prev runtime");
+    CHECK(output.find("OK   cond-prev\n1\n-1\n3\nOK   nested-cond\n") != std::string::npos,
+          "5303 cond-prev runtime");
+    CHECK(output.find("OK   both-var\n1\n4\nOK   eq-float\n") != std::string::npos,
+          "5303 both-var runtime");
+    CHECK(output.find("OK   helper\n1\n4\nOK   host-helper\n1\n9\nFAIL grounds\n") !=
+              std::string::npos,
+          "5303 helper runtime");
+    CHECK(output.find("FAIL grounds") != std::string::npos, "5303 distinct grounds still fail");
+    CHECK(output.find("incompatible ground types") != std::string::npos, output);
+    CHECK(output.find("Int") != std::string::npos && output.find("String") != std::string::npos,
+          output);
+}
+
 // Issue #4557: register_* dedup goes through an intern index instead of a
 // linear scan. Identity must not change: structurally equal types return
 // the first-registered TypeId, distinct ones stay distinct, and compact()
@@ -1535,6 +1623,7 @@ int run_test_mutate_type_gate() {
 
     rejection_leaves_sibling_callable_5280();
     rebind_int_param_join_5300();
+    rebind_cmp_param_join_5303();
 
     reset_for_test();
     std::println("=== #2219 + #2279 done: {} passed, {} failed ===", g_passed, g_failed);
