@@ -28,6 +28,7 @@ module;
 #include "compiler/user_arity.hh"          // Issue #4467: call-site procedure arity
 #include "compiler/locked_string_heap.hh" // Issue #4608: the IR reads strings from the evaluator heap
 #include "compiler/ir_inflight_roots.hh" // Issue #4617: IR frame roots for the TW reclaim
+#include "codec_inflight_roots.hh"       // Issue #5294: defer marks during a codec decode
 #include "hash_meta.h"                   // FNV constants (#901)
 // Issue #4568: this TU owns the feedback row map. The macro must be
 // set before the include so the definition arrives via the header
@@ -3714,6 +3715,11 @@ void IRInterpreter::maybe_reclaim_unreachable() {
     const auto trigger = ev->file_heap_allocs_trigger();
     if (allocs_since_reclaim_ < kFileReclaimAllocs &&
         ev->file_heap_allocs_since_reclaim() < trigger)
+        return;
+    // Issue #5294: a channel payload decode is building a value in a C++
+    // frame; its mints charged that window. Defer to the next allocation
+    // outside the decode (see codec_inflight_roots.hh).
+    if (codec_inflight_roots::active())
         return;
     (void)reclaim_unreachable_now();
 }

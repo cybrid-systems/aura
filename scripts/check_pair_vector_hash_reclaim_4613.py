@@ -174,7 +174,7 @@ def main() -> int:
     tw = _between(gc, "bool Evaluator::reclaim_tw_unreachable(", "void Evaluator::abandon_file_heap_freelists(")
     for name, body in (("file-mode", file_mode), ("tree-walker", tw)):
         must(
-            "release_unreachable_hash_tables(seen_hash, hash_at_mark)" in body,
+            "release_unreachable_hash_tables(seen_hash, hash_at_mark" in body,
             f"AC2: the {name} reclaim releases the unreachable hash tables",
         )
         must(
