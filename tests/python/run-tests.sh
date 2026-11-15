@@ -781,7 +781,9 @@ run_test "diag:parse-error-multiline" "$(printf '#|whoops')" "error: 1:1: parse 
 run_test "diag:parse-error-badsyntax" "$(printf '#bad')" "error: 1:1: parse error: invalid character '#'   |  1 | #bad   | ^^^^"
 
 # Type checker: unbound variable with suggestion
-run_typecheck_test "diag:typecheck-suggest" "(undef 5)" "type: Any1:2: unbound variable: undef  did you mean 'and'?"
+# Issue #5235: undef is three edits from and; the threshold keeps a real
+# near-miss, andd, as the useful suggestion.
+run_typecheck_test "diag:typecheck-suggest" "(andd 5)" "type: Any1:2: unbound variable: andd  did you mean 'and'?"
 
 run_typecheck_test "diag:typecheck-ok" "(+ 1 2)" "type: Intno errors"
 
