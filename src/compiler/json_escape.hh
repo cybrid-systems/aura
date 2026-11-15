@@ -13,10 +13,10 @@
 namespace aura::json {
 
 // Append the escaped body of a JSON string (no surrounding quotes).
-inline void escape_into(std::string& out, std::string_view s) {
-    static constexpr char kHex[] = "0123456789abcdef";
-    for (const unsigned char c : s) {
-        switch (c) {
+inline void escape_into(std::string& out, std::string_view text) {
+    static constexpr std::string_view kHex = "0123456789abcdef";
+    for (const unsigned char code : text) {
+        switch (code) {
             case '"':
                 out += "\\\"";
                 break;
@@ -33,21 +33,22 @@ inline void escape_into(std::string& out, std::string_view s) {
                 out += "\\t";
                 break;
             default:
-                if (c < 0x20) {
+                if (code < 0x20) {
+                    const auto byte = static_cast<unsigned>(code);
                     out += "\\u00";
-                    out += kHex[(c >> 4) & 0xf];
-                    out += kHex[c & 0xf];
+                    out += kHex[(byte >> 4u) & 0xfu];
+                    out += kHex[byte & 0xfu];
                 } else {
-                    out.push_back(static_cast<char>(c));
+                    out.push_back(static_cast<char>(code));
                 }
         }
     }
 }
 
-inline std::string escape(std::string_view s) {
+inline std::string escape(std::string_view text) {
     std::string out;
-    out.reserve(s.size() + 8);
-    escape_into(out, s);
+    out.reserve(text.size() + 8);
+    escape_into(out, text);
     return out;
 }
 
