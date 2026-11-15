@@ -3395,22 +3395,24 @@ int main() {
             }
 
             // AC2: genuinely unbound rep — nothing unifies x, so the
-            // normalized ids are still variables and the join stays
-            // gradual Dynamic (the gate must not over-fire).
+            // normalized ids are still variables. The join stays a type
+            // variable (#5300), not Dynamic: Dynamic made the next integer
+            // branch look like a ground and fail the production gate.
+            // The gate must not over-fire on this single join.
             {
                 ProdScope prod;
                 TypeRegistry treg;
                 auto r = infer_src("(lambda (x) (if #t x 1))", treg);
                 const auto* ft = treg.func_of(r.ty);
-                if (!r.saw_gate_te && !r.saw_any_te && ft && ft->ret == treg.dynamic_type()) {
+                if (!r.saw_gate_te && !r.saw_any_te && ft && treg.is_var(ft->ret)) {
                     ++ts_passed;
-                    std::println("TS OK: ac4515_2_unbound_rep_join_stays_dynamic");
+                    std::println("TS OK: ac4515_2_unbound_rep_join_stays_variable");
                 } else {
                     ++ts_failed;
                     std::println(
                         std::cerr,
-                        "TS FAIL: ac4515_2_unbound_rep_join_stays_dynamic te={} ft={} dyn={}",
-                        r.saw_gate_te, ft != nullptr, ft ? ft->ret == treg.dynamic_type() : false);
+                        "TS FAIL: ac4515_2_unbound_rep_join_stays_variable te={} ft={} var={}",
+                        r.saw_gate_te, ft != nullptr, ft ? treg.is_var(ft->ret) : false);
                 }
             }
 
@@ -3567,21 +3569,56 @@ int main() {
             }
 
             // AC4: #4515 stays landed — an unbound union-find rep joined
-            // with a ground is still gradual Dynamic with no TypeError.
+            // with a ground is still a gradual variable with no TypeError
+            // (#5300). It is not collapsed to a ground and not rejected.
             {
                 ProdScope prod;
                 TypeRegistry treg;
                 auto r = infer_src("(lambda (x) (if #t x 1))", treg);
                 const auto* ft = treg.func_of(r.ty);
-                if (!r.saw_any_te && ft && ft->ret == treg.dynamic_type()) {
+                if (!r.saw_any_te && ft && treg.is_var(ft->ret)) {
                     ++ts_passed;
-                    std::println("TS OK: ac4684_4_4515_unbound_rep_stays_dynamic");
+                    std::println("TS OK: ac4684_4_4515_unbound_rep_stays_variable");
                 } else {
                     ++ts_failed;
                     std::println(
                         std::cerr,
-                        "TS FAIL: ac4684_4_4515_unbound_rep_stays_dynamic te={} ft={} dyn={}",
-                        r.saw_any_te, ft != nullptr, ft ? ft->ret == treg.dynamic_type() : false);
+                        "TS FAIL: ac4684_4_4515_unbound_rep_stays_variable te={} ft={} var={}",
+                        r.saw_any_te, ft != nullptr, ft ? treg.is_var(ft->ret) : false);
+                }
+            }
+
+            // Issue #5300: two integer branches plus a parameter are the
+            // parameter type joined with an integer. A different ground
+            // on the inner branch still names the join and demotes authority.
+            {
+                ProdScope prod;
+                TypeRegistry treg;
+                auto ok = infer_src("(lambda (x prev) (if (> x 1) 1 (if (< x 0) -1 prev)))", treg);
+                const auto* ft = treg.func_of(ok.ty);
+                if (!ok.saw_any_te && ft && treg.is_var(ft->ret)) {
+                    ++ts_passed;
+                    std::println("TS OK: ac5300_1_two_int_branches_plus_param");
+                } else {
+                    ++ts_failed;
+                    std::println(std::cerr,
+                                 "TS FAIL: ac5300_1_two_int_branches_plus_param te={} ft={} var={}",
+                                 ok.saw_any_te, ft != nullptr, ft ? treg.is_var(ft->ret) : false);
+                }
+            }
+            {
+                ProdScope prod;
+                TypeRegistry treg;
+                auto bad =
+                    infer_src("(lambda (x prev) (if (> x 1) 1 (if (< x 0) \"a\" prev)))", treg);
+                if (bad.saw_gate_te) {
+                    ++ts_passed;
+                    std::println("TS OK: ac5300_2_int_and_string_param_still_gated");
+                } else {
+                    ++ts_failed;
+                    std::println(std::cerr,
+                                 "TS FAIL: ac5300_2_int_and_string_param_still_gated te={}",
+                                 bad.saw_gate_te);
                 }
             }
 

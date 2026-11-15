@@ -534,8 +534,31 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
                 aura::compiler::typed_audit::production_defaults_active()) {
                 commit_cs_live_ = false;
                 clear_type_export_authority();
-                last_mutate_error_ =
+                // Issue #5300: the prefix stays so existing checks still
+                // match. A real conflict names the join (or the solver
+                // constraint) instead of only saying the delta was not SOLVED.
+                std::string msg =
                     "typecheck after mutate: solve_delta not SOLVED (production fail-closed)";
+                std::string detail;
+                for (const auto& d : diag.diagnostics()) {
+                    if (d.kind != aura::diag::ErrorKind::TypeError)
+                        continue;
+                    const bool names_constraint =
+                        d.message.find("incompatible ground types") != std::string::npos ||
+                        d.message.find("type constraint") != std::string::npos;
+                    if (!detail.empty() && !names_constraint)
+                        continue;
+                    detail = d.message;
+                    if (d.location.valid())
+                        detail += " at " + d.location.format();
+                    if (names_constraint)
+                        break;
+                }
+                if (!detail.empty()) {
+                    msg += ": ";
+                    msg += detail;
+                }
+                last_mutate_error_ = std::move(msg);
                 // Issue #3700: Quote-inner TypeError / not-SOLVED must
                 // flip last_type_solve_solved so query:type is not green.
                 note_infer_solve_solved(false);

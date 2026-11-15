@@ -333,6 +333,14 @@ public:
     void bind(std::string name, aura::core::TypeId type);
     aura::core::TypeId lookup(const std::string& name);
     bool is_bound(const std::string& name) const;
+    // Issue #5300: true only for a name the host fallback answers. A scope
+    // or primitive-base binding wins, so a parameter that shadows a host
+    // helper is not treated as that helper.
+    bool is_host_fallback_name(const std::string& name) const;
+    // Issue #5300: true when a push_scope frame (parameter or let) binds
+    // the name. The constructor frame is the host-seed scope and does not
+    // count; a shadow there keeps the parameter's own type.
+    bool bound_in_inner_scope(const std::string& name) const;
     void collect_names(std::vector<std::string>& out) const;
     // Issue #4557: outermost-scope bindings (name, bound type), for the
     // shared primitive-environment cache. Replayed through bind().
@@ -1947,6 +1955,11 @@ export class InferenceEngine {
     // (rebuilt only when the host names change). Non-null => seed installs
     // a TypeEnv fallback instead of binding every name.
     std::shared_ptr<const TypeEnv::HostNameSet> host_name_set_;
+    // Issue #5300: names the vector seed actually bound as Dynamic in the
+    // outermost scope. The full recheck does not install host_fallback_,
+    // so a call of one of these is an unknown host helper, not a proven
+    // Any. An inner binding is excluded at the call site.
+    TypeEnv::HostNameSet seeded_host_dyn_;
 
     // ADT constructors are looked up via TypeRegistry::get_adt_constructors()
 
@@ -2351,6 +2364,12 @@ public:
     // IfExpr arm consumes this to stamp the node error and leave the
     // join uncached/dirty instead of clear_dirty'ing a solved Void.
     bool last_join_gate_error_ = false;
+    // Issue #5300: a variable joined with a scalar ground remembers that
+    // ground (keyed by the fresh var's TypeId index). The next branch can
+    // join the same ground without publishing Dynamic — Dynamic made the
+    // following integer branch look like Dynamic~Int and trip the #4684
+    // gate. A different ground still fails that gate.
+    std::unordered_map<std::uint32_t, aura::core::TypeTag> join_ground_;
 
     // Issue #281: per-condition memoization for analyze_predicate_flat.
     // Keyed by cond NodeId + the epoch at which the predicate was
