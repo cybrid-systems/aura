@@ -207,28 +207,28 @@
     "code": "x",
     "pipeline": "eval",
     "expected_err": "unbound variable",
-    "expected_status": 1
+    "expected_status": 4
   },
   {
     "name": "err_unbound_arg",
     "code": "(display notexist)",
     "pipeline": "eval",
     "expected_err": "unbound variable",
-    "expected_status": 1
+    "expected_status": 4
   },
   {
     "name": "err_unbound_arg2",
     "code": "(+ notexist 1)",
     "pipeline": "eval",
     "expected_err": "unbound variable",
-    "expected_status": 1
+    "expected_status": 4
   },
   {
     "name": "err_unbound_var",
     "code": "nonexistent",
     "pipeline": "eval",
     "expected_err": "unbound variable",
-    "expected_status": 1
+    "expected_status": 4
   },
   {
     "name": "serve_define",
