@@ -2,6 +2,9 @@
 # Build trees — catch all variants: build/, build-gcc/, build-gcc16/, build-mac/,
 # build_asan, build_ubsan, build_o0/, build_dbg/, build_debug, build_gdb/, etc.
 build*/
+# Issue #5246: tools/build/ is the build CLI package, not a build tree.
+!tools/build/
+!tools/build/**
 /build_rel/
 gcm.cache/
 # C++26
