@@ -771,6 +771,89 @@ static void ac5282_discarded_trial_keeps_inline() {
     CHECK(flat.find("Issue #5282") != std::string::npos, "5282: cite");
 }
 
+// Issue #5308: a non-tail range inside a map/filter/foldl callback used
+// to die at the tree-walker's 512 C-stack frames and report a type error,
+// while the same function at top level resumed onto the IR heap. The
+// result must not depend on calling the function at top level first.
+static void ac5308_hof_callback_recursion() {
+    std::println("\n--- #5308: map callback recursion matches top level ---");
+    const auto bin = aura_binary_4466();
+    CHECK(!bin.empty(), "5308: aura binary");
+    if (bin.empty())
+        return;
+    const char* src = "/tmp/aura-5308.aura";
+    auto run = [&](const std::string& body, const std::string& env) {
+        {
+            std::ofstream out(src);
+            out << body;
+        }
+        return run_file_4466(bin, src, env);
+    };
+    const char* defs = "(define (range-list a b)"
+                       " (if (>= a b) (list) (cons a (range-list (+ a 1) b))))\n"
+                       "(define (inner p) (length (range-list 0 520)))\n";
+    {
+        auto r = run(std::string(defs) + "(display (map (lambda (p) (inner p)) (list 1)))\n"
+                                         "(newline)\n",
+                     "");
+        CHECK(r.rc == 0, "5308: map exits 0");
+        CHECK(r.out.find("(520)") != std::string::npos, "5308: map prints (520)");
+        CHECK(r.err.find("type error") == std::string::npos, "5308: map is not a type error");
+        CHECK(r.err.find("recursion depth") == std::string::npos, "5308: map does not hit 512");
+    }
+    {
+        auto r = run(std::string(defs) + "(define (go) (map (lambda (p) (inner p)) (list 1)))\n"
+                                         "(display (go))\n(newline)\n",
+                     "");
+        CHECK(r.rc == 0, "5308: nested exits 0");
+        CHECK(r.out.find("(520)") != std::string::npos, "5308: nested prints (520)");
+    }
+    {
+        auto r = run(std::string(defs) +
+                         "(display (filter (lambda (p) (= (inner p) 520)) (list 1)))\n(newline)\n",
+                     "");
+        CHECK(r.rc == 0, "5308: filter exits 0");
+        CHECK(r.out.find("(1)") != std::string::npos, "5308: filter keeps the element");
+    }
+    {
+        // foldl calls (fn acc element). The sum is the length, 520.
+        auto r = run(std::string(defs) +
+                         "(display (foldl (lambda (acc p) (+ acc (inner p))) 0 (list 1)))\n"
+                         "(newline)\n",
+                     "");
+        CHECK(r.rc == 0, "5308: foldl exits 0");
+        CHECK(r.out.find("520\n") != std::string::npos, "5308: foldl sums 520");
+        CHECK(r.out.find("521") == std::string::npos, "5308: foldl is not off by one");
+    }
+    {
+        auto r = run("(display (map (lambda (p) (car p)) (list 1)))\n(newline)\n", "");
+        CHECK(r.rc != 0, "5308: a real type error still fails");
+        CHECK(r.err.find("type error") != std::string::npos, "5308: car stays a type error");
+        CHECK(r.err.find("recursion depth") == std::string::npos,
+              "5308: car is not a depth resume");
+    }
+    {
+        auto r = run(std::string(defs) + "(display (length (range-list 0 600)))\n(newline)\n"
+                                         "(display (map (lambda (p) (inner p)) (list 1)))\n"
+                                         "(newline)\n",
+                     "");
+        CHECK(r.rc == 0, "5308: warm path exits 0");
+        CHECK(r.out.find("600") != std::string::npos, "5308: warm top-level 600");
+        CHECK(r.out.find("(520)") != std::string::npos, "5308: warm map still 520");
+    }
+    {
+        auto r = run(std::string(defs) + "(display (map (lambda (p) (inner p)) (list 1)))\n"
+                                         "(newline)\n",
+                     "AURA_IR_MAX_CALL_DEPTH=50");
+        CHECK(r.rc != 0, "5308: a real IR cap still fails");
+        CHECK(r.err.find("recursion depth exceeded") != std::string::npos,
+              "5308: cap names the stack limit");
+        CHECK(r.err.find("type error") == std::string::npos, "5308: cap is not a type error");
+        CHECK(r.err.find("arity mismatch") == std::string::npos,
+              "5308: cap is not an arity mismatch");
+    }
+}
+
 } // namespace
 
 int run_test_while_define_oneshot() {
@@ -786,6 +869,7 @@ int run_test_while_define_oneshot() {
     ac4690_closure_while_keeps_diagnostic();
     ac5281_foreach_set_after_set_code();
     ac5282_discarded_trial_keeps_inline();
+    ac5308_hof_callback_recursion();
     std::println("\n=== #2571: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

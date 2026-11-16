@@ -2061,10 +2061,20 @@ namespace {
     }
 
     // Common case is an empty park: one thread_local check, no name compare.
+    // Issue #5308: a map/filter/fold callback hits the walker C-stack guard
+    // and apply_closure turns that diagnostic into an error value so try can
+    // catch it. display then prints the value and the oneshot eval succeeds,
+    // so the file runner never resumes onto the IR heap the way a direct
+    // call of the same function does. Re-raise the walker's own diagnostic
+    // (kind, raw message, "fiber=") and let the file root stamp the form.
     EvalResult finish_prim_call(std::string_view name, EvalValue value) {
         if (!pending_apply_diagnostic)
             return value;
-        if (name == "while") {
+        const bool depth_5308 =
+            pending_apply_diagnostic->kind == aura::diag::ErrorKind::InternalError &&
+            pending_apply_diagnostic->message.starts_with("recursion depth exceeded") &&
+            pending_apply_diagnostic->message.find("fiber=") != std::string::npos;
+        if (name == "while" || depth_5308) {
             auto diag = std::move(*pending_apply_diagnostic);
             pending_apply_diagnostic.reset();
             return std::unexpected(std::move(diag));
@@ -2900,8 +2910,19 @@ Evaluator::apply_closure_eval_body(ClosureId cid, std::span<const EvalValue> arg
         // already propagates) so the caller propagates it and try can
         // catch it. The parked copy above still lets the #4690 while
         // face raise the diagnostic instead of returning the value.
-        const std::string diag_text = r.error().format();
+        // Issue #5308: format() prefixes the kind ("internal error: ")
+        // and a primitive error with no mark is a type error. A map /
+        // filter / fold callback then dies as
+        // "type error: internal error: recursion depth exceeded", and
+        // the file runner does not resume onto the IR heap the way a
+        // top-level call of the same function does. Keep the walker's
+        // kind and the raw message so that resume still matches.
+        const bool depth_5308 = r.error().kind == ErrorKind::InternalError &&
+                                r.error().message.starts_with("recursion depth exceeded");
+        const std::string diag_text = depth_5308 ? r.error().message : r.error().format();
         park_pending_apply_diagnostic(std::move(r.error()));
+        if (depth_5308)
+            return make_typed_error(diag_text, ErrorKind::InternalError);
         return primitives_detail::make_primitive_error(string_heap_, error_values_, diag_text,
                                                        primitive_error_counter_ptr());
     }
@@ -10472,9 +10493,15 @@ Evaluator::FlatStep Evaluator::eval_flat_on_closure(EvalFlatCursor& cur,
                     prefer_user_arity_call_name(*msg, p->resolve(callee.sym_id));
                 const auto line = v.line == 0 ? 1u : v.line;
                 const auto col = v.col == 0 ? 1u : v.col;
+                // Issue #5308: the IR depth guard parks its message on
+                // the arity channel because the define bridge drops the
+                // diagnostic. It is a stack limit, not an arity mismatch.
+                const auto kind = msg->starts_with("recursion depth exceeded")
+                                      ? ErrorKind::InternalError
+                                      : ErrorKind::ArityMismatch;
                 return FlatStep::ret(std::unexpected(Diagnostic{
-                    ErrorKind::ArityMismatch, std::move(*msg),
-                    aura::diag::SourceLocation{line, col, diag_fid_4916(f)}, current_id}));
+                    kind, std::move(*msg), aura::diag::SourceLocation{line, col, diag_fid_4916(f)},
+                    current_id}));
             }
             return FlatStep::ret(std::unexpected(
                 Diagnostic{ErrorKind::InvalidClosure, "eval_flat: foreign call failed"}));
@@ -10548,13 +10575,18 @@ Evaluator::FlatStep Evaluator::eval_flat_on_closure(EvalFlatCursor& cur,
                 // The IR define bridge drops call_closure's
                 // diagnostic. The parked text says "lambda"
                 // when the function was lowered unnamed.
+                // Issue #5308: a recursion-depth message on this
+                // channel is the IR stack limit, not a bad arity.
                 if (callee.tag == aura::ast::NodeTag::Variable)
                     prefer_user_arity_call_name(*msg, p->resolve(callee.sym_id));
                 const auto line = v.line == 0 ? 1u : v.line;
                 const auto col = v.col == 0 ? 1u : v.col;
+                const auto kind = msg->starts_with("recursion depth exceeded")
+                                      ? ErrorKind::InternalError
+                                      : ErrorKind::ArityMismatch;
                 return FlatStep::ret(std::unexpected(Diagnostic{
-                    ErrorKind::ArityMismatch, std::move(*msg),
-                    aura::diag::SourceLocation{line, col, diag_fid_4916(f)}, current_id}));
+                    kind, std::move(*msg), aura::diag::SourceLocation{line, col, diag_fid_4916(f)},
+                    current_id}));
             }
             return FlatStep::ret(std::unexpected(
                 Diagnostic{ErrorKind::InvalidClosure, "eval_flat: invalid closure"}));
