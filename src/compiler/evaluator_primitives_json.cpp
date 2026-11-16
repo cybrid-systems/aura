@@ -544,7 +544,8 @@ void RegSplitParts::register_json_evo_primitives(
     // appends one worldline record to AURA_EVO_LOG (see evo_log_4910.hh) so user
     // gates land in the same log as mutate:* / ast:restore. Evidence is any
     // json-encode-able value (hash / list / number / string). Returns the
-    // record id, or #f when the log is off (AURA_EVO_LOG unset).
+    // record id, or #f when both the in-process ring and the file are off
+    // (#5251: the ring is on by default, AURA_EVO_RING=0 turns it off).
     //
     // Issue #4939: an optional 8th argument is a hash of v=2 members
     // (multi-objective / constrained / multi-parent / behavior records).
@@ -552,14 +553,19 @@ void RegSplitParts::register_json_evo_primitives(
     // order — so two identical runs write byte-identical lines. An unknown
     // key is an error, not a silent drop: a stage that logs "behavior" must
     // not lose it.
-    static constexpr std::string_view kEvoV2Keys[] = {"algo",     "gen",        "slot",
-                                                      "search",   "candidate",  "parents",
-                                                      "behavior", "objectives", "constraints"};
+    // Issue #5255: "gate" / "weight" are the acceptance-gate slots. Nothing
+    // computes them yet; a caller may already pass them and a reader sees
+    // them in the same fixed position.
+    static constexpr std::string_view kEvoV2Keys[] = {
+        "algo",     "gen",        "slot",        "search", "candidate", "parents",
+        "behavior", "objectives", "constraints", "gate",   "weight"};
     register_prim(
         add, ev, "evo:record!",
         [&ev, &string_heap, &pairs, &error_values,
          primitive_error_counter](std::span<const EvalValue> a) -> EvalValue {
-            if (!aura::evo::log_enabled())
+            // Issue #5251: the in-process ring counts as a log, so a record is
+            // kept even when no AURA_EVO_LOG file is configured.
+            if (!aura::evo::trace_enabled())
                 return make_bool(false);
             auto text = [&](std::size_t i) -> std::string {
                 if (i >= a.size())
@@ -693,8 +699,8 @@ void RegSplitParts::register_json_evo_primitives(
             255,
             "(evo:record! candidate decision reason evidence [new-src dur-ms parent extras]) -> "
             "id|#f",
-            "Append a worldline record to the evolution log (AURA_EVO_LOG; #4910/#4939: "
-            "an extras hash writes schema v=2)."));
+            "Append a worldline record to the evolution trace (in-process ring by default, "
+            "AURA_EVO_LOG spills to a file; #4910/#4939: an extras hash writes schema v=2)."));
 
     // Issue #4910: (evo:log-path) -> the active evolution log path, or #f.
     register_prim(
@@ -707,6 +713,34 @@ void RegSplitParts::register_json_evo_primitives(
         },
         aura::compiler::impure_general(0, "(evo:log-path) -> string|#f",
                                        "Active evolution log path (AURA_EVO_LOG), or #f (#4910)."));
+    // Issue #5251: (query "qr:evo-trace") -> the in-process ring, oldest
+    // first, as JSON record strings. std/evo parses them into hashes; this is
+    // the read that works in a single-file run and under serve without
+    // AURA_EVO_LOG. The JSONL file stays the optional spill.
+    ev.primitives().add_hidden(
+        "qr:evo-trace",
+        [&ev, &pairs, &string_heap, &error_values,
+         primitive_error_counter](std::span<const EvalValue>) -> EvalValue {
+            const auto view = aura::evo::trace_snapshot();
+            const std::size_t n = view.lines.size();
+            if ((ev.prim_heap_quota_limited(PrimHeapDim::Pairs) || n > kPrimHeapUnlimitedSmall) &&
+                !ev.prim_heap_quota_allow(PrimHeapDim::Pairs, pairs.size() + n)) {
+                return make_primitive_error(
+                    string_heap, error_values,
+                    std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Pairs)),
+                    primitive_error_counter);
+            }
+            Evaluator::ListCtorLockHold hold(ev);
+            pairs.reserve(monotonic_pairs_reserve_cap(pairs.size(), pairs.capacity(), n));
+            EvalValue result = make_void();
+            for (std::size_t i = n; i > 0; --i) {
+                const auto sid = string_heap.mint(view.lines[i - 1]);
+                const auto pid = pairs.size();
+                pairs.push_back({types::make_string(sid), result});
+                result = types::make_pair(pid);
+            }
+            return result;
+        });
 }
 
 void RegSplitParts::register_json_codec_primitives(

@@ -37,7 +37,7 @@
 | `std/engine-metrics` | `engine-metrics:get` `engine-metrics:list` `engine-metrics:group` `engine-metrics:prefix` `engine-metrics:all` `engine-metrics:count` | lib/std/engine-metrics.aura — Issue #1433 thin wrappers around (engine:metrics) |
 | `std/evo-core` | `evo:help` `evo:schema` `evo:candidate` `evo:candidate?` `evo:child` `evo:candidate-id` `evo:candidate-genome` `evo:candidate-parents` … (+38) | lib/std/evo-core.aura — Issue #4939 (v0.2 P0): the shared base every |
 | `std/evo-meta` | `meta:help` `meta:schema` `meta:loop` `meta:loop?` `meta:refused?` `meta:loop-report` `meta:step!` `meta:approve!` … (+43) | lib/std/evo-meta.aura — Issue #4944 (v0.2 P5): the meta layer of the |
-| `std/evo` | `evo:records` `evo:worldline` `evo:parse-line` `evo:parse-log` `evo:record-count` `evo:keep?` `evo:arm-of` `evo:arm-stats` … (+19) | lib/std/evo.aura — experience layer over the evo:record! worldline (#5004) |
+| `std/evo` | `evo:records` `evo:trace` `evo:worldline` `evo:parse-line` `evo:parse-log` `evo:record-count` `evo:keep?` `evo:arm-of` … (+20) | lib/std/evo.aura — experience layer over the evo:record! worldline (#5004) |
 | `std/exception` | `with-exception-handler` `raise-continuable` `error-object?` `error-object-message` `error-object-irritants` `guard` `raise` | lib/std/exception.aura — R7RS (scheme base) exception surface (Issue #5005) |
 | `std/extract` | `extract-code` `trim-str` `find-in-str` | lib/std/extract.aura — Code extraction from LLM responses |
 | `std/ffi` | `c-load` `c-func` `c-alloc` `c-free` `c-opaque` `c-opaque?` `c-opaque->int` `c-struct-size` … (+14) | ffi.aura — C FFI host prims (Issue #3176) |

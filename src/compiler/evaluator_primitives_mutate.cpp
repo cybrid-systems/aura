@@ -11429,7 +11429,14 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             const std::string old_src = by_name ? define_src(target) : std::string();
             std::string new_src = a.size() > 1 ? str_arg(a[1]) : std::string();
             const auto t0 = std::chrono::steady_clock::now();
+            // Issue #5251: ids are handed out as next_mutation_id_++, so a
+            // single-record call records exactly the id read before it.
+            auto mutation_counter = [&ev]() -> std::uint64_t {
+                return ev.workspace_flat_ ? ev.workspace_flat_->next_mutation_id() : 0;
+            };
+            const std::uint64_t mut_before = mutation_counter();
             EvalValue r = call();
+            const std::uint64_t mut_after = mutation_counter();
             const double ms =
                 std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0)
                     .count();
@@ -11465,6 +11472,12 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             const std::uint32_t active_ws =
                 ev.workspace_tree_ ? static_cast<WorkspaceTree*>(ev.workspace_tree_)->active_idx()
                                    : 0;
+            // Issue #5251: name the workspace mutation this row recorded when
+            // the call appended exactly one record. A nested or multi-record
+            // op names none rather than guessing. A restore uses the id to
+            // link its per-mutation ROLLBACK rows back to this row.
+            const std::uint64_t mutation_id =
+                (mut_before != 0 && mut_after == mut_before + 1) ? mut_before : 0;
             std::string extras;
             int version = 1;
             if (active_ws != 0) {
@@ -11476,6 +11489,12 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                         reason = "fork-worldline";
                 }
             }
+            if (mutation_id != 0) {
+                if (!extras.empty())
+                    extras += ",";
+                extras += "\"mutation\":" + std::to_string(mutation_id);
+                version = 2;
+            }
             aura::evo::log_append({.kind = op,
                                    .target = target,
                                    .decision = decision,
@@ -11485,6 +11504,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                                    .new_src = new_src,
                                    .parent = {},
                                    .dur_ms = ms,
+                                   .mutation_id = mutation_id,
                                    .extras_json = extras,
                                    .version = version});
             return r;
@@ -11498,7 +11518,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             ev.primitives().add_hidden(std::move(n),
                                        [&ev, op_name, evo_call_4910, body = std::move(body)](
                                            std::span<const EvalValue> a) -> EvalValue {
-                                           if (!aura::evo::log_enabled()) [[likely]]
+                                           if (!aura::evo::trace_enabled()) [[likely]]
                                                return body(a);
                                            return evo_call_4910(ev, *op_name, a,
                                                                 [&] { return body(a); });

@@ -53,6 +53,7 @@ AURA_CONFIG_ENTRY(AURA_EVAL_CURRENT_JIT_INCREMENTAL, "AURA_EVAL_CURRENT_JIT_INCR
 AURA_CONFIG_ENTRY(AURA_EVAL_DEBUG, "AURA_EVAL_DEBUG", Flag, "", "Dump evaluator debug traces.")
 AURA_CONFIG_ENTRY(AURA_EVAL_GRANT, "AURA_EVAL_GRANT", Text, "", "Capability grant list applied to the evaluation.")
 AURA_CONFIG_ENTRY(AURA_EVO_LOG, "AURA_EVO_LOG", Path, "", "Evolution log path used by aura evo.")
+AURA_CONFIG_ENTRY(AURA_EVO_RING, "AURA_EVO_RING", Size, "4096", "In-process evolution trace: records kept before the oldest is dropped (0 = off; #5251).")
 AURA_CONFIG_ENTRY(AURA_EVO_RUN, "AURA_EVO_RUN", Text, "", "Evolution run id selected for aura evo commands.")
 AURA_CONFIG_ENTRY(AURA_FORCE_FIBER_SAFEPOINT_ON_ORPHAN, "AURA_FORCE_FIBER_SAFEPOINT_ON_ORPHAN", Flag, "", "Force a safepoint when an orphan fiber is detected.")
 AURA_CONFIG_ENTRY(AURA_FORCE_HATCH, "AURA_FORCE_HATCH", Flag, "", "Force hatch (forced deopt) handling.")

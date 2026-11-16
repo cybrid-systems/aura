@@ -30,6 +30,17 @@
 //
 // The path is operator configuration (env), never program-chosen: the log is
 // an audit trail like the security WAL, not a program file write.
+//
+// Issue #5251 (v0.2.6): the trace is ON by default in process. Every record
+// also lands in a bounded ring (AURA_EVO_RING lines, default 4096; 0 = off),
+// so a single-file run and a serve worker can read a rebind without
+// AURA_EVO_LOG. The JSONL file is optional spill, written only when
+// AURA_EVO_LOG names a path. (query "qr:evo-trace") reads the ring; the one
+// filtered entry is std/evo's (evo:trace opts).
+// Additive members, never reordered: "gate" / "weight" slots for the unified
+// acceptance gate (#5255), and "mutation" (the workspace mutation-log id a
+// mutate:* row recorded) plus "link" (the trace id that row came from) on the
+// per-mutation ROLLBACK a restore writes.
 #pragma once
 
 #include "core/runtime_config.hh"
@@ -42,15 +53,34 @@
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
+#include <deque>
 #include <format>
 #include <filesystem>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <system_error>
 #include <unistd.h>
+#include <vector>
 
 namespace aura::evo {
+
+// Issue #5251: the ring is bounded by records AND by bytes. A rebind row
+// carries the old and new source, so a count-only bound could hold gigabytes
+// of define bodies. A single line larger than the budget is kept out of the
+// ring (the file, when configured, still has it).
+inline constexpr std::size_t kTraceRingBytes = 8u << 20;
+
+// Issue #5251: identity of one ring entry, enough to answer "which trace row
+// recorded mutation N, and what did it name" without re-parsing the line.
+struct TraceMeta {
+    std::string id;
+    std::string kind;
+    std::string target;
+    std::string decision;
+    std::uint64_t mutation = 0;
+};
 
 struct LogState {
     std::mutex mu;
@@ -59,6 +89,13 @@ struct LogState {
     std::uint64_t seq = 0;
     std::string tip;
     std::string last_error;
+    // Issue #5251: bounded in-process trace. ring[i] and meta[i] are the same
+    // record; both deques are trimmed together, so the ring never grows past
+    // AURA_EVO_RING lines.
+    std::deque<std::string> ring;
+    std::deque<TraceMeta> meta;
+    std::size_t ring_bytes = 0;
+    std::uint64_t ring_dropped = 0;
 };
 
 inline LogState& log_state() noexcept {
@@ -108,6 +145,18 @@ inline std::string log_path() {
     return s.path;
 }
 
+// Issue #5251: in-process trace capacity. AURA_EVO_RING=0 turns the ring
+// off; AURA_EVO_LOG can still spill to a file. The file is no longer the
+// switch that decides whether a record exists at all.
+inline std::size_t ring_capacity() noexcept {
+    return ::aura::config::size(::aura::config::Key::AURA_EVO_RING);
+}
+
+// True when a record can be kept anywhere (ring or file).
+inline bool trace_enabled() noexcept {
+    return ring_capacity() > 0 || log_enabled();
+}
+
 inline void json_escape_into(std::string& out, std::string_view in) {
     out.push_back('"');
     aura::json::escape_into(out, in);
@@ -124,6 +173,14 @@ struct Entry {
     std::string_view new_src;
     std::string_view parent; // empty → current worldline tip
     double dur_ms = 0.0;
+    // Issue #5255 slot: the unified acceptance gate this row was decided by.
+    // Empty today (nothing computes it yet); written only when set.
+    std::string_view gate;
+    // Issue #5255 slot: the gate's potential value as a raw JSON number.
+    std::string_view weight_json;
+    // Issue #5251: the workspace mutation-log id this row recorded (0 = none,
+    // e.g. an evo:record! candidate row or a multi-row mutate).
+    std::uint64_t mutation_id = 0;
     std::string_view extras_json; // #4939: pre-rendered "k":v,… members, or empty
     int version = 1;              // #4939: 1, or 2 when extras_json is set
 };
@@ -135,10 +192,18 @@ struct Entry {
 // declarator stays a plain function there. That shim is not the GCC check.
 inline std::string log_append(const Entry& e)
     post(r : r.empty() || r.find('#') != std::string::npos) {
-    if (!log_enabled())
+    // Issue #5251: log_enabled() fills path/run under the state lock, so it
+    // runs before this scope takes the same lock.
+    const bool file_on = log_enabled();
+    const std::size_t ring_cap = ring_capacity();
+    if (!file_on && ring_cap == 0)
         return {};
     auto& s = log_state();
     std::scoped_lock lk(s.mu);
+    // A ring-only process still needs a run id: record ids are the join key
+    // for "link" and the parent of the next candidate record.
+    if (s.run.empty())
+        s.run = default_run_id();
     const std::uint64_t seq = ++s.seq;
     std::string id = s.run + "#" + std::to_string(seq);
     const std::string parent = e.parent.empty() ? s.tip : std::string(e.parent);
@@ -173,11 +238,36 @@ inline std::string log_append(const Entry& e)
     json_escape_into(line, e.new_src);
     line += ",\"dur_ms\":";
     line += std::format("{:.3f}", e.dur_ms);
+    // Issue #5255 slots: empty today, and written only when a gate fills them.
+    if (!e.gate.empty()) {
+        line += ",\"gate\":";
+        json_escape_into(line, e.gate);
+    }
+    if (!e.weight_json.empty()) {
+        line += ",\"weight\":";
+        line += e.weight_json;
+    }
     if (!e.extras_json.empty()) {
         line += ",";
         line += e.extras_json;
     }
     line += "}\n";
+    // Issue #5251: keep the record in process whether or not a file is
+    // configured, then trim oldest-first to the configured bound.
+    if (ring_cap > 0 && line.size() <= kTraceRingBytes) {
+        s.ring.push_back(line);
+        s.ring_bytes += line.size();
+        s.meta.push_back({id, std::string(e.kind), std::string(e.target), std::string(e.decision),
+                          e.mutation_id});
+        while (s.ring.size() > ring_cap || (s.ring_bytes > kTraceRingBytes && s.ring.size() > 1)) {
+            s.ring_bytes -= s.ring.front().size();
+            s.ring.pop_front();
+            s.meta.pop_front();
+            ++s.ring_dropped;
+        }
+    }
+    if (!file_on)
+        return id;
     std::error_code ec;
     const std::filesystem::path p(s.path);
     if (p.has_parent_path())
@@ -193,7 +283,8 @@ inline std::string log_append(const Entry& e)
     const bool ok = ::aura::core::close_file(f) && wrote;
     if (!ok) {
         s.last_error = "short write to " + s.path;
-        return {};
+        // Issue #5251: the in-process record stands; the spill is best effort.
+        return id;
     }
     // Issue #5139: only an audited candidate record is a worldline tip. An
     // auto-logged mutate:rebind / mw:restore reuses the candidate's decision
@@ -205,6 +296,39 @@ inline std::string log_append(const Entry& e)
     return id;
 }
 
+// Issue #5251: read the in-process ring, oldest first. Returns copies so a
+// caller can json-parse outside the state lock.
+struct TraceView {
+    std::vector<std::string> lines;
+    std::uint64_t dropped = 0;
+    std::string run;
+};
+
+inline TraceView trace_snapshot() {
+    auto& s = log_state();
+    std::scoped_lock lk(s.mu);
+    TraceView v;
+    v.lines.assign(s.ring.begin(), s.ring.end());
+    v.dropped = s.ring_dropped;
+    v.run = s.run;
+    return v;
+}
+
+// Issue #5251: the trace row that recorded workspace mutation `mutation_id`,
+// if it is still in the ring. A restore ROLLBACK row uses it to link back to
+// the row it undoes and to inherit its kind / target.
+inline std::optional<TraceMeta> trace_origin(std::uint64_t mutation_id) {
+    if (mutation_id == 0)
+        return std::nullopt;
+    auto& s = log_state();
+    std::scoped_lock lk(s.mu);
+    for (auto it = s.meta.rbegin(); it != s.meta.rend(); ++it) {
+        if (it->mutation == mutation_id)
+            return *it;
+    }
+    return std::nullopt;
+}
+
 // Tests only: re-read AURA_EVO_LOG on next use.
 inline void log_reset_for_test() noexcept {
     auto& s = log_state();
@@ -214,6 +338,10 @@ inline void log_reset_for_test() noexcept {
     s.seq = 0;
     s.tip.clear();
     s.last_error.clear();
+    s.ring.clear();
+    s.meta.clear();
+    s.ring_bytes = 0;
+    s.ring_dropped = 0;
     log_flag().store(-1, std::memory_order_release);
 }
 
