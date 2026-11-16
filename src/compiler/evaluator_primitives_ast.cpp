@@ -265,7 +265,8 @@ using types::make_void;
 // Issue #4910: ast:restore is a worldline ROLLBACK (evolution log).
 template <class F> auto evo_wrap_restore_4910(F body) {
     return [body = std::move(body)](std::span<const EvalValue> a) -> EvalValue {
-        if (!aura::evo::log_enabled()) [[likely]]
+        // Issue #5251: the in-process ring is the default trace.
+        if (!aura::evo::trace_enabled()) [[likely]]
             return body(a);
         const auto t0 = std::chrono::steady_clock::now();
         EvalValue r = body(a);
@@ -288,6 +289,13 @@ template <class F> auto evo_wrap_restore_4910(F body) {
 // Issue #5032: ast:restore phase state, carried across the peeled phases so
 // the precheck / capture / publish / finalize order of the original single
 // lambda is preserved without one 480-line body.
+// Issue #5251: one discarded mutation, kept so the restore can write a
+// ROLLBACK row per attempt rather than one compressed summary.
+struct AstRestoreDiscarded {
+    std::uint64_t mutation_id = 0;
+    std::string op;
+};
+
 struct AstRestoreState {
     std::size_t id = 0;
     bool dep_graph_synced_pre = false;
@@ -298,6 +306,7 @@ struct AstRestoreState {
     std::uint64_t rolled_first = 0;
     std::uint64_t rolled_last = 0;
     std::uint64_t rolled_count = 0;
+    std::vector<AstRestoreDiscarded> discarded;
     // Issue #5148: the !small_diff IR re-population takes Mutate
     // (invalidate_function). Publish still runs under the restore
     // guard's Workspace lock, so the populate is deferred to
@@ -484,6 +493,7 @@ void RegSplitParts::ast_restore_capture(Evaluator& ev, AstRestoreState& state,
             rolled_first = rec.mutation_id;
         rolled_last = rec.mutation_id;
         ++rolled_count;
+        state.discarded.push_back({rec.mutation_id, rec.operator_name});
     }
     const std::shared_ptr<FlatSnapshotDefineStamps> stamps = snap_entry.stamps;
     if (stamps && stamps->live_flat != ev.workspace_flat_)
@@ -767,6 +777,32 @@ void RegSplitParts::ast_restore_publish(Evaluator& ev, AstRestoreState& state,
     ev.rebase_open_mutation_checkpoint_after_flat_replace();
 }
 
+// Issue #5251: append one trace ROLLBACK row for a mutation a restore
+// discarded. kind / target are inherited from the row that recorded it (while
+// that row is still in the ring) and "link" names it, so the attempt stays
+// readable after the workspace log compressed it into a summary.
+static void trace_discarded_mutation(std::string_view op, std::uint64_t mutation_id,
+                                     std::size_t snapshot) {
+    const auto origin = aura::evo::trace_origin(mutation_id);
+    std::string extras = "\"scope\":\"rollback\",\"mutation\":" + std::to_string(mutation_id);
+    if (origin) {
+        extras += ",\"link\":";
+        aura::evo::json_escape_into(extras, origin->id);
+    }
+    aura::evo::log_append({.kind = origin ? std::string_view(origin->kind) : op,
+                           .target = origin ? std::string_view(origin->target) : std::string_view{},
+                           .decision = "ROLLBACK",
+                           .reason = "restore snapshot-" + std::to_string(snapshot),
+                           .evidence_json = {},
+                           .old_src = {},
+                           .new_src = {},
+                           .parent = {},
+                           .dur_ms = 0.0,
+                           .mutation_id = mutation_id,
+                           .extras_json = extras,
+                           .version = 2});
+}
+
 // Issue #5032: post-guard finalize phase of ast:restore (#4782 epoch, #4729
 // rollback entry, dep-graph advance, #2920 text restamp).
 void RegSplitParts::ast_restore_finalize(Evaluator& ev, AstRestoreState& state) {
@@ -802,6 +838,12 @@ void RegSplitParts::ast_restore_finalize(Evaluator& ev, AstRestoreState& state) 
                                                  " rolled-back=" + std::to_string(rolled_count) +
                                                  " ids=" + std::to_string(rolled_first) + ".." +
                                                  std::to_string(rolled_last));
+            // Issue #5251: one ROLLBACK row per discarded mutation, linked to
+            // the row that recorded it. The aggregate mw:restore row above
+            // stays the workspace log's own summary; the trace keeps every
+            // attempt readable instead of only the count.
+            for (const auto& gone : state.discarded)
+                trace_discarded_mutation(gone.op, gone.mutation_id, id);
         }
         // The rollback entry changes no define: a graph in sync just
         // before it stays in sync after it, so the next restore (or a
@@ -889,6 +931,11 @@ EvalValue RegSplitParts::ast_restore_source_fallback(Evaluator& ev, std::size_t 
         carried_log.assign(live_log.begin(), live_log.end());
         carried_next = ev.workspace_flat_->next_mutation_id();
     }
+    // Issue #5251: the snapshot counter names the suffix this fallback
+    // discards, so the per-mutation ROLLBACK rows match the main path.
+    std::uint64_t snap_next = 0;
+    if (id < ev.snapshot_flats_.size() && ev.snapshot_flats_[id].flat)
+        snap_next = ev.snapshot_flats_[id].flat->shell->next_mutation_id();
     auto result = (*set_fn)({make_string(source_idx)});
     // Issue #4400: set-code already returned the effect-deny string.
     // Surface it. Parse merr pairs stay #f.
@@ -904,6 +951,12 @@ EvalValue RegSplitParts::ast_restore_source_fallback(Evaluator& ev, std::size_t 
                 aura::ast::NULL_NODE, "mw:restore", "", "",
                 "restore snapshot-" + std::to_string(id) +
                     " rolled-back=" + std::to_string(carried_log.size()) + " source-fallback=1");
+            // Issue #5251: the fresh flat lost the live log; keep one trace
+            // ROLLBACK per discarded mutation of the snapshot suffix.
+            for (const auto& gone : carried_log) {
+                if (gone.mutation_id >= snap_next)
+                    trace_discarded_mutation(gone.operator_name, gone.mutation_id, id);
+            }
         }
     }
     return make_bool(ok_fallback);
