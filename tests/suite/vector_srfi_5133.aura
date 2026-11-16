@@ -60,6 +60,36 @@
                      (vector 1 2 3))
     (check= 3 (vector-ref n 0))))
 
+; Issue #5311: map/for-each read the vectors, then call f in order.
+; One argument over several vectors stays the #5198 result. The walk
+; stops at the shortest vector.
+(test-case "vector-map direct" (hash "issue" 5311)
+  (check= (vector) (vector-map (lambda (x) (* x 2)) (vector)))
+  (check= (vector 3.0 6.0) (vector-map (lambda (x) (* x 2.0)) (vector 1.5 3.0)))
+  (let ((n (vector 0)))
+    (check= (vector 2 4 6)
+            (vector-map (lambda (x)
+                          (vector-set! n 0 (+ (vector-ref n 0) 1))
+                          (* x 2))
+                        (vector 1 2 3)))
+    (check= 3 (vector-ref n 0)))
+  (check= (vector 11 22) (vector-map + (vector 1 2 9) (vector 10 20)))
+  (check= (vector 6) (vector-map + (vector 1 8) (vector 2 8) (vector 3))))
+
+(test-case "vector-for-each direct" (hash "issue" 5311)
+  (let ((n (vector 0)))
+    (vector-for-each (lambda (x) (vector-set! n 0 (+ (vector-ref n 0) x)))
+                     (vector 1 2 3))
+    (check= 6 (vector-ref n 0)))
+  (let ((n (vector 0)))
+    (vector-for-each (lambda (a b) (vector-set! n 0 (+ (vector-ref n 0) a b)))
+                     (vector 1 2) (vector 10 20 30))
+    (check= 33 (vector-ref n 0)))
+  (let ((n (vector 0)))
+    (vector-for-each (lambda (a b c) (vector-set! n 0 (+ (vector-ref n 0) a b c)))
+                     (vector 1 2) (vector 10 20) (vector 100))
+    (check= 111 (vector-ref n 0))))
+
 (test-case "vector-copy! returns the target" (hash)
   (let ((to (vector 0 0 0)))
     (vector-copy! to 0 (vector 7 8))
