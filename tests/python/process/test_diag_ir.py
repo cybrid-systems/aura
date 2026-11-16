@@ -276,6 +276,21 @@ CASES = (
         "diag_json_format.DiagJson.test_refusal_code_is_effect_denied",
     ),
     (
+        5241,
+        "test_pair_and_arithmetic_kinds_are_typed_at_creation",
+        "diag_json_format.DiagJson.test_pair_and_arithmetic_kinds_are_typed_at_creation",
+    ),
+    (
+        5241,
+        "test_car_not_a_pair_same_label_direct_and_via_define",
+        "diag_json_format.DiagJson.test_car_not_a_pair_same_label_direct_and_via_define",
+    ),
+    (
+        5241,
+        "test_module_failure_is_module_error_on_both_faces",
+        "diag_json_format.DiagJson.test_module_failure_is_module_error_on_both_faces",
+    ),
+    (
         5240,
         "test_exit_code_table",
         "diag_json_format.DiagJson.test_exit_code_table",
