@@ -273,8 +273,8 @@ CASES = (
     ),
     (
         5169,
-        "test_refactor_inline_counts_callers",
-        "sand_stdlib_unbound.TestIssue5169StdlibUnbound.test_refactor_inline_counts_callers",
+        "test_refactor_inline_refuses_when_mutation_denied",
+        "sand_stdlib_unbound.TestIssue5169StdlibUnbound.test_refactor_inline_refuses_when_mutation_denied",
     ),
     (
         5169,
