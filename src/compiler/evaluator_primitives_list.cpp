@@ -330,10 +330,9 @@ EvalValue RegSplitParts::walk_lists(Evaluator& ev, std::pmr::vector<Pair>& pairs
                     break;
                 if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/false,
                                                    /*required_effects=*/0, op)) {
-                    return make_primitive_error(string_heap, error_values,
-                                                std::string(op) +
-                                                    ": cross-tenant pair slot read denied (#4505)",
-                                                ev.primitive_error_counter_ptr());
+                    return ev.make_typed_error(std::string(op) +
+                                                   ": cross-tenant pair slot read denied (#4505)",
+                                               aura::diag::ErrorKind::EffectDenied);
                 }
                 flat.push_back(pairs[idx].car);
                 current = pairs[idx].cdr;
@@ -484,10 +483,9 @@ void RegSplitParts::register_list_basics(PrimRegistrar add, Evaluator& ev,
                     // slot stops the walk the way an in-range miss does.
                     auto slot = jit_pair_cdr(ev, idx, "length");
                     if (slot.kind == JitCdrKind::Denied) {
-                        return make_primitive_error(
-                            string_heap, error_values,
+                        return ev.make_typed_error(
                             "length: cross-tenant pair slot read denied (#4111)",
-                            ev.primitive_error_counter_ptr());
+                            aura::diag::ErrorKind::EffectDenied);
                     }
                     if (slot.kind != JitCdrKind::Ok)
                         break;
@@ -500,10 +498,8 @@ void RegSplitParts::register_list_basics(PrimRegistrar add, Evaluator& ev,
                 // as car (required_effects 0, IsolationDeny in the helper).
                 if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/false,
                                                    /*required_effects=*/0, "length")) {
-                    return make_primitive_error(
-                        string_heap, error_values,
-                        "length: cross-tenant pair slot read denied (#4505)",
-                        ev.primitive_error_counter_ptr());
+                    return ev.make_typed_error("length: cross-tenant pair slot read denied (#4505)",
+                                               aura::diag::ErrorKind::EffectDenied);
                 }
                 v = pairs[idx].cdr;
                 n++;
@@ -791,10 +787,9 @@ void RegSplitParts::register_list_higher_order(PrimRegistrar add, Evaluator& ev,
                     // foreign element into the caller-owned result list.
                     if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/false,
                                                        /*required_effects=*/0, "append")) {
-                        return make_primitive_error(
-                            string_heap, error_values,
+                        return ev.make_typed_error(
                             "append: cross-tenant pair slot read denied (#4505)",
-                            ev.primitive_error_counter_ptr());
+                            aura::diag::ErrorKind::EffectDenied);
                     }
                     cars.push_back(pairs[idx].car);
                     v = pairs[idx].cdr;
@@ -957,10 +952,9 @@ void RegSplitParts::register_list_walk(PrimRegistrar add, Evaluator& ev,
                     // must not observe a foreign car either.
                     if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/false,
                                                        /*required_effects=*/0, "filter")) {
-                        return make_primitive_error(
-                            string_heap, error_values,
+                        return ev.make_typed_error(
                             "filter: cross-tenant pair slot read denied (#4505)",
-                            ev.primitive_error_counter_ptr());
+                            aura::diag::ErrorKind::EffectDenied);
                     }
                     cars.push_back(pairs[idx].car);
                     current = pairs[idx].cdr;

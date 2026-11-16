@@ -969,10 +969,9 @@ void RegSplitParts::register_eval_primitive(PrimRegistrar add, Evaluator& ev) {
             // refused program (the merr pair keeps the kind+message pair).
             if (!ev.inrange_string_tenant_allows(sidx, aura::compiler::security::kEffectNone,
                                                  "eval"))
-                return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                            "eval: cross-tenant string denied by "
-                                            "WorkspaceIsolationPolicy",
-                                            ev.primitive_error_counter_ptr());
+                return ev.make_typed_error("eval: cross-tenant string denied by "
+                                           "WorkspaceIsolationPolicy",
+                                           aura::diag::ErrorKind::EffectDenied);
             code = ev.string_at(sidx);
         }
         // Issue #4359: a stack flat dies when eval returns, and the

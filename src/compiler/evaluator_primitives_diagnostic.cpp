@@ -511,10 +511,9 @@ void RegSplitParts::register_agent_recover_primitive(PrimRegistrar add, Evaluato
             err_msg = extract_err_string(a[0]);
             if (cause_denied) {
                 ev.note_agent_recovery_result(5, false, false, false);
-                return make_primitive_error(
-                    ev.string_heap_, ev.error_values_,
+                return ev.make_typed_error(
                     "agent:recover-from-error: cross-tenant string slot read denied (#4505)",
-                    ev.primitive_error_counter_ptr());
+                    aura::diag::ErrorKind::EffectDenied);
             }
             if (err_msg.empty() || !is_string(a[1])) {
                 ev.note_agent_recovery_result(5, false, false, false);

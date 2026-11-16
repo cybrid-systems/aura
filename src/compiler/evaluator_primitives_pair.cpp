@@ -97,10 +97,9 @@ namespace {
         // Issue #4530: a foreign numeric string must not answer with its
         // parsed value; same reader gate as string->list (#4505).
         if (!ev.inrange_string_tenant_allows(i, /*required_effects=*/0, "string->number"))
-            return make_primitive_error(
-                string_heap, error_values,
+            return ev.make_typed_error(
                 "string->number: cross-tenant string slot read denied (#4505)",
-                ev.primitive_error_counter_ptr());
+                aura::diag::ErrorKind::EffectDenied);
         const auto& str = string_heap[i];
         if (str.empty())
             return make_bool(false);
@@ -187,9 +186,9 @@ void RegSplitParts::register_string_basics(PrimRegistrar add, Evaluator& ev,
             // mismatch. Soft/Off does not read the stamp.
             if (!ev.inrange_string_tenant_allows(idx, aura::compiler::security::kEffectMutate,
                                                  "string-fill!")) {
-                return make_primitive_error(string_heap, error_values,
-                                            "string-fill!: cross-tenant string slot write "
-                                            "denied (#4428)");
+                return ev.make_typed_error("string-fill!: cross-tenant string slot write "
+                                           "denied (#4428)",
+                                           aura::diag::ErrorKind::EffectDenied);
             }
             auto fill_char = static_cast<char>(as_int(a[1]));
             std::fill(string_heap[idx].begin(), string_heap[idx].end(), fill_char);
@@ -210,10 +209,9 @@ void RegSplitParts::register_string_basics(PrimRegistrar add, Evaluator& ev,
                 return make_bool(false);
             // Issue #4505: reader gate before the code points are read.
             if (!ev.inrange_string_tenant_allows(idx, /*required_effects=*/0, "string->list")) {
-                return make_primitive_error(
-                    string_heap, error_values,
+                return ev.make_typed_error(
                     "string->list: cross-tenant string slot read denied (#4505)",
-                    primitive_error_counter);
+                    aura::diag::ErrorKind::EffectDenied);
             }
             const auto& s = string_heap[idx];
             // Issue #4472: one code point per element. Byte length is an
@@ -294,10 +292,9 @@ void RegSplitParts::register_string_basics(PrimRegistrar add, Evaluator& ev,
             // the delimiter, every visited spine slot, and every element
             // string. Helpers are lock-free; we hold alloc_storage_lock_.
             if (!ev.inrange_string_tenant_allows(delim_idx, /*required_effects=*/0, "string-join"))
-                return make_primitive_error(
-                    string_heap, error_values,
+                return ev.make_typed_error(
                     "string-join: cross-tenant string slot read denied (#4505)",
-                    primitive_error_counter);
+                    aura::diag::ErrorKind::EffectDenied);
             auto& delim = string_heap[delim_idx];
             std::string result;
             bool first = true;
@@ -308,20 +305,18 @@ void RegSplitParts::register_string_basics(PrimRegistrar add, Evaluator& ev,
                     break;
                 if (!ev.inrange_slot_tenant_allows(p, /*vector_heap=*/false,
                                                    /*required_effects=*/0, "string-join"))
-                    return make_primitive_error(
-                        string_heap, error_values,
+                    return ev.make_typed_error(
                         "string-join: cross-tenant pair slot read denied (#4505)",
-                        primitive_error_counter);
+                        aura::diag::ErrorKind::EffectDenied);
                 auto car = pairs[p].car;
                 if (is_string(car)) {
                     auto sidx = as_string_idx(car);
                     if (sidx < string_heap.size()) {
                         if (!ev.inrange_string_tenant_allows(sidx, /*required_effects=*/0,
                                                              "string-join"))
-                            return make_primitive_error(
-                                string_heap, error_values,
+                            return ev.make_typed_error(
                                 "string-join: cross-tenant string slot read denied (#4505)",
-                                primitive_error_counter);
+                                aura::diag::ErrorKind::EffectDenied);
                         if (!first)
                             result += delim;
                         result += string_heap[sidx];
@@ -424,9 +419,8 @@ void RegSplitParts::register_pair_constructor(PrimRegistrar add, Evaluator& ev,
                 // compares the mint stamp and does not return the payload.
                 if (!ev.inrange_slot_tenant_allows(id, /*vector_heap=*/false,
                                                    /*required_effects=*/0, "car")) {
-                    return make_primitive_error(string_heap, error_values,
-                                                "car: cross-tenant pair slot read denied (#4298)",
-                                                primitive_error_counter);
+                    return ev.make_typed_error("car: cross-tenant pair slot read denied (#4298)",
+                                               aura::diag::ErrorKind::EffectDenied);
                 }
                 return pairs[id].car;
             }
@@ -458,10 +452,9 @@ void RegSplitParts::register_pair_constructor(PrimRegistrar add, Evaluator& ev,
                         (void)ev.check_workspace_isolation(
                             /*target=*/ev.capability_tenant_id(), /*ref_tenant=*/slot_tenant,
                             /*required_effects=*/0, "car");
-                        return make_primitive_error(
-                            string_heap, error_values,
+                        return ev.make_typed_error(
                             "car: cross-tenant pair slot read denied (#4111)",
-                            primitive_error_counter);
+                            aura::diag::ErrorKind::EffectDenied);
                     }
                 }
                 return types::EvalValue{g_pair_slots[id]->car};
@@ -483,9 +476,8 @@ void RegSplitParts::register_pair_constructor(PrimRegistrar add, Evaluator& ev,
                 // Issue #4298: same in-range read gate as car.
                 if (!ev.inrange_slot_tenant_allows(id, /*vector_heap=*/false,
                                                    /*required_effects=*/0, "cdr")) {
-                    return make_primitive_error(string_heap, error_values,
-                                                "cdr: cross-tenant pair slot read denied (#4298)",
-                                                primitive_error_counter);
+                    return ev.make_typed_error("cdr: cross-tenant pair slot read denied (#4298)",
+                                               aura::diag::ErrorKind::EffectDenied);
                 }
                 return pairs[id].cdr;
             }
@@ -517,10 +509,9 @@ void RegSplitParts::register_pair_constructor(PrimRegistrar add, Evaluator& ev,
                         (void)ev.check_workspace_isolation(
                             /*target=*/ev.capability_tenant_id(), /*ref_tenant=*/slot_tenant,
                             /*required_effects=*/0, "cdr");
-                        return make_primitive_error(
-                            string_heap, error_values,
+                        return ev.make_typed_error(
                             "cdr: cross-tenant pair slot read denied (#4111)",
-                            primitive_error_counter);
+                            aura::diag::ErrorKind::EffectDenied);
                     }
                 }
                 return types::EvalValue{g_pair_slots[id]->cdr};
@@ -568,9 +559,8 @@ void RegSplitParts::register_pair_shorthands_first(
             // field read, deny shape identical, no effect consumed.
             if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/false,
                                                /*required_effects=*/0, "caar")) {
-                return make_primitive_error(string_heap, error_values,
-                                            "caar: cross-tenant pair slot read denied (#4505)",
-                                            ev.primitive_error_counter_ptr());
+                return ev.make_typed_error("caar: cross-tenant pair slot read denied (#4505)",
+                                           aura::diag::ErrorKind::EffectDenied);
             }
             auto c = pairs[idx].car;
             if (!is_pair(c))
@@ -578,9 +568,8 @@ void RegSplitParts::register_pair_shorthands_first(
             auto ci = as_pair_idx(c);
             if (!ev.inrange_slot_tenant_allows(ci, /*vector_heap=*/false,
                                                /*required_effects=*/0, "caar")) {
-                return make_primitive_error(string_heap, error_values,
-                                            "caar: cross-tenant pair slot read denied (#4505)",
-                                            ev.primitive_error_counter_ptr());
+                return ev.make_typed_error("caar: cross-tenant pair slot read denied (#4505)",
+                                           aura::diag::ErrorKind::EffectDenied);
             }
             return pairs[ci].car;
         },
@@ -596,9 +585,8 @@ void RegSplitParts::register_pair_shorthands_first(
             // Issue #4505: same reader gate as caar.
             if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/false,
                                                /*required_effects=*/0, "cadr")) {
-                return make_primitive_error(string_heap, error_values,
-                                            "cadr: cross-tenant pair slot read denied (#4505)",
-                                            ev.primitive_error_counter_ptr());
+                return ev.make_typed_error("cadr: cross-tenant pair slot read denied (#4505)",
+                                           aura::diag::ErrorKind::EffectDenied);
             }
             auto c = pairs[idx].cdr;
             if (!is_pair(c))
@@ -606,9 +594,8 @@ void RegSplitParts::register_pair_shorthands_first(
             auto ci = as_pair_idx(c);
             if (!ev.inrange_slot_tenant_allows(ci, /*vector_heap=*/false,
                                                /*required_effects=*/0, "cadr")) {
-                return make_primitive_error(string_heap, error_values,
-                                            "cadr: cross-tenant pair slot read denied (#4505)",
-                                            ev.primitive_error_counter_ptr());
+                return ev.make_typed_error("cadr: cross-tenant pair slot read denied (#4505)",
+                                           aura::diag::ErrorKind::EffectDenied);
             }
             return pairs[ci].car;
         },
@@ -624,9 +611,8 @@ void RegSplitParts::register_pair_shorthands_first(
             // Issue #4505: same reader gate as caar.
             if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/false,
                                                /*required_effects=*/0, "cdar")) {
-                return make_primitive_error(string_heap, error_values,
-                                            "cdar: cross-tenant pair slot read denied (#4505)",
-                                            ev.primitive_error_counter_ptr());
+                return ev.make_typed_error("cdar: cross-tenant pair slot read denied (#4505)",
+                                           aura::diag::ErrorKind::EffectDenied);
             }
             auto c = pairs[idx].car;
             if (!is_pair(c))
@@ -634,9 +620,8 @@ void RegSplitParts::register_pair_shorthands_first(
             auto ci = as_pair_idx(c);
             if (!ev.inrange_slot_tenant_allows(ci, /*vector_heap=*/false,
                                                /*required_effects=*/0, "cdar")) {
-                return make_primitive_error(string_heap, error_values,
-                                            "cdar: cross-tenant pair slot read denied (#4505)",
-                                            ev.primitive_error_counter_ptr());
+                return ev.make_typed_error("cdar: cross-tenant pair slot read denied (#4505)",
+                                           aura::diag::ErrorKind::EffectDenied);
             }
             return pairs[ci].cdr;
         },
@@ -652,9 +637,8 @@ void RegSplitParts::register_pair_shorthands_first(
             // Issue #4505: same reader gate as caar.
             if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/false,
                                                /*required_effects=*/0, "cddr")) {
-                return make_primitive_error(string_heap, error_values,
-                                            "cddr: cross-tenant pair slot read denied (#4505)",
-                                            ev.primitive_error_counter_ptr());
+                return ev.make_typed_error("cddr: cross-tenant pair slot read denied (#4505)",
+                                           aura::diag::ErrorKind::EffectDenied);
             }
             auto c = pairs[idx].cdr;
             if (!is_pair(c))
@@ -662,9 +646,8 @@ void RegSplitParts::register_pair_shorthands_first(
             auto ci = as_pair_idx(c);
             if (!ev.inrange_slot_tenant_allows(ci, /*vector_heap=*/false,
                                                /*required_effects=*/0, "cddr")) {
-                return make_primitive_error(string_heap, error_values,
-                                            "cddr: cross-tenant pair slot read denied (#4505)",
-                                            ev.primitive_error_counter_ptr());
+                return ev.make_typed_error("cddr: cross-tenant pair slot read denied (#4505)",
+                                           aura::diag::ErrorKind::EffectDenied);
             }
             return pairs[ci].cdr;
         },
@@ -680,9 +663,8 @@ void RegSplitParts::register_pair_shorthands_first(
             // Issue #4505: same reader gate as caar, one compare per slot.
             if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/false,
                                                /*required_effects=*/0, "caaar")) {
-                return make_primitive_error(string_heap, error_values,
-                                            "caaar: cross-tenant pair slot read denied (#4505)",
-                                            ev.primitive_error_counter_ptr());
+                return ev.make_typed_error("caaar: cross-tenant pair slot read denied (#4505)",
+                                           aura::diag::ErrorKind::EffectDenied);
             }
             auto c = pairs[idx].car;
             if (!is_pair(c))
@@ -690,9 +672,8 @@ void RegSplitParts::register_pair_shorthands_first(
             auto ci = as_pair_idx(c);
             if (!ev.inrange_slot_tenant_allows(ci, /*vector_heap=*/false,
                                                /*required_effects=*/0, "caaar")) {
-                return make_primitive_error(string_heap, error_values,
-                                            "caaar: cross-tenant pair slot read denied (#4505)",
-                                            ev.primitive_error_counter_ptr());
+                return ev.make_typed_error("caaar: cross-tenant pair slot read denied (#4505)",
+                                           aura::diag::ErrorKind::EffectDenied);
             }
             auto d = pairs[ci].car;
             if (!is_pair(d))
@@ -700,9 +681,8 @@ void RegSplitParts::register_pair_shorthands_first(
             auto di = as_pair_idx(d);
             if (!ev.inrange_slot_tenant_allows(di, /*vector_heap=*/false,
                                                /*required_effects=*/0, "caaar")) {
-                return make_primitive_error(string_heap, error_values,
-                                            "caaar: cross-tenant pair slot read denied (#4505)",
-                                            ev.primitive_error_counter_ptr());
+                return ev.make_typed_error("caaar: cross-tenant pair slot read denied (#4505)",
+                                           aura::diag::ErrorKind::EffectDenied);
             }
             return pairs[di].car;
         },
@@ -718,9 +698,8 @@ void RegSplitParts::register_pair_shorthands_first(
             // Issue #4505: same reader gate as caar, one compare per slot.
             if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/false,
                                                /*required_effects=*/0, "caadr")) {
-                return make_primitive_error(string_heap, error_values,
-                                            "caadr: cross-tenant pair slot read denied (#4505)",
-                                            ev.primitive_error_counter_ptr());
+                return ev.make_typed_error("caadr: cross-tenant pair slot read denied (#4505)",
+                                           aura::diag::ErrorKind::EffectDenied);
             }
             auto c = pairs[idx].cdr;
             if (!is_pair(c))
@@ -728,9 +707,8 @@ void RegSplitParts::register_pair_shorthands_first(
             auto ci = as_pair_idx(c);
             if (!ev.inrange_slot_tenant_allows(ci, /*vector_heap=*/false,
                                                /*required_effects=*/0, "caadr")) {
-                return make_primitive_error(string_heap, error_values,
-                                            "caadr: cross-tenant pair slot read denied (#4505)",
-                                            ev.primitive_error_counter_ptr());
+                return ev.make_typed_error("caadr: cross-tenant pair slot read denied (#4505)",
+                                           aura::diag::ErrorKind::EffectDenied);
             }
             auto d = pairs[ci].car;
             if (!is_pair(d))
@@ -738,9 +716,8 @@ void RegSplitParts::register_pair_shorthands_first(
             auto di = as_pair_idx(d);
             if (!ev.inrange_slot_tenant_allows(di, /*vector_heap=*/false,
                                                /*required_effects=*/0, "caadr")) {
-                return make_primitive_error(string_heap, error_values,
-                                            "caadr: cross-tenant pair slot read denied (#4505)",
-                                            ev.primitive_error_counter_ptr());
+                return ev.make_typed_error("caadr: cross-tenant pair slot read denied (#4505)",
+                                           aura::diag::ErrorKind::EffectDenied);
             }
             return pairs[di].car;
         },
@@ -756,9 +733,8 @@ void RegSplitParts::register_pair_shorthands_first(
             // Issue #4505: same reader gate as caar, one compare per slot.
             if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/false,
                                                /*required_effects=*/0, "cadar")) {
-                return make_primitive_error(string_heap, error_values,
-                                            "cadar: cross-tenant pair slot read denied (#4505)",
-                                            ev.primitive_error_counter_ptr());
+                return ev.make_typed_error("cadar: cross-tenant pair slot read denied (#4505)",
+                                           aura::diag::ErrorKind::EffectDenied);
             }
             auto c = pairs[idx].car;
             if (!is_pair(c))
@@ -766,9 +742,8 @@ void RegSplitParts::register_pair_shorthands_first(
             auto ci = as_pair_idx(c);
             if (!ev.inrange_slot_tenant_allows(ci, /*vector_heap=*/false,
                                                /*required_effects=*/0, "cadar")) {
-                return make_primitive_error(string_heap, error_values,
-                                            "cadar: cross-tenant pair slot read denied (#4505)",
-                                            ev.primitive_error_counter_ptr());
+                return ev.make_typed_error("cadar: cross-tenant pair slot read denied (#4505)",
+                                           aura::diag::ErrorKind::EffectDenied);
             }
             auto d = pairs[ci].cdr;
             if (!is_pair(d))
@@ -776,9 +751,8 @@ void RegSplitParts::register_pair_shorthands_first(
             auto di = as_pair_idx(d);
             if (!ev.inrange_slot_tenant_allows(di, /*vector_heap=*/false,
                                                /*required_effects=*/0, "cadar")) {
-                return make_primitive_error(string_heap, error_values,
-                                            "cadar: cross-tenant pair slot read denied (#4505)",
-                                            ev.primitive_error_counter_ptr());
+                return ev.make_typed_error("cadar: cross-tenant pair slot read denied (#4505)",
+                                           aura::diag::ErrorKind::EffectDenied);
             }
             return pairs[di].car;
         },
@@ -804,9 +778,8 @@ void RegSplitParts::register_pair_shorthands_rest(
             // Issue #4505: same reader gate as caar, one compare per slot.
             if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/false,
                                                /*required_effects=*/0, "caddr")) {
-                return make_primitive_error(string_heap, error_values,
-                                            "caddr: cross-tenant pair slot read denied (#4505)",
-                                            ev.primitive_error_counter_ptr());
+                return ev.make_typed_error("caddr: cross-tenant pair slot read denied (#4505)",
+                                           aura::diag::ErrorKind::EffectDenied);
             }
             auto c = pairs[idx].cdr;
             if (!is_pair(c))
@@ -814,9 +787,8 @@ void RegSplitParts::register_pair_shorthands_rest(
             auto ci = as_pair_idx(c);
             if (!ev.inrange_slot_tenant_allows(ci, /*vector_heap=*/false,
                                                /*required_effects=*/0, "caddr")) {
-                return make_primitive_error(string_heap, error_values,
-                                            "caddr: cross-tenant pair slot read denied (#4505)",
-                                            ev.primitive_error_counter_ptr());
+                return ev.make_typed_error("caddr: cross-tenant pair slot read denied (#4505)",
+                                           aura::diag::ErrorKind::EffectDenied);
             }
             auto d = pairs[ci].cdr;
             if (!is_pair(d))
@@ -824,9 +796,8 @@ void RegSplitParts::register_pair_shorthands_rest(
             auto di = as_pair_idx(d);
             if (!ev.inrange_slot_tenant_allows(di, /*vector_heap=*/false,
                                                /*required_effects=*/0, "caddr")) {
-                return make_primitive_error(string_heap, error_values,
-                                            "caddr: cross-tenant pair slot read denied (#4505)",
-                                            ev.primitive_error_counter_ptr());
+                return ev.make_typed_error("caddr: cross-tenant pair slot read denied (#4505)",
+                                           aura::diag::ErrorKind::EffectDenied);
             }
             return pairs[di].car;
         },
@@ -842,9 +813,8 @@ void RegSplitParts::register_pair_shorthands_rest(
             // Issue #4505: same reader gate as caar, one compare per slot.
             if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/false,
                                                /*required_effects=*/0, "cdaar")) {
-                return make_primitive_error(string_heap, error_values,
-                                            "cdaar: cross-tenant pair slot read denied (#4505)",
-                                            ev.primitive_error_counter_ptr());
+                return ev.make_typed_error("cdaar: cross-tenant pair slot read denied (#4505)",
+                                           aura::diag::ErrorKind::EffectDenied);
             }
             auto c = pairs[idx].car;
             if (!is_pair(c))
@@ -852,9 +822,8 @@ void RegSplitParts::register_pair_shorthands_rest(
             auto ci = as_pair_idx(c);
             if (!ev.inrange_slot_tenant_allows(ci, /*vector_heap=*/false,
                                                /*required_effects=*/0, "cdaar")) {
-                return make_primitive_error(string_heap, error_values,
-                                            "cdaar: cross-tenant pair slot read denied (#4505)",
-                                            ev.primitive_error_counter_ptr());
+                return ev.make_typed_error("cdaar: cross-tenant pair slot read denied (#4505)",
+                                           aura::diag::ErrorKind::EffectDenied);
             }
             auto d = pairs[ci].car;
             if (!is_pair(d))
@@ -862,9 +831,8 @@ void RegSplitParts::register_pair_shorthands_rest(
             auto di = as_pair_idx(d);
             if (!ev.inrange_slot_tenant_allows(di, /*vector_heap=*/false,
                                                /*required_effects=*/0, "cdaar")) {
-                return make_primitive_error(string_heap, error_values,
-                                            "cdaar: cross-tenant pair slot read denied (#4505)",
-                                            ev.primitive_error_counter_ptr());
+                return ev.make_typed_error("cdaar: cross-tenant pair slot read denied (#4505)",
+                                           aura::diag::ErrorKind::EffectDenied);
             }
             return pairs[di].cdr;
         },
@@ -880,9 +848,8 @@ void RegSplitParts::register_pair_shorthands_rest(
             // Issue #4505: same reader gate as caar, one compare per slot.
             if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/false,
                                                /*required_effects=*/0, "cdadr")) {
-                return make_primitive_error(string_heap, error_values,
-                                            "cdadr: cross-tenant pair slot read denied (#4505)",
-                                            ev.primitive_error_counter_ptr());
+                return ev.make_typed_error("cdadr: cross-tenant pair slot read denied (#4505)",
+                                           aura::diag::ErrorKind::EffectDenied);
             }
             auto c = pairs[idx].cdr;
             if (!is_pair(c))
@@ -890,9 +857,8 @@ void RegSplitParts::register_pair_shorthands_rest(
             auto ci = as_pair_idx(c);
             if (!ev.inrange_slot_tenant_allows(ci, /*vector_heap=*/false,
                                                /*required_effects=*/0, "cdadr")) {
-                return make_primitive_error(string_heap, error_values,
-                                            "cdadr: cross-tenant pair slot read denied (#4505)",
-                                            ev.primitive_error_counter_ptr());
+                return ev.make_typed_error("cdadr: cross-tenant pair slot read denied (#4505)",
+                                           aura::diag::ErrorKind::EffectDenied);
             }
             auto d = pairs[ci].car;
             if (!is_pair(d))
@@ -900,9 +866,8 @@ void RegSplitParts::register_pair_shorthands_rest(
             auto di = as_pair_idx(d);
             if (!ev.inrange_slot_tenant_allows(di, /*vector_heap=*/false,
                                                /*required_effects=*/0, "cdadr")) {
-                return make_primitive_error(string_heap, error_values,
-                                            "cdadr: cross-tenant pair slot read denied (#4505)",
-                                            ev.primitive_error_counter_ptr());
+                return ev.make_typed_error("cdadr: cross-tenant pair slot read denied (#4505)",
+                                           aura::diag::ErrorKind::EffectDenied);
             }
             return pairs[di].cdr;
         },
@@ -918,9 +883,8 @@ void RegSplitParts::register_pair_shorthands_rest(
             // Issue #4505: same reader gate as caar, one compare per slot.
             if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/false,
                                                /*required_effects=*/0, "cddar")) {
-                return make_primitive_error(string_heap, error_values,
-                                            "cddar: cross-tenant pair slot read denied (#4505)",
-                                            ev.primitive_error_counter_ptr());
+                return ev.make_typed_error("cddar: cross-tenant pair slot read denied (#4505)",
+                                           aura::diag::ErrorKind::EffectDenied);
             }
             auto c = pairs[idx].car;
             if (!is_pair(c))
@@ -928,9 +892,8 @@ void RegSplitParts::register_pair_shorthands_rest(
             auto ci = as_pair_idx(c);
             if (!ev.inrange_slot_tenant_allows(ci, /*vector_heap=*/false,
                                                /*required_effects=*/0, "cddar")) {
-                return make_primitive_error(string_heap, error_values,
-                                            "cddar: cross-tenant pair slot read denied (#4505)",
-                                            ev.primitive_error_counter_ptr());
+                return ev.make_typed_error("cddar: cross-tenant pair slot read denied (#4505)",
+                                           aura::diag::ErrorKind::EffectDenied);
             }
             auto d = pairs[ci].cdr;
             if (!is_pair(d))
@@ -938,9 +901,8 @@ void RegSplitParts::register_pair_shorthands_rest(
             auto di = as_pair_idx(d);
             if (!ev.inrange_slot_tenant_allows(di, /*vector_heap=*/false,
                                                /*required_effects=*/0, "cddar")) {
-                return make_primitive_error(string_heap, error_values,
-                                            "cddar: cross-tenant pair slot read denied (#4505)",
-                                            ev.primitive_error_counter_ptr());
+                return ev.make_typed_error("cddar: cross-tenant pair slot read denied (#4505)",
+                                           aura::diag::ErrorKind::EffectDenied);
             }
             return pairs[di].cdr;
         },
@@ -956,9 +918,8 @@ void RegSplitParts::register_pair_shorthands_rest(
             // Issue #4505: same reader gate as caar, one compare per slot.
             if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/false,
                                                /*required_effects=*/0, "cdddr")) {
-                return make_primitive_error(string_heap, error_values,
-                                            "cdddr: cross-tenant pair slot read denied (#4505)",
-                                            ev.primitive_error_counter_ptr());
+                return ev.make_typed_error("cdddr: cross-tenant pair slot read denied (#4505)",
+                                           aura::diag::ErrorKind::EffectDenied);
             }
             auto c = pairs[idx].cdr;
             if (!is_pair(c))
@@ -966,9 +927,8 @@ void RegSplitParts::register_pair_shorthands_rest(
             auto ci = as_pair_idx(c);
             if (!ev.inrange_slot_tenant_allows(ci, /*vector_heap=*/false,
                                                /*required_effects=*/0, "cdddr")) {
-                return make_primitive_error(string_heap, error_values,
-                                            "cdddr: cross-tenant pair slot read denied (#4505)",
-                                            ev.primitive_error_counter_ptr());
+                return ev.make_typed_error("cdddr: cross-tenant pair slot read denied (#4505)",
+                                           aura::diag::ErrorKind::EffectDenied);
             }
             auto d = pairs[ci].cdr;
             if (!is_pair(d))
@@ -976,9 +936,8 @@ void RegSplitParts::register_pair_shorthands_rest(
             auto di = as_pair_idx(d);
             if (!ev.inrange_slot_tenant_allows(di, /*vector_heap=*/false,
                                                /*required_effects=*/0, "cdddr")) {
-                return make_primitive_error(string_heap, error_values,
-                                            "cdddr: cross-tenant pair slot read denied (#4505)",
-                                            ev.primitive_error_counter_ptr());
+                return ev.make_typed_error("cdddr: cross-tenant pair slot read denied (#4505)",
+                                           aura::diag::ErrorKind::EffectDenied);
             }
             return pairs[di].cdr;
         },
@@ -1043,9 +1002,9 @@ void RegSplitParts::register_mutable_pair_ops(PrimRegistrar add, Evaluator& ev,
                 if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/false,
                                                    aura::compiler::security::kEffectMutate,
                                                    "set-car!")) {
-                    return make_primitive_error(string_heap, error_values,
-                                                "set-car!: cross-tenant pair slot write "
-                                                "denied (#4298)");
+                    return ev.make_typed_error("set-car!: cross-tenant pair slot write "
+                                               "denied (#4298)",
+                                               aura::diag::ErrorKind::EffectDenied);
                 }
                 pairs[idx].car = a[1];
                 if (ev.pair_is_workspace_reachable(idx))
@@ -1075,9 +1034,9 @@ void RegSplitParts::register_mutable_pair_ops(PrimRegistrar add, Evaluator& ev,
                     (void)ev.check_workspace_isolation(
                         /*target=*/ev.capability_tenant_id(), /*ref_tenant=*/slot_tenant,
                         aura::compiler::security::kEffectMutate, "set-car!");
-                    return make_primitive_error(string_heap, error_values,
-                                                "set-car!: cross-tenant pair slot write "
-                                                "denied (#4057)");
+                    return ev.make_typed_error("set-car!: cross-tenant pair slot write "
+                                               "denied (#4057)",
+                                               aura::diag::ErrorKind::EffectDenied);
                 }
                 g_pair_slots[idx]->car = a[1].val;
                 if (ev.pair_is_workspace_reachable(idx))
@@ -1114,9 +1073,9 @@ void RegSplitParts::register_mutable_pair_ops(PrimRegistrar add, Evaluator& ev,
                 if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/false,
                                                    aura::compiler::security::kEffectMutate,
                                                    "set-cdr!")) {
-                    return make_primitive_error(string_heap, error_values,
-                                                "set-cdr!: cross-tenant pair slot write "
-                                                "denied (#4298)");
+                    return ev.make_typed_error("set-cdr!: cross-tenant pair slot write "
+                                               "denied (#4298)",
+                                               aura::diag::ErrorKind::EffectDenied);
                 }
                 pairs[idx].cdr = a[1];
                 if (ev.pair_is_workspace_reachable(idx))
@@ -1138,9 +1097,9 @@ void RegSplitParts::register_mutable_pair_ops(PrimRegistrar add, Evaluator& ev,
                     (void)ev.check_workspace_isolation(
                         /*target=*/ev.capability_tenant_id(), /*ref_tenant=*/slot_tenant,
                         aura::compiler::security::kEffectMutate, "set-cdr!");
-                    return make_primitive_error(string_heap, error_values,
-                                                "set-cdr!: cross-tenant pair slot write "
-                                                "denied (#4057)");
+                    return ev.make_typed_error("set-cdr!: cross-tenant pair slot write "
+                                               "denied (#4057)",
+                                               aura::diag::ErrorKind::EffectDenied);
                 }
                 g_pair_slots[idx]->cdr = a[1].val;
                 if (ev.pair_is_workspace_reachable(idx))
@@ -1200,10 +1159,9 @@ void RegSplitParts::register_string_ops(PrimRegistrar add, Evaluator& ev,
                     // copy; same reader gate as string=?.
                     if (!ev.inrange_string_tenant_allows(idx, /*required_effects=*/0,
                                                          "string-append")) {
-                        return make_primitive_error(
-                            string_heap, error_values,
+                        return ev.make_typed_error(
                             "string-append: cross-tenant string slot read denied (#4505)",
-                            primitive_error_counter);
+                            aura::diag::ErrorKind::EffectDenied);
                     }
                     result += string_heap[idx];
                 }
@@ -1243,10 +1201,9 @@ void RegSplitParts::register_string_ops(PrimRegistrar add, Evaluator& ev,
                     // reader gate as the other string readers.
                     if (!ev.inrange_string_tenant_allows(idx, /*required_effects=*/0,
                                                          "string-length")) {
-                        return make_primitive_error(
-                            string_heap, error_values,
+                        return ev.make_typed_error(
                             "string-length: cross-tenant string slot read denied (#4505)",
-                            ev.primitive_error_counter_ptr());
+                            aura::diag::ErrorKind::EffectDenied);
                     }
                     // Issue #4548: cached index, not a recount per call.
                     const auto n = ev.string_heap_code_point_count(idx);
@@ -1282,10 +1239,9 @@ void RegSplitParts::register_string_ops(PrimRegistrar add, Evaluator& ev,
             // Issue #4505: the bytes are payload — the in-range stamp
             // compare runs before the slot is read.
             if (!ev.inrange_string_tenant_allows(idx, /*required_effects=*/0, "string-hash")) {
-                return make_primitive_error(
-                    string_heap, error_values,
+                return ev.make_typed_error(
                     "string-hash: cross-tenant string slot read denied (#4505)",
-                    ev.primitive_error_counter_ptr());
+                    aura::diag::ErrorKind::EffectDenied);
             }
             // Issue #2651 / #2652: the heap read runs under the alloc lock
             // (the string heap shares it as its own mutex).
@@ -1364,10 +1320,9 @@ void RegSplitParts::register_string_ops(PrimRegistrar add, Evaluator& ev,
                 // stamp before the copy.
                 if (!ev.inrange_string_tenant_allows(as_string_idx(a[0]), /*required_effects=*/0,
                                                      "substring")) {
-                    return make_primitive_error(
-                        string_heap, error_values,
+                    return ev.make_typed_error(
                         "substring: cross-tenant string slot read denied (#4505)",
-                        ev.primitive_error_counter_ptr());
+                        aura::diag::ErrorKind::EffectDenied);
                 }
             } else
                 return make_int(0);
@@ -1408,10 +1363,8 @@ void RegSplitParts::register_string_ops(PrimRegistrar add, Evaluator& ev,
                        ev.inrange_string_tenant_allows(idx, /*required_effects=*/0, "string=?");
             };
             if (!tenant_allows(a[0]) || !tenant_allows(a[1])) {
-                return make_primitive_error(
-                    string_heap, error_values,
-                    "string=?: cross-tenant string slot read denied (#4505)",
-                    ev.primitive_error_counter_ptr());
+                return ev.make_typed_error("string=?: cross-tenant string slot read denied (#4505)",
+                                           aura::diag::ErrorKind::EffectDenied);
             }
             auto to_str = [&string_heap](const EvalValue& v) -> std::string {
                 if (is_string(v)) {
@@ -1440,10 +1393,8 @@ void RegSplitParts::register_string_ops(PrimRegistrar add, Evaluator& ev,
                        ev.inrange_string_tenant_allows(idx, /*required_effects=*/0, "string<?");
             };
             if (!tenant_allows(a[0]) || !tenant_allows(a[1]))
-                return make_primitive_error(
-                    string_heap, error_values,
-                    "string<?: cross-tenant string slot read denied (#4505)",
-                    ev.primitive_error_counter_ptr());
+                return ev.make_typed_error("string<?: cross-tenant string slot read denied (#4505)",
+                                           aura::diag::ErrorKind::EffectDenied);
             auto to_str = [&string_heap](const EvalValue& v) -> std::string {
                 if (is_string(v)) {
                     auto idx = as_string_idx(v);
@@ -1485,10 +1436,8 @@ void RegSplitParts::register_string_number_ops(
                        ev.inrange_string_tenant_allows(idx, /*required_effects=*/0, "string>?");
             };
             if (!tenant_allows(a[0]) || !tenant_allows(a[1]))
-                return make_primitive_error(
-                    string_heap, error_values,
-                    "string>?: cross-tenant string slot read denied (#4505)",
-                    ev.primitive_error_counter_ptr());
+                return ev.make_typed_error("string>?: cross-tenant string slot read denied (#4505)",
+                                           aura::diag::ErrorKind::EffectDenied);
             auto to_str = [&string_heap](const EvalValue& v) -> std::string {
                 if (is_string(v)) {
                     auto idx = as_string_idx(v);
@@ -1515,10 +1464,9 @@ void RegSplitParts::register_string_number_ops(
                        ev.inrange_string_tenant_allows(idx, /*required_effects=*/0, "string>=?");
             };
             if (!tenant_allows(a[0]) || !tenant_allows(a[1]))
-                return make_primitive_error(
-                    string_heap, error_values,
+                return ev.make_typed_error(
                     "string>=?: cross-tenant string slot read denied (#4505)",
-                    ev.primitive_error_counter_ptr());
+                    aura::diag::ErrorKind::EffectDenied);
             auto to_str = [&string_heap](const EvalValue& v) -> std::string {
                 if (is_string(v)) {
                     auto idx = as_string_idx(v);
@@ -1545,10 +1493,9 @@ void RegSplitParts::register_string_number_ops(
                        ev.inrange_string_tenant_allows(idx, /*required_effects=*/0, "string<=?");
             };
             if (!tenant_allows(a[0]) || !tenant_allows(a[1]))
-                return make_primitive_error(
-                    string_heap, error_values,
+                return ev.make_typed_error(
                     "string<=?: cross-tenant string slot read denied (#4505)",
-                    ev.primitive_error_counter_ptr());
+                    aura::diag::ErrorKind::EffectDenied);
             auto to_str = [&string_heap](const EvalValue& v) -> std::string {
                 if (is_string(v)) {
                     auto idx = as_string_idx(v);
@@ -1585,10 +1532,9 @@ void RegSplitParts::register_string_number_ops(
                        ev.inrange_string_tenant_allows(idx, /*required_effects=*/0, "string-index");
             };
             if (!tenant_allows(a[0]) || !tenant_allows(a[1]))
-                return make_primitive_error(
-                    string_heap, error_values,
+                return ev.make_typed_error(
                     "string-index: cross-tenant string slot read denied (#4505)",
-                    ev.primitive_error_counter_ptr());
+                    aura::diag::ErrorKind::EffectDenied);
             auto haystack = (is_string(a[0]) && as_string_idx(a[0]) < string_heap.size())
                                 ? string_heap[as_string_idx(a[0])]
                                 : "";
