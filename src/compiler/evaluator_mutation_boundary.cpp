@@ -4388,6 +4388,10 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(
         typed_audit::g_tls_outermost_persist_reject_needs_restore = false;
         // Issue #4403: a gate token belongs to the boundary that noted it.
         typed_audit::clear_boundary_deny_op();
+        // Issue #5310: this commit's pre-decision pipeline may arm density.
+        // A pending left by the previous commit's post-decision sweep must
+        // not be the reason this body is rejected.
+        aura::compiler::castop_density::begin_density_gate_boundary();
         // A prior boundary's synth/post-mutate/escape sticky must not
         // restore this boundary's children after a #t return.
         ev_->clear_linear_synth_hard_fail_pending();

@@ -50,6 +50,26 @@ inline std::atomic<std::uint64_t>& g_gate_reject_total() noexcept {
 // can arm it.
 inline std::atomic<std::uint32_t> g_density_gate_reject_pending{0};
 
+// Issue #5310: finish_mutate_hard_gate sets this once the commit has already
+// accepted or rejected on density. A relower / undermark sweep after that
+// point must not store a pending reject — the next mutate:rebind would
+// consume it and flip invariant-denied / #t for a body that did not itself
+// trip, and the undermark arm ignores AURA_CASTOP_DENSITY_STREAK_GATE.
+// The next outermost boundary clears it so a pre-decision arm still rejects.
+inline thread_local std::uint32_t t_density_decision_closed{0};
+
+[[nodiscard]] inline bool density_decision_already_closed() noexcept {
+    return t_density_decision_closed != 0;
+}
+
+inline void note_density_decision_closed() noexcept {
+    t_density_decision_closed = 1;
+}
+
+inline void begin_density_gate_boundary() noexcept {
+    t_density_decision_closed = 0;
+}
+
 [[nodiscard]] inline bool density_gate_reject_pending() noexcept {
     return g_density_gate_reject_pending.load(std::memory_order_acquire) != 0;
 }
@@ -60,6 +80,7 @@ inline bool consume_density_gate_reject_pending() noexcept {
 
 inline void reset_density_gate_reject_pending_for_test() noexcept {
     g_density_gate_reject_pending.store(0, std::memory_order_relaxed);
+    t_density_decision_closed = 0;
 }
 
 // hard_override: -1 = read env, 0 = force soft, 1 = force hard (tests).
@@ -166,7 +187,9 @@ inline ClosedLoopResult apply_density_closed_loop(CompilerMetrics& m, std::uint6
                 r.gate_reject = true;
                 // Issue #3699: streak gate must fail the mutate commit,
                 // not only bump reject pressure / force-JIT.
-                g_density_gate_reject_pending.store(1, std::memory_order_release);
+                // Issue #5310: not after this commit already decided.
+                if (!density_decision_already_closed())
+                    g_density_gate_reject_pending.store(1, std::memory_order_release);
             } else {
                 m.castop_density_soft_warn_total.fetch_add(1, std::memory_order_relaxed);
                 r.soft_warn = true;
@@ -191,8 +214,11 @@ inline bool apply_hard_policy(CompilerMetrics& m, std::uint64_t dens, std::uint6
 }
 
 // Test helper: reset process-wide streak between cases.
+// Also reopens the #5310 decision latch so a direct policy call is not
+// suppressed by an earlier finish_mutate_hard_gate in this process.
 inline void reset_streak_for_test() noexcept {
     g_density_streak().store(0, std::memory_order_relaxed);
+    t_density_decision_closed = 0;
 }
 
 [[nodiscard]] inline std::uint64_t density_streak() noexcept {
@@ -258,6 +284,11 @@ inline void note_hot_residual_fail_close(std::size_t leftover_non_id, bool unann
     const auto streak = g_density_streak().fetch_add(1, std::memory_order_relaxed) + 1;
     if (streak < streak_gate_threshold())
         return;
+    // Issue #5310: the sweep that crosses the threshold often runs after
+    // the commit already returned. Do not leave a pending reject for the
+    // next body. The threshold above is still AURA_CASTOP_DENSITY_STREAK_GATE.
+    if (density_decision_already_closed())
+        return;
     g_gate_reject_total().fetch_add(1, std::memory_order_relaxed);
     mutate_type_gate::g_hard_type_error_reject_total.fetch_add(1, std::memory_order_relaxed);
     g_density_gate_reject_pending.store(1, std::memory_order_release);
@@ -300,6 +331,12 @@ inline void note_residual_undermark_reelide(std::size_t elided) noexcept {
 // boundary) reject without any new query key.
 inline void note_residual_undermark_hard_reject(std::size_t unannotated_leftover) noexcept {
     if (unannotated_leftover == 0)
+        return;
+    // Issue #5310: no streak hop (#4172 — the latch already proves the
+    // miss) when this commit has not decided yet. After the decision,
+    // storing pending fails the next rebind and ignores
+    // AURA_CASTOP_DENSITY_STREAK_GATE. Skip that late arm.
+    if (density_decision_already_closed())
         return;
     g_residual_undermark_reject_total.fetch_add(1, std::memory_order_relaxed);
     g_gate_reject_total().fetch_add(1, std::memory_order_relaxed);

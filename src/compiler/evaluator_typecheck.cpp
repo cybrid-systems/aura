@@ -2789,15 +2789,20 @@ bool Evaluator::finish_mutate_hard_gate(std::uint64_t nodes_changed, bool linear
         return false;
     // Issue #3699: Production density streak gate → mutate commit false
     // (reuse MutateTypeGate hard face). Soft never arms the pending.
-    if ((typed_audit::production_defaults_active() || mutate_type_gate::is_hard()) &&
-        aura::compiler::castop_density::consume_density_gate_reject_pending()) {
-        // Issue #4403: this arm consumes the pending flag, so the Guard
-        // belt cannot see density. Note the gate; exit stamps after restore.
-        typed_audit::note_boundary_deny_op("density-streak");
-        last_mutate_error_ =
-            "typecheck after mutate: CastOp density streak gate (production fail-closed)";
-        ac.hard_gate_force_rollback_total.fetch_add(1, std::memory_order_relaxed);
-        return false;
+    // Issue #5310: once this check has run, a later sweep in the same
+    // boundary must not arm a reject for the next mutate.
+    if (typed_audit::production_defaults_active() || mutate_type_gate::is_hard()) {
+        if (aura::compiler::castop_density::consume_density_gate_reject_pending()) {
+            aura::compiler::castop_density::note_density_decision_closed();
+            // Issue #4403: this arm consumes the pending flag, so the Guard
+            // belt cannot see density. Note the gate; exit stamps after restore.
+            typed_audit::note_boundary_deny_op("density-streak");
+            last_mutate_error_ =
+                "typecheck after mutate: CastOp density streak gate (production fail-closed)";
+            ac.hard_gate_force_rollback_total.fetch_add(1, std::memory_order_relaxed);
+            return false;
+        }
+        aura::compiler::castop_density::note_density_decision_closed();
     }
     const bool strict = aura::core::sandbox::is_strict();
     // Issue #2223: force hard-gate when workspace has match sites (Sampled
