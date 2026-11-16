@@ -142,7 +142,8 @@ namespace {
     // parser message — the same "parse error:" word the CLI prints.
     [[nodiscard]] std::string format_set_code_parse_error(const aura::parser::FlatParseResult& pr) {
         std::string err;
-        auto add = [&](std::string piece) {
+        // prim_surface.py records an indented add("...") line as a registration.
+        auto append_diag = [&](std::string piece) {
             if (!err.empty())
                 err += "; ";
             err += std::move(piece);
@@ -150,15 +151,15 @@ namespace {
         if (!pr.errors.empty()) {
             for (const auto& e : pr.errors) {
                 if (e.location.valid())
-                    add(std::format("workspace.aura:{}:{}: parse error: {}", e.location.line,
-                                    e.location.column, e.message));
+                    append_diag(std::format("workspace.aura:{}:{}: parse error: {}",
+                                            e.location.line, e.location.column, e.message));
                 else
-                    add(std::format("workspace.aura: parse error: {}", e.message));
+                    append_diag(std::format("workspace.aura: parse error: {}", e.message));
             }
         } else if (!pr.error.empty()) {
-            add(std::format("workspace.aura: parse error: {}", pr.error));
+            append_diag(std::format("workspace.aura: parse error: {}", pr.error));
         } else {
-            add("workspace.aura: parse error");
+            append_diag("workspace.aura: parse error");
         }
         return err;
     }
