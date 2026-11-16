@@ -3956,7 +3956,8 @@ static OneshotLaunch parse_oneshot_launch(int argc, char** argv) {
             if (!a.empty() && a[0] == '-') {
                 std::println(std::cerr, "error: unknown option '{}'", a);
                 std::println(std::cerr, "hint: 'aura --help' for usage");
-                out.status = 1;
+                // Issue #5240: usage errors use the one-shot exit table (2).
+                out.status = 2;
                 return out;
             }
             // Bare path: read file contents (denseness sugar for `./aura < file`).
@@ -3966,7 +3967,8 @@ static OneshotLaunch parse_oneshot_launch(int argc, char** argv) {
                 std::println(std::cerr, "hint: programs default to stdin — try: aura < {}",
                              argv[i]);
                 std::println(std::cerr, "hint: 'aura --help' for usage");
-                out.status = 1;
+                // Issue #5240: unreadable program path is a usage error (2).
+                out.status = 2;
                 return out;
             }
             if (!all_input.empty())
