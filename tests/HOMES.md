@@ -85,6 +85,7 @@ Append there. Names `std/iter` re-exports are the `std/list` contract. Names
 | std/extract and std/agent extractors | `tests/suite/export_contracts_5198.aura` | `extract-code`, `llm:extract-code` |
 | std/refactor and std/safe-refactor | `tests/suite/refactor_rename_inline.aura` | `refactor:rename-var`, `refactor:inline-function`, `safe-refactor:replace-fn` |
 | std/contract (invariants + protection sets) | `tests/suite/contracts_invariants.aura` | `contract:set`, `contract:protect`, `contract:invariant`, `std/contract` |
+| std/feedback (one transform's record) | `tests/suite/feedback_record.aura` | `feedback:rebind`, `feedback:transform`, `ws:diff`, `mutation:trace`, `std/feedback`, `std/source-diff` |
 | std/search | `tests/suite/search_clonal.aura` | `search:init`, `std/search` |
 | lang/module | `tests/suite/module.aura` | `lang/module`, `overwrite warning` |
 | lang/parser | `tests/suite/paren_semi_comment_5199.aura` | `unclosed list`, `(;` |
@@ -105,6 +106,7 @@ A stem (no `.` in the last component) matches the end, `/`, `.`, or `_`.
 - std/evo: `lib/std/evo.aura`, `lib/std/evo-core.aura`, `src/compiler/evo_log_4910.hh`, `src/compiler/evaluator_primitives_mutate`
 - std/extract: `lib/std/extract.aura`
 - std/contract: `lib/std/contract.aura`
+- std/feedback: `lib/std/feedback.aura`, `lib/std/source-diff.aura`, `lib/std/workspace.aura`, `lib/std/ast.aura`, `lib/std/ast-viz.aura`
 - std/search: `lib/std/search.aura`
 - lang/module: `src/compiler/evaluator_module_loader.cpp`, `src/compiler/evaluator_primitives_module.cpp`, `src/core/module_boundary.ixx`
 - lang/parser: `src/parser/`, `src/compiler/diag.ixx`, `src/compiler/evaluator_primitives_diagnostic.cpp`

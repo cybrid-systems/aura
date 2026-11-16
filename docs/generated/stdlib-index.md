@@ -2,7 +2,7 @@
 
 # Standard library index (generated)
 
-**106** modules in `lib/std/`. Load: `(require "std/name" all:)`.
+**108** modules in `lib/std/`. Load: `(require "std/name" all:)`.
 
 | Module | Exports | Description |
 |--------|---------|-------------|
@@ -41,6 +41,7 @@
 | `std/evo` | `evo:records` `evo:trace` `evo:worldline` `evo:parse-line` `evo:parse-log` `evo:record-count` `evo:keep?` `evo:arm-of` … (+20) | lib/std/evo.aura — experience layer over the evo:record! worldline (#5004) |
 | `std/exception` | `with-exception-handler` `raise-continuable` `error-object?` `error-object-message` `error-object-irritants` `guard` `raise` | lib/std/exception.aura — R7RS (scheme base) exception surface (Issue #5005) |
 | `std/extract` | `extract-code` `trim-str` `find-in-str` | lib/std/extract.aura — Code extraction from LLM responses |
+| `std/feedback` | `feedback:fields` `feedback:snapshot` `feedback:record` `feedback:transform` `feedback:rebind` `feedback:test-result` `feedback:test-selection` `feedback:metrics-keys` … (+1) | lib/std/feedback.aura — one transformation's feedback record (Issue #5254) |
 | `std/ffi` | `c-load` `c-func` `c-alloc` `c-free` `c-opaque` `c-opaque?` `c-opaque->int` `c-struct-size` … (+14) | ffi.aura — C FFI host prims (Issue #3176) |
 | `std/fs` | `path-join` `path-dirname` `path-basename` `path-extname` `file-read` `file-write` `file-exists?` `file-size` … (+3) | lib/std/fs.aura — File system utilities |
 | `std/fss` | `fss:init` `fss:init-hash` `fss:step!` `fss:best` `fss:population` `fss:report` `fss:export` `fss:help` … (+8) | lib/std/fss.aura — Issue #2880 Fish School Search surface |
@@ -95,6 +96,7 @@
 | `std/set` | `set` `set?` `set-copy` `set-clear!` `set-adjoin` `set-adjoin!` `set-delete` `set-delete!` … (+37) | lib/std/set.aura — SRFI-113 sets on the unified hash table (Issue #5003) |
 | `std/socket` | `tcp-connect` `tcp-send` `tcp-recv` `tcp-close` `tcp-listen` `tcp-local-port` `tcp-accept` `tcp-accept-timeout` | socket.aura — TCP socket library (client + server) |
 | `std/sort` | `list-sort` `list-stable-sort` `list-sort!` `list-stable-sort!` `vector-sort` `vector-stable-sort` `vector-sort!` `vector-stable-sort!` … (+3) | lib/std/sort.aura — SRFI-132 sorting (Issue #5003) |
+| `std/source-diff` | `src:forms` `src:define-map` `src:define-text` `src:diff` `src:diff-text` `src:workspace-source` | lib/std/source-diff.aura — define-level source diff (Issue #5254) |
 | `std/stack` | `make-stack` `stack-push` `stack-pop` `stack-top` `stack-empty?` `stack-length` `stack->list` `list->stack` | stack.aura — LIFO stack (pair-based) |
 | `std/stats` | `stats:get` `stats:list` `stats:contains?` `stats:count` `stats:prefix` `stats:filter` | Aura standard observability / stats module |
 | `std/string` | `string-split` `string-split-words` `string-join` `string-trim` `string-upcase` `string-downcase` `string-contains?` `string-prefix?` … (+20) | Aura standard string library |

@@ -5,7 +5,7 @@
 ;
 ; Provides:
 ;   ws:merge-symbols child-id    — True per-symbol merge via workspace:sync-from
-;   ws:diff child-id             — Show differences between child and parent
+;   ws:diff child-id             — Define-level diff of child vs parent (root 0)
 ;   ws:snapshot-current          — Capture current workspace state
 ;   ws:list-snapshots            — List all available snapshots
 ;   ws:rollback-latest           — Roll back to latest snapshot
@@ -13,10 +13,18 @@
 ;   ws:current-stats             — Combined stats for AI context
 ;   ws:state                     — Human-readable workspace snapshot (#5144)
 ;
+; Issue #5254: ws:diff is no longer a stub, and ws:state's MUTATIONS section
+; reads the mutation log — the same log (query :mutation-log) answers — so
+; ws:state, mutation:trace and the log cannot disagree about one transform.
+; ws:diff returns a hash: "kind" "ws-diff", "ok", "child", "parent", and the
+; src:diff keys ("identical" "changed" "added" "removed" "edits" "text").
 (export ws:merge-symbols ws:diff ws:snapshot-current
         ws:list-snapshots ws:rollback-latest
         ws:memory-pressure ws:current-stats
         ws:state)
+
+(require "std/string" all:)
+(require "std/source-diff" all:)
 
 ; ── ws:merge-symbols child-id ──
 ; Merges individual symbols from child workspace into the active parent.
@@ -42,9 +50,30 @@
   merged)
 
 ; ── ws:diff ──
-; Show what symbols differ between child and parent
+; Define-level diff between workspace child-id and the root (0). Both sides
+; are the authoritative source the engine already re-unparses after a mutate
+; ((query :code)), so this needs no AST op: (query :diff) does not exist.
+; The caller's active workspace is restored before returning.
 (define (ws:diff child-id)
-  (list "ws:diff not yet implemented" child-id))
+  (define here (workspace :current))
+  (if (not (workspace :switch child-id))
+      (hash "kind" "ws-diff" "ok" #f "child" child-id "parent" 0
+            "reason" "workspace-switch-refused"
+            "text" (string-append "ws:diff: workspace "
+                                  (if (number? child-id) (number->string child-id) "?")
+                                  " is not switchable"))
+      (let ((child-src (src:workspace-source)))
+        (workspace :switch 0)
+        (let* ((parent-src (src:workspace-source))
+               (d (src:diff parent-src child-src)))
+          (if (not (= here 0)) (workspace :switch here) #f)
+          (hash "kind" "ws-diff" "ok" #t "child" child-id "parent" 0
+                "identical" (hash-ref d "identical" #f)
+                "changed" (hash-ref d "changed" '())
+                "added" (hash-ref d "added" '())
+                "removed" (hash-ref d "removed" '())
+                "edits" (hash-ref d "edits" '())
+                "text" (hash-ref d "text" "none"))))))
 
 ; ── ws:snapshot-current ──
 ; Capture the current workspace state as a snapshot for
@@ -103,17 +132,19 @@
 
 
 ; ── ws:state ──
-; Human-readable workspace snapshot for the Agent / EDSL (#5144). The
-; retired (workspace-state) primitive printed exactly this text; the
-; std formatter rebuilds it from (stats:get "ast:defs") and the intend
-; timeline so the output stays byte-identical:
+; Human-readable workspace snapshot for the Agent / EDSL (#5144, #5254):
 ;   WORKSPACE: <n> defines      one header line, <n> = DEFINE: line count
 ;   DEFINE: <name>              one per define, in workspace (flat) order
 ;   (no defines)                placeholder when there is no define
-;   MUTATIONS (last 10):        timeline section header
-;     <i>:<line>                last ten entries, index-prefixed
-;   (none)                      placeholder when the timeline is empty
+;   MUTATIONS (last 10):        mutation-log section header
+;     <id>:<op> target=<node>   last ten records of (query :mutation-log)
+;   (none)                      placeholder when the log is empty
 ; No workspace AST loaded -> the same WORKSPACE-ERROR line as the engine.
+;
+; #5254: this section used to print the intend/approval timeline under the
+; MUTATIONS header, so a fresh rebind showed "(none)" while
+; (query :mutation-log) had the record. It now prints the mutation log
+; itself: one fact, three readers (ws:state, mutation:trace, the log).
 (define (ws:state)
   (define defs (stats:get "ast:defs"))
   (if (void? defs)
@@ -124,7 +155,7 @@
                            "(no defines)\n"
                            (ws:define-lines ds))
                        "MUTATIONS (last 10):\n"
-                       (ws:last-timeline)))))
+                       (ws:last-mutations)))))
 
 ; Count the (name . node-id) entries; defensive against a bare name.
 (define (ws:define-count ds)
@@ -144,39 +175,27 @@
                     (string-append out "DEFINE: " (car entry) "\n")
                     out))))))
 
-; Last ten timeline entries, "  <i>:<line>" each. The intend timeline
-; snapshot is "i:line\n" per entry with absolute indexes, so keeping the
-; prefix and indenting reproduces the engine's timeline_tail(10) text.
-(define (ws:last-timeline)
-  (let ((hist (intend-history)))
-    (if (string=? hist "(empty)")
+; Last ten mutation-log records, "  <id>:<op> target=<node>" each, in log
+; order (oldest first). Reads the same (query :mutation-log) the Agent reads.
+(define (ws:last-mutations)
+  (let ((log (try (query :mutation-log 10) (catch (e) '()))))
+    (if (not (pair? log))
         "  (none)\n"
-        (let* ((lines (ws:split-newlines hist))
-               (n (length lines))
-               (tail (if (> n 10) (ws:drop (- n 10) lines) lines)))
-          (ws:indent-lines tail)))))
+        (let loop ((rs log) (out ""))
+          (if (null? rs)
+              out
+              (loop (cdr rs)
+                    (string-append out "  "
+                                   (ws:log-field (car rs) "id") ":"
+                                   (ws:log-field (car rs) "op")
+                                   " target=" (ws:log-field (car rs) "target")
+                                   "\n")))))))
 
-; Split on #\newline and drop the trailing empty piece (the final "\n").
-(define (ws:split-newlines s)
-  (let ((n (string-length s)))
-    (let loop ((i 0) (start 0) (acc '()))
-      (if (>= i n)
-          (let ((piece (substring s start i)))
-            (reverse (if (string=? piece "") acc (cons piece acc))))
-          (if (= (string-ref s i) 10)
-              (loop (+ i 1) (+ i 1) (cons (substring s start i) acc))
-              (loop (+ i 1) start acc))))))
-
-; "  " + line + "\n" for each line, concatenated.
-(define (ws:indent-lines lines)
-  (let loop ((rest lines) (out ""))
-    (if (null? rest)
-        out
-        (loop (cdr rest)
-              (string-append out "  " (car rest) "\n")))))
-
-; Drop the first n elements (tail-recursive; keeps the list when short).
-(define (ws:drop n lst)
-  (if (or (= n 0) (null? lst))
-      lst
-      (ws:drop (- n 1) (cdr lst))))
+; One "key=value" field from a mutation-log line.
+(define (ws:log-field line key)
+  (let ((prefix (string-append key "=")))
+    (let loop ((ws (string-split-words line)))
+      (cond ((null? ws) "")
+            ((string-prefix? (car ws) prefix)
+             (substring (car ws) (string-length prefix) (string-length (car ws))))
+            (else (loop (cdr ws)))))))
