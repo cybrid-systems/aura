@@ -83,7 +83,7 @@ def main() -> int:
     # ── AC4: exit restore on failed authority audit ──────────────────────
     must(
         "if (nested_boundary && success && !soft_only_below)\n"
-        "                                goto skip_nested_success_composite_restore;",
+        "                            goto skip_nested_success_composite_restore;",
         "AC4 nested-success skip only for real Guard nesting",
         emb,
     )

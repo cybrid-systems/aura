@@ -18858,6 +18858,17 @@ public:
     // enter and exit are rolled back (see MutationRecord inverse).
     // Returns the popped checkpoint (or {0} if the stack is empty).
     MutationCheckpoint exit_mutation_boundary(bool success);
+    // Issue #5243: extract-method of exit_mutation_boundary's failure arm.
+    // Dual-topology abort restore + abort-face clears, moved verbatim.
+    void exit_rollback_failed_dual_topology_(MutationCheckpoint& cp, bool nested_boundary,
+                                             std::vector<std::uint32_t>& coerced_nodes_at_exit);
+    // Issue #5243: success-arm validation/audit/rollback body, moved verbatim.
+    // Returns true when the strict reflect rollback already handled the exit.
+    bool exit_validate_success_(MutationCheckpoint& cp, bool success, bool nested_boundary,
+                                bool soft_only_below, bool provenance_miss);
+    // Issue #5243: the former exit_mutation_boundary lambda, now shared with
+    // the extracted success arm (body unchanged).
+    void invalidate_defuse_index_for_nested_() noexcept;
 
     // Issue #2099: lightweight, Agent-visible HygieneCheckpoint for
     // what-if / self-evo rollback semantics. The struct definition

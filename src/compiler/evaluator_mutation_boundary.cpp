@@ -1721,6 +1721,1043 @@ void Evaluator::rebase_open_mutation_checkpoint_after_flat_replace() noexcept {
     }
 }
 
+// Issue #5243: was the exit_mutation_boundary lambda; the extracted success
+// arm calls it too, so it becomes a private method with the same body.
+void Evaluator::invalidate_defuse_index_for_nested_() noexcept {
+    if (!(typed_audit::production_defaults_active() ||
+          typed_audit::get_strategy() == typed_audit::AuditStrategy::Full))
+        return;
+    defuse_index_ = nullptr;
+    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+        m->nested_observation_window_closed_total.fetch_add(1, std::memory_order_relaxed);
+}
+
+// Issue #5243: extract-method of exit_mutation_boundary's failure arm.
+// The body moved verbatim (dual-topology abort restore + abort-face
+// clears); control flow and ordering are unchanged.
+void Evaluator::exit_rollback_failed_dual_topology_(
+    MutationCheckpoint& cp, bool nested_boundary,
+    std::vector<std::uint32_t>& coerced_nodes_at_exit) {
+    clear_expected_occurrence_snapshot_fp();
+    // Issue #3122: Agent-visible topology-restore is the Guard wrap
+    // (run_under_mutation_guard); this path owns the Hard restore.
+    // Issue #2959: dual topology abort under ONE structural exclusive —
+    // mutation-log rollback + children_ snapshot + parent_ rebuild +
+    // dual canary. Closes densify×steal mid-window tears between
+    // partial structural inverse and full restore.
+    // Issue #549: bump mutation_log_rollback_count_ when records
+    // were actually rolled (stricter subset of failed boundaries).
+    // Issue #3117: publish abort-force fence before restore so a
+    // concurrent lookup cannot serve pre-abort IR as clean.
+    if (abort_ir_cache_begin_force_fn_)
+        abort_ir_cache_begin_force_fn_();
+    // Issue #3193 / Issue #3232: publish abort authority before topology
+    // restore so concurrent densify/steal rehydrate waits for dual_clear
+    // + persist clear + proof invalidate (one face). Nested hold is a
+    // count — inner end does not drop the outer face. Soft: observe-only.
+    typed_audit::AbortAuthorityHold abort_authority;
+    // Issue #3281: mid-bound abort authority version. Capture the
+    // mid-local version at abort enter (production/Full only) so ALL
+    // ordered clears below complete under it; a concurrent
+    // densify/steal rehydrate for the SAME mid refuses to freeze a
+    // green proof while the slot is outstanding (AC1), and the
+    // post-clear check below detects version drift (interleave) and
+    // forces full clear + reject proof.
+    const auto mid_abort_ver = typed_audit::begin_mid_abort_authority(cp.audit_mid);
+    BoundaryRollbackStats stats;
+    // Issue #3687: persist-reject already restored dual-topology under
+    // the same mutate lock (snapshot moved). Skip a second restore so
+    // empty children_snapshot cannot wipe the enter checkpoint.
+    if (!cp.topology_restored) {
+        // Issue #3897: pass the enter dirty-SoA snapshot so abort
+        // does not leave phantom over-dirty cones (#3865 incomplete).
+        // Issue #4346: empty children_ snapshot is not a pre-image.
+        if (cp.heap_slot_only && cp.children_snapshot.empty())
+            stats.field_records_rolled = workspace_flat_->rollback_to_size(cp.mutation_log_size);
+        else
+            stats.field_records_rolled = workspace_flat_->abort_restore_dual_topology(
+                cp.mutation_log_size, std::move(cp.children_snapshot),
+                std::move(cp.dirty_soa_snapshot), std::move(cp.marker_provenance_snapshot));
+        if (stats.field_records_rolled > 0) {
+            bump_mutation_log_rollback_count();
+            if (nested_boundary)
+                bump_edsl_nested_atomic_rollback();
+        }
+        // Issue #3743: inbody force-exit / abort restore restamp before
+        // this function returns (Guard dtor triad is later; Agent can
+        // observe after force_release_hold_budget_inbody). Soft/Off:
+        // outermost dtor still restamps; skip extra atomics here.
+        if (typed_audit::production_defaults_active() ||
+            typed_audit::get_strategy() == typed_audit::AuditStrategy::Full)
+            (void)unified_restamp_after_boundary(UnifiedRestampSite::AbortRestore);
+    } else if (last_boundary_rollback_stats_.children_column_restored) {
+        stats = last_boundary_rollback_stats_;
+    }
+    // Issue #1281 / #1502: dual restore sealed inside abort_restore_dual_topology.
+    stats.children_column_restored = true;
+    // Issue #3095: post-restore macro hygiene invariant enforcement.
+    // Closes the residual pairing gap where MacroIntroduced markers /
+    // provenance / macro_dirty_ could drift out of sync with the
+    // restored children_ / parent_ topology and the flat generation
+    // (steal mid-expand + dual-topology abort + densify combined path).
+    // Soft / Off → metric-only; production → hard_fail + stable reason.
+    (void)check_macro_hygiene_invariant_post_restore("abort-failure");
+    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+        m->children_topology_rollback_count.fetch_add(1, std::memory_order_relaxed);
+        m->parent_topology_rollback_count.fetch_add(1, std::memory_order_relaxed);
+        // Issue #2959: dual restore seal counters (Agent canary).
+        m->topology_dual_restore_total.fetch_add(1, std::memory_order_relaxed);
+        const auto inc = workspace_flat_->topology_dual_restore_inconsistency_total();
+        // Mirror process flat inconsistency into per-eval metrics once
+        // per abort (delta not available; Agents poll flat absolute).
+        if (inc > 0)
+            m->topology_dual_restore_inconsistency_total.store(inc, std::memory_order_relaxed);
+    }
+    // Issue #266: restore sym_id_ / param columns for bulk
+    // rename operations when fine rollback was requested.
+    if (cp.fine_rollback) {
+        workspace_flat_->restore_sym_id(std::move(cp.sym_id_snapshot));
+        workspace_flat_->restore_param_columns(std::move(cp.param_snapshot));
+        stats.sym_id_column_restored = true;
+        stats.param_columns_restored = true;
+    }
+    // Issue #679: realign atomic-batch suppressed flag if a
+    // nested path left it inconsistent with the snapshot.
+    if (workspace_flat_->atomic_batch_active() != cp.bump_suppressed_at_entry) {
+        if (cp.bump_suppressed_at_entry)
+            workspace_flat_->begin_atomic_batch();
+        else
+            workspace_flat_->rollback_atomic_batch();
+        suppressed_misalign_caught_.fetch_add(1, std::memory_order_relaxed);
+    }
+    if (stats.children_column_restored && cp.macro_introduced_count_at_entry > 0) {
+        macro_rollback_hits_.fetch_add(1, std::memory_order_relaxed);
+    }
+    // Issue #3033: dual-topology abort leaves IR cache version stamps
+    // pointing at intermediate/pre-abort state — force-dirty + zero-
+    // restamp every cached entry so should_relower is forced true and
+    // lookup_define_v2 / eval / AOT reemit never serve stale IR.
+    // Issue #3551: force-dirty also drops entry.irs via
+    // clear_cache_v2_for_define (after restore, before success return).
+    if (abort_ir_cache_force_dirty_fn_)
+        abort_ir_cache_force_dirty_fn_();
+    // Issue #3030: drop stale TypeLinearCommitProof / linear_fast_path
+    // face so post-abort Move/Drop cannot elide on a pre-abort stamp.
+    typed_audit::clear_type_linear_commit_proof_on_abort();
+    // Issue #3102: AC1+AC2+AC3+AC4 — CoercionMap abort rewind.
+    // Production/Full: truncate the type cone to entry size, force-dirty
+    // coerced nodes, bump DeadCoercion decision invalidate gen, and
+    // clear coercion commit_readiness. Soft: bump observe counter only.
+    if (typed_audit::production_defaults_active() ||
+        typed_audit::get_strategy() == typed_audit::AuditStrategy::Full) {
+        // AC1: truncate the type cone to entry size.
+        aura::compiler::dirty::truncate_type_cone_to_size(cp.coercion_cone_size_at_entry);
+        // AC2: force-dirty coerced nodes for the next incremental typecheck.
+        // #4672: the tracker was drained by the exit call above (the
+        // outermost exit CLEARS it), so this take used to be empty and
+        // the force-dirty step was a no-op. Consume the capture taken
+        // BEFORE that drain, plus a node coerced after it.
+        auto coerced = std::move(coerced_nodes_at_exit);
+        auto late_coerced = aura::compiler::coerced_nodes_tracker_take();
+        if (!late_coerced.empty())
+            coerced.insert(coerced.end(), late_coerced.begin(), late_coerced.end());
+        if (!coerced.empty()) {
+            const auto added = aura::compiler::dirty::force_dead_coercion_elim_into_cone(coerced);
+            aura::compiler::g_coercion_map_abort_forced_dirty_total.fetch_add(
+                added, std::memory_order_relaxed);
+        }
+        // AC3: bump DeadCoercion decision invalidate gen (drops stale IR).
+        aura::compiler::dirty::bump_dead_coercion_decision_invalidate();
+        // AC4: clear coercion commit_readiness on abort (sibling of proof clear).
+        typed_audit::clear_coercion_commit_readiness_on_abort();
+        // Issue #3158: AC2 — abort restore-or-clear (production/Full).
+        // Truncates live occurrence_goals_ back to boundary-entry size
+        // so residual narrowing goals added during the failed boundary
+        // don't poison the next delta's priority + fingerprint + stamp
+        // face. Runs AFTER dual-topology restore + proof + coercion
+        // clear, BEFORE any post-abort IR/JIT lookup that could elide
+        // on the stamped face. Soft path bumps observe counter only
+        // (no structural write) — see else branch.
+        if (auto* tc = static_cast<aura::compiler::TypeChecker*>(commit_type_checker_handle())) {
+            const auto dropped = tc->constraint_system().restore_or_clear_occurrence_to_entry(
+                cp.occurrence_entry_size);
+            aura::compiler::typed_audit::note_3158_occurrence_abort_restore(dropped);
+        }
+        aura::compiler::g_coercion_map_abort_rewind_total.fetch_add(1, std::memory_order_relaxed);
+    } else {
+        aura::compiler::g_coercion_map_abort_rewind_observe_total.fetch_add(
+            1, std::memory_order_relaxed);
+        // #4672: the capture is dropped — Soft / Off stays observe-only.
+        coerced_nodes_at_exit.clear();
+        (void)aura::compiler::coerced_nodes_tracker_take(); // discard
+        // Issue #3158: Soft / Off path — observe counter only, no
+        // structural write. Per AC3 zero-cost contract: Soft bumps
+        // observe_total without entering the restore_or_clear_ path.
+        aura::compiler::typed_audit::note_3158_occurrence_abort_observe();
+    }
+    // Issue #4310: outermost !success puts type columns and the CS
+    // high-water back. Persist-reject already set type_face_restored.
+    if (typed_audit::production_defaults_active() ||
+        typed_audit::get_strategy() == typed_audit::AuditStrategy::Full)
+        restore_abort_type_face(cp);
+    // Issue #3116: last_coercions_ + TLS active context (half-green residual).
+    dual_clear_coercion_state_on_abort();
+    // Issue #3193: persist clear on the abort body (before hold ends)
+    // so densify/steal cannot rehydrate a pre-abort snapshot against
+    // a cleared proof / empty coercion face. Dtor clear is idempotent.
+    aura_clear_occurrence_persist_buffer(this);
+    last_boundary_rollback_stats_ = stats;
+    // Invalidate the def-use index — the workspace state
+    // is now different from what the index reflects.
+    defuse_index_ = nullptr;
+    // Issue #3281: mid-bound authority post-clear check. All ordered
+    // clears (IR force-dirty → proof clear → coercion rewind →
+    // occurrence restore → dual-clear → persist clear) completed under
+    // the version captured at abort enter. If a concurrent densify/steal
+    // rehydrate bumped the mid authority version mid-abort, the clears
+    // may be torn → force full clear + stamp REJECT proof (no green
+    // stamp on torn state, AC2) + bump the existing mismatch family.
+    if (mid_abort_ver != 0 &&
+        typed_audit::mid_abort_authority_version(cp.audit_mid) != mid_abort_ver) {
+        typed_audit::g_mid_abort_authority_mismatch_total.fetch_add(1, std::memory_order_relaxed);
+        typed_audit::clear_type_linear_commit_proof_on_abort();
+        typed_audit::clear_coercion_commit_readiness_on_abort();
+        aura_clear_occurrence_persist_buffer(this);
+        (void)typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
+            ::aura::core::current_mutation_epoch(), /*would_allow_commit=*/false,
+            /*linear_ok=*/false, typed_audit::kProofLiveGoalCountHintAuto,
+            /*goal_fingerprint=*/0,
+            /*from_cs=*/false, /*force_reason=*/16);
+        typed_audit::publish_type_linear_proof_outcome(typed_audit::kTypeLinearProofOutcomeReject);
+    }
+    typed_audit::end_mid_abort_authority(cp.audit_mid);
+}
+
+
+// Issue #5243: extract-method of exit_mutation_boundary's success
+// validation arm. The body moved verbatim; the three internal
+// "return cp" sites now return true so the caller performs the same
+// early return. Control flow and ordering are unchanged.
+bool Evaluator::exit_validate_success_(MutationCheckpoint& cp, bool success, bool nested_boundary,
+                                       bool soft_only_below, bool provenance_miss) {
+    const auto post_size = workspace_flat_->all_mutations().size();
+    std::uint64_t nodes_changed = 0;
+    if (post_size > cp.mutation_log_size) {
+        nodes_changed = post_size - cp.mutation_log_size;
+    }
+    const std::uint64_t epoch_after = defuse_version_.load(std::memory_order_acquire);
+    // Issue #4564: typed before/after are the Mutation epoch at the
+    // stamp. The mutation-impact ring keeps this defuse surrogate.
+    const std::uint64_t audit_epoch = ::aura::core::current_mutation_epoch();
+    const std::uint64_t epoch_delta = epoch_after - cp.version;
+    // Surrogate reasons mask: bit 0 = any node was
+    // touched (kGeneralDirty equivalent).
+    // Higher bits reserved for follow-up
+    // MutationRecord reason bytes.
+    const std::uint8_t reasons_mask = nodes_changed > 0 ? 0x01 : 0x00;
+    mutation_impact_count_.fetch_add(1, std::memory_order_relaxed);
+    if (nodes_changed > 0) {
+        mutation_impact_nodes_changed_total_.fetch_add(nodes_changed, std::memory_order_relaxed);
+    }
+    // OR the new reasons into the running mask
+    // (relaxed atomic CAS loop; the mask is for
+    // observability only).
+    std::uint64_t cur = mutation_impact_reasons_seen_mask_.load(std::memory_order_relaxed);
+    while (!mutation_impact_reasons_seen_mask_.compare_exchange_weak(cur, cur | reasons_mask,
+                                                                     std::memory_order_relaxed)) {
+    }
+    // Append to the ring buffer (lockless; the
+    // 8-slot ring tolerates torn writes from
+    // concurrent boundaries — worst case is one
+    // stale entry visible to (query :mutation-impact)
+    // for one read, which is acceptable for
+    // observability). We index by ring_seq_
+    // modulo the ring size.
+    const auto seq = mutation_impact_ring_seq_.fetch_add(1, std::memory_order_relaxed);
+    auto& slot = mutation_impact_ring_[seq % kMutationImpactRingSize];
+    slot.epoch_after = epoch_after;
+    slot.epoch_delta = epoch_delta;
+    slot.nodes_changed = nodes_changed;
+    slot.reasons_mask = reasons_mask;
+    // Issue #676: security audit event for successful mutations.
+    std::string_view audit_op = "structural";
+    ast::NodeId audit_target = ast::NULL_NODE;
+    const auto& log = workspace_flat_->all_mutations();
+    if (post_size > cp.mutation_log_size && post_size <= log.size()) {
+        const auto& rec = log[post_size - 1];
+        audit_op = rec.operator_name;
+        audit_target = rec.target_node;
+    }
+    // Issue #3780: outermost pre-persist may have already appended
+    // under fail-closed + WAL — skip only that duplicate. Nested /
+    // Soft / WAL-off keep this post-success emit (#3056 / #3734 AC3).
+    if (g_tls_mutation_audit_wal_precommitted) {
+        g_tls_mutation_audit_wal_precommitted = false;
+    } else {
+        (void)emit_mutation_audit(static_cast<std::uint32_t>(nodes_changed),
+                                  static_cast<std::uint32_t>(epoch_delta), audit_op, audit_target);
+    }
+    // Issue #2038 / #2988: push-automatic DefUse/IR/JIT cascade so the
+    // next eval-current / apply_closure sees updated caches without a
+    // manual invalidate. #2988 adds binding_gen + JIT invalidate signal
+    // (precise default; coarse env fallback). Scoped to mutation-log
+    // targets + staged defuse names. No-op when log empty.
+    // Issue #3658: type dirty txn + mirror must already have run on
+    // the outermost production success path (Guard persist-front).
+    // This cascade is IR dirty / BFS enqueue only — Phase-5 densify
+    // is not a type txn.
+    // Issue #4678: a nested boundary's log range is a suffix of the
+    // enclosing non-soft boundary's, whose own cascade (after the
+    // outermost type txn) re-lowers the same dirty defines again. Defer
+    // the eager re-lower to that outer exit; the dirty marks stay, so
+    // any lookup in between still fails closed to a re-lower.
+    // AURA_NESTED_CASCADE_RELOWER=1 restores the per-boundary re-lower.
+    const bool defer_relower_4678 =
+        nested_boundary && !soft_only_below && !nested_cascade_relower_forced_4678();
+    push_post_mutate_incremental_cascade(cp.mutation_log_size, defer_relower_4678);
+    // Issue #2144: selective predicate-memo invalidate + occurrence
+    // reanalyze on outermost success exit only (long-lived engine).
+    // Nested guards defer to outer; after cascade so dirty bits stamp.
+    // Issue #4346: collect_existing_stale walks every node even when
+    // the mutation log did not grow. A heap-slot write did not stale
+    // an If, so that scan is not this guard's work.
+    const bool heap_occ_quiet = cp.heap_slot_only && !cp.lightweight &&
+                                workspace_flat_->mutation_log_size() <= cp.mutation_log_size;
+    if (!nested_boundary && !heap_occ_quiet)
+        refresh_occurrence_on_guard_exit(cp.mutation_log_size, nodes_changed);
+    // Issue #1589 / #1614 / #1894 / #2027 / #2029: TypedMutationAudit
+    // trail + real invariant suite on mutation boundary hot path.
+    // Contextual sampling (#1894) forces audit for large dirty / linear.
+    // #2027: nested/atomic_batch never under-samples.
+    // #2029: Full strategy always tries per-category partial recovery
+    // (type recheck / linear re-enforce / provenance restamp) before
+    // structural rollback — composite and single-boundary alike.
+    // #2102: provenance_miss (consumed above) forces Full-path audit.
+    // Issue #2215 RenderFastExit: skip Full suite under render hotpath
+    // success (frame budget); still record lightweight boundary outcome.
+    {
+        const std::uint64_t mid = cp.audit_mid;
+        const auto fid = static_cast<std::int64_t>(aura_fiber_current_id());
+        if (render_fast_exit_this_boundary_ && !nested_boundary) {
+            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                m->render_fast_exit_skipped_audit_total.fetch_add(1, std::memory_order_relaxed);
+            clear_txn_dirty();
+            // Issue #2814: intentional skip of invariant suite (frame budget).
+            typed_audit::note_invariant_enforcement_skipped(mid);
+            typed_audit::record_boundary_outcome(mid, audit_op, audit_epoch, audit_epoch,
+                                                 /*success=*/true,
+                                                 static_cast<std::uint32_t>(audit_target),
+                                                 static_cast<std::uint32_t>(nodes_changed), fid);
+            // Issue #3322: production/Full still drop stale defuse/IR so
+            // a mid-boundary query cannot observe pre-proof state before
+            // outermost TypeLinearCommitProof. Soft/Off: helper no-ops.
+            invalidate_defuse_index_for_nested_();
+            // Skip Full/composite invariant walk + partial recovery.
+        } else if (rebind_light_skip_heavy_exit(*this)) {
+            // Issue #4357: record the boundary and skip the suite.
+            // The body's finish_mutate_hard_gate already ran. A nested
+            // guard is composite and would always enter
+            // composite_txn_commit even when the strategy is Sampled.
+            clear_txn_dirty();
+            typed_audit::note_invariant_enforcement_skipped(mid);
+            typed_audit::record_boundary_outcome(mid, audit_op, audit_epoch, audit_epoch,
+                                                 /*success=*/true,
+                                                 static_cast<std::uint32_t>(audit_target),
+                                                 static_cast<std::uint32_t>(nodes_changed), fid);
+            invalidate_defuse_index_for_nested_();
+        } else {
+            const bool linear_hint = (audit_op.find("linear") != std::string_view::npos) ||
+                                     (audit_op.find("move") != std::string_view::npos) ||
+                                     (audit_op.find("inline") != std::string_view::npos);
+            // Issue #2223: match sites force Sampled hard-gate / audit
+            // (mirror linear_ops_present — ADT self-mod must not under-sample).
+            bool match_sites = false;
+            // Issue #4346: a heap-slot guard did not edit the tree.
+            // has_match_info over every node is O(defines) per write.
+            const bool heap_slot_quiet_4346 =
+                cp.heap_slot_only && !cp.lightweight &&
+                !(workspace_flat_ && workspace_flat_->mutation_log_size() > cp.mutation_log_size);
+            if (workspace_flat_ && !heap_slot_quiet_4346) {
+                const auto n = match_scan_bound(*workspace_flat_);
+                for (aura::ast::NodeId id = 0; id < n; ++id) {
+                    if (workspace_flat_->has_match_info(id)) {
+                        match_sites = true;
+                        break;
+                    }
+                }
+            }
+            const bool batch_active = cp.bump_suppressed_at_entry ||
+                                      (workspace_flat_ && workspace_flat_->atomic_batch_active());
+            const bool composite = nested_boundary || batch_active;
+            const auto strat = typed_audit::get_strategy();
+            // Issue #2145: Strict sandbox links Full-class hard gate.
+            const bool strict_sandbox = aura::core::sandbox::is_strict();
+            const bool hard_gate = typed_audit::requires_invariant_hard_gate(
+                nodes_changed, linear_hint, strict_sandbox, match_sites,
+                /*mutate_session=*/true);
+            // Issue #2514 / #2545 / Issue #2559: unified linear force entry
+            // is single rollback authority for synth + sticky post-mutate /
+            // escape (three-layer type-half inventory site).
+            // Decision table (see force_linear_rollback / typecheck):
+            //   SynthHardFail (prod/strict) → force + skip soft recovery
+            //   Soft Warning only           → no force; continue audit below
+            //   PostMutate / CrossBatch     → sticky may force if set
+            //   None                        → post-mutate ownership defense
+            // Must run before Sampled skip / partial recovery so soft recovery
+            // cannot claim Success after a synth TypeError.
+            // force_linear_rollback classifies linear_synth_hard_fail_pending
+            // first (deny_if_linear_synth_hard_fail is the thin alias).
+            // Issue #4082: capture the synth sticky before force clears it.
+            // Nested re-arms it so the outer pre-persist belt still denies.
+            const bool synth_sticky_4082 = linear_synth_hard_fail_pending();
+            if (force_linear_rollback(composite ? "composite-linear-synth-hard-fail"
+                                                : "linear-synth-hard-fail")) {
+                // Issue #3217: fence then restore then proof clear then stamp.
+                if (abort_ir_cache_begin_force_fn_)
+                    abort_ir_cache_begin_force_fn_();
+                // Issue #4082 / #3232: hold abort authority across the
+                // dual-topology restore (same shape as the later arm).
+                typed_audit::AbortAuthorityHold abort_authority;
+                const auto mid_abort_ver_4082 =
+                    typed_audit::begin_mid_abort_authority(cp.audit_mid);
+                (void)mid_abort_ver_4082;
+                // Issue #4082: dual topology so dirty SoA matches the
+                // restored children.
+                BoundaryRollbackStats stats;
+                // Issue #4346: empty children_ snapshot is not a pre-image.
+                if (cp.heap_slot_only && cp.children_snapshot.empty())
+                    stats.field_records_rolled =
+                        workspace_flat_->rollback_to_size(cp.mutation_log_size);
+                else
+                    stats.field_records_rolled = workspace_flat_->abort_restore_dual_topology(
+                        cp.mutation_log_size, std::move(cp.children_snapshot),
+                        std::move(cp.dirty_soa_snapshot), std::move(cp.marker_provenance_snapshot));
+                if (stats.field_records_rolled > 0) {
+                    bump_mutation_log_rollback_count();
+                    if (nested_boundary)
+                        bump_edsl_nested_atomic_rollback();
+                }
+                stats.children_column_restored = true;
+                if (cp.fine_rollback) {
+                    workspace_flat_->restore_sym_id(std::move(cp.sym_id_snapshot));
+                    workspace_flat_->restore_param_columns(std::move(cp.param_snapshot));
+                    stats.sym_id_column_restored = true;
+                    stats.param_columns_restored = true;
+                }
+                if (workspace_flat_->atomic_batch_active() != cp.bump_suppressed_at_entry) {
+                    if (cp.bump_suppressed_at_entry)
+                        workspace_flat_->begin_atomic_batch();
+                    else
+                        workspace_flat_->rollback_atomic_batch();
+                    suppressed_misalign_caught_.fetch_add(1, std::memory_order_relaxed);
+                }
+                last_boundary_rollback_stats_ = stats;
+                defuse_index_ = nullptr;
+                // Issue #3821: pair begin fence with force-dirty after
+                // topology restore (same order as dual-topology abort
+                // arms). Clears abort_force_in_progress_; drops pre-abort
+                // irs / stamps abort_map_invalid so lookup cannot thrash
+                // on a stuck in_progress latch.
+                if (abort_ir_cache_force_dirty_fn_)
+                    abort_ir_cache_force_dirty_fn_();
+                // Issue #3116: synth-hard-fail rollback is a production abort.
+                dual_clear_coercion_state_on_abort();
+                // Issue #3217 / #3030: proof clear before deny stamp.
+                typed_audit::clear_type_linear_commit_proof_on_abort();
+                if (!nested_boundary)
+                    clear_txn_dirty();
+                typed_audit::record_boundary_deny_after_restore(
+                    mid, composite ? "composite-linear-synth-hard-fail" : "linear-synth-hard-fail",
+                    audit_epoch, audit_epoch, static_cast<std::uint32_t>(audit_target), 0, fid);
+                if (strict_sandbox)
+                    typed_audit::capture_audit_event_forced(
+                        mid, "strict-linear-synth-denied", typed_audit::MutationKind::Structural,
+                        audit_epoch, audit_epoch, typed_audit::AuditOutcome::Error,
+                        static_cast<std::uint32_t>(audit_target), 0, fid, 0,
+                        static_cast<std::uint32_t>(capability_tenant_id()));
+                // Issue #4082: force_linear_rollback already cleared the
+                // sticky, so a live stamp would see linear_ok and publish
+                // green. Explicit deny is the pre-clear authority.
+                // Restore occurrence to the enter size (same #3158 helper
+                // as the later invariant arm). Outermost notes the dtor
+                // fail flip; nested re-arms synth for the outer belt.
+                if (typed_audit::production_defaults_active() ||
+                    typed_audit::get_strategy() == typed_audit::AuditStrategy::Full) {
+                    if (auto* tc = static_cast<aura::compiler::TypeChecker*>(
+                            commit_type_checker_handle())) {
+                        const auto dropped =
+                            tc->constraint_system().restore_or_clear_occurrence_to_entry(
+                                cp.occurrence_entry_size);
+                        aura::compiler::typed_audit::note_3158_occurrence_abort_restore(dropped);
+                    }
+                    restore_abort_type_face(cp);
+                } else {
+                    aura::compiler::typed_audit::note_3158_occurrence_abort_observe();
+                }
+                aura_clear_occurrence_persist_buffer(this);
+                clear_type_export_authority();
+                {
+                    void* tc_handle = commit_type_checker_handle();
+                    typed_audit::note_stamp_last_look_tc(tc_handle);
+                    const auto truth = freeze_proof_goal_truth_from_type_checker(tc_handle);
+                    (void)typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
+                        ::aura::core::current_mutation_epoch(), /*would_allow_commit=*/false,
+                        /*linear_ok=*/false, truth.live_goal_count, truth.goal_fingerprint,
+                        truth.from_cs,
+                        /*force_reason=*/3);
+                    typed_audit::publish_type_linear_proof_outcome(
+                        typed_audit::kTypeLinearProofOutcomeReject);
+                }
+                if (!nested_boundary)
+                    typed_audit::note_outermost_audit_rollback_needs_fail();
+                else if (synth_sticky_4082)
+                    note_linear_synth_hard_fail_pending();
+                typed_audit::end_mid_abort_authority(cp.audit_mid);
+                return true;
+            }
+            // Composite paths never under-sample (self-evo multi-step safety).
+            // Provenance miss forces audit even when Sampled would skip and
+            // even when nodes_changed==0 (apply may be the only side effect).
+            // Issue #2108: linear_ops_present (linear_hint) and composite
+            // always force the escape hard-block path — Sampled must not
+            // skip analyze_linear_escape / Moved live-root checks.
+            // Issue #2145: Full/Strict hard_gate always audits (even small dirty).
+            // Issue #2223: match_sites force Sampled audit.
+            const bool do_audit =
+                strat != typed_audit::AuditStrategy::Off &&
+                (hard_gate || provenance_miss || composite || linear_hint || match_sites ||
+                 (nodes_changed > 0 && typed_audit::should_audit_contextual(
+                                           mid, nodes_changed, linear_hint, match_sites)));
+            if (!do_audit && strat == typed_audit::AuditStrategy::Sampled)
+                typed_audit::g_typed_mutation_audit_counters.hard_gate_sampled_skip_total.fetch_add(
+                    1, std::memory_order_relaxed);
+            if (do_audit) {
+                typed_audit::InvariantAuditResult first{};
+                bool inv_ok = false;
+                bool recovered = false;
+                // Issue #2105: composite/nested/atomic_batch uses ordered
+                // commit barrier (solve_delta_occurrence → linear revalidate
+                // → invariant audit → Full partial recovery or reject).
+                // Issue #2260: non-composite hard-gate must prove SOLVED /
+                // !truncated_reverify (or full-resync) before native continues.
+                if (composite) {
+                    typed_audit::CompositeTxnCommitResult ccr{};
+                    // Issue #2851: stage mutations-since-boundary-enter so
+                    // composite_txn_commit body (which holds the #2610
+                    // auto_partial_from_cone bump site) can run the
+                    // log-delta force-partial check. Quiet path (no
+                    // log delta / Soft default) stores 0 → zero behavior
+                    // change. Default 0 also matches the empty-state
+                    // reset below.
+                    const std::uint64_t log_delta =
+                        workspace_flat_ && cp.mutation_log_size > 0
+                            ? (workspace_flat_->mutation_log_size() > cp.mutation_log_size
+                                   ? workspace_flat_->mutation_log_size() - cp.mutation_log_size
+                                   : 0ull)
+                            : 0ull;
+                    typed_audit::g_composite_commit_log_forces_partial_pending_log_delta.store(
+                        log_delta, std::memory_order_relaxed);
+                    inv_ok = composite_txn_commit(
+                        mid, audit_op, static_cast<std::uint32_t>(audit_target), audit_epoch,
+                        audit_epoch, nested_boundary, batch_active, &ccr);
+                    // Reset pending log_delta after composite_txn_commit
+                    // returns so subsequent non-composite boundaries
+                    // don't see stale value. composite_txn_commit body
+                    // reads + clears via the new #2851 check below.
+                    typed_audit::g_composite_commit_log_forces_partial_pending_log_delta.store(
+                        0, std::memory_order_relaxed);
+                    first = ccr.audit;
+                    recovered = ccr.partial_recovered;
+                    if (inv_ok)
+                        clear_txn_dirty();
+                } else {
+                    bool proof_trunc = false;
+                    bool proof_force = false;
+                    const bool proof_ok = boundary_solve_proof_gate(
+                        hard_gate, linear_hint, nodes_changed, &proof_trunc, &proof_force);
+                    if (hard_gate && (!proof_ok || proof_force)) {
+                        first.type_ok = false;
+                        inv_ok = false;
+                        // Fall through to force-rollback path below.
+                    } else {
+                        inv_ok = run_typed_mutation_invariant_audit(
+                            mid, audit_op, static_cast<std::uint32_t>(audit_target), audit_epoch,
+                            audit_epoch,
+                            /*composite_mode=*/false, &first);
+                    }
+                    (void)proof_trunc;
+                }
+                // #1894 / #2029 / #2145: non-composite Full/Strict hard-gate →
+                // per-category partial recover before structural rollback.
+                if (!composite && !inv_ok && hard_gate) {
+                    auto& ac = typed_audit::g_typed_mutation_audit_counters;
+                    ac.partial_recovery_attempt_total.fetch_add(1, std::memory_order_relaxed);
+                    ac.hard_gate_audits_total.fetch_add(1, std::memory_order_relaxed);
+                    // Prefer linear re-enforce first (cheap; often fixes Moved live roots).
+                    if (!first.linear_ok || first.cross_batch_linear_escape) {
+                        ac.partial_recovery_linear_total.fetch_add(1, std::memory_order_relaxed);
+                        (void)linear_post_mutate_enforce_all();
+                        (void)enforce_linear_boundary_consistency(kLinearGcRootAuditTypedMutate,
+                                                                  /*mark_all_linear=*/true);
+                        // Issue #2695: unified rebind entry — routes
+                        // densify-driven rebind through the same API
+                        // as steal / Agent (single entry for Agents).
+                        // AC3 zero-cost short-circuit when no roots
+                        // were remapped; real per-root span wires in
+                        // follow-up. Production force-rollback on
+                        // mismatch (returns false) per #2563 contract.
+                        // Issue #2708: real per-root walk wires through
+                        // this same call site.
+                        // Issue #2723: wire non-empty span via
+                        // collect_linear_or_dirty_roots_for_rebind()
+                        // (single source of truth — densify + steal
+                        // share the same helper per AC4). AC3 zero-cost
+                        // preserved when no linear roots registered.
+                        (void)aura::compiler::ownership_rebind_after_remap(
+                            aura::compiler::collect_linear_or_dirty_roots_for_rebind(),
+                            aura::compiler::RemapReason::Densify);
+                    }
+                    // Type-only recheck: re-driven by the full suite below
+                    // (visitor rewalks NotChecked / dirty mutations).
+                    if (!first.type_ok) {
+                        ac.partial_recovery_type_total.fetch_add(1, std::memory_order_relaxed);
+                    }
+                    // Provenance fail → restamp pins / generations + re-validate chain.
+                    if (!first.provenance_ok) {
+                        ac.partial_recovery_provenance_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+                            // Issue #3309: route through the unified entry
+                            // (single budget/torn decision + node-gen /
+                            // pinned-stable pairing) instead of adjacent
+                            // direct calls — abort-partial-recovery shares
+                            // the same restamp family as outermost abort.
+                            // clang-format off
+                            (void)unified_restamp_after_boundary(
+                                UnifiedRestampSite::AbortRestore);
+                        // clang-format on
+                        (void)post_mutation_reflect_validate();
+                    }
+                    // Issue #2223: ADT renarrow / revalidate before re-audit.
+                    if (!first.adt_ok) {
+                        ac.partial_recovery_adt_total.fetch_add(1, std::memory_order_relaxed);
+                        partial_recover_adt_exhaustiveness(mid);
+                    }
+                    typed_audit::InvariantAuditResult after{};
+                    inv_ok = run_typed_mutation_invariant_audit(
+                        mid, "full-partial-recover", static_cast<std::uint32_t>(audit_target),
+                        audit_epoch, audit_epoch,
+                        /*composite_mode=*/false, &after);
+                    if (inv_ok) {
+                        recovered = true;
+                        ac.partial_recovery_success_total.fetch_add(1, std::memory_order_relaxed);
+                    } else {
+                        ac.partial_recovery_fail_total.fetch_add(1, std::memory_order_relaxed);
+                    }
+                }
+                // Issue #2145 / #2545 / #2029: hard-gate force rollback
+                // for Full / Strict / composite. Linear axes go through
+                // the unified force_linear_rollback entry first (single
+                // counter ownership; no double-count with
+                // linear_invariant_fail). Structural rollback only if
+                // partial recover did not succeed.
+                if (!inv_ok && (composite || hard_gate)) {
+                    if (!recovered) {
+                        // add_mutate holds an outermost wrapper Guard; the
+                        // primitive's try_acquire is nested → composite.
+                        // Nested success must not dual-restore here: that
+                        // undoes mutate:rebind after it returned #t.
+                        // Outermost owns commit / Full fail-closed restore.
+                        // Issue #4089: only real Guard nesting keeps the
+                        // nested-success skip. When only orch soft frames
+                        // remain below, this boundary is the type-authority
+                        // outermost — restore + flip Guard success (via
+                        // note_outermost_audit_rollback_needs_fail, consumed
+                        // by the dtor) so the existing abort path runs
+                        // instead of committing a type-failed tree.
+                        if (nested_boundary && success && !soft_only_below)
+                            goto skip_nested_success_composite_restore;
+                        auto& ac = typed_audit::g_typed_mutation_audit_counters;
+                        const bool linear_forced = force_linear_rollback(
+                            composite ? "composite-linear-force" : "linear-force-rollback", &first);
+                        if (!linear_forced &&
+                            (strat == typed_audit::AuditStrategy::Full || hard_gate)) {
+                            // Type / provenance / adt (non-linear) force path.
+                            ac.full_strategy_force_rollback_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                            ac.hard_gate_force_rollback_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+                            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                                m->typed_mutation_full_force_rollback_total.fetch_add(
+                                    1, std::memory_order_relaxed);
+                            aura_escape_move_gate_clear();
+                            g_linear_escape_gate_clear_on_rollback_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                        }
+                        if (composite) {
+                            ac.composite_full_rollback_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+                        }
+                        // Issue #2309: linear force path already cleared the
+                        // escape gate inside force_linear_rollback; non-linear
+                        // path cleared above.
+                        // Issue #2284: publish boundary hard-reject signal on the
+                        // repair surface. The typecheck path already published the
+                        // detailed unresolved_affected_nodes data; we only update
+                        // the status + publish_total here to avoid clobbering the
+                        // repair set with an empty boundary-only snapshot.
+                        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+                            constexpr std::uint64_t kHardRejectStatus = 99;
+                            m->type_repair_last_timeout_status.store(kHardRejectStatus,
+                                                                     std::memory_order_relaxed);
+                            m->type_repair_publish_total.fetch_add(1, std::memory_order_relaxed);
+                        }
+                        // Agent-visible deny reason (#2145 / #2076 shape).
+                        std::string_view deny_kind = "invariant";
+                        if (first.cross_batch_linear_escape)
+                            deny_kind = "linear-escape";
+                        else if (!first.linear_ok)
+                            deny_kind = "linear";
+                        else if (!first.type_ok)
+                            deny_kind = "type";
+                        else if (!first.provenance_ok)
+                            deny_kind = "provenance";
+                        last_mutate_error_ = typed_audit::format_invariant_deny_reason(
+                            deny_kind, capability_tenant_id(),
+                            composite ? "composite-invariant-force-rollback"
+                                      : "invariant-force-rollback");
+                        if (strict_sandbox) {
+                            strict_mutate_hold_.store(1, std::memory_order_relaxed);
+                            ac.hard_gate_strict_hold_total.fetch_add(1, std::memory_order_relaxed);
+                        }
+                        // Issue #2959: dual topology structural undo (same as
+                        // failure path) under one structural exclusive.
+                        // Issue #3117: publish abort-force fence before restore.
+                        if (abort_ir_cache_begin_force_fn_)
+                            abort_ir_cache_begin_force_fn_();
+                        // Issue #3193 / Issue #3232: abort authority hold (one face).
+                        typed_audit::AbortAuthorityHold abort_authority;
+                        // Issue #3281: mid-bound abort authority for this
+                        // abort-restore (production/Full). Released after
+                        // the clears below (see end_mid_abort_authority).
+                        const auto mid_abort_ver =
+                            typed_audit::begin_mid_abort_authority(cp.audit_mid);
+                        BoundaryRollbackStats stats;
+                        // Issue #3897: pass the enter dirty-SoA snapshot
+                        // so invariant force-rollback does not leave
+                        // phantom over-dirty cones (#3865 incomplete).
+                        // Issue #4346: empty children_ snapshot is not a pre-image.
+                        if (cp.heap_slot_only && cp.children_snapshot.empty())
+                            stats.field_records_rolled =
+                                workspace_flat_->rollback_to_size(cp.mutation_log_size);
+                        else
+                            stats.field_records_rolled =
+                                workspace_flat_->abort_restore_dual_topology(
+                                    cp.mutation_log_size, std::move(cp.children_snapshot),
+                                    std::move(cp.dirty_soa_snapshot),
+                                    std::move(cp.marker_provenance_snapshot));
+                        if (stats.field_records_rolled > 0) {
+                            bump_mutation_log_rollback_count();
+                            if (nested_boundary)
+                                bump_edsl_nested_atomic_rollback();
+                        }
+                        stats.children_column_restored = true;
+                        // Issue #3743: force-rollback restamp before the
+                        // early return (Phase-1 probes must not see a
+                        // post-mutate pin gen on the restored tree).
+                        if (typed_audit::production_defaults_active() ||
+                            typed_audit::get_strategy() == typed_audit::AuditStrategy::Full)
+                            (void)unified_restamp_after_boundary(UnifiedRestampSite::AbortRestore);
+                        // Issue #3095: post-restore macro hygiene invariant
+                        // enforcement (paired with #2959 dual-topology abort).
+                        (void)check_macro_hygiene_invariant_post_restore(
+                            "invariant-force-rollback");
+                        if (cp.fine_rollback) {
+                            workspace_flat_->restore_sym_id(std::move(cp.sym_id_snapshot));
+                            workspace_flat_->restore_param_columns(std::move(cp.param_snapshot));
+                            stats.sym_id_column_restored = true;
+                            stats.param_columns_restored = true;
+                        }
+                        // Realign atomic-batch flag if nested path left it inconsistent.
+                        if (workspace_flat_->atomic_batch_active() != cp.bump_suppressed_at_entry) {
+                            if (cp.bump_suppressed_at_entry)
+                                workspace_flat_->begin_atomic_batch();
+                            else
+                                workspace_flat_->rollback_atomic_batch();
+                            suppressed_misalign_caught_.fetch_add(1, std::memory_order_relaxed);
+                        }
+                        // Issue #3033 / #3551: dual-topology abort → force-dirty
+                        // IR cache + drop pre-abort irs (clear_cache_v2_for_define).
+                        if (abort_ir_cache_force_dirty_fn_)
+                            abort_ir_cache_force_dirty_fn_();
+                        // Issue #3030: invariant force-rollback clears proof face.
+                        typed_audit::clear_type_linear_commit_proof_on_abort();
+                        // Issue #3102: AC1+AC2+AC3+AC4 — CoercionMap abort rewind
+                        // (production/Full). Soft path bumps the observe counter.
+                        if (typed_audit::production_defaults_active() ||
+                            typed_audit::get_strategy() == typed_audit::AuditStrategy::Full) {
+                            aura::compiler::dirty::truncate_type_cone_to_size(
+                                cp.coercion_cone_size_at_entry);
+                            auto coerced = aura::compiler::coerced_nodes_tracker_take();
+                            if (!coerced.empty()) {
+                                const auto added =
+                                    aura::compiler::dirty::force_dead_coercion_elim_into_cone(
+                                        coerced);
+                                aura::compiler::g_coercion_map_abort_forced_dirty_total.fetch_add(
+                                    added, std::memory_order_relaxed);
+                            }
+                            aura::compiler::dirty::bump_dead_coercion_decision_invalidate();
+                            typed_audit::clear_coercion_commit_readiness_on_abort();
+                            // Issue #3158: AC2 — abort restore-or-clear (production/Full).
+                            // See first abort site for full rationale. Sibling
+                            // of the coercion rewind — runs AFTER dual-topology +
+                            // proof + coercion clear, BEFORE post-abort lookup.
+                            if (auto* tc = static_cast<aura::compiler::TypeChecker*>(
+                                    commit_type_checker_handle())) {
+                                const auto dropped =
+                                    tc->constraint_system().restore_or_clear_occurrence_to_entry(
+                                        cp.occurrence_entry_size);
+                                aura::compiler::typed_audit::note_3158_occurrence_abort_restore(
+                                    dropped);
+                            }
+                            restore_abort_type_face(cp);
+                            aura::compiler::g_coercion_map_abort_rewind_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                        } else {
+                            aura::compiler::g_coercion_map_abort_rewind_observe_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                            (void)aura::compiler::coerced_nodes_tracker_take();
+                            // Issue #3158: Soft / Off path — observe counter only.
+                            aura::compiler::typed_audit::note_3158_occurrence_abort_observe();
+                        }
+                        // Issue #3116: last_coercions_ + TLS active context.
+                        dual_clear_coercion_state_on_abort();
+                        // Issue #3193: persist clear before hold ends.
+                        aura_clear_occurrence_persist_buffer(this);
+                        // Issue #3517: persist already granted query:type on the
+                        // success-entered path. Drop grant + flip Guard success
+                        // after this exit so the dtor `!success` tail runs.
+                        clear_type_export_authority();
+                        typed_audit::note_outermost_audit_rollback_needs_fail();
+                        last_boundary_rollback_stats_ = stats;
+                        defuse_index_ = nullptr;
+                        // Issue #2105: leave txn_dirty set until outermost clean exit,
+                        // or clear when no remaining nested guards.
+                        if (!nested_boundary)
+                            clear_txn_dirty();
+                        typed_audit::record_boundary_deny_after_restore(
+                            mid,
+                            composite ? "composite-invariant-force-rollback"
+                                      : "invariant-force-rollback",
+                            audit_epoch, audit_epoch, static_cast<std::uint32_t>(audit_target), 0,
+                            fid);
+                        // Strict trail: Error outcome for Agent dashboards.
+                        if (strict_sandbox)
+                            typed_audit::capture_audit_event_forced(
+                                mid, "strict-invariant-denied",
+                                typed_audit::MutationKind::Structural, audit_epoch, audit_epoch,
+                                typed_audit::AuditOutcome::Error,
+                                static_cast<std::uint32_t>(audit_target), 0, fid, 0);
+                        // Issue #3281: mid-bound authority post-clear check —
+                        // same shape as the main abort site. If a concurrent
+                        // densify/steal bumped the mid authority version during
+                        // this abort-restore's clears, force reject (no green
+                        // stamp on torn state).
+                        if (mid_abort_ver != 0 && typed_audit::mid_abort_authority_version(
+                                                      cp.audit_mid) != mid_abort_ver) {
+                            typed_audit::g_mid_abort_authority_mismatch_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                            typed_audit::clear_type_linear_commit_proof_on_abort();
+                            typed_audit::clear_coercion_commit_readiness_on_abort();
+                            aura_clear_occurrence_persist_buffer(this);
+                            (void)
+                                typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
+                                    ::aura::core::current_mutation_epoch(),
+                                    /*would_allow_commit=*/false,
+                                    /*linear_ok=*/false, typed_audit::kProofLiveGoalCountHintAuto,
+                                    /*goal_fingerprint=*/0, /*from_cs=*/false,
+                                    /*force_reason=*/16);
+                            typed_audit::publish_type_linear_proof_outcome(
+                                typed_audit::kTypeLinearProofOutcomeReject);
+                        }
+                        typed_audit::end_mid_abort_authority(cp.audit_mid);
+                        return true;
+                    }
+                }
+            skip_nested_success_composite_restore:
+                // Success path: record outcome when audit passed / recovered.
+                // Enforcement already linked via record_invariant_audit_result.
+                if (inv_ok || recovered) {
+                    if (!nested_boundary)
+                        clear_txn_dirty();
+                    typed_audit::record_boundary_outcome(
+                        mid, audit_op, audit_epoch, audit_epoch, /*success=*/true,
+                        static_cast<std::uint32_t>(audit_target),
+                        static_cast<std::uint32_t>(nodes_changed), fid);
+                }
+            } else {
+                // Issue #2814: Sampled/quiet path — no invariant suite;
+                // mark intentional skip so Success trail is not a gap.
+                typed_audit::note_invariant_enforcement_skipped(mid);
+                if (!nested_boundary)
+                    clear_txn_dirty();
+                typed_audit::record_boundary_outcome(
+                    mid, audit_op, audit_epoch, audit_epoch, /*success=*/true,
+                    static_cast<std::uint32_t>(audit_target),
+                    static_cast<std::uint32_t>(nodes_changed), fid);
+            }
+        } // !render_fast_exit_this_boundary_
+    }
+    // Issue #488 / #1611 / #2765: post-mutate reflect auto_validate /
+    // hygiene_validate on Guard success path (schema-level closed loop).
+    // Default ON (guard_reflect_validate_enabled_); Soft → metric-only
+    // on fail; Strict → structural force-rollback. RenderFastExit and
+    // flag-off → zero validate cost (skip counter only).
+    // (Also covered as provenance leg of #1614 invariant audit when sampled.)
+    if (render_fast_exit_this_boundary_ || !get_guard_reflect_validate_enabled() ||
+        rebind_light_skip_heavy_exit(*this) || cp.heap_slot_only) {
+        bump_guard_reflect_validate_skipped(); // #2765 AC4 quiet / opt-out
+    } else {
+        bump_guard_reflect_validate(); // #2765 Agent counter
+        const bool reflect_ok = post_mutation_reflect_validate();
+        if (!reflect_ok) {
+            bump_guard_reflect_validate_fail(); // #2765
+            const bool strict_sandbox = aura::core::sandbox::is_strict();
+            if (strict_sandbox && workspace_flat_) {
+                // #2765 AC1 Strict: schema/hygiene fail → force structural undo
+                // (mirrors invariant hard-gate force-rollback shape).
+                bump_guard_reflect_validate_strict_rollback();
+                // Issue #2959: dual topology undo under one structural exclusive.
+                // Issue #3117: publish abort-force fence before restore.
+                if (abort_ir_cache_begin_force_fn_)
+                    abort_ir_cache_begin_force_fn_();
+                // Issue #3193 / Issue #3232: abort authority hold (one face).
+                typed_audit::AbortAuthorityHold abort_authority;
+                // Issue #3281: mid-bound abort authority for this
+                // abort-restore (production/Full). Released after the
+                // clears below (see end_mid_abort_authority).
+                const auto mid_abort_ver = typed_audit::begin_mid_abort_authority(cp.audit_mid);
+                BoundaryRollbackStats stats;
+                // Issue #3897: pass the enter dirty-SoA snapshot so
+                // Strict reflect-validate rollback does not leave
+                // phantom over-dirty cones (#3865 incomplete).
+                // Issue #4346: empty children_ snapshot is not a pre-image.
+                if (cp.heap_slot_only && cp.children_snapshot.empty())
+                    stats.field_records_rolled =
+                        workspace_flat_->rollback_to_size(cp.mutation_log_size);
+                else
+                    stats.field_records_rolled = workspace_flat_->abort_restore_dual_topology(
+                        cp.mutation_log_size, std::move(cp.children_snapshot),
+                        std::move(cp.dirty_soa_snapshot), std::move(cp.marker_provenance_snapshot));
+                if (stats.field_records_rolled > 0) {
+                    bump_mutation_log_rollback_count();
+                    if (nested_boundary)
+                        bump_edsl_nested_atomic_rollback();
+                }
+                stats.children_column_restored = true;
+                // Issue #3743: Strict reflect-validate rollback restamp
+                // before the early return (same window as force-rollback).
+                if (typed_audit::production_defaults_active() ||
+                    typed_audit::get_strategy() == typed_audit::AuditStrategy::Full)
+                    (void)unified_restamp_after_boundary(UnifiedRestampSite::AbortRestore);
+                // Issue #3095: post-restore macro hygiene invariant
+                // enforcement (Strict path).
+                (void)check_macro_hygiene_invariant_post_restore(
+                    "guard-reflect-validate-strict-rollback");
+                if (cp.fine_rollback) {
+                    workspace_flat_->restore_sym_id(std::move(cp.sym_id_snapshot));
+                    workspace_flat_->restore_param_columns(std::move(cp.param_snapshot));
+                    stats.sym_id_column_restored = true;
+                    stats.param_columns_restored = true;
+                }
+                // Issue #3033 / #3551: dual-topology abort → force-dirty
+                // IR cache + drop pre-abort irs (clear_cache_v2_for_define).
+                if (abort_ir_cache_force_dirty_fn_)
+                    abort_ir_cache_force_dirty_fn_();
+                // Issue #3030: Strict reflect-validate rollback clears proof face.
+                typed_audit::clear_type_linear_commit_proof_on_abort();
+                // Issue #3102: AC1+AC2+AC3+AC4 — CoercionMap abort rewind
+                // (production/Full). Soft path bumps the observe counter.
+                if (typed_audit::production_defaults_active() ||
+                    typed_audit::get_strategy() == typed_audit::AuditStrategy::Full) {
+                    aura::compiler::dirty::truncate_type_cone_to_size(
+                        cp.coercion_cone_size_at_entry);
+                    auto coerced = aura::compiler::coerced_nodes_tracker_take();
+                    if (!coerced.empty()) {
+                        const auto added =
+                            aura::compiler::dirty::force_dead_coercion_elim_into_cone(coerced);
+                        aura::compiler::g_coercion_map_abort_forced_dirty_total.fetch_add(
+                            added, std::memory_order_relaxed);
+                    }
+                    aura::compiler::dirty::bump_dead_coercion_decision_invalidate();
+                    typed_audit::clear_coercion_commit_readiness_on_abort();
+                    // Issue #3158: AC2 — abort restore-or-clear (production/Full).
+                    // See first abort site for full rationale. Third
+                    // twin-site sibling of the coercion rewind.
+                    if (auto* tc = static_cast<aura::compiler::TypeChecker*>(
+                            commit_type_checker_handle())) {
+                        const auto dropped =
+                            tc->constraint_system().restore_or_clear_occurrence_to_entry(
+                                cp.occurrence_entry_size);
+                        aura::compiler::typed_audit::note_3158_occurrence_abort_restore(dropped);
+                    }
+                    restore_abort_type_face(cp);
+                    aura::compiler::g_coercion_map_abort_rewind_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                } else {
+                    aura::compiler::g_coercion_map_abort_rewind_observe_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    (void)aura::compiler::coerced_nodes_tracker_take();
+                    // Issue #3158: Soft / Off path — observe counter only.
+                    aura::compiler::typed_audit::note_3158_occurrence_abort_observe();
+                }
+                // Issue #3116: last_coercions_ + TLS active context.
+                dual_clear_coercion_state_on_abort();
+                // Issue #3193: persist clear before hold ends.
+                aura_clear_occurrence_persist_buffer(this);
+                // Issue #3517: success-entered Strict reflect rollback
+                // must drop query:type grant (persist already granted).
+                clear_type_export_authority();
+                typed_audit::note_outermost_audit_rollback_needs_fail();
+                last_boundary_rollback_stats_ = stats;
+                defuse_index_ = nullptr;
+                if (!nested_boundary)
+                    clear_txn_dirty();
+                last_mutate_error_ = "guard-reflect-validate-fail-strict-rollback";
+                const std::uint64_t mid = cp.audit_mid;
+                const auto fid = static_cast<std::int64_t>(aura_fiber_current_id());
+                typed_audit::record_boundary_deny_after_restore(
+                    mid, "guard-reflect-validate-force-rollback", audit_epoch, audit_epoch, 0, 0,
+                    fid);
+                // Issue #3281: mid-bound authority post-clear check —
+                // same shape as the main abort site. If a concurrent
+                // densify/steal bumped the mid authority version during
+                // this abort-restore's clears, force reject (no green
+                // stamp on torn state).
+                if (mid_abort_ver != 0 &&
+                    typed_audit::mid_abort_authority_version(cp.audit_mid) != mid_abort_ver) {
+                    typed_audit::g_mid_abort_authority_mismatch_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    typed_audit::clear_type_linear_commit_proof_on_abort();
+                    typed_audit::clear_coercion_commit_readiness_on_abort();
+                    aura_clear_occurrence_persist_buffer(this);
+                    (void)typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
+                        ::aura::core::current_mutation_epoch(), /*would_allow_commit=*/false,
+                        /*linear_ok=*/false, typed_audit::kProofLiveGoalCountHintAuto,
+                        /*goal_fingerprint=*/0,
+                        /*from_cs=*/false, /*force_reason=*/16);
+                    typed_audit::publish_type_linear_proof_outcome(
+                        typed_audit::kTypeLinearProofOutcomeReject);
+                }
+                typed_audit::end_mid_abort_authority(cp.audit_mid);
+                return true;
+            }
+            // Soft / non-Strict: metric-only; mutation stays committed.
+        }
+    }
+    return false;
+}
+
+
 Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
     auto& stack = active_mutation_stack();
     if (stack.empty())
@@ -1768,14 +2805,6 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
     // Issue #3322: production/Full force-close the pre-proof observation
     // window (nested exit + outermost render-fast skip). Soft/Off: no-op.
     // Does not stamp TypeLinearCommitProof or persist occurrence.
-    auto invalidate_defuse_index_for_nested = [&]() noexcept {
-        if (!(typed_audit::production_defaults_active() ||
-              typed_audit::get_strategy() == typed_audit::AuditStrategy::Full))
-            return;
-        defuse_index_ = nullptr;
-        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
-            m->nested_observation_window_closed_total.fetch_add(1, std::memory_order_relaxed);
-    };
     // Issue #3233: pair pcv_checkpoint_live_enter from snapshot.
     struct PcvCkptExit : ::aura::core::NoCopy {
         bool on;
@@ -1862,205 +2891,7 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
             defuse_index_ = nullptr;
         }
     } else if (!success && workspace_flat_) {
-        clear_expected_occurrence_snapshot_fp();
-        // Issue #3122: Agent-visible topology-restore is the Guard wrap
-        // (run_under_mutation_guard); this path owns the Hard restore.
-        // Issue #2959: dual topology abort under ONE structural exclusive —
-        // mutation-log rollback + children_ snapshot + parent_ rebuild +
-        // dual canary. Closes densify×steal mid-window tears between
-        // partial structural inverse and full restore.
-        // Issue #549: bump mutation_log_rollback_count_ when records
-        // were actually rolled (stricter subset of failed boundaries).
-        // Issue #3117: publish abort-force fence before restore so a
-        // concurrent lookup cannot serve pre-abort IR as clean.
-        if (abort_ir_cache_begin_force_fn_)
-            abort_ir_cache_begin_force_fn_();
-        // Issue #3193 / Issue #3232: publish abort authority before topology
-        // restore so concurrent densify/steal rehydrate waits for dual_clear
-        // + persist clear + proof invalidate (one face). Nested hold is a
-        // count — inner end does not drop the outer face. Soft: observe-only.
-        typed_audit::AbortAuthorityHold abort_authority;
-        // Issue #3281: mid-bound abort authority version. Capture the
-        // mid-local version at abort enter (production/Full only) so ALL
-        // ordered clears below complete under it; a concurrent
-        // densify/steal rehydrate for the SAME mid refuses to freeze a
-        // green proof while the slot is outstanding (AC1), and the
-        // post-clear check below detects version drift (interleave) and
-        // forces full clear + reject proof.
-        const auto mid_abort_ver = typed_audit::begin_mid_abort_authority(cp.audit_mid);
-        BoundaryRollbackStats stats;
-        // Issue #3687: persist-reject already restored dual-topology under
-        // the same mutate lock (snapshot moved). Skip a second restore so
-        // empty children_snapshot cannot wipe the enter checkpoint.
-        if (!cp.topology_restored) {
-            // Issue #3897: pass the enter dirty-SoA snapshot so abort
-            // does not leave phantom over-dirty cones (#3865 incomplete).
-            // Issue #4346: empty children_ snapshot is not a pre-image.
-            if (cp.heap_slot_only && cp.children_snapshot.empty())
-                stats.field_records_rolled =
-                    workspace_flat_->rollback_to_size(cp.mutation_log_size);
-            else
-                stats.field_records_rolled = workspace_flat_->abort_restore_dual_topology(
-                    cp.mutation_log_size, std::move(cp.children_snapshot),
-                    std::move(cp.dirty_soa_snapshot), std::move(cp.marker_provenance_snapshot));
-            if (stats.field_records_rolled > 0) {
-                bump_mutation_log_rollback_count();
-                if (nested_boundary)
-                    bump_edsl_nested_atomic_rollback();
-            }
-            // Issue #3743: inbody force-exit / abort restore restamp before
-            // this function returns (Guard dtor triad is later; Agent can
-            // observe after force_release_hold_budget_inbody). Soft/Off:
-            // outermost dtor still restamps; skip extra atomics here.
-            if (typed_audit::production_defaults_active() ||
-                typed_audit::get_strategy() == typed_audit::AuditStrategy::Full)
-                (void)unified_restamp_after_boundary(UnifiedRestampSite::AbortRestore);
-        } else if (last_boundary_rollback_stats_.children_column_restored) {
-            stats = last_boundary_rollback_stats_;
-        }
-        // Issue #1281 / #1502: dual restore sealed inside abort_restore_dual_topology.
-        stats.children_column_restored = true;
-        // Issue #3095: post-restore macro hygiene invariant enforcement.
-        // Closes the residual pairing gap where MacroIntroduced markers /
-        // provenance / macro_dirty_ could drift out of sync with the
-        // restored children_ / parent_ topology and the flat generation
-        // (steal mid-expand + dual-topology abort + densify combined path).
-        // Soft / Off → metric-only; production → hard_fail + stable reason.
-        (void)check_macro_hygiene_invariant_post_restore("abort-failure");
-        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
-            m->children_topology_rollback_count.fetch_add(1, std::memory_order_relaxed);
-            m->parent_topology_rollback_count.fetch_add(1, std::memory_order_relaxed);
-            // Issue #2959: dual restore seal counters (Agent canary).
-            m->topology_dual_restore_total.fetch_add(1, std::memory_order_relaxed);
-            const auto inc = workspace_flat_->topology_dual_restore_inconsistency_total();
-            // Mirror process flat inconsistency into per-eval metrics once
-            // per abort (delta not available; Agents poll flat absolute).
-            if (inc > 0)
-                m->topology_dual_restore_inconsistency_total.store(inc, std::memory_order_relaxed);
-        }
-        // Issue #266: restore sym_id_ / param columns for bulk
-        // rename operations when fine rollback was requested.
-        if (cp.fine_rollback) {
-            workspace_flat_->restore_sym_id(std::move(cp.sym_id_snapshot));
-            workspace_flat_->restore_param_columns(std::move(cp.param_snapshot));
-            stats.sym_id_column_restored = true;
-            stats.param_columns_restored = true;
-        }
-        // Issue #679: realign atomic-batch suppressed flag if a
-        // nested path left it inconsistent with the snapshot.
-        if (workspace_flat_->atomic_batch_active() != cp.bump_suppressed_at_entry) {
-            if (cp.bump_suppressed_at_entry)
-                workspace_flat_->begin_atomic_batch();
-            else
-                workspace_flat_->rollback_atomic_batch();
-            suppressed_misalign_caught_.fetch_add(1, std::memory_order_relaxed);
-        }
-        if (stats.children_column_restored && cp.macro_introduced_count_at_entry > 0) {
-            macro_rollback_hits_.fetch_add(1, std::memory_order_relaxed);
-        }
-        // Issue #3033: dual-topology abort leaves IR cache version stamps
-        // pointing at intermediate/pre-abort state — force-dirty + zero-
-        // restamp every cached entry so should_relower is forced true and
-        // lookup_define_v2 / eval / AOT reemit never serve stale IR.
-        // Issue #3551: force-dirty also drops entry.irs via
-        // clear_cache_v2_for_define (after restore, before success return).
-        if (abort_ir_cache_force_dirty_fn_)
-            abort_ir_cache_force_dirty_fn_();
-        // Issue #3030: drop stale TypeLinearCommitProof / linear_fast_path
-        // face so post-abort Move/Drop cannot elide on a pre-abort stamp.
-        typed_audit::clear_type_linear_commit_proof_on_abort();
-        // Issue #3102: AC1+AC2+AC3+AC4 — CoercionMap abort rewind.
-        // Production/Full: truncate the type cone to entry size, force-dirty
-        // coerced nodes, bump DeadCoercion decision invalidate gen, and
-        // clear coercion commit_readiness. Soft: bump observe counter only.
-        if (typed_audit::production_defaults_active() ||
-            typed_audit::get_strategy() == typed_audit::AuditStrategy::Full) {
-            // AC1: truncate the type cone to entry size.
-            aura::compiler::dirty::truncate_type_cone_to_size(cp.coercion_cone_size_at_entry);
-            // AC2: force-dirty coerced nodes for the next incremental typecheck.
-            // #4672: the tracker was drained by the exit call above (the
-            // outermost exit CLEARS it), so this take used to be empty and
-            // the force-dirty step was a no-op. Consume the capture taken
-            // BEFORE that drain, plus a node coerced after it.
-            auto coerced = std::move(coerced_nodes_at_exit);
-            auto late_coerced = aura::compiler::coerced_nodes_tracker_take();
-            if (!late_coerced.empty())
-                coerced.insert(coerced.end(), late_coerced.begin(), late_coerced.end());
-            if (!coerced.empty()) {
-                const auto added =
-                    aura::compiler::dirty::force_dead_coercion_elim_into_cone(coerced);
-                aura::compiler::g_coercion_map_abort_forced_dirty_total.fetch_add(
-                    added, std::memory_order_relaxed);
-            }
-            // AC3: bump DeadCoercion decision invalidate gen (drops stale IR).
-            aura::compiler::dirty::bump_dead_coercion_decision_invalidate();
-            // AC4: clear coercion commit_readiness on abort (sibling of proof clear).
-            typed_audit::clear_coercion_commit_readiness_on_abort();
-            // Issue #3158: AC2 — abort restore-or-clear (production/Full).
-            // Truncates live occurrence_goals_ back to boundary-entry size
-            // so residual narrowing goals added during the failed boundary
-            // don't poison the next delta's priority + fingerprint + stamp
-            // face. Runs AFTER dual-topology restore + proof + coercion
-            // clear, BEFORE any post-abort IR/JIT lookup that could elide
-            // on the stamped face. Soft path bumps observe counter only
-            // (no structural write) — see else branch.
-            if (auto* tc =
-                    static_cast<aura::compiler::TypeChecker*>(commit_type_checker_handle())) {
-                const auto dropped = tc->constraint_system().restore_or_clear_occurrence_to_entry(
-                    cp.occurrence_entry_size);
-                aura::compiler::typed_audit::note_3158_occurrence_abort_restore(dropped);
-            }
-            aura::compiler::g_coercion_map_abort_rewind_total.fetch_add(1,
-                                                                        std::memory_order_relaxed);
-        } else {
-            aura::compiler::g_coercion_map_abort_rewind_observe_total.fetch_add(
-                1, std::memory_order_relaxed);
-            // #4672: the capture is dropped — Soft / Off stays observe-only.
-            coerced_nodes_at_exit.clear();
-            (void)aura::compiler::coerced_nodes_tracker_take(); // discard
-            // Issue #3158: Soft / Off path — observe counter only, no
-            // structural write. Per AC3 zero-cost contract: Soft bumps
-            // observe_total without entering the restore_or_clear_ path.
-            aura::compiler::typed_audit::note_3158_occurrence_abort_observe();
-        }
-        // Issue #4310: outermost !success puts type columns and the CS
-        // high-water back. Persist-reject already set type_face_restored.
-        if (typed_audit::production_defaults_active() ||
-            typed_audit::get_strategy() == typed_audit::AuditStrategy::Full)
-            restore_abort_type_face(cp);
-        // Issue #3116: last_coercions_ + TLS active context (half-green residual).
-        dual_clear_coercion_state_on_abort();
-        // Issue #3193: persist clear on the abort body (before hold ends)
-        // so densify/steal cannot rehydrate a pre-abort snapshot against
-        // a cleared proof / empty coercion face. Dtor clear is idempotent.
-        aura_clear_occurrence_persist_buffer(this);
-        last_boundary_rollback_stats_ = stats;
-        // Invalidate the def-use index — the workspace state
-        // is now different from what the index reflects.
-        defuse_index_ = nullptr;
-        // Issue #3281: mid-bound authority post-clear check. All ordered
-        // clears (IR force-dirty → proof clear → coercion rewind →
-        // occurrence restore → dual-clear → persist clear) completed under
-        // the version captured at abort enter. If a concurrent densify/steal
-        // rehydrate bumped the mid authority version mid-abort, the clears
-        // may be torn → force full clear + stamp REJECT proof (no green
-        // stamp on torn state, AC2) + bump the existing mismatch family.
-        if (mid_abort_ver != 0 &&
-            typed_audit::mid_abort_authority_version(cp.audit_mid) != mid_abort_ver) {
-            typed_audit::g_mid_abort_authority_mismatch_total.fetch_add(1,
-                                                                        std::memory_order_relaxed);
-            typed_audit::clear_type_linear_commit_proof_on_abort();
-            typed_audit::clear_coercion_commit_readiness_on_abort();
-            aura_clear_occurrence_persist_buffer(this);
-            (void)typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
-                ::aura::core::current_mutation_epoch(), /*would_allow_commit=*/false,
-                /*linear_ok=*/false, typed_audit::kProofLiveGoalCountHintAuto,
-                /*goal_fingerprint=*/0,
-                /*from_cs=*/false, /*force_reason=*/16);
-            typed_audit::publish_type_linear_proof_outcome(
-                typed_audit::kTypeLinearProofOutcomeReject);
-        }
-        typed_audit::end_mid_abort_authority(cp.audit_mid);
+        exit_rollback_failed_dual_topology_(cp, nested_boundary, coerced_nodes_at_exit);
     }
     // Issue #273: structural mutates bump generation_; refresh all
     // live node_gen_ entries so subsequent eval_flat paths see
@@ -2102,7 +2933,7 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
         // observation window (success or fail, structural or not). #3166
         // only forced on nested_structural_mutate; fail-without-log-delta
         // left defuse_index_ live until outermost. Soft/Off: helper no-ops.
-        invalidate_defuse_index_for_nested();
+        invalidate_defuse_index_for_nested_();
         const bool wrap_pending = workspace_flat_->auto_restamp_pending();
         workspace_flat_->restamp_all_node_generations();
         if (wrap_pending) {
@@ -2398,839 +3229,8 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
     // to carry a dirty_reasons byte so we can OR the
     // actual reasons in here.
     if (success && workspace_flat_) {
-        const auto post_size = workspace_flat_->all_mutations().size();
-        std::uint64_t nodes_changed = 0;
-        if (post_size > cp.mutation_log_size) {
-            nodes_changed = post_size - cp.mutation_log_size;
-        }
-        const std::uint64_t epoch_after = defuse_version_.load(std::memory_order_acquire);
-        // Issue #4564: typed before/after are the Mutation epoch at the
-        // stamp. The mutation-impact ring keeps this defuse surrogate.
-        const std::uint64_t audit_epoch = ::aura::core::current_mutation_epoch();
-        const std::uint64_t epoch_delta = epoch_after - cp.version;
-        // Surrogate reasons mask: bit 0 = any node was
-        // touched (kGeneralDirty equivalent).
-        // Higher bits reserved for follow-up
-        // MutationRecord reason bytes.
-        const std::uint8_t reasons_mask = nodes_changed > 0 ? 0x01 : 0x00;
-        mutation_impact_count_.fetch_add(1, std::memory_order_relaxed);
-        if (nodes_changed > 0) {
-            mutation_impact_nodes_changed_total_.fetch_add(nodes_changed,
-                                                           std::memory_order_relaxed);
-        }
-        // OR the new reasons into the running mask
-        // (relaxed atomic CAS loop; the mask is for
-        // observability only).
-        std::uint64_t cur = mutation_impact_reasons_seen_mask_.load(std::memory_order_relaxed);
-        while (!mutation_impact_reasons_seen_mask_.compare_exchange_weak(
-            cur, cur | reasons_mask, std::memory_order_relaxed)) {
-        }
-        // Append to the ring buffer (lockless; the
-        // 8-slot ring tolerates torn writes from
-        // concurrent boundaries — worst case is one
-        // stale entry visible to (query :mutation-impact)
-        // for one read, which is acceptable for
-        // observability). We index by ring_seq_
-        // modulo the ring size.
-        const auto seq = mutation_impact_ring_seq_.fetch_add(1, std::memory_order_relaxed);
-        auto& slot = mutation_impact_ring_[seq % kMutationImpactRingSize];
-        slot.epoch_after = epoch_after;
-        slot.epoch_delta = epoch_delta;
-        slot.nodes_changed = nodes_changed;
-        slot.reasons_mask = reasons_mask;
-        // Issue #676: security audit event for successful mutations.
-        std::string_view audit_op = "structural";
-        ast::NodeId audit_target = ast::NULL_NODE;
-        const auto& log = workspace_flat_->all_mutations();
-        if (post_size > cp.mutation_log_size && post_size <= log.size()) {
-            const auto& rec = log[post_size - 1];
-            audit_op = rec.operator_name;
-            audit_target = rec.target_node;
-        }
-        // Issue #3780: outermost pre-persist may have already appended
-        // under fail-closed + WAL — skip only that duplicate. Nested /
-        // Soft / WAL-off keep this post-success emit (#3056 / #3734 AC3).
-        if (g_tls_mutation_audit_wal_precommitted) {
-            g_tls_mutation_audit_wal_precommitted = false;
-        } else {
-            (void)emit_mutation_audit(static_cast<std::uint32_t>(nodes_changed),
-                                      static_cast<std::uint32_t>(epoch_delta), audit_op,
-                                      audit_target);
-        }
-        // Issue #2038 / #2988: push-automatic DefUse/IR/JIT cascade so the
-        // next eval-current / apply_closure sees updated caches without a
-        // manual invalidate. #2988 adds binding_gen + JIT invalidate signal
-        // (precise default; coarse env fallback). Scoped to mutation-log
-        // targets + staged defuse names. No-op when log empty.
-        // Issue #3658: type dirty txn + mirror must already have run on
-        // the outermost production success path (Guard persist-front).
-        // This cascade is IR dirty / BFS enqueue only — Phase-5 densify
-        // is not a type txn.
-        // Issue #4678: a nested boundary's log range is a suffix of the
-        // enclosing non-soft boundary's, whose own cascade (after the
-        // outermost type txn) re-lowers the same dirty defines again. Defer
-        // the eager re-lower to that outer exit; the dirty marks stay, so
-        // any lookup in between still fails closed to a re-lower.
-        // AURA_NESTED_CASCADE_RELOWER=1 restores the per-boundary re-lower.
-        const bool defer_relower_4678 =
-            nested_boundary && !soft_only_below && !nested_cascade_relower_forced_4678();
-        push_post_mutate_incremental_cascade(cp.mutation_log_size, defer_relower_4678);
-        // Issue #2144: selective predicate-memo invalidate + occurrence
-        // reanalyze on outermost success exit only (long-lived engine).
-        // Nested guards defer to outer; after cascade so dirty bits stamp.
-        // Issue #4346: collect_existing_stale walks every node even when
-        // the mutation log did not grow. A heap-slot write did not stale
-        // an If, so that scan is not this guard's work.
-        const bool heap_occ_quiet = cp.heap_slot_only && !cp.lightweight &&
-                                    workspace_flat_->mutation_log_size() <= cp.mutation_log_size;
-        if (!nested_boundary && !heap_occ_quiet)
-            refresh_occurrence_on_guard_exit(cp.mutation_log_size, nodes_changed);
-        // Issue #1589 / #1614 / #1894 / #2027 / #2029: TypedMutationAudit
-        // trail + real invariant suite on mutation boundary hot path.
-        // Contextual sampling (#1894) forces audit for large dirty / linear.
-        // #2027: nested/atomic_batch never under-samples.
-        // #2029: Full strategy always tries per-category partial recovery
-        // (type recheck / linear re-enforce / provenance restamp) before
-        // structural rollback — composite and single-boundary alike.
-        // #2102: provenance_miss (consumed above) forces Full-path audit.
-        // Issue #2215 RenderFastExit: skip Full suite under render hotpath
-        // success (frame budget); still record lightweight boundary outcome.
-        {
-            const std::uint64_t mid = cp.audit_mid;
-            const auto fid = static_cast<std::int64_t>(aura_fiber_current_id());
-            if (render_fast_exit_this_boundary_ && !nested_boundary) {
-                if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
-                    m->render_fast_exit_skipped_audit_total.fetch_add(1, std::memory_order_relaxed);
-                clear_txn_dirty();
-                // Issue #2814: intentional skip of invariant suite (frame budget).
-                typed_audit::note_invariant_enforcement_skipped(mid);
-                typed_audit::record_boundary_outcome(
-                    mid, audit_op, audit_epoch, audit_epoch, /*success=*/true,
-                    static_cast<std::uint32_t>(audit_target),
-                    static_cast<std::uint32_t>(nodes_changed), fid);
-                // Issue #3322: production/Full still drop stale defuse/IR so
-                // a mid-boundary query cannot observe pre-proof state before
-                // outermost TypeLinearCommitProof. Soft/Off: helper no-ops.
-                invalidate_defuse_index_for_nested();
-                // Skip Full/composite invariant walk + partial recovery.
-            } else if (rebind_light_skip_heavy_exit(*this)) {
-                // Issue #4357: record the boundary and skip the suite.
-                // The body's finish_mutate_hard_gate already ran. A nested
-                // guard is composite and would always enter
-                // composite_txn_commit even when the strategy is Sampled.
-                clear_txn_dirty();
-                typed_audit::note_invariant_enforcement_skipped(mid);
-                typed_audit::record_boundary_outcome(
-                    mid, audit_op, audit_epoch, audit_epoch, /*success=*/true,
-                    static_cast<std::uint32_t>(audit_target),
-                    static_cast<std::uint32_t>(nodes_changed), fid);
-                invalidate_defuse_index_for_nested();
-            } else {
-                const bool linear_hint = (audit_op.find("linear") != std::string_view::npos) ||
-                                         (audit_op.find("move") != std::string_view::npos) ||
-                                         (audit_op.find("inline") != std::string_view::npos);
-                // Issue #2223: match sites force Sampled hard-gate / audit
-                // (mirror linear_ops_present — ADT self-mod must not under-sample).
-                bool match_sites = false;
-                // Issue #4346: a heap-slot guard did not edit the tree.
-                // has_match_info over every node is O(defines) per write.
-                const bool heap_slot_quiet_4346 =
-                    cp.heap_slot_only && !cp.lightweight &&
-                    !(workspace_flat_ &&
-                      workspace_flat_->mutation_log_size() > cp.mutation_log_size);
-                if (workspace_flat_ && !heap_slot_quiet_4346) {
-                    const auto n = match_scan_bound(*workspace_flat_);
-                    for (aura::ast::NodeId id = 0; id < n; ++id) {
-                        if (workspace_flat_->has_match_info(id)) {
-                            match_sites = true;
-                            break;
-                        }
-                    }
-                }
-                const bool batch_active =
-                    cp.bump_suppressed_at_entry ||
-                    (workspace_flat_ && workspace_flat_->atomic_batch_active());
-                const bool composite = nested_boundary || batch_active;
-                const auto strat = typed_audit::get_strategy();
-                // Issue #2145: Strict sandbox links Full-class hard gate.
-                const bool strict_sandbox = aura::core::sandbox::is_strict();
-                const bool hard_gate = typed_audit::requires_invariant_hard_gate(
-                    nodes_changed, linear_hint, strict_sandbox, match_sites,
-                    /*mutate_session=*/true);
-                // Issue #2514 / #2545 / Issue #2559: unified linear force entry
-                // is single rollback authority for synth + sticky post-mutate /
-                // escape (three-layer type-half inventory site).
-                // Decision table (see force_linear_rollback / typecheck):
-                //   SynthHardFail (prod/strict) → force + skip soft recovery
-                //   Soft Warning only           → no force; continue audit below
-                //   PostMutate / CrossBatch     → sticky may force if set
-                //   None                        → post-mutate ownership defense
-                // Must run before Sampled skip / partial recovery so soft recovery
-                // cannot claim Success after a synth TypeError.
-                // force_linear_rollback classifies linear_synth_hard_fail_pending
-                // first (deny_if_linear_synth_hard_fail is the thin alias).
-                // Issue #4082: capture the synth sticky before force clears it.
-                // Nested re-arms it so the outer pre-persist belt still denies.
-                const bool synth_sticky_4082 = linear_synth_hard_fail_pending();
-                if (force_linear_rollback(composite ? "composite-linear-synth-hard-fail"
-                                                    : "linear-synth-hard-fail")) {
-                    // Issue #3217: fence then restore then proof clear then stamp.
-                    if (abort_ir_cache_begin_force_fn_)
-                        abort_ir_cache_begin_force_fn_();
-                    // Issue #4082 / #3232: hold abort authority across the
-                    // dual-topology restore (same shape as the later arm).
-                    typed_audit::AbortAuthorityHold abort_authority;
-                    const auto mid_abort_ver_4082 =
-                        typed_audit::begin_mid_abort_authority(cp.audit_mid);
-                    (void)mid_abort_ver_4082;
-                    // Issue #4082: dual topology so dirty SoA matches the
-                    // restored children.
-                    BoundaryRollbackStats stats;
-                    // Issue #4346: empty children_ snapshot is not a pre-image.
-                    if (cp.heap_slot_only && cp.children_snapshot.empty())
-                        stats.field_records_rolled =
-                            workspace_flat_->rollback_to_size(cp.mutation_log_size);
-                    else
-                        stats.field_records_rolled = workspace_flat_->abort_restore_dual_topology(
-                            cp.mutation_log_size, std::move(cp.children_snapshot),
-                            std::move(cp.dirty_soa_snapshot),
-                            std::move(cp.marker_provenance_snapshot));
-                    if (stats.field_records_rolled > 0) {
-                        bump_mutation_log_rollback_count();
-                        if (nested_boundary)
-                            bump_edsl_nested_atomic_rollback();
-                    }
-                    stats.children_column_restored = true;
-                    if (cp.fine_rollback) {
-                        workspace_flat_->restore_sym_id(std::move(cp.sym_id_snapshot));
-                        workspace_flat_->restore_param_columns(std::move(cp.param_snapshot));
-                        stats.sym_id_column_restored = true;
-                        stats.param_columns_restored = true;
-                    }
-                    if (workspace_flat_->atomic_batch_active() != cp.bump_suppressed_at_entry) {
-                        if (cp.bump_suppressed_at_entry)
-                            workspace_flat_->begin_atomic_batch();
-                        else
-                            workspace_flat_->rollback_atomic_batch();
-                        suppressed_misalign_caught_.fetch_add(1, std::memory_order_relaxed);
-                    }
-                    last_boundary_rollback_stats_ = stats;
-                    defuse_index_ = nullptr;
-                    // Issue #3821: pair begin fence with force-dirty after
-                    // topology restore (same order as dual-topology abort
-                    // arms). Clears abort_force_in_progress_; drops pre-abort
-                    // irs / stamps abort_map_invalid so lookup cannot thrash
-                    // on a stuck in_progress latch.
-                    if (abort_ir_cache_force_dirty_fn_)
-                        abort_ir_cache_force_dirty_fn_();
-                    // Issue #3116: synth-hard-fail rollback is a production abort.
-                    dual_clear_coercion_state_on_abort();
-                    // Issue #3217 / #3030: proof clear before deny stamp.
-                    typed_audit::clear_type_linear_commit_proof_on_abort();
-                    if (!nested_boundary)
-                        clear_txn_dirty();
-                    typed_audit::record_boundary_deny_after_restore(
-                        mid,
-                        composite ? "composite-linear-synth-hard-fail" : "linear-synth-hard-fail",
-                        audit_epoch, audit_epoch, static_cast<std::uint32_t>(audit_target), 0, fid);
-                    if (strict_sandbox)
-                        typed_audit::capture_audit_event_forced(
-                            mid, "strict-linear-synth-denied",
-                            typed_audit::MutationKind::Structural, audit_epoch, audit_epoch,
-                            typed_audit::AuditOutcome::Error,
-                            static_cast<std::uint32_t>(audit_target), 0, fid, 0,
-                            static_cast<std::uint32_t>(capability_tenant_id()));
-                    // Issue #4082: force_linear_rollback already cleared the
-                    // sticky, so a live stamp would see linear_ok and publish
-                    // green. Explicit deny is the pre-clear authority.
-                    // Restore occurrence to the enter size (same #3158 helper
-                    // as the later invariant arm). Outermost notes the dtor
-                    // fail flip; nested re-arms synth for the outer belt.
-                    if (typed_audit::production_defaults_active() ||
-                        typed_audit::get_strategy() == typed_audit::AuditStrategy::Full) {
-                        if (auto* tc = static_cast<aura::compiler::TypeChecker*>(
-                                commit_type_checker_handle())) {
-                            const auto dropped =
-                                tc->constraint_system().restore_or_clear_occurrence_to_entry(
-                                    cp.occurrence_entry_size);
-                            aura::compiler::typed_audit::note_3158_occurrence_abort_restore(
-                                dropped);
-                        }
-                        restore_abort_type_face(cp);
-                    } else {
-                        aura::compiler::typed_audit::note_3158_occurrence_abort_observe();
-                    }
-                    aura_clear_occurrence_persist_buffer(this);
-                    clear_type_export_authority();
-                    {
-                        void* tc_handle = commit_type_checker_handle();
-                        typed_audit::note_stamp_last_look_tc(tc_handle);
-                        const auto truth = freeze_proof_goal_truth_from_type_checker(tc_handle);
-                        (void)typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
-                            ::aura::core::current_mutation_epoch(), /*would_allow_commit=*/false,
-                            /*linear_ok=*/false, truth.live_goal_count, truth.goal_fingerprint,
-                            truth.from_cs,
-                            /*force_reason=*/3);
-                        typed_audit::publish_type_linear_proof_outcome(
-                            typed_audit::kTypeLinearProofOutcomeReject);
-                    }
-                    if (!nested_boundary)
-                        typed_audit::note_outermost_audit_rollback_needs_fail();
-                    else if (synth_sticky_4082)
-                        note_linear_synth_hard_fail_pending();
-                    typed_audit::end_mid_abort_authority(cp.audit_mid);
-                    return cp;
-                }
-                // Composite paths never under-sample (self-evo multi-step safety).
-                // Provenance miss forces audit even when Sampled would skip and
-                // even when nodes_changed==0 (apply may be the only side effect).
-                // Issue #2108: linear_ops_present (linear_hint) and composite
-                // always force the escape hard-block path — Sampled must not
-                // skip analyze_linear_escape / Moved live-root checks.
-                // Issue #2145: Full/Strict hard_gate always audits (even small dirty).
-                // Issue #2223: match_sites force Sampled audit.
-                const bool do_audit =
-                    strat != typed_audit::AuditStrategy::Off &&
-                    (hard_gate || provenance_miss || composite || linear_hint || match_sites ||
-                     (nodes_changed > 0 && typed_audit::should_audit_contextual(
-                                               mid, nodes_changed, linear_hint, match_sites)));
-                if (!do_audit && strat == typed_audit::AuditStrategy::Sampled)
-                    typed_audit::g_typed_mutation_audit_counters.hard_gate_sampled_skip_total
-                        .fetch_add(1, std::memory_order_relaxed);
-                if (do_audit) {
-                    typed_audit::InvariantAuditResult first{};
-                    bool inv_ok = false;
-                    bool recovered = false;
-                    // Issue #2105: composite/nested/atomic_batch uses ordered
-                    // commit barrier (solve_delta_occurrence → linear revalidate
-                    // → invariant audit → Full partial recovery or reject).
-                    // Issue #2260: non-composite hard-gate must prove SOLVED /
-                    // !truncated_reverify (or full-resync) before native continues.
-                    if (composite) {
-                        typed_audit::CompositeTxnCommitResult ccr{};
-                        // Issue #2851: stage mutations-since-boundary-enter so
-                        // composite_txn_commit body (which holds the #2610
-                        // auto_partial_from_cone bump site) can run the
-                        // log-delta force-partial check. Quiet path (no
-                        // log delta / Soft default) stores 0 → zero behavior
-                        // change. Default 0 also matches the empty-state
-                        // reset below.
-                        const std::uint64_t log_delta =
-                            workspace_flat_ && cp.mutation_log_size > 0
-                                ? (workspace_flat_->mutation_log_size() > cp.mutation_log_size
-                                       ? workspace_flat_->mutation_log_size() - cp.mutation_log_size
-                                       : 0ull)
-                                : 0ull;
-                        typed_audit::g_composite_commit_log_forces_partial_pending_log_delta.store(
-                            log_delta, std::memory_order_relaxed);
-                        inv_ok = composite_txn_commit(
-                            mid, audit_op, static_cast<std::uint32_t>(audit_target), audit_epoch,
-                            audit_epoch, nested_boundary, batch_active, &ccr);
-                        // Reset pending log_delta after composite_txn_commit
-                        // returns so subsequent non-composite boundaries
-                        // don't see stale value. composite_txn_commit body
-                        // reads + clears via the new #2851 check below.
-                        typed_audit::g_composite_commit_log_forces_partial_pending_log_delta.store(
-                            0, std::memory_order_relaxed);
-                        first = ccr.audit;
-                        recovered = ccr.partial_recovered;
-                        if (inv_ok)
-                            clear_txn_dirty();
-                    } else {
-                        bool proof_trunc = false;
-                        bool proof_force = false;
-                        const bool proof_ok = boundary_solve_proof_gate(
-                            hard_gate, linear_hint, nodes_changed, &proof_trunc, &proof_force);
-                        if (hard_gate && (!proof_ok || proof_force)) {
-                            first.type_ok = false;
-                            inv_ok = false;
-                            // Fall through to force-rollback path below.
-                        } else {
-                            inv_ok = run_typed_mutation_invariant_audit(
-                                mid, audit_op, static_cast<std::uint32_t>(audit_target),
-                                audit_epoch, audit_epoch,
-                                /*composite_mode=*/false, &first);
-                        }
-                        (void)proof_trunc;
-                    }
-                    // #1894 / #2029 / #2145: non-composite Full/Strict hard-gate →
-                    // per-category partial recover before structural rollback.
-                    if (!composite && !inv_ok && hard_gate) {
-                        auto& ac = typed_audit::g_typed_mutation_audit_counters;
-                        ac.partial_recovery_attempt_total.fetch_add(1, std::memory_order_relaxed);
-                        ac.hard_gate_audits_total.fetch_add(1, std::memory_order_relaxed);
-                        // Prefer linear re-enforce first (cheap; often fixes Moved live roots).
-                        if (!first.linear_ok || first.cross_batch_linear_escape) {
-                            ac.partial_recovery_linear_total.fetch_add(1,
-                                                                       std::memory_order_relaxed);
-                            (void)linear_post_mutate_enforce_all();
-                            (void)enforce_linear_boundary_consistency(kLinearGcRootAuditTypedMutate,
-                                                                      /*mark_all_linear=*/true);
-                            // Issue #2695: unified rebind entry — routes
-                            // densify-driven rebind through the same API
-                            // as steal / Agent (single entry for Agents).
-                            // AC3 zero-cost short-circuit when no roots
-                            // were remapped; real per-root span wires in
-                            // follow-up. Production force-rollback on
-                            // mismatch (returns false) per #2563 contract.
-                            // Issue #2708: real per-root walk wires through
-                            // this same call site.
-                            // Issue #2723: wire non-empty span via
-                            // collect_linear_or_dirty_roots_for_rebind()
-                            // (single source of truth — densify + steal
-                            // share the same helper per AC4). AC3 zero-cost
-                            // preserved when no linear roots registered.
-                            (void)aura::compiler::ownership_rebind_after_remap(
-                                aura::compiler::collect_linear_or_dirty_roots_for_rebind(),
-                                aura::compiler::RemapReason::Densify);
-                        }
-                        // Type-only recheck: re-driven by the full suite below
-                        // (visitor rewalks NotChecked / dirty mutations).
-                        if (!first.type_ok) {
-                            ac.partial_recovery_type_total.fetch_add(1, std::memory_order_relaxed);
-                        }
-                        // Provenance fail → restamp pins / generations + re-validate chain.
-                        if (!first.provenance_ok) {
-                            ac.partial_recovery_provenance_total.fetch_add(
-                                1, std::memory_order_relaxed);
-                            // Issue #3309: route through the unified entry
-                            // (single budget/torn decision + node-gen /
-                            // pinned-stable pairing) instead of adjacent
-                            // direct calls — abort-partial-recovery shares
-                            // the same restamp family as outermost abort.
-                            // clang-format off
-                            (void)unified_restamp_after_boundary(
-                                UnifiedRestampSite::AbortRestore);
-                            // clang-format on
-                            (void)post_mutation_reflect_validate();
-                        }
-                        // Issue #2223: ADT renarrow / revalidate before re-audit.
-                        if (!first.adt_ok) {
-                            ac.partial_recovery_adt_total.fetch_add(1, std::memory_order_relaxed);
-                            partial_recover_adt_exhaustiveness(mid);
-                        }
-                        typed_audit::InvariantAuditResult after{};
-                        inv_ok = run_typed_mutation_invariant_audit(
-                            mid, "full-partial-recover", static_cast<std::uint32_t>(audit_target),
-                            audit_epoch, audit_epoch,
-                            /*composite_mode=*/false, &after);
-                        if (inv_ok) {
-                            recovered = true;
-                            ac.partial_recovery_success_total.fetch_add(1,
-                                                                        std::memory_order_relaxed);
-                        } else {
-                            ac.partial_recovery_fail_total.fetch_add(1, std::memory_order_relaxed);
-                        }
-                    }
-                    // Issue #2145 / #2545 / #2029: hard-gate force rollback
-                    // for Full / Strict / composite. Linear axes go through
-                    // the unified force_linear_rollback entry first (single
-                    // counter ownership; no double-count with
-                    // linear_invariant_fail). Structural rollback only if
-                    // partial recover did not succeed.
-                    if (!inv_ok && (composite || hard_gate)) {
-                        if (!recovered) {
-                            // add_mutate holds an outermost wrapper Guard; the
-                            // primitive's try_acquire is nested → composite.
-                            // Nested success must not dual-restore here: that
-                            // undoes mutate:rebind after it returned #t.
-                            // Outermost owns commit / Full fail-closed restore.
-                            // Issue #4089: only real Guard nesting keeps the
-                            // nested-success skip. When only orch soft frames
-                            // remain below, this boundary is the type-authority
-                            // outermost — restore + flip Guard success (via
-                            // note_outermost_audit_rollback_needs_fail, consumed
-                            // by the dtor) so the existing abort path runs
-                            // instead of committing a type-failed tree.
-                            if (nested_boundary && success && !soft_only_below)
-                                goto skip_nested_success_composite_restore;
-                            auto& ac = typed_audit::g_typed_mutation_audit_counters;
-                            const bool linear_forced = force_linear_rollback(
-                                composite ? "composite-linear-force" : "linear-force-rollback",
-                                &first);
-                            if (!linear_forced &&
-                                (strat == typed_audit::AuditStrategy::Full || hard_gate)) {
-                                // Type / provenance / adt (non-linear) force path.
-                                ac.full_strategy_force_rollback_total.fetch_add(
-                                    1, std::memory_order_relaxed);
-                                ac.hard_gate_force_rollback_total.fetch_add(
-                                    1, std::memory_order_relaxed);
-                                if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
-                                    m->typed_mutation_full_force_rollback_total.fetch_add(
-                                        1, std::memory_order_relaxed);
-                                aura_escape_move_gate_clear();
-                                g_linear_escape_gate_clear_on_rollback_total.fetch_add(
-                                    1, std::memory_order_relaxed);
-                            }
-                            if (composite) {
-                                ac.composite_full_rollback_total.fetch_add(
-                                    1, std::memory_order_relaxed);
-                            }
-                            // Issue #2309: linear force path already cleared the
-                            // escape gate inside force_linear_rollback; non-linear
-                            // path cleared above.
-                            // Issue #2284: publish boundary hard-reject signal on the
-                            // repair surface. The typecheck path already published the
-                            // detailed unresolved_affected_nodes data; we only update
-                            // the status + publish_total here to avoid clobbering the
-                            // repair set with an empty boundary-only snapshot.
-                            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
-                                constexpr std::uint64_t kHardRejectStatus = 99;
-                                m->type_repair_last_timeout_status.store(kHardRejectStatus,
-                                                                         std::memory_order_relaxed);
-                                m->type_repair_publish_total.fetch_add(1,
-                                                                       std::memory_order_relaxed);
-                            }
-                            // Agent-visible deny reason (#2145 / #2076 shape).
-                            std::string_view deny_kind = "invariant";
-                            if (first.cross_batch_linear_escape)
-                                deny_kind = "linear-escape";
-                            else if (!first.linear_ok)
-                                deny_kind = "linear";
-                            else if (!first.type_ok)
-                                deny_kind = "type";
-                            else if (!first.provenance_ok)
-                                deny_kind = "provenance";
-                            last_mutate_error_ = typed_audit::format_invariant_deny_reason(
-                                deny_kind, capability_tenant_id(),
-                                composite ? "composite-invariant-force-rollback"
-                                          : "invariant-force-rollback");
-                            if (strict_sandbox) {
-                                strict_mutate_hold_.store(1, std::memory_order_relaxed);
-                                ac.hard_gate_strict_hold_total.fetch_add(1,
-                                                                         std::memory_order_relaxed);
-                            }
-                            // Issue #2959: dual topology structural undo (same as
-                            // failure path) under one structural exclusive.
-                            // Issue #3117: publish abort-force fence before restore.
-                            if (abort_ir_cache_begin_force_fn_)
-                                abort_ir_cache_begin_force_fn_();
-                            // Issue #3193 / Issue #3232: abort authority hold (one face).
-                            typed_audit::AbortAuthorityHold abort_authority;
-                            // Issue #3281: mid-bound abort authority for this
-                            // abort-restore (production/Full). Released after
-                            // the clears below (see end_mid_abort_authority).
-                            const auto mid_abort_ver =
-                                typed_audit::begin_mid_abort_authority(cp.audit_mid);
-                            BoundaryRollbackStats stats;
-                            // Issue #3897: pass the enter dirty-SoA snapshot
-                            // so invariant force-rollback does not leave
-                            // phantom over-dirty cones (#3865 incomplete).
-                            // Issue #4346: empty children_ snapshot is not a pre-image.
-                            if (cp.heap_slot_only && cp.children_snapshot.empty())
-                                stats.field_records_rolled =
-                                    workspace_flat_->rollback_to_size(cp.mutation_log_size);
-                            else
-                                stats.field_records_rolled =
-                                    workspace_flat_->abort_restore_dual_topology(
-                                        cp.mutation_log_size, std::move(cp.children_snapshot),
-                                        std::move(cp.dirty_soa_snapshot),
-                                        std::move(cp.marker_provenance_snapshot));
-                            if (stats.field_records_rolled > 0) {
-                                bump_mutation_log_rollback_count();
-                                if (nested_boundary)
-                                    bump_edsl_nested_atomic_rollback();
-                            }
-                            stats.children_column_restored = true;
-                            // Issue #3743: force-rollback restamp before the
-                            // early return (Phase-1 probes must not see a
-                            // post-mutate pin gen on the restored tree).
-                            if (typed_audit::production_defaults_active() ||
-                                typed_audit::get_strategy() == typed_audit::AuditStrategy::Full)
-                                (void)unified_restamp_after_boundary(
-                                    UnifiedRestampSite::AbortRestore);
-                            // Issue #3095: post-restore macro hygiene invariant
-                            // enforcement (paired with #2959 dual-topology abort).
-                            (void)check_macro_hygiene_invariant_post_restore(
-                                "invariant-force-rollback");
-                            if (cp.fine_rollback) {
-                                workspace_flat_->restore_sym_id(std::move(cp.sym_id_snapshot));
-                                workspace_flat_->restore_param_columns(
-                                    std::move(cp.param_snapshot));
-                                stats.sym_id_column_restored = true;
-                                stats.param_columns_restored = true;
-                            }
-                            // Realign atomic-batch flag if nested path left it inconsistent.
-                            if (workspace_flat_->atomic_batch_active() !=
-                                cp.bump_suppressed_at_entry) {
-                                if (cp.bump_suppressed_at_entry)
-                                    workspace_flat_->begin_atomic_batch();
-                                else
-                                    workspace_flat_->rollback_atomic_batch();
-                                suppressed_misalign_caught_.fetch_add(1, std::memory_order_relaxed);
-                            }
-                            // Issue #3033 / #3551: dual-topology abort → force-dirty
-                            // IR cache + drop pre-abort irs (clear_cache_v2_for_define).
-                            if (abort_ir_cache_force_dirty_fn_)
-                                abort_ir_cache_force_dirty_fn_();
-                            // Issue #3030: invariant force-rollback clears proof face.
-                            typed_audit::clear_type_linear_commit_proof_on_abort();
-                            // Issue #3102: AC1+AC2+AC3+AC4 — CoercionMap abort rewind
-                            // (production/Full). Soft path bumps the observe counter.
-                            if (typed_audit::production_defaults_active() ||
-                                typed_audit::get_strategy() == typed_audit::AuditStrategy::Full) {
-                                aura::compiler::dirty::truncate_type_cone_to_size(
-                                    cp.coercion_cone_size_at_entry);
-                                auto coerced = aura::compiler::coerced_nodes_tracker_take();
-                                if (!coerced.empty()) {
-                                    const auto added =
-                                        aura::compiler::dirty::force_dead_coercion_elim_into_cone(
-                                            coerced);
-                                    aura::compiler::g_coercion_map_abort_forced_dirty_total
-                                        .fetch_add(added, std::memory_order_relaxed);
-                                }
-                                aura::compiler::dirty::bump_dead_coercion_decision_invalidate();
-                                typed_audit::clear_coercion_commit_readiness_on_abort();
-                                // Issue #3158: AC2 — abort restore-or-clear (production/Full).
-                                // See first abort site for full rationale. Sibling
-                                // of the coercion rewind — runs AFTER dual-topology +
-                                // proof + coercion clear, BEFORE post-abort lookup.
-                                if (auto* tc = static_cast<aura::compiler::TypeChecker*>(
-                                        commit_type_checker_handle())) {
-                                    const auto dropped = tc->constraint_system()
-                                                             .restore_or_clear_occurrence_to_entry(
-                                                                 cp.occurrence_entry_size);
-                                    aura::compiler::typed_audit::note_3158_occurrence_abort_restore(
-                                        dropped);
-                                }
-                                restore_abort_type_face(cp);
-                                aura::compiler::g_coercion_map_abort_rewind_total.fetch_add(
-                                    1, std::memory_order_relaxed);
-                            } else {
-                                aura::compiler::g_coercion_map_abort_rewind_observe_total.fetch_add(
-                                    1, std::memory_order_relaxed);
-                                (void)aura::compiler::coerced_nodes_tracker_take();
-                                // Issue #3158: Soft / Off path — observe counter only.
-                                aura::compiler::typed_audit::note_3158_occurrence_abort_observe();
-                            }
-                            // Issue #3116: last_coercions_ + TLS active context.
-                            dual_clear_coercion_state_on_abort();
-                            // Issue #3193: persist clear before hold ends.
-                            aura_clear_occurrence_persist_buffer(this);
-                            // Issue #3517: persist already granted query:type on the
-                            // success-entered path. Drop grant + flip Guard success
-                            // after this exit so the dtor `!success` tail runs.
-                            clear_type_export_authority();
-                            typed_audit::note_outermost_audit_rollback_needs_fail();
-                            last_boundary_rollback_stats_ = stats;
-                            defuse_index_ = nullptr;
-                            // Issue #2105: leave txn_dirty set until outermost clean exit,
-                            // or clear when no remaining nested guards.
-                            if (!nested_boundary)
-                                clear_txn_dirty();
-                            typed_audit::record_boundary_deny_after_restore(
-                                mid,
-                                composite ? "composite-invariant-force-rollback"
-                                          : "invariant-force-rollback",
-                                audit_epoch, audit_epoch, static_cast<std::uint32_t>(audit_target),
-                                0, fid);
-                            // Strict trail: Error outcome for Agent dashboards.
-                            if (strict_sandbox)
-                                typed_audit::capture_audit_event_forced(
-                                    mid, "strict-invariant-denied",
-                                    typed_audit::MutationKind::Structural, audit_epoch, audit_epoch,
-                                    typed_audit::AuditOutcome::Error,
-                                    static_cast<std::uint32_t>(audit_target), 0, fid, 0);
-                            // Issue #3281: mid-bound authority post-clear check —
-                            // same shape as the main abort site. If a concurrent
-                            // densify/steal bumped the mid authority version during
-                            // this abort-restore's clears, force reject (no green
-                            // stamp on torn state).
-                            if (mid_abort_ver != 0 && typed_audit::mid_abort_authority_version(
-                                                          cp.audit_mid) != mid_abort_ver) {
-                                typed_audit::g_mid_abort_authority_mismatch_total.fetch_add(
-                                    1, std::memory_order_relaxed);
-                                typed_audit::clear_type_linear_commit_proof_on_abort();
-                                typed_audit::clear_coercion_commit_readiness_on_abort();
-                                aura_clear_occurrence_persist_buffer(this);
-                                (void)typed_audit::
-                                    build_type_linear_commit_proof_from_live_with_outcome(
-                                        ::aura::core::current_mutation_epoch(),
-                                        /*would_allow_commit=*/false,
-                                        /*linear_ok=*/false,
-                                        typed_audit::kProofLiveGoalCountHintAuto,
-                                        /*goal_fingerprint=*/0, /*from_cs=*/false,
-                                        /*force_reason=*/16);
-                                typed_audit::publish_type_linear_proof_outcome(
-                                    typed_audit::kTypeLinearProofOutcomeReject);
-                            }
-                            typed_audit::end_mid_abort_authority(cp.audit_mid);
-                            return cp;
-                        }
-                    }
-                skip_nested_success_composite_restore:
-                    // Success path: record outcome when audit passed / recovered.
-                    // Enforcement already linked via record_invariant_audit_result.
-                    if (inv_ok || recovered) {
-                        if (!nested_boundary)
-                            clear_txn_dirty();
-                        typed_audit::record_boundary_outcome(
-                            mid, audit_op, audit_epoch, audit_epoch, /*success=*/true,
-                            static_cast<std::uint32_t>(audit_target),
-                            static_cast<std::uint32_t>(nodes_changed), fid);
-                    }
-                } else {
-                    // Issue #2814: Sampled/quiet path — no invariant suite;
-                    // mark intentional skip so Success trail is not a gap.
-                    typed_audit::note_invariant_enforcement_skipped(mid);
-                    if (!nested_boundary)
-                        clear_txn_dirty();
-                    typed_audit::record_boundary_outcome(
-                        mid, audit_op, audit_epoch, audit_epoch, /*success=*/true,
-                        static_cast<std::uint32_t>(audit_target),
-                        static_cast<std::uint32_t>(nodes_changed), fid);
-                }
-            } // !render_fast_exit_this_boundary_
-        }
-        // Issue #488 / #1611 / #2765: post-mutate reflect auto_validate /
-        // hygiene_validate on Guard success path (schema-level closed loop).
-        // Default ON (guard_reflect_validate_enabled_); Soft → metric-only
-        // on fail; Strict → structural force-rollback. RenderFastExit and
-        // flag-off → zero validate cost (skip counter only).
-        // (Also covered as provenance leg of #1614 invariant audit when sampled.)
-        if (render_fast_exit_this_boundary_ || !get_guard_reflect_validate_enabled() ||
-            rebind_light_skip_heavy_exit(*this) || cp.heap_slot_only) {
-            bump_guard_reflect_validate_skipped(); // #2765 AC4 quiet / opt-out
-        } else {
-            bump_guard_reflect_validate(); // #2765 Agent counter
-            const bool reflect_ok = post_mutation_reflect_validate();
-            if (!reflect_ok) {
-                bump_guard_reflect_validate_fail(); // #2765
-                const bool strict_sandbox = aura::core::sandbox::is_strict();
-                if (strict_sandbox && workspace_flat_) {
-                    // #2765 AC1 Strict: schema/hygiene fail → force structural undo
-                    // (mirrors invariant hard-gate force-rollback shape).
-                    bump_guard_reflect_validate_strict_rollback();
-                    // Issue #2959: dual topology undo under one structural exclusive.
-                    // Issue #3117: publish abort-force fence before restore.
-                    if (abort_ir_cache_begin_force_fn_)
-                        abort_ir_cache_begin_force_fn_();
-                    // Issue #3193 / Issue #3232: abort authority hold (one face).
-                    typed_audit::AbortAuthorityHold abort_authority;
-                    // Issue #3281: mid-bound abort authority for this
-                    // abort-restore (production/Full). Released after the
-                    // clears below (see end_mid_abort_authority).
-                    const auto mid_abort_ver = typed_audit::begin_mid_abort_authority(cp.audit_mid);
-                    BoundaryRollbackStats stats;
-                    // Issue #3897: pass the enter dirty-SoA snapshot so
-                    // Strict reflect-validate rollback does not leave
-                    // phantom over-dirty cones (#3865 incomplete).
-                    // Issue #4346: empty children_ snapshot is not a pre-image.
-                    if (cp.heap_slot_only && cp.children_snapshot.empty())
-                        stats.field_records_rolled =
-                            workspace_flat_->rollback_to_size(cp.mutation_log_size);
-                    else
-                        stats.field_records_rolled = workspace_flat_->abort_restore_dual_topology(
-                            cp.mutation_log_size, std::move(cp.children_snapshot),
-                            std::move(cp.dirty_soa_snapshot),
-                            std::move(cp.marker_provenance_snapshot));
-                    if (stats.field_records_rolled > 0) {
-                        bump_mutation_log_rollback_count();
-                        if (nested_boundary)
-                            bump_edsl_nested_atomic_rollback();
-                    }
-                    stats.children_column_restored = true;
-                    // Issue #3743: Strict reflect-validate rollback restamp
-                    // before the early return (same window as force-rollback).
-                    if (typed_audit::production_defaults_active() ||
-                        typed_audit::get_strategy() == typed_audit::AuditStrategy::Full)
-                        (void)unified_restamp_after_boundary(UnifiedRestampSite::AbortRestore);
-                    // Issue #3095: post-restore macro hygiene invariant
-                    // enforcement (Strict path).
-                    (void)check_macro_hygiene_invariant_post_restore(
-                        "guard-reflect-validate-strict-rollback");
-                    if (cp.fine_rollback) {
-                        workspace_flat_->restore_sym_id(std::move(cp.sym_id_snapshot));
-                        workspace_flat_->restore_param_columns(std::move(cp.param_snapshot));
-                        stats.sym_id_column_restored = true;
-                        stats.param_columns_restored = true;
-                    }
-                    // Issue #3033 / #3551: dual-topology abort → force-dirty
-                    // IR cache + drop pre-abort irs (clear_cache_v2_for_define).
-                    if (abort_ir_cache_force_dirty_fn_)
-                        abort_ir_cache_force_dirty_fn_();
-                    // Issue #3030: Strict reflect-validate rollback clears proof face.
-                    typed_audit::clear_type_linear_commit_proof_on_abort();
-                    // Issue #3102: AC1+AC2+AC3+AC4 — CoercionMap abort rewind
-                    // (production/Full). Soft path bumps the observe counter.
-                    if (typed_audit::production_defaults_active() ||
-                        typed_audit::get_strategy() == typed_audit::AuditStrategy::Full) {
-                        aura::compiler::dirty::truncate_type_cone_to_size(
-                            cp.coercion_cone_size_at_entry);
-                        auto coerced = aura::compiler::coerced_nodes_tracker_take();
-                        if (!coerced.empty()) {
-                            const auto added =
-                                aura::compiler::dirty::force_dead_coercion_elim_into_cone(coerced);
-                            aura::compiler::g_coercion_map_abort_forced_dirty_total.fetch_add(
-                                added, std::memory_order_relaxed);
-                        }
-                        aura::compiler::dirty::bump_dead_coercion_decision_invalidate();
-                        typed_audit::clear_coercion_commit_readiness_on_abort();
-                        // Issue #3158: AC2 — abort restore-or-clear (production/Full).
-                        // See first abort site for full rationale. Third
-                        // twin-site sibling of the coercion rewind.
-                        if (auto* tc = static_cast<aura::compiler::TypeChecker*>(
-                                commit_type_checker_handle())) {
-                            const auto dropped =
-                                tc->constraint_system().restore_or_clear_occurrence_to_entry(
-                                    cp.occurrence_entry_size);
-                            aura::compiler::typed_audit::note_3158_occurrence_abort_restore(
-                                dropped);
-                        }
-                        restore_abort_type_face(cp);
-                        aura::compiler::g_coercion_map_abort_rewind_total.fetch_add(
-                            1, std::memory_order_relaxed);
-                    } else {
-                        aura::compiler::g_coercion_map_abort_rewind_observe_total.fetch_add(
-                            1, std::memory_order_relaxed);
-                        (void)aura::compiler::coerced_nodes_tracker_take();
-                        // Issue #3158: Soft / Off path — observe counter only.
-                        aura::compiler::typed_audit::note_3158_occurrence_abort_observe();
-                    }
-                    // Issue #3116: last_coercions_ + TLS active context.
-                    dual_clear_coercion_state_on_abort();
-                    // Issue #3193: persist clear before hold ends.
-                    aura_clear_occurrence_persist_buffer(this);
-                    // Issue #3517: success-entered Strict reflect rollback
-                    // must drop query:type grant (persist already granted).
-                    clear_type_export_authority();
-                    typed_audit::note_outermost_audit_rollback_needs_fail();
-                    last_boundary_rollback_stats_ = stats;
-                    defuse_index_ = nullptr;
-                    if (!nested_boundary)
-                        clear_txn_dirty();
-                    last_mutate_error_ = "guard-reflect-validate-fail-strict-rollback";
-                    const std::uint64_t mid = cp.audit_mid;
-                    const auto fid = static_cast<std::int64_t>(aura_fiber_current_id());
-                    typed_audit::record_boundary_deny_after_restore(
-                        mid, "guard-reflect-validate-force-rollback", audit_epoch, audit_epoch, 0,
-                        0, fid);
-                    // Issue #3281: mid-bound authority post-clear check —
-                    // same shape as the main abort site. If a concurrent
-                    // densify/steal bumped the mid authority version during
-                    // this abort-restore's clears, force reject (no green
-                    // stamp on torn state).
-                    if (mid_abort_ver != 0 &&
-                        typed_audit::mid_abort_authority_version(cp.audit_mid) != mid_abort_ver) {
-                        typed_audit::g_mid_abort_authority_mismatch_total.fetch_add(
-                            1, std::memory_order_relaxed);
-                        typed_audit::clear_type_linear_commit_proof_on_abort();
-                        typed_audit::clear_coercion_commit_readiness_on_abort();
-                        aura_clear_occurrence_persist_buffer(this);
-                        (void)typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
-                            ::aura::core::current_mutation_epoch(), /*would_allow_commit=*/false,
-                            /*linear_ok=*/false, typed_audit::kProofLiveGoalCountHintAuto,
-                            /*goal_fingerprint=*/0,
-                            /*from_cs=*/false, /*force_reason=*/16);
-                        typed_audit::publish_type_linear_proof_outcome(
-                            typed_audit::kTypeLinearProofOutcomeReject);
-                    }
-                    typed_audit::end_mid_abort_authority(cp.audit_mid);
-                    return cp;
-                }
-                // Soft / non-Strict: metric-only; mutation stays committed.
-            }
-        }
+        if (exit_validate_success_(cp, success, nested_boundary, soft_only_below, provenance_miss))
+            return cp;
     } else if (!success) {
         // Issue #1589: TypedMutationAudit rollback trail.
         // Issue #4403: a deny belt that never emitted its own SE leaves a
