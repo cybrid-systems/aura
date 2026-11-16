@@ -214,6 +214,12 @@ class DiagJson(unittest.TestCase):
         empty = subprocess.run([str(AURA_BIN)], input="", capture_output=True, text=True, env=env, timeout=120)
         self.assertEqual(empty.returncode, 2)  # usage
 
+    def test_exit_code_usage_errors(self) -> None:
+        # Issue #5240: the one-shot table puts usage errors at 2. These two
+        # paths used to fall through the reader with the old runtime value 1.
+        self.assertEqual(run(["--definitely-not-an-option"]).returncode, 2)
+        self.assertEqual(run(["/nonexistent-5240.aura"]).returncode, 2)
+
     def test_default_text_output_is_unchanged(self) -> None:
         with tempfile.TemporaryDirectory() as d:
             p = Path(d) / "u.aura"

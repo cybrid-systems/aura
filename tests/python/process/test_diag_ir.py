@@ -282,6 +282,11 @@ CASES = (
     ),
     (
         5240,
+        "test_exit_code_usage_errors",
+        "diag_json_format.DiagJson.test_exit_code_usage_errors",
+    ),
+    (
+        5240,
         "test_default_text_output_is_unchanged",
         "diag_json_format.DiagJson.test_default_text_output_is_unchanged",
     ),
