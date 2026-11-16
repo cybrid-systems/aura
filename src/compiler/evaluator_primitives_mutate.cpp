@@ -11472,12 +11472,13 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             const std::uint32_t active_ws =
                 ev.workspace_tree_ ? static_cast<WorkspaceTree*>(ev.workspace_tree_)->active_idx()
                                    : 0;
-            // Issue #5251: name the workspace mutation this row recorded when
-            // the call appended exactly one record. A nested or multi-record
-            // op names none rather than guessing. A restore uses the id to
-            // link its per-mutation ROLLBACK rows back to this row.
-            const std::uint64_t mutation_id =
-                (mut_before != 0 && mut_after == mut_before + 1) ? mut_before : 0;
+            // Issue #5251: name the workspace mutation ids this row recorded.
+            // They are consecutive (ids++) and the flat may be re-seeded by an
+            // op that swaps it, so only a forward range is claimed. A restore
+            // uses the range to link each per-mutation ROLLBACK back here.
+            const std::uint64_t mutation_count =
+                (mut_before != 0 && mut_after > mut_before) ? mut_after - mut_before : 0;
+            const std::uint64_t mutation_id = mutation_count != 0 ? mut_before : 0;
             std::string extras;
             int version = 1;
             if (active_ws != 0) {
@@ -11493,6 +11494,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 if (!extras.empty())
                     extras += ",";
                 extras += "\"mutation\":" + std::to_string(mutation_id);
+                if (mutation_count > 1)
+                    extras += ",\"mutations\":" + std::to_string(mutation_count);
                 version = 2;
             }
             aura::evo::log_append({.kind = op,
@@ -11505,6 +11508,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                                    .parent = {},
                                    .dur_ms = ms,
                                    .mutation_id = mutation_id,
+                                   .mutation_count = mutation_count,
                                    .extras_json = extras,
                                    .version = version});
             return r;

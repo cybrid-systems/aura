@@ -80,6 +80,7 @@ struct TraceMeta {
     std::string target;
     std::string decision;
     std::uint64_t mutation = 0;
+    std::uint64_t mutations = 0; // consecutive workspace mutation ids from `mutation`
 };
 
 struct LogState {
@@ -148,7 +149,12 @@ inline std::string log_path() {
 // Issue #5251: in-process trace capacity. AURA_EVO_RING=0 turns the ring
 // off; AURA_EVO_LOG can still spill to a file. The file is no longer the
 // switch that decides whether a record exists at all.
+inline constexpr std::size_t kTraceRingDefault = 4096;
+
 inline std::size_t ring_capacity() noexcept {
+    const char* raw = ::aura::config::raw(::aura::config::Key::AURA_EVO_RING);
+    if (raw == nullptr || *raw == '\0') [[likely]]
+        return kTraceRingDefault;
     return ::aura::config::size(::aura::config::Key::AURA_EVO_RING);
 }
 
@@ -178,9 +184,12 @@ struct Entry {
     std::string_view gate;
     // Issue #5255 slot: the gate's potential value as a raw JSON number.
     std::string_view weight_json;
-    // Issue #5251: the workspace mutation-log id this row recorded (0 = none,
-    // e.g. an evo:record! candidate row or a multi-row mutate).
+    // Issue #5251: the workspace mutation-log ids this row recorded. Ids are
+    // handed out consecutively, so (first, count) covers a call that appended
+    // several records (a rebind appends its own row and a structural one).
+    // count == 0 means none (an evo:record! candidate row).
     std::uint64_t mutation_id = 0;
+    std::uint64_t mutation_count = 0;
     std::string_view extras_json; // #4939: pre-rendered "k":v,… members, or empty
     int version = 1;              // #4939: 1, or 2 when extras_json is set
 };
@@ -258,7 +267,7 @@ inline std::string log_append(const Entry& e)
         s.ring.push_back(line);
         s.ring_bytes += line.size();
         s.meta.push_back({id, std::string(e.kind), std::string(e.target), std::string(e.decision),
-                          e.mutation_id});
+                          e.mutation_id, e.mutation_count});
         while (s.ring.size() > ring_cap || (s.ring_bytes > kTraceRingBytes && s.ring.size() > 1)) {
             s.ring_bytes -= s.ring.front().size();
             s.ring.pop_front();
@@ -323,7 +332,8 @@ inline std::optional<TraceMeta> trace_origin(std::uint64_t mutation_id) {
     auto& s = log_state();
     std::scoped_lock lk(s.mu);
     for (auto it = s.meta.rbegin(); it != s.meta.rend(); ++it) {
-        if (it->mutation == mutation_id)
+        if (it->mutations != 0 && mutation_id >= it->mutation &&
+            mutation_id < it->mutation + it->mutations)
             return *it;
     }
     return std::nullopt;

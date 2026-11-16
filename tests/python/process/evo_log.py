@@ -173,9 +173,19 @@ class EvoLog(unittest.TestCase):
             kinds = [(x["kind"], x["decision"]) for x in recs]
             self.assertIn(("mutate:rebind", "KEEP"), kinds)
             self.assertIn(("mw:restore", "ROLLBACK"), kinds)
+            # Issue #5251: every discarded mutation keeps its own ROLLBACK row,
+            # linked to the KEEP it undid, instead of only the aggregate row.
+            keep = next(x for x in recs if x["decision"] == "KEEP")
+            per_attempt = [x for x in recs if x["decision"] == "ROLLBACK" and x.get("scope") == "rollback"]
+            self.assertTrue(per_attempt, "a restore wrote no per-mutation ROLLBACK")
+            for row in per_attempt:
+                self.assertEqual(row["link"], keep["id"], row)
+                self.assertEqual(row["kind"], "mutate:rebind", row)
+                self.assertEqual(row["target"], "f", row)
             shown = aura(["evo", "log", "--log", str(log)], d, env_for(None))
             self.assertEqual(shown.returncode, 0, shown.stderr)
-            self.assertIn("1 KEEP, 1 ROLLBACK", shown.stdout)
+            self.assertIn("1 KEEP, ", shown.stdout)
+            self.assertIn("ROLLBACK", shown.stdout)
             self.assertIn("mw:restore", shown.stdout)
 
         # Issue #5139: the rollback row is not the worldline tip. The
@@ -285,11 +295,13 @@ class EvoLog(unittest.TestCase):
             self.assertEqual({x["v"] for x in parsed}, {1, 2})
 
     def test_off_by_default_outside_projects(self) -> None:
+        # Issue #5251: no project log file is written outside a project, but
+        # the in-process ring keeps the record (and evo:log-path stays #f).
         with tempfile.TemporaryDirectory() as d:
-            (Path(d) / "p.aura").write_text('(display (evo:record! "c" "KEEP" "r" 1))\n')
+            (Path(d) / "p.aura").write_text('(display (list (evo:record! "c" "KEEP" "r" 1) (evo:log-path)))\n')
             r = aura(["p.aura"], d, env_for(None))
             self.assertEqual(r.returncode, 0, r.stderr)
-            self.assertEqual(r.stdout.strip(), "#f")
+            self.assertRegex(r.stdout.strip(), r"^\(\d{8}T[0-9A-Za-z-]+#\d+ #f\)$")
             self.assertFalse((Path(d) / ".aura").exists())
             miss = aura(["evo", "log"], d, env_for(None))
             self.assertEqual(miss.returncode, 1)
