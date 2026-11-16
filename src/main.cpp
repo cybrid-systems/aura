@@ -5183,6 +5183,12 @@ static int run_cli_typecheck(int argc, char** argv) {
         std::print("{}", result.output);
         return result.has_errors ? 1 : 0;
     }
+    // A combined text that does not parse keeps the plain face: there is no
+    // per-file map to attribute yet, and the message already names the form.
+    if (result.output.rfind("type: ", 0) != 0) {
+        std::print("{}", result.output);
+        return 1;
+    }
     // Multi-file program: name the file each diagnostic came from, with the
     // line local to that file (the combined text keeps every segment's
     // newlines, so a global line maps back by segment offset).

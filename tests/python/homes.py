@@ -230,6 +230,24 @@ HOMES: tuple[Home, ...] = (
         note="runtime/workspace source and require behavior.",
     ),
     _h(
+        "typecheck oracle",
+        "aura",
+        "tests/suite/typecheck_three_paths.aura",
+        ("typecheck-status", "typecheck-current", "typecheck", "--typecheck"),
+        tag="typecheck",
+        body="(check (string? (typecheck-current)))",
+        roots=(
+            "src/compiler/evaluator_primitives_eval",
+            "src/compiler/evaluator_typecheck",
+            "src/compiler/service_typecheck",
+            "src/compiler/reg_split_parts_decl.inc",
+        ),
+        note=(
+            "In-process typecheck oracle: one conclusion with the mutate gate and "
+            "--typecheck, and the #5240 record list as a value."
+        ),
+    ),
+    _h(
         "cli/help",
         "python",
         "tests/python/process/test_cli_help.py",
