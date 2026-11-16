@@ -50,26 +50,22 @@
 (define (vector-empty? v) (= 0 (vector-length v)))
 
 ; (vector-map f v ...) — result is as long as the shortest argument.
+; Issue #5311: each index used to build a closure, a list, and an apply.
+; That was about 8–9× a list map on 5200 elements. An index loop in this
+; module stays interpreted and was still several times native map, so
+; every arity goes through map. map already stops at the shortest list
+; and returns the historical one-argument result over several vectors
+; (#5198). The vectors are read before f runs.
 (define (vector-map f v . vs)
-  (let* ((all (cons v vs))
-         (len (min-length v vs))
-         (out (make-vector len 0)))
-    (let loop ((i 0))
-      (if (>= i len)
-          out
-          (begin
-            (vector-set! out i (apply f (map (lambda (x) (vector-ref x i)) all)))
-            (loop (+ i 1)))))))
+  (list->vector
+    (apply map (cons f (cons (vector->list v) (map vector->list vs))))))
 
 ; (vector-for-each f v ...) — stops at the shortest vector; returns void.
+; Issue #5311: same per-index apply as vector-map. for-each is the
+; native walk. The vectors are read before f runs.
 (define (vector-for-each f v . vs)
-  (let* ((len (min-length v vs)))
-    (let loop ((i 0))
-      (if (>= i len)
-          (void)
-          (begin
-            (apply f (map (lambda (x) (vector-ref x i)) (cons v vs)))
-            (loop (+ i 1)))))))
+  (apply for-each (cons f (cons (vector->list v) (map vector->list vs))))
+  (void))
 
 ; (vector-fold kons knil v ...) — kons gets (state elt ...).
 (define (vector-fold kons knil v . vs)
