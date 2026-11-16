@@ -134,6 +134,35 @@ using types::make_void;
 
 namespace {
 
+    // Issue #5315: parse_to_flat stamps file_id 0. SourceLocation::format
+    // then substitutes the entry file (the caller), so a missing paren in
+    // the set-code buffer was reported as the caller's script. The buffer
+    // is registered as workspace.aura only after a successful install.
+    // Build the diagnostic from that name, the token line/column, and the
+    // parser message — the same "parse error:" word the CLI prints.
+    [[nodiscard]] std::string format_set_code_parse_error(const aura::parser::FlatParseResult& pr) {
+        std::string err;
+        auto add = [&](std::string piece) {
+            if (!err.empty())
+                err += "; ";
+            err += std::move(piece);
+        };
+        if (!pr.errors.empty()) {
+            for (const auto& e : pr.errors) {
+                if (e.location.valid())
+                    add(std::format("workspace.aura:{}:{}: parse error: {}", e.location.line,
+                                    e.location.column, e.message));
+                else
+                    add(std::format("workspace.aura: parse error: {}", e.message));
+            }
+        } else if (!pr.error.empty()) {
+            add(std::format("workspace.aura: parse error: {}", pr.error));
+        } else {
+            add("workspace.aura: parse error");
+        }
+        return err;
+    }
+
     // Issue #4746: datum reader / printer recursion limits. Namespace scope
     // (not members): the reader struct below is a local class inside
     // register_eval_primitives, and a local class may not declare static
@@ -328,20 +357,13 @@ std::optional<EvalValue> RegSplitParts::set_code_install_workspace(
 
     auto pr = aura::parser::parse_to_flat(src, *flat_ptr, *pool_ptr);
     if (!pr.success || pr.root == aura::ast::NULL_NODE) {
-        // Return structured parse error: ("parse" "message")
-        std::string err;
-        if (!pr.errors.empty()) {
-            for (auto& e : pr.errors) {
-                if (!err.empty())
-                    err += "; ";
-                err += e.format();
-            }
-        } else if (!pr.error.empty()) {
-            err = pr.error;
-        } else {
-            err = "parse error";
-        }
-        // Store error for eval-current/eval-current-output to propagate
+        // Issue #5315: an error value, not ("parse" . message). try/catch
+        // classifies error values; begin drops an ordinary pair, so the
+        // caller kept running on the previous definitions. The message
+        // names workspace.aura (the buffer), not the caller's file.
+        // Leave the pending record set so a later eval-current still
+        // reports the failure instead of evaluating an empty install.
+        const std::string err = format_set_code_parse_error(pr);
         ev.last_set_code_error_kind_ = "parse";
         ev.last_set_code_error_msg_ = err;
         std::atomic_ref<std::uint64_t>(ev.coverage_counters_[5])
@@ -349,7 +371,8 @@ std::optional<EvalValue> RegSplitParts::set_code_install_workspace(
         ev.workspace_pool_ = saved_pool;
         ev.workspace_flat_ = saved_flat;
         ok = false;
-        return mev("parse", err);
+        return make_primitive_error(ev.string_heap_, ev.error_values_, "parse-error: " + err,
+                                    ev.primitive_error_counter_ptr());
     }
     flat_ptr->root = pr.root;
     // #5235: bind the installed workspace source so type diagnostics name the
@@ -1511,9 +1534,17 @@ void RegSplitParts::register_eval_current_primitive(PrimRegistrar add, Evaluator
         std::atomic_ref<std::uint64_t>(ev.coverage_counters_[2])
             .fetch_add(1, std::memory_order_relaxed);
         // set-code errors are evaluator-local (not under workspace_mtx_).
+        // Issue #5315: a pending parse failure is an error value, not a
+        // pair the caller can drop on the way to a later form.
         if (!ev.last_set_code_error_kind_.empty()) {
             auto kind = std::move(ev.last_set_code_error_kind_);
             auto msg = std::move(ev.last_set_code_error_msg_);
+            if (kind == "parse") {
+                if (!msg.starts_with("parse-error:"))
+                    msg.insert(0, "parse-error: ");
+                return make_primitive_error(ev.string_heap_, ev.error_values_, msg,
+                                            ev.primitive_error_counter_ptr());
+            }
             return mev(kind, msg);
         }
 
@@ -1742,9 +1773,16 @@ void RegSplitParts::register_eval_current_output_primitive(PrimRegistrar add, Ev
     // Captures all display output during eval via fd-level redirection.
     // Wave1 B-03: same short-pin then unlock pattern as eval-current.
     add(aura::compiler::prim::kEvalCurrentOutput, [&ev, mev](const auto&) {
+        // Issue #5315: same catchable pending-parse face as eval-current.
         if (!ev.last_set_code_error_kind_.empty()) {
             auto kind = std::move(ev.last_set_code_error_kind_);
             auto msg = std::move(ev.last_set_code_error_msg_);
+            if (kind == "parse") {
+                if (!msg.starts_with("parse-error:"))
+                    msg.insert(0, "parse-error: ");
+                return make_primitive_error(ev.string_heap_, ev.error_values_, msg,
+                                            ev.primitive_error_counter_ptr());
+            }
             return mev(kind, msg);
         }
         aura::ast::FlatAST* flat = nullptr;

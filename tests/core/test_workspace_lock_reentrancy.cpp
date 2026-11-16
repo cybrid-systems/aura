@@ -185,36 +185,30 @@ int main() {
     // a truncated begin, wrapped trailing forms, and scored 10/10 while
     // oneshot (#3917 CLI splitter) hard-failed with empty CASE. parse_to_flat
     // now fails closed on top-level unexpected ')' (Issue #4272 / #3917 parity).
-    // set-code returns make_merr("parse", ...) as an EvalValue pair (Result
-    // still has_value) — Soft serve surfaces that as status=error.
+    // Issue #5315: the failure is a catchable error value whose text names
+    // workspace.aura with a line and column. A ("parse" . message) pair is
+    // an ordinary value, so (begin (set-code bad) ...) kept running. Soft
+    // serve reports the error value as status=error (#4273 / #5172).
     {
         std::println("\n--- AC8 (#4272): set-code rejects extra close-paren ---");
         ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
         ::aura::config::test_setenv("AURA_PIPELINE_STRICT", "0", 1);
         CompilerService cs;
-        auto merr_kind_is = [&](const std::string& set_code_arg, std::string_view expect) -> bool {
-            auto r = cs.eval(std::string("(set-code \"") + set_code_arg + "\")");
-            if (!r || !aura::compiler::types::is_pair(*r))
-                return false;
-            auto pidx = aura::compiler::types::as_pair_idx(*r);
-            auto& pairs = cs.evaluator().pairs();
-            if (pidx >= pairs.size())
-                return false;
-            auto car = pairs[pidx].car;
-            if (!aura::compiler::types::is_string(car))
-                return false;
-            auto& heap = cs.evaluator().string_heap_mut();
-            auto idx = aura::compiler::types::as_string_idx(car);
-            if (idx >= heap.size())
-                return false;
-            return heap[idx] == expect;
+        auto positioned_parse_error = [&](const std::string& set_code_arg) -> bool {
+            const std::string probe = "(let ((r (try (set-code \"" + set_code_arg +
+                                      "\") (catch (e) (if (string? e) e \"not-string\"))))) "
+                                      "(and (string? r) "
+                                      "(>= (string-index r \"workspace.aura:\" 0) 0) "
+                                      "(>= (string-index r \"parse\" 0) 0) "
+                                      "(>= (string-index r \"unexpected\" 0) 0)))";
+            auto r = cs.eval(probe);
+            return r && aura::compiler::types::is_bool(*r) && aura::compiler::types::as_bool(*r);
         };
-        CHECK(merr_kind_is("(begin (define x 1) x))", "parse"),
-              "AC8: extra top-level ) → parse merr (oneshot parity)");
-        CHECK(merr_kind_is("(begin (define a 1) (define b (lambda () a))))) "
-                           "(define c 2) c)",
-                           "parse"),
-              "AC8: truncated-begin + trailing forms → parse merr");
+        CHECK(positioned_parse_error("(begin (define x 1) x))"),
+              "AC8: extra top-level ) → positioned parse error (oneshot parity)");
+        CHECK(positioned_parse_error("(begin (define a 1) (define b (lambda () a))))) "
+                                     "(define c 2) c)"),
+              "AC8: truncated-begin + trailing forms → positioned parse error");
         auto ok = cs.eval("(set-code \"(begin (define x 1) x)\")");
         CHECK(ok.has_value() && aura::compiler::types::is_bool(*ok) &&
                   aura::compiler::types::as_bool(*ok),
