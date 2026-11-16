@@ -34,9 +34,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
-
 sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 PRIM = "src/compiler/evaluator_primitives_eval.cpp"
 IXX = "src/compiler/evaluator.ixx"

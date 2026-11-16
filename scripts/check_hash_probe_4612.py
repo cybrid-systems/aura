@@ -40,6 +40,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
 from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 VEC = ROOT / "src" / "compiler" / "evaluator_primitives_vector.cpp"
