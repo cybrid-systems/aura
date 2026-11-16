@@ -17,6 +17,9 @@
 
 ; ── 规则存储 ──────────────────────────────────────────────
 ; name(string) -> rule record, plus the insertion order for listing.
+; #5253: every fix consults the active invariant / protection set.
+(require "std/contract" all:)
+
 (define *rule-index* (make-hash))
 (define *rule-order* '())
 (define *rule-valid-keywords*
@@ -240,6 +243,55 @@
           #f))
       #t)))
 
+; ── (#5253) contract gate for a rule fix ─────────────────────
+; A fix is a mutate:rebind of a synthetic name, so the semantic target is
+; the define that contains each match. A symbol :scope names it directly;
+; :workspace walks the match's ancestors. A match that cannot be
+; attributed means the target is unknown — fail closed (a workspace-scoped
+; rule can never silently edit a protected define).
+(define (rule-kind-string v)
+  (cond ((string? v) v)
+        ((symbol? v) (symbol->string v))
+        (else "")))
+
+(define (rule-define-name-of node-id)
+  (let loop ((id node-id) (depth 0))
+    (if (or (not (number? id)) (>= depth 64))
+        #f
+        (let ((n (try (query :node id) (catch (e) #f))))
+          (cond
+            ((not (pair? n)) #f)
+            ((< (length n) 4) #f)
+            ((string=? (rule-kind-string (list-ref n 3)) "Define") (list-ref n 1))
+            (else
+             (let ((p (try (query :parent id) (catch (e) #f))))
+               (if (or (not (number? p)) (equal? p id))
+                   #f
+                   (loop p (+ depth 1))))))))))
+
+; -> report hash when the fix is refused, #f when it may run.
+(define (rule-contract-scan r matches)
+  (if (not (contract:active))
+      #f
+      (let* ((set (contract:active))
+             (scope (rule-scope r))
+             (names (if (symbol? scope)
+                        (list (symbol->string scope))
+                        (let loop ((ms matches) (acc (quote ())))
+                          (if (null? ms)
+                              acc
+                              (let ((n (rule-define-name-of (car ms))))
+                                (loop (cdr ms) (if n (cons n acc) acc))))))))
+        (if (null? names)
+            (if (pair? (contract:protected set))
+                (contract:refuse set "rule:apply" "rule-target-unknown")
+                #f)
+            (let loop ((ns names) (bad #f))
+              (if (or bad (null? ns))
+                  bad
+                  (let ((x (contract:check-mutation set "rule:apply" (car ns))))
+                    (loop (cdr ns) (if (contract:report-ok? x) #f x)))))))))
+
 ; ── 内部: 应用单条规则到 workspace（带 scope 过滤）─────────
 (define (apply-rule r)
   (if (not (rule-enabled? r)) 0
@@ -249,25 +301,42 @@
           (scope (rule-scope r)))
       (define matches (query :pattern pattern))
       (if (not (pair? matches)) 0
-        (let ((fixed 0))
-          (for-each
-            (lambda (node)
-              (if (and (check-condition cond-fn node)
-                       (in-scope? scope node))
-                (let ((result
-                      (try
-                        (if (string? replacement)
+        (let ((refused (rule-contract-scan r matches)))
+          (if refused
+              ; #5253: refused before any write. The report is queryable
+              ; through (contract:last-failure); the return stays the int
+              ; every existing caller expects (#4835).
+              0
+              (let ((fixed 0)
+                    (snap (if (contract:active)
+                              (try (mutate :snapshot "rule-apply") (catch (e) -1))
+                              -1)))
+                (for-each
+                  (lambda (node)
+                    (if (and (check-condition cond-fn node)
+                             (in-scope? scope node))
+                      (let ((result
+                            (try
+                              (if (string? replacement)
+                                (begin
+                                  (mutate :rebind (string-append "_fix_"
+                                    (number->string node))
+                                    replacement "rule-fix")
+                                  #t)
+                                #f)
+                              (catch (e) #f))))
+                        (if result (set! fixed (+ fixed 1))))
+                      #f))
+                  matches)
+                ; #5253: the post-state must satisfy the active set.
+                (if (and (contract:active) (> fixed 0))
+                    (let ((post (contract:check (contract:active))))
+                      (if (contract:report-ok? post)
+                          fixed
                           (begin
-                            (mutate :rebind (string-append "_fix_"
-                              (number->string node))
-                              replacement "rule-fix")
-                            #t)
-                          #f)
-                        (catch (e) #f))))
-                  (if result (set! fixed (+ fixed 1))))
-                #f))
-            matches)
-          fixed)))))
+                            (if (>= snap 0) (try (mutate :restore snap) (catch (e) #f)))
+                            0)))
+                    fixed))))))))
 
 ; ── rule:apply — 应用单条规则 ──────────────────────────────
 (define (rule:apply name)

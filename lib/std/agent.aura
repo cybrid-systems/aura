@@ -43,6 +43,8 @@
 (require std/json)
 (require std/string)
 (require "std/mutate" all:)
+; #5253: the user-declared invariant / protection set every round consults.
+(require "std/contract" all:)
 ; #5004: experience layer (worldline selectors) + replacement steps.
 (require "std/evo" all:)
 (require "std/hot-update" all:)
@@ -400,9 +402,59 @@
           (cons ":metrics" metrics))
     summary))
 
+; ═══════════════════════════════════════════════════════════════
+; Contract gate (#5253)
+; If no constraint set is active — (contract:active) is #f — every
+; helper here returns #f and the round below is the pre-#5253 round.
+; With a set active the round is refused, rolled back and recorded
+; (":decision" 'contract-refused, ":contract" the report hash) instead
+; of committing a state the user declared must not happen.
+; ═══════════════════════════════════════════════════════════════
+
+; The names this round may touch: the rebind target plus any op whose
+; second element is a name ("mutate:rebind" name body summary).
+(define (agent-contract-targets rebind-name mutations)
+  (let ((rb (if (string? rebind-name) (list rebind-name) (quote ())))
+        (ops (if (pair? mutations) mutations (quote ()))))
+    (let loop ((xs ops) (acc rb))
+      (if (null? xs)
+          acc
+          (let ((op (car xs)))
+            (loop (cdr xs)
+                  (if (and (pair? op) (pair? (cdr op)) (string? (car (cdr op))))
+                      (cons (car (cdr op)) acc)
+                      acc)))))))
+
+; Pre-commit: structure only (protected names + their operator allow lists).
+(define (agent-contract-pre op rebind-name mutations)
+  (if (not (contract:active))
+      #f
+      (let loop ((ns (agent-contract-targets rebind-name mutations)) (bad #f))
+        (if (or bad (null? ns))
+            bad
+            (let ((r (contract:check-mutation (contract:active) op (car ns))))
+              (loop (cdr ns) (if (contract:report-ok? r) #f r)))))))
+
+; Post-commit: the predicate invariants over the program view.
+(define (agent-contract-post)
+  (if (not (contract:active))
+      #f
+      (contract:check (contract:active))))
+
+(define (agent-contract-refused report metrics summary bump)
+  (if (string? bump) (agent-bump! bump) #f)
+  (agent:record
+    (list (cons ":ok" #f)
+          (cons ":decision" 'contract-refused)
+          (cons ":eval-ok" #f)
+          (cons ":metrics" metrics)
+          (cons ":contract" report))
+    summary))
+
 ; ── agent:round — one closed loop round ──
 ; (agent:round source mutations rebind-name rebind-body summary skip-set-code?)
-; Returns ((:ok . bool) (:decision . sym) (:eval-ok . bool) (:metrics . hash)).
+; Returns ((:ok . bool) (:decision . sym) (:eval-ok . bool) (:metrics . hash)),
+; plus (:contract . report) when #5253 refused the round.
 (define (agent:round source mutations rebind-name rebind-body summary
                      skip-set-code?)
   ; 1) observe: load source
@@ -422,6 +474,9 @@
       ((eq? gate 'back-off)
        (agent-round-result #f 'back-off #f pre-metrics summary "back-offs"))
       (else
+       (let ((pre-refused (agent-contract-pre "agent:round" rebind-name mutations)))
+        (if pre-refused
+          (agent-contract-refused pre-refused pre-metrics summary "rollbacks")
        (let* ((proposal (agent:propose mutations rebind-name rebind-body summary))
               ; 3) apply
               (snap (try (mutate :snapshot (hash-ref proposal "summary" "closed-loop"))
@@ -456,8 +511,19 @@
               (agent-restore-source! pre-src))
             (agent-round-result #f 'back-off #t post-metrics summary "back-offs"))
            (else
-            ; 5) record a committed round
-            (agent-round-result #t 'commit #t post-metrics summary "commits"))))))))
+            ; 5) #5253: the post-state must satisfy the active invariants.
+            (let ((post-refused (agent-contract-post)))
+              (if (and post-refused (not (contract:report-ok? post-refused)))
+                (begin
+                  (if (and (number? snap2) (>= snap2 0))
+                    (try (mutate :restore snap2)
+                         (catch (e) (agent-restore-source! pre-src)))
+                    (agent-restore-source! pre-src))
+                  (agent-contract-refused post-refused post-metrics summary
+                                          "rollbacks"))
+                ; 6) record a committed round
+                (agent-round-result #t 'commit #t post-metrics summary
+                                    "commits"))))))))))))
 
 ; Positional core — kept for auto-grow / edsl-fix callers; same round.
 (define (agent-closed-loop-core source mutations rebind-name rebind-body

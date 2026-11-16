@@ -169,6 +169,39 @@ HOMES: tuple[Home, ...] = (
         ),
     ),
     _h(
+        "std/contract",
+        "aura",
+        "tests/suite/contracts_invariants.aura",
+        (
+            "contract:set",
+            "contract:protect",
+            "contract:invariant",
+            "contract:invariant-on",
+            "contract:detector-set",
+            "contract:activate!",
+            "contract:last-failure",
+            "std/contract",
+            "protection set",
+        ),
+        tag="contract",
+        requires=(
+            "std/contract",
+            "std/agent",
+            "std/safe-refactor",
+            "std/refactor",
+            "std/hot-strategy",
+            "std/rule",
+            "std/evo-meta",
+        ),
+        body='(check (contract:set? (contract:protect (contract:set) "gate")))',
+        roots=("lib/std/contract.aura",),
+        note=(
+            "Executable invariants + protection sets (#5253). The daily paths "
+            "(agent:round / safe-refactor / refactor:* / hot-strategy:swap! / "
+            "rule:apply) consult the active set; evo-meta's protected reads it."
+        ),
+    ),
+    _h(
         "std/search",
         "aura",
         "tests/suite/search_clonal.aura",

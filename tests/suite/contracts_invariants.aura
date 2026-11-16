@@ -1,0 +1,255 @@
+; Issue #5253 — std/contract: executable invariants and protection sets on
+; every daily path (wave 1: the std layer).
+;
+; Covers: a versioned/audited constraint set; a protected name refused by
+; agent:round / safe-refactor / refactor:* / hot-strategy / rule:apply; an
+; operator allow list that lets exactly one path through; a predicate
+; invariant that rolls a round back; evo-meta reading the same protection
+; set; a queryable failure record; constraint changes in the #5251 evo
+; trace; and the reserved detector-set kind (registration + retrain only —
+; the algorithm is #5271).
+(require "std/test" all:)
+(require "std/contract" all:)
+(require "std/agent" all:)
+(require "std/safe-refactor" all:)
+(require "std/refactor" all:)
+(require "std/hot-strategy" all:)
+(require "std/rule" all:)
+(require "std/evo-meta" all:)
+(require "std/evo" all:)
+
+(test-file "contracts_invariants.aura")
+
+; Every case starts from a clean process state: the previous case's set is
+; not active and its failures are not in the ring.
+(define (contract-test-reset! source)
+  (contract:deactivate!)
+  (contract:reset-failures!)
+  (set-code source)
+  (eval-current))
+
+; ═══════════════════════════════════════════════════════════════════
+; The constraint set is a value: version, audit, content hash
+; ═══════════════════════════════════════════════════════════════════
+(test-case "a constraint set is versioned and audited" (hash "issue" 5253 "tags" (list "contract"))
+  (define s0 (contract:set))
+  (check (contract:set? s0))
+  (check= 1 (contract:version s0))
+  (check= 0 (length (contract:audit s0)))
+  (check= (list) (contract:protected s0))
+  (define s1 (contract:protect s0 "gate"))
+  (check= 2 (contract:version s1))
+  (check= 1 (length (contract:audit s1)))
+  (check= "protect" (hash-ref (car (contract:audit s1)) "op" ""))
+  (check (member? "gate" (contract:protected s1)))
+  (check (not (string=? (contract:hash s0) (contract:hash s1))))
+  (define s2 (contract:invariant-on s1 "params-non-empty"
+                                    (lambda (r) (pair? (hash-ref r "params" (quote ()))))
+                                    "error" (quote all)))
+  (check= 3 (contract:version s2))
+  (check= 2 (length (contract:audit s2)))
+  (check= 1 (length (contract:invariants s2)))
+  ; the base set is a value too: protecting it left s0 alone
+  (check= 1 (contract:version s0))
+  (check= (list) (contract:protected s0)))
+
+; ═══════════════════════════════════════════════════════════════════
+; AC1 — a protected name is refused by every daily path
+; ═══════════════════════════════════════════════════════════════════
+(test-case "a protected name blocks rename and replace on every daily path" (hash "issue" 5253 "tags" (list "contract" "safe-refactor" "hot-strategy"))
+  (contract-test-reset! "(define (gate x) (+ x 1))\n(define (free y) (* y 2))")
+  (define s (contract:protect (contract:set) "gate"))
+  (contract:activate! s)
+
+  ; refactor:rename-var — the recommended wrapper
+  (check= #f (refactor:rename-var "gate" "gate2"))
+  (check (pair? (query :defines "gate")))
+
+  ; safe-refactor:replace-fn — refused with the report hash, not #f
+  (define sr (safe-refactor:replace-fn "gate" "(define (gate x) (+ x 3))"))
+  (check= 'rejected (car sr))
+  (check (hash? (car (cdr sr))))
+  (check= #f (contract:report-ok? (car (cdr sr))))
+
+  ; hot-strategy:swap! — refused, 4th slot carries the report
+  (define hs (hot-strategy:swap! "gate" "(lambda (x) 0)" "contract-swap"))
+  (check= #f (car hs))
+  (check= 4 (length hs))
+  (check (hash? (list-ref hs 3)))
+
+  ; agent:round — refused, decision + report
+  (define ar (agent:round #f (quote ()) "gate" "(lambda (x) 0)" "contract-round" #t))
+  (check= #f (agent-alist-ref ":ok" ar #t))
+  (check= 'contract-refused (agent-alist-ref ":decision" ar 'none))
+  (check (hash? (agent-alist-ref ":contract" ar #f)))
+
+  ; rule:apply — the int return stays, the refusal is recorded
+  (rule:define 'c-rule :pattern "(+ x 1)" :replace "(+ x 9)" :scope 'gate)
+  (check= 0 (rule:apply 'c-rule))
+
+  ; the protected define is untouched by all five paths
+  (check= 2 (gate 1))
+  (check (pair? (query :defines "gate")))
+  ; an unprotected name still moves
+  (check= #t (refactor:rename-var "free" "free2")))
+
+; ═══════════════════════════════════════════════════════════════════
+; AC2 — the allow list lets exactly the named operator through
+; ═══════════════════════════════════════════════════════════════════
+(test-case "an operator allow list admits one path and blocks the others" (hash "issue" 5253 "tags" (list "contract"))
+  (contract-test-reset! "(define (counter x) (+ x 1))")
+  (define s (contract:protect (contract:set) "counter" "agent:round"))
+  (check= (list "agent:round") (contract:allowed-ops s "counter"))
+  (contract:activate! s)
+  ; agent:round is on the allow list: the round commits
+  (define ar (agent:round #f (quote ()) "counter" "(lambda (x) (+ x 10))" "allowed-round" #t))
+  (check= #t (agent-alist-ref ":ok" ar #f))
+  (check= 'commit (agent-alist-ref ":decision" ar 'none))
+  (check= 11 (counter 1))
+  ; every other operator is still refused
+  (check= #f (refactor:rename-var "counter" "counter2"))
+  (check= #f (car (hot-strategy:swap! "counter" "(lambda (x) 0)" "not-allowed")))
+  (check= 11 (counter 1)))
+
+; ═══════════════════════════════════════════════════════════════════
+; AC3 — a predicate invariant refuses the commit and rolls back
+; ═══════════════════════════════════════════════════════════════════
+(test-case "an invariant over the program view rolls a round back" (hash "issue" 5253 "tags" (list "contract" "agent"))
+  (contract-test-reset! "(define (gate x) (+ x 1))")
+  ; every definition must keep at least one parameter
+  (define s (contract:invariant-on (contract:set) "params-non-empty"
+                                   (lambda (r) (pair? (hash-ref r "params" (quote ()))))
+                                   "error" (quote all)))
+  (contract:activate! s)
+  ; a healthy round commits
+  (define ok (agent:round #f (quote ()) "gate" "(lambda (x) (+ x 2))" "healthy" #t))
+  (check= #t (agent-alist-ref ":ok" ok #f))
+  (check= 3 (gate 1))
+  ; a zero-parameter rebind breaks the invariant: refused + rolled back
+  (define bad (agent:round #f (quote ()) "gate" "(lambda () 0)" "breaks-params" #t))
+  (check= #f (agent-alist-ref ":ok" bad #t))
+  (check= 'contract-refused (agent-alist-ref ":decision" bad 'none))
+  (check= 3 (gate 1))
+  (define rep (agent-alist-ref ":contract" bad #f))
+  (check (hash? rep))
+  (check= #f (contract:report-ok? rep))
+  (check= "predicate-false:gate" (hash-ref (car (contract:violations rep)) "detail" "")))
+
+; ═══════════════════════════════════════════════════════════════════
+; AC4 — the failure is a queryable record, never #f
+; ═══════════════════════════════════════════════════════════════════
+(test-case "a refusal leaves a queryable record in the failure ring" (hash "issue" 5253 "tags" (list "contract"))
+  (contract-test-reset! "(define (gate x) (+ x 1))")
+  (contract:activate! (contract:protect (contract:set) "gate"))
+  (check= #f (contract:last-failure))
+  (safe-refactor:replace-fn "gate" "(define (gate x) 0)")
+  (define f (contract:last-failure))
+  (check (hash? f))
+  (check= "contract-check" (hash-ref f "kind" ""))
+  (check= #f (hash-ref f "ok" #t))
+  (check (pair? (contract:violations f)))
+  (check= "protected:gate" (hash-ref (car (contract:violations f)) "invariant" ""))
+  (check= "protected-no-operator" (hash-ref (car (contract:violations f)) "detail" ""))
+  (check= "gate" (hash-ref (car (contract:violations f)) "subject" ""))
+  (check (pair? (contract:failures)))
+  (check (pair? (contract:failures-of "gate")))
+  (check= (list) (contract:failures-of "nobody"))
+  (contract:reset-failures!)
+  (check= #f (contract:last-failure)))
+
+; ═══════════════════════════════════════════════════════════════════
+; AC5 — evo-meta reads the same protection set
+; ═══════════════════════════════════════════════════════════════════
+(test-case "evo-meta protected/evolvable read the same set" (hash "issue" 5253 "tags" (list "contract" "evo-meta"))
+  (contract:deactivate!)
+  ; no set: the #4944 defaults, untouched
+  (define m0 (meta:loop (hash "depth" 1
+                              "meta-holdout" (list (hash "id" "m0"))
+                              "inner-tasks" (list (hash "id" "i0"))
+                              "canary" (list))))
+  (check= 5 (length (meta:protected m0)))
+  (check= 4 (length (meta:evolvable m0)))
+  ; a set protects one of the four evolvable knobs
+  (define s (contract:protect (contract:set) "mutation-ops"))
+  (contract:activate! s)
+  (check (member? "mutation-ops" (meta:protected m0)))
+  (check (not (member? "mutation-ops" (meta:evolvable m0))))
+  (check= 3 (length (meta:evolvable m0)))
+  ; a loop that tries to evolve it is refused, not silently narrowed
+  (define m1 (meta:loop (hash "depth" 1
+                              "evolvable" (list "mutation-ops")
+                              "meta-holdout" (list (hash "id" "m0"))
+                              "inner-tasks" (list (hash "id" "i0"))
+                              "canary" (list))))
+  (check (meta:refused? m1))
+  (check (not (meta:loop? m1)))
+  (check (>= (string-index (hash-ref (meta:loop-report m1) "reason" "") "contract" 0) 0))
+  ; the guard report carries the shared version
+  (check= (contract:version s) (hash-ref (meta:guard-report) "contract-version" -1))
+  (check (member? "mutation-ops" (hash-ref (meta:guard-report) "contract-protected" (list))))
+  ; the source scan uses the same names
+  (check (string? (meta:check m0 (hash "source" "(define (mutation-ops) 1)")))))
+
+; ═══════════════════════════════════════════════════════════════════
+; AC6 — constraint changes appear in the #5251 decision trace
+; ═══════════════════════════════════════════════════════════════════
+(test-case "constraint changes land in the evo trace" (hash "issue" 5253 "tags" (list "contract" "evo"))
+  (contract:deactivate!)
+  (contract:reset-failures!)
+  (define before (length (evo:trace (hash "target" "contract:constraints"))))
+  (define s0 (contract:set))
+  (define s1 (contract:protect s0 "gate"))
+  (define s2 (contract:unprotect s1 "gate"))
+  (check= 3 (contract:version s2))
+  (check= 2 (length (contract:audit s2)))
+  (contract:activate! s2)
+  (define rows (evo:trace (hash "target" "contract:constraints")))
+  (check (> (length rows) before))
+  (check (>= (length rows) 3))
+  ; every row is a hash record, never a "key=val" string
+  (check (hash? (car rows)))
+  (check= "contract:constraints" (hash-ref (car rows) "target" "")))
+
+; ═══════════════════════════════════════════════════════════════════
+; AC7 — the reserved detector-set kind: registration + retrain only
+; ═══════════════════════════════════════════════════════════════════
+(test-case "a detector-set registers, skips without evidence, and retrains" (hash "issue" 5253 "tags" (list "contract" "detector"))
+  (contract:deactivate!)
+  (contract:reset-failures!)
+  (define s (contract:detector-set (contract:set) "shape-drift" (list "d1" "d2") "error" (quote all)))
+  (check= 2 (contract:version s))
+  (check= 1 (length (contract:detectors s)))
+  ; no evidence: unproven, not a violation
+  (define rep0 (contract:check s))
+  (check (contract:report-ok? rep0))
+  (check (member? "shape-drift" (hash-ref rep0 "skipped" (list))))
+  ; a fired detector is a violation
+  (define rep1 (contract:check s (hash "detectors" (hash "shape-drift" (list "d1")))))
+  (check= #f (contract:report-ok? rep1))
+  (check= 1 (length (contract:violations rep1)))
+  (check= "detector-fired" (hash-ref (car (contract:violations rep1)) "detail" ""))
+  ; retrain bumps the set and the detector-set version, and audits
+  (define s2 (contract:retrain s "shape-drift" (list "d3")))
+  (check= 3 (contract:version s2))
+  (check= 2 (length (contract:audit s2)))
+  (check= "retrain" (hash-ref (car (contract:audit s2)) "op" ""))
+  (define d (car (contract:detectors s2)))
+  (check= 2 (hash-ref d "version" 0))
+  (check= (list "d3") (hash-ref d "detectors" (list))))
+
+; ═══════════════════════════════════════════════════════════════════
+; AC8 — severity: "warn" is recorded and does not block
+; ═══════════════════════════════════════════════════════════════════
+(test-case "a warn invariant is recorded without blocking" (hash "issue" 5253 "tags" (list "contract"))
+  (contract-test-reset! "(define (gate x) (+ x 1))")
+  (define s (contract:invariant (contract:set) "advisory"
+                                (lambda (v) #f) "warn" (quote all)))
+  (contract:activate! s)
+  (define rep (contract:check s))
+  (check= #t (contract:report-ok? rep))
+  (check= 1 (length (contract:violations rep)))
+  (check= "warn" (hash-ref (car (contract:violations rep)) "severity" ""))
+  (check= (list) (contract:blocking rep))
+  (contract:deactivate!))
+
+(test-finish)

@@ -2,7 +2,7 @@
 
 # Standard library index (generated)
 
-**105** modules in `lib/std/`. Load: `(require "std/name" all:)`.
+**106** modules in `lib/std/`. Load: `(require "std/name" all:)`.
 
 | Module | Exports | Description |
 |--------|---------|-------------|
@@ -27,6 +27,7 @@
 | `std/char` | `char=?` `char<?` `char>?` `char<=?` `char>=?` `char-ci=?` `char-ci<?` `char-ci>?` … (+13) | lib/std/char.aura — R7RS (scheme char) surface (Issue #5005) |
 | `std/combinators` | `compose` `curry` `rcurry` `partial2` `const` `identity` `flip` `complement` … (+1) | combinators.aura — Functional programming utilities |
 | `std/compat` | `query:siblings` `query:find-by-name` `query:nodes-with-marker` `query:subtree` | lib/std/compat.aura — temporary compatibility shims for demoted query:* |
+| `std/contract` | `contract:schema` `contract:help` `contract:set` `contract:set?` `contract:version` `contract:hash` `contract:audit` `contract:invariants` … (+27) | lib/std/contract.aura — Issue #5253 (v0.2.6, W2 wave 1): executable |
 | `std/core` | `core:any` `core:all` `core:zip-with` `core:group-by` `core:chunk` `core:running-sum` `core:safe-div` `core:format-currency` … (+2) | lib/std/core.aura — Core builtin high-level helpers (Issue #564) |
 | `std/csv` | `csv-parse` `csv->rows` `csv->table` `csv-select` `csv-filter` `csv-header` `column-names` `rows->csv` | csv.aura — CSV parsing and generation (RFC 4180) |
 | `std/data` | `make-trie` `trie-insert` `trie-search` `trie-prefix?` `trie-keys` | Aura standard data structures library |
@@ -89,7 +90,7 @@
 | `std/refactor` | `refactor:rename-var` `refactor:extract-function` `refactor:inline-function` | — |
 | `std/regex` | `re-match?` `re-find` `re-replace` `re-split` `re-quote` | lib/std/regex.aura — Regular expression utilities |
 | `std/rule` | `rule:define` `rule:apply` `rule:apply-all` `rule:list` `rule:list-violations` `rule:remove` `rule:enable` `rule:disable` … (+3) | Aura std/rule — 代码规范系统 (P2) |
-| `std/safe-refactor` | `safe-refactor:with-snapshot` `safe-refactor:replace-fn` `safe-refactor:check-and-apply` `safe-refactor:rollback` | lib/std/safe-refactor.aura — verification-gated refactoring |
+| `std/safe-refactor` | `safe-refactor:with-snapshot` `safe-refactor:replace-fn` `safe-refactor:check-and-apply` `safe-refactor:rollback` `safe-refactor:contract-pre` `safe-refactor:contract-post` | lib/std/safe-refactor.aura — verification-gated refactoring |
 | `std/search` | `search:init` `search:step` `search:batch` `search:run` `search:pending` `search:best` `search:best-score` `search:export` … (+6) | lib/std/search.aura — one search protocol over the program space (#5007) |
 | `std/set` | `set` `set?` `set-copy` `set-clear!` `set-adjoin` `set-adjoin!` `set-delete` `set-delete!` … (+37) | lib/std/set.aura — SRFI-113 sets on the unified hash table (Issue #5003) |
 | `std/socket` | `tcp-connect` `tcp-send` `tcp-recv` `tcp-close` `tcp-listen` `tcp-local-port` `tcp-accept` `tcp-accept-timeout` | socket.aura — TCP socket library (client + server) |

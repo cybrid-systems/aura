@@ -14,6 +14,11 @@
 ;   extract-function → (mutate :extract-function node-id name)
 ;   inline-function  → 每个调用点一次 (mutate :inline-call call-id)
 ; 失败一律返回 #f（或回滚到操作前的 snapshot），不谎报成功。
+;
+; Issue #5253: 每个动作在提交前后都问一次当前契约集（std/contract）。
+; 没激活契约集时三个钩子都返回 #f，行为与 #5252 完全一致。
+;   pre  — 受保护名字 / 算子白名单，在 mutate 之前拒绝；
+;   post — 视图不变量 + 受保护 define 的前后差分，拒绝则回滚。
 
 
 (export refactor:rename-var refactor:extract-function refactor:inline-function)
@@ -21,6 +26,34 @@
 (require "std/list" all:)
 (require "std/string" all:)
 (require "std/query" all:)
+; #5253: the recommended wrapper set consults the active contract set.
+(require "std/contract" all:)
+
+; ── (#5253) contract gate ──────────────────────────────────────────
+(define (refactor:contract-pre op name)
+  (if (contract:active) (contract:check-mutation (contract:active) op name) #f))
+
+(define (refactor:contract-before)
+  (if (contract:active)
+      (let ((d (hash-ref (contract:view) "defines" (quote ()))))
+        (if (list? d) d (quote ())))
+      (quote ())))
+
+(define (refactor:contract-post before)
+  (if (contract:active)
+      (contract:check (contract:active)
+                      (hash "before" (if (list? before) before (quote ()))))
+      #f))
+
+(define (refactor:contract-refused? report)
+  (and (hash? report) (not (contract:report-ok? report))))
+
+; Restore a snapshot when one was taken; the caller still returns its own
+; value (the rollback is not a success and never becomes one).
+(define (refactor:contract-rollback snap)
+  (if (and (number? snap) (>= snap 0))
+      (try (mutate :restore snap) (catch (e) #f))
+      #f))
 
 ; query:* matches: a bare list under Soft, a schema-2 hash under the
 ; production face — both carry the node refs this module hands to mutate:*
@@ -46,31 +79,47 @@
 ; 改名，所以它什么没改却把计数加了 1（#5252）。
 ;
 ; Returns: #t  至少改名了一个节点（按 workspace 事后状态确认）
-;          #f  无 workspace / 名字不存在 / 只读 / hygiene-protected
+;          #f  无 workspace / 名字不存在 / 只读 / hygiene-protected /
+;              受保护名字（#5253）
 (define (refactor:rename-var old new)
-  (if (or (not (string? old))
-          (not (string? new))
-          (= (string-length old) 0)
-          (= (string-length new) 0))
-      #f
-      (let ((r (try (mutate :rename-symbol old new
+  (cond
+    ((or (not (string? old))
+         (not (string? new))
+         (= (string-length old) 0)
+         (= (string-length new) 0))
+     #f)
+    ; #5253: a protected old name is refused before the rename runs.
+    ((refactor:contract-refused? (refactor:contract-pre "refactor:rename-var" old))
+     #f)
+    (else
+     (let* ((before (refactor:contract-before))
+            (snap (if (contract:active)
+                      (try (mutate :snapshot "refactor-rename") (catch (e) -1))
+                      -1))
+            (r (try (mutate :rename-symbol old new
                             (string-append "refactor:rename-var " old " -> " new))
-                    (catch (e) #f))))
-        (cond
-          ((equal? r #t) #t)
-          ; Engine note (#5252): a rename of a name that occurs twice inside
-          ; one expression ((f (f x))) can come back as
-          ;   (persist-reject mutate:rename-symbol aborted
-          ;                  (post-mutate-typecheck); topology restored . 0)
-          ; while the symbol column is already renamed and the workspace
-          ; typechecks clean — the post-mutate selective recheck narrows on
-          ; the first occurrence only (#5250 family). Accept the operation
-          ; when the observable post-condition holds: the old name has no
-          ; define left and the new name has one.
-          ((and (not (refactor:has-defines? old))
-                (refactor:has-defines? new))
-           #t)
-          (else #f)))))
+                    (catch (e) #f)))
+            ; Engine note (#5252): a rename of a name that occurs twice inside
+            ; one expression ((f (f x))) can come back as
+            ;   (persist-reject mutate:rename-symbol aborted
+            ;                  (post-mutate-typecheck); topology restored . 0)
+            ; while the symbol column is already renamed and the workspace
+            ; typechecks clean — the post-mutate selective recheck narrows on
+            ; the first occurrence only (#5250 family). Accept the operation
+            ; when the observable post-condition holds: the old name has no
+            ; define left and the new name has one.
+            (ok (cond
+                  ((equal? r #t) #t)
+                  ((and (not (refactor:has-defines? old))
+                        (refactor:has-defines? new))
+                   #t)
+                  (else #f)))
+            (post (if ok (refactor:contract-post before) #f)))
+       (cond
+         ((refactor:contract-refused? post)
+          (refactor:contract-rollback snap)
+          #f)
+         (else ok))))))
 
 ; ── refactor:extract-function — 提取子树为新函数 ──
 ;
@@ -89,13 +138,28 @@
                #f
                (car node-ids)))
           (else node-ids)))
-  (if (or (not target)
-          (and (not (number? target)) (not (hash? target)))
-          (not (string? fn-name))
-          (= (string-length fn-name) 0))
-      #f
-      (let ((r (try (mutate :extract-function target fn-name) (catch (e) #f))))
-        (if (equal? r #t) #t #f))))
+  (cond
+    ((or (not target)
+         (and (not (number? target)) (not (hash? target)))
+         (not (string? fn-name))
+         (= (string-length fn-name) 0))
+     #f)
+    ; #5253: the new name itself must not be protected.
+    ((refactor:contract-refused? (refactor:contract-pre "refactor:extract-function" fn-name))
+     #f)
+    (else
+     (let* ((before (refactor:contract-before))
+            (snap (if (contract:active)
+                      (try (mutate :snapshot "refactor-extract") (catch (e) -1))
+                      -1))
+            (r (try (mutate :extract-function target fn-name) (catch (e) #f)))
+            (ok (if (equal? r #t) #t #f))
+            (post (if ok (refactor:contract-post before) #f)))
+       (cond
+         ((refactor:contract-refused? post)
+          (refactor:contract-rollback snap)
+          #f)
+         (else ok))))))
 
 ; ── refactor:inline-function — 内联函数 ──
 ;
@@ -110,28 +174,45 @@
 ; Issue #5252: 以前只返回调用点数、从不内联；现在真内联，返回值仍是
 ; 内联成功的调用点数。
 (define (refactor:inline-function fn-name)
-  (if (not (string? fn-name))
-      #f
-      (let ((defs (try (query :defines fn-name) (catch #f))))
-        (if (or (not defs) (null? (refactor:matches defs)))
-            #f
-            (let ((calls (refactor:matches
-                           (try (query :calls fn-name) (catch (quote ()))))))
-              (if (null? calls)
-                  0
-                  (let ((snap (try (mutate :snapshot
-                                           (string-append "inline-" fn-name))
-                                   (catch (e) -1))))
-                    (let loop ((cs calls) (n 0))
-                      (cond
-                        ((null? cs) n)
-                        (else
-                         (let ((r (try (mutate :inline-call (car cs)
-                                               "refactor:inline-function")
-                                       (catch (e) #f))))
-                           (if (equal? r #t)
-                               (loop (cdr cs) (+ n 1))
-                               (begin
-                                 (when (and (number? snap) (>= snap 0))
-                                   (mutate :restore snap))
-                                 #f)))))))))))))
+  (cond
+    ((not (string? fn-name)) #f)
+    ; #5253: a protected fn-name is refused before any call site moves.
+    ((refactor:contract-refused? (refactor:contract-pre "refactor:inline-function" fn-name))
+     #f)
+    (else
+     (let ((before (refactor:contract-before))
+           (defs (try (query :defines fn-name) (catch #f))))
+       (cond
+         ((or (not defs) (null? (refactor:matches defs))) #f)
+         (else
+          (let ((calls (refactor:matches
+                         (try (query :calls fn-name) (catch (quote ()))))))
+            (cond
+              ((null? calls) 0)
+              (else
+               (let ((snap (try (mutate :snapshot
+                                        (string-append "inline-" fn-name))
+                                (catch (e) -1)))
+                     (done 0))
+                 (let loop ((cs calls))
+                   (cond
+                     ((null? cs) done)
+                     (else
+                      (let ((r (try (mutate :inline-call (car cs)
+                                            "refactor:inline-function")
+                                    (catch (e) #f))))
+                        (if (equal? r #t)
+                            (begin
+                              (set! done (+ done 1))
+                              (loop (cdr cs)))
+                            (begin
+                              (when (and (number? snap) (>= snap 0))
+                                (mutate :restore snap))
+                              (set! done -1)))))))
+                 ; #5253: a refused post-state undoes the whole batch.
+                 (if (= done -1)
+                     #f
+                     (let ((post (refactor:contract-post before)))
+                       (if (refactor:contract-refused? post)
+                           (begin (refactor:contract-rollback snap) #f)
+                           done)))))))))))))
