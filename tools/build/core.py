@@ -11,6 +11,7 @@ any command module.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -170,3 +171,106 @@ def coverage_run(script: Path) -> subprocess.CompletedProcess:
         return subprocess.run([sys.executable, str(COVERAGE_RUNNER), "--issue", issue], cwd=ROOT)
     fail(f"missing {script}")
     return subprocess.CompletedProcess(args=[], returncode=1)
+
+
+# Issue #5246: toolchain / job-count helpers shared by the command groups.
+def _build_jobs() -> int:
+    raw = os.environ.get("AURA_BUILD_JOBS", "").strip()
+    if raw:
+        try:
+            n = int(raw)
+            if n > 0:
+                return n
+        except ValueError:
+            pass
+    return os.cpu_count() or 4
+
+
+def _tool_available(name: str) -> bool:
+    return shutil.which(name) is not None
+
+
+def _linker_binary_runs(name: str) -> bool:
+    """True if `name` is on PATH and can start (not a broken .so link)."""
+    path = shutil.which(name)
+    if path is None:
+        return False
+    try:
+        r = subprocess.run([path, "--version"], capture_output=True, timeout=5)
+        return r.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    """Parse AURA_*/env truthy flags: 1/true/yes/on vs 0/false/no/off."""
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _cxx_driver() -> str:
+    """Compiler driver used for link probes (matches CMake preference)."""
+    for cand in (
+        os.environ.get("CXX", "").strip(),
+        "c++",
+        "g++",
+        "clang++",
+    ):
+        if cand and shutil.which(cand):
+            return cand
+    return "c++"
+
+
+def _fuse_ld_works(fuse_ld: str) -> bool:
+    """Probe whether ``-fuse-ld=<name>`` can link a trivial C++ program.
+
+    GCC 16 ships ``libatomic_asneeded.so`` linker scripts that older mold
+    mis-parses (``library not found: AS_NEEDED``), which breaks CMake's
+    compiler identification. Prefer probing over hard-coding versions.
+    """
+    import tempfile
+
+    cxx = _cxx_driver()
+    try:
+        with tempfile.TemporaryDirectory(prefix="aura_ldprobe_") as td:
+            src = Path(td) / "t.cpp"
+            out = Path(td) / "t.out"
+            src.write_text("int main(){return 0;}\n", encoding="utf-8")
+            r = subprocess.run(
+                [cxx, f"-fuse-ld={fuse_ld}", str(src), "-o", str(out)],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if r.returncode == 0 and out.is_file():
+                return True
+            err = (r.stderr or "") + (r.stdout or "")
+            # Keep the first useful line for CI logs when we fall back.
+            first = next((ln.strip() for ln in err.splitlines() if ln.strip()), "")
+            if first:
+                warn(f"linker probe -fuse-ld={fuse_ld} failed: {first[:160]}")
+            return False
+    except (OSError, subprocess.TimeoutExpired) as e:
+        warn(f"linker probe -fuse-ld={fuse_ld} error: {e}")
+        return False
+
+
+def _select_fast_linker() -> str | None:
+    """Pick mold / lld when available *and* able to link with the toolchain.
+
+    Returns the ``-fuse-ld=`` value (``mold`` / ``lld``) or None for default ld.
+    """
+    # AURA_USE_MOLD=0 disables both mold and lld fast-path (classic ld.bfd).
+    if not _env_flag("AURA_USE_MOLD", default=True):
+        return None
+    # Prefer mold when it works; fall back to lld on GCC16/libatomic_asneeded
+    # incompatibility (mold issue #1545 / Gentoo #968893).
+    if _tool_available("mold") and _linker_binary_runs("mold") and _fuse_ld_works("mold"):
+        return "mold"
+    if _tool_available("ld.lld") and _linker_binary_runs("ld.lld") and _fuse_ld_works("lld"):
+        return "lld"
+    if _tool_available("mold"):
+        warn("mold present but cannot link with this toolchain; falling back")
+    return None
