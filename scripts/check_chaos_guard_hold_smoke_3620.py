@@ -131,6 +131,8 @@ def main() -> int:
         sample_chaos = (
             CASE + "\nstatic void " + CASE + '() { std::println("#3620"); }\n' + CASE + "();\n" + CITE + "();\n"
             "set_production_multi_worker_latched_for_test\n"
+            "std::thread holder\n"
+            "Fiber::yield(YieldReason::Explicit)\n"
             "spawn_with_affinity\n"
             "Scheduler sched(2)\n"
             "push Ok while shared Evaluator boundary live\n"
