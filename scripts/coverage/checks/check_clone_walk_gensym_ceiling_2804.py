@@ -42,8 +42,8 @@ def main() -> int:
     test = _read("tests/compiler/test_clone_walk_gensym_ceiling.cpp")
     cmake = _read("CMakeLists.txt")
 
-    pre = me.find("auto rename_binding_pre")
-    walk = me.find("auto rename_binding =", pre + 1 if pre >= 0 else 0)
+    pre = me.find("aura::ast::SymId rename_binding_pre(")
+    walk = me.find("aura::ast::SymId rename_binding(", pre + 1 if pre >= 0 else 0)
     win = me[walk : walk + 1800] if walk >= 0 else ""
 
     # AC1

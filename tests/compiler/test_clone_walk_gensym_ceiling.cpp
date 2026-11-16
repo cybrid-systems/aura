@@ -72,9 +72,10 @@ int run_test_clone_walk_gensym_ceiling() {
         auto bridge = read_file("src/compiler/aura_jit_bridge.h");
         CHECK(!me.empty() && !ixx.empty(), "AC1: sources readable");
 
-        // Locate rename_binding lambda (clone walk), not rename_binding_pre.
-        auto pre = me.find("auto rename_binding_pre");
-        auto walk = me.find("auto rename_binding =", pre == std::string::npos ? 0 : pre + 1);
+        // Locate rename_binding method (clone walk), not rename_binding_pre.
+        auto pre = me.find("aura::ast::SymId rename_binding_pre(");
+        auto walk =
+            me.find("aura::ast::SymId rename_binding(", pre == std::string::npos ? 0 : pre + 1);
         CHECK(walk != std::string::npos, "AC1: rename_binding present");
         auto win = me.substr(walk, 2800);
         CHECK(win.find("Issue #2804") != std::string::npos, "AC1: rename_binding cites #2804");
@@ -277,7 +278,7 @@ int run_test_clone_walk_gensym_ceiling() {
         CHECK(win.find("return aura::ast::NULL_NODE") != std::string::npos,
               "3816 AC1: return NULL_NODE");
         // rename_binding deny still leaves hyg_ctr unadvanced (#2811).
-        auto rb = me.find("auto rename_binding =");
+        auto rb = me.find("aura::ast::SymId rename_binding(");
         CHECK(rb != std::string::npos, "3816 AC2: rename_binding");
         auto rb_win = me.substr(rb, 2800);
         CHECK(rb_win.find("hyg_ctr untouched") != std::string::npos ||

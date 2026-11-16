@@ -75,7 +75,7 @@ int run_test_gensym_ceiling_serial_drift() {
         auto bridge = read_file("src/compiler/aura_jit_bridge.h");
         CHECK(!me.empty(), "AC1: sources readable");
 
-        auto pre = me.find("auto rename_binding_pre");
+        auto pre = me.find("aura::ast::SymId rename_binding_pre(");
         CHECK(pre != std::string::npos, "AC1: rename_binding_pre present");
         auto win = me.substr(pre, 2500);
         CHECK(win.find("Issue #2811") != std::string::npos, "AC1: cites #2811");

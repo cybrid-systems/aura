@@ -101,7 +101,7 @@ def main() -> int:
 
     # ── AC1: rename_binding_pre ceiling deny → expand_ckpt.try_restore() ──
     ac1_cites = "Issue #3183" in me
-    lim_pos, ret_pos = _lambda_ceiling_deny_window(me, "rename_binding_pre = [&](SymId sid)")
+    lim_pos, ret_pos = _lambda_ceiling_deny_window(me, "rename_binding_pre(aura::ast::SymId sid")
     ac1_lambda_found = lim_pos != -1 and ret_pos != -1
     ac1_try_restore = False
     if ac1_lambda_found:
@@ -125,7 +125,7 @@ def main() -> int:
     )
 
     # ── AC2: rename_binding ceiling deny → expand_ckpt.try_restore() ──
-    lim_pos, ret_pos = _lambda_ceiling_deny_window(me, "auto rename_binding = [&](SymId sid)")
+    lim_pos, ret_pos = _lambda_ceiling_deny_window(me, "aura::ast::SymId rename_binding(aura::ast::SymId sid")
     ac2_lambda_found = lim_pos != -1 and ret_pos != -1
     ac2_try_restore = False
     if ac2_lambda_found:
@@ -146,7 +146,7 @@ def main() -> int:
     )
 
     # ── AC3: rename_rest_binding_pre shares ceiling ──
-    lim_pos, ret_pos = _lambda_ceiling_deny_window(me, "auto rename_rest_binding_pre = [&](SymId sid)")
+    lim_pos, ret_pos = _lambda_ceiling_deny_window(me, "aura::ast::SymId rename_rest_binding_pre(aura::ast::SymId sid")
     ac3_lambda_found = lim_pos != -1 and ret_pos != -1
     ac3_checks_cap = False
     ac3_checks_size = False
@@ -164,8 +164,8 @@ def main() -> int:
         # Issue #3183 fix rationale + const auto cap declaration +
         # if condition + store(1,) ≈ 500+ chars). Search the wider
         # lambda body for the cite, not just the deny-window.
-        lam_pos = me.find("auto rename_rest_binding_pre = [&](SymId sid)")
-        lam_end = me.find("};\n", lam_pos) if lam_pos != -1 else -1
+        lam_pos = me.find("aura::ast::SymId rename_rest_binding_pre(aura::ast::SymId sid")
+        lam_end = lam_pos + 3000 if lam_pos != -1 else -1
         body = me[lam_pos:lam_end] if (lam_pos != -1 and lam_end != -1) else ""
         ac3_cites = "Issue #3183" in body
     ac3_ok = ac3_lambda_found and ac3_checks_cap and ac3_checks_size and ac3_try_restore and ac3_no_serial and ac3_cites
