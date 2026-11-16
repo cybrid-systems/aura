@@ -33,6 +33,20 @@
 ; A feedback record that already carries a refused "contract" slot is a
 ; ROLLBACK too — the transform's own post-check is evidence, not a pass.
 ;
+; ── Evidence class (#5316) ─────────────────────────────────────────
+; "require" names the standard of proof a KEEP must meet:
+;   "any"                     default — the pre-#5316 rule
+;   "out-of-sample"           the feedback carries holdout windows
+;   "out-of-sample-adjusted"  those windows are deflated by the number of
+;                             candidate attempts (std/validation)
+; The record lives in the feedback's "validation" slot
+; (std/validation's val:attach). A training-only record is a ROLLBACK with
+; reason "unadjusted"; too few windows is "insufficient-windows". Neither
+; verdict is a crash: both carry the requirement, the window count and the
+; record's class, so the caller can query why. With "any" — every gate built
+; before this issue — nothing changes, and the verdict hash keeps its old
+; shape.
+;
 ; ── No gate ────────────────────────────────────────────────────────
 ; With nothing installed every daily path keeps its pre-#5255 decision and
 ; records gate="none". That KEEP is explicitly unproven: the record says
@@ -49,13 +63,16 @@
 ;   "potential-after"   number | #f
 ;   "delta"             number | #f
 ;   "invariants"        #5253 report | "none"
-;   "evidence"          hash  (proven / why / invariant names / counts)
+;   "evidence"          hash  (proven / why / invariant names / counts;
+;                             "class" / "windows" / "trials" when the gate
+;                             requires validation evidence, #5316)
 ;
 ; Form order (#2769): export before require.
 
 (export gate:schema gate:help
         gate:new gate:gate? gate:name gate:potential gate:compare
         gate:invariants gate:accept gate:baseline gate:tolerance
+        gate:require gate:min-windows
         gate:none? gate:from-contract gate:from-evo gate:with-invariants
         gate:install! gate:installed gate:uninstall!
         gate:current gate:effective-name
@@ -92,6 +109,17 @@
         ((string=? v "min") "min")
         (else "min")))
 
+(define (gate-as-require v)
+  (let ((s (cond ((string? v) v)
+                 ((symbol? v) (symbol->string v))
+                 (else "any"))))
+    (cond ((string=? s "out-of-sample") s)
+          ((string=? s "out-of-sample-adjusted") s)
+          (else "any"))))
+
+(define (gate-as-min-windows v)
+  (if (and (number? v) (>= v 1)) (exact (trunc v)) 3))
+
 ; (gate:new opts) -> gate hash.
 ;   "name"        string, default "gate"
 ;   "potential"   procedure (fb -> number | (before after) | hash before/after
@@ -100,7 +128,10 @@
 ;   "baseline"    number | procedure (fb -> number) | #f
 ;   "tolerance"   number, default 0
 ;   "invariants"  #5253 contract set | #f
+;   "require"     "any" (default) | "out-of-sample" | "out-of-sample-adjusted"
+;   "min-windows" holdout window floor, default 3
 ;   "accept"      legacy predicate (fb -> truthy) | #f
+
 (define (gate:new opts)
   (let* ((o (if (hash? opts) opts (hash)))
          (name (gate-as-name (hash-ref o "name" "gate") "gate"))
@@ -118,6 +149,8 @@
           "tolerance" (let ((t (hash-ref o "tolerance" 0)))
                         (if (number? t) t 0))
           "invariants" set
+          "require" (gate-as-require (hash-ref o "require" "any"))
+          "min-windows" (gate-as-min-windows (hash-ref o "min-windows" 3))
           "accept" (if (procedure? accept) accept #f))))
 
 (define (gate:gate? g)
@@ -135,6 +168,12 @@
   (if (gate:gate? g)
       (let ((t (hash-ref g "tolerance" 0))) (if (number? t) t 0))
       0))
+
+(define (gate:require g)
+  (if (gate:gate? g) (gate-as-require (hash-ref g "require" "any")) "any"))
+
+(define (gate:min-windows g)
+  (if (gate:gate? g) (gate-as-min-windows (hash-ref g "min-windows" 3)) 3))
 
 (define (gate:none? g) (not (gate:gate? g)))
 
@@ -193,7 +232,8 @@
 ; The slots the gate reads. A #5254 record already has all of them; this
 ; constructor fills the ones a daily path may not carry, so one shape is
 ; consumed everywhere (and an evo evaluation hash can be passed as
-; (gate:feedback-from-eval cand ev)).
+; (gate:feedback-from-eval cand ev)). "validation" (#5316) is std/validation's
+; evidence record, kept as passed through — an unset one is not evidence.
 (define (gate:feedback slots)
   (let ((s (if (hash? slots) slots (hash))))
     (hash "kind" (hash-ref s "kind" "transform-feedback")
@@ -217,7 +257,10 @@
           "constraints" (hash-ref s "constraints" (hash))
           "engine" (hash-ref s "engine" (hash))
           "count" (hash-ref s "count" 0)
-          "status" (hash-ref s "status" "ok"))))
+          "status" (hash-ref s "status" "ok")
+          ; #5316: out-of-sample evidence a gate may require. #f means the
+          ; record carries training metrics only, which is not proof.
+          "validation" (hash-ref s "validation" #f))))
 
 (define (gate:feedback? fb)
   (and (hash? fb) (equal? (hash-ref fb "kind" #f) "transform-feedback")))
@@ -361,6 +404,78 @@
     (list (if (number? b) b #f)
           (if (number? after) after #f))))
 
+; ── evidence class (#5316) ──────────────────────────────────────
+; The validation record a gate may require. Shape is std/validation's
+; val:evidence; this reads it structurally so std/gate does not depend on
+; std/validation (a validation user may skip the gate, not the reverse).
+(define (gate-validation-record fb)
+  (let ((v (if (hash? fb) (hash-ref fb "validation" #f) #f)))
+    (if (and (hash? v) (equal? (hash-ref v "kind" #f) "validation-evidence"))
+        v
+        #f)))
+
+(define (gate-evidence-int rec key def)
+  (let ((v (if (hash? rec) (hash-ref rec key def) def)))
+    (if (number? v) (exact (trunc v)) def)))
+
+(define (gate-evidence-class rec)
+  (let ((c (if (hash? rec) (hash-ref rec "class" "train-only") "train-only")))
+    (if (string? c) c "train-only")))
+
+(define (gate-evidence-base rec req minw)
+  (hash "required" req
+        "proven" #f
+        "class" (gate-evidence-class rec)
+        "windows" (gate-evidence-int rec "windows" 0)
+        "trials" (gate-evidence-int rec "trials" 0)
+        "min-windows" minw))
+
+; #f when the requirement is met or the gate asks for nothing; a ROLLBACK
+; verdict otherwise. "why" names the failure: train-only | not-deflated |
+; insufficient-windows | adjusted-not-better.
+(define (gate-evidence-verdict gate fb name before after report)
+  (let* ((req (gate:require gate))
+         (minw (gate:min-windows gate))
+         (rec (gate-validation-record fb))
+         (cls (gate-evidence-class rec))
+         (wins (gate-evidence-int rec "windows" 0))
+         (passed (and (hash? rec) (equal? (hash-ref rec "passed" #f) #t)))
+         (base (gate-evidence-base rec req minw)))
+    (cond
+      ((string=? req "any") #f)
+      ((not (hash? rec))
+       (gate-verdict name "ROLLBACK" "unadjusted" before after report
+                     (hash-set (hash-set base "why" "train-only")
+                               "note"
+                               "training metrics only; attach out-of-sample evidence")))
+      ((string=? cls "train-only")
+       (gate-verdict name "ROLLBACK" "unadjusted" before after report
+                     (hash-set base "why" "train-only")))
+      ((< wins minw)
+       (gate-verdict name "ROLLBACK" "insufficient-windows" before after report
+                     (hash-set base "why" "insufficient-windows")))
+      ((and (string=? req "out-of-sample-adjusted")
+            (not (string=? cls "out-of-sample-adjusted")))
+       (gate-verdict name "ROLLBACK" "unadjusted" before after report
+                     (hash-set base "why" "not-deflated")))
+      ((not passed)
+       (gate-verdict name "ROLLBACK" "adjusted-not-better" before after report
+                     (hash-set (hash-set base "why" "adjusted-not-better")
+                               "adjusted" (hash-ref rec "adjusted" #f))))
+      (else #f))))
+
+; A KEEP under a requirement says which class cleared it.
+(define (gate-keep-evidence v gate fb)
+  (let* ((req (gate:require gate))
+         (rec (gate-validation-record fb)))
+    (if (or (string=? req "any") (not (hash? rec)))
+        v
+        (let ((e (hash-ref v "evidence" (hash))))
+          (hash-set v "evidence"
+                    (hash-set (hash-set (hash-set e "class" (gate-evidence-class rec))
+                                        "windows" (gate-evidence-int rec "windows" 0))
+                              "trials" (gate-evidence-int rec "trials" 0)))))))
+
 (define (gate-verdict name decision reason before after invs evidence)
   (hash "kind" "gate-verdict"
         "schema" gate-schema-version
@@ -425,7 +540,11 @@
                      (hash "proven" #t "why" "invariant-violated"
                            "violations" (gate-count-violations report))))
       (else
-       (gate-accept gate fb before after report)))))
+       (let ((ev (gate-evidence-verdict gate fb name before after report)))
+         (if ev
+             ev
+             (gate-keep-evidence (gate-accept gate fb before after report)
+                                 gate fb)))))))
 
 ; The acceptance half once structure and invariants passed.
 (define (gate-accept g fb before after report)

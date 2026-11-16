@@ -231,9 +231,71 @@
            (ss (foldl (lambda (a x) (+ a (* (- x m) (- x m)))) 0.0 xs)))
       (sqrt (/ ss (- (length xs) 1))))))
 
+; (#5316) A paired test on one series is at best training evidence: it
+; knows nothing about a holdout split or how many candidates were tried.
+; When the caller names a requirement ("require"), or the #5255 gate the
+; result will be judged by ("gate"), the hash also carries the evidence
+; class and may only KEEP with matching out-of-sample, deflated evidence in
+; "validation" (std/validation's val:evidence). With no such option the
+; hash keeps exactly its pre-#5316 shape and meaning.
+(define (tune-gate-required opts gate)
+  (let* ((g (if (hash? gate) gate (hash)))
+         (a (hash-ref opts "require" #f))
+         (r (hash-ref g "require" #f)))
+    (cond ((and (string? a) (not (string=? a ""))) a)
+          ((string? r) r)
+          (else "any"))))
+
+(define (tune-gate-min-windows gate)
+  (let ((m (if (hash? gate) (hash-ref gate "min-windows" 3) 3)))
+    (if (number? m) (exact (trunc m)) 3)))
+
+(define (tune-gate-class ev)
+  (let ((c (if (hash? ev) (hash-ref ev "class" "train-only") "train-only")))
+    (if (string? c) c "train-only")))
+
+(define (tune-gate-windows ev)
+  (let ((w (if (hash? ev) (hash-ref ev "windows" 0) 0)))
+    (if (number? w) (exact (trunc w)) 0)))
+
+(define (tune-gate-evidence-ok? req cls wins minw ev)
+  (or (string=? req "any")
+      (and (hash? ev)
+           (equal? (hash-ref ev "passed" #f) #t)
+           (>= wins minw)
+           (cond ((string=? req "out-of-sample-adjusted")
+                  (string=? cls "out-of-sample-adjusted"))
+                 ((string=? req "out-of-sample")
+                  (or (string=? cls "out-of-sample")
+                      (string=? cls "out-of-sample-adjusted")))
+                 (else #t)))))
+
+(define (tune-gate-hardened res opts)
+  (let* ((gate (hash-ref opts "gate" #f))
+         (ev (hash-ref opts "validation" #f))
+         (req (tune-gate-required opts gate))
+         (minw (tune-gate-min-windows gate))
+         (cls (tune-gate-class ev))
+         (wins (tune-gate-windows ev))
+         (stat (equal? (hash-ref res "keep" #f) #t))
+         (ok (and stat (tune-gate-evidence-ok? req cls wins minw ev)))
+         (reason (cond (ok "")
+                       ((not stat) "not-significant")
+                       ((not (hash? ev)) "unadjusted")
+                       ((string=? cls "train-only") "unadjusted")
+                       ((< wins minw) "insufficient-windows")
+                       (else "adjusted-not-better"))))
+    (hash-set (hash-set (hash-set (hash-set res
+                                            "keep" (if ok #t #f))
+                                  "class" cls)
+                        "required" req)
+              "reason" reason)))
+
 ; (tune:gate cand base [opts]) — paired test on seed-level results.
 ; keep = the candidate is better by more than the noise, at alpha.
 ; Returns "keep", "t", "df", "crit", "alpha", "mean-diff", "sd-diff", "n".
+; With "require" / "gate" / "validation" it also returns "class", "required"
+; and "reason", and keep is ANDed with the evidence test (#5316).
 (define (tune:gate cand base . rest)
   (let* ((opts (if (and (pair? rest) (hash? (car rest))) (car rest) (hash)))
          (alpha (hash-ref opts "alpha" 0.05))
@@ -248,14 +310,19 @@
          (df (max 1 (- n 1)))
          (crit (tune:t-crit df alpha))
          (t (if (<= se 1e-12) (if (> m 0.0) 1.0e9 0.0) (/ m se))))
-    (hash "keep" (and (>= n 2) (> m 0.0) (> t crit))
-          "t" t
-          "df" df
-          "crit" crit
-          "alpha" alpha
-          "mean-diff" m
-          "sd-diff" sd
-          "n" n)))
+    (let ((res (hash "keep" (and (>= n 2) (> m 0.0) (> t crit))
+                     "t" t
+                     "df" df
+                     "crit" crit
+                     "alpha" alpha
+                     "mean-diff" m
+                     "sd-diff" sd
+                     "n" n)))
+      (if (or (hash? (hash-ref opts "validation" #f))
+              (hash? (hash-ref opts "gate" #f))
+              (string? (hash-ref opts "require" #f)))
+          (tune-gate-hardened res opts)
+          res))))
 
 ; ── irace-lite: race configurations with the multi-seed gate ──
 
