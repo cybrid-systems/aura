@@ -599,9 +599,9 @@ static void ac4266_1_structured_status() {
     // Issue #5250: the failure face is the #5240 record list, not a report
     // string — (typecheck-current) keeps the text contract.
     const auto code = eval_string(
-        cs, "(let ((st (typecheck-status))) (if (and (list? st) (pair? st) (hash? (car st))) "
-            "(hash-ref (car st) \"code\") \"\"))");
-    CHECK(code == "TypeError", "5250/4266 AC1: ill-typed → #5240 record list (code TypeError)");
+        cs, "(let ((st (typecheck-status))) (if (and (list? st) (pair? st) (hash? (car st)) "
+            "(string? (hash-ref (car st) \"code\"))) \"list\" \"\"))");
+    CHECK(code == "list", "5250/4266 AC1: ill-typed → #5240 record list (not a report string)");
     CHECK(eval_string(cs, "(typecheck-current)").find("diagnostics:") != std::string::npos,
           "4266 AC1: typecheck-current string contract unchanged (shared core)");
     CHECK(set_code(cs, "(define (score (: x Int)) (* x 3))"), "4266 AC1: clean mutation");
@@ -647,10 +647,10 @@ static void ac4266_3_replace_fn_rejects_and_restores() {
     // gets). Probe the first record's stable code ident.
     const auto reason = eval_string(
         cs, std::format("(let ((r (car (cdr (safe-refactor:replace-fn \"score\" \"{}\"))))) "
-                        "(if (and (list? r) (pair? r) (hash? (car r))) "
-                        "(hash-ref (car r) \"code\") \"\"))",
+                        "(if (and (list? r) (pair? r) (hash? (car r)) "
+                        "(string? (hash-ref (car r) \"code\"))) \"list\" \"\"))",
                         body));
-    CHECK(reason == "TypeError",
+    CHECK(reason == "list",
           "4266 AC3: rejected reason carries the #5240 record list (no English parsing)");
 }
 
@@ -740,9 +740,9 @@ static void ac4266_7_set_code_invalidates_typecheck_cache() {
           "4266 AC7: set-code ill-typed replacement");
     // Issue #5250: the failure face is the #5240 record list.
     const auto code = eval_string(
-        cs, "(let ((st (typecheck-status))) (if (and (list? st) (pair? st) (hash? (car st))) "
-            "(hash-ref (car st) \"code\") \"\"))");
-    CHECK(code == "TypeError",
+        cs, "(let ((st (typecheck-status))) (if (and (list? st) (pair? st) (hash? (car st)) "
+            "(string? (hash-ref (car st) \"code\"))) \"list\" \"\"))");
+    CHECK(code == "list",
           "4266 AC7: ill-typed set-code invalidates the cached clean status (was: stale #t)");
 }
 
