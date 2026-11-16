@@ -90,8 +90,12 @@
   (define before (current-source :workspace))
   (define status (safe-refactor:replace-fn "typed" "(define (typed (: x Int)) (+ x \"oops\"))"))
   (check (equal? 'rejected (car status)))
-  ; #4266 reason shape: the diagnostics block rides the reason slot.
-  (check (string-contains? (car (cdr status)) "diagnostics:"))
+  ; #4266/#5250 reason shape: the #5240 record list rides the reason slot
+  ; (a legacy text report is still accepted).
+  (define reason (car (cdr status)))
+  (check (or (and (list? reason) (pair? reason) (hash? (car reason))
+                  (string? (hash-ref (car reason) "code")))
+             (and (string? reason) (string-contains? reason "diagnostics:"))))
   (check= before (current-source :workspace))
   (eval-current)
   (check= 3 (typed 1)))

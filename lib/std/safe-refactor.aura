@@ -315,15 +315,18 @@
          ; ("parse-error" msg) / ("type-error" report) from the dry-run gate.
          ((and (pair? gate) (string? (car gate)))
           (let ((tag (car gate))
-                (detail (if (and (pair? (cdr gate)) (string? (car (cdr gate))))
-                            (car (cdr gate))
-                            "")))
+                (raw (if (pair? (cdr gate)) (car (cdr gate)) "")))
             (cond
               ((string=? tag "type-error")
-               ; #4266 reason shape: carries a diagnostics block.
-               (list 'rejected (string-append "type-error\ndiagnostics:\n" detail)))
+               ; #4266: carry the #5240 record list (mutate:check now returns
+               ; it); a legacy text report still rides the reason slot.
+               (list 'rejected
+                     (if (list? raw)
+                         raw
+                         (string-append "type-error\ndiagnostics:\n"
+                                        (if (string? raw) raw "")))))
               ((string=? tag "parse-error")
-               (list 'rejected (string-append "parse-error: " detail)))
-              (else (list 'rejected (string-append tag ": " detail))))))
+               (list 'rejected (string-append "parse-error: " (if (string? raw) raw ""))))
+              (else (list 'rejected (string-append tag ": " (if (string? raw) raw "")))))))
          (else
           (list 'rejected (safe-refactor:mutate-reason gate))))))))
