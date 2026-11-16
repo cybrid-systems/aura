@@ -141,6 +141,48 @@ static void ac3_under_budget_reset() {
     CHECK(m.castop_density_streak.load() == 0, "AC3: metrics streak 0");
 }
 
+// Issue #5310: a sweep after the density decision must not leave a pending
+// reject for the next body. A new boundary (or a test reset) arms again,
+// and the streak threshold still gates the hot-residual path.
+static void ac5310_post_decision_arm_does_not_stick() {
+    std::println("\n--- #5310: post-decision density arm does not stick ---");
+    using aura::compiler::castop_density::begin_density_gate_boundary;
+    using aura::compiler::castop_density::density_gate_reject_pending;
+    using aura::compiler::castop_density::note_density_decision_closed;
+    using aura::compiler::castop_density::note_hot_residual_fail_close;
+    using aura::compiler::castop_density::note_residual_undermark_hard_reject;
+    using aura::compiler::castop_density::reset_density_gate_reject_pending_for_test;
+
+    reset_density_gate_reject_pending_for_test();
+    reset_streak_for_test();
+    note_density_decision_closed();
+    note_residual_undermark_hard_reject(1);
+    CHECK(!density_gate_reject_pending(), "5310: post-decision undermark does not arm");
+    note_hot_residual_fail_close(1, /*unannotated=*/true, /*production=*/1);
+    note_hot_residual_fail_close(1, true, 1);
+    CHECK(!density_gate_reject_pending(), "5310: post-decision streak does not arm");
+
+    begin_density_gate_boundary();
+    reset_streak_for_test();
+    reset_density_gate_reject_pending_for_test();
+    note_residual_undermark_hard_reject(1);
+    CHECK(density_gate_reject_pending(), "5310: pre-decision undermark still arms");
+    (void)aura::compiler::castop_density::consume_density_gate_reject_pending();
+    reset_streak_for_test();
+    const auto thr = aura::compiler::castop_density::streak_gate_threshold();
+    CHECK(thr >= 1, "5310: streak gate threshold");
+    if (thr > 1) {
+        note_hot_residual_fail_close(1, true, 1);
+        CHECK(!density_gate_reject_pending(),
+              "5310: first pre-decision leftover stays under the gate");
+    }
+    for (std::uint64_t i = (thr > 1) ? 1 : 0; i < thr; ++i)
+        note_hot_residual_fail_close(1, true, 1);
+    CHECK(density_gate_reject_pending(), "5310: streak gate still arms before the decision");
+    reset_density_gate_reject_pending_for_test();
+    reset_streak_for_test();
+}
+
 // ── AC5: schema + source ──
 static void ac5_schema_source() {
     std::println("\n--- #2459 AC5: schema + source-cite ---");
@@ -191,6 +233,7 @@ int run_test_castop_density_closed_loop() {
     ac1_soft_no_gate_reject();
     ac4_then_ac2_streak_gate();
     ac3_under_budget_reset();
+    ac5310_post_decision_arm_does_not_stick();
     ac5_schema_source();
     std::println("\n=== #2459 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;

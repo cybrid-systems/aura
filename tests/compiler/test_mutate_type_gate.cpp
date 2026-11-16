@@ -319,6 +319,68 @@ static void rebind_cmp_param_join_5303() {
           output);
 }
 
+// Issue #5310: the same mutate:rebind body must not flip from
+// invariant-denied to #t because an earlier body armed the CastOp density
+// pending. AURA_CASTOP_DENSITY_STREAK_GATE=100 must not still deny the
+// third submit. The body that is #t with no prior history stays #t.
+static void rebind_density_streak_history_5310() {
+    const auto binary = aura_sibling_binary();
+    CHECK(!binary.empty(), "5310 aura binary");
+    if (binary.empty())
+        return;
+    const auto run = [&](const char* path, const char* script, const char* gate,
+                         const char* out_path, const char* err_path, const char* label) {
+        {
+            std::ofstream file(path);
+            file << script;
+        }
+        std::string command = "timeout 40 env -u AURA_SANDBOX -u AURA_HOT_HARDEN ";
+        command += "-u AURA_PRESET -u AURA_PIPELINE_STRICT ";
+        if (gate != nullptr && gate[0] != '\0')
+            command += std::string("AURA_CASTOP_DENSITY_STREAK_GATE=") + gate + " ";
+        else
+            command += "-u AURA_CASTOP_DENSITY_STREAK_GATE ";
+        command += "'" + binary + "' --preset dev --quiet '" + path + "' > '" + out_path +
+                   "' 2> '" + err_path + "'";
+        const int status = std::system(command.c_str());
+        std::ifstream out_file(out_path);
+        const std::string output((std::istreambuf_iterator<char>(out_file)), {});
+        std::ifstream err_file(err_path);
+        const std::string error((std::istreambuf_iterator<char>(err_file)), {});
+        const bool clean_exit = status >= 0 && WIFEXITED(status) && WEXITSTATUS(status) == 0;
+        CHECK(clean_exit, label);
+        CHECK(error.find("SIGABRT") == std::string::npos &&
+                  error.find("AURA CRASH") == std::string::npos,
+              label);
+        CHECK(output.find("invariant-denied") == std::string::npos, output);
+        return output;
+    };
+    const char* history = R"aura((set-code "(define (v4x c i) 1.5)\n(define (f i) 0.0)")
+(eval-current)
+(define (rb body) (let ((r (mutate :rebind "f" body "x"))) (display (if (pair? r) (car r) r)) (newline)))
+(rb "(lambda (i) (+ 1.0 (v4x \"vr\" i)))")
+(rb "(lambda (i) (if (> (v4x \"vr\" i) 1.2) 2.0 0.0))")
+(rb "(lambda (i) (if #t 2.0 0.0))")
+(rb "(lambda (i) (if #t 2.0 0.0))")
+)aura";
+    const char* alone = R"aura((set-code "(define (v4x c i) 1.5)\n(define (f i) 0.0)")
+(eval-current)
+(define (rb body) (let ((r (mutate :rebind "f" body "x"))) (display (if (pair? r) (car r) r)) (newline)))
+(rb "(lambda (i) (if #t 2.0 0.0))")
+(rb "(lambda (i) (if #t 2.0 0.0))")
+(rb "(lambda (i) (if #t 2.0 0.0))")
+)aura";
+    const auto def = run("/tmp/aura-5310-rebind.aura", history, "", "/tmp/aura-5310-out.txt",
+                         "/tmp/aura-5310-err.txt", "5310 default gate");
+    CHECK(def == "#t\n#t\n#t\n#t\n", def);
+    const auto wide = run("/tmp/aura-5310-rebind.aura", history, "100", "/tmp/aura-5310-out.txt",
+                          "/tmp/aura-5310-err.txt", "5310 gate 100");
+    CHECK(wide == "#t\n#t\n#t\n#t\n", wide);
+    const auto only = run("/tmp/aura-5310-alone.aura", alone, "", "/tmp/aura-5310-alone-out.txt",
+                          "/tmp/aura-5310-alone-err.txt", "5310 body alone");
+    CHECK(only == "#t\n#t\n#t\n", only);
+}
+
 // Issue #4557: register_* dedup goes through an intern index instead of a
 // linear scan. Identity must not change: structurally equal types return
 // the first-registered TypeId, distinct ones stay distinct, and compact()
@@ -1625,6 +1687,7 @@ int run_test_mutate_type_gate() {
     rejection_leaves_sibling_callable_5280();
     rebind_int_param_join_5300();
     rebind_cmp_param_join_5303();
+    rebind_density_streak_history_5310();
 
     reset_for_test();
     std::println("=== #2219 + #2279 done: {} passed, {} failed ===", g_passed, g_failed);
