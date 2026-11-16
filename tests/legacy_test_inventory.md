@@ -1934,7 +1934,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_tag_arity_key_hash.cpp` (—) [domain_suite, theme_core] — AC1: hash packs fields and applies splitmix-style finalizer (source-cite)
 - `tests/core/test_validate_node_no_abort.cpp` (—) [domain_suite, theme_core] — AC1: validate_post_restore with corrupt gen returns PostRestoreReport
 - `tests/core/test_validate_post_restore_soa.cpp` (—) [domain_suite, theme_core] — AC1: sym_id_ size != tag_.size() → PostRestoreReport size-mismatch
-- `tests/compiler/test_value_tag_hot_path.cpp` (—) [domain_suite, theme_compiler] — AC1: Pure is_* (is_fixnum_hot / is_int) match classify; single low2 path
+- `tests/compiler/test_value_tag_hot_path.cpp` (—) [large, domain_suite, theme_compiler] — AC1: Pure is_* (is_fixnum_hot / is_int) match classify; single low2 path
 - `tests/compiler/test_workspace_delete_child.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_workspace_delete_child.cpp — Issue #1770: WorkspaceTree delete_child test.
 
 ### `observability` — Observability / metrics / query:*-stats (131)
