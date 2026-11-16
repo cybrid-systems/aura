@@ -43,7 +43,8 @@ def main() -> int:
         if n not in hay:
             fails.append(f"{label}: missing {n!r}")
 
-    build = _read("build.py")
+    # #5246: the gate body lives in tools/build/chaos.py now.
+    build = _read("build.py") + _read("tools/build/chaos.py")
     chaos = _read("tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp")
     hdr = _read("src/serve/steal_safety.h")
     release = _read(".github/workflows/release.yml")

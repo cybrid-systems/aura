@@ -26,7 +26,10 @@
     },
     {
       "ac": "AC2",
-      "path": "build.py",
+      "paths": [
+        "build.py",
+        "tools/build/chaos.py"
+      ],
       "contains": [
         "AURA_CHAOS_PR_GATE_INJECT_HARD_FAIL",
         "cmd_chaos_pr_hard_fail_gate",

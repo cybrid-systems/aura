@@ -194,7 +194,8 @@ def run_rows(texts: dict) -> list[str]:
 def main() -> int:
     texts = {
         "hdr": HEADER.read_text(),
-        "build": BUILD.read_text(),
+        # #5246: the deploy gate body moved to tools/build/chaos.py.
+        "build": BUILD.read_text() + (ROOT / "tools" / "build" / "chaos.py").read_text(),
         "release": RELEASE.read_text(),
         "allow": ALLOW.read_text(),
         "chaos": CHAOS.read_text(),
