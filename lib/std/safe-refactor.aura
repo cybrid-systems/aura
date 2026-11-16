@@ -38,7 +38,8 @@
         safe-refactor:check-and-apply
         safe-refactor:rollback
         safe-refactor:contract-pre
-        safe-refactor:contract-post)
+        safe-refactor:contract-post
+        safe-refactor:last-gate)
 
 ; #5253: every mutation helper below consults the active contract set
 ; before it commits. With no active set (contract:active) = #f and the
@@ -76,6 +77,27 @@
 (define (safe-refactor:contract-refused? report)
   (and (hash? report) (not (contract:report-ok? report))))
 
+; ── (#5255) the unified acceptance gate ──────────────────────────
+; One verdict per finished wrapper result. No gate configured keeps the
+; pre-#5255 answer (KEEP "none") and only records it; a configured gate can
+; roll the snapshot back. safe-refactor:last-gate exposes the verdict.
+(define *safe-refactor-last-gate* #f)
+
+(define (safe-refactor:last-gate) *safe-refactor-last-gate*)
+
+(define (safe-refactor:gate-verdict op target applied count report)
+  (let* ((fb (gate:feedback
+               (hash "transform" (hash "operator" op
+                                       "target" (if (string? target) target "")
+                                       "applied" applied)
+                     "exec" (hash "result" "ok" "error-kind" "none"
+                                  "error-code" "" "message" "")
+                     "contract" (if (hash? report) report "none")
+                     "count" (if (number? count) count 1))))
+         (verdict (gate:evaluate (gate:installed) fb)))
+    (set! *safe-refactor-last-gate* verdict)
+    verdict))
+
 ; ── safe-refactor:with-snapshot — snapshot/restore wrapper ──
 (define (safe-refactor:with-snapshot tag thunk)
   (let ((snap-id (mutate :snapshot tag))
@@ -97,7 +119,14 @@
                (begin
                  (mutate :restore snap-id)
                  (list 'rolled-back cref))
-               result)))))))
+               ; #5255: a configured gate still decides the wrapped result.
+               (let ((verdict (safe-refactor:gate-verdict
+                                "safe-refactor:with-snapshot" tag #t 1 cref)))
+                 (if (gate:keep? verdict)
+                     result
+                     (begin
+                       (mutate :restore snap-id)
+                       (list 'rolled-back verdict)))))))))))
 
 ; ── safe-refactor:check-and-apply — pre/post verification gate ──
 (define (safe-refactor:check-and-apply pre-verify post-verify apply-fn)
@@ -138,16 +167,10 @@
                      ; #5255: and the unified gate. typecheck-status passing
                      ; is not by itself a KEEP; a configured gate can still
                      ; roll the workspace back.
-                     (let* ((fb (gate:feedback
-                                  (hash "transform" (hash "operator" "safe-refactor"
-                                                          "target" ""
-                                                          "applied" #t)
-                                        "exec" (hash "result" "ok"
-                                                     "error-kind" "none"
-                                                     "error-code" "" "message" "")
-                                        "contract" (if (hash? cref) cref "none")
-                                        "count" (if (number? apply-result) apply-result 1))))
-                            (verdict (gate:evaluate (gate:installed) fb)))
+                     (let ((verdict (safe-refactor:gate-verdict
+                                      "safe-refactor:check-and-apply" "" #t
+                                      (if (number? apply-result) apply-result 1)
+                                      cref)))
                        (if (gate:keep? verdict)
                            (list 'applied apply-result)
                            (begin
@@ -272,7 +295,14 @@
                      (begin
                        (mutate :restore snap-id)
                        (list 'rejected cref2))
-                     (list 'applied snap-id))))
+                     ; #5255: the gate decides commit vs rollback.
+                     (let ((verdict (safe-refactor:gate-verdict
+                                      "safe-refactor:replace-fn" fn-name #t 1 cref2)))
+                       (if (gate:keep? verdict)
+                           (list 'applied snap-id)
+                           (begin
+                             (mutate :restore snap-id)
+                             (list 'rolled-back verdict)))))))
               (else
                (begin
                  (mutate :restore snap-id)

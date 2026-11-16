@@ -68,7 +68,7 @@
 | `std/math` | `;` `Constants` `pi` `e` `phi` `tau` `Basic` `square` … (+53) | Aura standard math library |
 | `std/maybe` | `maybe?` `maybe-ref` `maybe-default` `map-maybe` `filter-maybe` | maybe.aura — Maybe/Option type |
 | `std/moead` | `moead:make` `moead:ask` `moead:tell!` `moead:run!` `moead:front` `moead:weights` `moead:report` `moead:help` … (+2) | lib/std/moead.aura — Issue #4940 (v0.2 P1): MOEA/D as the main |
-| `std/mutate` | `mutate:summary` `mutate:by-operator` `mutate:last-info` `mutate:operator-count` `mutate:rolled-back?` `mutate:rollback-rate` `mutate:boundary-depth` `mutate:boundary-safe?` … (+4) | — |
+| `std/mutate` | `mutate:summary` `mutate:by-operator` `mutate:last-info` `mutate:operator-count` `mutate:rolled-back?` `mutate:rollback-rate` `mutate:boundary-depth` `mutate:boundary-safe?` … (+13) | — |
 | `std/mutation-atomic` | `typed-mutate-atomic-all` | lib/std/mutation-atomic.aura — Issue #1442 convenience over (typed-mutate-atomic) |
 | `std/negative` | `negative:schema` `negative:help` `negative:train` `negative:train-from-trace` `negative:detector-set?` `negative:name` `negative:version` `negative:detectors` … (+24) | lib/std/negative.aura — Issue #5271 (v0.2.6, W2): negative selection — |
 | `std/net` | `http-get-json` `http-post-json` `url-encode` `url-decode` `url-join` `fetch-try` | lib/std/net.aura — Network client library |
@@ -90,10 +90,10 @@
 | `std/r7rs` | `r7rs:libraries` `r7rs:coverage` `r7rs:status` `r7rs:missing` `r7rs:library-exports` | lib/std/r7rs.aura — R7RS-small coverage table (Issue #5005) |
 | `std/random` | `make-random` `random-next` `random-integer` `random-float` `random-range` `random-vector` `shuffle` `random-seed` | random.aura — Simple pseudo-random number generator |
 | `std/record` | — | lib/std/record.aura — SRFI-9 records (Issue #5003) |
-| `std/refactor` | `refactor:rename-var` `refactor:extract-function` `refactor:inline-function` | — |
+| `std/refactor` | `refactor:rename-var` `refactor:extract-function` `refactor:inline-function` `refactor:last-gate` | — |
 | `std/regex` | `re-match?` `re-find` `re-replace` `re-split` `re-quote` | lib/std/regex.aura — Regular expression utilities |
 | `std/rule` | `rule:define` `rule:apply` `rule:apply-all` `rule:list` `rule:list-violations` `rule:remove` `rule:enable` `rule:disable` … (+3) | Aura std/rule — 代码规范系统 (P2) |
-| `std/safe-refactor` | `safe-refactor:with-snapshot` `safe-refactor:replace-fn` `safe-refactor:check-and-apply` `safe-refactor:rollback` `safe-refactor:contract-pre` `safe-refactor:contract-post` | lib/std/safe-refactor.aura — verification-gated refactoring |
+| `std/safe-refactor` | `safe-refactor:with-snapshot` `safe-refactor:replace-fn` `safe-refactor:check-and-apply` `safe-refactor:rollback` `safe-refactor:contract-pre` `safe-refactor:contract-post` `safe-refactor:last-gate` | lib/std/safe-refactor.aura — verification-gated refactoring |
 | `std/search` | `search:init` `search:step` `search:batch` `search:run` `search:pending` `search:best` `search:best-score` `search:export` … (+6) | lib/std/search.aura — one search protocol over the program space (#5007) |
 | `std/set` | `set` `set?` `set-copy` `set-clear!` `set-adjoin` `set-adjoin!` `set-delete` `set-delete!` … (+37) | lib/std/set.aura — SRFI-113 sets on the unified hash table (Issue #5003) |
 | `std/socket` | `tcp-connect` `tcp-send` `tcp-recv` `tcp-close` `tcp-listen` `tcp-local-port` `tcp-accept` `tcp-accept-timeout` | socket.aura — TCP socket library (client + server) |

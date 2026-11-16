@@ -15,19 +15,26 @@
 ;   inline-function  → 每个调用点一次 (mutate :inline-call call-id)
 ; 失败一律返回 #f（或回滚到操作前的 snapshot），不谎报成功。
 ;
+; Issue #5252 wave 2: 每个动作结束后问统一接受门（std/gate, #5255）。
+; 配了门就按 verdict 提交/回滚；没配门行为不变，verdict 记为 gate="none"，
+; 由 (refactor:last-gate) 读取。
+;
 ; Issue #5253: 每个动作在提交前后都问一次当前契约集（std/contract）。
 ; 没激活契约集时三个钩子都返回 #f，行为与 #5252 完全一致。
 ;   pre  — 受保护名字 / 算子白名单，在 mutate 之前拒绝；
 ;   post — 视图不变量 + 受保护 define 的前后差分，拒绝则回滚。
 
 
-(export refactor:rename-var refactor:extract-function refactor:inline-function)
+(export refactor:rename-var refactor:extract-function refactor:inline-function
+        refactor:last-gate)
 
 (require "std/list" all:)
 (require "std/string" all:)
 (require "std/query" all:)
 ; #5253: the recommended wrapper set consults the active contract set.
 (require "std/contract" all:)
+; #5255: and the one acceptance gate decides every finished step.
+(require "std/gate" all:)
 
 ; ── (#5253) contract gate ──────────────────────────────────────────
 (define (refactor:contract-pre op name)
@@ -47,6 +54,33 @@
 
 (define (refactor:contract-refused? report)
   (and (hash? report) (not (contract:report-ok? report))))
+
+; ── (#5255) the unified acceptance gate ───────────────────────────
+; Every step that finishes asks the gate. No gate configured: the verdict is
+; KEEP "none" and the pre-#5255 result stands unchanged — but the record says
+; gate="none", so "the primitive did not error" is never presented as proven.
+; A configured gate can still ROLLBACK a step that typechecked and satisfied
+; the contract set. refactor:last-gate keeps the last verdict for the caller.
+(define *refactor-last-gate* #f)
+
+(define (refactor:last-gate) *refactor-last-gate*)
+
+; Snapshot on the paths a gate or a contract set can refuse.
+(define (refactor:guard-active?)
+  (or (contract:active) (gate:gate? (gate:installed))))
+
+(define (refactor:gate-verdict op target applied count report)
+  (let* ((fb (gate:feedback
+               (hash "transform" (hash "operator" op
+                                       "target" (if (string? target) target "")
+                                       "applied" applied)
+                     "exec" (hash "result" "ok" "error-kind" "none"
+                                  "error-code" "" "message" "")
+                     "contract" (if (hash? report) report "none")
+                     "count" (if (number? count) count 1))))
+         (verdict (gate:evaluate (gate:installed) fb)))
+    (set! *refactor-last-gate* verdict)
+    verdict))
 
 ; Restore a snapshot when one was taken; the caller still returns its own
 ; value (the rollback is not a success and never becomes one).
@@ -93,7 +127,7 @@
      #f)
     (else
      (let* ((before (refactor:contract-before))
-            (snap (if (contract:active)
+            (snap (if (refactor:guard-active?)
                       (try (mutate :snapshot "refactor-rename") (catch (e) -1))
                       -1))
             (r (try (mutate :rename-symbol old new
@@ -116,10 +150,16 @@
                   (else #f)))
             (post (if ok (refactor:contract-post before) #f)))
        (cond
+         ((not ok) #f)
          ((refactor:contract-refused? post)
           (refactor:contract-rollback snap)
           #f)
-         (else ok))))))
+         (else
+          ; #5255: the installed gate owns the commit/rollback decision.
+          (let ((verdict (refactor:gate-verdict "refactor:rename-var" old #t 1 post)))
+            (if (gate:keep? verdict)
+                ok
+                (begin (refactor:contract-rollback snap) #f)))))))))
 
 ; ── refactor:extract-function — 提取子树为新函数 ──
 ;
@@ -149,17 +189,23 @@
      #f)
     (else
      (let* ((before (refactor:contract-before))
-            (snap (if (contract:active)
+            (snap (if (refactor:guard-active?)
                       (try (mutate :snapshot "refactor-extract") (catch (e) -1))
                       -1))
             (r (try (mutate :extract-function target fn-name) (catch (e) #f)))
             (ok (if (equal? r #t) #t #f))
             (post (if ok (refactor:contract-post before) #f)))
        (cond
+         ((not ok) #f)
          ((refactor:contract-refused? post)
           (refactor:contract-rollback snap)
           #f)
-         (else ok))))))
+         (else
+          (let ((verdict (refactor:gate-verdict "refactor:extract-function"
+                                                fn-name #t 1 post)))
+            (if (gate:keep? verdict)
+                ok
+                (begin (refactor:contract-rollback snap) #f)))))))))
 
 ; ── refactor:inline-function — 内联函数 ──
 ;
@@ -212,7 +258,16 @@
                  ; #5253: a refused post-state undoes the whole batch.
                  (if (= done -1)
                      #f
-                     (let ((post (refactor:contract-post before)))
-                       (if (refactor:contract-refused? post)
-                           (begin (refactor:contract-rollback snap) #f)
-                           done)))))))))))))
+                     (let ((post (if (> done 0) (refactor:contract-post before) #f)))
+                       (cond
+                         ((refactor:contract-refused? post)
+                          (begin (refactor:contract-rollback snap) #f))
+                         ((= done 0) done)
+                         (else
+                          ; #5255: one verdict for the whole batch.
+                          (let ((verdict (refactor:gate-verdict
+                                           "refactor:inline-function" fn-name
+                                           #t done post)))
+                            (if (gate:keep? verdict)
+                                done
+                                (begin (refactor:contract-rollback snap) #f)))))))))))))))))
