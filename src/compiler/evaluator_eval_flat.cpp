@@ -31,6 +31,7 @@ module;
 #include "compiler/ir_inflight_roots.hh"      // Issue #4617: IR in-flight roots for the TW sweep
 #include "codec_inflight_roots.hh"            // Issue #5294: defer marks during a codec decode
 #include "core/ownership.hh"                  // #4936 immortal<T>
+#include "compiler/hash_meta.h"               // #5307: same FNV probe as hash-ref
 
 
 #include "core/runtime_config.hh"
@@ -6153,7 +6154,8 @@ namespace {
     thread_local std::uint8_t tls_fast_keep_5304[16] = {};
 
     // A pure call folded to one number for this named-let entry: a literal
-    // zero-arg function, a constant vector-ref, or list-ref of a literal list.
+    // zero-arg function, a constant vector-ref, list-ref of a literal list,
+    // or hash-ref of a literal key (#5307).
     struct Invar5304 {
         aura::ast::NodeId call = aura::ast::NULL_NODE;
         bool is_float = false;
@@ -7188,10 +7190,107 @@ namespace {
         return true;
     }
 
+    // #5307: one hash-ref of a literal key. The table is not a named-let
+    // parameter, so this call's value is stable. A miss, a deny, or a
+    // non-number stays out of the fold and the interpreter reports it.
+    // The probe matches hash-ref (#4612): linear, tombstones are skipped,
+    // empty ends the chain. The hash lock is held only for this copy.
+    std::optional<EvalValue> lookup_hash_literal_5307(Evaluator& ev, const EvalValue& table,
+                                                      std::string_view key_text, bool key_is_int,
+                                                      std::int64_t key_i) {
+        if (!is_hash(table))
+            return std::nullopt;
+        std::scoped_lock hlock(ev.hash_tables_mutex());
+        std::scoped_lock slock(ev.cells_storage_mutex());
+        const auto hidx = as_hash_idx(table);
+        if (hidx >= g_hash_tables.size() ||
+            g_hash_tables[static_cast<std::size_t>(hidx)] == nullptr)
+            return std::nullopt;
+        if (aura_hash_gate_checked(hidx, ev.capability_tenant_id(), ev.effect_sandbox_mode(),
+                                   "hash-ref"))
+            return std::nullopt;
+        auto* ht = g_hash_tables[static_cast<std::size_t>(hidx)];
+        const auto cap = ht->capacity;
+        if (cap == 0 || (cap & (cap - 1)) != 0)
+            return std::nullopt;
+        const auto sh = ev.string_heap();
+        const auto kh = key_is_int ? static_cast<std::uint64_t>(key_i) * 0x9e3779b97f4a7c15ull
+                                   : ::aura::compiler::hash::fnv1a_bytes(key_text);
+        const auto* meta = ht->metadata();
+        const auto* keys = ht->keys();
+        const auto* vals = ht->values();
+        for (std::uint64_t at = 0; at < cap; ++at) {
+            const auto idx = ((kh >> 1) + at) & (cap - 1);
+            const auto m = meta[idx];
+            if (m == ::aura::compiler::hash::kEmptySlot)
+                return std::nullopt;
+            if (m == ::aura::compiler::hash::kTombstoneSlot)
+                continue;
+            EvalValue slot_key{keys[idx]};
+            if (key_is_int) {
+                if (is_int(slot_key) && as_int(slot_key) == key_i)
+                    return EvalValue{vals[idx]};
+                continue;
+            }
+            if (!is_string(slot_key))
+                continue;
+            const auto si = as_string_idx(slot_key);
+            if (si >= sh.size() || std::string_view(sh[si]) != key_text)
+                continue;
+            if (!ev.inrange_string_tenant_allows(si, /*required_effects=*/0, "hash-ref"))
+                return std::nullopt;
+            return EvalValue{vals[idx]};
+        }
+        return std::nullopt;
+    }
+
+    std::optional<EvalValue> resolve_hash_ref_call_5307(const aura::ast::FlatAST& flat,
+                                                        const aura::ast::StringPool& pool,
+                                                        const Env& env,
+                                                        std::span<const aura::ast::SymId> params,
+                                                        aura::ast::NodeId node) {
+        if (node >= flat.size() || flat.tag(node) != aura::ast::NodeTag::Call)
+            return std::nullopt;
+        const auto kids = flat.children(node);
+        if (kids.size() != 3 || !callee_is_prim_5066(flat, pool, env, kids[0], "hash-ref"))
+            return std::nullopt;
+        if (flat.tag(kids[1]) != aura::ast::NodeTag::Variable ||
+            param_index_5066(params, flat.sym_id(kids[1])) >= 0)
+            return std::nullopt;
+        auto table = read_any_5304(pool, env, flat.sym_id(kids[1]));
+        auto* owner = env.owner();
+        if (!table || owner == nullptr)
+            return std::nullopt;
+        const auto key = kids[2];
+        if (flat.tag(key) == aura::ast::NodeTag::LiteralString)
+            return lookup_hash_literal_5307(*owner, *table, pool.resolve(flat.sym_id(key)),
+                                            /*key_is_int=*/false, 0);
+        bool lit_float = false;
+        std::int64_t lit_i = 0;
+        double lit_d = 0.0;
+        if (!plain_num_lit_5304(flat, key, lit_float, lit_i, lit_d) || lit_float)
+            return std::nullopt;
+        return lookup_hash_literal_5307(*owner, *table, {}, /*key_is_int=*/true, lit_i);
+    }
+
+    std::optional<Invar5304> invar_from_num_5307(aura::ast::NodeId call, const EvalValue& v) {
+        Invar5304 inv;
+        inv.call = call;
+        if (is_float(v)) {
+            inv.is_float = true;
+            inv.d = as_float(v);
+            return inv;
+        }
+        if (!is_int(v) || !types::fits_fixnum(as_int(v)))
+            return std::nullopt;
+        inv.i = as_int(v);
+        return inv;
+    }
+
     // (vector-ref v k) with k a literal and v not a loop parameter, (list-ref
-    // (list <number lits>) k), or a zero-arg closure whose body is a number
-    // literal. The copy is this call's (#5116). A side-effecting body is not
-    // folded.
+    // (list <number lits>) k), hash-ref of a literal key, vector-ref of that
+    // hash value, or a zero-arg closure whose body is a number literal. The
+    // copy is this call's (#5116). A side-effecting body is not folded.
     std::optional<Invar5304> match_invar_5304(const aura::ast::FlatAST& flat,
                                               const aura::ast::StringPool& pool, const Env& env,
                                               std::span<const aura::ast::SymId> params,
@@ -7283,14 +7382,17 @@ namespace {
         std::int64_t lit_i = 0;
         double lit_d = 0.0;
         if (name == "vector-ref" && callee_is_prim_5066(flat, pool, env, kids[0], name)) {
-            if (flat.tag(kids[1]) != aura::ast::NodeTag::Variable)
-                return std::nullopt;
-            if (param_index_5066(params, flat.sym_id(kids[1])) >= 0)
-                return std::nullopt;
             if (!plain_num_lit_5304(flat, kids[2], lit_float, lit_i, lit_d) || lit_float ||
                 lit_i < 0)
                 return std::nullopt;
-            auto vec = read_any_5304(pool, env, flat.sym_id(kids[1]));
+            std::optional<EvalValue> vec;
+            if (flat.tag(kids[1]) == aura::ast::NodeTag::Variable) {
+                if (param_index_5066(params, flat.sym_id(kids[1])) >= 0)
+                    return std::nullopt;
+                vec = read_any_5304(pool, env, flat.sym_id(kids[1]));
+            } else {
+                vec = resolve_hash_ref_call_5307(flat, pool, env, params, kids[1]);
+            }
             if (!vec || !is_vector(*vec))
                 return std::nullopt;
             const auto vi = static_cast<std::size_t>(as_vector_idx(*vec));
@@ -7301,18 +7403,13 @@ namespace {
             const auto pos = static_cast<std::size_t>(lit_i);
             if (vi >= heap.size() || pos >= heap[vi].size())
                 return std::nullopt;
-            const auto& elem = heap[vi][pos];
-            Invar5304 inv;
-            inv.call = node;
-            if (is_float(elem)) {
-                inv.is_float = true;
-                inv.d = as_float(elem);
-                return inv;
-            }
-            if (!is_int(elem))
+            return invar_from_num_5307(node, heap[vi][pos]);
+        }
+        if (name == "hash-ref" && callee_is_prim_5066(flat, pool, env, kids[0], name)) {
+            auto got = resolve_hash_ref_call_5307(flat, pool, env, params, node);
+            if (!got)
                 return std::nullopt;
-            inv.i = as_int(elem);
-            return inv;
+            return invar_from_num_5307(node, *got);
         }
         if (name != "list-ref" || !callee_is_prim_5066(flat, pool, env, kids[0], name))
             return std::nullopt;
@@ -7346,8 +7443,9 @@ namespace {
         return inv;
     }
 
-    // (vector-ref v <index>) with a non-literal index. v is resolved once.
-    // The element is read again each step. A literal index stays in match_invar.
+    // (vector-ref v <index>) with a non-literal index. v is a variable or a
+    // literal-key hash-ref, resolved once. The element is read again each
+    // step. A literal index stays in match_invar.
     std::optional<VecRef5304> match_vecref_5304(const aura::ast::FlatAST& flat,
                                                 const aura::ast::StringPool& pool, const Env& env,
                                                 std::span<const aura::ast::SymId> params,
@@ -7361,13 +7459,17 @@ namespace {
             return std::nullopt;
         if (!callee_is_prim_5066(flat, pool, env, kids[0], "vector-ref"))
             return std::nullopt;
-        if (flat.tag(kids[1]) != aura::ast::NodeTag::Variable ||
-            param_index_5066(params, flat.sym_id(kids[1])) >= 0)
-            return std::nullopt;
         auto* owner = env.owner();
         if (owner == nullptr)
             return std::nullopt;
-        auto vec = read_any_5304(pool, env, flat.sym_id(kids[1]));
+        std::optional<EvalValue> vec;
+        if (flat.tag(kids[1]) == aura::ast::NodeTag::Variable) {
+            if (param_index_5066(params, flat.sym_id(kids[1])) >= 0)
+                return std::nullopt;
+            vec = read_any_5304(pool, env, flat.sym_id(kids[1]));
+        } else {
+            vec = resolve_hash_ref_call_5307(flat, pool, env, params, kids[1]);
+        }
         if (!vec || !is_vector(*vec))
             return std::nullopt;
         const auto vi = static_cast<std::size_t>(as_vector_idx(*vec));
@@ -7417,8 +7519,10 @@ namespace {
     // integers are snapshotted for this call (#5297). A pure nested call
     // (literal function, constant vector-ref, list-ref of a literal list) is
     // copied once (#5304). A varying vector-ref re-reads the slot each step.
-    // vector-length and car of a captured value are one copy. A miss returns
-    // nullopt and the interpreter re-reads that frame (#5116). The site table
+    // vector-length and car of a captured value are one copy. hash-ref of a
+    // literal key is one copy; a varying index re-reads that vector (#5307).
+    // A miss returns nullopt and the interpreter re-reads that frame (#5116).
+    // The site table
     // is thread-local, so a scheduler fiber runs the same loop.
     struct AccelLatch5066 {
         const aura::ast::FlatAST* flat = nullptr;

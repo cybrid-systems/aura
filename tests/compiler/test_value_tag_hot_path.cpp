@@ -489,6 +489,108 @@ static void ac8_named_let_calls_5304() {
     CHECK(neg.has_value() && is_error(*neg), "5304 negative vector-ref still errors");
 }
 
+// #5307: hash-ref of a literal key in a named let is one copy. A vector
+// value with a varying index re-reads that slot. A missing key still errors.
+static void ac9_named_let_hash_ref_5307() {
+    std::println("\n--- AC9 (#5307): named-let hash-ref stays on the numeric loop ---");
+    CompilerService cs;
+    constexpr int kSteps = 200000;
+    double mod_sum = 0.0;
+    for (int i = 0; i < kSteps; ++i)
+        mod_sum += static_cast<double>((i % 4) + 1);
+    const std::string live =
+        "(define Hv (hash \"px\" (vector 1.0 2.0 3.0 4.0 5.0 6.0) \"n\" 3 \"a\" 1 \"b\" 2 \"c\" "
+        "3))\n"
+        "(define (sum-v n) (let loop ((i 0) (s 0.0)) (if (< i n) (loop (+ i 1) (+ s (vector-ref "
+        "(hash-ref Hv \"px\") 5))) s)))\n"
+        "(define (sum-var n) (let loop ((i 0) (s 0.0)) (if (< i n) (loop (+ i 1) (+ s (vector-ref "
+        "(hash-ref Hv \"px\") (modulo i 4)))) s)))\n"
+        "(define (sum-off n) (let loop ((i 1) (s 0.0)) (if (> i n) s (loop (+ i 1) (+ s "
+        "(vector-ref (hash-ref Hv \"px\") (- i 1)))))))\n"
+        "(define (sum-i n) (let loop ((i 0) (s 0)) (if (< i n) (loop (+ i 1) (+ s (hash-ref Hv "
+        "\"n\"))) s)))\n"
+        "(define (sum-3 n) (let loop ((i 0) (s 0)) (if (< i n) (loop (+ i 1) (+ (+ (+ s (hash-ref "
+        "Hv \"a\")) (hash-ref Hv \"b\")) (hash-ref Hv \"c\"))) s)))\n"
+        "(define HK (hash 2 8))\n"
+        "(define (sum-k n) (let loop ((i 0) (s 0)) (if (< i n) (loop (+ i 1) (+ s (hash-ref HK "
+        "2))) s)))\n"
+        "(define (sum-arg t n) (let loop ((i 0) (s 0)) (if (< i n) (loop (+ i 1) (+ s (hash-ref t "
+        "\"n\"))) s)))\n"
+        "(define (sum-sh n) (let ((hash-ref (lambda (h k) 1))) (let loop ((i 0) (s 0)) (if (< i n) "
+        "(loop (+ i 1) (+ s (hash-ref Hv \"n\"))) s))))\n"
+        "(define (sum-re) (let loop ((i 0) (s 0) (h (hash \"n\" 4))) (if (>= i 2) s (loop (+ i 1) "
+        "(+ s (hash-ref h \"n\")) (hash \"n\" 9)))))\n"
+        "(define (sum-def n) (let loop ((i 0) (s 0)) (if (< i n) (loop (+ i 1) (+ s (hash-ref Hv "
+        "\"missing\" 7))) s)))\n"
+        "(define (sum-plain n) (let loop ((i 0) (s 0.0)) (if (< i n) (loop (+ i 1) (+ s 1.0)) "
+        "s)))\n"
+        "(define HN (hash \"n\" 3))\n"
+        "(define (sum-n n) (let loop ((i 0) (s 0)) (if (< i n) (loop (+ i 1) (+ s (hash-ref HN "
+        "\"n\"))) s)))\n"
+        "(define a (sum-v 4))\n"
+        "(define b (sum-var 4))\n"
+        "(define c (sum-off 4))\n"
+        "(define d (sum-i 4))\n"
+        "(define e (sum-3 4))\n"
+        "(define f (sum-k 4))\n"
+        "(define g (sum-arg (hash \"n\" 6) 3))\n"
+        "(define g2 (sum-arg (hash \"n\" 2) 3))\n"
+        "(define h (sum-sh 4))\n"
+        "(define rb (sum-re))\n"
+        "(define df (sum-def 4))\n"
+        "(define n1 (sum-n 4))\n"
+        "(hash-set! HN \"n\" 5)\n"
+        "(define n2 (sum-n 4))\n"
+        "(define Vx (vector 1.0 2.0 3.0 4.0 5.0 6.0))\n"
+        "(define Hx (hash \"px\" Vx))\n"
+        "(define (sum-x n) (let loop ((i 0) (s 0.0)) (if (< i n) (loop (+ i 1) (+ s (vector-ref "
+        "(hash-ref Hx \"px\") i))) s)))\n"
+        "(define x1 (sum-x 4))\n"
+        "(vector-set! Vx 1 10.0)\n"
+        "(define x2 (sum-x 4))\n"
+        "(define t0 (monotonic-ms))\n"
+        "(define rp (sum-plain " +
+        std::to_string(kSteps) +
+        "))\n"
+        "(define t1 (monotonic-ms))\n"
+        "(define rv (sum-v " +
+        std::to_string(kSteps) +
+        "))\n"
+        "(define t2 (monotonic-ms))\n"
+        "(define rm (sum-var " +
+        std::to_string(kSteps) +
+        "))\n"
+        "(define t3 (monotonic-ms))\n"
+        "(define ri (sum-i " +
+        std::to_string(kSteps) +
+        "))\n"
+        "(define t4 (monotonic-ms))\n"
+        "(display (list a b c d e f g g2 h rb df n1 n2 x1 x2 rp rv rm ri (- t1 t0) (- t2 t1) (- t3 "
+        "t2) (- t4 t3)))\n"
+        "(newline)\n"
+        "(if (and (= a 24.0) (= b 10.0) (= c 10.0) (= d 12) (= e 24) (= f 32) (= g 18) (= g2 6)"
+        " (= h 4) (= rb 13) (= df 28) (= n1 12) (= n2 20) (= x1 10.0) (= x2 18.0)"
+        " (= rp " +
+        std::to_string(kSteps) + ".0) (= rv " + std::to_string(static_cast<long long>(6) * kSteps) +
+        ".0) (= rm " + std::to_string(static_cast<long long>(mod_sum)) + ".0) (= ri " +
+        std::to_string(static_cast<long long>(3) * kSteps) +
+        ")"
+        " (< (- t2 t1) (+ (* (- t1 t0) 3) 40))"
+        " (< (- t3 t2) (+ (* (- t1 t0) 3) 40))"
+        " (< (- t4 t3) (+ (* (- t1 t0) 3) 40))) 1 0)\n";
+    auto live_r = cs.eval(live);
+    CHECK(live_r.has_value() && types::is_int(*live_r) && types::as_int(*live_r) == 1,
+          "5307 hash-ref values match and stay near the add loop");
+    auto miss = cs.eval(
+        "(let ((h (hash \"n\" 1))) (let loop ((i 0) (s 0)) (if (>= i 2) s (loop (+ i 1) (+ s "
+        "(hash-ref h \"no\"))))))");
+    CHECK(miss.has_value() && is_error(*miss), "5307 missing hash key still errors");
+    auto oob = cs.eval(
+        "(let ((h (hash \"px\" (vector 1)))) (let loop ((i 0) (s 0)) (if (>= i 3) s (loop (+ i 1) "
+        "(+ s (vector-ref (hash-ref h \"px\") i))))))");
+    CHECK(oob.has_value() && is_error(*oob), "5307 vector-ref past the end still errors");
+}
+
 } // namespace
 
 int run_test_value_tag_hot_path() {
@@ -501,6 +603,7 @@ int run_test_value_tag_hot_path() {
     ac6_classify_order_4524();
     ac7_float_local_loop_4524();
     ac8_named_let_calls_5304();
+    ac9_named_let_hash_ref_5307();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
