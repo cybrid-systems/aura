@@ -544,6 +544,11 @@ run_test "git:status" "$(printf '(begin (require "std/git" all:) (string? (git-s
 run_test "git:diff" "$(printf '(begin (require "std/git" all:) (string? (git-diff)))')" "#t"
 run_test "git:log" "$(printf '(begin (require "std/git" all:) (string? (git-log 5)))')" "#t"
 
+# Issue #5238/#5004: requiring std/evo re-defines the strategy:* primitives
+# with the value-based layer on purpose; loading it must stay quiet because
+# the bash harness compares the whole combined output.
+run_test "evo:load-quiet" "$(printf '(begin (require std/evo all:) #t)')" "#t"
+
 # safe-refactor module loads cleanly
 run_test "safe-refactor:loaded" "$(printf '(begin (require std/safe-refactor all:) #t)')" "#t"
 
