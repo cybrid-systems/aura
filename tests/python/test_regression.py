@@ -19,6 +19,21 @@ from regression_cases import load_regression_cases
 
 REPO = Path(__file__).resolve().parents[2]  # #1932 repo root
 
+
+def _service_source():
+    """#5242: read the service module as the compiler sees it.
+
+    The interface keeps declarations; member bodies live in
+    src/compiler/service_*.cpp units. Source rows that pin a sentence from
+    a body read the interface plus every unit, then drop the out-of-class
+    ``CompilerService::`` qualifier so pins written for the old in-class
+    bodies keep matching (mirrors tests/support/service_module_source.hh).
+    """
+    parts = [unit.read_text(encoding="utf-8") for unit in sorted((REPO / "src/compiler").glob("service_*.cpp"))]
+    parts.append((REPO / "src/compiler/service.ixx").read_text(encoding="utf-8"))
+    return "".join(parts).replace("CompilerService::", "")
+
+
 # Issue #3627 pack-strict binding: AURA is the production pack binary
 # (Forbidden with env unset — AURA_SANDBOX=off no longer selects the
 # walker on the pack), which hard-errored the walker-side P0 regression
@@ -2238,9 +2253,10 @@ def test_jit_redefine_4604():
     second = session_ir(";;ir g#2")
     assert re.search(r'define i64 @"g#\d+"\(', second), second[:400]
     # Source cite: the exec_jit compile loop splits a duplicate name
-    # instead of evicting the first module.
-    svc = (REPO / "src/compiler/service.ixx").read_text(encoding="utf-8")
-    assert "Issue #4604" in svc, "service.ixx does not cite #4604"
+    # instead of evicting the first module (#5242: body moved to
+    # service_exec_jit.cpp).
+    svc = _service_source()
+    assert "Issue #4604" in svc, "service module does not cite #4604"
     assert "jit_symbol_names" in svc, "the duplicate-name symbol split is missing"
     print(f"  ✅ test_jit_redefine_4604 ({len(programs)} programs x 6 modes; distinct body symbols)")
 
@@ -4702,7 +4718,8 @@ def test_fiber_lock_order_inversion_4711():
 
     # Source contract: eval() takes M0 then M1 and publishes M1 for the
     # wait hooks; every M0 wait guard drops M1 first and re-takes it last.
-    svc = (REPO / "src/compiler/service.ixx").read_text(encoding="utf-8")
+    # #5242: the body moved to service_eval.cpp.
+    svc = _service_source()
     i_body = svc.find("aura::messaging::CliMainEvalBodyLock cli_body_lock;")
     i_lock = svc.find("std::unique_lock<std::recursive_mutex> lock(eval_mutex_);")
     i_pub = svc.find("EvalMutexWaitPublishScope eval_mutex_wait_scope(eval_mutex_);")
@@ -5574,7 +5591,8 @@ def test_fiber_sibling_define_dispatch_4712():
             os.remove(path)
     # Source rows: the fallback resolves an index miss by binding identity,
     # and the wholesale clear it compensates for is still in place.
-    svc = (REPO / "src/compiler/service.ixx").read_text(encoding="utf-8")
+    # #5242: the body moved to service_dispatch_define.cpp.
+    svc = _service_source()
     assert "Issue #4712" in svc, "#4712: the dispatch fallback citation is gone"
     assert "owner_name = &kv.first" in svc, (
         "#4712: dispatch_ir_define_closure no longer resolves a cleared-index id to its live binding"
@@ -5637,7 +5655,8 @@ def test_fiber_sibling_dispatch_across_rebind_4715_regression():
         assert "BENCH fibers 1000010200 " in out, (
             f"#4715 regression attempt {attempt}: expected the bench line, got {out[-200:]!r}"
         )
-    svc = (REPO / "src/compiler/service.ixx").read_text(encoding="utf-8")
+    # #5242: the retired-id history moved to service_dispatch_define.cpp.
+    svc = _service_source()
     assert "retire_ir_define_closure_" in svc, "#4715 regression: the retired define-closure history is gone"
     assert "retired_define_closure_owner_.find(cid)" in svc, (
         "#4715 regression: dispatch no longer resolves a superseded define id"

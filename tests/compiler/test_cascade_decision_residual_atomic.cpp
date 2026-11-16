@@ -71,7 +71,7 @@ using aura::compiler::CompilerService;
 static void ac3257_1_last_look_source() {
     std::println("\n--- #3257 AC1: last-look armed / size before peel ---");
     const auto ixx = aura_test::service_module_source();
-    auto pos = ixx.find("std::size_t CompilerService::relower_dirty_defines_from_workspace()");
+    auto pos = ixx.find("std::size_t relower_dirty_defines_from_workspace()");
     CHECK(pos != std::string::npos, "3257 AC1: relower present");
     // Brace-matched relower body: #3491/#3611/#4172 kept growing it past the
     // old 30000/34200-char windows; the body itself is the window.
@@ -292,8 +292,7 @@ int run_test_cascade_decision_residual_atomic_3135() {
                     "AC1 reject path sets armed under lock");
 
         // relower_dirty_defines_from_workspace: critical section + re-check.
-        auto rel_pos =
-            ixx.find("std::size_t CompilerService::relower_dirty_defines_from_workspace()");
+        auto rel_pos = ixx.find("std::size_t relower_dirty_defines_from_workspace()");
         CHECK(rel_pos != std::string::npos, "AC1: relower function definition");
         // Window covers the #3257/#3283/#3348 last-look additions inside
         // relower (function body grew past 8KB after the #3480-#3491 P0 wave;
@@ -314,7 +313,7 @@ int run_test_cascade_decision_residual_atomic_3135() {
     // ── AC2: Soft / sandbox=off + clean (armed==0) skips the lock for zero cost ──
     {
         std::println("\n--- AC2: Soft skip path ---");
-        auto pos = ixx.find("std::size_t CompilerService::relower_dirty_defines_from_workspace()");
+        auto pos = ixx.find("std::size_t relower_dirty_defines_from_workspace()");
         auto end = pos + 12000; // #3310 moved the consult deeper into the fn
         auto block = ixx.substr(pos, end - pos);
         // need_lock must be the gate that decides skip-or-take.
@@ -329,7 +328,7 @@ int run_test_cascade_decision_residual_atomic_3135() {
     // ── AC3: Quiet happy path — no extra lock when need_lock is false ──
     {
         std::println("\n--- AC3: quiet happy path no extra lock ---");
-        auto pos = ixx.find("std::size_t CompilerService::relower_dirty_defines_from_workspace()");
+        auto pos = ixx.find("std::size_t relower_dirty_defines_from_workspace()");
         auto end = pos + 12000; // #3310 moved the consult deeper into the fn
         auto block = ixx.substr(pos, end - pos);
         // The defer_lock pattern ensures no atomic acquire happens when
@@ -363,7 +362,7 @@ int run_test_cascade_decision_residual_atomic_3135() {
     // ── AC4: Existing #3067 + #3097 paths preserved + re-check force-full ──
     {
         std::println("\n--- AC4: existing #3067 + #3097 + re-check force-full ---");
-        auto pos = ixx.find("std::size_t CompilerService::relower_dirty_defines_from_workspace()");
+        auto pos = ixx.find("std::size_t relower_dirty_defines_from_workspace()");
         // #3310 moved the consult deeper; #3381 caller-union + #3348
         // last-look grew the body past 12000; the #3646-era SSOT/audit
         // growth pushed the #3097 impact_ub consult past 20000 (~20.8k
@@ -648,7 +647,7 @@ static void ac3283_1_source_shape() {
 static void ac3283_2_gen_recheck_fail_closed() {
     std::println("\n--- #3283 AC2: gen0 snapshot + pre-peel fail-closed re-check ---");
     auto ixx = aura_test::service_module_source();
-    auto pos = ixx.find("std::size_t CompilerService::relower_dirty_defines_from_workspace()");
+    auto pos = ixx.find("std::size_t relower_dirty_defines_from_workspace()");
     CHECK(pos != std::string::npos, "3283 AC2: relower def");
     auto rel = ixx.substr(
         pos, 40000); // window covers relower growth through #3491; #3611 pushed cone_hit past
@@ -716,7 +715,7 @@ static void ac3283_4_linter_wiring() {
 static void ac3348_1_last_look_source() {
     std::println("\n--- #3348 AC1: last-look mirror counters before partial ---");
     auto ixx = aura_test::service_module_source();
-    auto pos = ixx.find("std::size_t CompilerService::relower_dirty_defines_from_workspace()");
+    auto pos = ixx.find("std::size_t relower_dirty_defines_from_workspace()");
     CHECK(pos != std::string::npos, "3348 AC1: relower def");
     auto rel =
         ixx.substr(pos, 42000); // relower body ends ~35.5KB after #3611; 37KB stays inside fn;

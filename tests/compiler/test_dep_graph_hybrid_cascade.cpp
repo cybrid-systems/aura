@@ -580,9 +580,9 @@ static void ac3187_production_fail_closed_default() {
         if (rd_pos == std::string::npos)
             rd_pos = svc.find("void record_dependency(");
         CHECK(rd_pos != std::string::npos, "ac3187 AC2: record_dependency definition");
-        auto rd_end = svc.find("\n    }\n", rd_pos);
-        if (rd_end == std::string::npos)
-            rd_end = rd_pos + 8000;
+        // #5242: the body now lives in an out-of-class unit, where nested
+        // blocks also close at four spaces; a fixed window is the stable end.
+        auto rd_end = rd_pos + 12000;
         auto rd_win = svc.substr(rd_pos, rd_end - rd_pos);
         CHECK(rd_win.find("dual_dep_graph_strict_or_production()") != std::string::npos,
               "ac3187 AC2: record_dependency Strict gate uses dual_dep_graph_strict_or_production");
@@ -601,9 +601,7 @@ static void ac3187_production_fail_closed_default() {
         const auto svc = aura_test::service_module_source();
         auto drain_pos = svc.find("void drain_deferred_hybrid_cascade_()");
         CHECK(drain_pos != std::string::npos, "ac3187 AC3: drain_deferred_hybrid_cascade_ present");
-        auto drain_end = svc.find("\n    }\n", drain_pos);
-        if (drain_end == std::string::npos)
-            drain_end = drain_pos + 5000;
+        auto drain_end = drain_pos + 12000;
         auto drain_win = svc.substr(drain_pos, drain_end - drain_pos);
         CHECK(drain_win.find("dual_dep_graph_strict_or_production()") != std::string::npos,
               "ac3187 AC3: drain_deferred_hybrid_cascade_ Strict gate uses "
@@ -763,9 +761,7 @@ static void ac3255_2_production_unchanged() {
     if (rd_pos == std::string::npos)
         rd_pos = svc.find("void record_dependency(");
     CHECK(rd_pos != std::string::npos, "ac3255 AC2: record_dependency definition");
-    auto rd_end = svc.find("\n    }\n", rd_pos);
-    if (rd_end == std::string::npos)
-        rd_end = rd_pos + 8000;
+    auto rd_end = rd_pos + 12000;
     auto rd_win = svc.substr(rd_pos, rd_end - rd_pos);
     CHECK(rd_win.find("dual_dep_graph_strict_or_production()") != std::string::npos,
           "ac3255 AC2: record_dependency still uses dual_dep_graph_strict_or_production");
@@ -775,9 +771,7 @@ static void ac3255_2_production_unchanged() {
 
     auto drain_pos = svc.find("void drain_deferred_hybrid_cascade_()");
     CHECK(drain_pos != std::string::npos, "ac3255 AC2: drain_deferred_hybrid_cascade_ present");
-    auto drain_end = svc.find("\n    }\n", drain_pos);
-    if (drain_end == std::string::npos)
-        drain_end = drain_pos + 5000;
+    auto drain_end = drain_pos + 12000;
     auto drain_win = svc.substr(drain_pos, drain_end - drain_pos);
     CHECK(drain_win.find("dual_dep_graph_strict_or_production()") != std::string::npos,
           "ac3255 AC2: drain still uses dual_dep_graph_strict_or_production");
@@ -814,18 +808,19 @@ static void ac3255_3_clean_soft_zero_extra() {
     (void)forced0; // impact_ub may still force full; parity path must not.
 
     const auto svc = aura_test::service_module_source();
-    auto help_pos = svc.find("fail_closed_soft_dual_graph_parity_before_partial_");
+    auto help_pos = svc.find("bool fail_closed_soft_dual_graph_parity_before_partial_cone_(");
     CHECK(help_pos != std::string::npos, "ac3255 AC3: Soft parity helper present");
-    auto help_win = svc.substr(help_pos > 2000 ? help_pos - 2000 : 0, 4500);
-    CHECK(help_win.find("Issue #3255") != std::string::npos,
-          "ac3255 AC3: helper cites Issue #3255");
+    auto help_win = svc.substr(help_pos, 6500);
+    // #5242 split the helper into service_soft_parity.cpp; the #3255 cite
+    // stays at the relower call site and in the interface.
+    CHECK(svc.find("Issue #3255") != std::string::npos, "ac3255 AC3: helper cites Issue #3255");
     CHECK(help_win.find("graphs_consistent") != std::string::npos,
           "ac3255 AC3: peel-time graphs_consistent re-check");
     CHECK(help_win.find("OrderedSharedLock") != std::string::npos,
           "ac3255 AC3: consistent path is shared-lock walk");
     CHECK(help_win.find("rebuild_node_dep_graph_from_string") != std::string::npos,
           "ac3255 AC3: rebuild only on fail");
-    auto rel_pos = svc.find("std::size_t CompilerService::relower_dirty_defines_from_workspace()");
+    auto rel_pos = svc.find("std::size_t relower_dirty_defines_from_workspace()");
     CHECK(rel_pos != std::string::npos, "ac3255 AC3: relower_dirty_defines_from_workspace present");
     auto rel_win = svc.substr(rel_pos, 8000);
     CHECK(rel_win.find("fail_closed_soft_dual_graph_parity_before_partial_") != std::string::npos,
@@ -1045,7 +1040,7 @@ static void ac3486_2_cross_fiber() {
 static void ac3486_3_soft_zero_extra() {
     std::println("\n--- #3486 AC3: Soft already-consistent — inject unused ---");
     const auto svc = aura_test::service_module_source();
-    auto rel_pos = svc.find("std::size_t CompilerService::relower_dirty_defines_from_workspace()");
+    auto rel_pos = svc.find("std::size_t relower_dirty_defines_from_workspace()");
     CHECK(rel_pos != std::string::npos, "3486 AC3: peel found");
     auto rel_win = aura::test::aura_source_block_after(svc, rel_pos);
     CHECK(rel_win.find("Issue #3486") != std::string::npos, "3486 AC3: peel cites #3486");
@@ -1111,7 +1106,7 @@ static void ac3615_1_cone_wide_non_front_fork() {
 static void ac3615_2_soft_erased_hole_take_full() {
     std::println("\n--- #3615 AC2: Soft-erased hole detection (source-cite + cone helper) ---");
     const auto svc = aura_test::service_module_source();
-    const auto cone_pos = svc.find("fail_closed_soft_dual_graph_parity_before_partial_cone_");
+    const auto cone_pos = svc.find("bool fail_closed_soft_dual_graph_parity_before_partial_cone_(");
     CHECK(cone_pos != std::string::npos, "3615 AC2: cone helper present");
     if (cone_pos != std::string::npos) {
         const auto win = svc.substr(cone_pos, 8500);
@@ -1137,7 +1132,7 @@ static void ac3615_2_soft_erased_hole_take_full() {
 static void ac3615_3_soft_zero_extra_path() {
     std::println("\n--- #3615 AC3: Soft/Off zero extra (production/Full gate only) ---");
     const auto svc = aura_test::service_module_source();
-    const auto cone_pos = svc.find("fail_closed_soft_dual_graph_parity_before_partial_cone_");
+    const auto cone_pos = svc.find("bool fail_closed_soft_dual_graph_parity_before_partial_cone_(");
     CHECK(cone_pos != std::string::npos, "3615 AC3: cone helper present");
     if (cone_pos != std::string::npos) {
         // Window starts 1500 chars before cone_pos to capture the function
@@ -1155,8 +1150,7 @@ static void ac3615_3_soft_zero_extra_path() {
     }
     // The #3486 front-only block must be replaced: the relower function
     // must use the cone helper (not the old front-only lookup).
-    const auto rel_pos =
-        svc.find("std::size_t CompilerService::relower_dirty_defines_from_workspace()");
+    const auto rel_pos = svc.find("std::size_t relower_dirty_defines_from_workspace()");
     CHECK(rel_pos != std::string::npos, "3615 AC3: peel function present");
     if (rel_pos != std::string::npos) {
         const auto rel_win = aura::test::aura_source_block_after(svc, rel_pos);
@@ -1266,7 +1260,8 @@ static void ac3761_2_ghost_node_only_still_remirrors() {
     CHECK(!cs.public_node_dep_has_mirror_edge("ghost3761", "f"),
           "3761 AC2: node-only ghost dropped by string SSOT remirror");
     const auto svc = aura_test::service_module_source();
-    CHECK(svc.find("fail_closed_soft_dual_graph_parity_before_partial_cone_") != std::string::npos,
+    CHECK(svc.find("bool fail_closed_soft_dual_graph_parity_before_partial_cone_(") !=
+              std::string::npos,
           "3761 AC2: cone helper");
     const auto cite = svc.find("Issue #3761: decode node dependents");
     CHECK(cite != std::string::npos, "3761 AC2: #3761 cite");
