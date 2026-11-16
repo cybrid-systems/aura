@@ -15,7 +15,7 @@
 ; variable, so two searches can run side by side.
 ;
 ; Candidates
-;   vector  — list of numbers              (grid pso abc fss es anneal)
+;   vector  — list of numbers              (grid pso abc fss es anneal clonal)
 ;   arm     — a string name                (ant bandit)
 ;   edits   — ordered list of edit names   (beam)
 ;
@@ -29,6 +29,7 @@
 ;   anneal  simulated annealing over one candidate
 ;   bandit  UCB / Thompson over arms (shared with std/evo)
 ;   beam    beam search over a finite edit tree
+;   clonal  clonal selection: clone count ∝ β·N/rank, mutation ∝ exp(-ρ·f)
 ;
 ; boids is not a kind: it is coupling between agents, and it stays a
 ; std/orch coordination example (#5007).
@@ -44,7 +45,7 @@
 ; Import: (require "std/search" all:)
 
 (export search:init search:step search:batch search:run search:pending
-        search:best search:best-score search:export search:kind search:gen
+        search:best search:best-score search:export search:import search:kind search:gen
         search:kinds search:complete? search:help)
 
 (require "std/list" all:)
@@ -81,7 +82,8 @@
 (define (search:complete? st) (= 0 (length (search:pending st))))
 
 (define (search:kinds)
-  (list "grid" "pso" "abc" "fss" "ant" "es" "anneal" "bandit" "beam"))
+  (list "grid" "pso" "abc" "fss" "ant" "es" "anneal" "bandit" "beam"
+        "clonal"))
 
 ; Shared by every kind whose option list includes bounds.
 (define search-bounds-help
@@ -107,7 +109,10 @@
                  search-bounds-help))
     (list "anneal" "simulated annealing; options: start step cooling iterations")
     (list "bandit" "UCB / Thompson arms; options: arms policy")
-    (list "beam" "beam search; options: root tree width")))
+    (list "beam" "beam search; options: root tree width")
+    (list "clonal" (string-append
+                     "clonal selection; options: dim pop select clone-factor mutation replace genes seed"
+                     search-bounds-help))))
 
 ;; ═══════════════════════════════════════════════════════════════
 ;; PRNG (LCG, value-threaded)
@@ -315,6 +320,14 @@
                                   (cons "width" (max 1 (oget opts "width" 2)))
                                   (cons "tree" (oget opts "tree" (hash)))
                                   (cons "done" (quote ()))))))
+      ((string=? kind "clonal")
+       (let loop ((i 0) (ps (quote ())) (s seed))
+         (if (>= i pop)
+           (search-init-state kind opts 0 (reverse ps) pop (quote ()))
+           (let ((rv (if (and (= i 0) (pair? (oget opts "start" #f)))
+                       (cons (oget opts "start" #f) s)
+                       (search-clonal-rand opts dim s))))
+             (loop (+ i 1) (cons (car rv) ps) (cdr rv))))))
       (else (error (string-append "search:init: unknown kind " kind))))))
 
 (define (search-zero-vec n)
@@ -379,6 +392,7 @@
       ((string=? kind "anneal") (search-advance-anneal state1 pairs))
       ((string=? kind "bandit") (search-advance-bandit state1 pairs))
       ((string=? kind "beam") (search-advance-beam state1 pairs))
+      ((string=? kind "clonal") (search-advance-clonal state1 pairs))
       (else state1))))
 
 (define (search-zip a b)
@@ -692,6 +706,123 @@
       (let ((r (search-rand seed)))
         (loop (+ d 1) (cons (if (< (car r) 0.5) 0 1) acc) (cdr r))))))
 
+;; ── clonal: CLONALG — affinity ranks the clone count, mutation
+;;    strength falls with affinity, the d worst slots are refilled ──
+
+; Discrete genes: opts "genes" is a list of value tables, one per dimension.
+; Dimension d is discrete when its table is a non-empty list, and mutation
+; swaps the value for another entry of that table instead of adding noise.
+(define (search-clonal-table opts d)
+  (let ((g (oget opts "genes" (quote ()))))
+    (if (or (not (list? g)) (>= d (length g))) (quote ())
+      (let ((tab (list-ref g d)))
+        (if (pair? tab) tab (quote ()))))))
+
+(define (search-clonal-index tab x)
+  (let loop ((xs tab) (i 0))
+    (cond ((null? xs) -1)
+          ((equal? (car xs) x) i)
+          (else (loop (cdr xs) (+ i 1))))))
+
+; Uniform draw per gene: a table entry for a discrete dimension, a point
+; inside the bound otherwise.
+(define (search-clonal-rand opts dim s)
+  (let loop ((d 0) (acc (quote ())) (seed s))
+    (if (>= d dim) (cons (reverse acc) seed)
+      (let* ((tab (search-clonal-table opts d))
+             (r (search-rand seed)))
+        (if (pair? tab)
+          (loop (+ d 1)
+                (cons (list-ref tab
+                                (modulo (search-next-seed (cdr r)) (length tab)))
+                      acc)
+                (cdr r))
+          (let* ((b (search-bound opts d))
+                 (lo (car b))
+                 (hi (car (cdr b))))
+            (loop (+ d 1) (cons (+ lo (* (car r) (- hi lo))) acc) (cdr r))))))))
+
+; scale is exp(-ρ·affinity) in (0, 1]: 1.0 for the least affine member,
+; exp(-ρ) for the best. A continuous gene moves by gauss · 0.3 · span ·
+; scale; a discrete gene swaps to another table entry with probability
+; scale, so a good clone barely moves and a poor one jumps.
+(define (search-clonal-mutate opts parent scale s)
+  (let loop ((d 0) (acc (quote ())) (seed s))
+    (if (>= d (length parent)) (cons (reverse acc) seed)
+      (let* ((tab (search-clonal-table opts d))
+             (r (search-rand seed)))
+        (if (pair? tab)
+          (let* ((len (length tab))
+                 (cur (search-clonal-index tab (search-list-ref parent d)))
+                 (off (+ 1 (modulo (search-next-seed (cdr r)) (max 1 (- len 1)))))
+                 (other (list-ref tab (modulo (+ (max 0 cur) off) len)))
+                 (val (if (< (car r) scale) other (search-list-ref parent d))))
+            (loop (+ d 1) (cons val acc) (cdr r)))
+          (let* ((g (search-gauss (cdr r)))
+                 (b (search-bound opts d))
+                 (x (+ (search-list-ref parent d)
+                       (* 0.3 scale (- (car (cdr b)) (car b)) (car g)))))
+            (loop (+ d 1)
+                  (cons (search-clip x (car b) (car (cdr b))) acc)
+                  (cdr g))))))))
+
+; Min-max over the scored population; a flat generation has no ranking, so
+; every member is treated as mid-affinity.
+(define (search-clonal-affinity score lo hi)
+  (if (<= (- hi lo) 0.000000000001)
+    0.5
+    (/ (- score lo) (- hi lo))))
+
+; One clone of `parent` for every slot the rank earned.
+(define (search-clonal-clone opts parent scale n s)
+  (let loop ((k 0) (acc (quote ())) (seed s))
+    (if (>= k n) (cons (reverse acc) seed)
+      (let ((mut (search-clonal-mutate opts parent scale seed)))
+        (loop (+ k 1) (cons (car mut) acc) (cdr mut))))))
+
+; Clone pool: rank i (1-based, best first) contributes round(β·N/i) clones,
+; at least one. The pool is therefore β·N·H_sel long; β = 0.5 and sel = N/2
+; puts it near N, which is the usual one-generation budget.
+(define (search-clonal-generation opts parents rho lo hi beta pop fresh seed)
+  (let* ((dim (length (car (car parents))))
+         (clones
+          (let loop ((ps parents) (r 1) (s seed) (acc (quote ())))
+            (if (null? ps) (cons acc s)
+              (let* ((p (car ps))
+                     (aff (search-clonal-affinity (cdr p) lo hi))
+                     (scale (search-exp (- 0.0 (* rho aff))))
+                     (nc (max 1 (round (/ (* beta pop) r))))
+                     (mut (search-clonal-clone opts (car p) scale nc s)))
+                (loop (cdr ps) (+ r 1) (cdr mut)
+                      (search-append-pairs acc (car mut)))))))
+         (news
+          (let loop ((k fresh) (s (cdr clones)) (acc (quote ())))
+            (if (<= k 0) (cons (reverse acc) s)
+              (let ((rv (search-clonal-rand opts dim s)))
+                (loop (- k 1) (cdr rv) (cons (car rv) acc)))))))
+    (cons (append (car clones) (car news)) (cdr news))))
+
+; One generation: the best candidate carries over unmutated, rank i gets
+; β·N/i mutated clones, and the d worst slots are fresh random individuals
+; instead of clones (CLONALG's receptor edit). `pop` is the population
+; size from init, so the batch size does not drift between generations.
+(define (search-advance-clonal state pairs)
+  (let* ((opts (sget state "opts" (hash)))
+         (n (max 1 (length pairs)))
+         (pop (max 1 (sget state "pop" n)))
+         (sorted (search-sort-pairs-desc pairs))
+         (hi (cdr (car sorted)))
+         (lo (cdr (car (search-reverse-pairs sorted))))
+         (d-n (max 0 (oget opts "replace" 1)))
+         (sel (min (max 1 (oget opts "select" (max 1 (quotient pop 2)))) n))
+         (beta (max 0.0 (oget opts "clone-factor" 0.5)))
+         (rho (max 0.0 (oget opts "mutation" 2.0)))
+         (parents (search-take sorted sel))
+         (off (search-clonal-generation opts parents rho lo hi beta pop d-n
+                                        (sget state "seed" 424242))))
+    (sput (sput state "pending" (cons (car (car sorted)) (car off)))
+          "seed" (cdr off))))
+
 ;; ── anneal ──
 (define (search-advance-anneal state pairs)
   (let* ((opts (sget state "opts" (hash)))
@@ -885,4 +1016,28 @@
         "pop" (sget state "pop" 8)
         "seed" (sget state "seed" 424242)
         "opts" (sget state "opts" (hash))
-        "pending" (sget state "pending" (quote ()))))
+        "pending" (sget state "pending" (quote ()))
+        "scored" (sget state "scored" (quote ()))
+        "extra" (sget state "extra" (quote ()))))
+
+; The other half of export: the same alist search:init builds, so a search
+; resumes where the blob was taken, mid-generation included. "extra" is the
+; kind's own population or bookkeeping and travels with it.
+(define (search:import blob)
+  (cond
+    ((not (hash? blob))
+     (error "search:import: expected the hash search:export returns"))
+    ((not (string? (hash-ref blob "kind" #f)))
+     (error "search:import: blob has no kind"))
+    (else
+     (let* ((st (search-init-state (hash-ref blob "kind" "grid")
+                                   (hash-ref blob "opts" (hash))
+                                   (hash-ref blob "gen" 0)
+                                   (hash-ref blob "pending" (quote ()))
+                                   (hash-ref blob "pop" 8)
+                                   (hash-ref blob "extra" (quote ()))))
+            (st1 (sput (sput st "best" (hash-ref blob "best" #f))
+                       "best-score"
+                       (hash-ref blob "best-score" -1000000000.0))))
+       (sput (sput st1 "scored" (hash-ref blob "scored" (quote ())))
+             "seed" (hash-ref blob "seed" 424242))))))
