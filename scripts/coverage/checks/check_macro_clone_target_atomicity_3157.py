@@ -93,13 +93,15 @@ def _read_text(path: Path) -> tuple[str, bool]:
 
 
 REQUIRED_PATTERNS = (
-    # --- AC1: ExpandCheckpointGuard struct + install in clone_macro_body_at_depth ---
+    # --- AC1: ExpandCheckpointGuard + install in clone_macro_body_at_depth ---
+    # Issue #5243: the guard type is shared at namespace scope now; the clone
+    # frame must still declare its own instance (same lifetime as before).
     (
-        "clone_macro_body_at_depth has ExpandCheckpointGuard struct",
+        "clone_macro_body_at_depth declares ExpandCheckpointGuard expand_ckpt",
         re.compile(
             r"static\s+aura::ast::NodeId\s+clone_macro_body_at_depth\s*\("
             + _BODY_OPEN
-            + r"struct\s+ExpandCheckpointGuard\s*\{"
+            + r"ExpandCheckpointGuard\s+expand_ckpt\s*;"
         ),
         1,
         MACRO_EXPANSION_CPP,

@@ -1181,7 +1181,7 @@ int run_test_concurrent_clone_hygiene_depth() {
                   me.find("if (hygiene_depth == 0)") != std::string::npos,
               "3685: guard captures session at top-level entry");
         // TLS mirrors stay written (diagnostics preserved).
-        CHECK(me.find("s_force_hygienic = chk.effective.force_hygienic;") != std::string::npos,
+        CHECK(me.find("s_force_hygienic() = chk.effective.force_hygienic;") != std::string::npos,
               "3685: TLS mirrors kept for diagnostics");
         // Depth stays the explicit argument (no TLS depth authority).
         CHECK(me.find("hygiene_depth + 1") != std::string::npos, "3685: depth still explicit");

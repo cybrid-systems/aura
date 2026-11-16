@@ -1878,6 +1878,90 @@ constexpr int kUnquoteCallerScopeDepth = -1;
 
 // Issue #2806: internal recursive entry with explicit depth (not TLS).
 // Public clone_macro_body(...) is a depth=0 wrapper.
+// Issue #5243: one rollback guard for the clone walk and the pass loop
+// (#3157 / #3062 / #3608 / #4078). The pass loop arms caller edges; the
+// clone walk leaves them inert, so the try_restore order is unchanged.
+struct PassLoopCallerRollback {
+    aura::ast::FlatAST* flat = nullptr;
+    std::size_t size0 = 0;
+    bool armed = false;
+    decltype(std::declval<aura::ast::FlatAST&>().snapshot_children()) children;
+    aura::ast::FlatAST::MarkerProvenanceSnapshot markers;
+    std::vector<std::uint8_t> macro_dirty_prefix;
+    void arm(aura::ast::FlatAST& tree) {
+        if (armed)
+            return;
+        children = tree.snapshot_children();
+        markers = tree.snapshot_marker_provenance();
+        flat = &tree;
+        size0 = tree.size();
+        tree.snapshot_macro_dirty_prefix(size0, macro_dirty_prefix);
+        armed = true;
+    }
+    // Truncate before restore so free_orphan does not push ids the
+    // column resize drops.
+    void rollback() noexcept {
+        if (!armed || flat == nullptr)
+            return;
+        auto* tree = flat;
+        const auto keep = size0;
+        auto snap = std::move(children);
+        auto marks = std::move(markers);
+        auto dirty = std::move(macro_dirty_prefix);
+        armed = false;
+        flat = nullptr;
+        try {
+            if (tree->size() > keep)
+                tree->truncate_to(keep);
+            tree->restore_children(std::move(snap));
+            tree->restore_marker_provenance(std::move(marks));
+            // Issue #4309: prefix only. Success path does not roll back.
+            tree->restore_macro_dirty_prefix(dirty);
+        } catch (...) {
+            // [SILENCE-PRIM-#615] child restore failed; still drop the refused tail.
+            if (tree->size() > keep)
+                tree->truncate_to(keep);
+        }
+    }
+};
+
+struct ExpandCheckpointGuard {
+    bool owned = false;
+    bool consumed = false;
+    aura::ast::FlatAST* local_target = nullptr;
+    std::size_t local_size0 = 0;
+    PassLoopCallerRollback caller;
+    ExpandCheckpointGuard() = default;
+    ExpandCheckpointGuard(const ExpandCheckpointGuard&) = delete;
+    ExpandCheckpointGuard& operator=(const ExpandCheckpointGuard&) = delete;
+    ExpandCheckpointGuard(ExpandCheckpointGuard&&) = delete;
+    ExpandCheckpointGuard& operator=(ExpandCheckpointGuard&&) = delete;
+    void ensure_installed() noexcept {
+        if (owned || consumed)
+            return;
+        owned = install_macro_expand_checkpoint() != 0;
+    }
+    void install_local_snapshot(aura::ast::FlatAST& tree) noexcept {
+        if (local_target != nullptr)
+            return;
+        local_target = &tree;
+        local_size0 = tree.size();
+    }
+    void arm_caller_edges(aura::ast::FlatAST& tree) { caller.arm(tree); }
+    void try_restore() noexcept {
+        consumed = true;
+        if (owned)
+            (void)aura_evaluator_try_restore_macro_expand_checkpoint();
+        else if (local_target != nullptr)
+            local_target->truncate_to(local_size0);
+        caller.rollback();
+    }
+    ~ExpandCheckpointGuard() {
+        if (owned && !consumed)
+            aura_evaluator_commit_macro_expand_checkpoint();
+    }
+};
+
 static aura::ast::NodeId clone_macro_body_at_depth(
     aura::ast::FlatAST& target, aura::ast::StringPool& target_pool, aura::ast::FlatAST& source,
     aura::ast::StringPool& source_pool, aura::ast::NodeId body_id,
@@ -2365,49 +2449,10 @@ static aura::ast::NodeId clone_macro_body_at_depth(
     // itself is a no-op when a MutationBoundary is already active, so
     // existing boundary callers continue to roll back via the boundary
     // itself (no double-rollback).
-    // #3157 pins `struct ExpandCheckpointGuard {`. Copy is deleted here
-    // instead of a NoCopy base so that spelling, and the install/restore
-    // calls below, stay the rollback contract.
-    struct ExpandCheckpointGuard {
-        bool owned = false;
-        bool consumed = false;
-        ExpandCheckpointGuard() = default;
-        ExpandCheckpointGuard(const ExpandCheckpointGuard&) = delete;
-        ExpandCheckpointGuard& operator=(const ExpandCheckpointGuard&) = delete;
-        ExpandCheckpointGuard(ExpandCheckpointGuard&&) = delete;
-        ExpandCheckpointGuard& operator=(ExpandCheckpointGuard&&) = delete;
-        // Issue #3608: production no-Evaluator local rollback. The C-ABI save
-        // cannot snapshot anything without a current Evaluator (weak stub /
-        // null strong def), so the guard falls back to the #3608 FlatAST
-        // truncate brick: snapshot the bare target's node count at install
-        // and truncate_to it on deny. No TLS, no second checkpoint model —
-        // same deny sites, one extra rollback surface.
-        aura::ast::FlatAST* local_target = nullptr;
-        std::size_t local_size0 = 0;
-        void ensure_installed() noexcept {
-            if (owned || consumed)
-                return;
-            owned = install_macro_expand_checkpoint() != 0;
-        }
-        void install_local_snapshot(aura::ast::FlatAST& target) noexcept {
-            if (local_target != nullptr)
-                return;
-            local_target = &target;
-            local_size0 = target.size();
-        }
-        void try_restore() noexcept {
-            consumed = true;
-            if (owned)
-                (void)aura_evaluator_try_restore_macro_expand_checkpoint();
-            else if (local_target != nullptr)
-                local_target->truncate_to(local_size0);
-        }
-        ~ExpandCheckpointGuard() {
-            if (owned && !consumed)
-                aura_evaluator_commit_macro_expand_checkpoint();
-        }
-    } expand_ckpt;
     const bool production_surface = aura::core::sandbox::is_sandbox_active();
+    // Issue #5243: the rollback guard is one shared type now; this frame
+    // keeps the same lifetime it had as a local declaration.
+    ExpandCheckpointGuard expand_ckpt;
     if (hygiene_depth == 0 && production_surface)
         expand_ckpt.ensure_installed();
     // Issue #3608: save failed (no current Evaluator) and no
@@ -4138,49 +4183,6 @@ aura::ast::NodeId macro_expand_all(aura::ast::FlatAST& flat, aura::ast::StringPo
 // object; truncate_to resizes the tail and leaves set_child slots on
 // parents below size0. Defined above macro_expand_all_body so the
 // #3062 source window still reaches the deny predicate.
-struct PassLoopCallerRollback {
-    aura::ast::FlatAST* flat = nullptr;
-    std::size_t size0 = 0;
-    bool armed = false;
-    decltype(std::declval<aura::ast::FlatAST&>().snapshot_children()) children;
-    aura::ast::FlatAST::MarkerProvenanceSnapshot markers;
-    std::vector<std::uint8_t> macro_dirty_prefix;
-    void arm(aura::ast::FlatAST& tree) {
-        if (armed)
-            return;
-        children = tree.snapshot_children();
-        markers = tree.snapshot_marker_provenance();
-        flat = &tree;
-        size0 = tree.size();
-        tree.snapshot_macro_dirty_prefix(size0, macro_dirty_prefix);
-        armed = true;
-    }
-    // Truncate before restore so free_orphan does not push ids the
-    // column resize drops.
-    void rollback() noexcept {
-        if (!armed || flat == nullptr)
-            return;
-        auto* tree = flat;
-        const auto keep = size0;
-        auto snap = std::move(children);
-        auto marks = std::move(markers);
-        auto dirty = std::move(macro_dirty_prefix);
-        armed = false;
-        flat = nullptr;
-        try {
-            if (tree->size() > keep)
-                tree->truncate_to(keep);
-            tree->restore_children(std::move(snap));
-            tree->restore_marker_provenance(std::move(marks));
-            // Issue #4309: prefix only. Success path does not roll back.
-            tree->restore_macro_dirty_prefix(dirty);
-        } catch (...) {
-            // [SILENCE-PRIM-#615] child restore failed; still drop the refused tail.
-            if (tree->size() > keep)
-                tree->truncate_to(keep);
-        }
-    }
-};
 
 // Issue #2023: body of macro_expand_all after capability gate (DepthPolicyGuard
 // is held by the caller via TLS already set).
@@ -4195,50 +4197,8 @@ static aura::ast::NodeId macro_expand_all_body(aura::ast::FlatAST& flat,
     // Issue #3062: Restricted/Strict (sandbox active) refuse partial writes
     // on limit. Soft/Off keeps the historical half-expand return (zero-cost).
     const bool production_surface = aura::core::sandbox::is_sandbox_active();
-    struct ExpandCheckpointGuard {
-        bool owned = false;
-        bool consumed = false;
-        ExpandCheckpointGuard() = default;
-        ExpandCheckpointGuard(const ExpandCheckpointGuard&) = delete;
-        ExpandCheckpointGuard& operator=(const ExpandCheckpointGuard&) = delete;
-        ExpandCheckpointGuard(ExpandCheckpointGuard&&) = delete;
-        ExpandCheckpointGuard& operator=(ExpandCheckpointGuard&&) = delete;
-        // Issue #3608: local no-Evaluator rollback — mirrors the clone walk
-        // guard (see clone_macro_body_at_depth): snapshot the bare flat's
-        // node count when the C-ABI save cannot own a checkpoint, and
-        // truncate_to it on deny. Boundary-active keeps the boundary SSOT.
-        aura::ast::FlatAST* local_target = nullptr;
-        std::size_t local_size0 = 0;
-        // Issue #4078: armed only at depth 0. An active MutationBoundary
-        // stays the topology SSOT (#3608) — no second snapshot.
-        PassLoopCallerRollback caller;
-        void ensure_installed() noexcept {
-            if (owned || consumed)
-                return;
-            owned = install_macro_expand_checkpoint() != 0;
-        }
-        void install_local_snapshot(aura::ast::FlatAST& tree) noexcept {
-            if (local_target != nullptr)
-                return;
-            local_target = &tree;
-            local_size0 = tree.size();
-        }
-        void arm_caller_edges(aura::ast::FlatAST& tree) { caller.arm(tree); }
-        void try_restore() noexcept {
-            consumed = true;
-            if (owned)
-                (void)aura_evaluator_try_restore_macro_expand_checkpoint();
-            else if (local_target != nullptr)
-                local_target->truncate_to(local_size0);
-            // Issue #4078: set-code and truncate_to are not the only
-            // rollback. The caller's pointer must match the pre-pass tree.
-            caller.rollback();
-        }
-        ~ExpandCheckpointGuard() {
-            if (owned && !consumed)
-                aura_evaluator_commit_macro_expand_checkpoint();
-        }
-    } expand_ckpt;
+    // Issue #5243: shared rollback guard type (same lifetime).
+    ExpandCheckpointGuard expand_ckpt;
     // Issue #2019: track whether any pass expanded so we restamp
     // MacroIntroduced gens once before return (FlatAST consistency).
     bool any_expand = false;
