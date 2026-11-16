@@ -238,6 +238,11 @@ struct RegSplitParts {
     struct WorkspaceTypecheckResult {
         bool ok = false;
         std::string report;
+        // Issue #5250: the machine-readable diagnostics this traversal
+        // produced — the same aura::diag::Diagnostic records the CLI JSON
+        // (#5240) and serve replies carry, so an in-process consumer (LSP,
+        // stdlib gate) never has to parse `report` English.
+        std::vector<aura::diag::Diagnostic> diagnostics;
     };
     static std::optional<WorkspaceTypecheckResult> run_workspace_typecheck(Evaluator& ev);
     // Issue #5032: the set-code install phase, peeled out of the registration.

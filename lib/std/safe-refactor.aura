@@ -166,7 +166,12 @@
             (begin
               (mutate :restore snap-id)
               (list 'rejected
-                    (if (string? apply-result)
+                    ; Issue #5250: (typecheck-status) returns the structured
+                    ; diagnostic list on failure (pre-#5250: a report string).
+                    ; Keep either in the reason slot so callers still get the
+                    ; code/message/line/column detail; #f (no workspace) and
+                    ; anything unrecognized keep the old token.
+                    (if (or (string? apply-result) (list? apply-result))
                         apply-result
                         "typecheck-status-not-ok"))))))))))
 

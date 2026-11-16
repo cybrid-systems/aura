@@ -87,6 +87,7 @@ Append there. Names `std/iter` re-exports are the `std/list` contract. Names
 | runtime/fiber | `tests/suite/issue_5064_fiber_cancel_text.aura` | `fiber cancel` |
 | runtime/orch | `tests/suite/orchestrator.aura` | `runtime/orch`, `orchestrator` |
 | runtime/workspace | `tests/suite/workspace_source_ssot_2920.aura` | `runtime/workspace`, `workspace` |
+| typecheck oracle | `tests/suite/typecheck_three_paths.aura` | `typecheck-status`, `typecheck-current`, `--typecheck` |
 
 Touched paths are the fast-loop map. A trailing slash is a directory.
 A stem (no `.` in the last component) matches the end, `/`, `.`, or `_`.
@@ -102,6 +103,7 @@ A stem (no `.` in the last component) matches the end, `/`, `.`, or `_`.
 - runtime/fiber: `src/serve/fiber`, `src/core/fiber_context`, `src/compiler/fiber`, `src/compiler/evaluator_fiber`, `src/compiler/evaluator_primitives_fiber`
 - runtime/orch: `src/orch/`, `lib/std/orch.aura`
 - runtime/workspace: `src/core/workspace`, `src/compiler/evaluator_workspace`, `src/compiler/evaluator_primitives_workspace`, `src/compiler/evaluator_primitives_query_workspace`, `lib/std/query-workspace.aura`
+- typecheck oracle: `src/compiler/evaluator_primitives_eval.cpp`, `src/compiler/evaluator_typecheck.cpp`, `src/compiler/service_typecheck.cpp`, `src/compiler/reg_split_parts_decl.inc`
 
 Core, when a home is selected or one of these files changes:
 `lib/std/test.aura`, `lib/std/edsl-test-harness.aura`,

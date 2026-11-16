@@ -596,9 +596,12 @@ static void ac4266_1_structured_status() {
     CHECK(got_bool && clean, "4266 AC1: clean workspace → #t");
     CHECK(set_code(cs, "(define (score (: x Int)) (* x 2)) (score \"s\")"),
           "4266 AC1: set-code ill-typed");
-    const auto report = eval_string(cs, "(typecheck-status)");
-    CHECK(!report.empty() && report.find("diagnostics:") != std::string::npos,
-          "4266 AC1: ill-typed → diagnostics report string");
+    // Issue #5250: the failure face is the #5240 record list, not a report
+    // string — (typecheck-current) keeps the text contract.
+    const auto code = eval_string(
+        cs, "(let ((st (typecheck-status))) (if (and (list? st) (pair? st) (hash? (car st))) "
+            "(hash-ref (car st) \"code\") \"\"))");
+    CHECK(code == "TypeError", "5250/4266 AC1: ill-typed → #5240 record list (code TypeError)");
     CHECK(eval_string(cs, "(typecheck-current)").find("diagnostics:") != std::string::npos,
           "4266 AC1: typecheck-current string contract unchanged (shared core)");
     CHECK(set_code(cs, "(define (score (: x Int)) (* x 3))"), "4266 AC1: clean mutation");
@@ -639,10 +642,16 @@ static void ac4266_3_replace_fn_rejects_and_restores() {
     bool got_bool = false;
     const auto clean = eval_bool(cs, "(typecheck-status)", &got_bool);
     CHECK(got_bool && clean, "4266 AC3: post-restore workspace typechecks clean");
+    // Issue #5250: the reason slot now carries the #5240 record list the
+    // oracle returns, not a report string (safe-refactor keeps whichever it
+    // gets). Probe the first record's stable code ident.
     const auto reason = eval_string(
-        cs, std::format("(car (cdr (safe-refactor:replace-fn \"score\" \"{}\")))", body));
-    CHECK(reason.find("diagnostics:") != std::string::npos,
-          "4266 AC3: rejected reason carries the diagnostics report (no English parsing)");
+        cs, std::format("(let ((r (car (cdr (safe-refactor:replace-fn \"score\" \"{}\"))))) "
+                        "(if (and (list? r) (pair? r) (hash? (car r))) "
+                        "(hash-ref (car r) \"code\") \"\"))",
+                        body));
+    CHECK(reason == "TypeError",
+          "4266 AC3: rejected reason carries the #5240 record list (no English parsing)");
 }
 
 static void ac4266_4_check_apply_post_verify_throw_restores() {
@@ -729,8 +738,11 @@ static void ac4266_7_set_code_invalidates_typecheck_cache() {
     // Ill-typed replacement: the previously cached clean status must NOT leak.
     CHECK(set_code(cs, "(define (score (: x Int)) (* x 2)) (score \"s\")"),
           "4266 AC7: set-code ill-typed replacement");
-    const auto report = eval_string(cs, "(typecheck-status)");
-    CHECK(report.find("diagnostics:") != std::string::npos,
+    // Issue #5250: the failure face is the #5240 record list.
+    const auto code = eval_string(
+        cs, "(let ((st (typecheck-status))) (if (and (list? st) (pair? st) (hash? (car st))) "
+            "(hash-ref (car st) \"code\") \"\"))");
+    CHECK(code == "TypeError",
           "4266 AC7: ill-typed set-code invalidates the cached clean status (was: stale #t)");
 }
 

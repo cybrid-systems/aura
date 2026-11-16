@@ -113,7 +113,13 @@ def main() -> int:
         "make_bool(true)" in status_body and "make_bool(false)" in status_body,
         "AC1: structured #t (clean) / #f (no workspace) faces",
     )
-    must("st->report" in status_body, "AC1: diagnostics ride the report string, never the boolean")
+    # Issue #5250: the failure face is the #5240 record list (code/message/
+    # line/column/hint/notes), not the report string; the boolean stays the
+    # only #t/#f face.
+    must(
+        "kind_ident" in status_body and '"message"' in status_body,
+        "5250/AC1: diagnostics ride the #5240 record list, never the boolean",
+    )
     current_body = _slice(prim, 'add("typecheck-current"', 'add("typecheck-status"')
     must("run_workspace_typecheck(ev)" in current_body, "AC1: typecheck-current delegates to the shared core")
     must("infer_flat" not in current_body, "AC1: no duplicated traversal — one typecheck model")
