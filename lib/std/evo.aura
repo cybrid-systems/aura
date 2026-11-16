@@ -59,18 +59,12 @@
 ; Issue #5251: the trace is in process by default. (query "qr:evo-trace")
 ; reads the bounded ring (oldest first); the JSONL file stays an optional
 ; spill and is merged in by record id. One entry, (evo:trace
-opts), filters on target / decision / run / gate and returns hash records —
+; opts), filters on target / decision / run / gate and returns hash records —
 ; never "key=val" strings.
 
 (define (evo-trace-lines text)
-  (if (not (string? text))
-    (quote ())
-    (let loop ((lines (string-split text "\n")) (acc (quote ())))
-      (if (null? lines)
-        (reverse acc)
-        (let ((line (string-trim (car lines))))
-          ; trailing newline is an empty rest, not a record
-          (loop (cdr lines) (if (string=? line "") acc (cons line acc))))))))
+  ; A blank rest line is not a record; evo:parse-line drops it below.
+  (if (string? text) (string-split text "\n") (quote ())))
 
 (define (evo-trace-ring-lines)
   (let ((v (try (query "qr:evo-trace") (catch (e) (quote ())))))
@@ -124,11 +118,13 @@ opts), filters on target / decision / run / gate and returns hash records —
 
 ; decision is an upper-case verb in the record; compare case-insensitively.
 (define (evo-trace-decision? val want)
-  (if (string? want)
-    (string=? (string-upcase val) (string-upcase want))
-    (evo-trace-want? (string-upcase val)
-                     (map (lambda (w) (if (string? w) (string-upcase w) w))
-                          (if (list? want) want (quote ()))))))
+  (cond
+    ((not want) #t)
+    ((string? want) (string=? (string-upcase val) (string-upcase want)))
+    ((list? want)
+     (evo-trace-want? (string-upcase val)
+                      (map (lambda (w) (if (string? w) (string-upcase w) w)) want)))
+    (else #f)))
 
 (define (evo:trace opts)
   (let* ((o (if (hash? opts) opts (hash)))

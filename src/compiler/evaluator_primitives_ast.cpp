@@ -799,6 +799,7 @@ static void trace_discarded_mutation(std::string_view op, std::uint64_t mutation
                            .parent = {},
                            .dur_ms = 0.0,
                            .mutation_id = mutation_id,
+                           .mutation_count = 1,
                            .extras_json = extras,
                            .version = 2});
 }
