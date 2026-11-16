@@ -43,6 +43,7 @@ import std;
 import aura.compiler.evaluator;
 import aura.compiler.service;
 import aura.compiler.value;
+import aura.diag;
 import aura.core.ast;
 
 #include "core/workspace_epoch.hh" // Issue #4165: QueryResult + schema-2 reserved
@@ -3973,6 +3974,14 @@ int main() {
         const auto baseline = ring.seq.load(std::memory_order_acquire);
         CHECK(!ev.check_workspace_isolation(99, 0, kEffectMutate, "test:3011-cross"),
               "AC1: Restricted cross-tenant mutate denied");
+        // Issue #5241: a downgrade refusal is typed at creation, not a
+        // TypeError recovered from the message text.
+        auto downgrade = cs.eval("(security:set-sandbox-mode! #f)");
+        CHECK(downgrade.has_value() && is_error(*downgrade),
+              "5241: sandbox downgrade deny is an error value");
+        CHECK(downgrade.has_value() && cs.evaluator().error_value_kind(*downgrade) ==
+                                           aura::diag::ErrorKind::EffectDenied,
+              "5241: sandbox downgrade deny carries EffectDenied");
         bool found = false;
         const auto head = ring.seq.load(std::memory_order_acquire);
         for (auto s = baseline; s < head; ++s) {
