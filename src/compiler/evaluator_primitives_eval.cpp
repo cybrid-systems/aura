@@ -183,7 +183,11 @@ RegSplitParts::run_workspace_typecheck(Evaluator& ev) {
     // diagnostics (last check errored, nothing mutated since).
     if (!ev.workspace_flat_->has_dirty_subtree(ev.workspace_flat_->root) &&
         ev.last_typecheck_result_) {
-        return WorkspaceTypecheckResult{ev.last_typecheck_ok_, *ev.last_typecheck_result_};
+        // Issue #5250: the cached verdict carries its diagnostics too, so a
+        // cache hit answers (typecheck-status) with the same list a fresh
+        // traversal published.
+        return WorkspaceTypecheckResult{ev.last_typecheck_ok_, *ev.last_typecheck_result_,
+                                        ev.last_typecheck_diags_};
     }
 
     // Lazily create persistent type registry (stable TypeIds across calls)
@@ -210,6 +214,22 @@ RegSplitParts::run_workspace_typecheck(Evaluator& ev) {
     }
 
     aura::diag::DiagnosticCollector diag;
+
+    // Issue #5250: the oracle's verdict must not depend on who typed the tree
+    // before it. A whole-workspace install (set-code / load-file) runs every
+    // define through cache_define's TypeCheckWrap pre-check, which stamps node
+    // types and then *discards* the diagnostics it found (they only reach
+    // stderr as a `type warning`). Those clean-but-stamped subtrees satisfy
+    // InferenceEngine::synthesize_flat_try_cache, so this traversal used to
+    // skip exactly the subtree that is ill-typed and report "no errors" for a
+    // program the same run's --typecheck and mutate gate both reject.
+    //
+    // Bumping the type-cache generation makes every stamped entry stale for
+    // this pass (the #412 mismatch path recomputes instead of returning the
+    // cached type). The Phase-5 report cache above still short-circuits
+    // repeated calls on an unchanged workspace, so the cost is one honest
+    // traversal per mutation, not one per call.
+    ev.workspace_flat_->bump_type_cache_generation();
 
     auto result =
         tc.infer_flat(*ev.workspace_flat_, *ev.workspace_pool_, ev.workspace_flat_->root, diag);
@@ -249,11 +269,15 @@ RegSplitParts::run_workspace_typecheck(Evaluator& ev) {
                 "  [" + std::to_string(static_cast<int>(d.kind)) + "] " + d.format() + "\n";
         }
     }
+    // Issue #5250: publish the machine-readable list alongside the text and
+    // the boolean — three faces of one traversal, never a second model.
+    st.diagnostics.assign(all_diags.begin(), all_diags.end());
 
     // Phase 5: cache the result for the next clean-workspace call —
-    // report and structured status in parity (#4266).
+    // report, structured status and diagnostics in parity (#4266/#5250).
     ev.last_typecheck_result_ = st.report;
     ev.last_typecheck_ok_ = st.ok;
+    ev.last_typecheck_diags_ = st.diagnostics;
     return st;
 }
 
@@ -2049,20 +2073,59 @@ void RegSplitParts::register_typecheck_primitives(PrimRegistrar add, Evaluator& 
     // safe-refactor:replace-fn gate reported 'applied for ill-typed
     // replacements. Agents need a value they can branch on without
     // parsing English:
-    //   #t     — workspace typechecks clean (diagnostics block empty)
-    //   string — the full diagnostics report (non-empty block)
-    //   #f     — no workspace live
+    //   #t   — workspace typechecks clean (no diagnostics)
+    //   list — one record per diagnostic (#5250; was the report string)
+    //   #f   — no workspace live
+    // Issue #5250: the record is the #5240 schema — `code` is the stable kind
+    // ident (never the enum ordinal), `message`, 1-based `line`/`column` when
+    // the producer had a source location, optional `hint` and `notes`. Same
+    // fields --error-format=json and serve replies emit, so the in-process
+    // consumer (#5261/#5262) reads diagnostics instead of parsing text.
     // Shares run_workspace_typecheck() with typecheck-current: one
-    // traversal, one Phase-5 cache (structured status cached in parity
-    // via last_typecheck_ok_), one coverage counter — no second model.
+    // traversal, one Phase-5 cache (status and diagnostics cached in parity
+    // via last_typecheck_ok_/_diags), one coverage counter — no second model.
     add("typecheck-status", [&](const auto&) {
         auto st = run_workspace_typecheck(ev);
         if (!st)
             return make_bool(false);
         if (st->ok)
             return make_bool(true);
-        const auto sidx = static_cast<std::uint64_t>(ev.push_string_heap(st->report));
-        return make_string(sidx);
+        auto hash_fn = ev.primitives_.lookup("hash");
+        auto list_fn = ev.primitives_.lookup("list");
+        if (!hash_fn || !list_fn)
+            return make_bool(false);
+        auto heap_str = [&ev](std::string_view s) {
+            return make_string(static_cast<std::uint64_t>(ev.push_string_heap(std::string(s))));
+        };
+        std::vector<EvalValue> records;
+        records.reserve(st->diagnostics.size());
+        for (const auto& d : st->diagnostics) {
+            std::vector<EvalValue> kv;
+            kv.push_back(heap_str("code"));
+            kv.push_back(heap_str(aura::diag::kind_ident(d.kind)));
+            kv.push_back(heap_str("message"));
+            kv.push_back(heap_str(d.message));
+            if (d.location.line > 0) {
+                kv.push_back(heap_str("line"));
+                kv.push_back(make_int(static_cast<std::int64_t>(d.location.line)));
+                kv.push_back(heap_str("column"));
+                kv.push_back(make_int(static_cast<std::int64_t>(d.location.column)));
+            }
+            if (!d.suggestion.empty()) {
+                kv.push_back(heap_str("hint"));
+                kv.push_back(heap_str(d.suggestion));
+            }
+            if (!d.context_stack.empty()) {
+                std::vector<EvalValue> notes;
+                notes.reserve(d.context_stack.size());
+                for (const auto& n : d.context_stack)
+                    notes.push_back(heap_str(n));
+                kv.push_back(heap_str("notes"));
+                kv.push_back((*list_fn)(notes));
+            }
+            records.push_back((*hash_fn)(kv));
+        }
+        return (*list_fn)(records);
     });
 }
 
