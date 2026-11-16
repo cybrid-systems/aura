@@ -331,7 +331,7 @@ int run_test_cache_stamp_restamp_contract() {
         const auto svc = aura_test::service_module_source();
         const auto peel = svc.find("bool relower_affected_instrs_");
         CHECK(peel != std::string::npos, "3481 AC2: instr peel exists");
-        const auto relower = svc.find("bool CompilerService::relower_define_blocks(");
+        const auto relower = svc.find("bool relower_define_blocks(");
         CHECK(relower != std::string::npos, "3481 AC2: relower_define_blocks");
         const auto win = aura::test::aura_source_block_after(svc, relower);
         CHECK(win.find("ack_cache_entry_fences_live_") != std::string::npos,

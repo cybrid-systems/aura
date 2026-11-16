@@ -1126,7 +1126,7 @@ static void ac4578_shape_deopt_erases_jit_bundle() {
         const auto prod = ixx.find("erase_shape_deopt_bundle_rows_(name)", arm);
         const auto demote = ixx.find("demote_jit_native_owner_scoped_for_shape_deopt_(name)", arm);
         const auto soft = ixx.find("} else {", demote);
-        const auto ret = ixx.find("\n            return;", soft);
+        const auto ret = ixx.find("return;", soft);
         CHECK(prod != std::string::npos && demote != std::string::npos &&
                   soft != std::string::npos && ret != std::string::npos && prod < demote &&
                   demote < soft,
