@@ -82,6 +82,7 @@ Append there. Names `std/iter` re-exports are the `std/list` contract. Names
 | std/sort | `tests/suite/sort_srfi_5133.aura` | `sorted?`, `list-sort`, `std/sort`, `std/algorithm` |
 | std/json | `tests/suite/json_reg_split_5032.aura` | `json-parse`, `std/json` |
 | std/extract and std/agent extractors | `tests/suite/export_contracts_5198.aura` | `extract-code`, `llm:extract-code` |
+| std/search | `tests/suite/search_clonal.aura` | `search:init`, `std/search` |
 | lang/module | `tests/suite/module.aura` | `lang/module`, `overwrite warning` |
 | lang/parser | `tests/suite/paren_semi_comment_5199.aura` | `unclosed list`, `(;` |
 | runtime/fiber | `tests/suite/issue_5064_fiber_cancel_text.aura` | `fiber cancel` |
@@ -97,6 +98,7 @@ A stem (no `.` in the last component) matches the end, `/`, `.`, or `_`.
 - std/sort: `lib/std/sort.aura`, `lib/std/algorithm.aura`
 - std/json: `lib/std/json.aura`
 - std/extract: `lib/std/extract.aura`
+- std/search: `lib/std/search.aura`
 - lang/module: `src/compiler/evaluator_module_loader.cpp`, `src/compiler/evaluator_primitives_module.cpp`, `src/core/module_boundary.ixx`
 - lang/parser: `src/parser/`, `src/compiler/diag.ixx`, `src/compiler/evaluator_primitives_diagnostic.cpp`
 - runtime/fiber: `src/serve/fiber`, `src/core/fiber_context`, `src/compiler/fiber`, `src/compiler/evaluator_fiber`, `src/compiler/evaluator_primitives_fiber`
