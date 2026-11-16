@@ -8323,6 +8323,10 @@ private:
     // cache hits so the stdlib gate branches on #t/#f without re-parsing
     // the report text.
     bool last_typecheck_ok_ = false;
+    // Issue #5250: the structured list behind the cached report/status —
+    // one traversal publishes all three (report text, #t/#f, diagnostics),
+    // so a Phase-5 cache hit serves the same conclusion the gate saw.
+    std::vector<aura::diag::Diagnostic> last_typecheck_diags_;
 
     // ── Def-Use Analysis (P1) ───────────────────────────────────
     void* defuse_index_ = nullptr;
@@ -20568,6 +20572,14 @@ public:
     void invalidate_typecheck_report_cache() noexcept {
         last_typecheck_result_.reset();
         last_typecheck_ok_ = false;
+        last_typecheck_diags_.clear();
+    }
+    // Issue #5250: the structured list from the last traversal (empty when
+    // clean). The in-process consumer (#5261 hover / #5262 type warnings)
+    // reads this instead of re-parsing a report string.
+    [[nodiscard]] const std::vector<aura::diag::Diagnostic>&
+    last_typecheck_diagnostics() const noexcept {
+        return last_typecheck_diags_;
     }
     [[nodiscard]] void* persistent_typechecker() const noexcept {
         return persistent_typechecker_opaque_.get();
