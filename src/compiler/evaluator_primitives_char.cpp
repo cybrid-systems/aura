@@ -170,10 +170,9 @@ void RegSplitParts::register_char_core_primitives(PrimRegistrar add, Evaluator& 
             // foreign code points are copied into new pairs.
             if (idx < ev.string_heap_.size() &&
                 !ev.inrange_string_tenant_allows(idx, /*required_effects=*/0, "string->list")) {
-                return make_primitive_error(
-                    ev.string_heap_, ev.error_values_,
+                return ev.make_typed_error(
                     "string->list: cross-tenant string slot read denied (#4505)",
-                    ev.primitive_error_counter_ptr());
+                    aura::diag::ErrorKind::EffectDenied);
             }
             if (idx < ev.string_heap_.size())
                 s = ev.string_at(idx);
@@ -223,10 +222,9 @@ void RegSplitParts::register_char_core_primitives(PrimRegistrar add, Evaluator& 
             // string->list (#4505).
             if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/false,
                                                /*required_effects=*/0, "list->string"))
-                return make_primitive_error(
-                    ev.string_heap_, ev.error_values_,
+                return ev.make_typed_error(
                     "list->string: cross-tenant pair slot read denied (#4505)",
-                    ev.primitive_error_counter_ptr());
+                    aura::diag::ErrorKind::EffectDenied);
             auto car = ev.pairs_[idx].car;
             if (is_int(car))
                 utf8_append(result, as_int(car)); // Issue #4472
@@ -343,10 +341,9 @@ void RegSplitParts::register_char_encoding_primitives(PrimRegistrar add, Evaluat
         // any string_heap_ byte is encoded; the helper records the
         // IsolationDeny, Soft/Off / record 0 / short stamps stay allow.
         if (!ev.inrange_string_tenant_allows(idx, /*required_effects=*/0, "%base64-encode"))
-            return make_primitive_error(
-                ev.string_heap_, ev.error_values_,
+            return ev.make_typed_error(
                 "%base64-encode: cross-tenant string slot read denied (#4505)",
-                ev.primitive_error_counter_ptr());
+                aura::diag::ErrorKind::EffectDenied);
         static const char kAlphabet[] =
             "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
         const std::string& data = ev.string_at(idx);
@@ -391,10 +388,9 @@ void RegSplitParts::register_char_encoding_primitives(PrimRegistrar add, Evaluat
         // Issue #4518: same reader gate as %base64-encode — fail closed
         // before any foreign byte is decoded into the new string.
         if (!ev.inrange_string_tenant_allows(idx, /*required_effects=*/0, "%base64-decode"))
-            return make_primitive_error(
-                ev.string_heap_, ev.error_values_,
+            return ev.make_typed_error(
                 "%base64-decode: cross-tenant string slot read denied (#4505)",
-                ev.primitive_error_counter_ptr());
+                aura::diag::ErrorKind::EffectDenied);
         const std::string& in = ev.string_at(idx);
         auto b64val = [](unsigned char c) -> int {
             if (c >= 'A' && c <= 'Z')
@@ -440,9 +436,8 @@ void RegSplitParts::register_char_encoding_primitives(PrimRegistrar add, Evaluat
         // before any foreign byte is hex-encoded (#4500: % names stay
         // kEffectNone, so the stamp compare lives in the body).
         if (!ev.inrange_string_tenant_allows(idx, /*required_effects=*/0, "%hex-encode"))
-            return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                        "%hex-encode: cross-tenant string slot read denied (#4505)",
-                                        ev.primitive_error_counter_ptr());
+            return ev.make_typed_error("%hex-encode: cross-tenant string slot read denied (#4505)",
+                                       aura::diag::ErrorKind::EffectDenied);
         static const char kHex[] = "0123456789abcdef";
         const std::string& data = ev.string_at(idx);
         std::string out;
@@ -464,9 +459,8 @@ void RegSplitParts::register_char_encoding_primitives(PrimRegistrar add, Evaluat
         // Issue #4518: same reader gate — fail closed before any foreign
         // byte is hex-decoded into the new string.
         if (!ev.inrange_string_tenant_allows(idx, /*required_effects=*/0, "%hex-decode"))
-            return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                        "%hex-decode: cross-tenant string slot read denied (#4505)",
-                                        ev.primitive_error_counter_ptr());
+            return ev.make_typed_error("%hex-decode: cross-tenant string slot read denied (#4505)",
+                                       aura::diag::ErrorKind::EffectDenied);
         const std::string& in = ev.string_at(idx);
         auto hexval = [](unsigned char c) -> int {
             if (c >= '0' && c <= '9')

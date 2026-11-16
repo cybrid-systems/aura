@@ -811,9 +811,8 @@ void RegSplitParts::register_equal_primitive(PrimRegistrar add, Evaluator& ev) {
         bool overflow = false;
         const bool eq_res = values_equal(ev, a[0], a[1], "equal?", denied, overflow);
         if (denied)
-            return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                        "equal?: cross-tenant string slot read denied (#4505)",
-                                        ev.primitive_error_counter_ptr());
+            return ev.make_typed_error("equal?: cross-tenant string slot read denied (#4505)",
+                                       aura::diag::ErrorKind::EffectDenied);
         // Issue #4780: a walk that gave up is an error, never a verdict.
         if (overflow)
             return make_primitive_error(ev.string_heap_, ev.error_values_,
@@ -836,9 +835,8 @@ void RegSplitParts::register_symbol_primitives(PrimRegistrar add, Evaluator& ev)
             auto gpidx = as_string_idx(a[0]);
             if (gpidx < ev.string_heap_.size() &&
                 !ev.inrange_string_tenant_allows(gpidx, /*required_effects=*/0, "gensym"))
-                return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                            "gensym: cross-tenant string slot read denied (#4505)",
-                                            ev.primitive_error_counter_ptr());
+                return ev.make_typed_error("gensym: cross-tenant string slot read denied (#4505)",
+                                           aura::diag::ErrorKind::EffectDenied);
             // Issue #2652: snapshot under lock (multi-fiber).
             prefix = ev.copy_string_heap_at(as_string_idx(a[0]));
             if (!prefix.empty())
@@ -864,10 +862,9 @@ void RegSplitParts::register_symbol_primitives(PrimRegistrar add, Evaluator& ev)
                 auto sidx = as_string_idx(v);
                 if (sidx < ev.string_heap_.size() &&
                     !ev.inrange_string_tenant_allows(sidx, /*required_effects=*/0, "symbol-append"))
-                    return make_primitive_error(
-                        ev.string_heap_, ev.error_values_,
+                    return ev.make_typed_error(
                         "symbol-append: cross-tenant string slot read denied (#4505)",
-                        ev.primitive_error_counter_ptr());
+                        aura::diag::ErrorKind::EffectDenied);
                 result += ev.copy_string_heap_at(sidx);
             } else if (is_int(v))
                 result += std::to_string(as_int(v));
@@ -904,10 +901,9 @@ void RegSplitParts::register_apply_primitive(PrimRegistrar add, Evaluator& ev) {
                     if (slot_tenant != ev.capability_tenant_id()) {
                         (void)ev.check_workspace_isolation(ev.capability_tenant_id(), slot_tenant,
                                                            /*required_effects=*/0, "apply");
-                        return make_primitive_error(
-                            ev.string_heap_, ev.error_values_,
+                        return ev.make_typed_error(
                             "apply: cross-tenant pair slot read denied (#4111)",
-                            ev.primitive_error_counter_ptr());
+                            aura::diag::ErrorKind::EffectDenied);
                     }
                 }
                 args.push_back(EvalValue{g_pair_slots[idx]->car});
@@ -923,9 +919,8 @@ void RegSplitParts::register_apply_primitive(PrimRegistrar add, Evaluator& ev) {
             // contract as list-ref (#4505); source slot unchanged.
             if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/false,
                                                /*required_effects=*/0, "apply"))
-                return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                            "apply: cross-tenant pair slot read denied (#4505)",
-                                            ev.primitive_error_counter_ptr());
+                return ev.make_typed_error("apply: cross-tenant pair slot read denied (#4505)",
+                                           aura::diag::ErrorKind::EffectDenied);
             args.push_back(ev.pairs_[idx].car);
             current = ev.pairs_[idx].cdr;
         }
@@ -975,9 +970,8 @@ void RegSplitParts::register_print_primitives(PrimRegistrar add, Evaluator& ev) 
             // a stderr dump of the other principal's bytes.
             if (!note_displayed_error(ev, a[0], "display")) {
                 g_displayed_errors.fetch_add(1, std::memory_order_relaxed);
-                return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                            "display: cross-tenant string slot read denied (#4505)",
-                                            ev.primitive_error_counter_ptr());
+                return ev.make_typed_error("display: cross-tenant string slot read denied (#4505)",
+                                           aura::diag::ErrorKind::EffectDenied);
             }
             return make_void();
         }
@@ -986,9 +980,8 @@ void RegSplitParts::register_print_primitives(PrimRegistrar add, Evaluator& ev) 
         // nothing and returns the reader deny shape.
         if (!io_walk_tenant_allows(a[0], ev, ev.string_heap_, ev.pairs_, ev.vector_heap_, "display",
                                    0)) {
-            return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                        "display: cross-tenant payload read denied (#4505)",
-                                        ev.primitive_error_counter_ptr());
+            return ev.make_typed_error("display: cross-tenant payload read denied (#4505)",
+                                       aura::diag::ErrorKind::EffectDenied);
         }
         // Issue #2652: snapshot string under lock before print so concurrent
         // string_heap_ reallocate cannot UAF; NUL-safe path in io_print_val.
@@ -1017,9 +1010,8 @@ void RegSplitParts::register_print_primitives(PrimRegistrar add, Evaluator& ev) 
             // Issue #4691: same cause fence as display.
             if (!note_displayed_error(ev, a[0], "write")) {
                 g_displayed_errors.fetch_add(1, std::memory_order_relaxed);
-                return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                            "write: cross-tenant string slot read denied (#4505)",
-                                            ev.primitive_error_counter_ptr());
+                return ev.make_typed_error("write: cross-tenant string slot read denied (#4505)",
+                                           aura::diag::ErrorKind::EffectDenied);
             }
             return make_void();
         }
@@ -1027,9 +1019,8 @@ void RegSplitParts::register_print_primitives(PrimRegistrar add, Evaluator& ev) 
         // quoted write copies the string bytes.
         if (!io_walk_tenant_allows(a[0], ev, ev.string_heap_, ev.pairs_, ev.vector_heap_, "write",
                                    0)) {
-            return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                        "write: cross-tenant payload read denied (#4505)",
-                                        ev.primitive_error_counter_ptr());
+            return ev.make_typed_error("write: cross-tenant payload read denied (#4505)",
+                                       aura::diag::ErrorKind::EffectDenied);
         }
         if (is_string(a[0])) {
             // Issue #2652: quoted write with escapes (incl. NUL as \x00;).
@@ -1087,9 +1078,8 @@ void RegSplitParts::register_format_primitive(PrimRegistrar add, Evaluator& ev) 
         auto ftidx = as_string_idx(a[0]);
         if (ftidx < ev.string_heap_.size() &&
             !ev.inrange_string_tenant_allows(ftidx, /*required_effects=*/0, "format"))
-            return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                        "format: cross-tenant string slot read denied (#4505)",
-                                        ev.primitive_error_counter_ptr());
+            return ev.make_typed_error("format: cross-tenant string slot read denied (#4505)",
+                                       aura::diag::ErrorKind::EffectDenied);
         // Issue #2652: snapshot template under lock; push result via locked helper.
         auto tmpl = ev.copy_string_heap_at(as_string_idx(a[0]));
         std::string result;
@@ -1107,19 +1097,17 @@ void RegSplitParts::register_format_primitive(PrimRegistrar add, Evaluator& ev) 
                                     !ev.inrange_string_tenant_allows(fvidx,
                                                                      /*required_effects=*/0,
                                                                      "format"))
-                                    return make_primitive_error(
-                                        ev.string_heap_, ev.error_values_,
+                                    return ev.make_typed_error(
                                         "format: cross-tenant string slot read denied (#4505)",
-                                        ev.primitive_error_counter_ptr());
+                                        aura::diag::ErrorKind::EffectDenied);
                                 // Snapshot string args (avoid UAF during format).
                                 result += ev.copy_string_heap_at(fvidx);
                             } else {
                                 if (fmt_payload_denied(ev, ev.string_heap_, ev.pairs_,
                                                        ev.vector_heap_, val, 0))
-                                    return make_primitive_error(
-                                        ev.string_heap_, ev.error_values_,
+                                    return ev.make_typed_error(
                                         "format: cross-tenant string slot read denied (#4505)",
-                                        ev.primitive_error_counter_ptr());
+                                        aura::diag::ErrorKind::EffectDenied);
                                 result += fmt_val_to_string(val, ev.string_heap_, ev.pairs_, false,
                                                             0, ev.vector_heap_, ev.symbol_table_,
                                                             ev.keyword_table_);
@@ -1137,10 +1125,9 @@ void RegSplitParts::register_format_primitive(PrimRegistrar add, Evaluator& ev) 
                                     !ev.inrange_string_tenant_allows(fvidx,
                                                                      /*required_effects=*/0,
                                                                      "format"))
-                                    return make_primitive_error(
-                                        ev.string_heap_, ev.error_values_,
+                                    return ev.make_typed_error(
                                         "format: cross-tenant string slot read denied (#4505)",
-                                        ev.primitive_error_counter_ptr());
+                                        aura::diag::ErrorKind::EffectDenied);
                                 auto s = ev.copy_string_heap_at(fvidx);
                                 result += '"';
                                 for (unsigned char c : s) {
@@ -1157,10 +1144,9 @@ void RegSplitParts::register_format_primitive(PrimRegistrar add, Evaluator& ev) 
                             } else {
                                 if (fmt_payload_denied(ev, ev.string_heap_, ev.pairs_,
                                                        ev.vector_heap_, val, 0))
-                                    return make_primitive_error(
-                                        ev.string_heap_, ev.error_values_,
+                                    return ev.make_typed_error(
                                         "format: cross-tenant string slot read denied (#4505)",
-                                        ev.primitive_error_counter_ptr());
+                                        aura::diag::ErrorKind::EffectDenied);
                                 result += fmt_val_to_string(val, ev.string_heap_, ev.pairs_, true,
                                                             0, ev.vector_heap_, ev.symbol_table_,
                                                             ev.keyword_table_);

@@ -678,10 +678,9 @@ void RegSplitParts::register_vector_core_primitives(
             // return below shares this single gate.
             if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/true, /*required_effects=*/0,
                                                "vector-ref")) {
-                return make_primitive_error(
-                    string_heap, error_values,
+                return ev.make_typed_error(
                     "vector-ref: cross-tenant vector slot read denied (#4298)",
-                    primitive_error_counter);
+                    aura::diag::ErrorKind::EffectDenied);
             }
             if (idx >= vector_heap.size() || pos >= vector_heap[idx].size()) {
                 // Issue #4497: name the index and length.
@@ -737,10 +736,9 @@ void RegSplitParts::register_vector_core_primitives(
             if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/true,
                                                aura::compiler::security::kEffectMutate,
                                                "vector-set!")) {
-                return make_primitive_error(
-                    string_heap, error_values,
+                return ev.make_typed_error(
                     "vector-set!: cross-tenant vector slot write denied (#4298)",
-                    primitive_error_counter);
+                    aura::diag::ErrorKind::EffectDenied);
             }
             vector_heap[idx][pos] = a[2];
             if (ev.vector_is_workspace_reachable(idx))
@@ -766,10 +764,9 @@ void RegSplitParts::register_vector_core_primitives(
             // as vector-ref before it is returned.
             if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/true, /*required_effects=*/0,
                                                "vector-length")) {
-                return make_primitive_error(
-                    string_heap, error_values,
+                return ev.make_typed_error(
                     "vector-length: cross-tenant vector slot read denied (#4505)",
-                    primitive_error_counter);
+                    aura::diag::ErrorKind::EffectDenied);
             }
             return make_int(static_cast<std::int64_t>(vector_heap[idx].size()));
         },
@@ -864,10 +861,9 @@ void RegSplitParts::register_vector_core_primitives(
                     // new vector's element storage.
                     if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/false,
                                                        /*required_effects=*/0, "list->vector")) {
-                        return make_primitive_error(
-                            string_heap, error_values,
+                        return ev.make_typed_error(
                             "list->vector: cross-tenant pair slot read denied (#4505)",
-                            primitive_error_counter);
+                            aura::diag::ErrorKind::EffectDenied);
                     }
                     elems.push_back(pairs[idx].car);
                     v = pairs[idx].cdr;
@@ -917,10 +913,9 @@ void RegSplitParts::register_vector_seq_primitives(
             // Issue #4505: no foreign element is copied into the new pairs.
             if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/true, /*required_effects=*/0,
                                                "vector->list")) {
-                return make_primitive_error(
-                    string_heap, error_values,
+                return ev.make_typed_error(
                     "vector->list: cross-tenant vector slot read denied (#4505)",
-                    primitive_error_counter);
+                    aura::diag::ErrorKind::EffectDenied);
             }
             // Issue #4613: mint the pairs through the evaluator's pair
             // heap. A raw pairs.push_back grew the heap by one slot per
@@ -973,10 +968,9 @@ void RegSplitParts::register_vector_seq_primitives(
             // compare runs before any element is copied out.
             if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/true, /*required_effects=*/0,
                                                "vector-copy")) {
-                return make_primitive_error(
-                    string_heap, error_values,
+                return ev.make_typed_error(
                     "vector-copy: cross-tenant vector slot read denied (#4298)",
-                    primitive_error_counter);
+                    aura::diag::ErrorKind::EffectDenied);
             }
             const auto len = vector_heap[idx].size();
             // start / end are optional; out-of-range clamps like the stdlib
@@ -1060,10 +1054,9 @@ void RegSplitParts::register_vector_seq_primitives(
             if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/true,
                                                aura::compiler::security::kEffectMutate,
                                                "vector-fill!")) {
-                return make_primitive_error(
-                    string_heap, error_values,
+                return ev.make_typed_error(
                     "vector-fill!: cross-tenant vector slot write denied (#4298)",
-                    primitive_error_counter);
+                    aura::diag::ErrorKind::EffectDenied);
             }
             for (auto& slot : vector_heap[idx])
                 slot = a[1];
@@ -1169,9 +1162,8 @@ void RegSplitParts::register_vector_mutate_primitives(
             // caller/face are this executing evaluator).
             if (aura_hash_gate_checked(hidx, ev.capability_tenant_id(), ev.effect_sandbox_mode(),
                                        "hash-copy"))
-                return make_primitive_error(string_heap, error_values,
-                                            "hash-copy: cross-tenant hash read denied (#4110)",
-                                            primitive_error_counter);
+                return ev.make_typed_error("hash-copy: cross-tenant hash read denied (#4110)",
+                                           aura::diag::ErrorKind::EffectDenied);
             auto* ht = g_hash_tables[hidx];
             auto* copy = FlatHashTable::create(ht->capacity);
             if (!copy)
