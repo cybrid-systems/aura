@@ -40,7 +40,7 @@ def main() -> int:
     test = _read("tests/compiler/test_gensym_ceiling_serial_drift.cpp")
     cmake = _read("CMakeLists.txt")
 
-    pre = me.find("auto rename_binding_pre")
+    pre = me.find("aura::ast::SymId rename_binding_pre(")
     win = me[pre : pre + 2500] if pre >= 0 else ""
 
     # AC1

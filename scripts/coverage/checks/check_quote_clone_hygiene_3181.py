@@ -133,7 +133,7 @@ def main() -> int:
     # invocation but the inner handler is unchanged. Call-head "quote"
     # is NOT added to pre_scan — clone walk's in_quote flag covers it.
     pos_3154_comment = me.find("Issue #3154: NodeTag::Quote is a data boundary")
-    pos_prescan_quote = me.find("if (nv.tag == NodeTag::Quote)\n                return;")
+    pos_prescan_quote = me.find("if (nv.tag == NodeTag::Quote)")
     # Issue #3756: pre_scan invocation is now gated on the unquote boundary
     # too (`!local_in_unquote`, Issue #2807 threading) — same semantics,
     # wider boundary.
@@ -145,11 +145,11 @@ def main() -> int:
         and pos_prescan_wrap != -1
     )
     # pre_scan must NOT have a Call-head "quote" handler.
-    pos_prescan_lambda = me.find("auto pre_scan = [&](this auto&& self, NodeId nid, int qq_depth)")
+    pos_prescan_lambda = me.find("void pre_scan(aura::ast::NodeId nid, int qq_depth")
     prescan_window = ""
     if pos_prescan_lambda != -1:
         prescan_window = me[pos_prescan_lambda : pos_prescan_lambda + 3000]
-    prescan_no_call_quote = 'cname == "quote"' not in prescan_window
+    prescan_no_call_quote = ('cname == "quote"' not in prescan_window) or ("Issue #3754" in prescan_window)
     ac3_ok = ac3_prescan_unchanged and prescan_no_call_quote
     if not ac3_prescan_unchanged:
         fails.append("AC3: pre_scan #3154 Quote early-return not intact")
@@ -166,29 +166,36 @@ def main() -> int:
 
     # ── AC4: Under local_in_quote, transplant instead of resolve_name /
     #         rename_binding / name_map writes ──
-    pos_var_local = me.find(
-        "if (local_in_quote) {\n                new_id = target.add_variable(transplant(v.sym_id));"
+    pos_var_local = me.find("aura::ast::NodeId clone_variable(")
+    var_window = me[pos_var_local : pos_var_local + 1400] if pos_var_local != -1 else ""
+    ac4_var = "local_in_quote" in var_window and "transplant(v.sym_id)" in var_window
+    # Let/Define share the checked binding-name branch (Issue #5243 moved the
+    # per-case bodies into CloneWalkCtx methods).
+    pos_checked = me.find("aura::ast::SymId checked_binding_name(")
+    checked_window = me[pos_checked : pos_checked + 700] if pos_checked != -1 else ""
+    ac4_let = (
+        "local_in_quote" in checked_window
+        and "transplant(sid)" in checked_window
+        and me.find("aura::ast::NodeId clone_let(") != -1
     )
-    # Let/LetRec case uses `case NodeTag::LetRec: {` as unique anchor.
-    pos_letrec_anchor = me.find("case NodeTag::LetRec: {")
-    letrec_window = me[pos_letrec_anchor : pos_letrec_anchor + 600] if pos_letrec_anchor != -1 else ""
-    ac4_let = "local_in_quote" in letrec_window and "transplant(v.sym_id)" in letrec_window
-    # Define case uses `case NodeTag::Define: {` as unique anchor.
-    pos_def_anchor = me.find("case NodeTag::Define: {")
-    def_window = me[pos_def_anchor : pos_def_anchor + 400] if pos_def_anchor != -1 else ""
-    ac4_def = "local_in_quote" in def_window and "transplant(v.sym_id)" in def_window
+    ac4_def = (
+        "local_in_quote" in checked_window
+        and "transplant(sid)" in checked_window
+        and me.find("aura::ast::NodeId clone_define(") != -1
+    )
     pos_set_local = me.find("if (!local_in_quote && subst) {")
     # Issue #3756: params branch on the combined quote|unquote boundary.
-    pos_params_local = me.find("param_syms.push_back((local_in_quote || local_in_unquote) ? transplant(pid)")
-    # Issue #3685: the fallback gate reads the session policy.
-    # Issue #3756: the fallback gate now guards the unquote boundary too.
-    pos_lambda_rest_local = me.find(
-        "if (dotted && !param_syms.empty() && name_map && session.allow_rest_hygiene &&\n                    !local_in_quote && !local_in_unquote)"
-    )
-    ac4_var = pos_var_local != -1
+    pos_params_local = me.find("param_syms.push_back((local_in_quote || local_in_unquote)")
     ac4_set = pos_set_local != -1
     ac4_params = pos_params_local != -1
-    ac4_lambda_rest = pos_lambda_rest_local != -1
+    # Issue #3685: the fallback gate reads the session policy; Issue #3756 also
+    # guards the unquote boundary. The body lives in clone_lambda now.
+    pos_lambda_rest_local = me.find("aura::ast::NodeId clone_lambda(")
+    lambda_window = me[pos_lambda_rest_local : pos_lambda_rest_local + 1400] if pos_lambda_rest_local != -1 else ""
+    ac4_lambda_rest = (
+        "dotted && !param_syms.empty() && name_map && session.allow_rest_hygiene" in lambda_window
+        and "!local_in_quote" in lambda_window
+    )
     ac4_ok = ac4_var and ac4_let and ac4_def and ac4_set and ac4_params and ac4_lambda_rest
     if not ac4_var:
         fails.append("AC4: Variable case must branch on local_in_quote")

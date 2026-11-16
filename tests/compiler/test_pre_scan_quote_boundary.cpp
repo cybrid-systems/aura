@@ -57,9 +57,8 @@ static void ac1_pre_scan_quote_boundary() {
     // handling (#2807) and the binding-position checks (Let/Lambda/Define/
     // MacroDef). Find the pre_scan closure and verify the Quote check is
     // present in the right place.
-    const auto pre_scan_pos =
-        mxcpp.find("auto pre_scan = [&](this auto&& self, NodeId nid, int qq_depth)");
-    CHECK(pre_scan_pos != std::string::npos, "pre_scan closure found");
+    const auto pre_scan_pos = mxcpp.find("void pre_scan(aura::ast::NodeId nid, int qq_depth");
+    CHECK(pre_scan_pos != std::string::npos, "pre_scan method found");
     if (pre_scan_pos != std::string::npos) {
         const auto window_end = std::min<std::size_t>(pre_scan_pos + 7000, mxcpp.size());
         const std::string window(mxcpp, pre_scan_pos, window_end - pre_scan_pos);
@@ -89,8 +88,7 @@ static void ac2_quote_body_no_gensym() {
     CHECK(!mxcpp.empty(), "macro_expansion.cpp readable");
     // The comment must explain the data-boundary semantics, matching the
     // unquote caller-scope stop semantics.
-    const auto pre_scan_pos =
-        mxcpp.find("auto pre_scan = [&](this auto&& self, NodeId nid, int qq_depth)");
+    const auto pre_scan_pos = mxcpp.find("void pre_scan(aura::ast::NodeId nid, int qq_depth");
     if (pre_scan_pos != std::string::npos) {
         const auto window_end = std::min<std::size_t>(pre_scan_pos + 4500, mxcpp.size());
         const std::string window(mxcpp, pre_scan_pos, window_end - pre_scan_pos);
@@ -115,9 +113,9 @@ static void ac2_quote_body_no_gensym() {
     }
     // Pre-scan's binding-position rename_binding_pre path is NOT reachable
     // from Quote children because of the early-return.
-    CHECK(mxcpp.find("rename_binding_pre(nv.sym_id)") != std::string::npos,
+    CHECK(mxcpp.find("rename_binding_pre(nv.sym_id,") != std::string::npos,
           "rename_binding_pre still defined (binding-position path intact)");
-    CHECK(mxcpp.find("rename_binding_pre(nv.params[i])") != std::string::npos,
+    CHECK(mxcpp.find("rename_binding_pre(nv.params[i],") != std::string::npos,
           "rename_binding_pre on Lambda/MacroDef params still defined");
 }
 
@@ -128,9 +126,8 @@ static void ac3_qq_unquote_splicing_unchanged() {
     auto mxcpp = read_file("src/compiler/macro_expansion.cpp");
     CHECK(!mxcpp.empty(), "macro_expansion.cpp readable");
     // All 3 Call-head paths must still be present in pre_scan.
-    const auto pre_scan_pos =
-        mxcpp.find("auto pre_scan = [&](this auto&& self, NodeId nid, int qq_depth)");
-    CHECK(pre_scan_pos != std::string::npos, "pre_scan closure found");
+    const auto pre_scan_pos = mxcpp.find("void pre_scan(aura::ast::NodeId nid, int qq_depth");
+    CHECK(pre_scan_pos != std::string::npos, "pre_scan method found");
     if (pre_scan_pos != std::string::npos) {
         const auto window_end = std::min<std::size_t>(pre_scan_pos + 6500, mxcpp.size());
         const std::string window(mxcpp, pre_scan_pos, window_end - pre_scan_pos);
@@ -172,10 +169,9 @@ static void ac4_soft_off_preserved() {
               "no new g_3154_* atomic in observability_metrics.h");
     }
     // Single shared pre_scan closure — no second hygiene model.
-    CHECK(mxcpp.find("auto pre_scan = [&](this auto&& self, NodeId nid, int qq_depth)") !=
-              std::string::npos,
-          "pre_scan closure present (single hygiene model)");
-    CHECK(mxcpp.find("pre_scan(body_id, qq_depth)") != std::string::npos,
+    CHECK(mxcpp.find("void pre_scan(aura::ast::NodeId nid, int qq_depth") != std::string::npos,
+          "pre_scan method present (single hygiene model)");
+    CHECK(mxcpp.find("pre_scan(body_id, qq_depth, session") != std::string::npos,
           "pre_scan entry inherits walk qq_depth (#3754)");
 }
 
@@ -183,9 +179,8 @@ static void ac3754_call_head_quote_stop() {
     std::println("\n--- #3754: Call-head quote stops pre_scan like NodeTag::Quote ---");
     auto mxcpp = read_file("src/compiler/macro_expansion.cpp");
     CHECK(!mxcpp.empty(), "macro_expansion.cpp readable");
-    const auto pre_scan_pos =
-        mxcpp.find("auto pre_scan = [&](this auto&& self, NodeId nid, int qq_depth)");
-    CHECK(pre_scan_pos != std::string::npos, "pre_scan closure found");
+    const auto pre_scan_pos = mxcpp.find("void pre_scan(aura::ast::NodeId nid, int qq_depth");
+    CHECK(pre_scan_pos != std::string::npos, "pre_scan method found");
     if (pre_scan_pos != std::string::npos) {
         const auto window = mxcpp.substr(pre_scan_pos, 4500);
         CHECK(window.find("cname == \"quote\"") != std::string::npos,

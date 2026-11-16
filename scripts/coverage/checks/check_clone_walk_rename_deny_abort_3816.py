@@ -53,7 +53,7 @@ def main() -> int:
     # AC2: Let / Define guards + hyg_ctr order in rename_binding
     must("abort before add_let", "AC2", me)
     must("abort before add_define", "AC2", me)
-    rb = me.find("auto rename_binding =")
+    rb = me.find("aura::ast::SymId rename_binding(")
     rb_win = me[rb : rb + 2800] if rb >= 0 else ""
     ceil = rb_win.find("gensym_cap")
     deny_ret = rb_win.find("return aura::ast::NULL_NODE", ceil if ceil >= 0 else 0)

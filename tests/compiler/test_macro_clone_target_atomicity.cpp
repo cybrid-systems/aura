@@ -137,8 +137,11 @@ static void ac1_2_6_clone_at_depth_installs_and_restores() {
     // AC1: ExpandCheckpointGuard struct definition lives inside clone_macro_body_at_depth
     // (after NameMapCheckpoint, mirroring the macro_expand_all_body pattern).
     // Forward decl then definition; rfind the definition (has a body).
-    const auto sig_pos = macro_exp.rfind("static aura::ast::NodeId clone_macro_body_at_depth(");
-    CHECK(sig_pos != std::string::npos, "AC1+AC2+AC6: clone_macro_body_at_depth signature present");
+    // Issue #5243: the walk body moved to clone_walk(ctx, ...); the public
+    // function is now a thin wrapper, so the install/steal contract lives
+    // in the clone_walk body.
+    const auto sig_pos = macro_exp.rfind("static aura::ast::NodeId clone_walk(");
+    CHECK(sig_pos != std::string::npos, "AC1+AC2+AC6: clone_walk signature present");
     if (sig_pos == std::string::npos)
         return;
 

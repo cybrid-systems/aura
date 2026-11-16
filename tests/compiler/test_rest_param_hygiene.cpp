@@ -410,7 +410,7 @@ int run_test_rest_param_hygiene() {
         const auto mx = read_file("src/compiler/macro_expansion.cpp");
         CHECK(mx.find("Issue #4419") != std::string::npos, "4419: cite");
         CHECK(mx.find("query:4419") == std::string::npos, "4419: no new query key");
-        auto pre = mx.find("auto rename_binding_pre");
+        auto pre = mx.find("aura::ast::SymId rename_binding_pre(");
         CHECK(pre != std::string::npos, "4419: rename_binding_pre");
         if (pre != std::string::npos) {
             auto win = mx.substr(pre, 2500);
@@ -422,7 +422,7 @@ int run_test_rest_param_hygiene() {
                   "4419: ceiling deny returns before the process serial and hyg_ctr++");
             CHECK(win.find("Issue #2811") != std::string::npos, "4419: #2811 cite stays");
         }
-        auto rb = mx.find("auto rename_binding =");
+        auto rb = mx.find("aura::ast::SymId rename_binding(");
         CHECK(rb != std::string::npos, "4419: rename_binding");
         if (rb != std::string::npos) {
             auto win = mx.substr(rb, 2800);

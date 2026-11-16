@@ -115,7 +115,7 @@ def run_checks() -> list[str]:
     flat = body(ME)
     # #4936 B4 renamed the local lambda's recursive call from pre_scan(...)
     # to deducing-this self(...); accept either spelling.
-    depth_minus_one = re.compile(r"(?:pre_scan|self)\(nv\.child\(1\),\s*qq_depth - 1\);")
+    depth_minus_one = re.compile(r"(?:pre_scan|self)\(nv\.child\(1\),\s*qq_depth - 1(?:,[^)]*)?\);")
 
     # AC1: both unquote and unquote-splicing recurse with depth - 1.
     if len(depth_minus_one.findall(flat)) < 2:

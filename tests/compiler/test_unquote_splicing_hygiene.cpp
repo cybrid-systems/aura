@@ -165,10 +165,10 @@ static void ac3183_1_ceiling_deny_rolls_back_flatast() {
     std::println("\n--- #3183 AC1: ceiling mid-walk deny → expand_ckpt.try_restore() ---");
     const auto me = read_file("src/compiler/macro_expansion.cpp");
     CHECK(me.find("Issue #3183") != std::string::npos, "AC1: cite #3183 in macro_expansion.cpp");
-    const auto cap_pos_pre = me.find("rename_binding_pre = [&](SymId sid)");
-    const auto cap_pos_binding = me.find("auto rename_binding = [&](SymId sid)");
-    CHECK(cap_pos_pre != std::string::npos, "AC1: rename_binding_pre lambda found");
-    CHECK(cap_pos_binding != std::string::npos, "AC1: rename_binding lambda found");
+    const auto cap_pos_pre = me.find("rename_binding_pre(aura::ast::SymId sid");
+    const auto cap_pos_binding = me.find("aura::ast::SymId rename_binding(aura::ast::SymId sid");
+    CHECK(cap_pos_pre != std::string::npos, "AC1: rename_binding_pre method found");
+    CHECK(cap_pos_binding != std::string::npos, "AC1: rename_binding method found");
     if (cap_pos_pre != std::string::npos && cap_pos_binding != std::string::npos) {
         for (const auto start : {cap_pos_pre, cap_pos_binding}) {
             const auto lim_pos =
@@ -188,8 +188,8 @@ static void ac3183_1_ceiling_deny_rolls_back_flatast() {
 static void ac3183_2_rest_path_shares_ceiling() {
     std::println("\n--- #3183 AC2: rename_rest_binding_pre — gensym_cap check ---");
     const auto me = read_file("src/compiler/macro_expansion.cpp");
-    const auto rest_pos = me.find("auto rename_rest_binding_pre = [&](SymId sid)");
-    CHECK(rest_pos != std::string::npos, "AC2: rename_rest_binding_pre lambda found");
+    const auto rest_pos = me.find("aura::ast::SymId rename_rest_binding_pre(aura::ast::SymId sid");
+    CHECK(rest_pos != std::string::npos, "AC2: rename_rest_binding_pre method found");
     if (rest_pos != std::string::npos) {
         const auto lim_pos =
             me.find("note_hygiene_last_limit_reason(kHygieneLimitReasonGensymCeiling)", rest_pos);
@@ -226,7 +226,7 @@ static void ac3183_3_depth_deny_stderr_updated() {
 static void ac3183_4_no_serial_drift_from_rest() {
     std::println("\n--- #3183 AC4: rest ceiling deny does NOT advance rest serial ---");
     const auto me = read_file("src/compiler/macro_expansion.cpp");
-    const auto rest_pos = me.find("auto rename_rest_binding_pre = [&](SymId sid)");
+    const auto rest_pos = me.find("aura::ast::SymId rename_rest_binding_pre(aura::ast::SymId sid");
     if (rest_pos != std::string::npos) {
         const auto lim_pos =
             me.find("note_hygiene_last_limit_reason(kHygieneLimitReasonGensymCeiling)", rest_pos);
@@ -903,11 +903,11 @@ int run_test_unquote_splicing_hygiene() {
     {
         const auto me = read_file("src/compiler/macro_expansion.cpp");
         CHECK(me.find("Issue #3754") != std::string::npos, "3754: cites #3754");
-        CHECK(me.find("pre_scan(body_id, qq_depth)") != std::string::npos,
+        CHECK(me.find("pre_scan(body_id, qq_depth, session") != std::string::npos,
               "3754: nested pre_scan inherits walk qq_depth");
         CHECK(me.find("!local_in_quote && !local_in_unquote") != std::string::npos,
               "3754: skip pre_scan in unquote caller-scope");
-        const auto pre = me.find("auto pre_scan = [&](this auto&& self, NodeId nid, int qq_depth)");
+        const auto pre = me.find("void pre_scan(aura::ast::NodeId nid, int qq_depth");
         CHECK(pre != std::string::npos, "3754: pre_scan present");
         if (pre != std::string::npos) {
             const auto win = me.substr(pre, 4500);

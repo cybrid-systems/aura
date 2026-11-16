@@ -102,7 +102,9 @@ def _check_detection_scope(me: str) -> list[str]:
     scope = me[scope_start : pos + 400]
     if "hygiene_depth == 0 && new_id != NULL_NODE" in scope:
         failures.append("AC5: steal detection still gated on hygiene_depth == 0")
-    if "if (new_id != NULL_NODE)" not in scope:
+    call_pos = me.find("ctx.detect_mid_walk_steal(")
+    call_guarded = call_pos >= 0 and "if (new_id != NULL_NODE)" in me[max(0, call_pos - 300) : call_pos]
+    if "if (new_id != NULL_NODE)" not in scope and not call_guarded:
         failures.append("AC5: outer guard should be `if (new_id != NULL_NODE)`")
     return failures
 

@@ -1970,46 +1970,779 @@ static aura::ast::NodeId clone_macro_body_at_depth(
     std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
                        std::equal_to<>>* name_map,
     aura::ast::SyntaxMarker cloned_marker, int hygiene_depth, int session_depth_limit,
-    bool in_quote = false, int qq_depth = 0, CloneSessionPolicy session = CloneSessionPolicy{});
+    bool in_quote, int qq_depth, CloneSessionPolicy session);
 
-aura::ast::NodeId clone_macro_body(
-    aura::ast::FlatAST& target, aura::ast::StringPool& target_pool, aura::ast::FlatAST& source,
-    aura::ast::StringPool& source_pool, aura::ast::NodeId body_id,
+// Issue #5243: named walk context for the clone recursion. The invariant
+// target/source refs, substitution maps, marker, and frame floor ride the
+// context; per-frame hygiene state stays explicit in each method signature.
+struct CloneWalkCtx {
+    aura::ast::FlatAST& target;
+    aura::ast::StringPool& target_pool;
+    aura::ast::FlatAST& source;
+    aura::ast::StringPool& source_pool;
     const std::unordered_map<std::string, aura::ast::NodeId, aura::core::TransparentStringHash,
-                             std::equal_to<>>* subst,
+                             std::equal_to<>>* subst;
     std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
-                       std::equal_to<>>* name_map,
-    aura::ast::SyntaxMarker cloned_marker, std::size_t owned_floor) {
-    // Issue #2806 / #3028: public API is always top-level depth=0.
-    // session_depth_limit=0 → compute at entry from capability+runtime (not TLS).
-    // Issue #4309: sentinel lets depth-0 snapshot target.size() before add_*.
-    // An explicit floor (rest spine checkpoint) rides the session, which
-    // nested frames copy. Depth stays the explicit argument.
-    if (owned_floor == static_cast<std::size_t>(-1)) {
-        return clone_macro_body_at_depth(target, target_pool, source, source_pool, body_id, subst,
-                                         name_map, cloned_marker, /*hygiene_depth=*/0,
-                                         /*session_depth_limit=*/0,
-                                         /*in_quote=*/false,
-                                         /*qq_depth=*/0, CloneSessionPolicy{});
+                       std::equal_to<>>* name_map;
+    aura::ast::SyntaxMarker cloned_marker;
+    std::size_t owned_floor;
+    // Re-intern SymIds: resolve in source_pool, intern in target_pool.
+    aura::ast::SymId transplant(aura::ast::SymId sid) const {
+        using namespace aura::ast;
+        return (sid == INVALID_SYM) ? sid
+                                    : target_pool.intern(std::string(source_pool.resolve(sid)));
     }
-    CloneSessionPolicy session{};
-    session.owned_floor = owned_floor;
-    return clone_macro_body_at_depth(target, target_pool, source, source_pool, body_id, subst,
-                                     name_map, cloned_marker, /*hygiene_depth=*/0,
-                                     /*session_depth_limit=*/0,
-                                     /*in_quote=*/false,
-                                     /*qq_depth=*/0, session);
-}
 
-static aura::ast::NodeId clone_macro_body_at_depth(
-    aura::ast::FlatAST& target, aura::ast::StringPool& target_pool, aura::ast::FlatAST& source,
-    aura::ast::StringPool& source_pool, aura::ast::NodeId body_id,
-    const std::unordered_map<std::string, aura::ast::NodeId, aura::core::TransparentStringHash,
-                             std::equal_to<>>* subst,
-    std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
-                       std::equal_to<>>* name_map,
-    aura::ast::SyntaxMarker cloned_marker, int hygiene_depth, int session_depth_limit,
-    bool in_quote, int qq_depth, CloneSessionPolicy session) {
+    // Resolve a name through name_map (hygiene: renamed binding).
+    std::string resolve_name(aura::ast::SymId sid) const {
+        using namespace aura::ast;
+        if (sid == INVALID_SYM)
+            return "";
+        auto name = std::string(source_pool.resolve(sid));
+        if (name_map) {
+            auto it = name_map->find(name);
+            if (it != name_map->end())
+                return it->second;
+        }
+        return name;
+    }
+
+    // Rename a binding position for hygiene: gensym if macro-introduced.
+    aura::ast::SymId rename_binding_pre(aura::ast::SymId sid, const CloneSessionPolicy& session,
+                                        ExpandCheckpointGuard& expand_ckpt,
+                                        std::uint64_t& hyg_ctr) {
+        using namespace aura::ast;
+        if (sid == INVALID_SYM || !name_map)
+            return transplant(sid);
+        auto name = std::string(source_pool.resolve(sid));
+        // Ordinary template bindings: keep free macro-param names substitutable
+        // (subst wins). Builtins keep their name.
+        if ((subst && subst->count(name)) || detail::hygiene_builtins_contains(name))
+            return transplant(sid);
+        auto it = name_map->find(name);
+        if (it != name_map->end())
+            return target_pool.intern(it->second);
+        // Issue #2811: ceiling before a gensym serial (#2243 / #2804).
+        const auto gensym_cap = effective_max_gensym_map_size(session);
+        if (gensym_cap > 0 && name_map && name_map->size() >= gensym_cap) {
+            note_hygiene_last_limit_reason(kHygieneLimitReasonGensymCeiling);
+            g_macro_self_evo_gensym_map_size_exceeded_total.fetch_add(1, std::memory_order_relaxed);
+            g_macro_self_evo_denied_total.fetch_add(1, std::memory_order_relaxed);
+            g_hygiene_violation_in_macro_expand_total.fetch_add(1, std::memory_order_relaxed);
+            // Serial-safe deny: hyg_ctr untouched → no drift vs name_map.size().
+            g_gensym_serial_drift_total.fetch_add(1, std::memory_order_relaxed);
+            bump_fiber_hygiene_on_violation(aura_fiber_current_id());
+            // Issue #3183: roll back partial target nodes.
+            expand_ckpt.try_restore();
+            return aura::ast::NULL_NODE;
+        }
+        // Only consume a serial after the ceiling check passes.
+        // Issue #4419: process serial, then the per-call hyg_ctr suffix.
+        auto fresh = std::string("__") + name + "_" + std::to_string(bind_gensym_serial()) + "_" +
+                     std::to_string(hyg_ctr++);
+        (*name_map)[name] = fresh;
+        return target_pool.intern(fresh);
+    }
+
+    aura::ast::SymId rename_rest_binding_pre(aura::ast::SymId sid,
+                                             const CloneSessionPolicy& session,
+                                             ExpandCheckpointGuard& expand_ckpt) {
+        using namespace aura::ast;
+        // No name_map → caller opted into untracked clone (not a violation).
+        if (sid == INVALID_SYM || !name_map)
+            return transplant(sid);
+        // Issue #2023: MacroSelfEvo policy may disable rest hygiene (opt-out).
+        if (!session.allow_rest_hygiene)
+            return transplant(sid);
+        auto name = std::string(source_pool.resolve(sid));
+        if (detail::hygiene_builtins_contains(name))
+            return transplant(sid);
+        // Issue #3183: rest path shares the same gensym_cap ceiling as
+        // rename_binding_pre / rename_binding (#2804 / #2811). Without
+        // this check, rest gensyms (g_macro_rest_gensym_serial + name_map
+        // insert) can inflate name_map past the MacroSelfEvo ceiling that
+        // rename_binding_pre enforces — drift + spurious deny when later
+        // bindings hit the cap. Deny BEFORE advancing the serial, with
+        // same rollback surface as ceiling mid-walk deny in rename_binding_pre.
+        const auto gensym_cap_rest = effective_max_gensym_map_size(session);
+        if (gensym_cap_rest > 0 && name_map->size() >= gensym_cap_rest) {
+            note_hygiene_last_limit_reason(kHygieneLimitReasonGensymCeiling);
+            g_macro_self_evo_gensym_map_size_exceeded_total.fetch_add(1, std::memory_order_relaxed);
+            g_clone_walk_gensym_ceiling_exceeded_total.fetch_add(1, std::memory_order_relaxed);
+            g_macro_self_evo_denied_total.fetch_add(1, std::memory_order_relaxed);
+            g_hygiene_violation_in_macro_expand_total.fetch_add(1, std::memory_order_relaxed);
+            g_gensym_serial_drift_total.fetch_add(1, std::memory_order_relaxed);
+            bump_fiber_hygiene_on_violation(aura_fiber_current_id());
+            expand_ckpt.try_restore();
+            return aura::ast::NULL_NODE;
+        }
+        auto it = name_map->find(name);
+        if (it != name_map->end()) {
+            // Already mapped — ensure rest-shaped gensym; repair if not.
+            if (it->second.rfind("__rest_", 0) != 0) {
+                const auto serial =
+                    g_macro_rest_gensym_serial.fetch_add(1, std::memory_order_relaxed);
+                auto fresh = std::string("__rest_") + name + "_" + std::to_string(serial);
+                it->second = fresh;
+                g_macro_rest_param_hygiene_total.fetch_add(1, std::memory_order_relaxed);
+                g_macro_rest_param_hygiene_incomplete_total.fetch_add(1, std::memory_order_relaxed);
+                // Issue #3215: rest spine should have been stamped — Agent reason.
+                note_hygiene_last_limit_reason(kHygieneLimitReasonRestUnmarked);
+                return target_pool.intern(fresh);
+            }
+            return target_pool.intern(it->second);
+        }
+        // Process-wide serial — concurrent fiber expand cannot collide.
+        const auto serial = g_macro_rest_gensym_serial.fetch_add(1, std::memory_order_relaxed);
+        auto fresh = std::string("__rest_") + name + "_" + std::to_string(serial);
+        (*name_map)[name] = fresh;
+        g_macro_rest_param_hygiene_total.fetch_add(1, std::memory_order_relaxed);
+        return target_pool.intern(fresh);
+    }
+
+    void pre_scan(aura::ast::NodeId nid, int qq_depth, const CloneSessionPolicy& session,
+                  ExpandCheckpointGuard& expand_ckpt, std::uint64_t& hyg_ctr) {
+        using namespace aura::ast;
+        if (nid == NULL_NODE || nid >= source.size())
+            return;
+        // Issue #3754: already in the unquote caller-scope zone —
+        // do not gensym bindings (clone walk transplants refs).
+        if (qq_depth == kUnquoteCallerScopeDepth)
+            return;
+        auto nv = source.get(nid);
+        // Quasiquote / unquote / unquote-splicing boundary detection.
+        // Encoded as Call nodes with Variable heads (no dedicated
+        // NodeTag). Quasiquote → recurse into first arg with deeper
+        // qq_depth; unquote / unquote-splicing → stop recursion
+        // (caller scope, no gensym). Issue #2807: `,@x` must match
+        // unquote, not fall through to generic child walk.
+        if (nv.tag == NodeTag::Call && !nv.children.empty()) {
+            auto callee_n = source.get(nv.child(0));
+            if (callee_n.tag == NodeTag::Variable) {
+                auto cname = std::string(source_pool.resolve(callee_n.sym_id));
+                if (cname == "quasiquote" && nv.children.size() >= 2) {
+                    // Entering qq body: bump depth + recurse ONLY
+                    // into the qq template (first arg).
+                    pre_scan(nv.child(1), qq_depth + 1, session, expand_ckpt, hyg_ctr);
+                    return;
+                }
+                if (cname == "unquote") {
+                    // Issue #2807/#3606: unquote at depth ≤ 1 is
+                    // caller scope — stop, no gensym (bindings inside
+                    // unquote live in the caller's scope). At depth
+                    // > 1 the unquote body is still OUTER-TEMPLATE
+                    // scope: recurse with depth - 1 so nested-qq
+                    // bindings gensym and refs resolve via name_map
+                    // (#2239 residual — qq_depth never decremented).
+                    if (qq_depth > 1 && nv.children.size() >= 2)
+                        pre_scan(nv.child(1), qq_depth - 1, session, expand_ckpt, hyg_ctr);
+                    return;
+                }
+                // Issue #2807: unquote-splicing (`,@x`) is caller
+                // scope at depth ≤ 1 — same stop as unquote (the
+                // mismatch counter keeps firing there). Issue #3606:
+                // at depth > 1 the splice body is still
+                // outer-template — recurse with depth - 1, no counter
+                // (not a mismatch).
+                if (cname == "unquote-splicing") {
+                    if (qq_depth <= 1) {
+                        g_unquote_splicing_hygiene_mismatch_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                    } else if (nv.children.size() >= 2) {
+                        pre_scan(nv.child(1), qq_depth - 1, session, expand_ckpt, hyg_ctr);
+                    }
+                    return;
+                }
+                // Issue #3754: Call-head "quote" is a data boundary,
+                // same stop as NodeTag::Quote (#3154). Parser quote
+                // is NodeTag::Quote; generated `(quote …)` is a Call
+                // and used to leak quoted bindings into name_map.
+                if (cname == "quote")
+                    return;
+            }
+        }
+        // Issue #3154: NodeTag::Quote is a data boundary, not code.
+        // pre_scan must NOT descend into Quote children — bindings
+        // under (quote (let ((x 1)) x)) are data, not template
+        // scope, and must NOT be gensym'd. Same caller-scope stop
+        // as unquote / unquote-splicing. Without this early-return,
+        // quoted forms containing Let / Lambda / Define / MacroDef
+        // get their bindings rename_binding_pre'd, producing
+        // unexpected __x_N inside the quoted data structure
+        // (depth inconsistency vs the qq Call-head paths handled
+        // above). Quote is a first-class NodeTag — distinct from
+        // the Call-named "quote" form. qq / unquote / unquote-
+        // splicing behaviour from #2807 unchanged. Soft / Off
+        // contract preserved — no new metrics middle-layer.
+        if (nv.tag == NodeTag::Quote)
+            return;
+        // If this node is a binding position, gensym its name
+        // (into the name_map) but don't generate any target node.
+        if (nv.tag == NodeTag::Let || nv.tag == NodeTag::LetRec || nv.tag == NodeTag::Define) {
+            rename_binding_pre(nv.sym_id, session, expand_ckpt, hyg_ctr);
+        } else if (nv.tag == NodeTag::Lambda) {
+            const bool dotted = nv.int_value != 0;
+            const auto nparams = nv.params.size();
+            for (std::size_t i = 0; i < nparams; ++i) {
+                if (dotted && i + 1 == nparams)
+                    rename_rest_binding_pre(nv.params[i], session, expand_ckpt);
+                else
+                    rename_binding_pre(nv.params[i], session, expand_ckpt, hyg_ctr);
+            }
+            // Issue #2239: track rest-param bindings discovered
+            // inside nested qq templates as their own observability
+            // dimension (separate from the flat rest-param counter).
+            if (dotted && qq_depth > 0)
+                g_macro_rest_param_nested_qq_hits_total.fetch_add(1, std::memory_order_relaxed);
+        } else if (nv.tag == NodeTag::MacroDef) {
+            // Nested macro defs inside a template: rest bit is bit 0 of
+            // int_value (same encoding as add_macrodef).
+            const bool dotted = (nv.int_value & 1) != 0;
+            const auto nparams = nv.params.size();
+            for (std::size_t i = 0; i < nparams; ++i) {
+                if (dotted && i + 1 == nparams)
+                    rename_rest_binding_pre(nv.params[i], session, expand_ckpt);
+                else
+                    rename_binding_pre(nv.params[i], session, expand_ckpt, hyg_ctr);
+            }
+            if (dotted && qq_depth > 0)
+                g_macro_rest_param_nested_qq_hits_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        std::vector<aura::ast::NodeId> scan_children(nv.children.begin(), nv.children.end());
+        for (auto c : scan_children)
+            pre_scan(c, qq_depth, session, expand_ckpt, hyg_ctr);
+    }
+
+    aura::ast::SymId rename_binding(aura::ast::SymId sid, const CloneSessionPolicy& session,
+                                    ExpandCheckpointGuard& expand_ckpt, std::uint64_t& hyg_ctr) {
+        using namespace aura::ast;
+        if (sid == INVALID_SYM || !name_map)
+            return transplant(sid);
+        auto name = std::string(source_pool.resolve(sid));
+        // Prefer pre-scan / rest renames first so template-introduced
+        // rest bindings (name_map) win over a same-named macro param.
+        auto it = name_map->find(name);
+        if (it != name_map->end())
+            return target_pool.intern(it->second);
+        // Macro params, builtins keep their name (free uses → Variable subst)
+        if ((subst && subst->count(name)) || detail::hygiene_builtins_contains(name))
+            return transplant(sid);
+        // Issue #2804: gensym-map-size ceiling — parity with rename_binding_pre.
+        // Clone walk can still allocate names pre-scan missed or refused;
+        // without this check max_gensym_map_size is only half-enforced.
+        const auto gensym_cap = effective_max_gensym_map_size(session);
+        if (gensym_cap > 0 && name_map->size() >= gensym_cap) {
+            note_hygiene_last_limit_reason(kHygieneLimitReasonGensymCeiling);
+            g_macro_self_evo_gensym_map_size_exceeded_total.fetch_add(1, std::memory_order_relaxed);
+            g_clone_walk_gensym_ceiling_exceeded_total.fetch_add(1, std::memory_order_relaxed);
+            g_macro_self_evo_denied_total.fetch_add(1, std::memory_order_relaxed);
+            g_hygiene_violation_in_macro_expand_total.fetch_add(1, std::memory_order_relaxed);
+            // Issue #3183: mid-walk ceiling deny in rename_binding — roll
+            // back target FlatAST partial additions via expand_ckpt.try_restore()
+            // (same pattern as rename_binding_pre / steal / pass-limit —
+            // L1749 / L2253 / L2768 / L2789). nm_ckpt RAII on this frame
+            // rolls back name_map on return. hyg_ctr untouched above so
+            // serial stays safe vs name_map.size() (#2811).
+            expand_ckpt.try_restore();
+            return aura::ast::NULL_NODE;
+        }
+        // Issue #4419: same process serial as rename_binding_pre, after the
+        // ceiling return so a deny does not fetch_add (#2811).
+        auto fresh = std::string("__") + name + "_" + std::to_string(bind_gensym_serial()) + "_" +
+                     std::to_string(hyg_ctr++);
+        (*name_map)[name] = fresh;
+        return target_pool.intern(fresh);
+    }
+
+    aura::ast::NodeId clone_variable(const aura::ast::NodeView& v, bool local_in_quote,
+                                     bool local_in_unquote) {
+        using namespace aura::ast;
+        // Hygienic: check name_map for renamed bindings.
+        // Issue #3181: under quote, transplant verbatim (no name_map
+        // lookup — pre_scan stopped at the quote boundary).
+        // Issue #2807: under unquote / unquote-splicing, transplant
+        // verbatim (caller scope — pre_scan stopped at the unquote
+        // boundary, but the outer qq Let binding's __x_N still
+        // resolves via resolve_name, breaking verbatim contract).
+        if (local_in_quote) {
+            return target.add_variable(transplant(v.sym_id));
+        } else if (local_in_unquote && name_map) {
+            return target.add_variable(transplant(v.sym_id));
+        } else if (name_map) {
+            auto name = resolve_name(v.sym_id);
+            return target.add_variable(target_pool.intern(name));
+        } else {
+            return target.add_variable(transplant(v.sym_id));
+        }
+    }
+
+    aura::ast::NodeId clone_call(const std::vector<aura::ast::NodeId>& child_ids) {
+        std::vector<aura::ast::NodeId> args(child_ids.begin() + 1, child_ids.end());
+        if (child_ids.empty())
+            return aura::ast::NULL_NODE;
+        return target.add_call(child_ids[0], args);
+    }
+
+    aura::ast::NodeId clone_lambda(const aura::ast::NodeView& v,
+                                   const std::vector<aura::ast::NodeId>& child_ids,
+                                   std::vector<aura::ast::SymId>& param_syms,
+                                   const CloneSessionPolicy& session, bool local_in_quote,
+                                   bool local_in_unquote) {
+        using namespace aura::ast;
+        // Issue #2018 / #2169: preserve dotted rest flag (int_value != 0).
+        // Fallback: if dotted rest param did not get a __rest_ gensym
+        // while hygiene is on, force-repair + incomplete counter.
+        // Issue #2805: never map hygiene_builtins names (let, list, …)
+        // into name_map — pre-scan already skips them; overwriting would
+        // rename free Variable uses of those builtins in the body.
+        // Issue #3181: skip rest-param fallback repair under quote —
+        // quote data has no __rest_<serial> mapping (pre_scan stopped at
+        // the quote boundary). param_syms.back() is verbatim.
+        if (!child_ids.empty()) {
+            const bool dotted = v.int_value != 0;
+            if (dotted && !param_syms.empty() && name_map && session.allow_rest_hygiene &&
+                !local_in_quote && !local_in_unquote) {
+                auto rest_name = std::string(target_pool.resolve(param_syms.back()));
+                if (rest_name.rfind("__rest_", 0) != 0) {
+                    const std::string src_nm =
+                        !v.params.empty() ? std::string(source_pool.resolve(v.params.back()))
+                                          : rest_name;
+                    // Issue #2805: builtins stay unmapped (parity with
+                    // rename_rest_binding_pre / rename_binding_pre).
+                    if (detail::hygiene_builtins_contains(src_nm) ||
+                        detail::hygiene_builtins_contains(rest_name)) {
+                        g_dotted_rest_builtin_rename_prevented_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                        // Keep param_syms.back() as the transplanted
+                        // original name — do not force __rest_fb_ gensym.
+                    } else {
+                        const auto serial =
+                            g_macro_rest_gensym_serial.fetch_add(1, std::memory_order_relaxed);
+                        auto fresh =
+                            std::string("__rest_fb_") + rest_name + "_" + std::to_string(serial);
+                        param_syms.back() = target_pool.intern(fresh);
+                        if (!v.params.empty())
+                            (*name_map)[src_nm] = fresh;
+                        g_macro_rest_param_hygiene_total.fetch_add(1, std::memory_order_relaxed);
+                        g_macro_rest_param_hygiene_incomplete_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                        g_hygiene_violation_in_macro_expand_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                        // Issue #3215: rest spine should have been stamped — Agent reason.
+                        note_hygiene_last_limit_reason(kHygieneLimitReasonRestUnmarked);
+                    }
+                }
+            }
+            return target.add_lambda(param_syms, child_ids[0], /*dotted=*/dotted);
+        }
+        return aura::ast::NULL_NODE;
+    }
+
+    aura::ast::SymId checked_binding_name(aura::ast::SymId sid, bool local_in_quote,
+                                          bool local_in_unquote, const CloneSessionPolicy& session,
+                                          ExpandCheckpointGuard& expand_ckpt,
+                                          bool production_surface, std::uint64_t& hyg_ctr,
+                                          bool& aborted) {
+        using namespace aura::ast;
+        auto s = (local_in_quote || local_in_unquote)
+                     ? transplant(sid)
+                     : rename_binding(sid, session, expand_ckpt, hyg_ctr);
+        if (production_surface && (s == NULL_NODE || inner_expand_production_limit_deny())) {
+            expand_ckpt.try_restore();
+            aborted = true;
+        }
+        return s;
+    }
+    aura::ast::NodeId clone_let(const aura::ast::NodeView& v,
+                                const std::vector<aura::ast::NodeId>& child_ids,
+                                const CloneSessionPolicy& session,
+                                ExpandCheckpointGuard& expand_ckpt, bool production_surface,
+                                bool local_in_quote, bool local_in_unquote, std::uint64_t& hyg_ctr,
+                                bool& aborted) {
+        using namespace aura::ast;
+        if (child_ids.size() < 2)
+            return aura::ast::NULL_NODE;
+        // Issue #3816: abort before add_let after rename deny (checkpoint may already be
+        // consumed — no post-deny add_*).
+        SymId s = checked_binding_name(v.sym_id, local_in_quote, local_in_unquote, session,
+                                       expand_ckpt, production_surface, hyg_ctr, aborted);
+        if (aborted)
+            return aura::ast::NULL_NODE;
+        return (v.tag == aura::ast::NodeTag::Let)
+                   ? target.add_let(s, child_ids[0], child_ids[1])
+                   : target.add_letrec(s, child_ids[0], child_ids[1]);
+    }
+
+    aura::ast::NodeId clone_set(const aura::ast::NodeView& v,
+                                const std::vector<aura::ast::NodeId>& child_ids,
+                                bool local_in_quote, bool local_in_unquote) {
+        using namespace aura::ast;
+        if (!child_ids.empty()) {
+            // Issue #120: if the set! target is a macro param, look
+            // up the arg and use ITS sym_id (resolved from target).
+            // Otherwise the set! would target the macro param
+            // (e.g., "a") which isn't bound in the calling env.
+            // Issue #3181: under quote, skip subst lookup — quoted
+            // data is not substituted, set! target is verbatim.
+            // Issue #3507: template-introduced bindings (let/lambda
+            // gensyms in name_map) must rename the assignment target
+            // too. Param subst still wins so swap! writes the caller.
+            // Unquote mirrors Variable: caller-scope, no name_map.
+            SymId set_name_sid = transplant(v.sym_id);
+            if (local_in_quote || (local_in_unquote && name_map)) {
+                // verbatim
+            } else {
+                bool hit_subst = false;
+                if (!local_in_quote && subst) {
+                    if (v.sym_id != INVALID_SYM) {
+                        auto set_name = std::string(source_pool.resolve(v.sym_id));
+                        auto sit = subst->find(set_name);
+                        if (sit != subst->end()) {
+                            auto arg_v = target.get(sit->second);
+                            if (arg_v.tag == NodeTag::Variable) {
+                                set_name_sid = arg_v.sym_id;
+                                hit_subst = true;
+                            }
+                        }
+                    }
+                }
+                if (!hit_subst && name_map)
+                    set_name_sid = target_pool.intern(resolve_name(v.sym_id));
+            }
+            return target.add_set(set_name_sid, child_ids[0]);
+        }
+        return aura::ast::NULL_NODE;
+    }
+
+    aura::ast::NodeId clone_define(const aura::ast::NodeView& v,
+                                   const std::vector<aura::ast::NodeId>& child_ids,
+                                   const CloneSessionPolicy& session,
+                                   ExpandCheckpointGuard& expand_ckpt, bool production_surface,
+                                   bool local_in_quote, bool local_in_unquote,
+                                   std::uint64_t& hyg_ctr, bool& aborted) {
+        using namespace aura::ast;
+        if (child_ids.empty())
+            return aura::ast::NULL_NODE;
+        // Issue #3816: abort before add_define after rename deny.
+        SymId s = checked_binding_name(v.sym_id, local_in_quote, local_in_unquote, session,
+                                       expand_ckpt, production_surface, hyg_ctr, aborted);
+        if (aborted)
+            return aura::ast::NULL_NODE;
+        return target.add_define(s, child_ids[0]);
+    }
+
+    aura::ast::NodeId clone_macrodef(const aura::ast::NodeView& v,
+                                     const std::vector<aura::ast::NodeId>& child_ids,
+                                     const std::vector<aura::ast::SymId>& param_syms,
+                                     bool production_surface, ExpandCheckpointGuard& expand_ckpt,
+                                     bool& aborted) {
+        using namespace aura::ast;
+        // Issue #4101: copy a nested define. new_id NULL makes the
+        // production parent abort the whole clone with no limit
+        // reason, so a later inner deny never has a MacroDef tail
+        // for the caller to truncate. The macro name stays the
+        // source spelling (pre_scan gensyms params only); params
+        // already went through rename_binding.
+        if (!child_ids.empty()) {
+            const bool dotted = (v.int_value & 1) != 0;
+            const bool hygienic_bit = (v.int_value & 2) != 0;
+            const bool preserved = (v.int_value & 4) != 0;
+            if (production_surface && inner_expand_production_limit_deny()) {
+                expand_ckpt.try_restore();
+                aborted = true;
+                return aura::ast::NULL_NODE;
+            }
+            return target.add_macrodef(transplant(v.sym_id), param_syms, child_ids[0], dotted,
+                                       hygienic_bit, preserved);
+        }
+        return aura::ast::NULL_NODE;
+    }
+
+    bool clone_children(aura::ast::NodeId body_id, int hygiene_depth, int depth_limit,
+                        bool local_in_quote, int qq_depth, const std::string& qq_head_name,
+                        aura::ast::NodeId qq_arg_id, const CloneSessionPolicy& session,
+                        ExpandCheckpointGuard& expand_ckpt, bool production_surface,
+                        std::vector<aura::ast::NodeId>& child_ids) {
+        using namespace aura::ast;
+        // Issue #483: snapshot child NodeIds before recursion — recursive
+        // clone / set_child on either flat can replace a parent's
+        // PersistentChildVector and invalidate v.children spans.
+        std::vector<aura::ast::NodeId> source_children;
+        {
+            auto fresh = source.get(body_id);
+            source_children.assign(fresh.children.begin(), fresh.children.end());
+        }
+        for (auto cid : source_children) {
+            // Issue #365 / #2806: pass depth+1 into the recursive frame
+            // (explicit parameter; siblings share the same depth).
+            // Issue #3181: propagate local_in_quote to recursive children so
+            // the subtree inside quote is cloned verbatim (no rename, no
+            // name_map write).
+            // Issue #3606: per-child qq depth (replaces the #2807 uniform
+            // in_unquote bool). quasiquote template arg → depth + 1;
+            // unquote / unquote-splicing arg at depth ≤ 1 → caller-scope
+            // verbatim zone (kUnquoteCallerScopeDepth); at depth > 1 →
+            // depth - 1 (still outer template — #2239). Head symbol and
+            // verbatim-zone children inherit depth.
+            int child_qq_depth = qq_depth;
+            if (!qq_head_name.empty() && qq_depth >= 0 && cid == qq_arg_id) {
+                if (qq_head_name == "quasiquote")
+                    child_qq_depth = qq_depth + 1;
+                else
+                    child_qq_depth = (qq_depth <= 1) ? kUnquoteCallerScopeDepth : qq_depth - 1;
+            }
+            const auto cloned = clone_macro_body_at_depth(
+                target, target_pool, source, source_pool, cid, subst, name_map, cloned_marker,
+                hygiene_depth + 1, depth_limit, local_in_quote, child_qq_depth, session);
+            child_ids.push_back(cloned);
+            // Issue #3321: production fail-fast after nested steal-abort.
+            // Issue #3506: same restore for nested depth / gensym / cap / pass.
+            // Soft/Off: continue (historical half-write contract).
+            // Issue #3888: also key on NULL_NODE (counter / fiber ceiling), not
+            // only sticky global reason — same face as #3816 let/define belts.
+            if (production_surface &&
+                (cloned == NULL_NODE || inner_expand_production_limit_deny())) {
+                expand_ckpt.try_restore();
+                return false;
+            }
+        }
+        return true;
+    }
+
+    void stamp_cloned_node(aura::ast::NodeId new_id, aura::ast::NodeId body_id,
+                           const aura::ast::NodeView& v) {
+        using namespace aura::ast;
+        // Issue #190: use the caller's specified marker
+        // (MacroIntroduced for macro expansion, User for closure
+        // materialization). The recursive calls already set the
+        // marker on each child node, so this is just the outer
+        // wrapper node.
+
+        // Issue #1908 / #2810 / #3260: force repin on MacroIntroduced clone.
+        // Bridge contract (aura_jit_bridge.h / aura_macro_provenance_repin_on_steal):
+        //   - always bumps file-level g_1908_repin_fallback_total
+        //   - was_violation=0 (clone is not a hygiene reject — #3260 Bug 1)
+        //   - when ev_ptr non-null (or TLS resolves an Evaluator), dual-writes
+        //     CompilerMetrics::macro_provenance_repin_on_steal_total
+        // Pre-#2810 always passed nullptr → production compiler_metrics stayed 0
+        // even with Evaluator wired via CompilerService::set_query_evaluator.
+        // Resolve active Evaluator (yield hook / query TLS / scheduler) so
+        // multi-tenant dashboards can attribute clones per-Evaluator.
+        // Issue #3341: never pass nullptr on this production clone path —
+        // resolve first; ev_ptr may still be null only when no Evaluator
+        // is wired (true module-unaware / early boot). Bridge dual-writes
+        // per-Evaluator CompilerMetrics when non-null.
+        if (cloned_marker == aura::ast::SyntaxMarker::MacroIntroduced) {
+            void* ev_ptr = aura_evaluator_resolve_current_for_macro();
+            const int r = aura_macro_provenance_repin_on_steal(
+                ev_ptr, static_cast<std::uint64_t>(cloned_marker), /*was_violation=*/0);
+            // r == 2 → per-eval dual-write succeeded (bridge return contract #2810).
+            if (r >= 2)
+                g_clone_macro_provenance_per_evaluator_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+        }
+        target.set_marker(new_id, cloned_marker);
+        target.set_loc(new_id, v.line, v.col);
+        // Issue #390: populate the per-node schema
+        // cache. Pre-#390 the type checker had to
+        // re-infer the type of every macro-cloned
+        // node from scratch (the cloned body had
+        // no pre-computed type). Post-#390 we copy
+        // the source node's schema_cache (or
+        // type_id_ as a fallback) into the cloned
+        // node's schema_cache column, so the type
+        // checker can use it as a cache hit signal
+        // and avoid the re-inference. The
+        // (compile:schema-cache-stats) Aura
+        // primitive reports the hit rate.
+        if (source.schema_cache(body_id) != 0) {
+            target.set_schema_cache(new_id, source.schema_cache(body_id));
+        } else if (source.type_id(body_id) != 0) {
+            target.set_schema_cache(new_id, source.type_id(body_id));
+        }
+        // Issue #290: also OR kMacroExpansion into the
+        // macro_dirty_ bitmask on every node in the cloned
+        // subtree (root + descendants). Single hook point for
+        // ALL clone_macro_body callers (eval_flat top-level,
+        // expand_inner_macros for nested, evaluator_eval_flat
+        // closure materialization). We condition on
+        // cloned_marker == MacroIntroduced so the
+        // closure-materialization call site (which passes
+        // User) doesn't accidentally trip the dirty bit.
+        // Iterative walk via std::vector stack — no
+        // recursion, safe for pathological depth.
+        //
+        // Issue #1891: also stamp expansion provenance at clone
+        // time (not only fiber restamp #1612) so AST→IR lowering
+        // sees non-zero provenance for MacroIntroduced nodes and
+        // blame / JIT hygiene can correlate back to the expansion
+        // origin without waiting for steal/GC repair.
+        if (cloned_marker == aura::ast::SyntaxMarker::MacroIntroduced) {
+            if (aura_evaluator_mutation_boundary_depth() > 0)
+                aura_evaluator_bump_macro_expand_checkpoint_save();
+            // Issue #1245 Phase 1: fiber-aware hygiene provenance counter for
+            // concurrent clone_macro_body (steal/GC/hot-swap contexts).
+            // Full dirty-to-fiber peel follows; metric makes the path visible.
+            const auto fiber_id = aura_fiber_current_id();
+            if (fiber_id != 0)
+                g_macro_clone_concurrent_fiber_total.fetch_add(1, std::memory_order_relaxed);
+            g_macro_clone_hygiene_dirty_total.fetch_add(1, std::memory_order_relaxed);
+            // Issue #1248: hygiene tracer expansion count (MacroIntroduced stamps).
+            g_hygiene_tracer_expansions.fetch_add(1, std::memory_order_relaxed);
+            (void)fiber_id;
+            // Prefer source body provenance; else weak-link to source body id
+            // (same weak pattern as fiber restamp #1612 / #1891).
+            const std::uint32_t src_prov = source.provenance(body_id);
+            const std::uint32_t origin =
+                src_prov != 0 ? src_prov : static_cast<std::uint32_t>(body_id == 0 ? 1 : body_id);
+            // Issue #4309: a node is owned iff this frame allocated it:
+            // id >= size_at_frame_entry && id < target.size().
+            // Record target.size() before this frame's add_* calls.
+            // Subst hits and dotted-rest remaining args fail owned().
+            // Fresh clone nodes and the dotted-rest list/pair spine pass.
+            auto owned = [&](aura::ast::NodeId id) noexcept {
+                return static_cast<std::size_t>(id) >= owned_floor && id < target.size();
+            };
+            std::vector<aura::ast::NodeId> stack;
+            if (owned(new_id))
+                stack.push_back(new_id);
+            while (!stack.empty()) {
+                auto cur = stack.back();
+                stack.pop_back();
+                if (!owned(cur))
+                    continue;
+                target.apply_macro_dirty_bits(
+                    cur, static_cast<std::uint8_t>(
+                             aura::ast::FlatAST::MacroDirtyReason::kMacroExpansion));
+                // Issue #2098: bump per-cloned-subtree schema-cache +
+                // dirty/provenance stamp counter — bumped per MacroIntroduced
+                // node that received kMacroExpansion dirty bit in this walk,
+                // giving observability into the stamping rate across rest-param
+                // + nested qq + schema_cache copy paths (the existing iterative
+                // stamp walk was previously silent in metrics).
+                g_macro_schema_cache_dirty_stamped_total.fetch_add(1, std::memory_order_relaxed);
+                if (target.provenance(cur) == 0)
+                    target.set_provenance(cur, origin);
+                auto cv = target.get(cur);
+                std::vector<aura::ast::NodeId> walk_children(cv.children.begin(),
+                                                             cv.children.end());
+                for (auto child : walk_children) {
+                    if (owned(child))
+                        stack.push_back(child);
+                }
+            }
+        }
+    }
+
+    bool detect_mid_walk_steal(int hygiene_depth, std::uint64_t steal0,
+                               const CloneSessionPolicy& session,
+                               ExpandCheckpointGuard& expand_ckpt) {
+        using namespace aura::ast;
+        // Issue #3303: steal mid-clone → fail-closed at ALL depths. Was:
+        // depth==0 only — nested clone walks left a residual race window
+        // where partial nodes were visible to readers not holding the
+        // expand checkpoint before ExpandCheckpointGuard::try_restore() +
+        // NameMapCheckpoint rollback completed. Now: every recursion level
+        // detects steal delta and stamps a stable agent-facing reason;
+        // nm_ckpt is null at nested depth (only constructed at depth==0),
+        // so no name_map rollback at nested level — name_map consistency
+        // is owned by the top-level claim (see ConcurrentCloneGuard
+        // ownership documentation). The top-level depth's expand_ckpt
+        // still rolls back via the C-linkage checkpoint, which protects
+        // all nested additions too.
+        // Issue #3303: observe nested steal-check path even when no
+        // steal detected, so agents can see how often the check fires.
+        // Top-level depth does not bump this counter — only nested.
+        if (hygiene_depth > 0) // top-level excluded
+            g_macro_clone_nested_steal_check_total.fetch_add(1, std::memory_order_relaxed);
+        // hygiene_depth > 0 gate (top-level excluded) — #3303 AC6 source-cite.
+        const auto steal1 = aura_fiber_static_cross_fiber_mutation_safe_steal_total() +
+                            g_clone_walk_steal_inject.load(std::memory_order_relaxed);
+        const bool nested_steal =
+            session.nested_steal_abort != nullptr && *session.nested_steal_abort;
+        if (steal1 > steal0 || nested_steal) {
+            if (session.nested_steal_abort)
+                *session.nested_steal_abort = true;
+            g_macro_clone_steal_abort_total.fetch_add(1, std::memory_order_relaxed);
+            // Issue #3303: stamp stable agent-facing reason. Previously
+            // stored kHygieneLimitReasonPassLimit (3), which was
+            // semantically wrong — pass-limit and steal-abort are
+            // distinct reasons. The new kHygieneLimitReasonStealAbort
+            // (6) lets agent replay distinguish "hygiene ceiling
+            // failed" (3) from "fiber-steal during expand walk" (6).
+            g_macro_clone_last_reject_reason.store(kHygieneLimitReasonStealAbort,
+                                                   std::memory_order_relaxed);
+            // Issue #3303: also stamp global hygiene reason so
+            // hygiene_last_limit_reason_string() returns "steal-abort"
+            // for agent replay (not just the clone-reject reason).
+            note_hygiene_last_limit_reason(kHygieneLimitReasonStealAbort);
+            // Issue #3341: durable Agent string on the mutate-hygiene
+            // reject surface (last_mutate_error_). Counter-only steal-abort
+            // left replay with totals but no reason string.
+            aura_evaluator_note_steal_abort_mid_expand();
+            // Issue #3544: explicit fiber-hygiene unwind (gensym_map_size /
+            // clone_in_flight). NameMapCheckpoint + expand_ckpt already
+            // roll back map / FlatAST; this clears the per-fiber slot.
+            unwind_fiber_hygiene_on_steal(aura_fiber_current_id());
+            // Issue #3157: roll back target FlatAST additions (target.add_*
+            // allocations done by the recursive clone walk between steal0
+            // and steal1). expand_ckpt.try_restore() is safe at all depths —
+            // Soft/Off path unaffected (expand_ckpt.owned == false → no-op +
+            // dtor skips commit, preserving historical half-write).
+            expand_ckpt.try_restore();
+            return true; // nm_ckpt rolls back (depth==0 only)
+        }
+
+        return false;
+    }
+
+    void clear_sticky_hygiene_on_success(std::uint8_t reason0) {
+        using namespace aura::ast;
+        // Issue #3756 / #3787 / #4034: successful top-level expand clears sticky
+        // production last_limit so a later pass-loop / peer expand is not
+        // permanently poisoned.
+        //   #4034 (a): if global reason is unchanged since walk entry (reason0),
+        //     this walk did not stain — CAS clear (covers sticky 1/2/3/6/7).
+        //   #3756/#3787: also clear 8/9/10 if a sibling stamped them mid-walk
+        //     when reason0 was 0 / different.
+        //   #3787/#4034: clear this fiber's 1/2/3/6/7/8/9/10 slot (host tests
+        //     often share fiber_id 0). Keep 4/5 (#3888 Agent-facing).
+        auto r = g_macro_hygiene_last_limit_reason.load(std::memory_order_relaxed);
+        if (r != 0 && r == reason0) {
+            g_macro_hygiene_last_limit_reason.compare_exchange_strong(
+                r, 0, std::memory_order_relaxed, std::memory_order_relaxed);
+        }
+        r = g_macro_hygiene_last_limit_reason.load(std::memory_order_relaxed);
+        if (r == kHygieneLimitReasonSameFlatReject || r == kHygieneLimitReasonNameMapShared ||
+            r == kHygieneLimitReasonConcurrentTopLevel) {
+            g_macro_hygiene_last_limit_reason.compare_exchange_strong(
+                r, 0, std::memory_order_relaxed, std::memory_order_relaxed);
+        }
+        const auto fid = static_cast<std::uint32_t>(aura_fiber_current_id());
+        std::scoped_lock lock(g_fiber_hygiene_mu);
+        if (auto it = g_fiber_hygiene_map.find(fid); it != g_fiber_hygiene_map.end()) {
+            const auto fr = it->second.last_limit_reason;
+            if (fr == kHygieneLimitReasonGensymCeiling || fr == kHygieneLimitReasonDepthLimit ||
+                fr == kHygieneLimitReasonPassLimit || fr == kHygieneLimitReasonStealAbort ||
+                fr == kHygieneLimitReasonCapabilityDeny ||
+                fr == kHygieneLimitReasonSameFlatReject || fr == kHygieneLimitReasonNameMapShared ||
+                fr == kHygieneLimitReasonConcurrentTopLevel)
+                it->second.last_limit_reason = 0;
+        }
+    }
+};
+
+static aura::ast::NodeId clone_walk(CloneWalkCtx& ctx, aura::ast::NodeId body_id, int hygiene_depth,
+                                    int session_depth_limit, bool in_quote, int qq_depth,
+                                    CloneSessionPolicy session) {
+    auto& target = ctx.target;
+    auto& target_pool = ctx.target_pool;
+    auto& source = ctx.source;
+    auto& source_pool = ctx.source_pool;
+    auto* subst = ctx.subst;
+    auto* name_map = ctx.name_map;
+    auto cloned_marker = ctx.cloned_marker;
+
     using namespace aura::ast;
     // Issue #4034: snapshot process-global last_limit at top-level entry so
     // a successful walk can CAS-clear sticky 1/2/3/6/7 that predated this
@@ -2303,6 +3036,8 @@ static aura::ast::NodeId clone_macro_body_at_depth(
     else if (hygiene_depth == 0)
         session.owned_floor = target.size();
     const std::size_t owned_floor = session.owned_floor;
+    // Issue #5243: the extracted stamp step reads the frame floor through ctx.
+    ctx.owned_floor = owned_floor;
     // Issue #3981: depth==0 owns the nested-steal sticky. Nested frames
     // copy the pointer through CloneSessionPolicy (not TLS).
     bool steal_abort_sticky = false;
@@ -2584,119 +3319,7 @@ static aura::ast::NodeId clone_macro_body_at_depth(
         }
     }
 
-    // Re-intern SymIds: resolve in source_pool, intern in target_pool
-    auto transplant = [&](SymId sid) -> SymId {
-        return (sid == INVALID_SYM) ? sid
-                                    : target_pool.intern(std::string(source_pool.resolve(sid)));
-    };
-
-    // Resolve a name through name_map (hygiene: renamed binding)
-    auto resolve_name = [&](SymId sid) -> std::string {
-        if (sid == INVALID_SYM)
-            return "";
-        auto name = std::string(source_pool.resolve(sid));
-        if (name_map) {
-            auto it = name_map->find(name);
-            if (it != name_map->end())
-                return it->second;
-        }
-        return name;
-    };
-
-    // Rename a binding position for hygiene: gensym if macro-introduced
     std::uint64_t hyg_ctr = 0; // Issue #265: per-call counter
-    auto rename_binding_pre = [&](SymId sid) -> SymId {
-        if (sid == INVALID_SYM || !name_map)
-            return transplant(sid);
-        auto name = std::string(source_pool.resolve(sid));
-        // Ordinary template bindings: keep free macro-param names substitutable
-        // (subst wins). Builtins keep their name.
-        if ((subst && subst->count(name)) || detail::hygiene_builtins_contains(name))
-            return transplant(sid);
-        auto it = name_map->find(name);
-        if (it != name_map->end())
-            return target_pool.intern(it->second);
-        // Issue #2811: ceiling before a gensym serial (#2243 / #2804).
-        const auto gensym_cap = effective_max_gensym_map_size(session);
-        if (gensym_cap > 0 && name_map && name_map->size() >= gensym_cap) {
-            note_hygiene_last_limit_reason(kHygieneLimitReasonGensymCeiling);
-            g_macro_self_evo_gensym_map_size_exceeded_total.fetch_add(1, std::memory_order_relaxed);
-            g_macro_self_evo_denied_total.fetch_add(1, std::memory_order_relaxed);
-            g_hygiene_violation_in_macro_expand_total.fetch_add(1, std::memory_order_relaxed);
-            // Serial-safe deny: hyg_ctr untouched → no drift vs name_map.size().
-            g_gensym_serial_drift_total.fetch_add(1, std::memory_order_relaxed);
-            bump_fiber_hygiene_on_violation(aura_fiber_current_id());
-            // Issue #3183: roll back partial target nodes.
-            expand_ckpt.try_restore();
-            return aura::ast::NULL_NODE;
-        }
-        // Only consume a serial after the ceiling check passes.
-        // Issue #4419: process serial, then the per-call hyg_ctr suffix.
-        auto fresh = std::string("__") + name + "_" + std::to_string(bind_gensym_serial()) + "_" +
-                     std::to_string(hyg_ctr++);
-        (*name_map)[name] = fresh;
-        return target_pool.intern(fresh);
-    };
-
-    // Issue #2018 / #2169: rest-param binding hygiene. Dotted Lambda /
-    // MacroDef last params ALWAYS get a process-unique
-    // `__rest_<name>_<serial>` gensym (unless MacroSelfEvo disables via
-    // s_allow_rest_hygiene). name_map is filled in pre-scan so body uses
-    // resolve via resolve_name / rename_binding. Free uses of the *macro
-    // formal* rest still hit Variable subst when not shadowed by a
-    // template rest binding of the same source name.
-    auto rename_rest_binding_pre = [&](SymId sid) -> SymId {
-        // No name_map → caller opted into untracked clone (not a violation).
-        if (sid == INVALID_SYM || !name_map)
-            return transplant(sid);
-        // Issue #2023: MacroSelfEvo policy may disable rest hygiene (opt-out).
-        if (!session.allow_rest_hygiene)
-            return transplant(sid);
-        auto name = std::string(source_pool.resolve(sid));
-        if (detail::hygiene_builtins_contains(name))
-            return transplant(sid);
-        // Issue #3183: rest path shares the same gensym_cap ceiling as
-        // rename_binding_pre / rename_binding (#2804 / #2811). Without
-        // this check, rest gensyms (g_macro_rest_gensym_serial + name_map
-        // insert) can inflate name_map past the MacroSelfEvo ceiling that
-        // rename_binding_pre enforces — drift + spurious deny when later
-        // bindings hit the cap. Deny BEFORE advancing the serial, with
-        // same rollback surface as ceiling mid-walk deny in rename_binding_pre.
-        const auto gensym_cap_rest = effective_max_gensym_map_size(session);
-        if (gensym_cap_rest > 0 && name_map->size() >= gensym_cap_rest) {
-            note_hygiene_last_limit_reason(kHygieneLimitReasonGensymCeiling);
-            g_macro_self_evo_gensym_map_size_exceeded_total.fetch_add(1, std::memory_order_relaxed);
-            g_clone_walk_gensym_ceiling_exceeded_total.fetch_add(1, std::memory_order_relaxed);
-            g_macro_self_evo_denied_total.fetch_add(1, std::memory_order_relaxed);
-            g_hygiene_violation_in_macro_expand_total.fetch_add(1, std::memory_order_relaxed);
-            g_gensym_serial_drift_total.fetch_add(1, std::memory_order_relaxed);
-            bump_fiber_hygiene_on_violation(aura_fiber_current_id());
-            expand_ckpt.try_restore();
-            return aura::ast::NULL_NODE;
-        }
-        auto it = name_map->find(name);
-        if (it != name_map->end()) {
-            // Already mapped — ensure rest-shaped gensym; repair if not.
-            if (it->second.rfind("__rest_", 0) != 0) {
-                const auto serial =
-                    g_macro_rest_gensym_serial.fetch_add(1, std::memory_order_relaxed);
-                auto fresh = std::string("__rest_") + name + "_" + std::to_string(serial);
-                it->second = fresh;
-                g_macro_rest_param_hygiene_total.fetch_add(1, std::memory_order_relaxed);
-                g_macro_rest_param_hygiene_incomplete_total.fetch_add(1, std::memory_order_relaxed);
-                // Issue #3215: rest spine should have been stamped — Agent reason.
-                note_hygiene_last_limit_reason(kHygieneLimitReasonRestUnmarked);
-                return target_pool.intern(fresh);
-            }
-            return target_pool.intern(it->second);
-        }
-        // Process-wide serial — concurrent fiber expand cannot collide.
-        const auto serial = g_macro_rest_gensym_serial.fetch_add(1, std::memory_order_relaxed);
-        auto fresh = std::string("__rest_") + name + "_" + std::to_string(serial);
-        (*name_map)[name] = fresh;
-        g_macro_rest_param_hygiene_total.fetch_add(1, std::memory_order_relaxed);
-        return target_pool.intern(fresh);
-    };
 
     // Issue #120: pre-scan the body to populate name_map BEFORE cloning.
     // The body may reference gensym'd bindings (e.g., `(let ((tmp a)) (set! b tmp))`
@@ -2723,118 +3346,7 @@ static aura::ast::NodeId clone_macro_body_at_depth(
         // expressions are NOT gensym'd (caller scope). Also bumps
         // g_macro_rest_param_nested_qq_hits_total whenever a dotted
         // Lambda/MacroDef is discovered inside qq (qq_depth > 0).
-        // #4936 B4: deducing this. The closure does not own a std::function copy of itself.
-        auto pre_scan = [&](this auto&& self, NodeId nid, int qq_depth) {
-            if (nid == NULL_NODE || nid >= source.size())
-                return;
-            // Issue #3754: already in the unquote caller-scope zone —
-            // do not gensym bindings (clone walk transplants refs).
-            if (qq_depth == kUnquoteCallerScopeDepth)
-                return;
-            auto nv = source.get(nid);
-            // Quasiquote / unquote / unquote-splicing boundary detection.
-            // Encoded as Call nodes with Variable heads (no dedicated
-            // NodeTag). Quasiquote → recurse into first arg with deeper
-            // qq_depth; unquote / unquote-splicing → stop recursion
-            // (caller scope, no gensym). Issue #2807: `,@x` must match
-            // unquote, not fall through to generic child walk.
-            if (nv.tag == NodeTag::Call && !nv.children.empty()) {
-                auto callee_n = source.get(nv.child(0));
-                if (callee_n.tag == NodeTag::Variable) {
-                    auto cname = std::string(source_pool.resolve(callee_n.sym_id));
-                    if (cname == "quasiquote" && nv.children.size() >= 2) {
-                        // Entering qq body: bump depth + recurse ONLY
-                        // into the qq template (first arg).
-                        self(nv.child(1), qq_depth + 1);
-                        return;
-                    }
-                    if (cname == "unquote") {
-                        // Issue #2807/#3606: unquote at depth ≤ 1 is
-                        // caller scope — stop, no gensym (bindings inside
-                        // unquote live in the caller's scope). At depth
-                        // > 1 the unquote body is still OUTER-TEMPLATE
-                        // scope: recurse with depth - 1 so nested-qq
-                        // bindings gensym and refs resolve via name_map
-                        // (#2239 residual — qq_depth never decremented).
-                        if (qq_depth > 1 && nv.children.size() >= 2)
-                            self(nv.child(1), qq_depth - 1);
-                        return;
-                    }
-                    // Issue #2807: unquote-splicing (`,@x`) is caller
-                    // scope at depth ≤ 1 — same stop as unquote (the
-                    // mismatch counter keeps firing there). Issue #3606:
-                    // at depth > 1 the splice body is still
-                    // outer-template — recurse with depth - 1, no counter
-                    // (not a mismatch).
-                    if (cname == "unquote-splicing") {
-                        if (qq_depth <= 1) {
-                            g_unquote_splicing_hygiene_mismatch_total.fetch_add(
-                                1, std::memory_order_relaxed);
-                        } else if (nv.children.size() >= 2) {
-                            self(nv.child(1), qq_depth - 1);
-                        }
-                        return;
-                    }
-                    // Issue #3754: Call-head "quote" is a data boundary,
-                    // same stop as NodeTag::Quote (#3154). Parser quote
-                    // is NodeTag::Quote; generated `(quote …)` is a Call
-                    // and used to leak quoted bindings into name_map.
-                    if (cname == "quote")
-                        return;
-                }
-            }
-            // Issue #3154: NodeTag::Quote is a data boundary, not code.
-            // pre_scan must NOT descend into Quote children — bindings
-            // under (quote (let ((x 1)) x)) are data, not template
-            // scope, and must NOT be gensym'd. Same caller-scope stop
-            // as unquote / unquote-splicing. Without this early-return,
-            // quoted forms containing Let / Lambda / Define / MacroDef
-            // get their bindings rename_binding_pre'd, producing
-            // unexpected __x_N inside the quoted data structure
-            // (depth inconsistency vs the qq Call-head paths handled
-            // above). Quote is a first-class NodeTag — distinct from
-            // the Call-named "quote" form. qq / unquote / unquote-
-            // splicing behaviour from #2807 unchanged. Soft / Off
-            // contract preserved — no new metrics middle-layer.
-            if (nv.tag == NodeTag::Quote)
-                return;
-            // If this node is a binding position, gensym its name
-            // (into the name_map) but don't generate any target node.
-            if (nv.tag == NodeTag::Let || nv.tag == NodeTag::LetRec || nv.tag == NodeTag::Define) {
-                rename_binding_pre(nv.sym_id);
-            } else if (nv.tag == NodeTag::Lambda) {
-                const bool dotted = nv.int_value != 0;
-                const auto nparams = nv.params.size();
-                for (std::size_t i = 0; i < nparams; ++i) {
-                    if (dotted && i + 1 == nparams)
-                        rename_rest_binding_pre(nv.params[i]);
-                    else
-                        rename_binding_pre(nv.params[i]);
-                }
-                // Issue #2239: track rest-param bindings discovered
-                // inside nested qq templates as their own observability
-                // dimension (separate from the flat rest-param counter).
-                if (dotted && qq_depth > 0)
-                    g_macro_rest_param_nested_qq_hits_total.fetch_add(1, std::memory_order_relaxed);
-            } else if (nv.tag == NodeTag::MacroDef) {
-                // Nested macro defs inside a template: rest bit is bit 0 of
-                // int_value (same encoding as add_macrodef).
-                const bool dotted = (nv.int_value & 1) != 0;
-                const auto nparams = nv.params.size();
-                for (std::size_t i = 0; i < nparams; ++i) {
-                    if (dotted && i + 1 == nparams)
-                        rename_rest_binding_pre(nv.params[i]);
-                    else
-                        rename_binding_pre(nv.params[i]);
-                }
-                if (dotted && qq_depth > 0)
-                    g_macro_rest_param_nested_qq_hits_total.fetch_add(1, std::memory_order_relaxed);
-            }
-            std::vector<aura::ast::NodeId> scan_children(nv.children.begin(), nv.children.end());
-            for (auto c : scan_children)
-                self(c, qq_depth);
-        };
-        pre_scan(body_id, qq_depth);
+        ctx.pre_scan(body_id, qq_depth, session, expand_ckpt, hyg_ctr);
         // Issue #3506: pre_scan ignores rename_*_pre NULL_NODE; a ceiling
         // deny already try_restore'd. Abort the clone walk so later add_*
         // are not unguarded (checkpoint consumed). Soft/Off: continue.
@@ -2846,88 +3358,13 @@ static aura::ast::NodeId clone_macro_body_at_depth(
         }
     }
 
-    auto rename_binding = [&](SymId sid) -> SymId {
-        if (sid == INVALID_SYM || !name_map)
-            return transplant(sid);
-        auto name = std::string(source_pool.resolve(sid));
-        // Prefer pre-scan / rest renames first so template-introduced
-        // rest bindings (name_map) win over a same-named macro param.
-        auto it = name_map->find(name);
-        if (it != name_map->end())
-            return target_pool.intern(it->second);
-        // Macro params, builtins keep their name (free uses → Variable subst)
-        if ((subst && subst->count(name)) || detail::hygiene_builtins_contains(name))
-            return transplant(sid);
-        // Issue #2804: gensym-map-size ceiling — parity with rename_binding_pre.
-        // Clone walk can still allocate names pre-scan missed or refused;
-        // without this check max_gensym_map_size is only half-enforced.
-        const auto gensym_cap = effective_max_gensym_map_size(session);
-        if (gensym_cap > 0 && name_map->size() >= gensym_cap) {
-            note_hygiene_last_limit_reason(kHygieneLimitReasonGensymCeiling);
-            g_macro_self_evo_gensym_map_size_exceeded_total.fetch_add(1, std::memory_order_relaxed);
-            g_clone_walk_gensym_ceiling_exceeded_total.fetch_add(1, std::memory_order_relaxed);
-            g_macro_self_evo_denied_total.fetch_add(1, std::memory_order_relaxed);
-            g_hygiene_violation_in_macro_expand_total.fetch_add(1, std::memory_order_relaxed);
-            // Issue #3183: mid-walk ceiling deny in rename_binding — roll
-            // back target FlatAST partial additions via expand_ckpt.try_restore()
-            // (same pattern as rename_binding_pre / steal / pass-limit —
-            // L1749 / L2253 / L2768 / L2789). nm_ckpt RAII on this frame
-            // rolls back name_map on return. hyg_ctr untouched above so
-            // serial stays safe vs name_map.size() (#2811).
-            expand_ckpt.try_restore();
-            return aura::ast::NULL_NODE;
-        }
-        // Issue #4419: same process serial as rename_binding_pre, after the
-        // ceiling return so a deny does not fetch_add (#2811).
-        auto fresh = std::string("__") + name + "_" + std::to_string(bind_gensym_serial()) + "_" +
-                     std::to_string(hyg_ctr++);
-        (*name_map)[name] = fresh;
-        return target_pool.intern(fresh);
-    };
 
     // Clone children recursively (pass cloned_marker through).
-    // Issue #483: snapshot child NodeIds before recursion — recursive
-    // clone / set_child on either flat can replace a parent's
-    // PersistentChildVector and invalidate v.children spans.
     std::vector<aura::ast::NodeId> child_ids;
-    std::vector<aura::ast::NodeId> source_children;
-    {
-        auto fresh = source.get(body_id);
-        source_children.assign(fresh.children.begin(), fresh.children.end());
-    }
-    for (auto cid : source_children) {
-        // Issue #365 / #2806: pass depth+1 into the recursive frame
-        // (explicit parameter; siblings share the same depth).
-        // Issue #3181: propagate local_in_quote to recursive children so
-        // the subtree inside quote is cloned verbatim (no rename, no
-        // name_map write).
-        // Issue #3606: per-child qq depth (replaces the #2807 uniform
-        // in_unquote bool). quasiquote template arg → depth + 1;
-        // unquote / unquote-splicing arg at depth ≤ 1 → caller-scope
-        // verbatim zone (kUnquoteCallerScopeDepth); at depth > 1 →
-        // depth - 1 (still outer template — #2239). Head symbol and
-        // verbatim-zone children inherit depth.
-        int child_qq_depth = qq_depth;
-        if (!qq_head_name.empty() && qq_depth >= 0 && cid == qq_arg_id) {
-            if (qq_head_name == "quasiquote")
-                child_qq_depth = qq_depth + 1;
-            else
-                child_qq_depth = (qq_depth <= 1) ? kUnquoteCallerScopeDepth : qq_depth - 1;
-        }
-        const auto cloned = clone_macro_body_at_depth(
-            target, target_pool, source, source_pool, cid, subst, name_map, cloned_marker,
-            hygiene_depth + 1, depth_limit, local_in_quote, child_qq_depth, session);
-        child_ids.push_back(cloned);
-        // Issue #3321: production fail-fast after nested steal-abort.
-        // Issue #3506: same restore for nested depth / gensym / cap / pass.
-        // Soft/Off: continue (historical half-write contract).
-        // Issue #3888: also key on NULL_NODE (counter / fiber ceiling), not
-        // only sticky global reason — same face as #3816 let/define belts.
-        if (production_surface && (cloned == NULL_NODE || inner_expand_production_limit_deny())) {
-            expand_ckpt.try_restore();
-            return NULL_NODE;
-        }
-    }
+    if (!ctx.clone_children(body_id, hygiene_depth, depth_limit, local_in_quote, qq_depth,
+                            qq_head_name, qq_arg_id, session, expand_ckpt, production_surface,
+                            child_ids))
+        return NULL_NODE;
 
     // Clone params (for Lambda nodes) — with hygienic renaming.
     // Issue #2018: rest (dotted last) already mapped via pre-scan
@@ -2938,8 +3375,9 @@ static aura::ast::NodeId clone_macro_body_at_depth(
     // the default.
     std::vector<aura::ast::SymId> param_syms;
     for (auto pid : v.params)
-        param_syms.push_back((local_in_quote || local_in_unquote) ? transplant(pid)
-                                                                  : rename_binding(pid));
+        param_syms.push_back((local_in_quote || local_in_unquote)
+                                 ? ctx.transplant(pid)
+                                 : ctx.rename_binding(pid, session, expand_ckpt, hyg_ctr));
 
     // Issue #3816: mirror #3506 after param/rename phase. rename_binding on
     // gensym-map ceiling try_restore + return NULL_NODE without advancing
@@ -2968,105 +3406,29 @@ static aura::ast::NodeId clone_macro_body_at_depth(
             new_id = target.add_literal(v.int_value);
             break;
         case NodeTag::LiteralString:
-            new_id = target.add_literalstring(transplant(v.sym_id));
+            new_id = target.add_literalstring(ctx.transplant(v.sym_id));
             break;
-        case NodeTag::Variable: {
-            // Hygienic: check name_map for renamed bindings.
-            // Issue #3181: under quote, transplant verbatim (no name_map
-            // lookup — pre_scan stopped at the quote boundary).
-            // Issue #2807: under unquote / unquote-splicing, transplant
-            // verbatim (caller scope — pre_scan stopped at the unquote
-            // boundary, but the outer qq Let binding's __x_N still
-            // resolves via resolve_name, breaking verbatim contract).
-            if (local_in_quote) {
-                new_id = target.add_variable(transplant(v.sym_id));
-            } else if (local_in_unquote && name_map) {
-                new_id = target.add_variable(transplant(v.sym_id));
-            } else if (name_map) {
-                auto name = resolve_name(v.sym_id);
-                new_id = target.add_variable(target_pool.intern(name));
-            } else {
-                new_id = target.add_variable(transplant(v.sym_id));
-            }
+        case NodeTag::Variable:
+            new_id = ctx.clone_variable(v, local_in_quote, local_in_unquote);
             break;
-        }
-        case NodeTag::Call: {
-            std::vector<aura::ast::NodeId> args(child_ids.begin() + 1, child_ids.end());
-            if (!child_ids.empty())
-                new_id = target.add_call(child_ids[0], args);
+        case NodeTag::Call:
+            new_id = ctx.clone_call(child_ids);
             break;
-        }
         case NodeTag::IfExpr:
             if (child_ids.size() >= 3)
                 new_id = target.add_if(child_ids[0], child_ids[1], child_ids[2]);
             break;
         case NodeTag::Lambda:
-            // Issue #2018 / #2169: preserve dotted rest flag (int_value != 0).
-            // Fallback: if dotted rest param did not get a __rest_ gensym
-            // while hygiene is on, force-repair + incomplete counter.
-            // Issue #2805: never map hygiene_builtins names (let, list, …)
-            // into name_map — pre-scan already skips them; overwriting would
-            // rename free Variable uses of those builtins in the body.
-            // Issue #3181: skip rest-param fallback repair under quote —
-            // quote data has no __rest_<serial> mapping (pre_scan stopped at
-            // the quote boundary). param_syms.back() is verbatim.
-            if (!child_ids.empty()) {
-                const bool dotted = v.int_value != 0;
-                if (dotted && !param_syms.empty() && name_map && session.allow_rest_hygiene &&
-                    !local_in_quote && !local_in_unquote) {
-                    auto rest_name = std::string(target_pool.resolve(param_syms.back()));
-                    if (rest_name.rfind("__rest_", 0) != 0) {
-                        const std::string src_nm =
-                            !v.params.empty() ? std::string(source_pool.resolve(v.params.back()))
-                                              : rest_name;
-                        // Issue #2805: builtins stay unmapped (parity with
-                        // rename_rest_binding_pre / rename_binding_pre).
-                        if (detail::hygiene_builtins_contains(src_nm) ||
-                            detail::hygiene_builtins_contains(rest_name)) {
-                            g_dotted_rest_builtin_rename_prevented_total.fetch_add(
-                                1, std::memory_order_relaxed);
-                            // Keep param_syms.back() as the transplanted
-                            // original name — do not force __rest_fb_ gensym.
-                        } else {
-                            const auto serial =
-                                g_macro_rest_gensym_serial.fetch_add(1, std::memory_order_relaxed);
-                            auto fresh = std::string("__rest_fb_") + rest_name + "_" +
-                                         std::to_string(serial);
-                            param_syms.back() = target_pool.intern(fresh);
-                            if (!v.params.empty())
-                                (*name_map)[src_nm] = fresh;
-                            g_macro_rest_param_hygiene_total.fetch_add(1,
-                                                                       std::memory_order_relaxed);
-                            g_macro_rest_param_hygiene_incomplete_total.fetch_add(
-                                1, std::memory_order_relaxed);
-                            g_hygiene_violation_in_macro_expand_total.fetch_add(
-                                1, std::memory_order_relaxed);
-                            // Issue #3215: rest spine should have been stamped — Agent reason.
-                            note_hygiene_last_limit_reason(kHygieneLimitReasonRestUnmarked);
-                        }
-                    }
-                }
-                new_id = target.add_lambda(param_syms, child_ids[0], /*dotted=*/dotted);
-            }
+            new_id = ctx.clone_lambda(v, child_ids, param_syms, session, local_in_quote,
+                                      local_in_unquote);
             break;
         case NodeTag::Let:
         case NodeTag::LetRec: {
-            // Issue #3181: under quote, binding name is transplanted
-            // verbatim (no rename_binding). Issue #3754: unquote
-            // caller-scope is the same (Variable refs already transplant).
-            if (child_ids.size() >= 2) {
-                SymId s = (local_in_quote || local_in_unquote) ? transplant(v.sym_id)
-                                                               : rename_binding(v.sym_id);
-                // Issue #3816: abort before add_let/add_letrec after rename deny
-                // (checkpoint may already be consumed — no post-deny add_*).
-                if (production_surface &&
-                    (s == aura::ast::NULL_NODE || inner_expand_production_limit_deny())) {
-                    expand_ckpt.try_restore();
-                    return aura::ast::NULL_NODE;
-                }
-                new_id = (v.tag == NodeTag::Let) ? target.add_let(s, child_ids[0], child_ids[1])
-                                                 : target.add_letrec(s, child_ids[0], child_ids[1]);
-            }
+            bool aborted = false;
+            new_id = ctx.clone_let(v, child_ids, session, expand_ckpt, production_surface,
+                                   local_in_quote, local_in_unquote, hyg_ctr, aborted);
+            if (aborted)
+                return NULL_NODE;
             break;
         }
         case NodeTag::Begin:
@@ -3074,207 +3436,35 @@ static aura::ast::NodeId clone_macro_body_at_depth(
                 new_id = target.add_begin(child_ids);
             break;
         case NodeTag::Set:
-            if (!child_ids.empty()) {
-                // Issue #120: if the set! target is a macro param, look
-                // up the arg and use ITS sym_id (resolved from target).
-                // Otherwise the set! would target the macro param
-                // (e.g., "a") which isn't bound in the calling env.
-                // Issue #3181: under quote, skip subst lookup — quoted
-                // data is not substituted, set! target is verbatim.
-                // Issue #3507: template-introduced bindings (let/lambda
-                // gensyms in name_map) must rename the assignment target
-                // too. Param subst still wins so swap! writes the caller.
-                // Unquote mirrors Variable: caller-scope, no name_map.
-                SymId set_name_sid = transplant(v.sym_id);
-                if (local_in_quote || (local_in_unquote && name_map)) {
-                    // verbatim
-                } else {
-                    bool hit_subst = false;
-                    if (!local_in_quote && subst) {
-                        if (v.sym_id != INVALID_SYM) {
-                            auto set_name = std::string(source_pool.resolve(v.sym_id));
-                            auto sit = subst->find(set_name);
-                            if (sit != subst->end()) {
-                                auto arg_v = target.get(sit->second);
-                                if (arg_v.tag == NodeTag::Variable) {
-                                    set_name_sid = arg_v.sym_id;
-                                    hit_subst = true;
-                                }
-                            }
-                        }
-                    }
-                    if (!hit_subst && name_map)
-                        set_name_sid = target_pool.intern(resolve_name(v.sym_id));
-                }
-                new_id = target.add_set(set_name_sid, child_ids[0]);
-            }
+            new_id = ctx.clone_set(v, child_ids, local_in_quote, local_in_unquote);
             break;
         case NodeTag::Quote:
             if (!child_ids.empty())
                 new_id = target.add_quote(child_ids[0]);
             break;
         case NodeTag::Define: {
-            // Issue #3181: under quote, binding name is transplanted
-            // verbatim (no rename_binding). Issue #3754: unquote too.
-            if (!child_ids.empty()) {
-                SymId s = (local_in_quote || local_in_unquote) ? transplant(v.sym_id)
-                                                               : rename_binding(v.sym_id);
-                // Issue #3816: abort before add_define after rename deny.
-                if (production_surface &&
-                    (s == aura::ast::NULL_NODE || inner_expand_production_limit_deny())) {
-                    expand_ckpt.try_restore();
-                    return aura::ast::NULL_NODE;
-                }
-                new_id = target.add_define(s, child_ids[0]);
-            }
+            bool aborted = false;
+            new_id = ctx.clone_define(v, child_ids, session, expand_ckpt, production_surface,
+                                      local_in_quote, local_in_unquote, hyg_ctr, aborted);
+            if (aborted)
+                return NULL_NODE;
             break;
         }
         case NodeTag::MacroDef: {
-            // Issue #4101: copy a nested define. new_id NULL makes the
-            // production parent abort the whole clone with no limit
-            // reason, so a later inner deny never has a MacroDef tail
-            // for the caller to truncate. The macro name stays the
-            // source spelling (pre_scan gensyms params only); params
-            // already went through rename_binding.
-            if (!child_ids.empty()) {
-                const bool dotted = (v.int_value & 1) != 0;
-                const bool hygienic_bit = (v.int_value & 2) != 0;
-                const bool preserved = (v.int_value & 4) != 0;
-                if (production_surface && inner_expand_production_limit_deny()) {
-                    expand_ckpt.try_restore();
-                    return aura::ast::NULL_NODE;
-                }
-                new_id = target.add_macrodef(transplant(v.sym_id), param_syms, child_ids[0], dotted,
-                                             hygienic_bit, preserved);
-            }
+            bool aborted = false;
+            new_id = ctx.clone_macrodef(v, child_ids, param_syms, production_surface, expand_ckpt,
+                                        aborted);
+            if (aborted)
+                return NULL_NODE;
             break;
         }
         default:
             break;
     }
 
-    if (new_id != NULL_NODE) {
-        // Issue #190: use the caller's specified marker
-        // (MacroIntroduced for macro expansion, User for closure
-        // materialization). The recursive calls already set the
-        // marker on each child node, so this is just the outer
-        // wrapper node.
+    if (new_id != NULL_NODE)
+        ctx.stamp_cloned_node(new_id, body_id, v);
 
-        // Issue #1908 / #2810 / #3260: force repin on MacroIntroduced clone.
-        // Bridge contract (aura_jit_bridge.h / aura_macro_provenance_repin_on_steal):
-        //   - always bumps file-level g_1908_repin_fallback_total
-        //   - was_violation=0 (clone is not a hygiene reject — #3260 Bug 1)
-        //   - when ev_ptr non-null (or TLS resolves an Evaluator), dual-writes
-        //     CompilerMetrics::macro_provenance_repin_on_steal_total
-        // Pre-#2810 always passed nullptr → production compiler_metrics stayed 0
-        // even with Evaluator wired via CompilerService::set_query_evaluator.
-        // Resolve active Evaluator (yield hook / query TLS / scheduler) so
-        // multi-tenant dashboards can attribute clones per-Evaluator.
-        // Issue #3341: never pass nullptr on this production clone path —
-        // resolve first; ev_ptr may still be null only when no Evaluator
-        // is wired (true module-unaware / early boot). Bridge dual-writes
-        // per-Evaluator CompilerMetrics when non-null.
-        if (cloned_marker == aura::ast::SyntaxMarker::MacroIntroduced) {
-            void* ev_ptr = aura_evaluator_resolve_current_for_macro();
-            const int r = aura_macro_provenance_repin_on_steal(
-                ev_ptr, static_cast<std::uint64_t>(cloned_marker), /*was_violation=*/0);
-            // r == 2 → per-eval dual-write succeeded (bridge return contract #2810).
-            if (r >= 2)
-                g_clone_macro_provenance_per_evaluator_total.fetch_add(1,
-                                                                       std::memory_order_relaxed);
-        }
-        target.set_marker(new_id, cloned_marker);
-        target.set_loc(new_id, v.line, v.col);
-        // Issue #390: populate the per-node schema
-        // cache. Pre-#390 the type checker had to
-        // re-infer the type of every macro-cloned
-        // node from scratch (the cloned body had
-        // no pre-computed type). Post-#390 we copy
-        // the source node's schema_cache (or
-        // type_id_ as a fallback) into the cloned
-        // node's schema_cache column, so the type
-        // checker can use it as a cache hit signal
-        // and avoid the re-inference. The
-        // (compile:schema-cache-stats) Aura
-        // primitive reports the hit rate.
-        if (source.schema_cache(body_id) != 0) {
-            target.set_schema_cache(new_id, source.schema_cache(body_id));
-        } else if (source.type_id(body_id) != 0) {
-            target.set_schema_cache(new_id, source.type_id(body_id));
-        }
-        // Issue #290: also OR kMacroExpansion into the
-        // macro_dirty_ bitmask on every node in the cloned
-        // subtree (root + descendants). Single hook point for
-        // ALL clone_macro_body callers (eval_flat top-level,
-        // expand_inner_macros for nested, evaluator_eval_flat
-        // closure materialization). We condition on
-        // cloned_marker == MacroIntroduced so the
-        // closure-materialization call site (which passes
-        // User) doesn't accidentally trip the dirty bit.
-        // Iterative walk via std::vector stack — no
-        // recursion, safe for pathological depth.
-        //
-        // Issue #1891: also stamp expansion provenance at clone
-        // time (not only fiber restamp #1612) so AST→IR lowering
-        // sees non-zero provenance for MacroIntroduced nodes and
-        // blame / JIT hygiene can correlate back to the expansion
-        // origin without waiting for steal/GC repair.
-        if (cloned_marker == aura::ast::SyntaxMarker::MacroIntroduced) {
-            if (aura_evaluator_mutation_boundary_depth() > 0)
-                aura_evaluator_bump_macro_expand_checkpoint_save();
-            // Issue #1245 Phase 1: fiber-aware hygiene provenance counter for
-            // concurrent clone_macro_body (steal/GC/hot-swap contexts).
-            // Full dirty-to-fiber peel follows; metric makes the path visible.
-            const auto fiber_id = aura_fiber_current_id();
-            if (fiber_id != 0)
-                g_macro_clone_concurrent_fiber_total.fetch_add(1, std::memory_order_relaxed);
-            g_macro_clone_hygiene_dirty_total.fetch_add(1, std::memory_order_relaxed);
-            // Issue #1248: hygiene tracer expansion count (MacroIntroduced stamps).
-            g_hygiene_tracer_expansions.fetch_add(1, std::memory_order_relaxed);
-            (void)fiber_id;
-            // Prefer source body provenance; else weak-link to source body id
-            // (same weak pattern as fiber restamp #1612 / #1891).
-            const std::uint32_t src_prov = source.provenance(body_id);
-            const std::uint32_t origin =
-                src_prov != 0 ? src_prov : static_cast<std::uint32_t>(body_id == 0 ? 1 : body_id);
-            // Issue #4309: a node is owned iff this frame allocated it:
-            // id >= size_at_frame_entry && id < target.size().
-            // Record target.size() before this frame's add_* calls.
-            // Subst hits and dotted-rest remaining args fail owned().
-            // Fresh clone nodes and the dotted-rest list/pair spine pass.
-            auto owned = [&](aura::ast::NodeId id) noexcept {
-                return static_cast<std::size_t>(id) >= owned_floor && id < target.size();
-            };
-            std::vector<aura::ast::NodeId> stack;
-            if (owned(new_id))
-                stack.push_back(new_id);
-            while (!stack.empty()) {
-                auto cur = stack.back();
-                stack.pop_back();
-                if (!owned(cur))
-                    continue;
-                target.apply_macro_dirty_bits(
-                    cur, static_cast<std::uint8_t>(
-                             aura::ast::FlatAST::MacroDirtyReason::kMacroExpansion));
-                // Issue #2098: bump per-cloned-subtree schema-cache +
-                // dirty/provenance stamp counter — bumped per MacroIntroduced
-                // node that received kMacroExpansion dirty bit in this walk,
-                // giving observability into the stamping rate across rest-param
-                // + nested qq + schema_cache copy paths (the existing iterative
-                // stamp walk was previously silent in metrics).
-                g_macro_schema_cache_dirty_stamped_total.fetch_add(1, std::memory_order_relaxed);
-                if (target.provenance(cur) == 0)
-                    target.set_provenance(cur, origin);
-                auto cv = target.get(cur);
-                std::vector<aura::ast::NodeId> walk_children(cv.children.begin(),
-                                                             cv.children.end());
-                for (auto child : walk_children) {
-                    if (owned(child))
-                        stack.push_back(child);
-                }
-            }
-        }
-    }
     // Issue #2171: cross-flat top-level clones must restamp + counter-bump
     // before returning so the freshly introduced MacroIntroduced subtree
     // leaves consistent marker / provenance / kMacroExpansion bits in
@@ -3285,99 +3475,72 @@ static aura::ast::NodeId clone_macro_body_at_depth(
         ensure_cross_flat_expand_consistency(target, target_pool, source, source_pool, new_id,
                                              owned_floor);
     }
-    // Issue #3303: steal mid-clone → fail-closed at ALL depths. Was:
-    // depth==0 only — nested clone walks left a residual race window
-    // where partial nodes were visible to readers not holding the
-    // expand checkpoint before ExpandCheckpointGuard::try_restore() +
-    // NameMapCheckpoint rollback completed. Now: every recursion level
-    // detects steal delta and stamps a stable agent-facing reason;
-    // nm_ckpt is null at nested depth (only constructed at depth==0),
-    // so no name_map rollback at nested level — name_map consistency
-    // is owned by the top-level claim (see ConcurrentCloneGuard
-    // ownership documentation). The top-level depth's expand_ckpt
-    // still rolls back via the C-linkage checkpoint, which protects
-    // all nested additions too.
     if (new_id != NULL_NODE) {
-        // Issue #3303: observe nested steal-check path even when no
-        // steal detected, so agents can see how often the check fires.
-        // Top-level depth does not bump this counter — only nested.
-        if (hygiene_depth > 0) // top-level excluded
-            g_macro_clone_nested_steal_check_total.fetch_add(1, std::memory_order_relaxed);
-        // hygiene_depth > 0 gate (top-level excluded) — #3303 AC6 source-cite.
-        const auto steal1 = aura_fiber_static_cross_fiber_mutation_safe_steal_total() +
-                            g_clone_walk_steal_inject.load(std::memory_order_relaxed);
-        const bool nested_steal =
-            session.nested_steal_abort != nullptr && *session.nested_steal_abort;
-        if (steal1 > steal0 || nested_steal) {
-            if (session.nested_steal_abort)
-                *session.nested_steal_abort = true;
-            g_macro_clone_steal_abort_total.fetch_add(1, std::memory_order_relaxed);
-            // Issue #3303: stamp stable agent-facing reason. Previously
-            // stored kHygieneLimitReasonPassLimit (3), which was
-            // semantically wrong — pass-limit and steal-abort are
-            // distinct reasons. The new kHygieneLimitReasonStealAbort
-            // (6) lets agent replay distinguish "hygiene ceiling
-            // failed" (3) from "fiber-steal during expand walk" (6).
-            g_macro_clone_last_reject_reason.store(kHygieneLimitReasonStealAbort,
-                                                   std::memory_order_relaxed);
-            // Issue #3303: also stamp global hygiene reason so
-            // hygiene_last_limit_reason_string() returns "steal-abort"
-            // for agent replay (not just the clone-reject reason).
-            note_hygiene_last_limit_reason(kHygieneLimitReasonStealAbort);
-            // Issue #3341: durable Agent string on the mutate-hygiene
-            // reject surface (last_mutate_error_). Counter-only steal-abort
-            // left replay with totals but no reason string.
-            aura_evaluator_note_steal_abort_mid_expand();
-            // Issue #3544: explicit fiber-hygiene unwind (gensym_map_size /
-            // clone_in_flight). NameMapCheckpoint + expand_ckpt already
-            // roll back map / FlatAST; this clears the per-fiber slot.
-            unwind_fiber_hygiene_on_steal(aura_fiber_current_id());
-            // Issue #3157: roll back target FlatAST additions (target.add_*
-            // allocations done by the recursive clone walk between steal0
-            // and steal1). expand_ckpt.try_restore() is safe at all depths —
-            // Soft/Off path unaffected (expand_ckpt.owned == false → no-op +
-            // dtor skips commit, preserving historical half-write).
-            expand_ckpt.try_restore();
-            return NULL_NODE; // nm_ckpt rolls back (depth==0 only)
-        }
+        if (ctx.detect_mid_walk_steal(hygiene_depth, steal0, session, expand_ckpt))
+            return NULL_NODE;
         // Commit name_map only at depth==0 (nested inherits top-level).
         if (hygiene_depth == 0)
             nm_ckpt.commit();
     }
-    // Issue #3756 / #3787 / #4034: successful top-level expand clears sticky
-    // production last_limit so a later pass-loop / peer expand is not
-    // permanently poisoned.
-    //   #4034 (a): if global reason is unchanged since walk entry (reason0),
-    //     this walk did not stain — CAS clear (covers sticky 1/2/3/6/7).
-    //   #3756/#3787: also clear 8/9/10 if a sibling stamped them mid-walk
-    //     when reason0 was 0 / different.
-    //   #3787/#4034: clear this fiber's 1/2/3/6/7/8/9/10 slot (host tests
-    //     often share fiber_id 0). Keep 4/5 (#3888 Agent-facing).
-    if (hygiene_depth == 0 && new_id != NULL_NODE) {
-        auto r = g_macro_hygiene_last_limit_reason.load(std::memory_order_relaxed);
-        if (r != 0 && r == reason0) {
-            g_macro_hygiene_last_limit_reason.compare_exchange_strong(
-                r, 0, std::memory_order_relaxed, std::memory_order_relaxed);
-        }
-        r = g_macro_hygiene_last_limit_reason.load(std::memory_order_relaxed);
-        if (r == kHygieneLimitReasonSameFlatReject || r == kHygieneLimitReasonNameMapShared ||
-            r == kHygieneLimitReasonConcurrentTopLevel) {
-            g_macro_hygiene_last_limit_reason.compare_exchange_strong(
-                r, 0, std::memory_order_relaxed, std::memory_order_relaxed);
-        }
-        const auto fid = static_cast<std::uint32_t>(aura_fiber_current_id());
-        std::scoped_lock lock(g_fiber_hygiene_mu);
-        if (auto it = g_fiber_hygiene_map.find(fid); it != g_fiber_hygiene_map.end()) {
-            const auto fr = it->second.last_limit_reason;
-            if (fr == kHygieneLimitReasonGensymCeiling || fr == kHygieneLimitReasonDepthLimit ||
-                fr == kHygieneLimitReasonPassLimit || fr == kHygieneLimitReasonStealAbort ||
-                fr == kHygieneLimitReasonCapabilityDeny ||
-                fr == kHygieneLimitReasonSameFlatReject || fr == kHygieneLimitReasonNameMapShared ||
-                fr == kHygieneLimitReasonConcurrentTopLevel)
-                it->second.last_limit_reason = 0;
-        }
-    }
+
+    if (hygiene_depth == 0 && new_id != NULL_NODE)
+        ctx.clear_sticky_hygiene_on_success(reason0);
     return new_id;
+}
+
+
+static aura::ast::NodeId clone_macro_body_at_depth(
+    aura::ast::FlatAST& target, aura::ast::StringPool& target_pool, aura::ast::FlatAST& source,
+    aura::ast::StringPool& source_pool, aura::ast::NodeId body_id,
+    const std::unordered_map<std::string, aura::ast::NodeId, aura::core::TransparentStringHash,
+                             std::equal_to<>>* subst,
+    std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
+                       std::equal_to<>>* name_map,
+    aura::ast::SyntaxMarker cloned_marker, int hygiene_depth, int session_depth_limit,
+    bool in_quote = false, int qq_depth = 0, CloneSessionPolicy session = CloneSessionPolicy{});
+
+aura::ast::NodeId clone_macro_body(
+    aura::ast::FlatAST& target, aura::ast::StringPool& target_pool, aura::ast::FlatAST& source,
+    aura::ast::StringPool& source_pool, aura::ast::NodeId body_id,
+    const std::unordered_map<std::string, aura::ast::NodeId, aura::core::TransparentStringHash,
+                             std::equal_to<>>* subst,
+    std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
+                       std::equal_to<>>* name_map,
+    aura::ast::SyntaxMarker cloned_marker, std::size_t owned_floor) {
+    // Issue #2806 / #3028: public API is always top-level depth=0.
+    // session_depth_limit=0 → compute at entry from capability+runtime (not TLS).
+    // Issue #4309: sentinel lets depth-0 snapshot target.size() before add_*.
+    // An explicit floor (rest spine checkpoint) rides the session, which
+    // nested frames copy. Depth stays the explicit argument.
+    if (owned_floor == static_cast<std::size_t>(-1)) {
+        return clone_macro_body_at_depth(target, target_pool, source, source_pool, body_id, subst,
+                                         name_map, cloned_marker, /*hygiene_depth=*/0,
+                                         /*session_depth_limit=*/0,
+                                         /*in_quote=*/false,
+                                         /*qq_depth=*/0, CloneSessionPolicy{});
+    }
+    CloneSessionPolicy session{};
+    session.owned_floor = owned_floor;
+    return clone_macro_body_at_depth(target, target_pool, source, source_pool, body_id, subst,
+                                     name_map, cloned_marker, /*hygiene_depth=*/0,
+                                     /*session_depth_limit=*/0,
+                                     /*in_quote=*/false,
+                                     /*qq_depth=*/0, session);
+}
+
+static aura::ast::NodeId clone_macro_body_at_depth(
+    aura::ast::FlatAST& target, aura::ast::StringPool& target_pool, aura::ast::FlatAST& source,
+    aura::ast::StringPool& source_pool, aura::ast::NodeId body_id,
+    const std::unordered_map<std::string, aura::ast::NodeId, aura::core::TransparentStringHash,
+                             std::equal_to<>>* subst,
+    std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
+                       std::equal_to<>>* name_map,
+    aura::ast::SyntaxMarker cloned_marker, int hygiene_depth, int session_depth_limit,
+    bool in_quote, int qq_depth, CloneSessionPolicy session) {
+    CloneWalkCtx ctx{target, target_pool, source,        source_pool,
+                     subst,  name_map,    cloned_marker, session.owned_floor};
+    return clone_walk(ctx, body_id, hygiene_depth, session_depth_limit, in_quote, qq_depth,
+                      session);
 }
 
 namespace detail {
