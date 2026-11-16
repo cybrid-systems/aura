@@ -79,7 +79,10 @@
 (require "std/list" all:)
 (require "std/string" all:)
 (require "std/hash" all:)
-(require "std/evo" all:)
+; Issue #5238: evo:record! is the engine primitive (#4910); requiring
+; std/evo here only re-defined the strategy:* primitives with the
+; value-based layer and printed the core-primitive warnings on every
+; module that needs the contract set.
 (require "std/query" all:)
 
 (define contract-schema-version 1)

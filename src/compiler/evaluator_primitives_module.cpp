@@ -81,6 +81,13 @@ namespace {
             return name == "gcd" || name == "lcm";
         if (module == "std/test")
             return name == "check" || name == "check=";
+        // std/evo (#5004) owns the value-based strategy layer: it deliberately
+        // re-defines the four names the engine's strategy primitives held, so
+        // loading it is not a silent contract swap. Without this entry every
+        // module that needs the experience layer printed the #5238 warning.
+        if (module == "std/evo")
+            return name == "strategy:active" || name == "strategy:set-strategy" ||
+                   name == "strategy:report-success" || name == "strategy:escalate";
         return false;
     }
 } // namespace
