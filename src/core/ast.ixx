@@ -2189,9 +2189,13 @@ public:
     // Issue #5249: definition-name token span, parallel to line_/col_ (which
     // keep the form head). Parse-time metadata: the v2 wire image in
     // serialize_soa does not carry it, so a deserialized AST reports 0 here
-    // (an honest "unknown", never a guessed position).
+    // (an honest "unknown", never a guessed position). Kept private: read it
+    // through name_line(id)/name_col(id).
+private:
     cow::TrackedColumn<std::uint32_t> name_line_;
     cow::TrackedColumn<std::uint32_t> name_col_;
+
+public:
     // Type information (L6.5+): type_id per node, 0 = DYNAMIC
     cow::TrackedColumn<SyntaxMarker> marker_;
     // Issue #367: per-node provenance id (0 = no provenance).
@@ -2450,7 +2454,15 @@ public:
     cow::TrackedColumn<std::int64_t> value_cache_;
     // Issue #2457: shared_ptr COW — FlatAST copy shares the log
     // (O(1)); first append/erase/clear after share detaches.
+    // The audit log is shared with snapshots but only this class reads its
+    // storage; callers use all_mutations()/mutation_log_size()/detach_count().
+private:
     CowPmrVector<MutationRecord> mutation_log_;
+    // Issue #5312: the rollback index and the published log chunks are
+    // bookkeeping for mutation_log_; nothing outside this class touches
+    // them, so they stay private (read the audit surface through
+    // all_mutations()/mutation_log_size()).
+private:
     // Issue #5312: log indices that still pin a rebind/batch-rebind
     // rollback NodeId. recycle_dead_nodes walks this, not every fat
     // historical record. Cleared entries stay in the audit log (#4729).
@@ -2463,6 +2475,8 @@ public:
     bool mutation_log_prefix_dirty_ = false;
     // Records inspected by the rebind-rollback walk (not the log length).
     std::uint64_t rebind_rollback_scan_visits_ = 0;
+
+public:
     // Issue #1419: provenance context stamped into new MutationRecords
     // (author / parent chain / composite transaction). Defaults 0.
     std::uint64_t mutation_author_fingerprint_ = 0;
@@ -4227,11 +4241,17 @@ public:
     // (not mirrored by operator=) is captured too, against its own base, so
     // the restore stamp diff can read the capture-time cells lazily.
     struct Image {
+        friend class FlatAST;           // capture/restore read the private log snapshot
         std::shared_ptr<FlatAST> shell; // scalars only (columns empty)
+        // The column images are restore inputs, not API: nothing outside
+        // FlatAST (a friend) reads them, so they are private.
+    private:
 #define AURA_4772_IMG_FIELD(c) decltype(FlatAST::c)::image_type c;
         AURA_FLATAST_COW_COLUMNS(AURA_4772_IMG_FIELD)
         AURA_FLATAST_COW_MAPS(AURA_4772_IMG_FIELD)
 #undef AURA_4772_IMG_FIELD
+        // Issue #4772/#5312: the generation mirror is a FlatAST restore
+        // input too.
         cow::ColumnImage<std::uint32_t> subtree_gen;
         // Issue #5312: mutation log at capture. Full chunks are shared
         // with later images; the tail is this image's alone. The shell
@@ -4243,6 +4263,8 @@ public:
             std::size_t size = 0;
         };
         MutationLogSnap mutation_log;
+
+    public:
         std::size_t node_count = 0;
         // Issue #4792: the define content version cell at capture (the
         // define_ver_ column image; 0 = unknown).
@@ -5408,13 +5430,13 @@ public:
     std::uint32_t col(NodeId id) const { return col_[id]; }
     // Issue #5249: reader-level span of the definition-name token. The parser
     // stamps it for Define / MacroDef / DefineType; anything else keeps 0.
-    void set_name_loc(NodeId id, std::uint32_t line, std::uint32_t col) pre(id < name_line_.size())
-        pre(id < name_col_.size()) {
-        name_line_[id] = line;
-        name_col_[id] = col;
+    void set_name_loc(NodeId node, std::uint32_t line, std::uint32_t col)
+        pre(node < name_line_.size()) pre(node < name_col_.size()) {
+        name_line_[node] = line;
+        name_col_[node] = col;
     }
-    std::uint32_t name_line(NodeId id) const { return name_line_[id]; }
-    std::uint32_t name_col(NodeId id) const { return name_col_[id]; }
+    std::uint32_t name_line(NodeId node) const { return name_line_[node]; }
+    std::uint32_t name_col(NodeId node) const { return name_col_[node]; }
 
     // Direct field access (for mutation)
     NodeTag& tag(NodeId id) { return tag_[id]; }
@@ -7011,8 +7033,8 @@ public:
     }
 
 private:
-    static bool is_rebind_rollback_op(std::string_view op) noexcept {
-        return op == "rebind" || op == "batch-rebind";
+    static bool is_rebind_rollback_op(std::string_view op_name) noexcept {
+        return op_name == "rebind" || op_name == "batch-rebind";
     }
     static bool record_pins_rebind_rollback(const MutationRecord& rec) noexcept {
         return rec.has_rollback_data && is_rebind_rollback_op(rec.operator_name);
@@ -7039,9 +7061,10 @@ private:
         }
     }
     void trim_live_rebind_rollback() {
-        const auto n = mutation_log_.size();
-        std::erase_if(live_rebind_rollback_,
-                      [n](std::uint32_t i) { return static_cast<std::size_t>(i) >= n; });
+        const auto log_size = mutation_log_.size();
+        std::erase_if(live_rebind_rollback_, [log_size](std::uint32_t index) {
+            return static_cast<std::size_t>(index) >= log_size;
+        });
     }
     // A prefix rewrite (rollback status, remap, compact, erase) — the
     // published chunks no longer match the live vector. The next capture
@@ -7051,44 +7074,44 @@ private:
         mutation_log_frozen_.clear();
     }
     void sync_frozen_mutation_record(std::size_t index) {
-        constexpr auto C = Image::MutationLogSnap::kChunk;
+        constexpr auto kChunkSize = Image::MutationLogSnap::kChunk;
         if (mutation_log_frozen_.empty() || mutation_log_prefix_dirty_)
             return;
-        const auto covered = mutation_log_frozen_.size() * C;
+        const auto covered = mutation_log_frozen_.size() * kChunkSize;
         if (index >= covered || index >= mutation_log_.size())
             return;
-        const auto ci = index / C;
-        auto& slot = mutation_log_frozen_[ci];
+        const auto chunk_index = index / kChunkSize;
+        auto& slot = mutation_log_frozen_[chunk_index];
         if (!slot)
             return;
         if (slot.use_count() != 1)
             slot = std::make_shared<std::vector<MutationRecord>>(*slot);
-        (*slot)[index % C] = mutation_log_.view()[index];
+        (*slot)[index % kChunkSize] = mutation_log_.view()[index];
     }
     void publish_mutation_log_frozen_chunks() {
-        constexpr auto C = Image::MutationLogSnap::kChunk;
+        constexpr auto kChunkSize = Image::MutationLogSnap::kChunk;
         if (mutation_log_prefix_dirty_) {
             mutation_log_frozen_.clear();
             mutation_log_prefix_dirty_ = false;
         }
         const auto& log = mutation_log_.view();
-        const auto full = log.size() / C;
+        const auto full = log.size() / kChunkSize;
         if (mutation_log_frozen_.size() > full)
             mutation_log_frozen_.resize(full);
         while (mutation_log_frozen_.size() < full) {
-            const auto base = mutation_log_frozen_.size() * C;
+            const auto base = mutation_log_frozen_.size() * kChunkSize;
             auto chunk = std::make_shared<std::vector<MutationRecord>>();
-            chunk->reserve(C);
-            for (std::size_t i = 0; i < C; ++i)
+            chunk->reserve(kChunkSize);
+            for (std::size_t i = 0; i < kChunkSize; ++i)
                 chunk->push_back(log[base + i]);
             mutation_log_frozen_.push_back(std::move(chunk));
         }
     }
     [[nodiscard]] Image::MutationLogSnap export_mutation_log_snap() const {
-        constexpr auto C = Image::MutationLogSnap::kChunk;
+        constexpr auto kChunkSize = Image::MutationLogSnap::kChunk;
         Image::MutationLogSnap snap;
         snap.chunks = mutation_log_frozen_;
-        const auto covered = mutation_log_frozen_.size() * C;
+        const auto covered = mutation_log_frozen_.size() * kChunkSize;
         if (mutation_log_.size() > covered) {
             auto tail = std::make_shared<std::vector<MutationRecord>>();
             tail->reserve(mutation_log_.size() - covered);
@@ -7100,22 +7123,22 @@ private:
         return snap;
     }
     void restore_mutation_log_snap(const Image::MutationLogSnap& snap) {
-        constexpr auto C = Image::MutationLogSnap::kChunk;
+        constexpr auto kChunkSize = Image::MutationLogSnap::kChunk;
         std::pmr::vector<MutationRecord> rebuilt{mutation_log_.get_allocator()};
         rebuilt.reserve(snap.size);
-        for (const auto& ch : snap.chunks) {
-            if (!ch)
+        for (const auto& chunk : snap.chunks) {
+            if (!chunk)
                 continue;
-            for (const auto& rec : *ch)
+            for (const auto& rec : *chunk)
                 rebuilt.push_back(rec);
         }
         mutation_log_ = std::move(rebuilt);
         mutation_log_frozen_.clear();
         mutation_log_prefix_dirty_ = false;
-        for (const auto& ch : snap.chunks) {
-            if (!ch || ch->size() != C)
+        for (const auto& chunk : snap.chunks) {
+            if (!chunk || chunk->size() != kChunkSize)
                 break;
-            mutation_log_frozen_.push_back(ch);
+            mutation_log_frozen_.push_back(chunk);
         }
         rebuild_live_rebind_rollback();
     }
@@ -7162,8 +7185,8 @@ public:
         // rollback consumer); structural child ops restore through the
         // Guard's children_ snapshot and their orphaned slots stay
         // recyclable (#2412 AC1).
-        const auto is_rebind_record = [](std::string_view op) {
-            return op == "rebind" || op == "batch-rebind";
+        const auto is_rebind_record = [](std::string_view op_name) {
+            return op_name == "rebind" || op_name == "batch-rebind";
         };
         // A committed log record's body ref is only worth keeping while the
         // body is still whole. Only the ref slot itself is kept above, so
@@ -7193,15 +7216,15 @@ public:
         still.reserve(live_rebind_rollback_.size());
         std::vector<std::size_t> release_idx;
         for (const auto ri32 : live_rebind_rollback_) {
-            const auto ri = static_cast<std::size_t>(ri32);
-            if (ri >= mutation_log_.size())
+            const auto record_index = static_cast<std::size_t>(ri32);
+            if (record_index >= mutation_log_.size())
                 continue;
-            const auto& rec = mutation_log_.view()[ri];
+            const auto& rec = mutation_log_.view()[record_index];
             if (!rec.has_rollback_data || !is_rebind_record(rec.operator_name))
                 continue;
             if (!atomic_batch_active() &&
                 (!body_whole(rec.old_value) || !body_whole(rec.new_value))) {
-                release_idx.push_back(ri);
+                release_idx.push_back(record_index);
                 continue;
             }
             keep_rollback_ref(rec.old_value);
