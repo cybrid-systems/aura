@@ -117,6 +117,26 @@
                             (evo:trace (hash))))
                    1))))))
 
+; The other audit surfaces are readable through the same entry, read-only:
+; nothing below changes their storage.
+(test-case "other audit surfaces read through the same entry"
+           (hash "issue" 5251 "tags" (list "std/evo"))
+  (let ((rows (evo:trace (hash "source" "mutation-audit"))))
+    (check (> (length rows) 0))
+    (check (hash? (hash-ref (car rows) "fields")))
+    (check (string? (hash-ref (car rows) "raw")))
+    (check= "mutation-audit" (field (car rows) "source")))
+  (let* ((audit (list (hash "kind" "refuse" "target" "f" "decision" "ROLLBACK")))
+         (rows (evo:trace (hash "source" "entries" "entries" audit))))
+    (check= 1 (length rows))
+    (check= "ROLLBACK" (field (car rows) "decision")))
+  ; a security trail row is adapted the same way
+  (let ((rows (evo:trace (hash "source" "security"))))
+    (check (list? rows))
+    (if (> (length rows) 0)
+      (check (string? (hash-ref (car rows) "raw")))
+      #t)))
+
 (test-case "v=1 jsonl fields still parse"
            (hash "issue" 5251 "tags" (list "std/evo"))
   (let ((rec (evo:parse-line
