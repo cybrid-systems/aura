@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.2.5
+
+Minor release on the 0.2 channel. It closes the clean-code and agent-diagnostics epic: file runs, `--serve`, `--serve-async` and embedding share one machine-readable diagnostic with a stable code and span, and primitive errors carry their kind from the creation site; the module interfaces no longer hold the `CompilerService` bodies, the mutation-path giants were split without behavior change, and `build.py` is a small CLI over `tools/build/`. No language surface change. The API is still not stable.
+
+- Diagnostics and error handling (#5234, #5235, #5239, #5240, #5241): `--serve` reports a displayed error as an error, keeps the original line numbers, and answers JSON-only replies that are valid JSON. `--error-format=json` gives file-run diagnostics a stable `code`, span and snippet, and the same code/span reach serve replies, serve-async lines and the embedding error record. Exit codes now distinguish usage (2), parse (3), static diagnostics such as type, unbound, effect and module (4) and runtime failure (1) instead of almost always 0/1. An unterminated string is a parser diagnostic in every entry point; `(if)`/`(define)` arity, division by zero, `--jit file.aura` and `--ir` failures carry a location and a hint. Primitive errors are typed where they are created (`TypeError`, `EffectDenied`, `ModuleError`); display and define faces print the same kind prefix, and `display_kind()` no longer classifies by message text.
+- Stdlib and evaluation: module exports cannot silently replace a core primitive (#5238); a channel list-of-hash payload survives a fiber reclaim; a named-let loop keeps its integer/float fast path; a zero-argument `(check)` parses as a call; typing joins in `mutate:rebind`, unparse keeps a variadic lambda's rest marker and a scientific float as one literal, and a re-exported `require` is attributed to its provider.
+- Clean code (#5236, #5237, #5242, #5243, #5244, #5245, #5246): 11 unbuilt module interfaces and the misnamed dead files are gone. The C ABI snapshot has one definition with `static_assert` on size and offset. `CompilerService` bodies moved out of `service.ixx` into 16 responsibility units (22,989 -> 13,514 lines); `Evaluator`'s interface keeps only small inline members. The mutation-path giants are extract-method only and green under TSAN: `exit_mutation_boundary` 1599/278 -> 562/108, `~MutationBoundaryGuard` 1825/613 -> 1590/525, `clone_macro_body_at_depth` 808/290 -> 451/145 (lines/CCN). `compiler_metrics_fields.inc` is generated from `CompilerMetrics` with a `--check` gate, and `StatsKvTable` replaced 233 of 473 hand-rolled stats tables. `AURA_*` variables are parsed once into a typed snapshot. `build.py` went from 27,708 to 11,102 lines (about 2.7k hand-written plus the generated wiring index) with the command groups under `tools/build/` and a table-driven gate.
+- Install and smoke coverage is unchanged: Ubuntu 24.04, Ubuntu 26.10, Debian 12, Rocky Linux 9, and openEuler 24.03 LTS SP4, on x86_64 and arm64.
+
+Not in this version:
+
+- macOS, Windows, and other Linux distributions.
+- `aura::eval` ships in the build tree only.
+
 ## 0.2.4
 
 Patch release on the 0.2 channel. It fixes a channel payload lifetime bug that could hand a fiber receiver an empty hash or a corrupt list, a GC reclaim-window regression that made hash allocation much slower after list-building fibers, and a set of stdlib, evo, and capability fixes. No new public surface. The API is still not stable.
