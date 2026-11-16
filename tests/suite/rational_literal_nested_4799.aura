@@ -20,7 +20,11 @@
 (define nested (parse-msg "(define zz (list 1/3))"))
 (display "  nested: ") (display nested) (newline)
 (check! (string-has? nested "rational literal '1/3' is not supported") "nested 1/3 reports the rational diagnostic")
-(check! (string-has? nested "1:18: rational literal") "diagnostic points at the literal itself")
+; #5315 made set-code report a located parse error ("workspace.aura:1:18:
+; parse error: ..."). Pin the position and the message body, not the prefix.
+(check! (and (string-has? nested "workspace.aura:1:18:")
+             (string-has? nested "rational literal '1/3' is not supported"))
+         "diagnostic points at the literal itself")
 (check! (not (string-has? (substring nested 0 (min 30 (string-length nested))) "unexpected")) "rational diagnostic comes first, not unexpected ')'")
 (define deep (parse-msg "(define zw (vector (list 2 7/2)))"))
 (check! (string-has? deep "rational literal '7/2'") "doubly nested literal reports the rational diagnostic")
