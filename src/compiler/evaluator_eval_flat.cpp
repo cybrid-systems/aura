@@ -6162,6 +6162,19 @@ namespace {
     };
     thread_local const Invar5304* tls_invar_p_5304 = nullptr;
     thread_local int tls_invar_n_5304 = 0;
+    // #5304: (vector-ref v <index>) where v is not a named-let parameter.
+    // The slot is this call's vector. The index is evaluated every step, so
+    // (vector-ref c i) and (vector-ref c (- i 1)) stay on the integer loop.
+    // A literal index remains an invariant. elem_float selects the raw
+    // numeric loop when the first element is a float.
+    struct VecRef5304 {
+        aura::ast::NodeId call = aura::ast::NULL_NODE;
+        aura::ast::NodeId index = aura::ast::NULL_NODE;
+        std::uint64_t slot = 0;
+        bool elem_float = false;
+    };
+    thread_local const VecRef5304* tls_vecref_p_5304 = nullptr;
+    thread_local int tls_vecref_n_5304 = 0;
     // collect_free_int failed on a call that will not become a site. Latch
     // that shape. A free-var miss stays unlatched (#5297).
     thread_local bool tls_structural_miss_5304 = false;
@@ -6172,6 +6185,34 @@ namespace {
                 return &tls_invar_p_5304[i];
         }
         return nullptr;
+    }
+
+    const VecRef5304* find_vecref_5304(aura::ast::NodeId node) noexcept {
+        for (int i = 0; i < tls_vecref_n_5304; ++i) {
+            if (tls_vecref_p_5304[i].call == node)
+                return &tls_vecref_p_5304[i];
+        }
+        return nullptr;
+    }
+
+    // Re-index every step. Do not keep a pointer into the heap: a safepoint
+    // can move the outer vector. No heap lock — vector-ref does not take one.
+    bool read_vec_slot_int_5304(const Env& env, std::uint64_t slot, std::int64_t pos,
+                                std::int64_t& out) {
+        if (pos < 0)
+            return false;
+        auto* owner = env.owner();
+        if (owner == nullptr)
+            return false;
+        const auto heap = owner->vector_heap();
+        const auto p = static_cast<std::size_t>(pos);
+        if (slot >= heap.size() || p >= heap[static_cast<std::size_t>(slot)].size())
+            return false;
+        const auto& elem = heap[static_cast<std::size_t>(slot)][p];
+        if (!types::is_int(elem))
+            return false;
+        out = types::as_int(elem);
+        return true;
     }
 
     void tls_fast_i_clear_5066() noexcept {
@@ -6205,6 +6246,10 @@ namespace {
     std::optional<EvalValue> eval_fast_iop_5066(FastIOp op, std::int64_t x, std::int64_t y);
     std::optional<FreeRead5066> read_free_int_5066(const aura::ast::StringPool& pool,
                                                    const Env& env, aura::ast::SymId sym);
+    bool eval_vecref_int_5304(const std::atomic<std::uint64_t>& top_gen, std::uint64_t defuse,
+                              const aura::ast::FlatAST& flat, const aura::ast::StringPool& pool,
+                              const Env& env, aura::ast::NodeId node, std::int64_t& out, int depth,
+                              std::span<const FreeInt5066> frees);
 
     std::optional<EvalValue> eval_fast_site_5066(const std::atomic<std::uint64_t>& top_gen,
                                                  std::uint64_t defuse,
@@ -6282,6 +6327,9 @@ namespace {
                 out = inv->i;
                 return true;
             }
+            if (find_vecref_5304(node) != nullptr)
+                return eval_vecref_int_5304(top_gen, defuse, flat, pool, env, node, out, depth,
+                                            frees);
             for (int i = 0; i < tls_fast_i_n_5066; ++i) {
                 FastISite& inner = tls_fast_i_5066[i];
                 if (inner.flat != &flat || inner.node != node ||
@@ -6459,6 +6507,73 @@ namespace {
         return nullptr;
     }
 
+    // Index of a per-step vector-ref: a loop variable, a captured integer,
+    // a literal, or an arithmetic site. A float index is the primitive's
+    // error, so it misses and the interpreter reports it.
+    bool eval_index_int_5304(const std::atomic<std::uint64_t>& top_gen, std::uint64_t defuse,
+                             const aura::ast::FlatAST& flat, const aura::ast::StringPool& pool,
+                             const Env& env, aura::ast::NodeId node, std::int64_t& out, int depth,
+                             std::span<const FreeInt5066> frees) {
+        if (depth > 6 || node >= flat.size())
+            return false;
+        if (const auto* inv = find_invar_5304(node)) {
+            if (inv->is_float)
+                return false;
+            out = inv->i;
+            return true;
+        }
+        if (find_vecref_5304(node) != nullptr)
+            return eval_vecref_int_5304(top_gen, defuse, flat, pool, env, node, out, depth, frees);
+        const auto tag = flat.tag(node);
+        if (tag == aura::ast::NodeTag::LiteralInt) {
+            const auto mark = flat.marker(node);
+            if (mark == aura::ast::SyntaxMarker::BoolLiteral ||
+                mark == aura::ast::SyntaxMarker::EmptyList)
+                return false;
+            out = flat.int_val(node);
+            return types::fits_fixnum(out);
+        }
+        if (tag == aura::ast::NodeTag::Call) {
+            FastISite* site = find_fast_site_5066(flat, node);
+            if (site == nullptr)
+                return false;
+            auto v = eval_fast_site_5066(top_gen, defuse, flat, pool, env, *site, depth, frees);
+            if (!v || !types::is_int(*v))
+                return false;
+            out = types::as_int(*v);
+            return true;
+        }
+        if (tag != aura::ast::NodeTag::Variable || env.pool() != &pool)
+            return false;
+        const auto sym = flat.sym_id(node);
+        if (const auto loc = env.local_symid_last(sym); loc && types::is_int(*loc)) {
+            out = types::as_int(*loc);
+            return true;
+        }
+        for (const auto& fr : frees) {
+            if (fr.sym != sym)
+                continue;
+            if (fr.dgen != defuse)
+                return false;
+            out = fr.value;
+            return true;
+        }
+        return false;
+    }
+
+    bool eval_vecref_int_5304(const std::atomic<std::uint64_t>& top_gen, std::uint64_t defuse,
+                              const aura::ast::FlatAST& flat, const aura::ast::StringPool& pool,
+                              const Env& env, aura::ast::NodeId node, std::int64_t& out, int depth,
+                              std::span<const FreeInt5066> frees) {
+        const auto* vr = find_vecref_5304(node);
+        if (vr == nullptr || depth > 6)
+            return false;
+        std::int64_t ix = 0;
+        if (!eval_index_int_5304(top_gen, defuse, flat, pool, env, vr->index, ix, depth + 1, frees))
+            return false;
+        return read_vec_slot_int_5304(env, vr->slot, ix, out);
+    }
+
     int param_index_5066(std::span<const aura::ast::SymId> params, aura::ast::SymId sym) noexcept {
         for (std::size_t i = 0; i < params.size(); ++i) {
             if (params[i] == sym)
@@ -6596,6 +6711,24 @@ namespace {
         return Num5302{NumKind5302::Box, 0, 0.0, v};
     }
 
+    // #5304: live element. A non-number misses so the interpreter runs it.
+    std::optional<Num5302> read_vec_slot_num_5304(const Env& env, std::uint64_t slot,
+                                                  std::int64_t pos) {
+        if (pos < 0)
+            return std::nullopt;
+        auto* owner = env.owner();
+        if (owner == nullptr)
+            return std::nullopt;
+        const auto heap = owner->vector_heap();
+        const auto p = static_cast<std::size_t>(pos);
+        if (slot >= heap.size() || p >= heap[static_cast<std::size_t>(slot)].size())
+            return std::nullopt;
+        auto num = num_from_value_5302(heap[static_cast<std::size_t>(slot)][p]);
+        if (!num || num->k == NumKind5302::Box)
+            return std::nullopt;
+        return num;
+    }
+
     // Same probe as read_free_int_5066, keeping a float instead of rejecting it.
     std::optional<Num5302> read_free_num_5302(const aura::ast::StringPool& pool, const Env& env,
                                               aura::ast::SymId sym) {
@@ -6689,6 +6822,9 @@ namespace {
             }
             return true;
         }
+        if (const auto* vr = find_vecref_5304(node))
+            return collect_free_int_5066(flat, pool, env, params, vr->index, depth + 1, store,
+                                         nfree, store_gen, folds);
         if (const auto* fold = find_car_fold_5066(folds, node)) {
             if (!collect_free_int_5066(flat, pool, env, params, fold->head, depth + 1, store, nfree,
                                        store_gen, folds))
@@ -6781,6 +6917,8 @@ namespace {
                 }
                 return true;
             }
+            if (const auto* vr = find_vecref_5304(node))
+                return self(vr->index, depth + 1);
             const auto tag = flat.tag(node);
             if (find_invar_5304(node))
                 return true;
@@ -6836,6 +6974,12 @@ namespace {
                 if (inv->is_float)
                     return Num5302{NumKind5302::Float, 0, inv->d, {}};
                 return Num5302{NumKind5302::Int, inv->i, 0.0, {}};
+            }
+            if (const auto* vr = find_vecref_5304(node)) {
+                auto ix = self(vr->index, defuse, depth + 1);
+                if (!ix || ix->k != NumKind5302::Int)
+                    return std::nullopt;
+                return read_vec_slot_num_5304(env, vr->slot, ix->i);
             }
             if (const auto* fold = find_car_fold_5066(folds, node)) {
                 auto head = self(fold->head, defuse, depth + 1);
@@ -7079,6 +7223,59 @@ namespace {
             inv.i = as_int(*lit);
             return inv;
         }
+        // #5304: length and car of a captured vector or pair are one copy.
+        // A named-let parameter is not stable across steps.
+        if (kids.size() == 2) {
+            const std::string name(pool.resolve(flat.sym_id(kids[0])));
+            const bool want_len = name == "vector-length";
+            const bool want_car = name == "car";
+            if ((!want_len && !want_car) || !callee_is_prim_5066(flat, pool, env, kids[0], name) ||
+                flat.tag(kids[1]) != aura::ast::NodeTag::Variable ||
+                param_index_5066(params, flat.sym_id(kids[1])) >= 0)
+                return std::nullopt;
+            auto bound = read_any_5304(pool, env, flat.sym_id(kids[1]));
+            if (!bound)
+                return std::nullopt;
+            if (want_len) {
+                if (!is_vector(*bound))
+                    return std::nullopt;
+                const auto vi = static_cast<std::size_t>(as_vector_idx(*bound));
+                if (!owner->inrange_slot_tenant_allows(vi, /*vector_heap=*/true,
+                                                       /*required_effects=*/0, "vector-length"))
+                    return std::nullopt;
+                const auto heap = owner->vector_heap();
+                if (vi >= heap.size())
+                    return std::nullopt;
+                const auto n = static_cast<std::int64_t>(heap[vi].size());
+                if (!types::fits_fixnum(n))
+                    return std::nullopt;
+                Invar5304 inv;
+                inv.call = node;
+                inv.i = n;
+                return inv;
+            }
+            if (!is_pair(*bound))
+                return std::nullopt;
+            const auto id = as_pair_idx(*bound);
+            if (!owner->inrange_slot_tenant_allows(id, /*vector_heap=*/false,
+                                                   /*required_effects=*/0, "car"))
+                return std::nullopt;
+            const auto pairs = owner->pairs();
+            if (id >= pairs.size())
+                return std::nullopt;
+            const auto& car = pairs[id].car;
+            Invar5304 inv;
+            inv.call = node;
+            if (is_float(car)) {
+                inv.is_float = true;
+                inv.d = as_float(car);
+                return inv;
+            }
+            if (!is_int(car))
+                return std::nullopt;
+            inv.i = as_int(car);
+            return inv;
+        }
         if (kids.size() != 3)
             return std::nullopt;
         const std::string name(pool.resolve(flat.sym_id(kids[0])));
@@ -7149,6 +7346,45 @@ namespace {
         return inv;
     }
 
+    // (vector-ref v <index>) with a non-literal index. v is resolved once.
+    // The element is read again each step. A literal index stays in match_invar.
+    std::optional<VecRef5304> match_vecref_5304(const aura::ast::FlatAST& flat,
+                                                const aura::ast::StringPool& pool, const Env& env,
+                                                std::span<const aura::ast::SymId> params,
+                                                aura::ast::NodeId node) {
+        if (node >= flat.size() || flat.tag(node) != aura::ast::NodeTag::Call)
+            return std::nullopt;
+        const auto kids = flat.children(node);
+        if (kids.size() != 3 || flat.tag(kids[0]) != aura::ast::NodeTag::Variable)
+            return std::nullopt;
+        if (flat.tag(kids[2]) == aura::ast::NodeTag::LiteralInt)
+            return std::nullopt;
+        if (!callee_is_prim_5066(flat, pool, env, kids[0], "vector-ref"))
+            return std::nullopt;
+        if (flat.tag(kids[1]) != aura::ast::NodeTag::Variable ||
+            param_index_5066(params, flat.sym_id(kids[1])) >= 0)
+            return std::nullopt;
+        auto* owner = env.owner();
+        if (owner == nullptr)
+            return std::nullopt;
+        auto vec = read_any_5304(pool, env, flat.sym_id(kids[1]));
+        if (!vec || !is_vector(*vec))
+            return std::nullopt;
+        const auto vi = static_cast<std::size_t>(as_vector_idx(*vec));
+        if (!owner->inrange_slot_tenant_allows(vi, /*vector_heap=*/true, /*required_effects=*/0,
+                                               "vector-ref"))
+            return std::nullopt;
+        const auto heap = owner->vector_heap();
+        if (vi >= heap.size())
+            return std::nullopt;
+        VecRef5304 vr;
+        vr.call = node;
+        vr.index = kids[2];
+        vr.slot = vi;
+        vr.elem_float = !heap[vi].empty() && is_float(heap[vi][0]);
+        return vr;
+    }
+
     struct InvarScope5304 {
         InvarScope5304(const Invar5304* p, int n) noexcept {
             tls_invar_p_5304 = p;
@@ -7162,14 +7398,28 @@ namespace {
         InvarScope5304& operator=(const InvarScope5304&) = delete;
     };
 
+    struct VecScope5304 {
+        VecScope5304(const VecRef5304* p, int n) noexcept {
+            tls_vecref_p_5304 = p;
+            tls_vecref_n_5304 = n;
+        }
+        ~VecScope5304() {
+            tls_vecref_p_5304 = nullptr;
+            tls_vecref_n_5304 = 0;
+        }
+        VecScope5304(const VecScope5304&) = delete;
+        VecScope5304& operator=(const VecScope5304&) = delete;
+    };
+
     // #5066: once a named-let body is an integer compare whose arms are a
     // result (param or literal) and `(self <int-args>...)`, in either order,
     // run the rest of the loop without re-entering eval_flat. Captured
     // integers are snapshotted for this call (#5297). A pure nested call
     // (literal function, constant vector-ref, list-ref of a literal list) is
-    // copied once (#5304). A miss returns nullopt and the interpreter
-    // re-reads that frame (#5116). The site table is thread-local, so a
-    // scheduler fiber runs the same loop.
+    // copied once (#5304). A varying vector-ref re-reads the slot each step.
+    // vector-length and car of a captured value are one copy. A miss returns
+    // nullopt and the interpreter re-reads that frame (#5116). The site table
+    // is thread-local, so a scheduler fiber runs the same loop.
     struct AccelLatch5066 {
         const aura::ast::FlatAST* flat = nullptr;
         aura::ast::NodeId body = aura::ast::NULL_NODE;
@@ -7279,6 +7529,8 @@ namespace {
         int nfold = 0;
         std::array<Invar5304, 8> inv_store{};
         int ninv = 0;
+        std::array<VecRef5304, 8> vec_store{};
+        int nvec = 0;
         auto record_folds = [&](this auto& self, aura::ast::NodeId node, int depth) -> bool {
             if (depth > 6 || node >= flat.size())
                 return true;
@@ -7299,6 +7551,12 @@ namespace {
                     return false;
                 inv_store[static_cast<std::size_t>(ninv++)] = *inv;
                 return true;
+            }
+            if (auto vr = match_vecref_5304(flat, pool, env, params, node)) {
+                if (nvec >= static_cast<int>(vec_store.size()))
+                    return false;
+                vec_store[static_cast<std::size_t>(nvec++)] = *vr;
+                return self(vr->index, depth + 1);
             }
             if (flat.tag(node) == aura::ast::NodeTag::Call) {
                 if (FastISite* site = find_fast_site_5066(flat, node))
@@ -7334,11 +7592,19 @@ namespace {
                     break;
                 }
             }
+            bool vec_arg = false;
+            for (int k = 0; k < nvec; ++k) {
+                if (vec_store[static_cast<std::size_t>(k)].call == arg_nodes[i]) {
+                    vec_arg = true;
+                    break;
+                }
+            }
             if (!accel_arg_ok_5066(flat, arg_nodes[i], params) &&
-                find_car_fold_5066(fold_span(), arg_nodes[i]) == nullptr && !invar_arg)
+                find_car_fold_5066(fold_span(), arg_nodes[i]) == nullptr && !invar_arg && !vec_arg)
                 return reject();
         }
         InvarScope5304 invar_scope(inv_store.data(), ninv);
+        VecScope5304 vec_scope(vec_store.data(), nvec);
         const auto folds = fold_span();
         const std::int64_t result_k = result_lit ? flat.int_val(result_node) : 0;
         const double result_d = result_float_lit ? flat.get(result_node).float_value : 0.0;
@@ -7361,6 +7627,13 @@ namespace {
             if (const auto* inv = find_invar_5304(node)) {
                 if (inv->is_float)
                     seen_float = true;
+                return;
+            }
+            if (const auto* vr = find_vecref_5304(node)) {
+                if (vr->elem_float)
+                    seen_float = true;
+                else
+                    self(vr->index, depth + 1);
                 return;
             }
             if (const auto* fold = find_car_fold_5066(folds, node)) {
@@ -7452,6 +7725,14 @@ namespace {
                         return std::nullopt;
                     return make_int(inv->i);
                 }
+                if (find_vecref_5304(node) != nullptr) {
+                    std::int64_t ix = 0;
+                    if (!eval_vecref_int_5304(top_gen,
+                                              g_cell_store_gen_5066.load(std::memory_order_acquire),
+                                              flat, pool, env, node, ix, 0, frees))
+                        return std::nullopt;
+                    return make_int(ix);
+                }
                 const auto tag = flat.tag(node);
                 if (tag == aura::ast::NodeTag::LiteralInt)
                     return make_int(flat.int_val(node));
@@ -7519,6 +7800,15 @@ namespace {
                     return make_float(inv->d);
                 }
                 return make_int(inv->i);
+            }
+            if (const auto* vr = find_vecref_5304(node)) {
+                auto ix = self(vr->index, defuse, depth + 1, true);
+                if (!ix || !is_int(*ix))
+                    return std::nullopt;
+                std::int64_t elem = 0;
+                if (!read_vec_slot_int_5304(env, vr->slot, as_int(*ix), elem))
+                    return std::nullopt;
+                return make_int(elem);
             }
             if (const auto* fold = find_car_fold_5066(folds, node)) {
                 auto head = self(fold->head, defuse, depth + 1, false);
