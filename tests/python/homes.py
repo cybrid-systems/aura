@@ -148,6 +148,17 @@ HOMES: tuple[Home, ...] = (
         note=("Text extractor is extract-code. The agent extractor is llm:extract-code. Both belong in this home."),
     ),
     _h(
+        "std/search",
+        "aura",
+        "tests/suite/search_clonal.aura",
+        ("search:init", "search:kinds", "std/search"),
+        tag="search",
+        requires=("std/search",),
+        body='(check (member "clonal" (search:kinds)))',
+        roots=("lib/std/search.aura",),
+        note=("One search protocol over the program space. Every kind is a value; new kinds append a case here."),
+    ),
+    _h(
         "lang/module",
         "aura",
         "tests/suite/module.aura",
