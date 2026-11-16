@@ -63,7 +63,9 @@ def main() -> int:
         if not re.search(pattern, hay):
             fails.append(f"{label}: pattern {pattern!r} not found")
 
-    build = _read("build.py")
+    # #5246: the command body lives in tools/build/chaos.py now; keep reading
+    # both so the dispatch table in build.py and the body stay covered.
+    build = _read("build.py") + _read("tools/build/chaos.py")
     release = _read(".github/workflows/release.yml")
     chaos = _read("tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp")
 

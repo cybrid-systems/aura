@@ -62,7 +62,10 @@
     },
     {
       "ac": "AC5",
-      "path": "build.py",
+      "paths": [
+        "build.py",
+        "tools/build/chaos.py"
+      ],
       "contains": [
         "AURA_PRODUCTION_CONCURRENCY_GATE"
       ]

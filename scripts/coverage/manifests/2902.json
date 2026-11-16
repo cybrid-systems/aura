@@ -37,7 +37,10 @@
     },
     {
       "ac": "AC2",
-      "path": "build.py",
+      "paths": [
+        "build.py",
+        "tools/build/chaos.py"
+      ],
       "contains": [
         "cmd_chaos_release_blocker_2902",
         "AURA_CHAOS_RELEASE_BLOCKER",
