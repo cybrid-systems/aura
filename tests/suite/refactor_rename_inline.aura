@@ -41,14 +41,14 @@
 
 ; ── inline-function: really inlines every call site ─────────────────
 (test-case "inline-function inlines the call sites" (hash "issue" 5252 "tags" (list "refactor" "mutate"))
-  (set-code "(begin (define (inc x) (+ x 1)) (define (use x) (inc x)))")
+  (set-code "(begin (define (inc x) (+ x 1)) (define (caller x) (inc x)))")
   (eval-current)
   (check= 1 (refactor:inline-function "inc"))
   (define src (current-source :workspace))
   (check (not (string-contains? src "(inc x)")))
   (check (string-contains? src "(+ x 1)"))
   (eval-current)
-  (check= 6 (use 5)))
+  (check= 6 (caller 5)))
 
 (test-case "inline-function counts zero for an uncalled name" (hash "issue" 5252 "tags" (list "refactor" "mutate"))
   (set-code "(define (lonely x) (+ x 2))")
