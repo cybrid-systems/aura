@@ -43,6 +43,9 @@ ROOT = Path(__file__).resolve().parents[3]
 TARGET_REL = "src/compiler/evaluator_mutation_boundary.cpp"
 
 FUNC_SIG = "Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary("
+# Issue #5243: the abort rewind moved into the extracted failure arm; the
+# contract follows the code so the order/gating checks still apply.
+HELPER_SIG = "void Evaluator::exit_rollback_failed_dual_topology_("
 REWIND_ANCHOR = "// Issue #3102: AC1+AC2+AC3+AC4 — CoercionMap abort rewind."
 
 CAPTURE_RE = re.compile(r"coerced_nodes_at_exit\s*=\s*aura::compiler::coerced_nodes_tracker_take\(\)\s*;")
@@ -152,6 +155,9 @@ def check_text(text: str) -> list[str]:
     body = _brace_block(text, sig_at)
     if not body:
         return ["AC1: the exit_mutation_boundary body could not be delimited"]
+    helper_at = text.find(HELPER_SIG)
+    helper_body = _brace_block(text, helper_at) if helper_at >= 0 else ""
+    rewind_scope = body + "\n" + helper_body
 
     # -- AC1: the capture runs BEFORE the drain ------------------------------
     cap = CAPTURE_RE.search(body)
@@ -182,11 +188,11 @@ def check_text(text: str) -> list[str]:
             fails.append("AC3: the captured vector declaration is missing")
 
     # -- AC2: the abort rewind consumes the capture and keeps its own ACs ----
-    anchor = body.find(REWIND_ANCHOR)
+    anchor = rewind_scope.find(REWIND_ANCHOR)
     if anchor < 0:
         fails.append(f"AC2: the abort rewind anchor {REWIND_ANCHOR!r} is missing")
     else:
-        win = body[anchor : anchor + 2000]
+        win = rewind_scope[anchor : anchor + 2000]
         if CONSUME_RE.search(win) is None:
             fails.append(
                 "AC2: the abort rewind does not consume the captured vector "
@@ -198,12 +204,12 @@ def check_text(text: str) -> list[str]:
                 fails.append(f"AC2: the abort rewind lost {needle!r}")
 
     # -- AC4: the Soft / Off observe branch drops the capture ----------------
-    obs = OBSERVE_RE.search(body)
+    obs = OBSERVE_RE.search(rewind_scope)
     if obs is None:
         fails.append("AC4: the Soft / Off observe branch is missing")
     else:
-        nxt = FORCE_DIRTY_RE.search(body, obs.end())
-        seg = body[obs.end() : nxt.start() if nxt else len(body)]
+        nxt = FORCE_DIRTY_RE.search(rewind_scope, obs.end())
+        seg = rewind_scope[obs.end() : nxt.start() if nxt else len(rewind_scope)]
         if FORCE_DIRTY_RE.search(seg) is not None:
             fails.append("AC4: the Soft / Off observe branch force-dirties nodes")
         if CLEAR_RE.search(seg) is None:

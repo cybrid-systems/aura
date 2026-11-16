@@ -384,7 +384,7 @@ static void ac13_exit_restore_not_skip() {
     CHECK(emb.find("bool soft_only_below = true;") != std::string::npos,
           "AC13: soft-only-below computed after the pop (exit + ctor)");
     CHECK(emb.find("if (nested_boundary && success && !soft_only_below)\n"
-                   "                                goto skip_nested_success_composite_restore;") !=
+                   "                            goto skip_nested_success_composite_restore;") !=
               std::string::npos,
           "AC13: nested-success skip only for real Guard nesting");
     CHECK(emb.find("if (nested_boundary && success)\n") == std::string::npos,
