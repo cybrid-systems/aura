@@ -323,15 +323,27 @@
       (else
        (feedback:build ctx op name #t "ok" "none" "" "" #f #f test)))))
 
-; (feedback:transform op name thunk [keys] [test]) — snapshot, gate, run,
-; record. A refused transform never runs the thunk: the #5253 gate decides.
+; (feedback:transform op name thunk [keys] [test] [detectors]) — snapshot,
+; gate, run, record. A refused transform never runs the thunk: the #5253
+; gate decides. The optional "detectors" hash is #5271's evidence
+; (detector-set name -> anomaly records) and is handed to the same gate, so
+; the anomaly lands in the "contract" slot of the record. A warn detector
+; set leaves the gate ok; a reject set refuses before the thunk runs.
 (define (feedback:transform op name thunk . opts)
   (let* ((keys (if (and (pair? opts) (list? (car opts))) (car opts) (feedback:metrics-keys)))
          (test (if (and (pair? opts) (pair? (cdr opts)))
                    (car (cdr opts))
                    (feedback:test-selection)))
+         (detectors (if (and (pair? opts) (pair? (cdr opts))
+                             (pair? (cdr (cdr opts))))
+                        (car (cdr (cdr opts)))
+                        #f))
          (ctx (feedback:snapshot keys))
-         (gate (contract:check-active op name)))
+         (gate (contract:check-active
+                 op name
+                 (if (hash? detectors)
+                     (hash "detectors" detectors)
+                     (hash)))))
     (if (and (hash? gate) (not (contract:report-ok? gate)))
         (feedback:build ctx op name #f "refused" "MutationRefused" "" "" gate #f test)
         (let ((res (try (thunk) (catch (e) (list 'feedback-raised e)))))
@@ -359,4 +371,8 @@
     (cond
       ((null? opts) (feedback:transform "rebind" name thunk))
       ((null? (cdr opts)) (feedback:transform "rebind" name thunk (car opts)))
-      (else (feedback:transform "rebind" name thunk (car opts) (car (cdr opts)))))))
+      ((null? (cdr (cdr opts)))
+       (feedback:transform "rebind" name thunk (car opts) (car (cdr opts))))
+      (else
+       (feedback:transform "rebind" name thunk (car opts) (car (cdr opts))
+                           (car (cdr (cdr opts))))))))

@@ -94,6 +94,10 @@
     (list "contract"
       (list "Executable invariants + protection sets: declare what must stay true; agent:round / safe-refactor / refactor:* / hot-strategy / rule:apply refuse a violating commit and leave a queryable report; evo-meta's protected reads the same set"
             "(require \"std/contract\" all:)(contract:activate! (contract:protect (contract:set) \"gate\"))"))
+    ; Issue #5271: negative selection over already-accepted behaviour
+    (list "negative"
+      (list "Negative-selection anomaly detection: self = already-KEEP behaviour vectors, V-detectors fire only outside it; a hit is a queryable anomaly record and one #5253 detector-set source (warn by default, reject refuses through the same gate, no evidence reports skipped)"
+            "(require \"std/negative\" all:)(negative:detect (negative:train \"t\" (list (list 0.0 0.0))) (list 9.0 9.0))"))
     ; ── Aura layer (#5004): agent / orch / evo are written in Aura over the
     ;    primitives; the Scheme layer below is engine + host prims. ──
     (list "agent"

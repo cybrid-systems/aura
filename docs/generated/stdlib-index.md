@@ -2,7 +2,7 @@
 
 # Standard library index (generated)
 
-**108** modules in `lib/std/`. Load: `(require "std/name" all:)`.
+**109** modules in `lib/std/`. Load: `(require "std/name" all:)`.
 
 | Module | Exports | Description |
 |--------|---------|-------------|
@@ -69,6 +69,7 @@
 | `std/moead` | `moead:make` `moead:ask` `moead:tell!` `moead:run!` `moead:front` `moead:weights` `moead:report` `moead:help` … (+2) | lib/std/moead.aura — Issue #4940 (v0.2 P1): MOEA/D as the main |
 | `std/mutate` | `mutate:summary` `mutate:by-operator` `mutate:last-info` `mutate:operator-count` `mutate:rolled-back?` `mutate:rollback-rate` `mutate:boundary-depth` `mutate:boundary-safe?` … (+4) | — |
 | `std/mutation-atomic` | `typed-mutate-atomic-all` | lib/std/mutation-atomic.aura — Issue #1442 convenience over (typed-mutate-atomic) |
+| `std/negative` | `negative:schema` `negative:help` `negative:train` `negative:train-from-trace` `negative:detector-set?` `negative:name` `negative:version` `negative:detectors` … (+24) | lib/std/negative.aura — Issue #5271 (v0.2.6, W2): negative selection — |
 | `std/net` | `http-get-json` `http-post-json` `url-encode` `url-decode` `url-join` `fetch-try` | lib/std/net.aura — Network client library |
 | `std/orch` | `orch:spawn` `orch:handle` `orch:list` `orch:status` `orch:stop` `orch:restart` `orch:local?` `orch:registry-epoch` … (+50) | lib/std/orch.aura — multi-agent orchestration on the five primitives (#5004) |
 | `std/parameter` | `make-parameter` `parameterize` `parameter?` `parameter-set!` | lib/std/parameter.aura — R7RS parameters (Issue #5005) |
@@ -81,7 +82,7 @@
 | `std/prompt` | `build-sys-prompt` `get-api-ref-for-modules` | lib/std/prompt.aura — Unified prompt builder for LLM code generation |
 | `std/proposer` | `prop:help` `prop:schema` `prop:ctx` `prop:propose` `prop:adapt` `prop:mock` `prop:grammar` `prop:llm` … (+33) | lib/std/proposer.aura — Issue #4942 (v0.2 P3): the proposal layer for |
 | `std/pso` | `pso:init` `pso:init-hash` `pso:step!` `pso:best` `pso:population` `pso:report` `pso:export` `pso:help` … (+12) | lib/std/pso.aura — Issue #2877 Particle Swarm Optimization surface |
-| `std/qd` | `qd:map-elites` `qd:insert!` `qd:elites` `qd:coverage` `qd:qd-score` `qd:best` `qd:novelty` `qd:select-parent` … (+15) | lib/std/qd.aura — Issue #4941 (v0.2 P2): quality diversity and open-ended |
+| `std/qd` | `qd:map-elites` `qd:insert!` `qd:elites` `qd:coverage` `qd:qd-score` `qd:best` `qd:novelty` `qd:select-parent` … (+16) | lib/std/qd.aura — Issue #4941 (v0.2 P2): quality diversity and open-ended |
 | `std/query-workspace` | `query:macro-introduced-calls` `query:macro-introduced-defines` | — |
 | `std/query` | `query:list-categories` `query:help` `query:help-topics` `query:nodes-with-marker` `query:find-by-name` `query:subtree` `query:defines` `query:defines-by-marker` … (+8) | lib/std/query.aura — query: namespace high-level Agent API |
 | `std/queue` | `make-queue` `enqueue` `dequeue` `queue-front` `queue-rest` `queue-empty?` `queue-length` `queue->list` … (+1) | queue.aura — FIFO queue (pair-based, immutable) |

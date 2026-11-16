@@ -17,3 +17,8 @@ qd:heatmap-svg: Any ... -> Any
 qd:lineage-svg: Any ... -> Any
 qd:help: Any ... -> Any
 qd:schema: Any ... -> Any
+qd:distance: Any ... -> Any
+qd-rng: Any ... -> Any
+qd-rand!: Any ... -> Any
+qd-opt: Any ... -> Any
+qd-num: Any ... -> Any

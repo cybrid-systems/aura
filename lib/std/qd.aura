@@ -30,7 +30,7 @@
 (export qd:map-elites qd:insert! qd:elites qd:coverage qd:qd-score qd:best
         qd:novelty qd:select-parent qd:novel-enough? qd:struct-hash
         qd:islands qd:island-ask qd:island-tell! qd:islands-run! qd:islands-best
-        qd:heatmap-svg qd:lineage-svg qd:help qd:schema
+        qd:heatmap-svg qd:lineage-svg qd:help qd:schema qd:distance
         qd-rng qd-rand! qd-opt qd-num)
 
 (require "std/evo-core" all:)
@@ -135,6 +135,11 @@
         (sqrt s)
         (let ((d (- (qd-num (car xs)) (qd-num (car ys)))))
           (loop (cdr xs) (cdr ys) (+ s (* d d)))))))
+
+; (qd:distance a b) — the public Euclid distance. #5271's negative-selection
+; detector set reuses this instead of carrying a second copy: one metric, so
+; "far from self" means the same thing in QD novelty and in an anomaly.
+(define (qd:distance a b) (qd-dist a b))
 
 (define (qd-bounds-box ds)
   (qd-mapf (lambda (d) (list (qd-num (list-ref d 1)) (qd-num (list-ref d 2)))) ds))

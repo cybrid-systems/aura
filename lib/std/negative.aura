@@ -1,0 +1,701 @@
+; lib/std/negative.aura — Issue #5271 (v0.2.6, W2): negative selection —
+; anomaly detection over a candidate's behaviour vector.
+;
+; #5253 lets a contract set say what must stay true three ways: a predicate
+; over the program view, a predicate per definition, and a detector-set kind
+; whose evidence arrives from outside. This module is that outside. Negative
+; selection (V-detectors) learns the shape of "self" from behaviour vectors
+; that were already accepted (a KEEP), then fires only in the regions where
+; no accepted behaviour lives. It catches the class a hand-written predicate
+; cannot express: "nothing I can name is wrong, but this is unlike anything
+; that was fine before".
+;
+;   (require "std/negative" all:)
+;
+;   (define ds (negative:train "std-phrases"
+;                              (list (list 12 3.0 1) (list 40 12.0 3))))
+;   (negative:detect ds (list 180 95.0 9))     ; -> anomaly hash
+;   (negative:detect ds (list 13 3.5 1))       ; -> #f (inside self)
+;   (negative:assess ds (list 180 95.0 9))     ; -> status/anomaly/coverage
+;
+;   ; register as one #5253 detector-set source, default severity warn
+;   (define s (negative:register (contract:set) ds))
+;   (contract:activate! s)
+;   (negative:check s ds (list 180 95.0 9))    ; contract report, not ok only
+;                                              ; when the user said reject
+;
+; ── The detector set is a value ────────────────────────────────────
+; "kind" "negative-detector-set", "schema" 1, "name", "version", "dim",
+; "ranges" (lo hi per dimension, from the self samples), "self-radius",
+; "self" (id + normalized point per accepted sample), "detectors" (id +
+; center + radius, in normalized space), "coverage", "reliable", "params"
+; (the training parameters), "audit" (one entry per train/retrain).
+; (negative:export ds) is JSON text; (negative:import text) reads it back.
+; Re-training bumps "version" and records an audit entry (newest first).
+;
+; ── The algorithm ──────────────────────────────────────────────────
+; 1. Every sample is normalized per dimension by the self range, so
+;    "length" (9..13) and "gap-total" (1..3) contribute on the same scale.
+;    Out-of-range candidates stay out of range: that is the signal.
+; 2. The self radius is 0.5 * mean nearest-neighbour distance (floor 0.02)
+;    unless "self-radius" is given. A point inside any self ball is self.
+; 3. A detector is a center + radius. Centers are drawn uniformly from the
+;    normalized box [0-margin, 1+margin]^d; a center inside self (distance
+;    <= self-radius) is discarded; otherwise its radius is the distance to
+;    the nearest self minus the self radius, capped at max-radius, and a
+;    radius below min-radius is discarded (a sliver, not a detector).
+; 4. Detection: inside any self ball -> no hit. Otherwise the detector that
+;    holds the point with the largest margin, or — when no detector covers it
+;    and a dimension left the self range — an "out-of-range" hit. The anomaly
+;    record names the winning detector, the distance and margin, the nearest
+;    accepted sample id, per-dimension contribution weights (squared deltas,
+;    summing to 1), the coverage estimate, and whether the set is reliable.
+;
+; ── Determinism and coverage ───────────────────────────────────────
+; Same seed + same samples -> the same detector set, ids and anomaly
+; records. Coverage is the fraction of sampled non-self points that a
+; detector covers; when it is below "coverage-threshold" (default 0.5) the
+; set says reliable #f and (negative:assess) answers "unreliable" instead
+; of a silent "clean". Coverage is an estimate, so it is reported with the
+; sample count, never as a claim about the whole space.
+;
+; ── Thresholds this implementation declares ───────────────────────
+; Synthetic experiment (tests/suite/contracts_negative_selection.aura):
+; two self clusters, 6 injected out-of-cluster points must fire (hit rate
+; >= 0.95) and at most 1 in 20 in-cluster points may (false-positive rate
+; <= 0.05; the shipped set fires 0 of 10). Same seed -> same set.
+; A behaviour hash becomes a vector in sorted key order, so a caller that
+; passes hashes to both train and detect keeps one layout; a plain list is
+; taken positionally and must use that same order.
+;
+; ── Severity and the unified gate ──────────────────────────────────
+; (negative:register s ds) defaults to "warn": a hit is a violation in the
+; report, the report is still ok, and an accepted transform stays accepted.
+; "reject" (contract severity "error") makes the same hit block through the
+; existing #5253 execution points; #5255 is the future gate that consumes
+; the same report. Nothing here changes an accept comparison. A #5254
+; feedback record carries the anomaly too: (feedback:transform op name
+; thunk keys test (negative:evidence ds behavior)) hands the evidence to
+; the same gate, so the record's "contract" slot holds the violation.
+;
+; ── Distance ───────────────────────────────────────────────────────
+; qd:distance is std/qd's Euclid metric (one implementation, reused): the
+; same number says "novel enough to keep" in QD and "far from normal" here.
+;
+; Form order (#2769): export before require.
+
+(export negative:schema negative:help
+        negative:train negative:train-from-trace
+        negative:detector-set? negative:name negative:version negative:detectors
+        negative:self negative:self-radius negative:coverage negative:reliable?
+        negative:params negative:ranges
+        negative:retrain! negative:export negative:import
+        negative:normalize negative:behavior-of
+        negative:detect negative:detect! negative:assess negative:evidence
+        negative:ids negative:register negative:retrain negative:check
+        negative:anomaly? negative:anomalies negative:last-anomaly
+        negative:reset-anomalies! negative:anomaly-of)
+
+(require "std/list" all:)
+(require "std/string" all:)
+(require "std/hash" all:)
+(require "std/json" all:)
+(require "std/evo" all:)
+(require "std/qd" all:)
+(require "std/contract" all:)
+
+(define negative-schema-version 1)
+
+; The anomaly ring: the records detections produced, newest first.
+(define negative-anomaly-cap 64)
+(define *negative-anomalies* (quote ()))
+
+(define (negative:help)
+  "std/negative (#5271): real-valued negative selection over a candidate's behaviour vector. (negative:train name samples [opts]) -> detector set (V-detectors, normalized per dimension, seeded); (negative:train-from-trace name (hash \"target\" t \"n\" 16)) -> self from recent KEEP behaviour in the evo trace; (negative:detect ds behavior) -> #f | anomaly record (detector, distance, margin, nearest-self, contributions, coverage); (negative:detect! ds behavior) also appends to negative:anomalies; (negative:assess ds behavior) -> status clean/anomaly/unreliable; (negative:evidence ds behavior) -> hash for a #5253 check context; (negative:register s ds [severity] [scope]) -> contract set with one contract-detector-set source, default warn; (negative:retrain s name ds) / (negative:retrain! ds samples) -> version + audit; (negative:export ds) / (negative:import text) -> JSON round trip.")
+
+(define (negative:schema) negative-schema-version)
+
+; ═══════════════════════════════════════════════════════════════════
+; Small helpers
+; ═══════════════════════════════════════════════════════════════════
+
+(define (negative-opt h k d)
+  (if (hash? h)
+      (let ((v (hash-ref h k (quote negative-absent))))
+        (if (equal? v (quote negative-absent)) d v))
+      d))
+
+(define (negative-num v)
+  (if (number? v) (exact->inexact v) 0.0))
+
+(define (negative:anomaly? v)
+  (and (hash? v) (equal? (hash-ref v "kind" #f) "negative-anomaly")))
+
+(define (negative-take n xs)
+  (let loop ((i 0) (ys xs) (acc (quote ())))
+    (if (or (>= i n) (null? ys))
+        (reverse acc)
+        (loop (+ i 1) (cdr ys) (cons (car ys) acc)))))
+
+(define (negative-vec? v)
+  (and (list? v) (pair? v)
+       (let loop ((xs v))
+         (cond ((null? xs) #t)
+               ((number? (car xs)) (loop (cdr xs)))
+               (else #f)))))
+
+(define (negative-sorted-keys h)
+  (if (hash? h) (sort (hash-keys h) (lambda (a b) (string<? a b))) (quote ())))
+
+(define (negative-hash-vector h)
+  (if (not (hash? h))
+      #f
+      (let loop ((ks (negative-sorted-keys h)) (acc (quote ())))
+        (if (null? ks)
+            (reverse acc)
+            (loop (cdr ks) (cons (negative-num (hash-ref h (car ks) 0)) acc))))))
+
+(define (negative-count-prefix text c)
+  (let ((n (string-length text)))
+    (let loop ((i 0) (acc 0))
+      (if (>= i n)
+          acc
+          (loop (+ i 1)
+                (if (= (string-ref text i) c) (+ acc 1) acc))))))
+
+; A diff hash carries a define-level "text" block with -/+ lines.
+(define (negative-diff-vector d)
+  (if (not (hash? d))
+      #f
+      (let ((t (negative-opt d "text" "")))
+        (list (negative-num (negative-count-prefix (if (string? t) t "") 43))
+              (negative-num (negative-num (negative-opt d "edits" 0)))
+              (/ (if (string? t) (string-length t) 0) 100.0)))))
+
+; An exec hash: result as 0/1/2 (ok/refused/raised) plus the error-code size.
+(define (negative-exec-vector e)
+  (if (not (hash? e))
+      #f
+      (let* ((r (negative-opt e "result" "ok"))
+             (code (negative-opt e "error-code" ""))
+             (k (cond ((equal? r "ok") 0.0)
+                      ((equal? r "refused") 1.0)
+                      ((equal? r "raised") 2.0)
+                      (else 3.0))))
+        (list k (/ (if (string? code) (string-length code) 0) 10.0)))))
+
+; (negative:behavior-of v) — the behaviour vector of a candidate, a record
+; or an explicit list. The hash forms are conveniences for a #5254 record;
+; a caller that already holds a numeric vector should pass it directly.
+(define (negative:behavior-of v)
+  (cond
+    ((negative-vec? v) (map negative-num v))
+    ((hash? v)
+     (let ((b (negative-opt v "behavior" #f)))
+       (cond
+         ((and b (not (equal? b #f))) (negative:behavior-of b))
+         ((negative-vec? (negative-opt v "point" (quote ())))
+          (negative:behavior-of (hash-ref v "point")))
+         ((negative-vec? (negative-opt v "features" (quote ())))
+          (negative:behavior-of (hash-ref v "features")))
+         ((hash? (negative-opt v "metrics" #f))
+          (negative-hash-vector (hash-ref v "metrics")))
+         ((hash? (negative-opt v "diff" #f))
+          (negative-diff-vector (hash-ref v "diff")))
+         ((hash? (negative-opt v "exec" #f))
+          (negative-exec-vector (hash-ref v "exec")))
+         ; A bare feature hash: every value numeric.
+         ((and (pair? (hash-keys v))
+               (every (lambda (k) (number? (hash-ref v k #f))) (hash-keys v)))
+          (negative-hash-vector v))
+         (else #f))))
+    (else #f)))
+
+(define (negative-fit p d)
+  (let loop ((i 0) (xs p) (acc (quote ())))
+    (if (>= i d)
+        (reverse acc)
+        (loop (+ i 1)
+              (if (null? xs) xs (cdr xs))
+              (cons (if (null? xs) 0.0 (negative-num (car xs))) acc)))))
+
+(define (negative-max-dim pts)
+  (let loop ((xs pts) (m 0))
+    (if (null? xs)
+        m
+        (let ((n (if (list? (car xs)) (length (car xs)) 0)))
+          (loop (cdr xs) (if (> n m) n m))))))
+
+; ── normalization ─────────────────────────────────────────────────
+(define (negative-range-of pts k)
+  (let loop ((xs pts) (lo 1e308) (hi -1e308))
+    (if (null? xs)
+        (let ((span (- hi lo)))
+          (list lo (if (< span 1e-9) (+ lo 1.0) hi)))
+        (let ((v (list-ref (car xs) k)))
+          (loop (cdr xs) (min lo v) (max hi v))))))
+
+(define (negative-ranges pts d)
+  (let loop ((i 0) (acc (quote ())))
+    (if (>= i d)
+        (reverse acc)
+        (loop (+ i 1) (cons (negative-range-of pts i) acc)))))
+
+(define (negative-normalize-with ranges p)
+  (let loop ((xs p) (rs ranges) (acc (quote ())))
+    (if (null? rs)
+        (reverse acc)
+        (let* ((b (car rs))
+               (lo (negative-num (car b)))
+               (span (- (negative-num (car (cdr b))) lo)))
+          (loop (if (null? xs) xs (cdr xs))
+                (cdr rs)
+                (cons (/ (- (if (null? xs) lo (negative-num (car xs))) lo) span)
+                      acc))))))
+
+(define (negative:normalize ds p)
+  (let ((b (negative:behavior-of p)))
+    (negative-normalize-with (negative:ranges ds)
+                             (negative-fit (if b b (quote ())) (negative-opt ds "dim" 0)))))
+
+; ═══════════════════════════════════════════════════════════════════
+; Distances (qd:distance — the one metric) and the self model
+; ═══════════════════════════════════════════════════════════════════
+
+(define (negative-nearest-distance pts p)
+  (let loop ((ys pts) (bd 1e308))
+    (if (null? ys)
+        bd
+        (let ((d (qd:distance p (car ys))))
+          (loop (cdr ys) (if (< d bd) d bd))))))
+
+(define (negative-nearest-id self p)
+  (let loop ((ys self) (bd 1e308) (bid ""))
+    (if (null? ys)
+        (list bd bid)
+        (let* ((s (car ys))
+               (d (qd:distance p (hash-ref s "point" (quote ())))))
+          (loop (cdr ys)
+                (if (< d bd) d bd)
+                (if (< d bd) (hash-ref s "id" "") bid))))))
+
+(define (negative-nearest-other pts i)
+  (let loop ((j 0) (ys pts) (bd 1e308))
+    (if (null? ys)
+        bd
+        (let ((d (if (= j i) 1e308 (qd:distance (list-ref pts i) (car ys)))))
+          (loop (+ j 1) (cdr ys) (if (< d bd) d bd))))))
+
+(define (negative-auto-self-radius self fallback)
+  (if (< (length self) 2)
+      fallback
+      (let loop ((i 0) (acc 0.0))
+        (if (>= i (length self))
+            (max 0.02 (* 0.5 (/ acc (length self))))
+            (loop (+ i 1) (+ acc (negative-nearest-other self i)))))))
+
+; ═══════════════════════════════════════════════════════════════════
+; Training (V-detectors)
+; ═══════════════════════════════════════════════════════════════════
+
+(define (negative-box margin d)
+  (let loop ((i 0) (acc (quote ())))
+    (if (>= i d)
+        (reverse acc)
+        (loop (+ i 1) (cons (list (- 0.0 margin) (+ 1.0 margin)) acc)))))
+
+(define (negative-random-point box r)
+  (let loop ((bs box) (acc (quote ())))
+    (if (null? bs)
+        (reverse acc)
+        (let* ((b (car bs))
+               (lo (negative-num (car b)))
+               (hi (negative-num (car (cdr b)))))
+          (loop (cdr bs) (cons (+ lo (* (qd-rand! r) (- hi lo))) acc))))))
+
+(define (negative-train-loop selfc self-radius box target tries maxr minr r)
+  (let loop ((i 0) (acc (quote ())))
+    (if (or (>= (length acc) target) (>= i tries))
+        (reverse acc)
+        (let* ((p (negative-random-point box r))
+               (dist (negative-nearest-distance selfc p)))
+          (if (<= dist self-radius)
+              (loop (+ i 1) acc)
+              (let ((rad (min maxr (- dist self-radius))))
+                (if (< rad minr)
+                    (loop (+ i 1) acc)
+                    (loop (+ i 1)
+                          (cons (hash "id" (string-append "d" (number->string (length acc)))
+                                      "center" p "radius" rad)
+                                acc)))))))))
+
+(define (negative-covered? detectors p)
+  (let loop ((ds detectors))
+    (cond ((null? ds) #f)
+          ((< (qd:distance p (hash-ref (car ds) "center" (quote ())))
+              (negative-num (hash-ref (car ds) "radius" 0.0))) #t)
+          (else (loop (cdr ds))))))
+
+; Fraction of sampled non-self points that a detector covers.
+(define (negative-coverage selfc detectors box self-radius r samples)
+  (let loop ((i 0) (nonself 0) (covered 0))
+    (if (>= i samples)
+        (if (= nonself 0) 0.0 (/ (* 1.0 covered) nonself))
+        (let ((p (negative-random-point box r)))
+          (if (<= (negative-nearest-distance selfc p) self-radius)
+              (loop (+ i 1) nonself covered)
+              (loop (+ i 1)
+                    (+ nonself 1)
+                    (if (negative-covered? detectors p) (+ covered 1) covered)))))))
+
+(define (negative-samples xs)
+  (let loop ((ys xs) (i 0) (acc (quote ())))
+    (cond
+      ((null? ys) (reverse acc))
+      (else
+       (let* ((s (car ys))
+              (b (negative:behavior-of s))
+              (id (if (hash? s)
+                      (let ((v (negative-opt s "id" #f)))
+                        (if (string? v) v (string-append "self-" (number->string i))))
+                      (string-append "self-" (number->string i)))))
+         (loop (cdr ys) (+ i 1)
+               (if b (cons (list b id) acc) acc)))))))
+
+(define (negative:train name samples . opts)
+  (let* ((o (if (and (pair? opts) (hash? (car opts))) (car opts) (hash)))
+         (nm (cond ((string? name) name)
+                   ((symbol? name) (symbol->string name))
+                   (else "negative")))
+         (raw (negative-samples samples))
+         (pts0 (map (lambda (s) (car s)) raw))
+         (ids0 (map (lambda (s) (car (cdr s))) raw))
+         (d (negative-max-dim pts0))
+         (pts (map (lambda (p) (negative-fit p d)) pts0))
+         (ranges (negative-ranges pts d))
+         (selfc (map (lambda (p) (negative-normalize-with ranges p)) pts))
+         (self (let loop ((ps selfc) (is ids0) (acc (quote ())))
+                 (if (null? ps)
+                     (reverse acc)
+                     (loop (cdr ps) (cdr is)
+                           (cons (hash "id" (car is) "point" (car ps)) acc)))))
+         (rs0 (negative-opt o "self-radius" #f))
+         (fallback (negative-num (negative-opt o "fallback-self-radius" 0.1)))
+         (rs (if (number? rs0) (negative-num rs0)
+                 (negative-auto-self-radius selfc fallback)))
+         (maxr (negative-num (negative-opt o "max-radius" 0.5)))
+         (minr (negative-num (negative-opt o "min-radius" 0.04)))
+         (target (negative-opt o "detectors" 32))
+         (tries (negative-opt o "tries" 2000))
+         (margin (negative-num (negative-opt o "box-margin" 0.2)))
+         (seed (negative-opt o "seed" 1))
+         (csamples (negative-opt o "coverage-samples" 120))
+         (cthresh (negative-num (negative-opt o "coverage-threshold" 0.5)))
+         (box (negative-box margin d))
+         (r (qd-rng seed 0 1))
+         ; No usable sample -> no geometry to learn; the set says reliable #f
+         ; rather than inventing detectors with an empty center.
+         (dets (if (= d 0) (quote ())
+                   (negative-train-loop selfc rs box target tries maxr minr r)))
+         (cov (negative-coverage selfc dets box rs r csamples))
+         (reliable (>= cov cthresh)))
+    (hash "kind" "negative-detector-set"
+          "schema" negative-schema-version
+          "name" nm
+          "version" 1
+          "dim" d
+          "ranges" ranges
+          "self-radius" rs
+          "self" self
+          "detectors" dets
+          "coverage" cov
+          "reliable" reliable
+          "params" (hash "seed" seed "detectors" target "tries" tries
+                         "max-radius" maxr "min-radius" minr
+                         "box-margin" margin
+                         "coverage-samples" csamples
+                         "coverage-threshold" cthresh)
+          "audit" (list (hash "op" "train" "version" 1
+                              "samples" (length self)
+                              "detectors" (length dets)
+                              "coverage" cov
+                              "reliable" reliable)))))
+
+; (negative:train-from-trace name opts) — self from the most recent KEEP
+; behaviour in the #5251 decision trace. opts: "target" (a worldline target
+; filter), "n" (default 16), "decision" (default "KEEP"), plus every
+; negative:train option.
+(define (negative:train-from-trace name . opts)
+  (let* ((o (if (and (pair? opts) (hash? (car opts))) (car opts) (hash)))
+         (n (negative-opt o "n" 16))
+         (decision (negative-opt o "decision" "KEEP"))
+         (target (negative-opt o "target" #f))
+         (filter0 (hash "decision" decision))
+         (filter (if (string? target) (hash-set filter0 "target" target) filter0))
+         (rs0 (try (evo:trace filter) (catch (e) (quote ()))))
+         (rs (if (list? rs0) rs0 (quote ())))
+         (recent (reverse (negative-take n (reverse rs))))
+         (samples (let loop ((xs recent) (acc (quote ())))
+                    (if (null? xs)
+                        (reverse acc)
+                        (let ((b (negative:behavior-of (car xs))))
+                          (loop (cdr xs)
+                                (if b
+                                    (cons (hash "id" (let ((id (negative-opt (car xs) "id" #f)))
+                                                       (if (string? id) id ""))
+                                                   "point" b)
+                                          acc)
+                                    acc)))))))
+    (negative:train name samples o)))
+
+; ── accessors ─────────────────────────────────────────────────────
+(define (negative:detector-set? v)
+  (and (hash? v) (equal? (hash-ref v "kind" #f) "negative-detector-set")))
+(define (negative:name ds) (hash-ref ds "name" ""))
+(define (negative:version ds) (hash-ref ds "version" 1))
+(define (negative:detectors ds) (hash-ref ds "detectors" (quote ())))
+(define (negative:self ds) (hash-ref ds "self" (quote ())))
+(define (negative:self-radius ds) (negative-num (hash-ref ds "self-radius" 0.0)))
+(define (negative:coverage ds) (negative-num (hash-ref ds "coverage" 0.0)))
+(define (negative:reliable? ds) (equal? (hash-ref ds "reliable" #f) #t))
+(define (negative:params ds) (hash-ref ds "params" (hash)))
+(define (negative:ranges ds) (hash-ref ds "ranges" (quote ())))
+(define (negative:ids ds)
+  (map (lambda (d) (hash-ref d "id" "")) (negative:detectors ds)))
+
+; (negative:retrain! ds samples opts) — retrain from new self samples, bump
+; the set's own version, keep the audit trail.
+(define (negative:retrain! ds samples . opts)
+  (let* ((fresh (negative:train (negative:name ds) samples
+                                (if (and (pair? opts) (hash? (car opts))) (car opts) (hash))))
+         (v (+ 1 (negative:version ds)))
+         (entry (hash "op" "retrain" "version" v
+                      "samples" (length (negative:self fresh))
+                      "detectors" (length (negative:detectors fresh))
+                      "coverage" (negative:coverage fresh)
+                      "reliable" (negative:reliable? fresh))))
+    (hash-set (hash-set fresh "version" v)
+              "audit" (cons entry (hash-ref fresh "audit" (quote ()))))))
+
+(define (negative:export ds) (json-stringify ds))
+
+; JSON numbers come back in the reader's own exactness; the geometry is
+; re-typed inexact here so an imported set measures exactly like the one
+; that was trained (and its ranges compare equal to the training value).
+(define (negative-canon-numbers xs)
+  (map (lambda (v) (negative-num v)) (if (list? xs) xs (quote ()))))
+
+(define (negative-import-canonical v)
+  (let* ((self (map (lambda (s)
+                      (hash "id" (hash-ref s "id" "")
+                            "point" (negative-canon-numbers (hash-ref s "point" (list)))))
+                    (if (list? (hash-ref v "self" (quote ()))) (hash-ref v "self") (quote ()))))
+         (dets (map (lambda (d)
+                      (hash "id" (hash-ref d "id" "")
+                            "center" (negative-canon-numbers (hash-ref d "center" (list)))
+                            "radius" (negative-num (hash-ref d "radius" 0.0))))
+                    (if (list? (hash-ref v "detectors" (quote ()))) (hash-ref v "detectors") (quote ()))))
+         (ranges (map (lambda (r) (negative-canon-numbers r))
+                      (if (list? (hash-ref v "ranges" (quote ()))) (hash-ref v "ranges") (quote ())))))
+    (hash-set (hash-set (hash-set (hash-set v "self" self) "detectors" dets)
+                        "ranges" ranges)
+              "self-radius" (negative-num (hash-ref v "self-radius" 0.0)))))
+
+(define (negative:import text)
+  (let ((v (try (json-parse text) (catch (e) #f))))
+    (if (negative:detector-set? v) (negative-import-canonical v) #f)))
+
+; ═══════════════════════════════════════════════════════════════════
+; Detection
+; ═══════════════════════════════════════════════════════════════════
+
+(define (negative-best-detector dets p)
+  (let loop ((ds dets) (best #f) (bm -1e308))
+    (if (null? ds)
+        best
+        (let* ((d (car ds))
+               (dist (qd:distance p (hash-ref d "center" (quote ()))))
+               (rad (negative-num (hash-ref d "radius" 0.0)))
+               (margin (- rad dist)))
+          (if (and (< dist rad) (> margin bm))
+              (loop (cdr ds) d margin)
+              (loop (cdr ds) best bm))))))
+
+(define (negative-contributions p center)
+  (let* ((pairs (let loop ((xs p) (cs center) (i 0) (acc (quote ())))
+                  (if (or (null? xs) (null? cs))
+                      (reverse acc)
+                      (let* ((delta (- (negative-num (car xs)) (negative-num (car cs))))
+                             (sq (* delta delta)))
+                        (loop (cdr xs) (cdr cs) (+ i 1)
+                              (cons (list i delta sq) acc))))))
+         (total (let loop ((ps pairs) (s 0.0))
+                  (if (null? ps) s (loop (cdr ps) (+ s (car (cdr (cdr (car ps)))))))))
+         (w (lambda (sq) (if (< total 1e-12) 0.0 (/ sq total)))))
+    (map (lambda (row) (hash "dim" (car row)
+                             "delta" (car (cdr row))
+                             "weight" (w (car (cdr (cdr row))))))
+         pairs)))
+
+; Dimensions whose normalized coordinate left the observed self range
+; [0, 1]: an extrapolation, which no accepted behaviour covers.
+(define (negative-out-of-range p)
+  (let loop ((i 0) (xs p) (acc (quote ())))
+    (if (null? xs)
+        (reverse acc)
+        (let ((v (negative-num (car xs))))
+          (loop (+ i 1) (cdr xs)
+                (if (or (< v 0.0) (> v 1.0)) (cons i acc) acc))))))
+
+(define (negative-out-of-range-weights p dims)
+  (let* ((excess (map (lambda (i) (let ((v (negative-num (list-ref p i))))
+                                  (if (< v 0.0) (- 0.0 v) (- v 1.0))))
+                      dims))
+         (total (let loop ((xs excess) (s 0.0))
+                  (if (null? xs) s (loop (cdr xs) (+ s (car xs)))))))
+    (let loop ((ds dims) (xs excess) (acc (quote ())))
+      (if (null? ds)
+          (reverse acc)
+          (loop (cdr ds) (cdr xs)
+                (cons (hash "dim" (car ds) "delta" (car xs)
+                            "weight" (if (< total 1e-12) 0.0 (/ (car xs) total)))
+                      acc))))))
+
+(define (negative-hit ds cand)
+  (let* ((p (negative:normalize ds cand))
+         (ns (negative-nearest-id (negative:self ds) p))
+         (self-dist (car ns))
+         (det (negative-best-detector (negative:detectors ds) p))
+         (outside (negative-out-of-range p)))
+    (cond
+      ; Inside a self ball: exactly what was accepted before.
+      ((<= self-dist (negative:self-radius ds)) #f)
+      (det
+       (let* ((center (hash-ref det "center" (quote ())))
+              (dist (qd:distance p center))
+              (id (hash-ref det "id" "")))
+         (hash "kind" "negative-anomaly"
+               "schema" negative-schema-version
+               "id" (string-append (negative:name ds) "#" id)
+               "set" (negative:name ds)
+               "version" (negative:version ds)
+               "reason" "detector"
+               "detector" id
+               "distance" dist
+               "radius" (negative-num (hash-ref det "radius" 0.0))
+               "margin" (- (negative-num (hash-ref det "radius" 0.0)) dist)
+               "nearest-self" (car (cdr ns))
+               "self-distance" self-dist
+               "contributions" (negative-contributions p center)
+               "point" p
+               "coverage" (negative:coverage ds)
+               "reliable" (negative:reliable? ds))))
+      ; Outside the self envelope on at least one dimension: extrapolation.
+      ((pair? outside)
+       (hash "kind" "negative-anomaly"
+             "schema" negative-schema-version
+             "id" (string-append (negative:name ds) "#domain")
+             "set" (negative:name ds)
+             "version" (negative:version ds)
+             "reason" "out-of-range"
+             "detector" "domain"
+             "distance" self-dist
+             "radius" 0.0
+             "margin" 0.0
+             "nearest-self" (car (cdr ns))
+             "self-distance" self-dist
+             "dimensions" outside
+             "contributions" (negative-out-of-range-weights p outside)
+             "point" p
+             "coverage" (negative:coverage ds)
+             "reliable" (negative:reliable? ds)))
+      (else #f))))
+
+(define (negative:detect ds cand) (negative-hit ds cand))
+
+(define (negative:detect! ds cand)
+  (let ((an (negative-hit ds cand)))
+    (if (not an)
+        #f
+        (begin
+          (set! *negative-anomalies*
+                (negative-take negative-anomaly-cap (cons an *negative-anomalies*)))
+          (try (evo:record! "contract:detector-set" "ANOMALY"
+                            "negative-selection-hit"
+                            (hash-ref an "id" "") "" 0 ""
+                            (hash "behavior" (hash-ref an "point" (quote ()))))
+               (catch (e) #f))
+          an))))
+
+(define (negative:assess ds cand)
+  (let* ((an (negative:detect ds cand))
+         (rel (negative:reliable? ds)))
+    (hash "kind" "negative-assessment"
+          "schema" negative-schema-version
+          "name" (negative:name ds)
+          "status" (cond (an "anomaly") (rel "clean") (else "unreliable"))
+          "anomaly" (if an an #f)
+          "coverage" (negative:coverage ds)
+          "reliable" rel)))
+
+; The #5253 check-context evidence: detector-set name -> fired records.
+; Entries are anomaly records; contract passes them through into the
+; violation's "detectors" slot, so the reason is queryable from a report.
+(define (negative:evidence ds cand)
+  (let ((an (negative-hit ds cand)))
+    (if an (hash (negative:name ds) (list an)) (hash))))
+
+(define (negative:anomalies) *negative-anomalies*)
+
+(define (negative:last-anomaly)
+  (if (null? *negative-anomalies*) #f (car *negative-anomalies*)))
+
+(define (negative:reset-anomalies!)
+  (set! *negative-anomalies* (quote ()))
+  #t)
+
+(define (negative:anomaly-of id)
+  (let ((want (if (string? id) id (if (symbol? id) (symbol->string id) ""))))
+    (let loop ((xs *negative-anomalies*))
+      (cond ((null? xs) #f)
+            ((equal? (hash-ref (car xs) "id" "") want) (car xs))
+            (else (loop (cdr xs)))))))
+
+; ═══════════════════════════════════════════════════════════════════
+; Registration in a #5253 contract set
+; ═══════════════════════════════════════════════════════════════════
+
+(define (negative-as-string v)
+  (cond ((string? v) v)
+        ((symbol? v) (symbol->string v))
+        (else "")))
+
+; (negative:register s ds [severity] [scope]) — one contract-detector-set
+; source. severity: "warn" (default) or "reject" (= contract "error").
+(define (negative:register s ds . opts)
+  (let* ((sev0 (negative-as-string (if (pair? opts) (car opts) #f)))
+         (scope (if (and (pair? opts) (pair? (cdr opts)))
+                    (car (cdr opts)) (quote all)))
+         (sev (cond ((string=? sev0 "reject") "error")
+                    ((string=? sev0 "error") "error")
+                    (else "warn"))))
+    (contract:detector-set s (negative:name ds) (negative:ids ds) sev scope)))
+
+; (negative:retrain s name ds) — replace the registered detector ids and
+; bump both the set's version and the detector-set rec version, with the
+; #5253 audit entry and evo trace.
+(define (negative:retrain s name ds)
+  (contract:retrain s name (negative:ids ds)))
+
+; (negative:check s ds cand) — run detection, record the anomaly, and pass
+; the evidence through the #5253 check. A warn set keeps the report ok; a
+; reject set makes it not ok and the report lands in contract:last-failure.
+; An unreliable set is named in the report's "unreliable" slot instead of
+; passing as clean.
+(define (negative:check s ds cand)
+  (let* ((an (negative:detect! ds cand))
+         (ev (if an (hash (negative:name ds) (list an)) (hash)))
+         (report (contract:check s (hash "detectors" ev))))
+    (if (negative:reliable? ds)
+        report
+        (hash-set report "unreliable" (list (negative:name ds))))))
