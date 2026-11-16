@@ -1,0 +1,234 @@
+; tests/suite/feedback_record.aura — Issue #5254
+;
+; One transformation, one feedback record: identity, define-level source
+; diff, type conclusion, invariant result, selected test case, execution
+; result with its #5241 error kind, and the before/after delta of a few
+; engine:metrics keys. Also pins that ws:state, mutation:trace and
+; (query :mutation-log) agree about the same transform.
+(require "std/test" all:)
+(require "std/feedback" all:)
+(require "std/workspace" all:)
+(require "std/ast" all:)
+(require "std/ast-viz" all:)
+(require "std/contract" all:)
+
+(test-file "feedback_record.aura")
+
+; Every record carries every documented slot — success or refusal.
+(define (fbt-complete? r)
+  (and (hash? r)
+       (every (lambda (k) (hash-has-key? r k)) (feedback:fields))))
+
+; The last record in the log whose op is "op" (the log also carries
+; bookkeeping rows such as structural-set-child).
+(define (fbt-last-op-id log op)
+  (let loop ((rs log) (hit #f))
+    (if (null? rs)
+        hit
+        (loop (cdr rs)
+              (if (string=? (fbt-field (car rs) "op") op)
+                  (fbt-field (car rs) "id")
+                  hit)))))
+
+; One "key=value" field of a mutation-log line.
+(define (fbt-field line key)
+  (let ((prefix (string-append key "=")))
+    (let loop ((ws (string-split-words line)))
+      (cond ((null? ws) "")
+            ((string-prefix? (car ws) prefix)
+             (substring (car ws) (string-length prefix) (string-length (car ws))))
+            (else (loop (cdr ws)))))))
+
+(define (fbt-fresh)
+  (contract:deactivate!)
+  (contract:reset-failures!)
+  (set-code "(define (f x) (+ x 1))
+(define (g y) (* y 3))
+")
+  (eval-current))
+
+; ═══════════════════════════════════════════════════════════════════
+; A successful rebind gets the whole record, diff visible
+; ═══════════════════════════════════════════════════════════════════
+(test-case "an applied rebind carries every recorded fact" (hash "issue" 5254 "tags" (list "feedback"))
+  (fbt-fresh)
+  (define r (feedback:rebind "f" "(lambda (x) (* x 2))"))
+  (check (fbt-complete? r))
+  (check= "transform-feedback" (hash-ref r "kind" ""))
+  (check= 1 (hash-ref r "schema" 0))
+
+  ; 1) identity
+  (define t (hash-ref r "transform" (hash)))
+  (check= "rebind" (hash-ref t "operator" ""))
+  (check= "f" (hash-ref t "target" ""))
+  (check= #t (hash-ref t "applied" #f))
+  (check (> (hash-ref t "mutation-id" 0) 0))
+  (check (hash? (hash-ref t "stable-ref" #f)))
+  (check (number? (hash-ref (hash-ref t "stable-ref") "node" #f)))
+  (check (number? (hash-ref (hash-ref t "stable-ref") "gen" #f)))
+
+  ; 2) source diff at define level — visible, not a stub, not "()"
+  (define d (hash-ref r "diff" (hash)))
+  (check (hash? d))
+  (check= #f (hash-ref d "identical" #t))
+  (check= (list "f") (hash-ref d "changed" '()))
+  (check= '() (hash-ref d "added" '()))
+  (check= '() (hash-ref d "removed" '()))
+  (define text (hash-ref d "text" ""))
+  (check (string? text))
+  (check (not (string=? "none" text)))
+  (check (>= (string-find text "- (define f (lambda (x) (+ x 1)))") 0))
+  (check (>= (string-find text "+ (define f (lambda (x) (* x 2)))") 0))
+
+  ; 3) type conclusion (#5250)
+  (define ty (hash-ref r "types" (hash)))
+  (check= "ok" (hash-ref ty "status" ""))
+  (check= 0 (hash-ref ty "count" -1))
+  (check= '() (hash-ref ty "diagnostics" '()))
+
+  ; 4) no active contract set -> "none", which is not a pass
+  (check= "none" (hash-ref r "contract" 'missing))
+
+  ; 5) no selected std/test case -> the field says so
+  (define te (hash-ref r "test" (hash)))
+  (check (hash? te))
+  (check (hash-has-key? te "result"))
+
+  ; 6) execution result and #5241 kind
+  (define ex (hash-ref r "exec" (hash)))
+  (check= "ok" (hash-ref ex "result" ""))
+  (check= "none" (hash-ref ex "error-kind" ""))
+  (check= "" (hash-ref ex "message" ""))
+
+  ; 7) metric delta over keys that already exist
+  (define m (hash-ref r "metrics" (hash)))
+  (check (pair? (hash-ref m "keys" '())))
+  (check= (length (hash-ref m "keys")) (hash-length (hash-ref m "before")))
+  (check (every (lambda (k) (hash-has-key? (hash-ref m "before") k)) (hash-ref m "keys")))
+  (check (= (hash-ref (hash-ref m "before") "mutate/mutate_force_effect_check_total" -1)
+            (- (hash-ref (hash-ref m "after") "mutate/mutate_force_effect_check_total" 0) 1)))
+
+  (check= 42 (f 21)))
+
+; ═══════════════════════════════════════════════════════════════════
+; A rejected rebind still gets the whole record
+; ═══════════════════════════════════════════════════════════════════
+(test-case "a refused rebind carries every recorded fact" (hash "issue" 5254 "tags" (list "feedback"))
+  (fbt-fresh)
+  (define r (feedback:rebind "f" "42"))
+  (check (fbt-complete? r))
+  (define t (hash-ref r "transform" (hash)))
+  (check= #f (hash-ref t "applied" #f))
+  (check= #f (hash-ref t "stable-ref" #f))
+  (check= "none" (hash-ref (hash-ref r "diff") "text" ""))
+  (check= #t (hash-ref (hash-ref r "diff") "identical" #f))
+  (define ex (hash-ref r "exec" (hash)))
+  (check= "refused" (hash-ref ex "result" ""))
+  (check= "MutationRefused" (hash-ref ex "error-kind" ""))
+  (check= "rebind-non-procedure" (hash-ref ex "error-code" ""))
+  (check (>= (string-find (hash-ref ex "message" "") "refusing to replace it") 0))
+  (check= "ok" (hash-ref (hash-ref r "types") "status" ""))
+  ; the workspace did not move: f is still (+ x 1)
+  (check= 43 (f 42)))
+
+(test-case "an active contract refuses the transform and records the report" (hash "issue" 5254 "tags" (list "feedback" "contract"))
+  (fbt-fresh)
+  (contract:activate! (contract:protect (contract:set) "f"))
+  (define r (feedback:rebind "f" "(lambda (x) 9)"))
+  (contract:deactivate!)
+  (check (fbt-complete? r))
+  (check= #f (hash-ref (hash-ref r "transform") "applied" #f))
+  (define c (hash-ref r "contract" #f))
+  (check (hash? c))
+  (check= #f (hash-ref c "ok" #f))
+  (define gate (hash-ref c "gate" #f))
+  (check (hash? gate))
+  (check= #f (hash-ref gate "ok" #t))
+  (check (pair? (hash-ref gate "violations" '())))
+  (check (number? (hash-ref gate "version" #f)))
+  (check (string? (hash-ref gate "hash" #f)))
+  (check (hash-has-key? gate "skipped"))
+  (check= "refused" (hash-ref (hash-ref r "exec") "result" ""))
+  (check= "MutationRefused" (hash-ref (hash-ref r "exec") "error-kind" ""))
+  ; protected name untouched
+  (check= 10 (f 9)))
+
+; ═══════════════════════════════════════════════════════════════════
+; ws:state / mutation:trace / mutation-log agree on one transform
+; ═══════════════════════════════════════════════════════════════════
+(test-case "ws:state, mutation:trace and the log tell one story" (hash "issue" 5254 "tags" (list "feedback" "workspace"))
+  (fbt-fresh)
+  (mutate :rebind "f" "(lambda (x) (* x 2))")
+  (define log (query :mutation-log 10))
+  (define last-id (fbt-last-op-id log "rebind"))
+  (define last-op "rebind")
+  (check (string? last-id))
+  (define st (ws:state))
+  (check (>= (string-find st "MUTATIONS (last 10):") 0))
+  (check (not (>= (string-find st "  (none)") 0)))
+  (check (>= (string-find st (string-append "  " last-id ":" last-op)) 0))
+  (define tr (mutation:trace))
+  (check (>= (string-find tr "Total mutations: ") 0))
+  (check (not (>= (string-find tr "No mutations recorded.") 0)))
+  (check (>= (string-find tr (string-append "id=" last-id " ")) 0))
+  (check (>= (string-find tr (string-append "op=" last-op)) 0)))
+
+(test-case "mutation:trace-node reads its target from the log" (hash "issue" 5254 "tags" (list "feedback" "workspace"))
+  (fbt-fresh)
+  (mutate :rebind "f" "(lambda (x) (* x 2))")
+  (define node (car (query :defines "f")))
+  (define tr (mutation:trace-node node))
+  (check (>= (string-find tr (string-append "target=" (number->string node))) 0))
+  (check (>= (string-find tr "op=rebind") 0)))
+
+; ═══════════════════════════════════════════════════════════════════
+; ws:diff — a real define-level child/parent diff, not the old stub
+; ═══════════════════════════════════════════════════════════════════
+(test-case "ws:diff reports the child's define-level change" (hash "issue" 5254 "tags" (list "feedback" "workspace"))
+  (fbt-fresh)
+  (define w (workspace :create "feedback-child"))
+  (workspace :switch w)
+  (mutate :rebind "f" "(lambda (x) (* x 5))")
+  (workspace :switch 0)
+  (define d (ws:diff w))
+  (check (hash? d))
+  (check= #t (hash-ref d "ok" #f))
+  (check= "ws-diff" (hash-ref d "kind" ""))
+  (check= (list "f") (hash-ref d "changed" '()))
+  (check= #f (hash-ref d "identical" #t))
+  (define text (hash-ref d "text" ""))
+  (check (>= (string-find text "- (define f (lambda (x) (+ x 1)))") 0))
+  (check (>= (string-find text "+ (define f (lambda (x) (* x 5)))") 0))
+  ; the root workspace was restored and did not move
+  (check= 0 (workspace :current))
+  (check= 22 (f 21)))
+
+; ═══════════════════════════════════════════════════════════════════
+; ast:diff-formatted — defined, visible, and never a silent ()
+; ═══════════════════════════════════════════════════════════════════
+(test-case "ast:diff-formatted diffs two sources" (hash "issue" 5254 "tags" (list "feedback" "ast"))
+  (check= "none" (ast:diff-formatted "(define (f x) 1)" "(define (f x) 1)"))
+  (define text (ast:diff-formatted "(define (f x) 1)" "(define (f x) 2)"))
+  (check (>= (string-find text "define f: changed") 0))
+  (check (>= (string-find text "+ (define (f x) 2)") 0))
+  (check= "(ast:diff-formatted: expected two source strings)" (ast:diff-formatted 1 2)))
+
+; ═══════════════════════════════════════════════════════════════════
+; The test slot consumes a #5224 case row
+; ═══════════════════════════════════════════════════════════════════
+(test-case "a #5224 case row fills the test slot" (hash "issue" 5254 "tags" (list "feedback"))
+  (fbt-fresh)
+  (define row (feedback:test-result (list "some-case" 5254 #t)))
+  (check= "pass" (hash-ref row "result" ""))
+  (check= "some-case" (hash-ref row "case" ""))
+  (check= 5254 (hash-ref row "issue" #f))
+  (define r (feedback:rebind "f" "(lambda (x) (* x 4))" #f row))
+  (check= "pass" (hash-ref (hash-ref r "test") "result" ""))
+  (define fail-row (feedback:test-result (list "other-case" 5254 #f)))
+  (check= "fail" (hash-ref fail-row "result" ""))
+  ; no selection: the field is present and says so
+  (define none (feedback:test-selection))
+  (check (hash-has-key? none "selected"))
+  (check (hash-has-key? none "result")))
+
+(test-finish)

@@ -8,8 +8,10 @@
 ;
 ;   A. Direct callables (add()):
 ;        (mutate :snapshot), (mutate :restore),
-;        ast:validate-nodes, ast:validate-ownership, ast:validate-post-restore,
-;        ast:diff, ast:stable-ref, ast:print, …
+;        ast:validate-nodes, ast:validate-ownership, ast:validate-post-restore.
+;        (ast:diff / ast:stable-ref / ast:print are retired — #5254: the
+;        workspace source diff lives in std/source-diff, the stable ref is
+;        (query "qr:stable-ref-pair" node-id).)
 ;
 ;   B. Stats catalog only (register_stats_impl → stats:get "…"):
 ;        ast:list-snapshots (#4274 — same as ast:nodes; not a direct add()),
@@ -30,6 +32,8 @@
         ast:nodes ast:defs ast:generation ast:version ast:summary
         ast:node-count ast:def-count)
 
+(require "std/source-diff" all:)
+
 ; ── Thin aliases for stats:get-only names (#2734 / #2737) ───────
 (define (ast:nodes) (stats:get "ast:nodes"))
 (define (ast:defs) (stats:get "ast:defs"))
@@ -49,19 +53,18 @@
         (string-append "AST summary: " (if (null? raw) "<empty>" "<alist>"))
         "AST summary: <unavailable>"))))
 
-; ── (ast:diff-formatted a b) ──
-; Compute (query :diff a b) and format the result for display.
-; Returns "no diff" if both args equal; "diff:" + summary otherwise.
+; ── (ast:diff-formatted before after) ──
+; Define-level diff of two source texts, formatted for display (#5254).
+; The old body called (query :diff a b) — an op that does not exist — and so
+; answered a silent "diff: <none>" for every input. Two source strings are
+; what this sees now: the same texts (query :code) returns before and after a
+; mutate, or any two workspace sources. Returns "none" when no define
+; differs; otherwise one "define <n>: <status>" block per changed define with
+; -/+ lines. Non-string arguments are reported, never swallowed.
 (define (ast:diff-formatted a b)
-  (let ((result (query :diff a b)))
-    (cond
-      ((null? result)  "diff: <none>")
-      ((string? result) (string-append "diff: " result))
-      (else
-        (let ((count (length result)))
-          (string-append "diff: "
-            (if (number? count) (number->string count) "<many>")
-            " entries"))))))
+  (cond
+    ((and (string? a) (string? b)) (src:diff-text a b))
+    (else "(ast:diff-formatted: expected two source strings)")))
 
 ; ── (ast:validate-summary) ──
 ; Run (query :validate-nodes) + (query :validate-ownership) +

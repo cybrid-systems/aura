@@ -1,0 +1,294 @@
+; lib/std/source-diff.aura — define-level source diff (Issue #5254)
+;
+; The engine has no (query :diff) op and the ast:diff / ast:print family is
+; retired (ast:diff-formatted used to call (query :diff a b), which answered
+; "unknown query op ':diff'" and reached display as "diff: <none>"). What the
+; engine *does* answer is (query :code): the authoritative workspace source,
+; re-unparsed after every mutate. This module turns two such sources into a
+; define-level diff with no engine change and no new primitive.
+;
+; Import with: (import "std/source-diff")
+; Or:          (require "std/source-diff" all:)
+;
+; API:
+;   (src:define-map text)     → (("name" "define text") ...) in source order
+;   (src:define-text text n)  → the define text for name, or #f
+;   (src:diff before after)   → hash, see the keys below
+;   (src:diff-text before after) → the "text" slot of src:diff
+;
+; src:diff keys (stable; #5254's record and #5255's consumer read them):
+;   "identical" #t | #f          no define-level difference at all
+;   "changed"   (name ...)       present in both, text differs
+;   "added"     (name ...)       only in "after"
+;   "removed"   (name ...)       only in "before"
+;   "edits"     (hash ...)       one per changed/added/removed name:
+;                                "name", "status" ("changed"|"added"|"removed"),
+;                                "before" ("" when added), "after" ("" when removed)
+;   "text"      string           "define <n>: <status>" blocks with -/+ lines,
+;                                or "none" when identical. Never "" or ().
+;
+; A form counts as a define when its head is (define …): top-level forms are
+; scanned paren-aware (strings, ; comments and #\char literals are skipped),
+; and the (begin …) wrapper that (query :code) emits is unwrapped.
+(export src:forms src:define-map src:define-text src:diff src:diff-text src:workspace-source)
+
+(require "std/string" all:)
+(require "std/list" all:)
+
+; ── character classes (numeric; Aura string-ref returns a code point) ──
+(define (src:space? c) (or (= c 32) (= c 9) (= c 10) (= c 13)))
+(define (src:open? c) (= c 40))
+(define (src:close? c) (= c 41))
+(define (src:dquote? c) (= c 34))
+(define (src:backslash? c) (= c 92))
+(define (src:semi? c) (= c 59))
+(define (src:hash? c) (= c 35))
+(define (src:newline? c) (= c 10))
+
+(define (src:skip-ws s i end)
+  (let loop ((j i))
+    (if (and (< j end) (src:space? (string-ref s j)))
+        (loop (+ j 1))
+        j)))
+
+(define (src:skip-line s i end)
+  (let loop ((j i))
+    (if (and (< j end) (not (src:newline? (string-ref s j))))
+        (loop (+ j 1))
+        j)))
+
+; A #\char literal: "#\x", "#\space", "#\(". Skip the two-char marker,
+; then any non-delimiter run.
+(define (src:skip-char-literal s i end)
+  (let ((j (+ i 2)))
+    (let loop ((k j))
+      (if (and (< k end)
+               (let ((c (string-ref s k)))
+                 (not (or (src:space? c) (src:open? c) (src:close? c)))))
+          (loop (+ k 1))
+          k))))
+
+; Spans (start end) of the forms directly inside [start, end).
+; in-string / escape state never leaks across a form boundary because the
+; scan is one pass over the whole slice.
+(define (src:form-spans s start end)
+  (let loop ((i start) (depth 0) (fstart #f) (in-str #f) (esc #f) (acc '()))
+    (if (>= i end)
+        (if fstart (reverse (cons (list fstart end) acc)) (reverse acc))
+        (let ((c (string-ref s i)))
+          (cond
+            (in-str
+             (cond (esc (loop (+ i 1) depth fstart in-str #f acc))
+                   ((src:backslash? c) (loop (+ i 1) depth fstart in-str #t acc))
+                   ((src:dquote? c) (loop (+ i 1) depth fstart #f #f acc))
+                   (else (loop (+ i 1) depth fstart in-str #f acc))))
+            ((src:semi? c) (loop (src:skip-line s i end) depth fstart in-str #f acc))
+            ((src:dquote? c) (loop (+ i 1) depth fstart #t #f acc))
+            ((and (src:hash? c) (< (+ i 1) end) (src:backslash? (string-ref s (+ i 1))))
+             (loop (src:skip-char-literal s i end) depth fstart in-str #f acc))
+            ((src:open? c)
+             (loop (+ i 1)
+                   (+ depth 1)
+                   (if (and (= depth 0) (not fstart)) i fstart)
+                   in-str #f acc))
+            ((src:close? c)
+             (if (<= depth 1)
+                 (loop (+ i 1) 0
+                       #f in-str #f
+                       (if fstart (cons (list fstart (+ i 1)) acc) acc))
+                 (loop (+ i 1) (- depth 1) fstart in-str #f acc)))
+            (else (loop (+ i 1) depth fstart in-str #f acc)))))))
+
+(define (src:begin-form? s span)
+  (let ((b (car span)) (e (cadr span)))
+    (and (>= (- e b) 6)
+         (string=? (substring s b (+ b 6)) "(begin")
+         (or (= (- e b) 6)
+             (let ((c (string-ref s (+ b 6))))
+               (or (src:space? c) (src:open? c) (src:close? c)))))))
+
+; Top-level forms. (query :code) answers "(begin (define …) …)"; unwrap that
+; one wrapper so the caller sees the defines, not begin.
+(define (src:forms s)
+  (if (not (string? s))
+      '()
+      (let ((spans (src:form-spans s 0 (string-length s))))
+        (if (and (= (length spans) 1) (src:begin-form? s (car spans)))
+            (let ((inner (car spans)))
+              (src:form-spans s (+ (car inner) 6) (- (cadr inner) 1)))
+            spans))))
+
+; Symbol token at j: up to whitespace, "(", or ")".
+(define (src:sym-token s j end)
+  (let loop ((k j))
+    (if (and (< k end)
+             (let ((c (string-ref s k)))
+               (not (or (src:space? c) (src:open? c) (src:close? c)))))
+        (loop (+ k 1))
+        (if (> k j) (substring s j k) #f))))
+
+; The define name of a form, or #f. Handles both (define (f x) …) and
+; (define f …). "(define-syntax" does not match: the head must end at
+; whitespace or "(".
+(define (src:define-name form)
+  (let* ((n (string-length form))
+         (i (src:skip-ws form 0 n)))
+    (if (and (<= (+ i 7) n) (string=? (substring form i (+ i 7)) "(define"))
+        (let ((c (if (< (+ i 7) n) (string-ref form (+ i 7)) 32)))
+          (if (or (src:space? c) (src:open? c) (src:close? c))
+              (let ((j (src:skip-ws form (+ i 7) n)))
+                (if (and (< j n) (src:open? (string-ref form j)))
+                    (src:sym-token form (src:skip-ws form (+ j 1) n) n)
+                    (src:sym-token form j n)))
+              #f))
+        #f)))
+
+(define (src:define-map text)
+  (let loop ((spans (src:forms text)) (acc '()))
+    (if (null? spans)
+        (reverse acc)
+        (let ((sp (car spans)))
+          (let* ((form (substring text (car sp) (cadr sp)))
+                 (nm (src:define-name form)))
+            (loop (cdr spans) (if nm (cons (list nm form) acc) acc)))))))
+
+(define (src:define-text text name)
+  (let ((hit (assoc name (src:define-map text))))
+    (if hit (car (cdr hit)) #f)))
+
+; A workspace source read that never raises: "" when no workspace is live.
+(define (src:workspace-source)
+  (let ((s (try (query :code) (catch (e) ""))))
+    (if (string? s) s "")))
+
+; ── line-level body: common prefix/suffix trim ──
+(define (src:lines s)
+  (let ((n (string-length s)))
+    (let loop ((i 0) (start 0) (acc '()))
+      (if (>= i n)
+          (reverse (cons (substring s start i) acc))
+          (if (src:newline? (string-ref s i))
+              (loop (+ i 1) (+ i 1) (cons (substring s start i) acc))
+              (loop (+ i 1) start acc))))))
+
+(define (src:common-prefix a b)
+  (let loop ((i 0))
+    (if (and (< i (length a)) (< i (length b)) (string=? (list-ref a i) (list-ref b i)))
+        (loop (+ i 1))
+        i)))
+
+(define (src:common-suffix a b prefix)
+  (let loop ((i 0))
+    (if (and (< (+ i prefix) (length a))
+             (< (+ i prefix) (length b))
+             (string=? (list-ref a (- (length a) (+ i 1)))
+                       (list-ref b (- (length b) (+ i 1)))))
+        (loop (+ i 1))
+        i)))
+
+(define (src:drop-n n lst)
+  (if (or (= n 0) (null? lst)) lst (src:drop-n (- n 1) (cdr lst))))
+
+(define (src:take-n n lst)
+  (if (or (= n 0) (null? lst)) '() (cons (car lst) (src:take-n (- n 1) (cdr lst)))))
+
+; "- old lines" then "+ new lines" for the differing middle of one define.
+(define (src:body-lines before after)
+  (cond
+    ; One side absent (added / removed): no phantom blank line.
+    ((string=? before "") (src:prefixed "+ " (src:lines after)))
+    ((string=? after "") (src:prefixed "- " (src:lines before)))
+    (else
+     (let* ((a (src:lines before))
+            (b (src:lines after))
+            (p (src:common-prefix a b))
+            (s (src:common-suffix a b p))
+            (old (src:take-n (- (length a) p s) (src:drop-n p a)))
+            (new (src:take-n (- (length b) p s) (src:drop-n p b))))
+       (string-append
+         (src:prefixed "- " old)
+         (src:prefixed "+ " new))))))
+
+(define (src:prefixed p lines)
+  (let loop ((ls lines) (out ""))
+    (if (null? ls)
+        out
+        (loop (cdr ls) (string-append out p (car ls) "\n")))))
+
+(define (src:status-block name status before after)
+  (string-append "define " name ": " status "\n"
+                 (cond
+                   ((string=? status "added") (src:body-lines "" after))
+                   ((string=? status "removed") (src:body-lines before ""))
+                   (else (src:body-lines before after)))))
+
+(define (src:name-member? n ns)
+  (let loop ((xs ns))
+    (cond ((null? xs) #f)
+          ((string=? n (car xs)) #t)
+          (else (loop (cdr xs))))))
+
+; ── (src:diff before after) ──
+(define (src:diff before after)
+  (let* ((b (src:define-map before))
+         (a (src:define-map after))
+         (b-names (map car b))
+         (a-names (map car a))
+         (changed '())
+         (added '())
+         (edits '()))
+    ; "after" order first: changed and added.
+    (let loop ((xs a))
+      (if (pair? xs)
+          (let* ((nm (car (car xs)))
+                 (af (car (cdr (car xs))))
+                 (bh (assoc nm b)))
+            (if (not bh)
+                (begin (set! added (cons nm added))
+                       (set! edits (cons (hash "name" nm "status" "added"
+                                               "before" "" "after" af)
+                                         edits)))
+                (if (not (string=? (car (cdr bh)) af))
+                    (begin (set! changed (cons nm changed))
+                           (set! edits (cons (hash "name" nm "status" "changed"
+                                                   "before" (car (cdr bh)) "after" af)
+                                             edits)))))
+            (loop (cdr xs)))))
+    ; then removed names, in "before" order.
+    (let loop ((xs b))
+      (if (pair? xs)
+          (let ((nm (car (car xs))))
+            (if (not (src:name-member? nm a-names))
+                (begin (set! edits (cons (hash "name" nm "status" "removed"
+                                               "before" (car (cdr (car xs))) "after" "")
+                                         edits))))
+            (loop (cdr xs)))))
+    (let* ((changed* (reverse changed))
+           (added* (reverse added))
+           (removed (let loop ((xs b) (acc '()))
+                      (if (null? xs) (reverse acc)
+                          (loop (cdr xs)
+                                (if (src:name-member? (car (car xs)) a-names)
+                                    acc
+                                    (cons (car (car xs)) acc))))))
+           (edits* (reverse edits))
+           (identical (null? edits*)))
+      (hash "identical" identical
+            "changed" changed*
+            "added" added*
+            "removed" removed
+            "edits" edits*
+            "text" (if identical
+                       "none"
+                       (let loop ((es edits*) (out ""))
+                         (if (null? es) out
+                             (loop (cdr es)
+                                   (string-append
+                                     out
+                                     (src:status-block (hash-ref (car es) "name" "")
+                                                       (hash-ref (car es) "status" "")
+                                                       (hash-ref (car es) "before" "")
+                                                       (hash-ref (car es) "after" "")))))))))))
+
+(define (src:diff-text before after)
+  (hash-ref (src:diff before after) "text" "none"))

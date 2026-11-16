@@ -8,6 +8,11 @@
 ;   (ast:to-dot-node id) → DOT subgraph for a specific node
 ;   (mutation:trace)     → mutation 历史文本摘要
 ;   (mutation:trace-node id) → 单个节点的 mutation 历史
+;
+; #5254: both readers now read (query :mutation-log) — the log the Agent
+; reads. Before, trace called the unbound (mutation-count) inside a try, so
+; it always answered "No mutations recorded." even right after a rebind,
+; and trace-node called the stats-only (mutation-history) the same way.
 
 
 (export ast:to-dot ast:to-dot-node mutation:trace mutation:trace-node)
@@ -125,15 +130,33 @@
 
 ; ── mutation:trace-node — 单个节点 mutation 历史 ──
 (define (mutation:trace-node id)
-  (define history (try (mutation-history id) (catch (e) (quote ()))))
-  (if (not (pair? history)) ""
-    (let loop ((entries history) (result ""))
+  (define log (try (query :mutation-log 1000) (catch (e) (quote ()))))
+  (if (not (pair? log)) ""
+    (let loop ((entries log) (result ""))
       (if (null? entries) result
         (loop (cdr entries)
-              (string-append result (car entries) "\n"))))))
+              (if (string=? (mutation:log-field (car entries) "target")
+                            (number->string id))
+                  (string-append result (car entries) "\n")
+                  result))))))
 
 ; ── mutation:trace — 全部 mutation 日志 ──
 (define (mutation:trace)
-  (define count (try (mutation-count) (catch 0)))
-  (if (= count 0) "No mutations recorded.\n"
-    (string-append "Total mutations: " (number->string count) "\n")))
+  (define log (try (query :mutation-log 10) (catch (e) (quote ()))))
+  (if (not (pair? log)) "No mutations recorded.\n"
+    (let ((count (try (stats:get "mutation-log-size") (catch (e) 0))))
+      (string-append "Total mutations: "
+                     (number->string (if (number? count) count 0)) "\n"
+                     (let loop ((entries log) (out ""))
+                       (if (null? entries) out
+                         (loop (cdr entries)
+                               (string-append out (car entries) "\n"))))))))
+
+; One "key=value" field of a mutation-log line (same reader as std/workspace).
+(define (mutation:log-field line key)
+  (let ((prefix (string-append key "=")))
+    (let loop ((ws (string-split-words line)))
+      (cond ((null? ws) "")
+            ((string-prefix? (car ws) prefix)
+             (substring (car ws) (string-length prefix) (string-length (car ws))))
+            (else (loop (cdr ws)))))))

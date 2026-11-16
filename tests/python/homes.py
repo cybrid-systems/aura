@@ -202,6 +202,41 @@ HOMES: tuple[Home, ...] = (
         ),
     ),
     _h(
+        "std/feedback",
+        "aura",
+        "tests/suite/feedback_record.aura",
+        (
+            "feedback:rebind",
+            "feedback:transform",
+            "feedback:record",
+            "feedback:snapshot",
+            "feedback:test-result",
+            "feedback",
+            "source-diff",
+            "std/feedback",
+            "std/source-diff",
+            "ws:diff",
+            "mutation:trace",
+            "transform feedback record",
+        ),
+        tag="feedback",
+        requires=("std/feedback", "std/workspace", "std/ast", "std/ast-viz"),
+        body='(check (hash? (feedback:rebind "f" "(lambda (x) (* x 2))")))',
+        roots=(
+            "lib/std/feedback.aura",
+            "lib/std/source-diff.aura",
+            "lib/std/workspace.aura",
+            "lib/std/ast.aura",
+            "lib/std/ast-viz.aura",
+        ),
+        note=(
+            "One transformation's feedback record (#5254): identity, define-level "
+            "source diff, type conclusion, contract result, selected test case, "
+            "execution kind, metric delta. Also the three mutation readers "
+            "(ws:state / mutation:trace / query :mutation-log) agreeing."
+        ),
+    ),
+    _h(
         "std/search",
         "aura",
         "tests/suite/search_clonal.aura",

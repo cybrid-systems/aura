@@ -1,0 +1,362 @@
+; lib/std/feedback.aura — one transformation's feedback record (Issue #5254)
+;
+; The closed-loop error signal: identity of the transform, the define-level
+; source diff it produced, the type conclusion, the invariant result, the
+; selected test case, the execution result with its #5241 error kind, and the
+; before/after delta of a few agent-named engine:metrics keys.
+;
+; (require "std/feedback" all:)
+;
+;   (feedback:rebind "f" "(lambda (x) (* x 2))")
+;   (feedback:transform "rebind" "f" (lambda () (mutate :rebind "f" expr)))
+;
+; ═══════════════════════════════════════════════════════════════════
+; Record hash keys — STABLE, documented for #5255's consumer.
+; Rename nothing here without a schema bump.
+; ═══════════════════════════════════════════════════════════════════
+;   "kind"      "transform-feedback"     the record kind
+;   "schema"    1                        this key set's version
+;
+;   "transform" hash
+;       "mutation-id"  int              0 when nothing was applied
+;       "operator"     string           e.g. "rebind"
+;       "target"       string           the define name
+;       "stable-ref"   hash | #f        "node" int, "gen" int
+;                                       ((query :stable-ref-pair) of the
+;                                       post-transform define; #f when none)
+;       "applied"      #t | #f
+;
+;   "diff"      hash | "none"           src:diff over (query :code) before/after
+;       "identical" "changed" "added" "removed" "edits" "text"
+;       ("text" is a define <n>: <status> block with -/+ lines, or "none";
+;        never "" and never ().)
+;
+;   "types"     hash
+;       "status"       "ok" | "diagnostics" | "no-workspace" | "unknown"
+;       "diagnostics"  list of #5240 records (empty unless "diagnostics")
+;       "count"        int
+;       Source: #5250's structured (typecheck-status).
+;
+;   "contract"  hash | "none"           ("none" = no active set; NOT a pass)
+;       "gate"  #5253 report hash (ok/version/hash/violations/skipped/…)
+;       "post"  #5253 report hash | #f  (run after an applied transform)
+;       "ok"    #t | #f
+;
+;   "test"      hash
+;       "case" string  "issue" int|#f  "selected" #t|#f
+;       "result" "pass" | "fail" | "pending" | "none"
+;       "note"   string
+;       Consumes #5224's case row (name issue ok) via
+;       (feedback:test-result row); with no selection the field says so.
+;
+;   "exec"      hash
+;       "result"     "ok" | "refused" | "raised"
+;       "error-kind" a #5241 ErrorKind ident ("MutationRefused", "UserError", …)
+;                    or "none" when "result" is "ok"
+;       "error-code" the producer's refusal tag ("rebind-non-procedure", …)
+;                    or "" — a refused mutate answers (tag message . code)
+;       "message"    string, "" when "result" is "ok"
+;
+;   "metrics"   hash
+;       "keys"   (string ...)           "group/key" names the agent named
+;       "before" hash   "after" hash    key -> value (#f when absent)
+;       "delta"  hash                   after - before when both are numbers
+;       Read-only: only keys that already exist in (engine:metrics).
+;
+; Reading the record: use hash-ref with a default; every slot is present.
+(export feedback:fields feedback:snapshot feedback:record feedback:transform
+        feedback:rebind feedback:test-result feedback:test-selection
+        feedback:metrics-keys feedback:set-metrics-keys!)
+
+(require "std/string" all:)
+(require "std/list" all:)
+(require "std/contract" all:)
+(require "std/source-diff" all:)
+
+(define feedback-schema-version 1)
+
+; A few keys that move on a workspace transform; all exist today.
+(define feedback-default-metrics
+  (list "mutate/mutate_force_effect_check_total"
+        "mutate/mutate_invalidate_dirty_nodes_total"
+        "mutate/mutation_boundary_primitives_wrapped"))
+(define *feedback-metrics* feedback-default-metrics)
+
+; ── small helpers ────────────────────────────────────────────────
+(define (feedback:index-of-char s c)
+  (let ((n (string-length s)))
+    (let loop ((i 0))
+      (if (>= i n) #f (if (= (string-ref s i) c) i (loop (+ i 1)))))))
+
+(define (feedback:kv-set h tok)
+  (let ((i (feedback:index-of-char tok 61))) ; '='
+    (if (not i)
+        h
+        (let* ((k (substring tok 0 i))
+               (v (substring tok (+ i 1) (string-length tok)))
+               (n (string->number v)))
+          (hash-set h k (if n n v))))))
+
+; "id=2 target=5 op=rebind sum=…" -> hash of the key=value fields.
+(define (feedback:log-fields line)
+  (if (not (string? line))
+      (hash)
+      (let loop ((ws (string-split-words line)) (h (hash)))
+        (if (null? ws) h (loop (cdr ws) (feedback:kv-set h (car ws)))))))
+
+(define (feedback:source)
+  (src:workspace-source))
+
+(define (feedback:env name)
+  (let ((v (try (getenv name) (catch (e) #f))))
+    (if (and (string? v) (> (string-length v) 0)) v #f)))
+
+; ── the agent's metric keys ──────────────────────────────────────
+(define (feedback:metrics-keys) *feedback-metrics*)
+
+(define (feedback:set-metrics-keys! keys)
+  (if (and (list? keys) (pair? keys))
+      (begin (set! *feedback-metrics* keys) keys)
+      *feedback-metrics*))
+
+(define (feedback:metric-value m k)
+  (let ((i (feedback:index-of-char k 47))) ; '/'
+    (if (not i)
+        (hash-ref m k #f)
+        (let ((g (hash-ref m (substring k 0 i) #f)))
+          (if (hash? g)
+              (hash-ref g (substring k (+ i 1) (string-length k)) #f)
+              #f)))))
+
+(define (feedback:metrics-read keys)
+  (let ((m (try (engine:metrics) (catch (e) #f))))
+    (let loop ((ks keys) (h (hash)))
+      (if (null? ks)
+          h
+          (loop (cdr ks)
+                (hash-set h (car ks) (if (hash? m) (feedback:metric-value m (car ks)) #f)))))))
+
+(define (feedback:metrics-delta keys before after)
+  (let loop ((ks keys) (h (hash)))
+    (if (null? ks)
+        h
+        (let* ((k (car ks))
+               (b (hash-ref before k #f))
+               (a (hash-ref after k #f)))
+          (loop (cdr ks)
+                (hash-set h k (if (and (number? b) (number? a)) (- a b) #f)))))))
+
+; ── before-state snapshot ────────────────────────────────────────
+; (feedback:snapshot [keys]) -> hash
+;   "mutation-id"  newest mutation id at capture (0 when the log is empty)
+;   "source"       (query :code) at capture
+;   "metrics-keys" the key list this snapshot reads
+;   "metrics"      key -> value
+(define (feedback:snapshot . keys)
+  (let ((ks (if (and (pair? keys) (list? (car keys))) (car keys) (feedback:metrics-keys))))
+    (hash "mutation-id" (feedback:newest-mutation-id)
+          "source" (feedback:source)
+          "metrics-keys" ks
+          "metrics" (feedback:metrics-read ks))))
+
+(define (feedback:newest-mutation-id)
+  (let* ((log (try (query :mutation-log 1) (catch (e) '())))
+         (rows (if (list? log) log '())))
+    (if (null? rows)
+        0
+        (let ((id (hash-ref (feedback:log-fields (car rows)) "id" 0)))
+          (if (number? id) id 0)))))
+
+; The id this transform produced: the first record after "since" whose op
+; matches, else the newest record after "since", else "since". (The log also
+; carries bookkeeping rows such as structural-set-child.)
+(define (feedback:new-mutation-id since op)
+  (let* ((log (try (query :mutation-log 1000) (catch (e) '())))
+         (rows (if (list? log) log '())))
+    (let loop ((rs rows) (last #f) (hit #f))
+      (if (null? rs)
+          (cond (hit hit) (last last) (else since))
+          (let* ((kv (feedback:log-fields (car rs)))
+                 (id (hash-ref kv "id" #f)))
+            (if (and (number? id) (> id since))
+                (loop (cdr rs) id
+                      (if (string=? (hash-ref kv "op" "") op) id hit))
+                (loop (cdr rs) last hit)))))))
+
+(define (feedback:stable-ref name)
+  (let ((ids (try (query :defines name) (catch (e) '()))))
+    (if (and (list? ids) (pair? ids) (number? (car ids)))
+        (let ((p (try (query "qr:stable-ref-pair" (car ids)) (catch (e) #f))))
+          (if (pair? p) (hash "node" (car p) "gen" (cdr p)) #f))
+        #f)))
+
+; ── type conclusion (#5250's structured (typecheck-status)) ──────
+(define (feedback:types)
+  (let ((tc (try (typecheck-status) (catch (e) #f))))
+    (cond
+      ((equal? tc #t) (hash "status" "ok" "diagnostics" '() "count" 0))
+      ((equal? tc #f) (hash "status" "no-workspace" "diagnostics" '() "count" 0))
+      ((list? tc) (hash "status" "diagnostics" "diagnostics" tc "count" (length tc)))
+      (else (hash "status" "unknown" "diagnostics" '() "count" 0)))))
+
+; ── selected test case (#5224's selection + result row) ──────────
+; (feedback:test-selection) reads AURA_TEST_CASE / AURA_TEST_ISSUE.
+(define (feedback:test-selection)
+  (let ((c (feedback:env "AURA_TEST_CASE"))
+        (i (feedback:env "AURA_TEST_ISSUE")))
+    (if c
+        (hash "case" c
+              "issue" (if (and i (string->number i)) (string->number i) #f)
+              "selected" #t
+              "result" "pending"
+              "note" "selected by std/test; the verdict lands at test-finish")
+        (hash "case" "" "issue" #f "selected" #f "result" "none"
+              "note" "no std/test case selected"))))
+
+; (feedback:test-result row) consumes a #5224 case row (name issue ok) and
+; answers the record's "test" slot. Any other value falls back to the
+; selection.
+(define (feedback:test-result row)
+  (if (and (pair? row) (string? (car row)) (pair? (cdr row)))
+      (let* ((name (car row))
+             (issue (car (cdr row)))
+             (rest (cdr (cdr row)))
+             (ok (and (pair? rest) (not (equal? (car rest) #f)))))
+        (hash "case" name
+              "issue" (if (number? issue) issue #f)
+              "selected" #t
+              "result" (if ok "pass" "fail")
+              "note" "consumed a std/test case row"))
+      (feedback:test-selection)))
+
+; ── error kind (#5241's ErrorKind idents) ────────────────────────
+; The in-process catch face carries a message, not the Diagnostic; when the
+; message still leads with a kind head use it, else the table's catch-all
+; UserError. A refused mutate value is MutationRefused with its tag in
+; "error-code" — that is the producer's own classification.
+(define feedback-kind-heads
+  (list (list "parse error" "ParseError")
+        (list "unexpected token" "UnexpectedToken")
+        (list "unterminated s-expr" "UnterminatedSExpr")
+        (list "unbound variable" "UnboundVariable")
+        (list "division by zero" "DivisionByZero")
+        (list "invalid closure" "InvalidClosure")
+        (list "arity mismatch" "ArityMismatch")
+        (list "type error" "TypeError")
+        (list "IR corruption" "IRCorruption")
+        (list "no return" "IRNoReturn")
+        (list "internal error" "InternalError")
+        (list "out of memory" "OutOfMemory")
+        (list "uncaught exception" "UncaughtException")
+        (list "stale workspace" "StaleWorkspace")
+        (list "effect-denied" "EffectDenied")
+        (list "module error" "ModuleError")
+        (list "io error" "IoError")
+        (list "mutation refused" "MutationRefused")))
+
+(define (feedback:kind-of message)
+  (if (not (string? message))
+      "UserError"
+      (let loop ((ts feedback-kind-heads))
+        (cond ((null? ts) "UserError")
+              ((string-prefix? message (string-append (car (car ts)) ": "))
+               (car (cdr (car ts))))
+              (else (loop (cdr ts)))))))
+
+; The (tag message . code) value a refused mutate answers.
+(define (feedback:refusal? v)
+  (and (pair? v) (string? (car v)) (pair? (cdr v))))
+
+; ── the record ───────────────────────────────────────────────────
+(define (feedback:fields)
+  (list "kind" "schema" "transform" "diff" "types" "contract" "test" "exec" "metrics"))
+
+(define (feedback:contract-slot gate post applied)
+  (if (not (hash? gate))
+      "none"
+      (hash "gate" gate
+            "post" (if applied post #f)
+            "ok" (and (contract:report-ok? gate)
+                      (if (and applied (hash? post)) (contract:report-ok? post) #t)))))
+
+(define (feedback:build ctx op name applied exec-result kind code message gate post test)
+  (let* ((before-src (hash-ref ctx "source" ""))
+         (after-src (feedback:source))
+         (d (src:diff before-src after-src))
+         (since (hash-ref ctx "mutation-id" 0))
+         (ks (hash-ref ctx "metrics-keys" (feedback:metrics-keys)))
+         (after-m (feedback:metrics-read ks))
+         (before-m (hash-ref ctx "metrics" (hash))))
+    (hash "kind" "transform-feedback"
+          "schema" feedback-schema-version
+          "transform" (hash "mutation-id" (if applied (feedback:new-mutation-id since op) since)
+                            "operator" op
+                            "target" name
+                            "stable-ref" (if applied (feedback:stable-ref name) #f)
+                            "applied" applied)
+          "diff" d
+          "types" (feedback:types)
+          "contract" (feedback:contract-slot gate post applied)
+          "test" (if (hash? test) test (feedback:test-selection))
+          "exec" (hash "result" exec-result
+                       "error-kind" kind
+                       "error-code" code
+                       "message" message)
+          "metrics" (hash "keys" ks
+                          "before" before-m
+                          "after" after-m
+                          "delta" (feedback:metrics-delta ks before-m after-m)))))
+
+; (feedback:record ctx op name result [test]) — assemble a record from a
+; snapshot the caller took and a mutate result value.
+(define (feedback:record ctx op name result . opts)
+  (let ((test (if (pair? opts) (car opts) (feedback:test-selection))))
+    (cond
+      ((feedback:refusal? result)
+       (feedback:build ctx op name #f "refused" "MutationRefused"
+                       (car result)
+                       (let ((m (car (cdr result)))) (if (string? m) m ""))
+                       #f #f test))
+      ((equal? result #f)
+       (feedback:build ctx op name #f "refused" "MutationRefused"
+                       "" "mutate returned #f" #f #f test))
+      (else
+       (feedback:build ctx op name #t "ok" "none" "" "" #f #f test)))))
+
+; (feedback:transform op name thunk [keys] [test]) — snapshot, gate, run,
+; record. A refused transform never runs the thunk: the #5253 gate decides.
+(define (feedback:transform op name thunk . opts)
+  (let* ((keys (if (and (pair? opts) (list? (car opts))) (car opts) (feedback:metrics-keys)))
+         (test (if (and (pair? opts) (pair? (cdr opts)))
+                   (car (cdr opts))
+                   (feedback:test-selection)))
+         (ctx (feedback:snapshot keys))
+         (gate (contract:check-active op name)))
+    (if (and (hash? gate) (not (contract:report-ok? gate)))
+        (feedback:build ctx op name #f "refused" "MutationRefused" "" "" gate #f test)
+        (let ((res (try (thunk) (catch (e) (list 'feedback-raised e)))))
+          (cond
+            ((and (pair? res) (equal? (car res) 'feedback-raised))
+             (let ((m (car (cdr res))))
+               (feedback:build ctx op name #f "raised" (feedback:kind-of m)
+                               "" (if (string? m) m "") gate #f test)))
+            ((feedback:refusal? res)
+             (feedback:build ctx op name #f "refused" "MutationRefused"
+                             (car res)
+                             (let ((m (car (cdr res)))) (if (string? m) m ""))
+                             gate #f test))
+            ; A mutate that answers #f did not apply anything either.
+            ((equal? res #f)
+             (feedback:build ctx op name #f "refused" "MutationRefused"
+                             "" "mutate returned #f" gate #f test))
+            (else
+             (let ((post (if (hash? gate) (contract:check-active op name) #f)))
+               (feedback:build ctx op name #t "ok" "none" "" "" gate post test))))))))
+
+; (feedback:rebind name expr [keys] [test]) — the acceptance path.
+(define (feedback:rebind name expr . opts)
+  (let ((thunk (lambda () (mutate :rebind name expr))))
+    (cond
+      ((null? opts) (feedback:transform "rebind" name thunk))
+      ((null? (cdr opts)) (feedback:transform "rebind" name thunk (car opts)))
+      (else (feedback:transform "rebind" name thunk (car opts) (car (cdr opts)))))))
