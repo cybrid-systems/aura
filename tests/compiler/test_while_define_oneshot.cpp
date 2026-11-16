@@ -854,6 +854,74 @@ static void ac5308_hof_callback_recursion() {
     }
 }
 
+// Issue #5309: a non-tail recursive operand of or/and used to read the
+// short-circuit cache after a later name-cache row reallocated it. The
+// call then returned the file's first define, or re-entered require.
+static void ac5309_or_and_recursive_operand() {
+    std::println("\n--- #5309: or/and recursive operand keeps its value ---");
+    const auto bin = aura_binary_4466();
+    CHECK(!bin.empty(), "5309: aura binary");
+    if (bin.empty())
+        return;
+    const char* src = "/tmp/aura-5309.aura";
+    auto run = [&](const std::string& body, const std::string& env) {
+        {
+            std::ofstream out(src);
+            out << body;
+        }
+        return run_file_4466(bin, src, env);
+    };
+    const char* walk = "(define A 6)\n"
+                       "(define (g s) (symbol->string s))\n"
+                       "(define (f e) (if (number? e) #f"
+                       " (if (eq? (car e) 'v)"
+                       " (begin (g (car e)) (if (null? (cdr e)) #f \"x\"))"
+                       " (or (f (cadr e)) (f (car (cddr e)))))))\n"
+                       "(display (f '(+ (+ (v) 1) 1)))\n(newline)\n"
+                       "(define (f2 e) (if (number? e) #f"
+                       " (if (eq? (car e) 'v)"
+                       " (begin (g (car e)) (if (null? (cdr e)) #f \"x\"))"
+                       " (let ((x (f2 (cadr e)))) (if x x (f2 (car (cddr e))))))))\n"
+                       "(display (f2 '(+ (+ (v) 1) 1)))\n(newline)\n";
+    {
+        auto r = run(walk, "");
+        CHECK(r.rc == 0, "5309: or exits 0");
+        CHECK(r.out == "#f\n#f\n", "5309: or and its let expansion are #f");
+        CHECK(r.err.find("unbound") == std::string::npos, "5309: or is not unbound");
+    }
+    {
+        auto r = run("(define A 6)\n"
+                     "(define (g s) (symbol->string s))\n"
+                     "(define (f e) (if (number? e) #t"
+                     " (if (eq? (car e) 'v)"
+                     " (begin (g (car e)) (if (null? (cdr e)) #f #t))"
+                     " (and (f (cadr e)) (f (car (cddr e)))))))\n"
+                     "(display (f '(+ (+ (v) 1) 1)))\n(newline)\n",
+                     "");
+        CHECK(r.rc == 0, "5309: and exits 0");
+        CHECK(r.out == "#f\n", "5309: and is #f");
+    }
+    std::string lib = "AURA_PATH=lib";
+#ifdef AURA_SOURCE_DIR
+    lib = std::string("AURA_PATH=") + AURA_SOURCE_DIR + "/lib";
+#endif
+    {
+        auto r = run("(require \"std/list\" all:)\n"
+                     "(define A 6)\n"
+                     "(define (g s) (last (list 1 2)))\n"
+                     "(define (f e) (if (number? e) #f"
+                     " (if (eq? (car e) 'v)"
+                     " (begin (g (car e)) (if (null? (cdr e)) #f \"x\"))"
+                     " (or (f (cadr e)) (f (car (cddr e)))))))\n"
+                     "(display (f '(+ (+ (v) 1) 1)))\n(newline)\n",
+                     lib);
+        CHECK(r.rc == 0, "5309: require exits 0");
+        CHECK(r.out == "#f\n", "5309: std/list last still yields #f");
+        CHECK(r.err.find("unbound variable: require") == std::string::npos,
+              "5309: require stays bound");
+    }
+}
+
 } // namespace
 
 int run_test_while_define_oneshot() {
@@ -870,6 +938,7 @@ int run_test_while_define_oneshot() {
     ac5281_foreach_set_after_set_code();
     ac5282_discarded_trial_keeps_inline();
     ac5308_hof_callback_recursion();
+    ac5309_or_and_recursive_operand();
     std::println("\n=== #2571: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

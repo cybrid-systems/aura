@@ -11024,7 +11024,12 @@ Evaluator::FlatStep Evaluator::eval_flat_on_and_or(EvalFlatCursor& cur,
         if (aura::serve::g_current_fiber == nullptr && callee.sym_id != aura::ast::INVALID_SYM) {
             const auto sc_uid = static_cast<std::uint32_t>(current_id);
             if (sc_uid < name_res_by_node().size()) {
-                const auto& sc = name_res_by_node()[sc_uid];
+                // Issue #5309: copy the entry. A recursive operand of
+                // this same and/or records further name-cache rows and
+                // can reallocate the vector. A reference into it then
+                // names some other form: the file's first define, or
+                // the require that loaded a std function on the way.
+                const auto sc = name_res_by_node()[sc_uid];
                 if (sc.kind == NameResEntry::Kind::CallNoPrim && sc.sym == callee.sym_id &&
                     sc.top_gen == top_bind_gen_ && sc.cap == eval_env.cap_snapshot().get()) {
                     // Issue #4599: the stored not-a-prim
@@ -11033,7 +11038,7 @@ Evaluator::FlatStep Evaluator::eval_flat_on_and_or(EvalFlatCursor& cur,
                     // prelude below consults the same entry.
                     sc_known_not = true;
                 } else if (sc.kind == NameResEntry::Kind::ShortCircuit && sc.sym == callee.sym_id &&
-                           sc.nchild >= 1) {
+                           sc.nchild >= 1 && sc.nchild <= sc.child.size()) {
                     bool sc_ok = true;
                     for (std::uint8_t sci = 0; sci < sc.nchild; ++sci) {
                         if (sc.child[sci] >= f->size()) {
