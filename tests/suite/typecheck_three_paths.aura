@@ -1,0 +1,85 @@
+; Issue #5250: one program, one conclusion.
+;
+; The in-process typecheck oracle ((typecheck-status) / (typecheck-current))
+; must never answer "clean" for a workspace the post-mutate gate and the CLI
+; --typecheck reject. #5250's report: for (define (g y) (+ y "s")) the oracle
+; returned #t (`no errors`) while the same run's --typecheck printed
+; `type error` and (mutate :rebind) failed closed. The oracle reused the
+; per-node types a whole-workspace install had stamped and discarded the
+; diagnostics of that traversal; this suite pins the shared conclusion and
+; the #5240 record shape the value now carries.
+;
+; The production pack (--preset dev) is a Python cross-mode check
+; (xmode_typecheck.py): the gate only rejects there, so the three-face
+; comparison lives out of process. Here the oracle's own contract is pinned
+; in the Soft/dev pack the suite runs in.
+(require "std/test" all:)
+(require "std/mutate" all:)
+(test-file "typecheck_three_paths.aura")
+
+; ── the reported miss: an ill-typed define body installed by set-code ──
+(test-case "ill-typed body is reported" (hash "issue" 5250 "tags" (list "typecheck"))
+  (set-code "(define (g y) (+ y \"s\"))\n")
+  (eval-current)
+  (define st (typecheck-status))
+  ; Not #t: the oracle may not say "clean" for a body the CLI rejects.
+  (check (not (eq? st #t)))
+  ; The failure is a list of #5240 records, not a report string.
+  (check (list? st))
+  (check (string=? "TypeError" (hash-ref (car st) "code")))
+  (check (>= (string-index (hash-ref (car st) "message") "argument 1") 0))
+  ; typecheck-current is the same traversal: its text agrees with the value.
+  (check (= -1 (string-index (typecheck-current) "no errors")))
+  (check (>= (string-index (typecheck-current) "diagnostics:") 0)))
+
+; ── the legal case: both faces pass ──
+(test-case "legal body passes" (hash "issue" 5250 "tags" (list "typecheck"))
+  (set-code "(define (g y) (+ y 1))\n")
+  (eval-current)
+  (check (eq? (typecheck-status) #t))
+  (check (string? (typecheck-current)))
+  (check (>= (string-index (typecheck-current) "no errors") 0))
+  (check (= 3 (g 2))))
+
+; ── the gate's program and the oracle's program are the same one ──
+(test-case "rebind to an ill-typed body is observable" (hash "issue" 5250 "tags" (list "typecheck"))
+  (set-code "(define (g y) (+ y 1))\n")
+  (eval-current)
+  (check (eq? (typecheck-status) #t))
+  ; The gate may accept (Soft) or reject (production) this body; either way
+  ; the workspace the oracle reads must not come back "clean" while the body
+  ; is ill-typed.
+  (define gate (try (mutate :rebind "g" "(lambda (y) (+ y \"s\"))" "tc-three-paths")
+                    (catch (e) (list "raised" e))))
+  (define st (typecheck-status))
+  (if (eq? gate #t)
+      (begin
+        (check (not (eq? st #t)))
+        (check (list? st))
+        (check (string=? "TypeError" (hash-ref (car st) "code"))))
+      (begin
+        ; Rejected: the rollback restores the well-typed body, so the oracle
+        ; reports clean and agrees with the gate.
+        (check (pair? gate))
+        (check (eq? st #t)))))
+
+; ── a well-typed rebind lands and both faces stay clean ──
+(test-case "rebind to a legal body passes" (hash "issue" 5250 "tags" (list "typecheck"))
+  (set-code "(define (g y) (+ y 1))\n")
+  (eval-current)
+  (check (eq? (mutate :rebind "g" "(lambda (y) (+ y 2))" "tc-three-paths") #t))
+  (check (eq? (typecheck-status) #t))
+  (check (= 4 (g 2))))
+
+; ── the record carries the #5240 fields when the producer had a location ──
+(test-case "diagnostic record shape" (hash "issue" 5250 "tags" (list "typecheck"))
+  (set-code "(define (h y) (+ y \"s\"))\n")
+  (eval-current)
+  (define rec (car (typecheck-status)))
+  (check (string? (hash-ref rec "code")))
+  (check (string? (hash-ref rec "message")))
+  (check (integer? (hash-ref rec "line")))
+  (check (integer? (hash-ref rec "column")))
+  (check (>= (hash-ref rec "line") 1)))
+
+(test-finish)

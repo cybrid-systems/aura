@@ -5098,23 +5098,126 @@ static int run_cli_query_and_fix(int argc, char** argv) {
     return result.applied ? 0 : 1;
 }
 
+// Issue #5250: --typecheck follows (require ...).
+//
+// The static face used to parse the entry file alone, so every name a
+// required module defines read as `unbound variable` while the same program
+// ran fine through the evaluator (and the LSP worked around it by
+// concatenating the files itself). Same resolution as the LSP (#4911):
+// dependencies first, each file once, resolved like the runtime (relative to
+// the requiring file, then the project root). The (require ...) forms are
+// blanked to spaces so they do not read as calls, and newlines are kept so a
+// diagnostic maps back to its file by line offset.
+struct TypecheckSegment5250 {
+    int first_line = 1; // 1-based line of this segment's first line
+    std::string path;
+};
+
+static void typecheck_collect_5250(const std::string& path, std::vector<std::string>& order,
+                                   std::unordered_set<std::string>& seen, int depth = 0) {
+    if (depth > 32 || !seen.insert(path).second)
+        return;
+    if (auto text = lsp_4911::read_file(path))
+        for (auto& r : lsp_4911::find_requires(*text))
+            if (auto dep = lsp_4911::resolve(path, r.spec))
+                typecheck_collect_5250(*dep, order, seen, depth + 1);
+    order.push_back(path);
+}
+
+// "" when the entry file has nothing to follow (the caller keeps the old
+// single-file face byte for byte).
+static std::string typecheck_combined_5250(const std::string& entry,
+                                           std::vector<TypecheckSegment5250>& segs) {
+    std::vector<std::string> order;
+    std::unordered_set<std::string> seen;
+    typecheck_collect_5250(entry, order, seen);
+    if (order.size() <= 1)
+        return {};
+    std::string combined;
+    int line = 1;
+    for (auto& path : order) {
+        auto text = lsp_4911::read_file(path).value_or("");
+        for (auto& r : lsp_4911::find_requires(text))
+            for (std::size_t i = r.begin; i < r.end; ++i)
+                if (text[i] != '\n')
+                    text[i] = ' ';
+        if (text.empty() || text.back() != '\n')
+            text += '\n';
+        segs.push_back({line, path});
+        line += static_cast<int>(std::ranges::count(text, '\n'));
+        combined += text;
+    }
+    return combined;
+}
+
 static int run_cli_typecheck(int argc, char** argv) {
     aura::compiler::CompilerService cs;
     std::string input;
+    std::string entry;
     if (argc > 2) {
         const CliToolProgram5171 prog = cli_tool_program_5171(argv[2]);
         if (prog.missing)
             return cli_tool_missing_5171(prog);
         input = prog.text;
+        if (prog.from_file)
+            entry = prog.path;
     } else {
         // Issue #4911: the whole program, not just its first line.
         input.assign(std::istreambuf_iterator<char>(std::cin), {});
+    }
+    // Issue #5250: follow (require ...) so the static face sees the same
+    // program the evaluator runs. A file with nothing to follow keeps the
+    // old single-file output byte for byte (cli_tool_file.py pins it).
+    std::vector<TypecheckSegment5250> segs;
+    if (!entry.empty()) {
+        if (auto combined = typecheck_combined_5250(entry, segs); !combined.empty())
+            input = std::move(combined);
+        else
+            segs.clear();
     }
     // Issue #79: use the structured result so we can return a proper
     // exit code. The old code parsed the output for "diagnostics:"
     // which the formatter never produces (always returned 0).
     auto result = cs.typecheck_full(input);
-    std::print("{}", result.output);
+    if (segs.empty()) {
+        std::print("{}", result.output);
+        return result.has_errors ? 1 : 0;
+    }
+    // A combined text that does not parse keeps the plain face: there is no
+    // per-file map to attribute yet, and the message already names the form.
+    if (result.output.rfind("type: ", 0) != 0) {
+        std::print("{}", result.output);
+        return 1;
+    }
+    // Multi-file program: name the file each diagnostic came from, with the
+    // line local to that file (the combined text keeps every segment's
+    // newlines, so a global line maps back by segment offset).
+    const auto type_eol = result.output.find('\n');
+    if (type_eol != std::string::npos)
+        std::print("{}\n", result.output.substr(0, type_eol));
+    if (result.diagnostics.empty()) {
+        std::print("no errors\n");
+        return 0;
+    }
+    for (const auto& d : result.diagnostics) {
+        const int global_line = static_cast<int>(d.location.line);
+        const TypecheckSegment5250* owner = &segs.front();
+        for (const auto& s : segs)
+            if (global_line > 0 && s.first_line <= global_line)
+                owner = &s;
+        const int local_line = global_line > 0 ? global_line - owner->first_line + 1 : 0;
+        // #5240: keep the single-file face's shape ("<line>:<col>: <kind>:
+        // <message>") and only prefix the owning file.
+        std::string text = d.format();
+        if (local_line > 0) {
+            const auto sep = text.find(':');
+            if (sep != std::string::npos)
+                text = std::to_string(local_line) + text.substr(sep);
+            std::print("{}{}\n", owner->path + ":", text);
+        } else {
+            std::print("{}: {}\n", owner->path, text);
+        }
+    }
     return result.has_errors ? 1 : 0;
 }
 

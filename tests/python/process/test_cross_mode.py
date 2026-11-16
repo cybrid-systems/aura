@@ -25,6 +25,7 @@ PARTS = (
     "xmode_macro_followup",
     "xmode_when_unless",
     "xmode_workflow",
+    "xmode_typecheck",
 )
 CASES = (
     (
@@ -236,6 +237,26 @@ CASES = (
         4904,
         "test_all_faces",
         "xmode_workflow.TestForceSoaWorkflow4904.test_all_faces",
+    ),
+    (
+        5250,
+        "test_ill_typed_body_every_face",
+        "xmode_typecheck.TypecheckThreePaths.test_ill_typed_body_every_face",
+    ),
+    (
+        5250,
+        "test_legal_body_every_face",
+        "xmode_typecheck.TypecheckThreePaths.test_legal_body_every_face",
+    ),
+    (
+        5250,
+        "test_typecheck_follows_require",
+        "xmode_typecheck.TypecheckThreePaths.test_typecheck_follows_require",
+    ),
+    (
+        5250,
+        "test_required_file_diagnostic_names_that_file",
+        "xmode_typecheck.TypecheckThreePaths.test_required_file_diagnostic_names_that_file",
     ),
 )
 
