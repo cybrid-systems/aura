@@ -66,8 +66,8 @@ enum class MutateTypeGate : std::uint8_t { Soft = 0, Hard = 1 };
 
 // Process-wide mode. Default Soft so unit tests / fuzzer do not mass-break.
 inline std::atomic<std::uint8_t>& g_mode() noexcept {
-    static std::atomic<std::uint8_t> m{static_cast<std::uint8_t>(MutateTypeGate::Soft)};
-    return m;
+    static std::atomic<std::uint8_t> mode_cell{static_cast<std::uint8_t>(MutateTypeGate::Soft)};
+    return mode_cell;
 }
 
 // Observability (process-wide freestanding atomics — avoid static Metrics
@@ -89,8 +89,8 @@ inline std::atomic<std::uint8_t> g_production_locked{0};
 inline std::atomic<std::uint8_t> g_soft_override_allowed{0};
 inline std::atomic<std::uint64_t> g_soft_in_production_alarm_total{0};
 
-inline void set_mode(MutateTypeGate m) noexcept {
-    g_mode().store(static_cast<std::uint8_t>(m), std::memory_order_relaxed);
+inline void set_mode(MutateTypeGate gate_mode) noexcept {
+    g_mode().store(static_cast<std::uint8_t>(gate_mode), std::memory_order_relaxed);
 }
 
 [[nodiscard]] inline MutateTypeGate mode() noexcept {
@@ -105,16 +105,16 @@ inline void set_mode(MutateTypeGate m) noexcept {
     return g_production_locked.load(std::memory_order_relaxed) != 0;
 }
 
-inline void set_production_locked(bool v) noexcept {
-    g_production_locked.store(v ? 1 : 0, std::memory_order_relaxed);
+inline void set_production_locked(bool locked) noexcept {
+    g_production_locked.store(locked ? 1 : 0, std::memory_order_relaxed);
 }
 
 [[nodiscard]] inline bool allow_soft_override() noexcept {
     return g_soft_override_allowed.load(std::memory_order_relaxed) != 0;
 }
 
-inline void set_soft_override_allowed(bool v) noexcept {
-    g_soft_override_allowed.store(v ? 1 : 0, std::memory_order_relaxed);
+inline void set_soft_override_allowed(bool allowed) noexcept {
+    g_soft_override_allowed.store(allowed ? 1 : 0, std::memory_order_relaxed);
 }
 
 [[nodiscard]] inline std::uint64_t soft_in_production_alarm_total() noexcept {
@@ -127,15 +127,15 @@ inline void bump_soft_in_production_alarm() noexcept {
 
 // Apply AURA_MUTATE_TYPE_GATE env when set; returns true if env applied.
 inline bool apply_env_override() noexcept {
-    const char* e = ::aura::config::raw(::aura::config::Key::AURA_MUTATE_TYPE_GATE);
-    if (!e || !*e)
+    const char* env_name = ::aura::config::raw(::aura::config::Key::AURA_MUTATE_TYPE_GATE);
+    if (!env_name || !*env_name)
         return false;
-    std::string_view v(e);
-    if (v == "hard" || v == "1" || v == "true" || v == "on" || v == "strict") {
+    std::string_view value(env_name);
+    if (value == "hard" || value == "1" || value == "true" || value == "on" || value == "strict") {
         set_mode(MutateTypeGate::Hard);
         return true;
     }
-    if (v == "soft" || v == "0" || v == "false" || v == "off") {
+    if (value == "soft" || value == "0" || value == "false" || value == "off") {
         set_mode(MutateTypeGate::Soft);
         return true;
     }
@@ -144,20 +144,20 @@ inline bool apply_env_override() noexcept {
 
 // Read AURA_ALLOW_SOFT_TYPE_GATE; returns true if set to a truthy value.
 [[nodiscard]] inline bool read_allow_soft_override_env() noexcept {
-    const char* e = ::aura::config::raw(::aura::config::Key::AURA_ALLOW_SOFT_TYPE_GATE);
-    if (!e || !*e)
+    const char* env_name = ::aura::config::raw(::aura::config::Key::AURA_ALLOW_SOFT_TYPE_GATE);
+    if (!env_name || !*env_name)
         return false;
-    std::string_view v(e);
-    return v == "1" || v == "true" || v == "yes" || v == "on";
+    std::string_view value(env_name);
+    return value == "1" || value == "true" || value == "yes" || value == "on";
 }
 
 // Read AURA_HARD_TYPE_GATE_ABORT; returns true if set to a truthy value.
 [[nodiscard]] inline bool read_hard_type_gate_abort_env() noexcept {
-    const char* e = ::aura::config::raw(::aura::config::Key::AURA_HARD_TYPE_GATE_ABORT);
-    if (!e || !*e)
+    const char* env_name = ::aura::config::raw(::aura::config::Key::AURA_HARD_TYPE_GATE_ABORT);
+    if (!env_name || !*env_name)
         return false;
-    std::string_view v(e);
-    return v == "1" || v == "true" || v == "yes" || v == "on";
+    std::string_view value(env_name);
+    return value == "1" || value == "true" || value == "yes" || value == "on";
 }
 
 // Issue #2279: production startup / first-mutate check. Bumps alarm
@@ -304,19 +304,19 @@ inline std::atomic<std::uint64_t> g_contract_deferred_total{0};
 inline std::atomic<std::uint64_t> g_contract_parse_error_total{0};
 
 inline std::atomic<std::uint64_t>& contract_installed_gen() noexcept {
-    static std::atomic<std::uint64_t> g{0};
-    return g;
+    static std::atomic<std::uint64_t> generation_cell{0};
+    return generation_cell;
 }
 
 inline std::atomic<bool>& contract_active_flag() noexcept {
-    static std::atomic<bool> a{false};
-    return a;
+    static std::atomic<bool> active_cell{false};
+    return active_cell;
 }
 
 inline std::atomic<std::shared_ptr<const ContractSummary>>& contract_summary() noexcept {
-    static std::atomic<std::shared_ptr<const ContractSummary>> s{
+    static std::atomic<std::shared_ptr<const ContractSummary>> summary_cell{
         std::make_shared<const ContractSummary>()};
-    return s;
+    return summary_cell;
 }
 
 [[nodiscard]] inline std::uint64_t installed_contract_gen() noexcept {
@@ -329,13 +329,13 @@ namespace contract_digest_detail {
         std::vector<std::string> out;
         std::size_t start = 0;
         while (start <= text.size()) {
-            const std::size_t at = text.find(sep, start);
-            const std::size_t end = at == std::string_view::npos ? text.size() : at;
+            const std::size_t pos = text.find(sep, start);
+            const std::size_t end = pos == std::string_view::npos ? text.size() : pos;
             if (end > start)
                 out.emplace_back(text.substr(start, end - start));
-            if (at == std::string_view::npos)
+            if (pos == std::string_view::npos)
                 break;
-            start = at + 1;
+            start = pos + 1;
         }
         return out;
     }
@@ -343,13 +343,13 @@ namespace contract_digest_detail {
     [[nodiscard]] inline bool parse_u64(std::string_view text, std::uint64_t& out) {
         if (text.empty() || text.size() > 20)
             return false;
-        std::uint64_t v = 0;
+        std::uint64_t value = 0;
         for (const char c : text) {
             if (c < '0' || c > '9')
                 return false;
-            v = v * 10 + static_cast<std::uint64_t>(c - '0');
+            value = value * 10 + static_cast<std::uint64_t>(c - '0');
         }
-        out = v;
+        out = value;
         return true;
     }
 
@@ -442,24 +442,24 @@ struct ContractRuling {
 // be attributed without a name, and the std layer's delta check covers it.
 [[nodiscard]] inline ContractRuling check_contract_mutation(std::string_view prim,
                                                             std::string_view name) {
-    ContractRuling r;
+    ContractRuling ruling;
     if (name.empty() || !contract_name_target(prim) ||
         !contract_active_flag().load(std::memory_order_relaxed))
-        return r;
+        return ruling;
     // A re-install can race a check; the shared_ptr load keeps the summary
     // alive for the duration of this decision.
     const auto summary = contract_summary().load(std::memory_order_acquire);
     if (!summary || !summary->active)
-        return r;
+        return ruling;
     const bool protected_name =
         std::find(summary->protected_names.begin(), summary->protected_names.end(), name) !=
         summary->protected_names.end();
     if (!protected_name)
-        return r;
+        return ruling;
     g_contract_check_total.fetch_add(1, std::memory_order_relaxed);
-    r.name = std::string(name);
-    r.version = summary->version;
-    r.digest = summary->hash;
+    ruling.name = std::string(name);
+    ruling.version = summary->version;
+    ruling.digest = summary->hash;
     const ContractAllowRow* row = nullptr;
     for (const auto& cand : summary->allow) {
         if (cand.name == name) {
@@ -469,10 +469,10 @@ struct ContractRuling {
     }
     if (row == nullptr || row->ops.empty()) {
         // No operator may change it — the #5317 bypass face.
-        r.rejected = true;
-        r.detail = "protected-no-operator";
+        ruling.rejected = true;
+        ruling.detail = "protected-no-operator";
     } else {
-        r.allowed = row->ops;
+        ruling.allowed = row->ops;
         bool names_engine_prim = false;
         bool allowed_here = false;
         for (const auto& op : row->ops) {
@@ -483,42 +483,42 @@ struct ContractRuling {
         }
         if (!allowed_here) {
             if (names_engine_prim) {
-                r.rejected = true;
-                r.detail = "protected-op-not-allowed";
+                ruling.rejected = true;
+                ruling.detail = "protected-op-not-allowed";
             } else {
                 // Std-operator allow list: std/contract already ran the
                 // pre-check on the path that carries this operator name.
                 g_contract_deferred_total.fetch_add(1, std::memory_order_relaxed);
-                return r;
+                return ruling;
             }
         }
     }
-    if (r.rejected)
+    if (ruling.rejected)
         g_contract_reject_total.fetch_add(1, std::memory_order_relaxed);
-    return r;
+    return ruling;
 }
 
 // The queryable reason a refusal carries: the same vocabulary as the #5255
 // gate report (kind / version / invariant / subject / detail).
-[[nodiscard]] inline std::string contract_refusal_message(const ContractRuling& r,
+[[nodiscard]] inline std::string contract_refusal_message(const ContractRuling& ruling,
                                                           std::string_view prim) {
-    std::string msg =
-        "constraint set v" + std::to_string(r.version) + " (digest " + r.digest + ") protects ";
-    msg += r.name;
+    std::string msg = "constraint set v" + std::to_string(ruling.version) + " (digest " +
+                      ruling.digest + ") protects ";
+    msg += ruling.name;
     msg += ": ";
-    msg += r.detail;
+    msg += ruling.detail;
     msg += " (op ";
     msg += prim;
-    if (r.allowed.empty()) {
+    if (ruling.allowed.empty()) {
         msg += "; no operator may change it)";
     } else {
         msg += "; allowed: ";
-        for (std::size_t i = 0; i < r.allowed.size(); ++i) {
+        for (std::size_t i = 0; i < ruling.allowed.size(); ++i) {
             if (i != 0)
-                msg += ",";
-            msg += r.allowed[i];
+                msg += ',';
+            msg += ruling.allowed[i];
         }
-        msg += ")";
+        msg += ')';
     }
     return msg;
 }
@@ -548,31 +548,35 @@ struct Snapshot {
 };
 
 [[nodiscard]] inline Snapshot snapshot() noexcept {
-    Snapshot s;
-    s.mode = static_cast<std::int64_t>(g_mode().load(std::memory_order_relaxed));
-    s.soft_type_skip_total = g_soft_type_skip_total.load(std::memory_order_relaxed);
-    s.exhaustiveness_reject_total = g_exhaustiveness_reject_total.load(std::memory_order_relaxed);
-    s.hard_type_error_reject_total = g_hard_type_error_reject_total.load(std::memory_order_relaxed);
-    s.gate_check_total = g_gate_check_total.load(std::memory_order_relaxed);
-    s.wired = g_wired.load(std::memory_order_relaxed);
-    s.production_locked =
+    Snapshot snapshot_state;
+    snapshot_state.mode = static_cast<std::int64_t>(g_mode().load(std::memory_order_relaxed));
+    snapshot_state.soft_type_skip_total = g_soft_type_skip_total.load(std::memory_order_relaxed);
+    snapshot_state.exhaustiveness_reject_total =
+        g_exhaustiveness_reject_total.load(std::memory_order_relaxed);
+    snapshot_state.hard_type_error_reject_total =
+        g_hard_type_error_reject_total.load(std::memory_order_relaxed);
+    snapshot_state.gate_check_total = g_gate_check_total.load(std::memory_order_relaxed);
+    snapshot_state.wired = g_wired.load(std::memory_order_relaxed);
+    snapshot_state.production_locked =
         static_cast<std::int64_t>(g_production_locked.load(std::memory_order_relaxed));
-    s.soft_override_allowed =
+    snapshot_state.soft_override_allowed =
         static_cast<std::int64_t>(g_soft_override_allowed.load(std::memory_order_relaxed));
-    s.soft_in_production_alarm_total =
+    snapshot_state.soft_in_production_alarm_total =
         g_soft_in_production_alarm_total.load(std::memory_order_relaxed);
-    s.schema = kMutateTypeGateIssue;
-    s.schema_lock = kMutateTypeGateLockIssue;
+    snapshot_state.schema = kMutateTypeGateIssue;
+    snapshot_state.schema_lock = kMutateTypeGateLockIssue;
     const auto contract = contract_summary().load(std::memory_order_relaxed);
-    s.contract_active = contract && contract->active ? 1 : 0;
-    s.contract_version = contract ? contract->version : 0;
-    s.contract_generation = installed_contract_gen();
-    s.contract_check_total = g_contract_check_total.load(std::memory_order_relaxed);
-    s.contract_reject_total = g_contract_reject_total.load(std::memory_order_relaxed);
-    s.contract_deferred_total = g_contract_deferred_total.load(std::memory_order_relaxed);
-    s.contract_parse_error_total = g_contract_parse_error_total.load(std::memory_order_relaxed);
-    s.schema_contract = kMutateContractGateIssue;
-    return s;
+    snapshot_state.contract_active = contract && contract->active ? 1 : 0;
+    snapshot_state.contract_version = contract ? contract->version : 0;
+    snapshot_state.contract_generation = installed_contract_gen();
+    snapshot_state.contract_check_total = g_contract_check_total.load(std::memory_order_relaxed);
+    snapshot_state.contract_reject_total = g_contract_reject_total.load(std::memory_order_relaxed);
+    snapshot_state.contract_deferred_total =
+        g_contract_deferred_total.load(std::memory_order_relaxed);
+    snapshot_state.contract_parse_error_total =
+        g_contract_parse_error_total.load(std::memory_order_relaxed);
+    snapshot_state.schema_contract = kMutateContractGateIssue;
+    return snapshot_state;
 }
 
 inline void reset_for_test() noexcept {
