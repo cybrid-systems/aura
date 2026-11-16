@@ -73,6 +73,38 @@ using types::make_void;
 
 namespace {
 
+    // Issue #5313: R7RS four-deep cxr. `steps` is the walk applied to the
+    // value, left to right ('a' = car, 'd' = cdr), which is the reverse of
+    // the letters between c and r. Each step takes the same per-slot tenant
+    // gate as cadr/caddr (#4505) before the field read. A missing or
+    // non-pair spine is void, matching caar/cadr; the final field is
+    // returned even when it is not a pair.
+    EvalValue cxr_walk(Evaluator& ev, std::pmr::vector<Pair>& pairs, std::span<const EvalValue> a,
+                       const char* name, const char* steps) {
+        if (a.empty() || !is_pair(a[0]) || steps == nullptr)
+            return make_void();
+        auto idx = as_pair_idx(a[0]);
+        if (idx >= pairs.size())
+            return make_void();
+        for (const char* s = steps; *s != '\0'; ++s) {
+            if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/false,
+                                               /*required_effects=*/0, name)) {
+                return ev.make_typed_error(std::string(name) +
+                                               ": cross-tenant pair slot read denied (#4505)",
+                                           aura::diag::ErrorKind::EffectDenied);
+            }
+            const auto field = (*s == 'a') ? pairs[idx].car : pairs[idx].cdr;
+            if (s[1] == '\0')
+                return field;
+            if (!is_pair(field))
+                return make_void();
+            idx = as_pair_idx(field);
+            if (idx >= pairs.size())
+                return make_void();
+        }
+        return make_void();
+    }
+
     EvalValue radix_out_of_range(Evaluator& ev, std::vector<EvalValue>& error_values,
                                  const char* who) {
         auto idx = static_cast<std::uint64_t>(
@@ -942,6 +974,107 @@ void RegSplitParts::register_pair_shorthands_rest(
             return pairs[di].cdr;
         },
         pure_general(1, "(pair) -> any", "cdr of cddr."));
+
+    // Issue #5313: the four-deep names the R7RS cxr table already calls
+    // kernel primitives. String literals stay on register_prim so the
+    // surface scan sees them. The walk is the reverse of the letters
+    // between c and r.
+    register_prim(
+        add, ev, "caaaar",
+        [&ev, &pairs](std::span<const EvalValue> a) -> EvalValue {
+            return cxr_walk(ev, pairs, a, "caaaar", "aaaa");
+        },
+        pure_general(1, "(pair) -> any", "car of caaar."));
+    register_prim(
+        add, ev, "caaadr",
+        [&ev, &pairs](std::span<const EvalValue> a) -> EvalValue {
+            return cxr_walk(ev, pairs, a, "caaadr", "daaa");
+        },
+        pure_general(1, "(pair) -> any", "car of caadr."));
+    register_prim(
+        add, ev, "caadar",
+        [&ev, &pairs](std::span<const EvalValue> a) -> EvalValue {
+            return cxr_walk(ev, pairs, a, "caadar", "adaa");
+        },
+        pure_general(1, "(pair) -> any", "car of cadar."));
+    register_prim(
+        add, ev, "caaddr",
+        [&ev, &pairs](std::span<const EvalValue> a) -> EvalValue {
+            return cxr_walk(ev, pairs, a, "caaddr", "ddaa");
+        },
+        pure_general(1, "(pair) -> any", "car of caddr."));
+    register_prim(
+        add, ev, "cadaar",
+        [&ev, &pairs](std::span<const EvalValue> a) -> EvalValue {
+            return cxr_walk(ev, pairs, a, "cadaar", "aada");
+        },
+        pure_general(1, "(pair) -> any", "car of cdaar."));
+    register_prim(
+        add, ev, "cadadr",
+        [&ev, &pairs](std::span<const EvalValue> a) -> EvalValue {
+            return cxr_walk(ev, pairs, a, "cadadr", "dada");
+        },
+        pure_general(1, "(pair) -> any", "car of cdadr."));
+    register_prim(
+        add, ev, "caddar",
+        [&ev, &pairs](std::span<const EvalValue> a) -> EvalValue {
+            return cxr_walk(ev, pairs, a, "caddar", "adda");
+        },
+        pure_general(1, "(pair) -> any", "car of cddar."));
+    register_prim(
+        add, ev, "cadddr",
+        [&ev, &pairs](std::span<const EvalValue> a) -> EvalValue {
+            return cxr_walk(ev, pairs, a, "cadddr", "ddda");
+        },
+        pure_general(1, "(pair) -> any", "car of cdddr."));
+    register_prim(
+        add, ev, "cdaaar",
+        [&ev, &pairs](std::span<const EvalValue> a) -> EvalValue {
+            return cxr_walk(ev, pairs, a, "cdaaar", "aaad");
+        },
+        pure_general(1, "(pair) -> any", "cdr of caaar."));
+    register_prim(
+        add, ev, "cdaadr",
+        [&ev, &pairs](std::span<const EvalValue> a) -> EvalValue {
+            return cxr_walk(ev, pairs, a, "cdaadr", "daad");
+        },
+        pure_general(1, "(pair) -> any", "cdr of caadr."));
+    register_prim(
+        add, ev, "cdadar",
+        [&ev, &pairs](std::span<const EvalValue> a) -> EvalValue {
+            return cxr_walk(ev, pairs, a, "cdadar", "adad");
+        },
+        pure_general(1, "(pair) -> any", "cdr of cadar."));
+    register_prim(
+        add, ev, "cdaddr",
+        [&ev, &pairs](std::span<const EvalValue> a) -> EvalValue {
+            return cxr_walk(ev, pairs, a, "cdaddr", "ddad");
+        },
+        pure_general(1, "(pair) -> any", "cdr of caddr."));
+    register_prim(
+        add, ev, "cddaar",
+        [&ev, &pairs](std::span<const EvalValue> a) -> EvalValue {
+            return cxr_walk(ev, pairs, a, "cddaar", "aadd");
+        },
+        pure_general(1, "(pair) -> any", "cdr of cdaar."));
+    register_prim(
+        add, ev, "cddadr",
+        [&ev, &pairs](std::span<const EvalValue> a) -> EvalValue {
+            return cxr_walk(ev, pairs, a, "cddadr", "dadd");
+        },
+        pure_general(1, "(pair) -> any", "cdr of cdadr."));
+    register_prim(
+        add, ev, "cdddar",
+        [&ev, &pairs](std::span<const EvalValue> a) -> EvalValue {
+            return cxr_walk(ev, pairs, a, "cdddar", "addd");
+        },
+        pure_general(1, "(pair) -> any", "cdr of cddar."));
+    register_prim(
+        add, ev, "cddddr",
+        [&ev, &pairs](std::span<const EvalValue> a) -> EvalValue {
+            return cxr_walk(ev, pairs, a, "cddddr", "dddd");
+        },
+        pure_general(1, "(pair) -> any", "cdr of cdddr."));
 }
 
 void RegSplitParts::register_mutable_pair_ops(PrimRegistrar add, Evaluator& ev,

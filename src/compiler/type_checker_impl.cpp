@@ -4603,6 +4603,23 @@ void InferenceEngine::init_primitive_env_part0(TypeId Int, TypeId Bool, TypeId F
     register_primitive("cdadr", {Dyn}, Dyn);
     register_primitive("cddar", {Dyn}, Dyn);
     register_primitive("cdddr", {Dyn}, Dyn);
+    // Issue #5313: four-deep cxr, same Dyn reader type as caddr/cdddr.
+    register_primitive("caaaar", {Dyn}, Dyn);
+    register_primitive("caaadr", {Dyn}, Dyn);
+    register_primitive("caadar", {Dyn}, Dyn);
+    register_primitive("caaddr", {Dyn}, Dyn);
+    register_primitive("cadaar", {Dyn}, Dyn);
+    register_primitive("cadadr", {Dyn}, Dyn);
+    register_primitive("caddar", {Dyn}, Dyn);
+    register_primitive("cadddr", {Dyn}, Dyn);
+    register_primitive("cdaaar", {Dyn}, Dyn);
+    register_primitive("cdaadr", {Dyn}, Dyn);
+    register_primitive("cdadar", {Dyn}, Dyn);
+    register_primitive("cdaddr", {Dyn}, Dyn);
+    register_primitive("cddaar", {Dyn}, Dyn);
+    register_primitive("cddadr", {Dyn}, Dyn);
+    register_primitive("cdddar", {Dyn}, Dyn);
+    register_primitive("cddddr", {Dyn}, Dyn);
 
     // Mutable pair operations
     register_primitive("set-car!", {Dyn, Dyn}, Void);
