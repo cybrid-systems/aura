@@ -123,6 +123,11 @@ class TestIssue5171ToolFile(unittest.TestCase):
             self.assertEqual(file.stdout, stdin.stdout)
             self.assertIn("query: 6 matches", file.stdout)
             self.assertNotIn("query: 3 matches", file.stdout)
+            # Issue #5249: the line carries the node kind NAME, not only the
+            # integer tag — an agent reading --query output must not have to
+            # map tag numbers back to NodeTag.
+            self.assertRegex(file.stdout, r"node\[0\]: [A-Za-z]+ \(tag=\d+\)")
+            self.assertNotRegex(file.stdout, r"node\[\d+\]: tag=\d+")
 
             missing = run_aura(["--query", ":defines", "missing.aura"], cwd=root)
             self.assertEqual(missing.returncode, 1, missing.stderr)
