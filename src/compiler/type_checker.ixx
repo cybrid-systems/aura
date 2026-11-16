@@ -4318,9 +4318,16 @@ public:
     void apply_status_updates(aura::ast::FlatAST& flat) const {
         if (status_updates_.empty())
             return;
-        for (auto& rec : flat.all_mutations()) {
-            if (auto it = status_updates_.find(rec.mutation_id); it != status_updates_.end())
-                rec.invariant_status = it->second;
+        auto& log = flat.all_mutations();
+        for (std::size_t i = 0; i < log.size(); ++i) {
+            const auto it = status_updates_.find(log[i].mutation_id);
+            if (it == status_updates_.end() || log[i].invariant_status == it->second)
+                continue;
+            log[i].invariant_status = it->second;
+            // Issue #5312: a frozen snapshot chunk must see this stamp.
+            // Tail records (the usual post-rebind case) are not published
+            // yet, so this is a no-op there.
+            flat.note_mutation_record_written(i);
         }
     }
 

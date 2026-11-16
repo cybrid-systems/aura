@@ -565,6 +565,10 @@ void RegSplitParts::register_persist_deserialize(PrimRegistrar add, Evaluator& e
             // Issue #4367: names were captured on the pre-save tree.
             remap_define_mutation_targets(ev.workspace_pool_, *ev.workspace_flat_,
                                           blob.define_targets);
+            // Issue #5312: clear()+refill replaced the vector. The
+            // rollback index and any frozen snapshot chunks still
+            // described the previous log.
+            ev.workspace_flat_->rebuild_mutation_log_rollback_index();
             ev.unlock_workspace_unique();
         }
 
