@@ -80,6 +80,20 @@ static std::string read_file(const char* path) {
     return {};
 }
 
+// #5246: build.py is the CLI core; command bodies live in tools/build/*.py.
+// Read the union so source pins survive the module split (and keep matching
+// when another group moves).
+static std::string read_build_source() {
+    std::string all = read_file("build.py");
+    std::error_code ec;
+    for (std::filesystem::directory_iterator it("tools/build", ec), end; !ec && it != end;
+         it.increment(ec)) {
+        if (it->path().extension() == ".py")
+            all += "\n" + read_file(it->path().string().c_str());
+    }
+    return all;
+}
+
 static std::int64_t href(CompilerService& cs, std::string_view key) {
     auto r = cs.eval(std::format(
         "(hash-ref (engine:metrics \"query:type-incremental-fidelity-stats\") \"{}\")", key));
@@ -316,7 +330,7 @@ static void ac2991_5_source_linter() {
     const auto cm = read_file("src/compiler/coercion_map.ixx");
     const auto impl = read_file("src/compiler/type_checker_impl.cpp");
     const auto t = read_file("tests/compiler/test_coercion_stamp_at_add.cpp");
-    const auto build = read_file("build.py");
+    const auto build = read_build_source();
     const auto lint = read_file("scripts/coverage/manifests/2991.json");
     CHECK(cm.find("#2991") != std::string::npos, "AC5: coercion_map cites #2991");
     CHECK(cm.find("resolve_deferred_coercion_provenance") != std::string::npos, "AC5: resolver");
@@ -405,7 +419,7 @@ static void ac3046_5_source_cites() {
           "3046 AC5: DCE sweep cites density keep");
     const auto lint = read_file("scripts/coverage/manifests/3046.json");
     CHECK(!lint.empty() && lint.find("#3046") != std::string::npos, "3046 AC5: linter");
-    CHECK(read_file("build.py").find("\"coverage\", lambda: _run_parallel_coverage_checks") !=
+    CHECK(read_build_source().find("\"coverage\", lambda: _run_parallel_coverage_checks") !=
               std::string::npos,
           "3046 AC5: build.py gate");
     CHECK(read_file("tests/compiler/test_issue_3046.cpp").empty(),
@@ -487,7 +501,7 @@ static void ac3318_4_no_new_schema() {
           "3318 AC4: reuse restamp key");
     CHECK(q.find("Issue #3318") != std::string::npos, "3318 AC4: query cite");
     const auto lint = read_file("scripts/coverage/manifests/3318.json");
-    const auto build = read_file("build.py");
+    const auto build = read_build_source();
     CHECK(!lint.empty() && lint.find("Issue #3318") != std::string::npos,
           "ac3318_4_no_new_schema: linter");
     CHECK(build.find("check_coercion_blame_epoch_restamp_3318") != std::string::npos,
