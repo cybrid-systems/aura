@@ -24,9 +24,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
-
 sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 CPP = "src/compiler/hot_update_registry.cpp"
 TEST = "tests/compiler/test_exhausted_min_dirty_reemit.cpp"

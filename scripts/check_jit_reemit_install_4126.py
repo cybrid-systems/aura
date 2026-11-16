@@ -33,9 +33,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
-
 sys.path.insert(0, str(Path(__file__).resolve().parent / "coverage" / "checks"))  # noqa: E402
+from _wiring import WIRED_TEXT as wired_text  # noqa: E402  (sibling helper)
 
 BRIDGE = "src/compiler/aura_jit_bridge.cpp"
 TEST = "tests/compiler/test_jit_aot_hot_update_unit_batch.cpp"
