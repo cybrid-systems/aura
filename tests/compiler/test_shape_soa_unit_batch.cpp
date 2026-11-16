@@ -26,7 +26,9 @@ int run_286_env_version_smoke() {
     CHECK(e.env_version() == 42, "set/get 42");
     CompilerService cs;
     CHECK(cs.eval("(define x 1)").has_value(), "define x");
-    CHECK(cs.eval("(let ((f (lambda (y) (+ x y)))) f)").has_value(), "capture lambda");
+    // A let-bound lambda is not a top-level binding: define it so the
+    // following call resolves instead of reporting unbound f.
+    CHECK(cs.eval("(define f (let ((g (lambda (y) (+ x y)))) g))").has_value(), "capture lambda");
     CHECK(cs.eval("(f 10)").has_value(), "apply stamps call env");
     const auto v = cs.evaluator().get_defuse_version();
     CHECK(v >= 0, "defuse_version readable");
