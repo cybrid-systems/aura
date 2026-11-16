@@ -175,6 +175,7 @@ def _self_test() -> int:
         "}\n"
         "wait_reclaimed_body(AgentHandle& h, std::optional<std::uint64_t> timeout_ms) noexcept {\n"
         "    std::this_thread::sleep_for(std::chrono::microseconds(200));\n"
+        "    wait_reclaimed_poll_once();\n"
         "    // no Fiber::join — re-join would race residual cleanup contracts\n"
         "}"
     )

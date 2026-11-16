@@ -222,7 +222,7 @@ def _self_test() -> int:
     # Bad: opt-out env removed — AC1/AC4 must trip.
     bad = _rows(
         sec_ok,
-        prov_ok.replace("AURA_MT_AUTODETECT", "AURA_MT_AUTODETECT_X"),
+        prov_ok.replace("AURA_MT_AUTODETECT", "AURA_MT_ENABLE"),
         iso_ok,
         quota_ok,
         se_ok,
