@@ -83,14 +83,25 @@ static std::string read_file(const char* path) {
 
 // #5246: build.py is the CLI core; command bodies live in tools/build/*.py.
 // Read the union so source pins survive the module split (and keep matching
-// when another group moves).
+// when another group moves). ctest starts in the build tree, so the module
+// directory is not "tools/build" relative to cwd — probe the same parents
+// read_file uses, or the chaos command bodies stay invisible.
 static std::string read_build_source() {
     std::string all = read_file("build.py");
-    std::error_code ec;
-    for (std::filesystem::directory_iterator it("tools/build", ec), end; !ec && it != end;
-         it.increment(ec)) {
-        if (it->path().extension() == ".py")
-            all += "\n" + read_file(it->path().string().c_str());
+    for (const char* root : {"tools/build", "../tools/build", "../../tools/build"}) {
+        std::error_code ec;
+        std::filesystem::directory_iterator it(root, ec), end;
+        if (ec)
+            continue;
+        bool any = false;
+        for (; !ec && it != end; it.increment(ec)) {
+            if (it->path().extension() == ".py") {
+                all += "\n" + read_file(it->path().string().c_str());
+                any = true;
+            }
+        }
+        if (any)
+            break;
     }
     return all;
 }
