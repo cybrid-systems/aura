@@ -411,6 +411,82 @@ static void ac8_named_let_calls_5304() {
     auto g = cs.eval(src);
     CHECK(g.has_value() && types::is_int(*g) && types::as_int(*g) == 1,
           "5304 values match and modulo stays within 3x of the const loop");
+
+    // A changing index, vector-length, and car stay on the integer loop.
+    // The broken path was ~13x the plain add. Length and car are one copy.
+    constexpr int kSteps = 200000;
+    std::int64_t mod_sum = 0;
+    for (int i = 0; i < kSteps; ++i)
+        mod_sum += (i % 8) + 1;
+    const std::string live =
+        "(define Vt (vector 1 2 3 4 5 6 7 8))\n"
+        "(define Vu (vector 1 2 3 4 5 6 7 8))\n"
+        "(define (sum-i v n) (let loop ((i 0) (s 0)) (if (>= i n) s (loop (+ i 1) (+ s (vector-ref "
+        "v i))))))\n"
+        "(define (sum-off v n) (let loop ((i 1) (s 0)) (if (> i n) s (loop (+ i 1) (+ s "
+        "(vector-ref "
+        "v (- i 1)))))))\n"
+        "(define (sum-len v n) (let loop ((i 0) (s 0)) (if (>= i n) s (loop (+ i 1) (+ s "
+        "(vector-length v))))))\n"
+        "(define (sum-car p n) (let loop ((i 0) (s 0)) (if (>= i n) s (loop (+ i 1) (+ s (car "
+        "p))))))\n"
+        "(define (sum-mod n) (let loop ((i 0) (s 0)) (if (>= i n) s (loop (+ i 1) (+ s (vector-ref "
+        "Vu (modulo i 8)))))))\n"
+        "(define (sum-plain n) (let loop ((i 0) (s 0)) (if (>= i n) s (loop (+ i 1) (+ s i)))))\n"
+        "(define (sum-sh v n) (let ((vector-ref (lambda (a b) 1))) (let loop ((i 0) (s 0)) (if (>= "
+        "i n) s (loop (+ i 1) (+ s (vector-ref v i)))))))\n"
+        "(define (sum-f v n) (let loop ((i 0) (s 0.0)) (if (>= i n) s (loop (+ i 1) (+ s "
+        "(vector-ref v i))))))\n"
+        "(define p (cons 6 0))\n"
+        "(define a (sum-i (vector 1 2 3 4) 4))\n"
+        "(define b (sum-off (vector 1 2 3 4) 4))\n"
+        "(define c (sum-len Vt 5))\n"
+        "(define d (sum-car p 5))\n"
+        "(set-car! p 8)\n"
+        "(define d2 (sum-car p 5))\n"
+        "(define e (sum-sh (vector 9 9 9 9) 4))\n"
+        "(define f (sum-f (vector 1.5 2.5) 2))\n"
+        "(vector-set! Vt 1 10)\n"
+        "(define a2 (sum-i Vt 4))\n"
+        "(define t0 (monotonic-ms))\n"
+        "(define rp (sum-plain " +
+        std::to_string(kSteps) +
+        "))\n"
+        "(define t1 (monotonic-ms))\n"
+        "(define rm (sum-mod " +
+        std::to_string(kSteps) +
+        "))\n"
+        "(define t2 (monotonic-ms))\n"
+        "(define rl (sum-len Vt " +
+        std::to_string(kSteps) +
+        "))\n"
+        "(define t3 (monotonic-ms))\n"
+        "(define rc (sum-car (cons 1 2) " +
+        std::to_string(kSteps) +
+        "))\n"
+        "(define t4 (monotonic-ms))\n"
+        "(display (list a b c d d2 e f a2 rp rm rl rc (- t1 t0) (- t2 t1) (- t3 t2) (- t4 t3)))\n"
+        "(newline)\n"
+        "(if (and (= a 10) (= b 10) (= c 40) (= d 30) (= d2 40) (= e 4) (= f 4.0) (= a2 18)"
+        " (= rp " +
+        std::to_string(static_cast<long long>(kSteps) * (kSteps - 1) / 2) + ") (= rm " +
+        std::to_string(mod_sum) + ") (= rl " + std::to_string(static_cast<long long>(8) * kSteps) +
+        ") (= rc " + std::to_string(kSteps) +
+        ")"
+        " (< (- t2 t1) (+ (* (- t1 t0) 6) 40))"
+        " (< (- t3 t2) (+ (* (- t1 t0) 3) 20))"
+        " (< (- t4 t3) (+ (* (- t1 t0) 3) 20))) 1 0)\n";
+    auto live_r = cs.eval(live);
+    CHECK(live_r.has_value() && types::is_int(*live_r) && types::as_int(*live_r) == 1,
+          "5304 variable vector-ref, length, and car match and stay near the add loop");
+    auto oob =
+        cs.eval("(let ((v (vector 1))) (let loop ((i 0) (s 0)) (if (>= i 3) s (loop (+ i 1) (+ s "
+                "(vector-ref v i))))))");
+    CHECK(oob.has_value() && is_error(*oob), "5304 vector-ref past the end still errors");
+    auto neg = cs.eval(
+        "(let ((v (vector 1 2 3))) (let loop ((i 0) (s 0)) (if (>= i 2) s (loop (+ i 1) (+ s "
+        "(vector-ref v (- i 1)))))))");
+    CHECK(neg.has_value() && is_error(*neg), "5304 negative vector-ref still errors");
 }
 
 } // namespace
