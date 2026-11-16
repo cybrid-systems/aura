@@ -1,0 +1,286 @@
+;
+; Issue #5252 wave 2 — the mutate:* operator catalog and the gate on the
+; refactor paths.
+;
+; The catalog is data an Agent can enumerate: 30 rows, one per callable
+; mutate:* (hidden at the primitive level, #5141 / #5144). The names are not
+; hand-maintained in parallel with the engine: this file parses
+; kMutateHygieneInventory — the registration point's review table (#4665) —
+; and fails when the catalog and the registry drift apart. The same table
+; supplies each row's hygiene policy.
+;
+; The refactor:* / safe-refactor:* results go through the one #5255 gate:
+; KEEP commits, ROLLBACK restores the snapshot, and with nothing installed
+; the pre-#5255 result stands with gate="none" recorded in *-last-gate.
+(require "std/test" all:)
+(require "std/mutate" all:)
+(require "std/refactor" all:)
+(require "std/safe-refactor" all:)
+(require "std/gate" all:)
+(require "std/contract" all:)
+(require "std/fs" all:)
+(require "std/string" all:)
+
+(test-file "mutate_catalog.aura")
+
+; ── helpers ──────────────────────────────────────────────────────
+(define (mc-clean!)
+  (gate:uninstall!)
+  (contract:deactivate!)
+  (contract:reset-failures!))
+
+(define *mc-registry-path* "src/compiler/evaluator_primitives_mutate.cpp")
+
+; The quoted token right after \"mutate: in a line of the inventory table.
+(define (mc-name-after-marker rest)
+  (let ((q (string-find rest "\"")))
+    (if (< q 0) "" (substring rest 0 q))))
+
+; Rows of kMutateHygieneInventory as (name policy); policy is the #4665
+; Required/Exempt column, read from the same line as the name.
+(define (mc-registry-rows)
+  (let* ((src (file-read *mc-registry-path*))
+         (mark (if (string? src)
+                   (string-find src "kMutateHygieneInventory[] = {")
+                   -1))
+         (tail (if (>= mark 0) (substring src mark (string-length src)) ""))
+         (close (if (string=? tail "") -1 (string-find tail "};")))
+         (block (if (>= close 0) (substring tail 0 close) ""))
+         (lines (if (string=? block "") (list) (string-split block "\n"))))
+    (let loop ((ls lines) (acc (list)))
+      (cond
+        ((null? ls) (reverse acc))
+        ((not (string-contains? (car ls) "\"mutate:")) (loop (cdr ls) acc))
+        (else
+         (let* ((line (car ls))
+                (q1 (string-find line "\"mutate:"))
+                (rest (substring line (+ q1 1) (string-length line)))
+                (name (mc-name-after-marker rest))
+                (policy (cond ((string-contains? line "MutateHygienePolicy::Required")
+                               "required")
+                              ((string-contains? line "MutateHygienePolicy::Exempt")
+                               "exempt")
+                              (else "unknown"))))
+           (loop (cdr ls) (cons (list name policy) acc))))))))
+
+(define (mc-registry-names)
+  (let loop ((rs (mc-registry-rows)) (acc (list)))
+    (cond ((null? rs) (reverse acc))
+          (else (loop (cdr rs) (cons (car (car rs)) acc))))))
+
+(define (mc-name-in? n xs)
+  (let loop ((ys xs))
+    (cond ((null? ys) #f)
+          ((string=? n (car ys)) #t)
+          (else (loop (cdr ys))))))
+
+; Names in want that are absent from have.
+(define (mc-missing want have)
+  (let loop ((ws want) (acc (list)))
+    (cond ((null? ws) (reverse acc))
+          ((mc-name-in? (car ws) have) (loop (cdr ws) acc))
+          (else (loop (cdr ws) (cons (car ws) acc))))))
+
+; Registry rows whose hygiene column differs from the catalog row.
+(define (mc-policy-drift)
+  (let loop ((rs (mc-registry-rows)) (acc (list)))
+    (cond
+      ((null? rs) (reverse acc))
+      (else
+       (let* ((n (car (car rs)))
+              (want (car (cdr (car rs))))
+              (row (mutate:catalog-entry n))
+              (have (if (hash? row) (hash-ref row "hygiene" "missing") "missing")))
+         (loop (cdr rs) (if (equal? want have) acc (cons n acc))))))))
+
+(define (mc-protected-names)
+  (let loop ((rs (mutate:catalog)) (acc (list)))
+    (cond ((null? rs) (reverse acc))
+          ((equal? #t (hash-ref (car rs) "protected?" #f))
+           (loop (cdr rs) (cons (hash-ref (car rs) "name") acc)))
+          (else (loop (cdr rs) acc)))))
+
+(define (mc-shape-problems)
+  (let loop ((rs (mutate:catalog)) (acc (list)))
+    (cond
+      ((null? rs) (reverse acc))
+      (else
+       (let* ((r (car rs))
+              (n (if (hash? r) (hash-ref r "name" "?") "?")))
+         (loop (cdr rs)
+               (if (and (hash? r)
+                        (string? (hash-ref r "name" #f))
+                        (string? (hash-ref r "granularity" #f))
+                        (string? (hash-ref r "params" #f))
+                        (boolean? (hash-ref r "rollback?" #f))
+                        (string? (hash-ref r "gate" #f))
+                        (boolean? (hash-ref r "protected?" #f))
+                        (string? (hash-ref r "hygiene" #f))
+                        (equal? #t (hash-ref r "hidden" #f))
+                        (list? (hash-ref r "wrappers" (list))))
+                   acc
+                   (cons n acc))))))))
+
+(define (mc-granularity-total)
+  (let loop ((gs (mutate:catalog-granularities)) (n 0))
+    (cond ((null? gs) n)
+          (else (loop (cdr gs)
+                      (+ n (length (mutate:catalog-by-granularity (car gs)))))))))
+
+; ═══════════════════════════════════════════════════════════════════
+; 1. Completeness and field shape
+; ═══════════════════════════════════════════════════════════════════
+(test-case "catalog has one complete row per callable mutate operator"
+           (hash "issue" 5252 "tags" (list "mutate" "catalog"))
+  (mc-clean!)
+  (check (= 30 (mutate:catalog-count)))
+  (check (= 30 (length (mutate:catalog-names))))
+  (check (null? (mc-shape-problems)))
+  (check (null? (mutate:catalog-check)))
+  ; every allowed granularity contributes, and the parts sum to the whole
+  (check (= 30 (mc-granularity-total)))
+  (check (= 2 (length (mutate:catalog-by-granularity "binding"))))
+  (check (= 1 (length (mutate:catalog-by-granularity "batch"))))
+  ; the catalog adds data, not primitive slots: all rows stay hidden
+  (check (equal? (list "mutate:rebind")
+                 (let loop ((rs (mutate:catalog)) (acc (list)))
+                   (cond ((null? rs) (reverse acc))
+                         ((equal? (hash-ref (car rs) "name") "mutate:rebind")
+                          (loop (cdr rs) (cons "mutate:rebind" acc)))
+                         (else (loop (cdr rs) acc)))))))
+
+; ═══════════════════════════════════════════════════════════════════
+; 2. The catalog and the engine registry agree (both directions)
+; ═══════════════════════════════════════════════════════════════════
+(test-case "catalog matches kMutateHygieneInventory exactly"
+           (hash "issue" 5252 "tags" (list "mutate" "registry"))
+  (mc-clean!)
+  (define regs (mc-registry-rows))
+  (check (= 30 (length regs)))
+  (check (null? (mc-policy-drift)))
+  (check (null? (mc-missing (mc-registry-names) (mutate:catalog-names))))
+  (check (null? (mc-missing (mutate:catalog-names) (mc-registry-names))))
+  ; the hygiene column is the registry's, not a second hand-written list
+  (check (equal? "required"
+                 (hash-ref (mutate:catalog-entry "mutate:rename-symbol") "hygiene")))
+  (check (equal? "exempt"
+                 (hash-ref (mutate:catalog-entry "mutate:check") "hygiene"))))
+
+; ═══════════════════════════════════════════════════════════════════
+; 3. The #5253 protected-set annotation
+; ═══════════════════════════════════════════════════════════════════
+(test-case "only name-bearing operators are marked protected"
+           (hash "issue" 5252 "tags" (list "mutate" "contract"))
+  (mc-clean!)
+  (define want (list "mutate:rebind"
+                     "mutate:set-body"
+                     "mutate:refactor/extract"
+                     "mutate:rename-symbol"
+                     "mutate:extract-function"))
+  (define have (mc-protected-names))
+  (check (= 5 (length have)))
+  (check (null? (mc-missing want have)))
+  (check (null? (mc-missing have want)))
+  ; an annotation without a name argument would be meaningless
+  (check (null? (let loop ((rs (mutate:catalog)) (acc (list)))
+                  (cond
+                    ((null? rs) (reverse acc))
+                    ((and (equal? #t (hash-ref (car rs) "protected?" #f))
+                          (not (string-contains? (hash-ref (car rs) "params") "name:string")))
+                     (loop (cdr rs) (cons (hash-ref (car rs) "name") acc)))
+                    (else (loop (cdr rs) acc)))))))
+
+; ═══════════════════════════════════════════════════════════════════
+; 4. Lookups are pure data
+; ═══════════════════════════════════════════════════════════════════
+(test-case "catalog lookups read data and never probe a primitive"
+           (hash "issue" 5252 "tags" (list "mutate" "catalog"))
+  (mc-clean!)
+  (check (equal? "mutate:rebind"
+                 (hash-ref (mutate:catalog-entry "mutate:rebind") "name")))
+  (check (not (mutate:catalog-entry "mutate:does-not-exist")))
+  ; a normal primitive is not an operator, and the lookup does not evaluate it
+  (check (not (mutate:catalog-entry "procedure?")))
+  (check (equal? "acceptance"
+                 (hash-ref (mutate:catalog-entry "mutate:rename-symbol") "gate")))
+  (check (equal? (list "refactor:rename-var")
+                 (hash-ref (mutate:catalog-entry "mutate:rename-symbol") "wrappers"))))
+
+; ═══════════════════════════════════════════════════════════════════
+; 5. The #5255 gate decides a refactor step: KEEP commits
+; ═══════════════════════════════════════════════════════════════════
+(test-case "rename-var commits under a KEEP gate and records the verdict"
+           (hash "issue" 5252 "tags" (list "refactor" "gate"))
+  (mc-clean!)
+  (set-code "(define (mc-old x) (+ x 1))")
+  (eval-current)
+  (gate:install! (gate:new (hash "name" "keep-all" "compare" "any")))
+  (check (refactor:rename-var "mc-old" "mc-new"))
+  (check (string-contains? (current-source :workspace) "mc-new"))
+  (define v (refactor:last-gate))
+  (check (gate:keep? v))
+  (check (equal? "keep-all" (hash-ref v "gate")))
+  (check (equal? "KEEP" (hash-ref v "decision")))
+  (mc-clean!))
+
+; ═══════════════════════════════════════════════════════════════════
+; 6. ROLLBACK restores every step's snapshot
+; ═══════════════════════════════════════════════════════════════════
+(test-case "a ROLLBACK gate restores a rename and an inline"
+           (hash "issue" 5252 "tags" (list "refactor" "gate" "snapshot"))
+  (mc-clean!)
+  (set-code "(begin (define (mc-inc x) (+ x 1)) (define (mc-caller x) (mc-inc x)))")
+  (eval-current)
+  (define before (current-source :workspace))
+  (gate:install! (gate:new (hash "name" "deny" "compare" "any"
+                                 "accept" (lambda (fb) #f))))
+  (check (not (refactor:rename-var "mc-inc" "mc-bumped")))
+  (check (equal? before (current-source :workspace)))
+  (check (equal? "ROLLBACK" (hash-ref (refactor:last-gate) "decision")))
+  (check (equal? "deny" (hash-ref (refactor:last-gate) "gate")))
+  (check (not (refactor:inline-function "mc-inc")))
+  (check (equal? before (current-source :workspace)))
+  (mc-clean!))
+
+; ═══════════════════════════════════════════════════════════════════
+; 7. safe-refactor:replace-fn routes its result through the gate
+; ═══════════════════════════════════════════════════════════════════
+(test-case "replace-fn is rolled back by the gate and applied under KEEP"
+           (hash "issue" 5252 "tags" (list "safe-refactor" "gate"))
+  (mc-clean!)
+  (set-code "(define (mc-f x) (+ x 1))")
+  (eval-current)
+  (define before (current-source :workspace))
+  (gate:install! (gate:new (hash "name" "deny" "compare" "any"
+                                 "accept" (lambda (fb) #f))))
+  (define denied (safe-refactor:replace-fn "mc-f" "(define (mc-f x) (* x 3))"))
+  (check (equal? 'rolled-back (car denied)))
+  (check (equal? before (current-source :workspace)))
+  (check (equal? "ROLLBACK" (hash-ref (safe-refactor:last-gate) "decision")))
+  ; the same replacement under a KEEP gate installs and reports applied
+  (gate:install! (gate:new (hash "name" "keep-all" "compare" "any")))
+  (define kept (safe-refactor:replace-fn "mc-f" "(define (mc-f x) (* x 3))"))
+  (check (equal? 'applied (car kept)))
+  (check (equal? "KEEP" (hash-ref (safe-refactor:last-gate) "decision")))
+  (eval-current)
+  (check= 9 (mc-f 3))
+  (mc-clean!))
+
+; ═══════════════════════════════════════════════════════════════════
+; 8. No gate: behaviour unchanged, and the record says gate="none"
+; ═══════════════════════════════════════════════════════════════════
+(test-case "without a gate the result stands and gate=none is recorded"
+           (hash "issue" 5252 "tags" (list "refactor" "gate"))
+  (mc-clean!)
+  (set-code "(define (mc-ungated x) (+ x 2))")
+  (eval-current)
+  (check (refactor:rename-var "mc-ungated" "mc-open"))
+  (check (string-contains? (current-source :workspace) "mc-open"))
+  (define v (refactor:last-gate))
+  (check (gate:keep? v))
+  (check (equal? "none" (hash-ref v "gate")))
+  (check (equal? "ungated" (hash-ref v "reason")))
+  ; an ungated KEEP is recorded as unproven, the #5255 contract
+  (check (equal? #f (hash-ref (hash-ref v "evidence") "proven"))))
+
+(test-finish)

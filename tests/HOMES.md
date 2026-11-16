@@ -87,6 +87,7 @@ Append there. Names `std/iter` re-exports are the `std/list` contract. Names
 | std/contract (invariants + protection sets) | `tests/suite/contracts_invariants.aura` | `contract:set`, `contract:protect`, `contract:invariant`, `std/contract` |
 | std/gate (unified acceptance gate) | `tests/suite/gate_unified.aura` | `gate:new`, `gate:evaluate`, `gate:install!`, `gate:keep?`, `std/gate` |
 | std/validation (splits + multiple-testing haircut) | `tests/suite/validate_split.aura` | `val:split`, `val:deflate`, `val:evidence`, `std/validation`, purge, embargo |
+| std/mutate (mutate:* operator catalog) | `tests/suite/mutate_catalog.aura` | `mutate:catalog`, `mutate:catalog-entry`, `mutate:catalog-check`, `std/mutate` |
 | std/contract (negative selection / anomaly detectors) | `tests/suite/contracts_negative_selection.aura` | `negative:train`, `negative:detect`, `negative:register`, `std/negative` |
 | std/feedback (one transform's record) | `tests/suite/feedback_record.aura` | `feedback:rebind`, `feedback:transform`, `ws:diff`, `mutation:trace`, `std/feedback`, `std/source-diff` |
 | std/search | `tests/suite/search_clonal.aura` | `search:init`, `std/search` |

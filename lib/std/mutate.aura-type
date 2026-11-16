@@ -10,3 +10,12 @@ mutate:safe-yield: -> Any
 mutate:quota-ok?: -> Any
 mutate:safety-snapshot: -> Any
 mutate:atomic-batch-safe: Any -> Any
+mutate:catalog: -> Any
+mutate:catalog-count: -> Any
+mutate:catalog-names: -> Any
+mutate:catalog-entry: Any -> Any
+mutate:catalog-by-granularity: Any -> Any
+mutate:catalog-granularities: -> Any
+mutate:catalog-gates: -> Any
+mutate:catalog-fields: -> Any
+mutate:catalog-check: -> Any

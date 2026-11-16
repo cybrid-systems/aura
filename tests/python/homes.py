@@ -229,6 +229,27 @@ HOMES: tuple[Home, ...] = (
         ),
     ),
     _h(
+        "std/mutate",
+        "aura",
+        "tests/suite/mutate_catalog.aura",
+        (
+            "mutate:catalog",
+            "mutate:catalog-entry",
+            "mutate:catalog-check",
+            "mutate:catalog-count",
+            "std/mutate",
+        ),
+        tag="mutate",
+        requires=("std/mutate", "std/refactor", "std/gate"),
+        body="(check= 30 (mutate:catalog-count))",
+        roots=("lib/std/mutate.aura",),
+        note=(
+            "The operator catalog is data: 30 mutate:* rows checked against "
+            "kMutateHygieneInventory; refactor paths route results to the "
+            "#5255 gate."
+        ),
+    ),
+    _h(
         "std/contract",
         "aura",
         "tests/suite/contracts_invariants.aura",

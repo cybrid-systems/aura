@@ -32,7 +32,11 @@
         mutate:rollback-rate
         mutate:boundary-depth mutate:boundary-safe?
         mutate:safe-yield mutate:quota-ok?
-        mutate:safety-snapshot mutate:atomic-batch-safe)
+        mutate:safety-snapshot mutate:atomic-batch-safe
+        mutate:catalog mutate:catalog-count mutate:catalog-names
+        mutate:catalog-entry mutate:catalog-by-granularity
+        mutate:catalog-granularities mutate:catalog-gates
+        mutate:catalog-fields mutate:catalog-check)
 
 ; ── mutate:summary — 完整 mutation log 摘要 ──
 ;
@@ -331,3 +335,203 @@
                     :sync-query-index? sync
                     :allow-macro? allow)))
               (catch (e) #f))))))))
++
+; ═══════════════════════════════════════════════════════════════
+; #5252 wave 2 — the mutate:* operator catalog (data only)
+; ═══════════════════════════════════════════════════════════════
+;
+; The engine registers 30 callable mutate:* small steps as HIDDEN
+; primitives (#5141 / #5144): they resolve at call position, they are not
+; first-class values, and primitives:list does not show them. An Agent
+; cannot enumerate them from the runtime — this catalog is that enumerable
+; face. It is pure data: no new primitive slot, no new effect, no change to
+; the hidden design.
+;
+; Source of truth: kMutateHygieneInventory in
+;   src/compiler/evaluator_primitives_mutate.cpp
+; is the registration point's review table (#4665): a mutate:* registration
+; with no row is refused there, fail-closed. tests/suite/mutate_catalog.aura
+; parses that table and fails when this list and the registry drift apart, so
+; the names are checked against the engine, never maintained in parallel.
+;
+; Row fields:
+;   "name"        string  the call name ("mutate:...")
+;   "granularity" string  binding | function | subtree | literal | query |
+;                         batch | metadata | policy
+;   "params"      string  argument shape, from the registration's usage text
+;   "rollback?"   bool    #t when a snapshot / the mutation log restores it
+;   "gate"        string  acceptance (#5255 verdict, via a std wrapper) |
+;                         mutation-boundary (engine guard only) | none
+;   "protected?"  bool    #t when a define name is an argument, so the #5253
+;                         protected set can constrain the operator
+;   "hygiene"     string  required | exempt — the #4665 registration policy,
+;                         checked against the registry by the suite
+;   "hidden"      bool    #t — registered add_hidden, not a first-class value
+;   "wrappers"    list    std wrappers whose result the #5255 gate decides
+
+(define (mutate-catalog-row name gran params rollback gate prot hyg wrappers)
+  (hash "name" name
+        "granularity" gran
+        "params" params
+        "rollback?" rollback
+        "gate" gate
+        "protected?" prot
+        "hygiene" hyg
+        "hidden" #t
+        "wrappers" wrappers))
+
+(define *mutate-catalog-rows*
+  (list
+    (mutate-catalog-row "mutate:replace-type" "subtree"
+      "(node-id|stable-ref new-type:string [summary:string])" #t "mutation-boundary" #f "required" (quote ()))
+    (mutate-catalog-row "mutate:replace-value" "literal"
+      "(node-id|stable-ref value [summary:string])" #t "mutation-boundary" #f "required" (quote ()))
+    (mutate-catalog-row "mutate:record-patch" "literal"
+      "(node-id|stable-ref key:string value:string)" #t "mutation-boundary" #f "required" (quote ()))
+    (mutate-catalog-row "mutate:query-and-replace" "query"
+      "(predicates... template:string [summary:string])" #t "mutation-boundary" #f "required" (quote ()))
+    (mutate-catalog-row "mutate:query-and-replace-batch" "query"
+      "(predicates... template:string ...)" #t "mutation-boundary" #f "required" (quote ()))
+    (mutate-catalog-row "mutate:rebind" "binding"
+      "(name:string define-source:string [summary:string] [validate: type-name])" #t "acceptance" #t "required"
+      (list "safe-refactor:replace-fn"))
+    (mutate-catalog-row "mutate:set-body" "function"
+      "(name:string body-source:string [:allow-macro? bool] [summary:string])" #t "mutation-boundary" #t "required" (quote ()))
+    (mutate-catalog-row "mutate:remove-node" "subtree"
+      "(node-id [:allow-macro? bool])" #t "mutation-boundary" #f "required" (quote ()))
+    (mutate-catalog-row "mutate:insert-child" "subtree"
+      "(parent-id position:int code:string [:allow-macro? bool])" #t "mutation-boundary" #f "required" (quote ()))
+    (mutate-catalog-row "mutate:tweak-literal" "literal"
+      "(node-id|stable-ref delta|factor:number [summary:string])" #t "mutation-boundary" #f "required" (quote ()))
+    (mutate-catalog-row "mutate:replace-pattern" "subtree"
+      "(pattern replacement [summary:string])" #t "mutation-boundary" #f "required" (quote ()))
+    (mutate-catalog-row "mutate:replace-subtree" "subtree"
+      "(node-id new-code:string [summary:string] [:allow-macro? bool])" #t "mutation-boundary" #f "required" (quote ()))
+    (mutate-catalog-row "mutate:atomic-batch" "batch"
+      "(ops:list [summary:string] [keyword value]...)" #t "mutation-boundary" #f "required" (quote ()))
+    (mutate-catalog-row "mutate:splice" "subtree"
+      "(parent-id position:int code-strings... [:allow-macro? bool] [summary:string])" #t "mutation-boundary" #f "required" (quote ()))
+    (mutate-catalog-row "mutate:wrap" "subtree"
+      "(node-id wrapper-template:string [:allow-macro? bool] [summary:string])" #t "mutation-boundary" #f "required" (quote ()))
+    (mutate-catalog-row "mutate:refactor/extract" "function"
+      "(node-id new-name:string [summary:string])" #t "mutation-boundary" #t "required" (quote ()))
+    (mutate-catalog-row "mutate:rename-symbol" "binding"
+      "(old-name:string new-name:string [summary:string])" #t "acceptance" #t "required"
+      (list "refactor:rename-var"))
+    (mutate-catalog-row "mutate:move-node" "subtree"
+      "(node parent pos [:allow-macro? bool])" #t "mutation-boundary" #f "required" (quote ()))
+    (mutate-catalog-row "mutate:extract-function" "function"
+      "(node-id new-name:string [:allow-macro? bool])" #t "acceptance" #t "required"
+      (list "refactor:extract-function"))
+    (mutate-catalog-row "mutate:inline-call" "function"
+      "(call-node-id [:allow-macro? bool])" #t "acceptance" #f "required"
+      (list "refactor:inline-function"))
+    (mutate-catalog-row "mutate:from-verification-feedback" "subtree"
+      "(strategy:string node payload:string)" #t "mutation-boundary" #f "required" (quote ()))
+    (mutate-catalog-row "mutate:check-stable-ref" "metadata"
+      "(stable-ref (id . gen))" #f "none" #f "exempt" (quote ()))
+    (mutate-catalog-row "mutate:check" "metadata"
+      "(name:string define-source:string)" #f "none" #f "exempt" (quote ()))
+    (mutate-catalog-row "mutate:set-stale-ref-policy" "policy"
+      "(policy:string \"warn\"|\"strict\"|\"disabled\")" #f "none" #f "exempt" (quote ()))
+    (mutate-catalog-row "mutate:rollback-macro-introduced" "subtree"
+      "(root-id [:keep-provenance? bool])" #f "mutation-boundary" #f "exempt" (quote ()))
+    (mutate-catalog-row "mutate:set-pattern-index-policy" "policy"
+      "(policy:string \"lazy\"|\"eager-after-mutate\"|\"eager-after-cow\")" #f "none" #f "exempt" (quote ()))
+    (mutate-catalog-row "mutate:request-gc-safepoint" "metadata"
+      "([timeout-ms:int])" #f "none" #f "exempt" (quote ()))
+    (mutate-catalog-row "mutate:save-hygiene-checkpoint" "metadata"
+      "() -> handle:int" #f "none" #f "exempt" (quote ()))
+    (mutate-catalog-row "mutate:restore-hygiene-checkpoint" "metadata"
+      "(handle:int)" #f "mutation-boundary" #f "exempt" (quote ()))
+    (mutate-catalog-row "mutate:set-agent-fingerprint" "metadata"
+      "(fingerprint:int)" #f "none" #f "exempt" (quote ()))))
+
+(define (mutate-catalog-member? x xs)
+  (cond ((null? xs) #f)
+        ((equal? x (car xs)) #t)
+        (else (mutate-catalog-member? x (cdr xs)))))
+
+; (mutate:catalog) — the rows, in registration order.
+(define (mutate:catalog) *mutate-catalog-rows*)
+
+(define (mutate:catalog-count) (length *mutate-catalog-rows*))
+
+; (mutate:catalog-names) — the 30 call names as strings.
+(define (mutate:catalog-names)
+  (let loop ((rs *mutate-catalog-rows*) (acc (quote ())))
+    (if (null? rs)
+        (reverse acc)
+        (loop (cdr rs) (cons (hash-ref (car rs) "name" "") acc)))))
+
+; (mutate:catalog-entry name) — one row, or #f when the name is not an
+; operator. A string in, data out: no primitive is probed or called.
+(define (mutate:catalog-entry name)
+  (let loop ((rs *mutate-catalog-rows*))
+    (cond ((null? rs) #f)
+          ((equal? (hash-ref (car rs) "name" #f) name) (car rs))
+          (else (loop (cdr rs))))))
+
+; (mutate:catalog-by-granularity g) — rows whose unit of edit is g.
+(define (mutate:catalog-by-granularity g)
+  (let loop ((rs *mutate-catalog-rows*) (acc (quote ())))
+    (cond ((null? rs) (reverse acc))
+          ((equal? (hash-ref (car rs) "granularity" #f) g)
+           (loop (cdr rs) (cons (car rs) acc)))
+          (else (loop (cdr rs) acc)))))
+
+(define (mutate:catalog-granularities)
+  (list "binding" "function" "subtree" "literal" "query" "batch" "metadata" "policy"))
+
+(define (mutate:catalog-gates)
+  (list "acceptance" "mutation-boundary" "none"))
+
+(define (mutate:catalog-fields)
+  (list "name" "granularity" "params" "rollback?" "gate" "protected?" "hygiene" "hidden" "wrappers"))
+
+; (mutate:catalog-check) — the catalog's own invariants as a list of problem
+; strings (empty = clean): required fields, allowed vocabulary, unique names,
+; a protected row names a define, and "acceptance" rows name their wrapper.
+; It does not read the C++ registry — the suite cross-checks that half.
+(define (mutate:catalog-check)
+  (let ((grans (mutate:catalog-granularities))
+        (gates (mutate:catalog-gates))
+        (hygs (list "required" "exempt"))
+        (bad (quote ())))
+    (let loop ((rs *mutate-catalog-rows*) (seen (quote ())))
+      (cond
+        ((null? rs) (reverse bad))
+        (else
+         (let* ((r (car rs))
+                (n (if (hash? r) (hash-ref r "name" #f) #f))
+                (tag (if (string? n) n "?"))
+                (par (if (hash? r) (hash-ref r "params" #f) #f))
+                (gate (if (hash? r) (hash-ref r "gate" #f) #f))
+                (prot (if (hash? r) (hash-ref r "protected?" #f) #f))
+                (wrap (if (hash? r) (hash-ref r "wrappers" (quote ())) (quote ()))))
+           (if (not (and (string? n) (string-prefix? n "mutate:")))
+               (set! bad (cons (string-append tag ":name") bad)))
+           (if (and (string? n) (mutate-catalog-member? n seen))
+               (set! bad (cons (string-append tag ":duplicate") bad)))
+           (if (not (mutate-catalog-member? (if (hash? r) (hash-ref r "granularity" #f) #f) grans))
+               (set! bad (cons (string-append tag ":granularity") bad)))
+           (if (not (mutate-catalog-member? gate gates))
+               (set! bad (cons (string-append tag ":gate") bad)))
+           (if (not (mutate-catalog-member? (if (hash? r) (hash-ref r "hygiene" #f) #f) hygs))
+               (set! bad (cons (string-append tag ":hygiene") bad)))
+           (if (not (string? par))
+               (set! bad (cons (string-append tag ":params") bad)))
+           (if (not (boolean? (if (hash? r) (hash-ref r "rollback?" #f) #f)))
+               (set! bad (cons (string-append tag ":rollback?") bad)))
+           (if (not (boolean? prot))
+               (set! bad (cons (string-append tag ":protected?") bad)))
+           (if (not (equal? #t (if (hash? r) (hash-ref r "hidden" #f) #f)))
+               (set! bad (cons (string-append tag ":hidden") bad)))
+           (if (not (list? wrap))
+               (set! bad (cons (string-append tag ":wrappers") bad)))
+           (if (and (equal? prot #t) (not (and (string? par) (string-contains? par "name:string"))))
+               (set! bad (cons (string-append tag ":protected-without-name") bad)))
+           (if (not (equal? (equal? gate "acceptance") (not (null? wrap))))
+               (set! bad (cons (string-append tag ":gate/wrappers") bad)))
+           (loop (cdr rs) (if (string? n) (cons n seen) seen))))))))
+
