@@ -282,10 +282,10 @@ static Cli4460 run_file_4460(const std::string& bin, const std::string& src,
     return r;
 }
 
-// Issue #4460: a failed require is one located error, later forms run, exit 1.
+// Issue #4460: a failed require is one located error, later forms run, exit 4.
 // cs.eval still returns an error value so #2570 fail-closed stays a value.
 static void ac4460_failed_require_continues() {
-    std::println("\n--- #4460: failed require continues and exits 1 ---");
+    std::println("\n--- #4460: failed require continues and exits 4 ---");
     CompilerService cs;
     auto api = cs.eval("(require \"nosuchmod-4460-api\" all:)");
     CHECK(api.has_value() && is_error(*api) && !is_string(*api),
@@ -312,7 +312,7 @@ static void ac4460_failed_require_continues() {
         f << "(display \"second\") (newline)\n";
     }
     auto miss_run = run_file_4460(bin, miss, "AURA_SANDBOX=off AURA_PIPELINE_STRICT=0");
-    CHECK(miss_run.rc == 1, "4460: missing module exits 1");
+    CHECK(miss_run.rc == 4, "4460: missing module exits 4");
     CHECK(miss_run.out.find("first") != std::string::npos, "4460: form before require ran");
     CHECK(miss_run.out.find("second") != std::string::npos, "4460: form after require ran");
     CHECK(miss_run.out.find("<error>") == std::string::npos, "4460: no <error> on stdout");
@@ -336,7 +336,7 @@ static void ac4460_failed_require_continues() {
     }
     auto bad_run =
         run_file_4460(bin, bad, "AURA_SANDBOX=off AURA_PIPELINE_STRICT=0 AURA_PATH=" + dir);
-    CHECK(bad_run.rc == 1, "4460: parse-error module exits 1");
+    CHECK(bad_run.rc == 4, "4460: parse-error module exits 4");
     CHECK(bad_run.out.find("before") != std::string::npos, "4460: form after bad require ran");
     CHECK(bad_run.out.find("<error>") == std::string::npos, "4460: bad require no <error>");
     CHECK(count_sub(bad_run.err, "load_module_file:") == 0, "4460: parse failure no loader stderr");
@@ -778,7 +778,7 @@ static void ac4471_file_lines_and_resume() {
                      lines.err);
     }
     // Issue #4916: file-mode diagnostics name the file ("x.aura:3:").
-    CHECK(lines.rc == 1, "4471: later errors exit 1");
+    CHECK(lines.rc == 4, "4471: later errors exit 4");
     CHECK(lines.out == "one\ntwo\nthree\n", "4471: one two three once");
     CHECK(count_sub(lines.err, "unbound variable: foo") == 1, "4471: foo once");
     CHECK(count_sub(lines.err, "unbound variable: bar") == 1, "4471: bar once");
@@ -803,7 +803,7 @@ static void ac4471_file_lines_and_resume() {
         span.err.find("(bar)") == std::string::npos) {
         std::println(std::cerr, "4471 span rc {} out [{}] err [{}]", span.rc, span.out, span.err);
     }
-    CHECK(span.rc == 1, "4471: multiline form exits 1");
+    CHECK(span.rc == 4, "4471: multiline form exits 4");
     CHECK(count_sub(span.err, "unbound variable: foo") == 1, "4471: span foo once");
     CHECK(count_sub(span.err, "unbound variable: bar") == 1, "4471: span bar once");
     CHECK(span.err.find(".aura:3:") != std::string::npos, "4471: bar on file line 3");
@@ -824,7 +824,7 @@ static void ac4471_file_lines_and_resume() {
         count_sub(zork.err, "unbound variable: zork") != 1) {
         std::println(std::cerr, "4471 zork rc {} out [{}] err [{}]", zork.rc, zork.out, zork.err);
     }
-    CHECK(zork.rc == 1, "4471: zork exits 1");
+    CHECK(zork.rc == 4, "4471: zork exits 4");
     CHECK(zork.out == "1\n2\n", "4471: 1 and 2 once");
     CHECK(count_sub(zork.err, "unbound variable: zork") == 1, "4471: zork once");
     CHECK(zork.err.find(".aura:3:") != std::string::npos, "4471: zork stays on the define");
@@ -847,7 +847,7 @@ static void ac4471_file_lines_and_resume() {
         std::println(std::cerr, "4471 after rc {} out [{}] err [{}]", after.rc, after.out,
                      after.err);
     }
-    CHECK(after.rc == 1, "4471: form after the call exits 1");
+    CHECK(after.rc == 4, "4471: form after the call exits 4");
     CHECK(after.out == "1\n2\n3\n", "4471: forms after the call run once");
     CHECK(count_sub(after.err, "unbound variable: zork") == 1, "4471: after does not re-call");
 }
