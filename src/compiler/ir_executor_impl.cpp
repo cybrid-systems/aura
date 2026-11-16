@@ -1079,7 +1079,12 @@ static std::optional<Diagnostic> take_ir_apply_arity(const IRInstruction* instr,
     auto msg = take_pending_user_arity();
     if (!msg)
         return std::nullopt;
-    return Diagnostic{ErrorKind::ArityMismatch, std::move(*msg), ir_call_arity_loc(instr, ev)};
+    // Issue #5308: call_closure parks "recursion depth exceeded" on the
+    // arity channel when the define bridge drops the diagnostic. Report
+    // that as the stack limit, not as an arity mismatch.
+    const auto kind = msg->starts_with("recursion depth exceeded") ? ErrorKind::InternalError
+                                                                   : ErrorKind::ArityMismatch;
+    return Diagnostic{kind, std::move(*msg), ir_call_arity_loc(instr, ev)};
 }
 
 EvalResult IRInterpreter::call_closure(std::uint64_t closure_id, std::span<const EvalValue> args) {
