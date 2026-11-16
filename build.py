@@ -107,7 +107,6 @@ from tools.build.core import (  # noqa: E402
     BENCH,
     BUILD,
     COVERAGE_CHECKS,
-    COVERAGE_RUN_CHECKS,
     COVERAGE_RUNNER,
     ROOT,
     SANITIZER_FLAGS,
@@ -119,7 +118,9 @@ from tools.build.core import (  # noqa: E402
     R,
     Y,
     _build_jobs,
-    _env_flag,
+    _git_changed_files,
+    _ninja_build,
+    _ninja_phony_inputs,
     _select_fast_linker,
     _tool_available,
     fail,
@@ -134,6 +135,7 @@ _coverage_run = _core.coverage_run
 # Gate check commands live in tools/build/checks.py; import them here so the
 # command table and the gate step list keep their names.
 import tools.build.chaos as _chaos  # noqa: E402
+import tools.build.gate as _gate  # noqa: E402
 from tools.build.chaos import (  # noqa: E402
     cmd_chaos_pr_hard_fail_coverage,
     cmd_chaos_pr_hard_fail_gate,
@@ -147,7 +149,6 @@ from tools.build.chaos import (  # noqa: E402
     cmd_production_concurrency,
     cmd_production_concurrency_coverage,
     cmd_production_concurrency_ready_gate_4159,
-    cmd_soak_pr_short_3387_coverage,
 )
 from tools.build.checks import (  # noqa: E402
     cmd_aot_env_linear_stamp,
@@ -158,10 +159,9 @@ from tools.build.checks import (  # noqa: E402
     cmd_fixtures,
     cmd_legacy_test_inventory,
     cmd_new_test_files,
-    cmd_primitive_surface,
-    cmd_test_binding,
     cmd_test_registry,
 )
+from tools.build.gate import _run_parallel_coverage_checks, cmd_gate  # noqa: E402
 
 # PGO commands live in tools/build/pgo.py; the command table below binds them.
 from tools.build.pgo import (  # noqa: E402
@@ -207,40 +207,6 @@ def _cpp_source_files():
             if path.suffix in exts and path.is_file():
                 files.append(path)
     return files
-
-
-def _git_changed_files(base: str = "origin/main") -> list[str]:
-    """Changed paths vs base (merge-base...HEAD) + staged + unstaged + untracked."""
-    files: set[str] = set()
-    try:
-        mb = subprocess.run(
-            ["git", "merge-base", base, "HEAD"],
-            cwd=ROOT,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if mb.returncode == 0 and mb.stdout.strip():
-            r = subprocess.run(
-                ["git", "diff", "--name-only", f"{mb.stdout.strip()}...HEAD"],
-                cwd=ROOT,
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            if r.returncode == 0:
-                files.update(ln.strip() for ln in r.stdout.splitlines() if ln.strip())
-        for args in (
-            ["git", "diff", "--name-only", "--cached"],
-            ["git", "diff", "--name-only"],
-            ["git", "ls-files", "--others", "--exclude-standard"],
-        ):
-            r = subprocess.run(args, cwd=ROOT, capture_output=True, text=True, check=False)
-            if r.returncode == 0:
-                files.update(ln.strip() for ln in r.stdout.splitlines() if ln.strip())
-    except FileNotFoundError:
-        pass
-    return sorted(files)
 
 
 def cmd_format():
@@ -331,6 +297,11 @@ def cmd_lint():
     # disagree about which checks exist or how strict they are.
     return _run_parallel_coverage_checks(changed="--changed" in sys.argv[2:])
     return 0
+
+
+# The gate module owns the ordered step table; hand it the two commands that
+# still live here (a module import back into build.py would be circular).
+_gate.set_commands(lint=cmd_lint, format_cmd=cmd_format)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -508,43 +479,6 @@ def _target_bin_ok(name: str) -> bool:
         return p.is_file() and os.access(p, os.X_OK) and p.stat().st_size >= 1024
     except OSError:
         return False
-
-
-def _ninja_build(targets: list[str], *, jobs: int, keep_going: bool = False) -> int:
-    cmd = ["ninja", "-C", str(BUILD), f"-j{jobs}"]
-    if keep_going:
-        cmd.append("-k0")
-    cmd.extend(targets)
-    return run(cmd, cwd=ROOT)
-
-
-def _ninja_phony_inputs(target: str) -> list[str]:
-    """Members of a phony aggregate (e.g. all_test_issue_targets)."""
-    try:
-        proc = subprocess.run(
-            ["ninja", "-C", str(BUILD), "-t", "query", target],
-            cwd=ROOT,
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return []
-    if proc.returncode != 0:
-        return []
-    names: list[str] = []
-    in_inputs = False
-    for ln in (proc.stdout or "").splitlines():
-        if ln.strip().startswith("input:"):
-            in_inputs = True
-            continue
-        if in_inputs:
-            if ln.startswith("  ") and not ln.startswith("    ") and ln.strip().endswith(":"):
-                break
-            s = ln.strip()
-            if s and s != "phony":
-                names.append(s)
-    return names
 
 
 def _launcher_consumer_dirs(main_bins: list[str], issue_targets: list[str]) -> list[str]:
@@ -1434,6 +1368,9 @@ def test_concurrent():
     return r.returncode
 
 
+_gate.set_test_command(test_concurrent)
+
+
 def test_issues():
     """Run issue/domain/bundle C++ binaries via tests/run.py (#1961).
 
@@ -2211,228 +2148,6 @@ def cmd_orch_scope_child_2631_coverage():
         fail("orch:scope-child coverage contract rows failed")
         return 1
     ok("orch:scope-child coverage clean")
-    return 0
-
-
-def _gate_parse_jobs() -> int:
-    """Parallel workers for coverage checks (0 → run_checks default)."""
-    if "--serial" in sys.argv[2:] or os.environ.get("AURA_GATE_SERIAL", "").strip() in (
-        "1",
-        "true",
-        "yes",
-    ):
-        return 1
-    argv = sys.argv[2:]
-    for i, a in enumerate(argv):
-        if a == "--jobs" and i + 1 < len(argv) and argv[i + 1].isdigit():
-            return max(1, int(argv[i + 1]))
-        if a.startswith("--jobs=") and a.split("=", 1)[1].isdigit():
-            return max(1, int(a.split("=", 1)[1]))
-    env = os.environ.get("AURA_GATE_JOBS", "").strip()
-    if env.isdigit() and int(env) > 0:
-        return int(env)
-    return 0  # run_checks chooses min(16, nproc)
-
-
-def _run_parallel_coverage_checks(*, changed: bool) -> int:
-    """Drive scripts/coverage/run_checks.py (parallel + cascade-free)."""
-    if not COVERAGE_RUN_CHECKS.is_file():
-        fail(f"missing {COVERAGE_RUN_CHECKS}")
-        return 1
-    print(f"{B}═══ Coverage checks ({'changed' if changed else 'all'}, parallel) ═══{N}")
-    # Cascade suppression is the default for gate: every check runs once.
-    os.environ["AURA_COVERAGE_NO_CASCADE"] = "1"
-    os.environ["AURA_LINT_SKIP_COVERAGE"] = "1"
-    cmd = [sys.executable, str(COVERAGE_RUN_CHECKS)]
-    cmd.append("--changed" if changed else "--all")
-    jobs = _gate_parse_jobs()
-    if jobs > 0:
-        cmd.extend(["--jobs", str(jobs)])
-    # Forward --base if present.
-    argv = sys.argv[2:]
-    for i, a in enumerate(argv):
-        if a == "--base" and i + 1 < len(argv):
-            cmd.extend(["--base", argv[i + 1]])
-            break
-        if a.startswith("--base="):
-            cmd.append(a)
-            break
-    r = subprocess.run(cmd, cwd=ROOT)
-    if r.returncode != 0:
-        fail("coverage checks failed — see scripts/coverage/run_checks.py output above")
-        return r.returncode
-    ok("coverage checks clean")
-    return 0
-
-
-def _gate_run_issue_bin(target: str) -> int:
-    """Ninja + run one issue binary from repo root (CI source-cite cwd)."""
-    if not (BUILD / "build.ninja").is_file():
-        info(f"changed: skip {target} (no ninja tree)")
-        return 0
-    print(f"{B}═══ Gate changed: {target} ═══{N}")
-    jobs = _gate_parse_jobs() or _build_jobs()
-    rc = _ninja_build([target], jobs=max(1, jobs))
-    if rc:
-        fail(f"ninja {target} failed")
-        return rc
-    bin_path = BUILD / target
-    if not bin_path.is_file():
-        fail(f"{target} binary not found")
-        return 1
-    env = os.environ.copy()
-    # Match tests/python/run_issue_tests.py — inherit hole is only
-    # visible when the runner default AURA_SANDBOX=off is set.
-    if not str(env.get("AURA_SANDBOX", "")).strip():
-        env["AURA_SANDBOX"] = "off"
-    env["AURA_IR_DIRTY_BATCH_ONLY"] = "0"
-    r = subprocess.run([str(bin_path)], cwd=str(ROOT), env=env)
-    if r.returncode != 0:
-        fail(f"{target} rc={r.returncode}")
-    return r.returncode
-
-
-def _gate_changed_runtime_suites() -> int:
-    """Run the slow CI leaves that gate --changed would otherwise skip.
-
-    ci/concurrent and ci/issues are wave-only. Local Debug often misses
-    RelWithDebInfo unused-result / AURA_SANDBOX=off isolate / source-cite
-    wraps. Compile+run the touched leaf here so those cannot land blind.
-    """
-    changed = _git_changed_files()
-    rc = 0
-    if any(p == "tests/serve/test_concurrent.cpp" or p.startswith("src/serve/") for p in changed):
-        if not (BUILD / "build.ninja").is_file():
-            info("changed serve: skip test_concurrent (no ninja tree)")
-        else:
-            print(f"{B}═══ Gate changed: test_concurrent (serve/fiber surface) ═══{N}")
-            jobs = _gate_parse_jobs() or _build_jobs()
-            nrc = _ninja_build(["test_concurrent"], jobs=max(1, jobs))
-            if nrc:
-                fail("ninja test_concurrent failed")
-                return nrc
-            rc = test_concurrent() or rc
-    densify_hit = any(
-        p
-        in (
-            "tests/core/test_moving_densify_fail_closed.cpp",
-            "tests/core/test_densify_pin_batch.cpp",
-            "src/core/arena.ixx",
-            "src/core/densify_consistency_report.h",
-        )
-        for p in changed
-    )
-    if densify_hit:
-        rc = _gate_run_issue_bin("test_densify_pin_batch") or rc
-    # Do not ninja-run test_orch_agent_batch here: leftover isolate
-    # members (apply-mutex join, schedule-gate SIGSEGV) flake the
-    # 12-member binary. #3179 ACs are covered by densify-style
-    # AURA_SANDBOX=off runs of that member in ci/issues.
-    return rc
-
-
-def _gate_steps(*, fix: bool, changed: bool, scripts_only: bool) -> list[tuple[str, Callable[[], int]]]:
-    """Ordered gate pipeline: (label, callable); a non-zero return aborts.
-
-    Issue #5246: this replaces the historical ~60-call hand-wired `or` chain.
-    Coverage is a single step — scripts/coverage/run_checks.py owns the whole
-    check_*.py set (parallel, cascade-free) plus the per-check argv that used
-    to be spelled out here as ~40 separate 'or cmd_*_coverage()' calls.
-    """
-    check = not fix
-    steps: list[tuple[str, Callable[[], int]]] = [
-        ("docs", lambda: cmd_docs(check=check)),
-        ("cli-templates", lambda: cmd_cli_templates(check=check)),
-        ("lint", cmd_lint),
-    ]
-    if not scripts_only:
-        steps.append(("format", cmd_format))
-    steps.extend(
-        [
-            ("fixtures", cmd_fixtures),
-            ("primitive-surface", cmd_primitive_surface),
-            ("test-registry", cmd_test_registry),
-            ("test-binding", cmd_test_binding),
-            ("new-test-files", cmd_new_test_files),
-            ("dead-heap-push", cmd_dead_heap_push),
-            ("catch-silent-swallow", cmd_catch_silent_swallow),
-            ("aot-env-linear-stamp", cmd_aot_env_linear_stamp),
-            ("legacy-test-inventory", cmd_legacy_test_inventory),
-            ("soak-pr-short-3387", cmd_soak_pr_short_3387_coverage),
-            ("coverage", lambda: _run_parallel_coverage_checks(changed=changed)),
-        ]
-    )
-    return steps
-
-
-def cmd_gate():
-    """Fast static checks for CI / pre-push.
-
-    Core: docs + ruff + clang-format + fixtures + surface audits.
-    Coverage: scripts/coverage/run_checks.py — parallel custom check_*.py
-    plus declarative manifests (runner.py). See tests/COVERAGE.md.
-
-    Flags:
-      --fix          auto-regen docs/registry/inventory; lint/format fix
-      --scripts-only  skip clang-format
-      --changed       only coverage/format for git-diff paths (pre-push)
-      --serial        coverage jobs=1
-      --jobs N        coverage parallel workers
-      --full          force full coverage + chaos runtime even with --changed
-                      (or AURA_GATE_FULL=1)
-
-    Issue #1572/#1573/#1668/#1669/#1931/#1957/#1966/#2057/#2168 lineage
-    preserved; execution order lives in the _gate_steps table (Issue #5246).
-    """
-    fix = "--fix" in sys.argv[2:]
-    scripts_only = "--scripts-only" in sys.argv[2:] or _env_flag("AURA_GATE_SCRIPTS_ONLY")
-    changed = "--changed" in sys.argv[2:] or _env_flag("AURA_GATE_CHANGED")
-    full = "--full" in sys.argv[2:] or _env_flag("AURA_GATE_FULL")
-    if full:
-        changed = False
-
-    mode = "fix" if fix else "check"
-    if scripts_only:
-        mode += "+scripts-only"
-    if changed:
-        mode += "+changed"
-    if full:
-        mode += "+full"
-    print(f"{B}═══ Gate ({mode}) ═══{N}")
-
-    os.environ["AURA_LINT_SKIP_COVERAGE"] = "1"
-    os.environ["AURA_COVERAGE_NO_CASCADE"] = "1"
-    if changed:
-        os.environ["AURA_FORMAT_CHANGED"] = "1"
-
-    t_gate = time.time()
-    if scripts_only:
-        info("scripts-only: skipping clang-format (cross-platform gate)")
-    for label, step in _gate_steps(fix=fix, changed=changed, scripts_only=scripts_only):
-        rc = step()
-        if rc:
-            fail(f"gate step failed: {label}")
-            return rc
-
-    # Chaos runtime profiles (need cmake tree / binary). Static coverage for
-    # these issues already ran via run_checks. On --changed pre-push, skip the
-    # multi-second runtime profiles unless --full.
-    if changed and not full:
-        info("changed mode: skipping chaos runtime profiles (static coverage already ran)")
-    else:
-        rc = cmd_chaos_release_blocker_2902() or cmd_chaos_pr_hard_fail_gate()
-        if rc:
-            return rc
-
-    # Issue #3567: ci/concurrent is a stress-wave suite (~16s, x86 SIGSEGV).
-    # Agents that only run gate --changed + unit never see it. When the
-    # serve/fiber surface changes and a ninja tree exists, compile+run here.
-    if changed and not scripts_only:
-        rc = _gate_changed_runtime_suites()
-        if rc:
-            return rc
-
-    ok(f"gate clean in {time.time() - t_gate:.1f}s ({mode})")
     return 0
 
 

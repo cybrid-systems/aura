@@ -28,7 +28,10 @@
     },
     {
       "ac": "AC4",
-      "path": "build.py",
+      "paths": [
+        "build.py",
+        "tools/build/gate.py"
+      ],
       "contains": [
         "_gate_changed_runtime_suites",
         "Issue #3567"
