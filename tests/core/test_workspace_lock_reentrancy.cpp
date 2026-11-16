@@ -189,6 +189,8 @@ int main() {
     // workspace.aura with a line and column. A ("parse" . message) pair is
     // an ordinary value, so (begin (set-code bad) ...) kept running. Soft
     // serve reports the error value as status=error (#4273 / #5172).
+    // The diagnostic builder is append_diag, so the primitive catalog does
+    // not record "workspace.aura: parse error" as a registration.
     {
         std::println("\n--- AC8 (#4272): set-code rejects extra close-paren ---");
         ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
