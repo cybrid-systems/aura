@@ -81,6 +81,20 @@ static std::string read_file(const char* path) {
     return {};
 }
 
+// #5246: build.py is the CLI core; command bodies live in tools/build/*.py.
+// Read the union so source pins survive the module split (and keep matching
+// when another group moves).
+static std::string read_build_source() {
+    std::string all = read_file("build.py");
+    std::error_code ec;
+    for (std::filesystem::directory_iterator it("tools/build", ec), end; !ec && it != end;
+         it.increment(ec)) {
+        if (it->path().extension() == ".py")
+            all += "\n" + read_file(it->path().string().c_str());
+    }
+    return all;
+}
+
 static void must_inline(const std::string& hay, const std::string& needle) {
     if (hay.find(needle) == std::string::npos) {
         g_failed += 1;
@@ -611,7 +625,7 @@ int run_test_steal_safety_production_residual_zero() {
               "3586: no docs/design/");
         // AC2: ci/concurrent + gate --changed spawn test_concurrent with the
         // runner Soft latch so existing Scheduler(4) unit tests still start.
-        const auto bp = read_file("build.py");
+        const auto bp = read_build_source();
         const auto pconc = bp.find("def test_concurrent");
         const auto pnext =
             pconc == std::string::npos ? std::string::npos : bp.find("\ndef ", pconc + 1);
@@ -662,7 +676,7 @@ int run_test_steal_safety_production_residual_zero() {
         CHECK(qts.find("schema-3073") != std::string::npos, "3950 AC3: keep schema-3073");
         CHECK(qts.find("steal_safety_production_residual_zero_v_read") != std::string::npos,
               "3950 AC3: schema-3073 still consults residual-zero");
-        const auto bp = read_file("build.py");
+        const auto bp = read_build_source();
         const auto pgate = bp.find("def cmd_chaos_pr_hard_fail_gate");
         const auto pnext =
             pgate == std::string::npos ? std::string::npos : bp.find("\ndef ", pgate + 1);
@@ -828,7 +842,7 @@ int run_test_steal_safety_production_residual_zero() {
     {
         std::println("\n--- AC18: production concurrency Ready deploy residual gate (#4159) ---");
         auto sh = read_file("src/serve/steal_safety.h");
-        auto build = read_file("build.py");
+        auto build = read_build_source();
         auto release = read_file(".github/workflows/release.yml");
         CHECK(sh.find("#include <cstdlib>") != std::string::npos,
               "AC18: cstdlib included for the soak-arm getenv");

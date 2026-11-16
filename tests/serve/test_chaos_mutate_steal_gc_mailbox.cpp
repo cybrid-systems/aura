@@ -134,6 +134,20 @@ static std::string read_file(const char* path) {
     return {};
 }
 
+// #5246: build.py is the CLI core; command bodies live in tools/build/*.py.
+// Read the union so source pins survive the module split (and keep matching
+// when another group moves).
+static std::string read_build_source() {
+    std::string all = read_file("build.py");
+    std::error_code ec;
+    for (std::filesystem::directory_iterator it("tools/build", ec), end; !ec && it != end;
+         it.increment(ec)) {
+        if (it->path().extension() == ".py")
+            all += "\n" + read_file(it->path().string().c_str());
+    }
+    return all;
+}
+
 static std::uint64_t chaos_seed() noexcept {
     const char* e = std::getenv("AURA_CHAOS_SEED");
     if (!e || !*e)
@@ -1017,7 +1031,7 @@ static void ac4_ac5_docs_and_source() {
     const auto cmake = read_file("CMakeLists.txt");
     CHECK(cmake.find("test_chaos_mutate_steal_gc_mailbox") != std::string::npos,
           "CMake registers test");
-    const auto build = read_file("build.py");
+    const auto build = read_build_source();
     CHECK(!read_file("scripts/coverage/manifests/2352.json").empty(),
           "build.py gate entry (manifest SSOT)");
     const auto gate = read_file("scripts/coverage/manifests/2352.json");
@@ -1072,7 +1086,7 @@ static void ac2380_production_concurrency_docs() {
           "AC3: Soft steal forbidden under prod gate");
     CHECK(src.find("Issue #2380") != std::string::npos, "AC5: cites #2380");
 
-    const auto build = read_file("build.py");
+    const auto build = read_build_source();
     CHECK(build.find("production-concurrency") != std::string::npos ||
               build.find("cmd_production_concurrency") != std::string::npos,
           "AC5: build.py production-concurrency command");
@@ -1132,7 +1146,7 @@ static void ac2554_docs_and_source() {
     CHECK(src.find("AURA_CHAOS_PR_GATE_INJECT_HARD_FAIL") != std::string::npos,
           "AC1: inject hard-fail documented");
 
-    const auto build = read_file("build.py");
+    const auto build = read_build_source();
     CHECK(build.find("cmd_chaos_pr_hard_fail_gate") != std::string::npos ||
               build.find("chaos_pr_hard_fail") != std::string::npos ||
               build.find("AURA_CHAOS_PR_GATE") != std::string::npos,
@@ -1179,7 +1193,7 @@ static void ac2513_docs_and_source() {
     CHECK(src.find("maybe_reap_orphans_on_tick") != std::string::npos,
           "AC3: tick reaper exercised");
 
-    const auto build = read_file("build.py");
+    const auto build = read_build_source();
     CHECK(build.find("2513") != std::string::npos ||
               build.find("AURA_CHAOS_SOAK") != std::string::npos,
           "AC5: build.py soak knobs / #2513");
@@ -1301,7 +1315,7 @@ static void ac2715_6_source_and_linter() {
     const auto hur = read_file("src/compiler/hot_update_registry.hh");
     const auto t = read_file("tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp");
     const auto lint = read_file("scripts/check_deferred_reemit_steal_sticky_2715.py");
-    const auto build = read_file("build.py");
+    const auto build = read_build_source();
     CHECK(efm.find("Issue #2715") != std::string::npos,
           "AC6: evaluator_fiber_mutation.cpp cites #2715");
     CHECK(hur.find("Issue #2715") != std::string::npos, "AC6: hot_update_registry.hh cites #2715");
@@ -1387,7 +1401,7 @@ static void ac2748_5_source_and_no_design() {
 // any tag / release candidate that claims multi-fiber mutation safety.
 static void ac2722_1_release_hard_gate_exists() {
     std::println("\n--- #2722 AC1: RELEASE hard gate exists ---");
-    const auto build = read_file("build.py");
+    const auto build = read_build_source();
     CHECK(build.find("def cmd_chaos_soak_hard_gate_2722(") != std::string::npos,
           "AC1: build.py defines cmd_chaos_soak_hard_gate_2722");
     CHECK(build.find("def cmd_chaos_soak_hard_gate_2722_coverage(") != std::string::npos,
@@ -1417,7 +1431,7 @@ static void ac2722_1_release_hard_gate_exists() {
 // 4 invariants from issue body AC2.
 static void ac2722_2_hard_fail_env_matrix() {
     std::println("\n--- #2722 AC2: hard-fail env matrix + 4 hard-fail counters ---");
-    const auto build = read_file("build.py");
+    const auto build = read_build_source();
     CHECK(build.find(R"(env["AURA_PRODUCTION_CONCURRENCY_GATE"] = "1")") != std::string::npos,
           "AC2: production-concurrency gate env set");
     CHECK(build.find(R"(env["AURA_LOCK_ORDER_CANARY"] = "1")") != std::string::npos,
@@ -1450,7 +1464,7 @@ static void ac2722_2_hard_fail_env_matrix() {
 // contracts (overridable for local iteration under override env).
 static void ac2722_3_soak_parameters_documented() {
     std::println("\n--- #2722 AC3: SOAK parameters documented ---");
-    const auto build = read_file("build.py");
+    const auto build = read_build_source();
     // Docstring documents the production envelope.
     CHECK(build.find("workers  : 8") != std::string::npos, "AC3: workers=8 documented");
     CHECK(build.find("fibers   : 256") != std::string::npos, "AC3: fibers=256 documented");
@@ -1498,7 +1512,7 @@ static void ac2722_4_release_wired_required() {
 // but NOT under the RELEASE hard gate. No docs/design/2722-* per #1655.
 static void ac2722_5_soft_non_gating_no_docs_design() {
     std::println("\n--- #2722 AC5: Soft mode non-gating + no docs/design/ ---");
-    const auto build = read_file("build.py");
+    const auto build = read_build_source();
     CHECK(build.find("Soft (metric-only) mode remains available") != std::string::npos,
           "AC5: Soft mode documented as available for local iteration");
     CHECK(build.find("EXPLICITLY non-gating") != std::string::npos,
@@ -1520,7 +1534,7 @@ static void ac2722_5_soft_non_gating_no_docs_design() {
 static void ac2755_1_residual_zero_under_hard_gate() {
     std::println("\n--- #2755 AC1: residual hard-AND zero under hard gate ---");
     const auto chaos = read_file("tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp");
-    const auto build = read_file("build.py");
+    const auto build = read_build_source();
     CHECK(chaos.find("chaos_soak_hard_gate") != std::string::npos,
           "AC1: chaos_soak_hard_gate helper present");
     CHECK(chaos.find("residual_zero_gate") != std::string::npos,
@@ -1554,7 +1568,7 @@ static void ac2755_1_residual_zero_under_hard_gate() {
 static void ac2755_2_soft_non_gating() {
     std::println("\n--- #2755 AC2: Soft / local residual non-gating ---");
     const auto chaos = read_file("tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp");
-    const auto build = read_file("build.py");
+    const auto build = read_build_source();
     CHECK(chaos.find("residual_zero_gate = chaos_soak_hard_gate() || prod_gate") !=
               std::string::npos,
           "AC2: residual gate only under SOAK hard / prod (not Soft alone)");
@@ -1568,7 +1582,7 @@ static void ac2755_2_soft_non_gating() {
 // ── Issue #2755 AC3: counter list documented in gate + harness + linter.
 static void ac2755_3_counter_list_documented() {
     std::println("\n--- #2755 AC3: residual counter list documented ---");
-    const auto build = read_file("build.py");
+    const auto build = read_build_source();
     const auto chaos = read_file("tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp");
     const auto lint = read_file("scripts/coverage/checks/check_chaos_soak_residual_zero_2755.py");
     CHECK(build.find("g_steal_safety_residual_boundary_unsafe_total") != std::string::npos,
@@ -1594,7 +1608,7 @@ static void ac2755_3_counter_list_documented() {
 // ── Issue #2755 AC4: existing #2722 ACs preserved (additive).
 static void ac2755_4_2722_preserved() {
     std::println("\n--- #2755 AC4: #2722 ACs preserved ---");
-    const auto build = read_file("build.py");
+    const auto build = read_build_source();
     const auto release = read_file(".github/workflows/release.yml");
     CHECK(build.find("def cmd_chaos_soak_hard_gate_2722(") != std::string::npos,
           "AC4: #2722 hard gate function preserved");
@@ -1615,7 +1629,7 @@ static void ac2755_4_2722_preserved() {
 static void ac2755_5_source_and_linter() {
     std::println("\n--- #2755 AC5: source-cite + linter + no docs/design/ ---");
     const auto chaos = read_file("tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp");
-    const auto build = read_file("build.py");
+    const auto build = read_build_source();
     const auto lint = read_file("scripts/coverage/checks/check_chaos_soak_residual_zero_2755.py");
     CHECK(chaos.find("Issue #2755") != std::string::npos, "AC5: chaos harness cites #2755");
     CHECK(build.find("Issue #2755") != std::string::npos, "AC5: build.py cites #2755");
@@ -1658,7 +1672,7 @@ static void ac2755_5_source_and_linter() {
 static void ac4159_1_deploy_and_gate_wired() {
     std::println("\n--- #4159 AC1: production concurrency Ready deploy residual gate wired ---");
     const auto sh = read_file("src/serve/steal_safety.h");
-    const auto build = read_file("build.py");
+    const auto build = read_build_source();
     const auto release = read_file(".github/workflows/release.yml");
     CHECK(sh.find("steal_safety_production_concurrency_ready_gate_v_read") != std::string::npos,
           "AC1: deploy-AND accessor present in steal_safety.h");
@@ -1718,8 +1732,8 @@ static void ac2856_1_production_chaos_gate_runnable() {
     // The existing test file itself is the source of truth for the
     // chaos target's existence. Source-cite key elements.
     const auto chaos = read_file("tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp");
-    const auto build = read_file("build.py");
-    const auto nightly = read_file("build.py"); // build.py also wires nightly
+    const auto build = read_build_source();
+    const auto nightly = read_build_source(); // build.py also wires nightly
     (void)nightly;
     // 32-64 fiber composition: source-cite that the test exercises
     // ≥ 32 fibers (the test file's default 32-64+ fibers is from
@@ -1815,7 +1829,7 @@ static void ac2856_4_release_blocker_documented_source_cite() {
     std::println(
         "\n--- #2856 AC4: release blocker documented (source-cite + no docs/design/*) ---");
     const auto chaos = read_file("tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp");
-    const auto build = read_file("build.py");
+    const auto build = read_build_source();
     // chaos file cites #2856 as release blocker.
     CHECK(chaos.find("#2856") != std::string::npos ||
               chaos.find("Issue #2856") != std::string::npos,
@@ -1959,7 +1973,7 @@ static void ac2902_3_sustained_mode() {
 static void ac2902_4_structural_source_cite() {
     std::println("\n--- #2902 AC4: structural source-cite (non-brittle) ---");
     const auto chaos = read_file("tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp");
-    const auto build = read_file("build.py");
+    const auto build = read_build_source();
     // Structural symbols (function / env names) — not line-number fragments.
     CHECK(chaos.find("run_chaos_pass") != std::string::npos, "AC4: run_chaos_pass present");
     CHECK(chaos.find("hard_fail_invariants") != std::string::npos, "AC4: hard_fail_invariants");
@@ -1981,7 +1995,7 @@ static void ac2902_4_structural_source_cite() {
 static void ac2902_5_release_blocker_docs_and_linter() {
     std::println("\n--- #2902 AC5: release blocker docs + linter + no docs/design ---");
     const auto chaos = read_file("tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp");
-    const auto build = read_file("build.py");
+    const auto build = read_build_source();
     const auto lint = read_file("scripts/coverage/manifests/2902.json");
     CHECK(chaos.find("#2902") != std::string::npos ||
               chaos.find("Issue #2902") != std::string::npos,
@@ -2150,7 +2164,7 @@ static void ac3073_3_reuse_counters_additive() {
 static void ac3073_4_source_linter_gate() {
     std::println("\n--- #3073 AC4/AC5/AC6: linter + no invent + no docs/design ---");
     const auto t = read_file("tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp");
-    const auto build = read_file("build.py");
+    const auto build = read_build_source();
     const auto lint = read_file("scripts/coverage/manifests/3073.json");
     CHECK(t.find("ac3073_1_production_soak_binds_residual_and_hold") != std::string::npos,
           "AC5: AC1 test");

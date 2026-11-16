@@ -45,6 +45,20 @@ static std::string read_file(const char* path) {
     return {};
 }
 
+// #5246: build.py is the CLI core; command bodies live in tools/build/*.py.
+// Read the union so source pins survive the module split (and keep matching
+// when another group moves).
+static std::string read_build_source() {
+    std::string all = read_file("build.py");
+    std::error_code ec;
+    for (std::filesystem::directory_iterator it("tools/build", ec), end; !ec && it != end;
+         it.increment(ec)) {
+        if (it->path().extension() == ".py")
+            all += "\n" + read_file(it->path().string().c_str());
+    }
+    return all;
+}
+
 // Helper: run the script via Python subprocess and capture exit code.
 // #4332-round fix: a bare relative path breaks batch runs from the build
 // directory (python exits 2 → std::system rc=512) — probe the fallback
@@ -107,7 +121,7 @@ static void ac2_existing_prim_set_passes() {
 // cmd_side_effect_security() (which uses --strict).
 static void ac3_ci_gate_runs_script() {
     std::println("\n--- #2494 AC3: CI gate runs script via build.py ---");
-    const auto bp = read_file("build.py");
+    const auto bp = read_build_source();
     // Issue #5246: the gate step list moved into a table; build.py keeps a
     // generated wiring index naming every check script it dispatches.
     CHECK(bp.find("check_side_effect_security") != std::string::npos,
@@ -161,7 +175,7 @@ static void ac6_registrations() {
     const auto cmake = read_file("CMakeLists.txt");
     CHECK(cmake.find("test_side_effect_security_gate_hardfail") != std::string::npos,
           "AC6: CMake registers test");
-    const auto build = read_file("build.py");
+    const auto build = read_build_source();
     CHECK(!read_file("scripts/coverage/manifests/2494.json").empty(),
           "AC6: build.py gate entry (manifest SSOT)");
     const auto gate = read_file("scripts/coverage/manifests/2494.json");
