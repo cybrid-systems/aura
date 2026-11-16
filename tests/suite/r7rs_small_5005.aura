@@ -254,3 +254,16 @@
           (cond ((null? rows) #t)
                 ((member? (car (car rows)) seen) #f)
                 (else (loop (cdr rows) (cons (car (car rows)) seen))))))
+
+; Issue #5313: four-deep cxr are kernel readers, same as cadr/caddr.
+; A file that calls cadddr must typecheck; the name is not a library import.
+(t= "r7rs:status cadddr" (list "kernel" "primitive") (r7rs:status "cadddr"))
+(t= "r7rs:status cddddr" (list "kernel" "primitive") (r7rs:status "cddddr"))
+(t= "cadddr" 4 (cadddr (list 1 2 3 4 5)))
+(t= "cddddr" (list 5) (cddddr (list 1 2 3 4 5)))
+(t= "caaaar" 1 (caaaar (cons (cons (cons (cons 1 2) 3) 4) 5)))
+(t= "cdaaar" 2 (cdaaar (cons (cons (cons (cons 1 2) 3) 4) 5)))
+(t= "cadadr" 4 (cadadr (list (list 1 2) (list 3 4))))
+(t= "cdaddr" (list 4 5) (cdaddr (list 1 2 (list 3 4 5))))
+(t-true "cadddr of a non-pair is void" (void? (cadddr 1)))
+(t-true "cadddr of a short list is void" (void? (cadddr (list 1 2))))

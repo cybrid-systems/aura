@@ -53,7 +53,8 @@
     "K-STR-HEAP": "string and symbol readers/writers: each read or write goes through the tenant-stamped string heap (inrange_string_tenant_allows, #4428) and a denied access is a typed error, so an Aura body would drop the cross-tenant check",
     "K-HASH-HEAP": "hash and ihash readers: the table lives in the tenanted heap, entries carry per-slot tenant stamps and the deny path is a typed error; Aura cannot inspect slot ownership",
     "K-PARSE": "reader/parser surfaces (json, read-from-string, verify:parse-*): the body drives the FlatAST reader and mints strings, so the failure shapes and the parse state are kernel-owned",
-    "K-ERR": "the assertion helpers build the engine error value through push_error_cause; an Aura (error ...) raises a different value, so moving them would change what a failing test observes"
+    "K-ERR": "the assertion helpers build the engine error value through push_error_cause; an Aura (error ...) raises a different value, so moving them would change what a failing test observes",
+    "K-EXC-5313": "R7RS four-deep cxr (#5313). The cxr table already lists them as kernel primitives, and each step must run inrange_slot_tenant_allows (#4505) the way cadr/caddr do. The shorthand family does not fall through to the shared pair-slot face (#4111), so an Aura composition of car/cdr is a different reader. No registration was removable in the same change."
   },
   "kernel_exceptions": [
     "arithmetic-shift",
@@ -68,6 +69,22 @@
     "c-load",
     "c-opaque",
     "c-struct-size",
+    "caaaar",
+    "caaadr",
+    "caadar",
+    "caaddr",
+    "cadaar",
+    "cadadr",
+    "caddar",
+    "cadddr",
+    "cdaaar",
+    "cdaadr",
+    "cdadar",
+    "cdaddr",
+    "cddaar",
+    "cddadr",
+    "cdddar",
+    "cddddr",
     "eof-object",
     "integer-length",
     "orch:agent-ask",
@@ -99,7 +116,7 @@
     "orch:supervise-batch"
   ],
   "counts": {
-    "kernel": 400,
+    "kernel": 416,
     "stdlib-candidate": 0,
     "delete": 1
   },
@@ -348,7 +365,23 @@
       "rule": "K-FFI",
       "note": "FFI host effect, installed on (require \"std/ffi\") under effect:ffi (#3176); std/ffi is the library face"
     },
+    "caaaar": {
+      "tier": "kernel",
+      "rule": "K-SLOT-GOV"
+    },
+    "caaadr": {
+      "tier": "kernel",
+      "rule": "K-SLOT-GOV"
+    },
     "caaar": {
+      "tier": "kernel",
+      "rule": "K-SLOT-GOV"
+    },
+    "caadar": {
+      "tier": "kernel",
+      "rule": "K-SLOT-GOV"
+    },
+    "caaddr": {
       "tier": "kernel",
       "rule": "K-SLOT-GOV"
     },
@@ -360,7 +393,23 @@
       "tier": "kernel",
       "rule": "K-SLOT-GOV"
     },
+    "cadaar": {
+      "tier": "kernel",
+      "rule": "K-SLOT-GOV"
+    },
+    "cadadr": {
+      "tier": "kernel",
+      "rule": "K-SLOT-GOV"
+    },
     "cadar": {
+      "tier": "kernel",
+      "rule": "K-SLOT-GOV"
+    },
+    "caddar": {
+      "tier": "kernel",
+      "rule": "K-SLOT-GOV"
+    },
+    "cadddr": {
       "tier": "kernel",
       "rule": "K-SLOT-GOV"
     },
@@ -384,7 +433,23 @@
       "tier": "kernel",
       "rule": "K-VAL"
     },
+    "cdaaar": {
+      "tier": "kernel",
+      "rule": "K-SLOT-GOV"
+    },
+    "cdaadr": {
+      "tier": "kernel",
+      "rule": "K-SLOT-GOV"
+    },
     "cdaar": {
+      "tier": "kernel",
+      "rule": "K-SLOT-GOV"
+    },
+    "cdadar": {
+      "tier": "kernel",
+      "rule": "K-SLOT-GOV"
+    },
+    "cdaddr": {
       "tier": "kernel",
       "rule": "K-SLOT-GOV"
     },
@@ -396,7 +461,23 @@
       "tier": "kernel",
       "rule": "K-SLOT-GOV"
     },
+    "cddaar": {
+      "tier": "kernel",
+      "rule": "K-SLOT-GOV"
+    },
+    "cddadr": {
+      "tier": "kernel",
+      "rule": "K-SLOT-GOV"
+    },
     "cddar": {
+      "tier": "kernel",
+      "rule": "K-SLOT-GOV"
+    },
+    "cdddar": {
+      "tier": "kernel",
+      "rule": "K-SLOT-GOV"
+    },
+    "cddddr": {
       "tier": "kernel",
       "rule": "K-SLOT-GOV"
     },
