@@ -48,10 +48,14 @@
 
 #include "core/runtime_config.hh"
 #include <cstdio>
+#include <algorithm>
 #include <atomic>
 #include <cstdint>
 #include <cstdlib>
+#include <memory>
+#include <string>
 #include <string_view>
+#include <vector>
 
 namespace aura::compiler::mutate_type_gate {
 
@@ -237,6 +241,288 @@ inline void apply_production_defaults(bool dev_sandbox_off) noexcept {
            msg.find("match warning") != std::string_view::npos;
 }
 
+// ———————————————————————————————————————————————————————————————————
+// Issue #5317: the structural half of the #5253 constraint set.
+//
+// std/contract owns the constraint set and its Aura predicates; a predicate
+// closure never crosses into C++. The structural half — protected names,
+// each name's operator allow list, the set version and the detector
+// registration — is published by std/contract as a compact digest on the
+// existing #5251 decision trace (target "contract:constraints",
+// reason "contract-digest cg1|..."), which is the std -> engine summary
+// surface that exists. No new primitive, no new FFI, no second gate: this
+// rides the same mutate:* pre-commit point and the same report vocabulary
+// as #5255.
+//
+// Digest (versioned; names are identifiers, ops are operator names, so
+// neither carries the "|" "," "=" "+" delimiters):
+//
+//   cg1|v=<set version>|h=<content hash>|p=<protected[,..]>|
+//       a=<name=op+op[..]>|d=<detector/version/ids[,..]>
+//
+//   p  protected names
+//   a  per-name operator allow list (absent name = any operator)
+//   d  detector registration digest (name/version/detector ids)
+//   v  the set version the digest describes; re-activating a changed set
+//      republishes, so a version bump is auditable on the trace and visible
+//      here.
+//
+// Operator identity: the engine sees the mutate:* primitive, not the std
+// wrapper that called it (agent:round calls mutate :rebind), and no channel
+// names the enclosing std operator. So:
+//   * an EMPTY allow list means "no operator may change it" and is refused
+//     here for every mutate:* — the direct-call bypass #5317 closes;
+//   * an allow list that names ENGINE primitives ("mutate:rebind", ...) is
+//     enforced here (the primitive must be listed);
+//   * an allow list that names only std operators ("agent:round", ...) is
+//     left to the std layer, which already ran contract:check-mutation on
+//     that path — the engine cannot attribute the call to it, and refusing
+//     would break the very path the allow list admits.
+//
+// With no digest (no activated set, or a process that only ever ran without
+// constraints) the whole section is one relaxed atomic load and behavior is
+// byte-identical to before #5317.
+inline constexpr int kMutateContractGateIssue = 5317;
+struct ContractAllowRow {
+    std::string name;
+    std::vector<std::string> ops;
+};
+
+struct ContractSummary {
+    bool active = false;
+    std::uint64_t version = 0;
+    std::string hash;
+    std::vector<std::string> protected_names;
+    std::vector<ContractAllowRow> allow;
+    std::vector<std::string> detectors;
+    std::string raw;
+};
+
+inline std::atomic<std::uint64_t> g_contract_check_total{0};
+inline std::atomic<std::uint64_t> g_contract_reject_total{0};
+inline std::atomic<std::uint64_t> g_contract_deferred_total{0};
+inline std::atomic<std::uint64_t> g_contract_parse_error_total{0};
+
+inline std::atomic<std::uint64_t>& contract_installed_gen() noexcept {
+    static std::atomic<std::uint64_t> g{0};
+    return g;
+}
+
+inline std::atomic<bool>& contract_active_flag() noexcept {
+    static std::atomic<bool> a{false};
+    return a;
+}
+
+inline std::atomic<std::shared_ptr<const ContractSummary>>& contract_summary() noexcept {
+    static std::atomic<std::shared_ptr<const ContractSummary>> s{
+        std::make_shared<const ContractSummary>()};
+    return s;
+}
+
+[[nodiscard]] inline std::uint64_t installed_contract_gen() noexcept {
+    return contract_installed_gen().load(std::memory_order_acquire);
+}
+
+namespace contract_digest_detail {
+
+    inline std::vector<std::string> split(std::string_view text, char sep) {
+        std::vector<std::string> out;
+        std::size_t start = 0;
+        while (start <= text.size()) {
+            const std::size_t at = text.find(sep, start);
+            const std::size_t end = at == std::string_view::npos ? text.size() : at;
+            if (end > start)
+                out.emplace_back(text.substr(start, end - start));
+            if (at == std::string_view::npos)
+                break;
+            start = at + 1;
+        }
+        return out;
+    }
+
+    [[nodiscard]] inline bool parse_u64(std::string_view text, std::uint64_t& out) {
+        if (text.empty() || text.size() > 20)
+            return false;
+        std::uint64_t v = 0;
+        for (const char c : text) {
+            if (c < '0' || c > '9')
+                return false;
+            v = v * 10 + static_cast<std::uint64_t>(c - '0');
+        }
+        out = v;
+        return true;
+    }
+
+} // namespace contract_digest_detail
+
+// -> true when text is a well-formed cg1 digest. A malformed one leaves the
+// summary inactive (fail-open + counter): a broken mirror must not wedge
+// every mutate in the process.
+[[nodiscard]] inline bool parse_contract_digest(std::string_view text, ContractSummary& out) {
+    out = ContractSummary{};
+    out.raw = std::string(text);
+    if (!text.starts_with("cg1|"))
+        return false;
+    bool have_version = false;
+    bool have_hash = false;
+    for (const auto& seg : contract_digest_detail::split(text.substr(4), '|')) {
+        const std::size_t eq = seg.find('=');
+        if (eq == std::string::npos)
+            return false;
+        const std::string_view key = std::string_view(seg).substr(0, eq);
+        const std::string_view val = std::string_view(seg).substr(eq + 1);
+        if (key == "v") {
+            if (!contract_digest_detail::parse_u64(val, out.version))
+                return false;
+            have_version = true;
+        } else if (key == "h") {
+            out.hash = std::string(val);
+            have_hash = true;
+        } else if (key == "p") {
+            out.protected_names = contract_digest_detail::split(val, ',');
+        } else if (key == "a") {
+            for (const auto& entry : contract_digest_detail::split(val, ',')) {
+                ContractAllowRow row;
+                const std::size_t at = entry.find('=');
+                if (at == std::string::npos)
+                    return false;
+                row.name = entry.substr(0, at);
+                row.ops =
+                    contract_digest_detail::split(std::string_view(entry).substr(at + 1), '+');
+                out.allow.push_back(std::move(row));
+            }
+        } else if (key == "d") {
+            out.detectors = contract_digest_detail::split(val, ',');
+        }
+        // Forward-compatible: an unknown member is ignored, not fatal.
+    }
+    if (!have_version || !have_hash)
+        return false;
+    out.active = true;
+    return true;
+}
+
+// Install the newest digest std/contract published. Called only when the
+// trace generation moved, so the steady state is one relaxed load per mutate.
+inline void install_contract_digest(std::string_view text, std::uint64_t gen) {
+    auto next = std::make_shared<ContractSummary>();
+    if (!parse_contract_digest(text, *next)) {
+        // "off" is std/contract's deactivate marker, not a malformed digest.
+        if (!text.empty() && text != "off")
+            g_contract_parse_error_total.fetch_add(1, std::memory_order_relaxed);
+        next->active = false;
+    }
+    contract_summary().store(std::shared_ptr<const ContractSummary>(std::move(next)),
+                             std::memory_order_release);
+    contract_active_flag().store(contract_summary().load(std::memory_order_relaxed)->active,
+                                 std::memory_order_release);
+    contract_installed_gen().store(gen, std::memory_order_release);
+}
+
+struct ContractRuling {
+    bool rejected = false;
+    std::string name;
+    std::string detail;
+    std::vector<std::string> allowed;
+    std::uint64_t version = 0;
+    std::string digest;
+};
+
+// Only these mutate:* primitives address a definition BY NAME in their first
+// argument. A node id, a literal, a snapshot tag or a policy name in that
+// slot is not a define name, so the name-based protection must not read it
+// as one (mutate :snapshot "gate" is a tag; mutate :tweak-literal "gate" is
+// not a rebind of gate).
+[[nodiscard]] inline bool contract_name_target(std::string_view prim) noexcept {
+    return prim == "mutate:rebind" || prim == "mutate:set-body" || prim == "mutate:rename-symbol";
+}
+
+// The pre-commit structural ruling for one mutation of a name by prim.
+// Empty name (node-id / batch entry) passes: name-based protection cannot
+// be attributed without a name, and the std layer's delta check covers it.
+[[nodiscard]] inline ContractRuling check_contract_mutation(std::string_view prim,
+                                                            std::string_view name) {
+    ContractRuling r;
+    if (name.empty() || !contract_name_target(prim) ||
+        !contract_active_flag().load(std::memory_order_relaxed))
+        return r;
+    // A re-install can race a check; the shared_ptr load keeps the summary
+    // alive for the duration of this decision.
+    const auto summary = contract_summary().load(std::memory_order_acquire);
+    if (!summary || !summary->active)
+        return r;
+    const bool protected_name =
+        std::find(summary->protected_names.begin(), summary->protected_names.end(), name) !=
+        summary->protected_names.end();
+    if (!protected_name)
+        return r;
+    g_contract_check_total.fetch_add(1, std::memory_order_relaxed);
+    r.name = std::string(name);
+    r.version = summary->version;
+    r.digest = summary->hash;
+    const ContractAllowRow* row = nullptr;
+    for (const auto& cand : summary->allow) {
+        if (cand.name == name) {
+            row = &cand;
+            break;
+        }
+    }
+    if (row == nullptr || row->ops.empty()) {
+        // No operator may change it — the #5317 bypass face.
+        r.rejected = true;
+        r.detail = "protected-no-operator";
+    } else {
+        r.allowed = row->ops;
+        bool names_engine_prim = false;
+        bool allowed_here = false;
+        for (const auto& op : row->ops) {
+            if (op == prim)
+                allowed_here = true;
+            if (op.starts_with("mutate:"))
+                names_engine_prim = true;
+        }
+        if (!allowed_here) {
+            if (names_engine_prim) {
+                r.rejected = true;
+                r.detail = "protected-op-not-allowed";
+            } else {
+                // Std-operator allow list: std/contract already ran the
+                // pre-check on the path that carries this operator name.
+                g_contract_deferred_total.fetch_add(1, std::memory_order_relaxed);
+                return r;
+            }
+        }
+    }
+    if (r.rejected)
+        g_contract_reject_total.fetch_add(1, std::memory_order_relaxed);
+    return r;
+}
+
+// The queryable reason a refusal carries: the same vocabulary as the #5255
+// gate report (kind / version / invariant / subject / detail).
+[[nodiscard]] inline std::string contract_refusal_message(const ContractRuling& r,
+                                                          std::string_view prim) {
+    std::string msg =
+        "constraint set v" + std::to_string(r.version) + " (digest " + r.digest + ") protects ";
+    msg += r.name;
+    msg += ": ";
+    msg += r.detail;
+    msg += " (op ";
+    msg += prim;
+    if (r.allowed.empty()) {
+        msg += "; no operator may change it)";
+    } else {
+        msg += "; allowed: ";
+        for (std::size_t i = 0; i < r.allowed.size(); ++i) {
+            if (i != 0)
+                msg += ",";
+            msg += r.allowed[i];
+        }
+        msg += ")";
+    }
+    return msg;
+}
+
 struct Snapshot {
     std::int64_t mode = 0; // 0 soft, 1 hard
     std::uint64_t soft_type_skip_total = 0;
@@ -250,6 +536,15 @@ struct Snapshot {
     std::uint64_t soft_in_production_alarm_total = 0;
     int schema = kMutateTypeGateIssue;
     int schema_lock = kMutateTypeGateLockIssue;
+    // Issue #5317: the structural #5253 mirror.
+    std::int64_t contract_active = 0;
+    std::uint64_t contract_version = 0;
+    std::uint64_t contract_generation = 0;
+    std::uint64_t contract_check_total = 0;
+    std::uint64_t contract_reject_total = 0;
+    std::uint64_t contract_deferred_total = 0;
+    std::uint64_t contract_parse_error_total = 0;
+    int schema_contract = kMutateContractGateIssue;
 };
 
 [[nodiscard]] inline Snapshot snapshot() noexcept {
@@ -268,6 +563,15 @@ struct Snapshot {
         g_soft_in_production_alarm_total.load(std::memory_order_relaxed);
     s.schema = kMutateTypeGateIssue;
     s.schema_lock = kMutateTypeGateLockIssue;
+    const auto contract = contract_summary().load(std::memory_order_relaxed);
+    s.contract_active = contract && contract->active ? 1 : 0;
+    s.contract_version = contract ? contract->version : 0;
+    s.contract_generation = installed_contract_gen();
+    s.contract_check_total = g_contract_check_total.load(std::memory_order_relaxed);
+    s.contract_reject_total = g_contract_reject_total.load(std::memory_order_relaxed);
+    s.contract_deferred_total = g_contract_deferred_total.load(std::memory_order_relaxed);
+    s.contract_parse_error_total = g_contract_parse_error_total.load(std::memory_order_relaxed);
+    s.schema_contract = kMutateContractGateIssue;
     return s;
 }
 
@@ -278,6 +582,15 @@ inline void reset_for_test() noexcept {
     g_hard_type_error_reject_total.store(0, std::memory_order_relaxed);
     g_gate_check_total.store(0, std::memory_order_relaxed);
     g_production_locked.store(0, std::memory_order_relaxed);
+    // #5317: tests start from "no constraint declared" so every pre-existing
+    // expectation sees the same bytes as before the mirror existed.
+    contract_summary().store(std::make_shared<const ContractSummary>(), std::memory_order_relaxed);
+    contract_active_flag().store(false, std::memory_order_relaxed);
+    contract_installed_gen().store(0, std::memory_order_relaxed);
+    g_contract_check_total.store(0, std::memory_order_relaxed);
+    g_contract_reject_total.store(0, std::memory_order_relaxed);
+    g_contract_deferred_total.store(0, std::memory_order_relaxed);
+    g_contract_parse_error_total.store(0, std::memory_order_relaxed);
     g_soft_override_allowed.store(0, std::memory_order_relaxed);
     g_soft_in_production_alarm_total.store(0, std::memory_order_relaxed);
 }

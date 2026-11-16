@@ -51,10 +51,14 @@
 ; identifies the declared constraint content (not the predicate closures),
 ; so two sets with the same declarations hash the same.
 ;
-; ── Scope (wave 1) ─────────────────────────────────────────────────
-; Only the std layer is hooked here. Direct mutate:* calls still bypass
-; this set; the C++ hard gate carries the same check in wave 2 (#5243 /
-; #5255). MutationBoundaryGuard is deliberately untouched.
+; ── Scope (wave 2, #5317) ──────────────────────────────────────────
+; The std layer runs the Aura predicates; the structural half (protected
+; names, operator allow lists, version, detector registration) is ALSO
+; mirrored into the engine's C++ hard gate, so a direct mutate:* cannot
+; bypass it. Activation publishes a compact digest on the #5251 trace and
+; the gate reads it before committing (see contract-publish! below); the
+; predicates never cross that boundary. MutationBoundaryGuard is
+; deliberately untouched.
 ;
 ; Form order (#2769): export before require.
 
@@ -206,6 +210,41 @@
   (let ((c (contract-canonical s)))
     (string-append "c" (number->string (contract-string-hash c))
                    "-" (number->string (string-length c)))))
+
+; ── #5317: the structural digest the C++ hard gate mirrors ─────────
+; The engine cannot call an Aura predicate (no FFI across that boundary), so
+; only the structural half crosses: protected names, each name's operator
+; allow list, the set version and the detector registration. It rides the
+; existing #5251 decision trace (target "contract:constraints") -- the one
+; std -> engine summary surface -- and the C++ gate reads it before it
+; commits a mutate:*. No new primitive, no new gate, no predicate in C++.
+;
+; Format (delimiter-stable: names are identifiers, ops are operator names):
+;   cg1|v=<version>|h=<content hash>|p=<protected[,..]>|
+;       a=<name=op+op[..]>|d=<detector/version/ids[,..]>
+(define contract-digest-marker "contract-digest ")
+(define contract-digest-off "off")
+
+(define (contract-digest s)
+  (string-append
+    "cg1|v=" (number->string (hash-ref s "version" 1))
+    "|h=" (contract:hash s)
+    "|p=" (contract-join (hash-ref s "protected" (quote ())) ",")
+    "|a=" (contract-join (contract-allow-canonical (hash-ref s "allow" (hash))) ",")
+    "|d=" (contract-join (map contract-detector-canonical
+                              (hash-ref s "detectors" (quote ()))) ",")))
+
+; Publish the active set's structural digest. evo:record! is the existing
+; #5251 entry point every constraint change already uses for audit; the
+; engine reader keys on the reason prefix, so an audit row without it is
+; never mistaken for a digest.
+(define (contract-publish! s)
+  (try (evo:record! "contract:constraints" "KEEP"
+                    (string-append contract-digest-marker
+                                   (if (contract:set? s) (contract-digest s) contract-digest-off))
+                    (hash "structural" #t
+                          "version" (if (contract:set? s) (hash-ref s "version" 1) 0)))
+       (catch (e) #f)))
 
 ; ── Audit + #5251 decision trace ───────────────────────────────────
 ; A constraint change is a decision like any other: it lands in the
@@ -609,12 +648,21 @@
       (begin
         (set! *contract-active* set)
         (contract-trace! (hash-ref set "version" 1) "activate" "")
+        ; #5317: the engine hard gate mirrors this set from here on. Without
+        ; this publish the C++ side keeps behaving as "no constraints", so
+        ; activation is the single point a structural change becomes binding.
+        (contract-publish! set)
         set)
       #f))
 
 (define (contract:deactivate!)
-  (set! *contract-active* #f)
-  #t)
+  ; #5317: tell the engine mirror to stand down with the std layer -- but
+  ; only when something was active, so a program that never declares a
+  ; constraint writes no trace row and stays byte-identical to before.
+  (let ((had (contract:set? *contract-active*)))
+    (set! *contract-active* #f)
+    (if had (contract-publish! #f) #f)
+    #t))
 
 (define (contract:active) *contract-active*)
 
@@ -653,4 +701,4 @@
 (define (contract:schema) contract-schema-version)
 
 (define (contract:help)
-  "std/contract (#5253): executable invariants + protection sets over the program view. (contract:set) then contract:protect / contract:invariant / contract:invariant-on / contract:detector-set build a versioned set; contract:activate! installs it; agent:round, safe-refactor, refactor:*, hot-strategy:swap! and rule:apply refuse a violating commit and leave a queryable report in contract:last-failure. Constraint changes are audited and land in evo:trace target contract:constraints. std layer only (wave 1); wave 2 hooks the C++ gate after #5243.")
+  "std/contract (#5253): executable invariants + protection sets over the program view. (contract:set) then contract:protect / contract:invariant / contract:invariant-on / contract:detector-set build a versioned set; contract:activate! installs it; agent:round, safe-refactor, refactor:*, hot-strategy:swap! and rule:apply refuse a violating commit and leave a queryable report in contract:last-failure. Constraint changes are audited and land in evo:trace target contract:constraints. wave 2 (#5317) mirrors the structural half into the C++ hard gate, so a direct mutate:* is refused too.")
