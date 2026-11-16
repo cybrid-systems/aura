@@ -274,3 +274,77 @@ def _select_fast_linker() -> str | None:
     if _tool_available("mold"):
         warn("mold present but cannot link with this toolchain; falling back")
     return None
+
+
+# Issue #5246: git-diff and ninja helpers shared by the gate/command groups.
+
+
+def _git_changed_files(base: str = "origin/main") -> list[str]:
+    """Changed paths vs base (merge-base...HEAD) + staged + unstaged + untracked."""
+    files: set[str] = set()
+    try:
+        mb = subprocess.run(
+            ["git", "merge-base", base, "HEAD"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if mb.returncode == 0 and mb.stdout.strip():
+            r = subprocess.run(
+                ["git", "diff", "--name-only", f"{mb.stdout.strip()}...HEAD"],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if r.returncode == 0:
+                files.update(ln.strip() for ln in r.stdout.splitlines() if ln.strip())
+        for args in (
+            ["git", "diff", "--name-only", "--cached"],
+            ["git", "diff", "--name-only"],
+            ["git", "ls-files", "--others", "--exclude-standard"],
+        ):
+            r = subprocess.run(args, cwd=ROOT, capture_output=True, text=True, check=False)
+            if r.returncode == 0:
+                files.update(ln.strip() for ln in r.stdout.splitlines() if ln.strip())
+    except FileNotFoundError:
+        pass
+    return sorted(files)
+
+
+def _ninja_build(targets: list[str], *, jobs: int, keep_going: bool = False) -> int:
+    cmd = ["ninja", "-C", str(BUILD), f"-j{jobs}"]
+    if keep_going:
+        cmd.append("-k0")
+    cmd.extend(targets)
+    return run(cmd, cwd=ROOT)
+
+
+def _ninja_phony_inputs(target: str) -> list[str]:
+    """Members of a phony aggregate (e.g. all_test_issue_targets)."""
+    try:
+        proc = subprocess.run(
+            ["ninja", "-C", str(BUILD), "-t", "query", target],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    if proc.returncode != 0:
+        return []
+    names: list[str] = []
+    in_inputs = False
+    for ln in (proc.stdout or "").splitlines():
+        if ln.strip().startswith("input:"):
+            in_inputs = True
+            continue
+        if in_inputs:
+            if ln.startswith("  ") and not ln.startswith("    ") and ln.strip().endswith(":"):
+                break
+            s = ln.strip()
+            if s and s != "phony":
+                names.append(s)
+    return names
