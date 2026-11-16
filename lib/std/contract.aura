@@ -1,0 +1,653 @@
+; lib/std/contract.aura — Issue #5253 (v0.2.6, W2 wave 1): executable
+; invariants and protection sets over the program view.
+;
+; A user declares what must stay true — with an Aura predicate over the
+; program view or over one definition record — and which names may not
+; change (or may only change through a named operator). Every daily path
+; runs the same check before it commits: agent:round, safe-refactor,
+; hot-strategy:swap!, rule:apply and the refactor:* wrappers. A refusal is
+; a queryable record (contract:last-failure / contract:failures), never #f.
+;
+;   (require "std/contract" all:)
+;
+;   (define s (contract:set))
+;   (define s (contract:protect s "gate"))                 ; no op may change it
+;   (define s (contract:protect s "counter" "agent:round")) ; only that op
+;   (define s (contract:invariant-on s "params-non-empty"
+;                (lambda (r) (pair? (hash-ref r "params" (list))))
+;                "error" (quote all)))
+;   (define s (contract:invariant s "has-gate"
+;                (lambda (v)
+;                  (pair? (filter (lambda (r) (string=? (hash-ref r "name" "") "gate"))
+;                                 (hash-ref v "defines" (list)))))
+;                "error" (list "gate")))
+;   (contract:activate! s)
+;   (contract:check (contract:active))   ; -> report hash, ok true/false
+;   (contract:last-failure)              ; -> report hash or #f
+;
+; ── What is checked ────────────────────────────────────────────────
+; 1. Structural: a protected name may only be changed by an operator on
+;    its allow list. (contract:protect s name) allows none.
+; 2. Invariants over the program view: the predicate receives the view
+;    hash ("defines" record list from query:define-records, plus "source").
+;    (contract:invariant-on ...) instead calls the predicate once per
+;    in-scope define record, so a per-definition rule reads natural.
+; 3. Detector-set invariants: a reserved kind (#5271 will register these).
+;    It carries a detector name list, its own version and a retrain audit
+;    trail; the negative-selection algorithm is NOT implemented here.
+;    Evidence comes in through the check context ("detectors" hash
+;    name -> fired detector ids). With no evidence the entry is reported
+;    as "skipped" — unproven, not passed and not a violation.
+;
+; ── Severity ───────────────────────────────────────────────────────
+; "error" (default) blocks: report ok is #f, the daily path rolls back.
+; "warn" is recorded in the same report and does not block.
+;
+; ── Version and audit ──────────────────────────────────────────────
+; Every constraint change bumps "version" and appends an audit entry.
+; It is also written to the #5251 decision trace with target
+; "contract:constraints", so (evo:trace (hash "target" "contract:constraints"))
+; reads constraint changes next to every other decision. (contract:hash s)
+; identifies the declared constraint content (not the predicate closures),
+; so two sets with the same declarations hash the same.
+;
+; ── Scope (wave 1) ─────────────────────────────────────────────────
+; Only the std layer is hooked here. Direct mutate:* calls still bypass
+; this set; the C++ hard gate carries the same check in wave 2 (#5243 /
+; #5255). MutationBoundaryGuard is deliberately untouched.
+;
+; Form order (#2769): export before require.
+
+(export contract:schema contract:help
+        contract:set contract:set? contract:version contract:hash
+        contract:audit contract:invariants contract:protected
+        contract:allowed-ops contract:detectors
+        contract:invariant contract:invariant-on contract:detector-set
+        contract:protect contract:unprotect contract:retrain
+        contract:activate! contract:deactivate! contract:active
+        contract:view contract:check contract:check-view contract:check-delta
+        contract:check-mutation contract:check-active contract:check-delta
+        contract:refuse
+        contract:report-ok? contract:violations contract:blocking
+        contract:failures contract:last-failure contract:failures-of
+        contract:reset-failures! contract:guard-report)
+
+(require "std/list" all:)
+(require "std/string" all:)
+(require "std/hash" all:)
+(require "std/evo" all:)
+(require "std/query" all:)
+
+(define contract-schema-version 1)
+
+; Failure ring: the reports a daily path refused on, newest first.
+(define contract-failure-cap 64)
+(define *contract-failures* (quote ()))
+
+; The active set. #f means "no constraints declared" — every execution
+; point passes without consulting anything, which keeps existing callers
+; and suites bit-for-bit unchanged.
+(define *contract-active* #f)
+
+; ═══════════════════════════════════════════════════════════════════
+; Small helpers
+; ═══════════════════════════════════════════════════════════════════
+
+(define (contract-as-name v)
+  (cond ((string? v) v)
+        ((symbol? v) (symbol->string v))
+        (else #f)))
+
+(define (contract-as-severity v)
+  (if (and (string? v) (string=? v "warn")) "warn" "error"))
+
+(define (contract-as-scope v)
+  (if (list? v) v (quote all)))
+
+(define (contract-truthy? v) (not (equal? v #f)))
+
+(define (contract-take n xs)
+  (let loop ((i 0) (ys xs) (acc (quote ())))
+    (if (or (>= i n) (null? ys))
+        (reverse acc)
+        (loop (+ i 1) (cdr ys) (cons (car ys) acc)))))
+
+(define (contract-join xs sep)
+  (let loop ((ys xs) (acc ""))
+    (cond ((null? ys) acc)
+          ((string? (car ys)) (loop (cdr ys) (if (string=? acc "") (car ys) (string-append acc sep (car ys)))))
+          (else (loop (cdr ys) acc)))))
+
+(define (contract-name-set names n)
+  (if (member? n names) names (append names (list n))))
+
+(define (contract-name-drop names n)
+  (filter (lambda (x) (not (equal? x n))) names))
+
+; ═══════════════════════════════════════════════════════════════════
+; The constraint set (a value; every constructor returns a new one)
+; ═══════════════════════════════════════════════════════════════════
+
+(define (contract:set)
+  (hash "kind" "contract-set" "schema" contract-schema-version
+        "version" 1
+        "invariants" (quote ())
+        "protected" (quote ())
+        "allow" (hash)
+        "detectors" (quote ())
+        "audit" (quote ())))
+
+(define (contract:set? v)
+  (and (hash? v) (equal? (hash-ref v "kind" #f) "contract-set")))
+
+(define (contract:version s) (hash-ref s "version" 1))
+(define (contract:audit s) (hash-ref s "audit" (quote ())))
+(define (contract:invariants s) (hash-ref s "invariants" (quote ())))
+(define (contract:protected s) (hash-ref s "protected" (quote ())))
+(define (contract:detectors s) (hash-ref s "detectors" (quote ())))
+
+; A protected name yields its allow list (() = no operator may change it);
+; an unprotected name yields the symbol all (any operator may).
+(define (contract:allowed-ops s name)
+  (let ((n (contract-as-name name)))
+    (if (and n (member? n (hash-ref s "protected" (quote ()))))
+        (hash-ref (hash-ref s "allow" (hash)) n (quote ()))
+        (quote all))))
+
+; ── Canonical content + hash ───────────────────────────────────────
+; The hash covers declarations (names, severities, subjects, allow lists,
+; detector versions) in declaration order. Predicate closures are not part
+; of it: a re-registered predicate with the same name keeps the hash and
+; still bumps the version + audit entry.
+(define (contract-allow-canonical allow)
+  (let loop ((ks (hash-keys allow)) (acc (quote ())))
+    (if (null? ks)
+        (reverse acc)
+        (loop (cdr ks)
+              (cons (string-append (car ks) "="
+                                   (contract-join (hash-ref allow (car ks) (quote ())) "+"))
+                    acc)))))
+
+(define (contract-invariant-canonical i)
+  (string-append (hash-ref i "name" "") "/"
+                 (hash-ref i "severity" "error") "/"
+                 (hash-ref i "subject" "view") "/"
+                 (contract-join (let ((s (hash-ref i "scope" (quote all))))
+                                  (if (list? s) s (list)))
+                                "+")))
+
+(define (contract-detector-canonical d)
+  (string-append (hash-ref d "name" "") "/"
+                 (number->string (hash-ref d "version" 1)) "/"
+                 (contract-join (hash-ref d "detectors" (quote ())) "+")))
+
+(define (contract-canonical s)
+  (string-append
+    "contract|schema=" (number->string contract-schema-version)
+    "|v=" (number->string (hash-ref s "version" 1))
+    "|protected=" (contract-join (hash-ref s "protected" (quote ())) ",")
+    "|allow=" (contract-join (contract-allow-canonical (hash-ref s "allow" (hash))) ",")
+    "|invariants=" (contract-join (map contract-invariant-canonical
+                                       (hash-ref s "invariants" (quote ()))) ",")
+    "|detectors=" (contract-join (map contract-detector-canonical
+                                      (hash-ref s "detectors" (quote ()))) ",")))
+
+; A small bounded string hash. std/hash's default-hash overflows the
+; fixnum range on a long canonical string, so the fold is local: 33*x+c
+; modulo 2^31-1, the same shape every other content id here uses.
+(define (contract-string-hash s)
+  (let loop ((i 0) (h 5381))
+    (if (>= i (string-length s))
+        h
+        (loop (+ i 1) (modulo (+ (* h 33) (char->integer (string-ref s i)))
+                              2147483647)))))
+
+(define (contract:hash s)
+  (let ((c (contract-canonical s)))
+    (string-append "c" (number->string (contract-string-hash c))
+                   "-" (number->string (string-length c)))))
+
+; ── Audit + #5251 decision trace ───────────────────────────────────
+; A constraint change is a decision like any other: it lands in the
+; in-process evo trace (target "contract:constraints") as well as in the
+; set's own audit list.
+(define (contract-trace! version op name)
+  (try (evo:record! "contract:constraints" "KEEP"
+                    (string-append "constraint-" op)
+                    (hash "version" version "op" op
+                          "name" (if (string? name) name "")))
+       (catch (e) #f)))
+
+(define (contract-bump s op name)
+  (let* ((v (+ 1 (hash-ref s "version" 1)))
+         (entry (hash "kind" "contract-audit" "op" op "version" v
+                      "name" (if (string? name) name "")))
+         (s2 (hash-set (hash-set s "version" v)
+                       "audit" (cons entry (hash-ref s "audit" (quote ()))))))
+    (contract-trace! v op name)
+    s2))
+
+; ═══════════════════════════════════════════════════════════════════
+; Declaration surface
+; ═══════════════════════════════════════════════════════════════════
+
+(define (contract-invariant-rec name pred subject severity scope)
+  (hash "kind" "contract-invariant"
+        "name" name "subject" subject
+        "severity" (contract-as-severity severity)
+        "scope" (contract-as-scope scope)
+        "predicate" pred "version" 1))
+
+(define (contract-add-invariant s rec op)
+  (let* ((n (hash-ref rec "name" ""))
+         (kept (filter (lambda (i) (not (equal? (hash-ref i "name" "") n)))
+                       (hash-ref s "invariants" (quote ()))))
+         (s2 (hash-set (hash-set s "invariants" (append kept (list rec)))
+                       "detectors"
+                       (filter (lambda (d) (not (equal? (hash-ref d "name" "") n)))
+                               (hash-ref s "detectors" (quote ()))))))
+    (contract-bump s2 op n)))
+
+; (contract:invariant s name pred severity scope) — pred takes the view.
+(define (contract:invariant s name pred severity scope)
+  (contract-add-invariant s
+                          (contract-invariant-rec (contract-as-name name) pred
+                                                  "view" severity scope)
+                          "invariant"))
+
+; (contract:invariant-on s name pred severity scope) — pred takes one
+; definition record at a time (scope: a name list, or all).
+(define (contract:invariant-on s name pred severity scope)
+  (contract-add-invariant s
+                          (contract-invariant-rec (contract-as-name name) pred
+                                                  "define" severity scope)
+                          "invariant-on"))
+
+; (contract:detector-set s name detectors severity scope) — the reserved
+; detector-set kind. Registration + version + retrain trail only; the
+; detector algorithm belongs to #5271.
+(define (contract:detector-set s name detectors severity scope)
+  (let* ((n (contract-as-name name))
+         (ds (if (list? detectors) detectors (quote ())))
+         (rec (hash "kind" "contract-detector-set"
+                    "name" n "subject" "detectors"
+                    "severity" (contract-as-severity severity)
+                    "scope" (contract-as-scope scope)
+                    "detectors" ds "version" 1 "retrain" (quote ())))
+         (kept (filter (lambda (d) (not (equal? (hash-ref d "name" "") n)))
+                       (hash-ref s "detectors" (quote ()))))
+         (s2 (hash-set (hash-set s "detectors" (append kept (list rec)))
+                       "invariants"
+                       (filter (lambda (i) (not (equal? (hash-ref i "name" "") n)))
+                               (hash-ref s "invariants" (quote ()))))))
+    (contract-bump s2 "detector-set" n)))
+
+; (contract:protect s name [op ...]) — no op may change the name, unless
+; an op name is listed. A protected name covers the definition's whole
+; subtree: any operator that reaches the name is the operator that the
+; allow list gates.
+(define (contract:protect s name . ops)
+  (let* ((n (contract-as-name name))
+         (allowed0 (filter (lambda (x) (string? x)) ops))
+         (s2 (hash-set (hash-set s "protected"
+                                 (contract-name-set (hash-ref s "protected" (quote ())) n))
+                       "allow" (hash-set (hash-ref s "allow" (hash)) n allowed0))))
+    (contract-bump s2 "protect" n)))
+
+(define (contract:unprotect s name)
+  (let* ((n (contract-as-name name))
+         (s2 (hash-set s "protected"
+                       (contract-name-drop (hash-ref s "protected" (quote ())) n))))
+    (contract-bump s2 "unprotect" n)))
+
+; (contract:retrain s name detectors) — replace a detector set's detector
+; list, bump its own version, and leave a retrain entry in the audit list.
+(define (contract:retrain s name detectors)
+  (let* ((n (contract-as-name name))
+         (found #f)
+         (ds (hash-ref s "detectors" (quote ())))
+         (acc (quote ())))
+    (for-each
+      (lambda (d)
+        (if (equal? (hash-ref d "name" "") n)
+            (begin
+              (set! found #t)
+              (set! acc (cons (hash-set (hash-set d "detectors"
+                                                 (if (list? detectors) detectors (quote ())))
+                                        "version" (+ 1 (hash-ref d "version" 1)))
+                              acc)))
+            (set! acc (cons d acc))))
+      ds)
+    (if found
+        (let* ((s2 (hash-set s "detectors" (reverse acc)))
+               (v (+ 1 (hash-ref s2 "version" 1)))
+               (entry (hash "kind" "contract-audit" "op" "retrain" "version" v
+                            "name" n
+                            "detectors" (if (list? detectors) detectors (quote ())))))
+          (contract-trace! v "retrain" n)
+          (hash-set (hash-set s2 "version" v)
+                    "audit" (cons entry (hash-ref s2 "audit" (quote ())))))
+        s)))
+
+; ═══════════════════════════════════════════════════════════════════
+; The program view (query:define-records) + checks
+; ═══════════════════════════════════════════════════════════════════
+
+(define (contract-view-records)
+  (try (let ((v (query:define-records))) (if (list? v) v (quote ())))
+       (catch (e) (quote ()))))
+
+(define (contract:view)
+  (hash "kind" "contract-view"
+        "defines" (contract-view-records)
+        "source" (try (current-source) (catch (e) ""))))
+
+(define (contract-view-of ctx)
+  (let ((v (if (hash? ctx) (hash-ref ctx "view" #f) #f)))
+    (if (hash? v) v (contract:view))))
+
+(define (contract-violation set inv-name severity op detail subject extra)
+  (hash "kind" "contract-violation"
+        "invariant" inv-name
+        "severity" severity
+        "op" op
+        "detail" detail
+        "subject" subject
+        "at-version" (hash-ref set "version" 1)
+        "extra" extra))
+
+(define (contract-scope-records recs scope)
+  (if (list? scope)
+      (if (null? scope)
+          recs
+          (filter (lambda (r) (member? (hash-ref r "name" "") scope)) recs))
+      recs))
+
+(define (contract-eval-define-invariant set inv recs op)
+  (let ((inv-name (hash-ref inv "name" ""))
+        (sev (hash-ref inv "severity" "error"))
+        (pred (hash-ref inv "predicate" #f))
+        (scope (hash-ref inv "scope" (quote all))))
+    (if (not (procedure? pred))
+        (list (contract-violation set inv-name sev op "predicate-missing" "" #f))
+        (let loop ((rs (contract-scope-records recs scope)) (acc (quote ())))
+          (if (null? rs)
+              acc
+              (let* ((r (car rs))
+                     (rn (hash-ref r "name" ""))
+                     (res (try (pred r) (catch (e) (quote contract-raised)))))
+                (cond
+                  ((equal? res (quote contract-raised))
+                   (loop (cdr rs)
+                         (append acc (list (contract-violation
+                                             set inv-name sev op
+                                             (string-append "predicate-raised:" rn)
+                                             rn #f)))))
+                  ((contract-truthy? res) (loop (cdr rs) acc))
+                  (else
+                   (loop (cdr rs)
+                         (append acc (list (contract-violation
+                                             set inv-name sev op
+                                             (string-append "predicate-false:" rn)
+                                             rn #f))))))))))))
+
+(define (contract-eval-view-invariant set inv view op)
+  (let ((inv-name (hash-ref inv "name" ""))
+        (sev (hash-ref inv "severity" "error"))
+        (pred (hash-ref inv "predicate" #f)))
+    (if (not (procedure? pred))
+        (list (contract-violation set inv-name sev op "predicate-missing" "" #f))
+        (let ((res (try (pred view) (catch (e) (quote contract-raised)))))
+          (cond
+            ((equal? res (quote contract-raised))
+             (list (contract-violation set inv-name sev op "predicate-raised" "" #f)))
+            ((contract-truthy? res) (quote ()))
+            (else (list (contract-violation set inv-name sev op "predicate-false" "" #f))))))))
+
+(define (contract-eval-invariants set recs view op)
+  (let loop ((is (hash-ref set "invariants" (quote ()))) (acc (quote ())))
+    (if (null? is)
+        acc
+        (let* ((i (car is))
+               (viols (if (equal? (hash-ref i "subject" "view") "define")
+                          (contract-eval-define-invariant set i recs op)
+                          (contract-eval-view-invariant set i view op))))
+          (loop (cdr is) (append acc viols))))))
+
+; -> (violations skipped-names). No detector evidence means "skipped":
+; the registration surface is present; the algorithm is not (#5271).
+(define (contract-eval-detectors set fired op)
+  (let loop ((ds (hash-ref set "detectors" (quote ())))
+             (vs (quote ())) (sk (quote ())))
+    (if (null? ds)
+        (list vs (reverse sk))
+        (let* ((d (car ds))
+               (name (hash-ref d "name" ""))
+               (sev (hash-ref d "severity" "error")))
+          (if (not (hash? fired))
+              (loop (cdr ds) vs (cons name sk))
+              (let* ((h0 (hash-ref fired name (quote ())))
+                     (hits (if (list? h0) h0 (quote ()))))
+                (if (null? hits)
+                    (loop (cdr ds) vs sk)
+                    (loop (cdr ds)
+                          (append vs (list (hash "kind" "contract-violation"
+                                                 "invariant" name
+                                                 "severity" sev "op" op
+                                                 "detail" "detector-fired"
+                                                 "subject" name
+                                                 "detectors" hits
+                                                 "at-version" (hash-ref d "version" 1)
+                                                 "extra" #f)))
+                          sk))))))))
+
+; The delta half: a generic thunk wrapper cannot name its target, so it
+; compares the protected defines before/after. A protected name that lost
+; its define (a rename) or whose parameter list / callee set changed is a
+; change; the operator allow list still gates it.
+(define (contract-protected-sig rec)
+  (if (hash? rec)
+      (string-append (hash-ref rec "name" "") "/"
+                     (contract-join (hash-ref rec "params" (quote ())) ",") "/"
+                     (contract-join (hash-ref rec "callees" (quote ())) ","))
+      ""))
+
+(define (contract-find-rec recs name)
+  (let loop ((rs recs))
+    (cond ((null? rs) #f)
+          ((equal? (hash-ref (car rs) "name" "") name) (car rs))
+          (else (loop (cdr rs))))))
+
+(define (contract-delta set before after op)
+  (if (or (not (list? before)) (null? before))
+      (quote ())
+      (let loop ((ns (hash-ref set "protected" (quote ()))) (acc (quote ())))
+        (if (null? ns)
+            acc
+            (let* ((n (car ns))
+                   (b (contract-find-rec before n))
+                   (a (contract-find-rec after n)))
+              (loop (cdr ns)
+                    (if (not b)
+                        acc
+                        (let ((allowed (hash-ref (hash-ref set "allow" (hash)) n (quote ()))))
+                          (cond
+                            ((not a)
+                             (if (member? op allowed)
+                                 acc
+                                 (append acc (list (contract-violation
+                                                     set (string-append "protected:" n)
+                                                     "error" op "protected-removed" n #f)))))
+                            ((equal? (contract-protected-sig b) (contract-protected-sig a))
+                             acc)
+                            ((member? op allowed) acc)
+                            (else
+                             (append acc (list (contract-violation
+                                                 set (string-append "protected:" n)
+                                                 "error" op "protected-changed" n #f)))))))))))))
+
+; The structural half: an operator may change a protected name only when
+; the name's allow list carries that operator.
+(define (contract-structural set op name)
+  (let* ((n (contract-as-name name))
+         (prot (hash-ref set "protected" (quote ()))))
+    (cond
+      ((not n) (quote ()))
+      ((not (member? n prot)) (quote ()))
+      (else
+       (let ((allowed (hash-ref (hash-ref set "allow" (hash)) n (quote ()))))
+         (if (member? op allowed)
+             (quote ())
+             (list (contract-violation
+                     set (string-append "protected:" n) "error" op
+                     (if (null? allowed)
+                         "protected-no-operator"
+                         "protected-operator-not-allowed")
+                     n allowed))))))))
+
+(define (contract-blocking? r)
+  (equal? (hash-ref r "severity" "error") "error"))
+
+(define (contract-note! report)
+  (if (contract:report-ok? report)
+      report
+      (begin
+        (set! *contract-failures*
+              (contract-take contract-failure-cap (cons report *contract-failures*)))
+        report)))
+
+(define (contract-run set op name ctx)
+  (let* ((view (contract-view-of ctx))
+         (recs (let ((d (hash-ref view "defines" (quote ()))))
+                 (if (list? d) d (quote ()))))
+         (fired (let ((f (if (hash? ctx) (hash-ref ctx "detectors" #f) #f)))
+                  (if (hash? f) f #f)))
+         (before (let ((b (if (hash? ctx) (hash-ref ctx "before" (quote ())) (quote ()))))
+                   (if (list? b) b (quote ()))))
+         (viols (append (contract-structural set op name)
+                        (contract-delta set before recs op)
+                        (contract-eval-invariants set recs view op)
+                        (car (contract-eval-detectors set fired op))))
+         (blocking (filter contract-blocking? viols))
+         (report (hash "kind" "contract-check"
+                       "ok" (null? blocking)
+                       "version" (hash-ref set "version" 1)
+                       "hash" (contract:hash set)
+                       "op" op
+                       "name" (if (string? name) name "")
+                       "violations" viols
+                       "skipped" (car (cdr (contract-eval-detectors set fired op)))
+                       "checked" (hash "invariants" (length (hash-ref set "invariants" (quote ())))
+                                       "detector-sets" (length (hash-ref set "detectors" (quote ())))
+                                       "defines" (length recs)))))
+    (contract-note! report)))
+
+(define (contract:report-ok? r)
+  (and (hash? r) (equal? (hash-ref r "ok" #f) #t)))
+
+(define (contract:violations r)
+  (if (hash? r) (hash-ref r "violations" (quote ())) (quote ())))
+
+(define (contract:blocking r)
+  (filter contract-blocking? (contract:violations r)))
+
+; (contract:check s [ctx]) — view + detector invariants over the current
+; workspace (or the "view" a caller supplies). ctx may also carry
+; "detectors": a hash of detector-set name -> fired detector ids.
+(define (contract:check s . ctx)
+  (contract-run s "check" #f
+                (if (and (pair? ctx) (hash? (car ctx))) (car ctx) (hash))))
+
+(define (contract:check-view s view)
+  (contract-run s "check" #f (if (hash? view) (hash "view" view) (hash))))
+
+; (contract:check-delta s before op) — the delta form a generic wrapper
+; uses: no target name is known, so the protected defines are compared.
+(define (contract:check-delta s before op)
+  (contract-run s op #f
+                (hash "before" (if (list? before) before (quote ())))))
+
+; (contract:check-mutation s op name) — the pre-commit structural check a
+; daily path runs before it touches name.
+(define (contract:check-mutation s op name)
+  (contract-run s op name (hash)))
+
+; (contract:check-active op name) — the same against the active set;
+; #f when no set is active (the zero-cost path for every existing caller).
+(define (contract:check-active op name)
+  (let ((s (contract:active)))
+    (if (contract:set? s)
+        (contract-run s op name (hash))
+        #f)))
+
+; (contract:refuse s op detail) — a refusal a daily path detects itself,
+; for example a workspace-scoped rule whose matches cannot be attributed
+; to one name. Same report shape and the same failure ring, so a caller
+; reads it exactly like an evaluated violation. Fail closed, never #f.
+(define (contract:refuse s op detail)
+  (contract-note!
+    (hash "kind" "contract-check" "ok" #f
+          "version" (hash-ref s "version" 1)
+          "hash" (contract:hash s)
+          "op" op "name" ""
+          "violations" (list (contract-violation s "path:unknown-target" "error"
+                                                 op detail "" #f))
+          "skipped" (quote ())
+          "checked" (hash "invariants" (length (hash-ref s "invariants" (quote ())))
+                          "detector-sets" (length (hash-ref s "detectors" (quote ())))
+                          "defines" 0))))
+
+; ═══════════════════════════════════════════════════════════════════
+; Activation + the queryable failure record
+; ═══════════════════════════════════════════════════════════════════
+
+(define (contract:activate! set)
+  (if (contract:set? set)
+      (begin
+        (set! *contract-active* set)
+        (contract-trace! (hash-ref set "version" 1) "activate" "")
+        set)
+      #f))
+
+(define (contract:deactivate!)
+  (set! *contract-active* #f)
+  #t)
+
+(define (contract:active) *contract-active*)
+
+(define (contract:failures) *contract-failures*)
+
+(define (contract:last-failure)
+  (if (null? *contract-failures*) #f (car *contract-failures*)))
+
+(define (contract:failures-of name)
+  (let ((n (contract-as-name name)))
+    (filter (lambda (r)
+              (let loop ((vs (hash-ref r "violations" (quote ()))))
+                (cond ((null? vs) #f)
+                      ((equal? (hash-ref (car vs) "subject" "") n) #t)
+                      (else (loop (cdr vs))))))
+            *contract-failures*)))
+
+(define (contract:reset-failures!)
+  (set! *contract-failures* (quote ()))
+  #t)
+
+(define (contract:guard-report)
+  (let ((s (contract:active)))
+    (if (contract:set? s)
+        (hash "kind" "contract-guard" "active" #t
+              "version" (hash-ref s "version" 1)
+              "hash" (contract:hash s)
+              "protected" (hash-ref s "protected" (quote ()))
+              "invariants" (length (hash-ref s "invariants" (quote ())))
+              "detector-sets" (length (hash-ref s "detectors" (quote ())))
+              "failed" (length *contract-failures*))
+        (hash "kind" "contract-guard" "active" #f "version" 0 "hash" ""
+              "protected" (quote ()) "invariants" 0 "detector-sets" 0
+              "failed" (length *contract-failures*)))))
+
+(define (contract:schema) contract-schema-version)
+
+(define (contract:help)
+  "std/contract (#5253): executable invariants + protection sets over the program view. (contract:set) then contract:protect / contract:invariant / contract:invariant-on / contract:detector-set build a versioned set; contract:activate! installs it; agent:round, safe-refactor, refactor:*, hot-strategy:swap! and rule:apply refuse a violating commit and leave a queryable report in contract:last-failure. Constraint changes are audited and land in evo:trace target contract:constraints. std layer only (wave 1); wave 2 hooks the C++ gate after #5243.")

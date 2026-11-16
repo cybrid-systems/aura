@@ -36,11 +36,48 @@
 (export safe-refactor:with-snapshot
         safe-refactor:replace-fn
         safe-refactor:check-and-apply
-        safe-refactor:rollback)
+        safe-refactor:rollback
+        safe-refactor:contract-pre
+        safe-refactor:contract-post)
+
+; #5253: every mutation helper below consults the active contract set
+; before it commits. With no active set (contract:active) = #f and the
+; helpers return #f, so a caller that never declared constraints sees the
+; pre-#5253 behavior exactly.
+(require "std/contract" all:)
+
+; ── (#5253) contract gate ──────────────────────────────────────────
+; pre  : protected names / operator allow lists, before any write.
+; post : the user's predicate invariants over the program view.
+; Both yield the report hash (queryable, never #f) only when refused;
+; #f means "no active set, nothing to say".
+(define (safe-refactor:contract-pre op name)
+  (if (contract:active)
+      (contract:check-mutation (contract:active) op name)
+      #f))
+
+; A generic wrapper does not know which name it is about to touch, so
+; the post check also compares the protected defines against "before".
+(define (safe-refactor:contract-before)
+  (if (contract:active)
+      (let ((v (contract:view)))
+        (let ((d (hash-ref v "defines" (quote ()))))
+          (if (list? d) d (quote ()))))
+      (quote ())))
+
+(define (safe-refactor:contract-post before)
+  (if (contract:active)
+      (contract:check (contract:active)
+                      (hash "before" (if (list? before) before (quote ()))))
+      #f))
+
+(define (safe-refactor:contract-refused? report)
+  (and (hash? report) (not (contract:report-ok? report))))
 
 ; ── safe-refactor:with-snapshot — snapshot/restore wrapper ──
 (define (safe-refactor:with-snapshot tag thunk)
-  (let ((snap-id (mutate :snapshot tag)))
+  (let ((snap-id (mutate :snapshot tag))
+        (before (safe-refactor:contract-before)))
     (let ((result (try (thunk) (catch (e) 'error-raised))))
       (cond
         ((equal? result 'error-raised)
@@ -51,7 +88,14 @@
          (begin
            (mutate :restore snap-id)
            (list 'rolled-back "explicit-fail")))
-        (else result)))))
+        (else
+         ; #5253: the wrapped thunk's post-state must satisfy the set.
+         (let ((cref (safe-refactor:contract-post before)))
+           (if (safe-refactor:contract-refused? cref)
+               (begin
+                 (mutate :restore snap-id)
+                 (list 'rolled-back cref))
+               result)))))))
 
 ; ── safe-refactor:check-and-apply — pre/post verification gate ──
 (define (safe-refactor:check-and-apply pre-verify post-verify apply-fn)
@@ -60,6 +104,7 @@
      (list 'rejected "pre-verify-failed"))
     (else
      (let* ((snap-id (mutate :snapshot "safe-refactor-check"))
+            (before (safe-refactor:contract-before))
             (apply-result
               (try (apply-fn) (catch (e) 'apply-error-raised))))
        (cond
@@ -82,7 +127,13 @@
                  (mutate :restore snap-id)
                  (list 'rolled-back "post-verify-failed")))
               (else
-               (list 'applied apply-result))))))))))
+               ; #5253: post-verify passed, the contract set still decides.
+               (let ((cref (safe-refactor:contract-post before)))
+                 (if (safe-refactor:contract-refused? cref)
+                     (begin
+                       (mutate :restore snap-id)
+                       (list 'rolled-back cref))
+                     (list 'applied apply-result))))))))))))
 
 ; ── safe-refactor:rollback — restore last safe-refactor snapshot ──
 ;
@@ -160,13 +211,18 @@
     ((or (= (string-length fn-name) 0) (= (string-length new-body) 0))
      (list 'rejected "empty-source-or-body"))
     (else
-     (let ((gate (try (mutate :check fn-name new-body) (catch (e) 'check-error-raised))))
+     ; #5253: a protected name is refused before the dry-run gate even runs.
+     (let* ((cref (safe-refactor:contract-pre "safe-refactor:replace-fn" fn-name))
+            (gate (try (mutate :check fn-name new-body) (catch (e) 'check-error-raised))))
        (cond
+         ((safe-refactor:contract-refused? cref)
+          (list 'rejected cref))
          ((equal? gate 'check-error-raised)
           (list 'rejected "check-error-raised"))
          ((equal? gate #t)
           ; Candidate parses and adds no new diagnostics — install it.
           (let* ((snap-id (mutate :snapshot (string-append "replace-" fn-name)))
+                 (before (safe-refactor:contract-before))
                  (apply-result
                    (try (mutate :rebind fn-name new-body)
                         (catch (e) 'apply-error-raised)))
@@ -191,7 +247,13 @@
               ; and is reported as rejected — the report rides the reason slot
               ; so Agents get the details without parsing English to branch.
               ((equal? tc #t)
-               (list 'applied snap-id))
+               ; #5253: the installed workspace must satisfy the set.
+               (let ((cref2 (safe-refactor:contract-post before)))
+                 (if (safe-refactor:contract-refused? cref2)
+                     (begin
+                       (mutate :restore snap-id)
+                       (list 'rejected cref2))
+                     (list 'applied snap-id))))
               (else
                (begin
                  (mutate :restore snap-id)

@@ -90,6 +90,10 @@
     (list "evo-meta"
       (list "Depth-1 RSI: evolvable proposal strategy / mutation ops / parent policy / budget split; protected evaluator/gate/holdout/audit; HGM CMP selection; canary rollback; human approval"
             "(require \"std/evo-meta\" all:)(meta:report (meta:loop (hash \"depth\" 1 \"meta-holdout\" (list))))"))
+    ; Issue #5253: executable invariants + protection sets (wave 1: std layer)
+    (list "contract"
+      (list "Executable invariants + protection sets: declare what must stay true; agent:round / safe-refactor / refactor:* / hot-strategy / rule:apply refuse a violating commit and leave a queryable report; evo-meta's protected reads the same set"
+            "(require \"std/contract\" all:)(contract:activate! (contract:protect (contract:set) \"gate\"))"))
     ; ── Aura layer (#5004): agent / orch / evo are written in Aura over the
     ;    primitives; the Scheme layer below is engine + host prims. ──
     (list "agent"

@@ -33,6 +33,8 @@
         hot-strategy:help)
 
 (require "std/mutate" all:)
+; #5253: the active invariant / protection set.
+(require "std/contract" all:)
 
 
 ; ── Process-local strategy registry. One record per name (#5288). ──
@@ -129,6 +131,19 @@
 (define (hot-strategy:snapshot! tag)
   (mutate :snapshot (if (string? tag) tag "hot-strategy")))
 
+; ── (#5253) contract gate ──────────────────────────────────────────
+; No active set → all three return #f and the swap below is unchanged.
+; A refusal restores the pre-swap snapshot, never promotes last-good, and
+; returns the report in the 4th slot: (list #f version snap report).
+(define (hot-strategy:contract-pre op name)
+  (if (contract:active) (contract:check-mutation (contract:active) op name) #f))
+
+(define (hot-strategy:contract-post)
+  (if (contract:active) (contract:check (contract:active)) #f))
+
+(define (hot-strategy:contract-refused? report)
+  (and (hash? report) (not (contract:report-ok? report))))
+
 ; Record last-good without rebinding (after a known-good eval).
 ; (hot-strategy:register! name body-string [tag])
 (define (hot-strategy:register! name body)
@@ -148,22 +163,32 @@
   ; prior is read before the rebind: it is the expression heal puts back.
   (let ((pre (hot-strategy:snapshot! (string-append "hs-pre-" name)))
         (sum (if (string? summary) summary "hot-strategy:swap"))
-        (prior (hs-prior-body name)))
-    (let ((ok (try
-                (let ((rebound (mutate :rebind name body sum)))
-                  ; Only exact #t is success — reject may be #f or an error
-                  ; object (truthy), neither of which must promote last-good.
-                  (if (equal? rebound #t)
-                      (begin (eval-current) #t)
-                      #f))
-                (catch (e) #f))))
-      (if ok
-          (begin
-            (set! *hs-name* name)
-            (set! *hs-version* (+ *hs-version* 1))
-            (hash-set! *hs-rules* name (list body pre prior))
-            (list #t *hs-version* pre))
-          (list #f *hs-version* pre)))))
+        (prior (hs-prior-body name))
+        (cref (hot-strategy:contract-pre "hot-strategy:swap!" name)))
+    (if (hot-strategy:contract-refused? cref)
+        ; #5253: refused before the rebind; the workspace never moves.
+        (list #f *hs-version* pre cref)
+        (let ((ok (try
+                    (let ((rebound (mutate :rebind name body sum)))
+                      ; Only exact #t is success — reject may be #f or an error
+                      ; object (truthy), neither of which must promote last-good.
+                      (if (equal? rebound #t)
+                          (begin (eval-current) #t)
+                          #f))
+                    (catch (e) #f))))
+          (let ((post (if ok (hot-strategy:contract-post) #f)))
+            (cond
+              ((hot-strategy:contract-refused? post)
+               ; #5253: the rebound state violates the set — restore it.
+               (try (mutate :restore pre) (catch (e) #f))
+               (list #f *hs-version* pre post))
+              (ok
+               (begin
+                 (set! *hs-name* name)
+                 (set! *hs-version* (+ *hs-version* 1))
+                 (hash-set! *hs-rules* name (list body pre prior))
+                 (list #t *hs-version* pre)))
+              (else (list #f *hs-version* pre))))))))
 
 ; One name, and the checkpoint is a whole-workspace snapshot: restore it.
 ; Several names: rebind only this name's rollback body.

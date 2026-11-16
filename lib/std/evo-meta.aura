@@ -96,6 +96,8 @@
 (require "std/list" all:)
 (require "std/evo-core" all:)
 (require "std/mutate" all:)
+; #5253: the one protection set the rest of the std layer also reads.
+(require "std/contract" all:)
 
 ; ═══════════════════════════════════════════════════════════════════
 ; Small helpers
@@ -419,13 +421,29 @@
 (define (meta:boundary-safe?)
   (try (eq? (mutate:boundary-safe?) #t) (catch (e) #t)))
 
+; ── #5253: read the same protection set as the rest of the std layer ──
+; A constraint declared once in std/contract also gates what the meta
+; layer may evolve: a protected name is appended to "protected" and
+; removed from "evolvable", so the two answers cannot drift apart. With
+; no active set both come from the caller/default lists above, exactly as
+; before (#4944's five protected names and four evolvable knobs).
+(define (meta-contract-set) (contract:active))
+
+(define (meta-contract-protected)
+  (let ((s (meta-contract-set)))
+    (if (contract:set? s) (contract:protected s) (quote ()))))
+
 (define (meta:evolvable m)
   (let ((v (meta-opt m "evolvable" meta-default-evolvable)))
-    (if (list? v) v meta-default-evolvable)))
+    (if (list? v)
+        (filter (lambda (k) (not (member? k (meta-contract-protected)))) v)
+        meta-default-evolvable)))
 
 (define (meta:protected m)
   (let ((v (meta-opt m "protected" meta-default-protected)))
-    (if (list? v) v meta-default-protected)))
+    (if (list? v)
+        (append v (meta-contract-protected))
+        (append meta-default-protected (meta-contract-protected)))))
 
 (define (meta-protected-all m)
   (append (meta:protected m) meta-hard-protected))
@@ -437,7 +455,10 @@
         "boundary-safe" (meta:boundary-safe?)
         "sandbox" (let ((v (getenv "AURA_SANDBOX"))) (if (string? v) v "default"))
         "protected" meta-default-protected
-        "evolvable" meta-default-evolvable))
+        "evolvable" meta-default-evolvable
+        "contract-version" (let ((s (meta-contract-set)))
+                             (if (contract:set? s) (contract:version s) 0))
+        "contract-protected" (meta-contract-protected)))
 
 (define (meta-parse-error? v)
   (and (pair? v) (eq? (car v) 'parse)))
@@ -553,6 +574,8 @@
       ((not (list? prot)) (meta-refused o "protected: not-a-list"))
       ((meta-any? (lambda (k) (member? k prot)) ev)
        (meta-refused o "protected: an evolvable key is protected"))
+      ((meta-any? (lambda (k) (member? k (meta-contract-protected))) ev)
+       (meta-refused o "contract: an evolvable key is protected"))
       ((not (meta:disjoint? inner-tasks holdout))
        (meta-refused o "holdout: inner-tasks overlap meta-holdout"))
       ((not (list? canary)) (meta-refused o "canary: not-a-list"))
