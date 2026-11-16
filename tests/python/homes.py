@@ -148,6 +148,27 @@ HOMES: tuple[Home, ...] = (
         note=("Text extractor is extract-code. The agent extractor is llm:extract-code. Both belong in this home."),
     ),
     _h(
+        "std/refactor",
+        "aura",
+        "tests/suite/refactor_rename_inline.aura",
+        (
+            "refactor:rename-var",
+            "refactor:inline-function",
+            "refactor:extract-function",
+            "safe-refactor:replace-fn",
+            "std/refactor",
+            "std/safe-refactor",
+        ),
+        tag="refactor",
+        requires=("std/refactor", "std/safe-refactor"),
+        body='(check (refactor:rename-var "old" "new"))',
+        roots=("lib/std/refactor.aura", "lib/std/safe-refactor.aura"),
+        note=(
+            "Refactor wrappers move the workspace through the registered "
+            "mutate:* small steps: rename-symbol / inline-call / rebind."
+        ),
+    ),
+    _h(
         "lang/module",
         "aura",
         "tests/suite/module.aura",
