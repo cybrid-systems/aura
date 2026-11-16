@@ -715,10 +715,9 @@ void register_security_set_sandbox_mode(PrimRegistrar add, Evaluator& ev) {
                                             /*effect_bits=*/0, /*cap_name=*/"<prim>",
                                             "sandbox-downgrade-needs-explicit-tenant-admin",
                                             /*denied=*/true, fid);
-                return make_primitive_error(
-                    ev.string_heap_, ev.error_values_,
+                return ev.make_typed_error(
                     "security:set-sandbox-mode!: explicit TenantAdmin required while sandboxed",
-                    ev.primitive_error_counter_ptr());
+                    aura::diag::ErrorKind::EffectDenied);
             }
             ev.set_sandbox_mode(want);
             return make_bool(old);
@@ -765,10 +764,9 @@ void register_security_set_sandbox_mode(PrimRegistrar add, Evaluator& ev) {
                                             /*effect_bits=*/0, /*cap_name=*/"<prim>",
                                             "sandbox-downgrade-needs-explicit-tenant-admin",
                                             /*denied=*/true, fid);
-                return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                            "security:set-effect-sandbox-mode!: explicit "
-                                            "TenantAdmin required to lower mode",
-                                            ev.primitive_error_counter_ptr());
+                return ev.make_typed_error("security:set-effect-sandbox-mode!: explicit "
+                                           "TenantAdmin required to lower mode",
+                                           aura::diag::ErrorKind::EffectDenied);
             }
             const auto prev = ev.effect_sandbox_mode();
             ev.set_effect_sandbox_mode(static_cast<std::uint8_t>(new_mode));
@@ -826,11 +824,10 @@ void register_security_set_sandbox_mode(PrimRegistrar add, Evaluator& ev) {
         // deny. Dedup-already-held stays #t (the bits are still held →
         // granted=true).
         if (!granted)
-            return make_primitive_error(
-                ev.string_heap_, ev.error_values_,
+            return ev.make_typed_error(
                 "security:grant-effect!: grant refused (grant-mid-refused or "
                 "policy deny)",
-                ev.primitive_error_counter_ptr());
+                aura::diag::ErrorKind::EffectDenied);
         // Issue #2023 / #2386: MacroSelfEvo bit / name seeds default policy
         // limits + stamps grant_epoch / fiber via make_grant_provenance.
         if ((bits & aura::compiler::security::kEffectMacroSelfEvo) != 0 ||
@@ -861,9 +858,8 @@ void register_security_set_sandbox_mode(PrimRegistrar add, Evaluator& ev) {
             // refuse, not a #t after a dead write.
             if (!g_capability_registry().grant_macro_self_evo(tenant, MacroSelfEvoPolicy{}, prov,
                                                               ev.capability_tenant_id()))
-                return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                            "security:grant-effect!: macro-self-evo grant refused",
-                                            ev.primitive_error_counter_ptr());
+                return ev.make_typed_error("security:grant-effect!: macro-self-evo grant refused",
+                                           aura::diag::ErrorKind::EffectDenied);
         }
         return make_bool(true);
     });
@@ -919,10 +915,9 @@ void register_security_grant_capability(PrimRegistrar add, Evaluator& ev) {
                                             /*effect_bits=*/0, /*cap_name=*/"<prim>",
                                             "grant-effect-needs-explicit-tenant-admin",
                                             /*denied=*/true, fid);
-                return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                            "security:grant-capability!: explicit TenantAdmin "
-                                            "required (wildcard alone insufficient)",
-                                            ev.primitive_error_counter_ptr());
+                return ev.make_typed_error("security:grant-capability!: explicit TenantAdmin "
+                                           "required (wildcard alone insufficient)",
+                                           aura::diag::ErrorKind::EffectDenied);
             }
         }
         const auto idx = as_string_idx(a[0]);
@@ -932,9 +927,8 @@ void register_security_grant_capability(PrimRegistrar add, Evaluator& ev) {
         // Issue #3459 hygiene: report a dropped write. Dedup-already-held
         // still reads held → #t.
         if (!ev.has_capability(ev.string_at(idx)))
-            return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                        "security:grant-capability!: grant did not land",
-                                        ev.primitive_error_counter_ptr());
+            return ev.make_typed_error("security:grant-capability!: grant did not land",
+                                       aura::diag::ErrorKind::InternalError);
         return make_bool(true);
     });
 
