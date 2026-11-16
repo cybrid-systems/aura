@@ -113,14 +113,37 @@ void register_defuse_query_primitives(
 
     ev.primitives().add_hidden(
         "query:reaches",
-        [&workspace_mtx, &workspace_flat, cb, make_merr](const auto& a) -> EvalValue {
+        [&workspace_mtx, &workspace_flat, &workspace_pool, &string_heap, cb,
+         make_merr](const auto& a) -> EvalValue {
             std::shared_lock<std::shared_mutex> rlock(workspace_mtx);
             if (a.empty())
-                return make_merr("bad-arg", "usage: (query :reaches node-id)");
+                return make_merr("bad-arg", "usage: (query :reaches name|node-id|stable-ref)");
             if (!workspace_flat)
                 return make_merr("no-workspace", "no workspace AST loaded");
             auto& flat = *workspace_flat;
             aura::ast::NodeId target = aura::ast::NULL_NODE;
+            // Issue #5249: a NAME is the Agent-facing operand. Resolve it to
+            // the definition it names through the same index query:find uses
+            // (find_define_by_name), so reaches starts at the binding instead
+            // of asking the caller to hold a raw node id. An unknown name is
+            // bad-arg, never a fabricated node.
+            if (is_string(a[0])) {
+                if (!workspace_pool)
+                    return make_merr("no-workspace", "no workspace AST loaded");
+                auto sym_idx = as_string_idx(a[0]);
+                if (sym_idx >= string_heap.size())
+                    return make_merr("bad-arg", "name string index out of range");
+                const auto name = string_heap[sym_idx];
+                auto found = flat.find_define_by_name(*workspace_pool, name);
+                if (!found)
+                    return make_merr("bad-arg", "query:reaches: no definition named '" +
+                                                    std::string(name) + "'");
+                target = *found;
+                auto idx = cb.ensure_defuse();
+                if (!idx)
+                    return make_merr("internal", "failed to build def-use index");
+                return cb.reaches_for_node(idx, target);
+            }
             // Issue #4106: production resolves the operand through the shared
             // gates before the def-use walk — a bare int is occupancy, not
             // identity, and is rejected with the #3395 stale-ref face (a

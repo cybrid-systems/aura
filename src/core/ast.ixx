@@ -864,6 +864,13 @@ export struct NodeView {
     SymId sym_id = INVALID_SYM;
     std::uint32_t line = 0;
     std::uint32_t col = 0;
+    // Issue #5249: the span of the definition-name token when this node is a
+    // definition (Define / MacroDef / DefineType). line/col above stay the
+    // form head (`define`) so existing goto-form consumers are unchanged;
+    // goto-definition and rename land on the name itself. 0 = no name token
+    // (non-definition node, or an AST restored from a pre-#5249 wire image).
+    std::uint32_t name_line = 0;
+    std::uint32_t name_col = 0;
     // Issue #73 Phase 2: per-view TypeId cache. 0 = DYNAMIC/unknown.
     // Populated by FlatAST::get (from SoA column) and MappedCache::get
     // (from cache column), so callers reading a NodeView don't have to
@@ -1294,6 +1301,8 @@ private:
     X(param_annot_data_) \
     X(line_) \
     X(col_) \
+    X(name_line_) \
+    X(name_col_) \
     X(marker_) \
     X(provenance_) \
     X(dirty_) \
@@ -1337,6 +1346,8 @@ private:
     X(param_annot_data_) \
     X(line_) \
     X(col_) \
+    X(name_line_) \
+    X(name_col_) \
     X(marker_) \
     X(provenance_) \
     X(node_gen_) \
@@ -1523,6 +1534,8 @@ private:
         cap_require_count_[id] = 0;
         line_[id] = 0;
         col_[id] = 0;
+        name_line_[id] = 0;
+        name_col_[id] = 0;
         // Issue #3301 residual: marker_ can lag tag_ when a parse
         // fast-path appended via add_raw_node without growing every SoA
         // column; free-list reuse then OOBs here. Guard-resize like the
@@ -1938,6 +1951,9 @@ public:
         cap_require_count_.push_back(0);
         line_.push_back(0);
         col_.push_back(0);
+        // Issue #5249: parallel name-token span columns (0 = unset).
+        name_line_.push_back(0);
+        name_col_.push_back(0);
         marker_.push_back(m);
         // Issue #367: provenance column (parallel to marker_).
         // 0 = no provenance. Stamped by hygiene / mutation
@@ -2161,6 +2177,12 @@ public:
     // Source location (line/col, 1-based)
     cow::TrackedColumn<std::uint32_t> line_;
     cow::TrackedColumn<std::uint32_t> col_;
+    // Issue #5249: definition-name token span, parallel to line_/col_ (which
+    // keep the form head). Parse-time metadata: the v2 wire image in
+    // serialize_soa does not carry it, so a deserialized AST reports 0 here
+    // (an honest "unknown", never a guessed position).
+    cow::TrackedColumn<std::uint32_t> name_line_;
+    cow::TrackedColumn<std::uint32_t> name_col_;
     // Type information (L6.5+): type_id per node, 0 = DYNAMIC
     cow::TrackedColumn<SyntaxMarker> marker_;
     // Issue #367: per-node provenance id (0 = no provenance).
@@ -4340,6 +4362,8 @@ public:
         , param_annot_data_(alloc)
         , line_(alloc)
         , col_(alloc)
+        , name_line_(alloc)
+        , name_col_(alloc)
         // Issue #300: these pmr columns must use the arena alloc passed
         // to FlatAST (not the default new_delete_resource).
         , marker_(alloc)
@@ -5283,6 +5307,8 @@ public:
             .sym_id = sym_id_[id],
             .line = id < line_.size() ? line_[id] : 0,
             .col = id < col_.size() ? col_[id] : 0,
+            .name_line = id < name_line_.size() ? name_line_[id] : 0,
+            .name_col = id < name_col_.size() ? name_col_[id] : 0,
             // Issue #73 Phase 2: populate type_id on the view so
             // callers can read it without a separate flat.type_id()
             // lookup. Same value as flat.type_id(id).
@@ -5305,6 +5331,15 @@ public:
     }
     std::uint32_t line(NodeId id) const { return line_[id]; }
     std::uint32_t col(NodeId id) const { return col_[id]; }
+    // Issue #5249: reader-level span of the definition-name token. The parser
+    // stamps it for Define / MacroDef / DefineType; anything else keeps 0.
+    void set_name_loc(NodeId id, std::uint32_t line, std::uint32_t col) pre(id < name_line_.size())
+        pre(id < name_col_.size()) {
+        name_line_[id] = line;
+        name_col_[id] = col;
+    }
+    std::uint32_t name_line(NodeId id) const { return name_line_[id]; }
+    std::uint32_t name_col(NodeId id) const { return name_col_[id]; }
 
     // Direct field access (for mutation)
     NodeTag& tag(NodeId id) { return tag_[id]; }
@@ -7053,6 +7088,8 @@ public:
         std::pmr::vector<std::uint32_t> new_cap_require_count(alloc);
         std::pmr::vector<std::uint32_t> new_line(alloc);
         std::pmr::vector<std::uint32_t> new_col(alloc);
+        std::pmr::vector<std::uint32_t> new_name_line(alloc);
+        std::pmr::vector<std::uint32_t> new_name_col(alloc);
         std::pmr::vector<SyntaxMarker> new_marker(alloc);
         std::pmr::vector<std::uint8_t> new_dirty(alloc);
         std::pmr::vector<std::uint8_t> new_ppa_dirty(alloc);
@@ -7093,6 +7130,8 @@ public:
         new_cap_require_count.reserve(live_count);
         new_line.reserve(live_count);
         new_col.reserve(live_count);
+        new_name_line.reserve(live_count);
+        new_name_col.reserve(live_count);
         new_marker.reserve(live_count);
         new_dirty.reserve(live_count);
         new_ppa_dirty.reserve(live_count);
@@ -7130,6 +7169,8 @@ public:
             new_cap_require_count.push_back(cap_require_count_[id]);
             new_line.push_back(line_[id]);
             new_col.push_back(col_[id]);
+            new_name_line.push_back(id < name_line_.size() ? name_line_[id] : 0u);
+            new_name_col.push_back(id < name_col_.size() ? name_col_[id] : 0u);
             new_marker.push_back(marker_[id]);
             new_dirty.push_back(dirty_[id]);
             if (id < ppa_dirty_.size())
@@ -7232,6 +7273,8 @@ public:
         cap_require_count_ = std::move(new_cap_require_count);
         line_ = std::move(new_line);
         col_ = std::move(new_col);
+        name_line_ = std::move(new_name_line);
+        name_col_ = std::move(new_name_col);
         marker_ = std::move(new_marker);
         dirty_ = std::move(new_dirty);
         ppa_dirty_ = std::move(new_ppa_dirty);
@@ -7400,6 +7443,8 @@ public:
         param_annot_data_.clear();
         line_.clear();
         col_.clear();
+        name_line_.clear();
+        name_col_.clear();
         marker_.clear();
         // Issue #402: clear summary flags alongside the
         // per-node columns. The next add_node will rebuild
@@ -8888,6 +8933,8 @@ public:
         cap_require_count_.resize(keep_size);
         line_.resize(keep_size);
         col_.resize(keep_size);
+        name_line_.resize(keep_size);
+        name_col_.resize(keep_size);
         marker_.resize(keep_size);
         provenance_.resize(keep_size);
         type_id_.resize(keep_size);

@@ -800,6 +800,256 @@ void build_workspace_query_resolve_prims(WorkspaceQueryPrims& P) {
     P.resolve_query_node_arg = resolve_query_node_arg;
 }
 
+// Issue #5249: the program semantic view's engine face.
+//
+// One record per definition, keyed by the name the reader saw. Every record
+// carries ONLY public, program-level keys: name / kind / span / name-span /
+// params / callers / callees / def-use / effects / stable-ref. The internal
+// QueryResult bookkeeping keys (schema-2192, schema-2933, schema-3137,
+// query-result-tag, issue-2933, ...) never appear here — an Agent reading a
+// record must never be handed engine metadata.
+//
+// Spans are reader positions (1-based, same convention as NodeView::line/col):
+//   span      = the define form head (the define token)
+//   name-span = the definition-name token (goto-definition / rename land here)
+// A definition in a comment or a string has no node at all, so it can never
+// produce a record: both spans come from the reader, not from a text scan.
+//
+// Recognised definition tags: Define, MacroDef (define-hygienic-macro /
+// define-hygienic-macro*), DefineType. define-struct is a stdlib macro, so its
+// expanded (define ...) forms are ordinary Define records, stamped
+// MacroIntroduced by the hygiene path.
+static EvalValue build_define_records(WorkspaceQueryState& ws, Evaluator& ev,
+                                      aura::ast::SymId only_sym) {
+    auto& flat = *ws.workspace_flat;
+    auto& pool = *ws.canonical_pool();
+    auto cons = [&ws](EvalValue head, EvalValue v) -> EvalValue {
+        auto pid = ws.pairs.size();
+        ws.push_stamped_pair({v, head});
+        return make_pair(pid);
+    };
+    auto span_list = [&cons](std::uint32_t line, std::uint32_t col) -> EvalValue {
+        EvalValue l = make_void();
+        l = cons(l, make_int(static_cast<std::int64_t>(col)));
+        l = cons(l, make_int(static_cast<std::int64_t>(line)));
+        return l;
+    };
+    auto string_list = [&](const std::vector<std::string>& items) -> EvalValue {
+        EvalValue l = make_void();
+        for (auto it = items.rbegin(); it != items.rend(); ++it) {
+            const auto sid = ws.string_heap.mint(*it);
+            l = cons(l, make_string(sid));
+        }
+        return l;
+    };
+    auto hash_of = [&ws, &ev](std::vector<std::pair<std::string, EvalValue>> kv) -> EvalValue {
+        auto* ht = FlatHashTable::create(32);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        const auto hcap = ht->capacity;
+        bool ok = true;
+        for (auto& [k, v] : kv) {
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+            for (char c : k)
+                h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
+            const auto fp = ::aura::compiler::hash::fingerprint(h);
+            const auto kidx = ws.string_heap.mint(k);
+            EvalValue key_ev = make_string(kidx);
+            bool inserted = false;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                const auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
+                    meta[idx] = fp;
+                    keys[idx] = key_ev.val;
+                    vals[idx] = v.val;
+                    ht->size++;
+                    inserted = true;
+                    break;
+                }
+            }
+            if (!inserted) {
+                ok = false;
+                break;
+            }
+        }
+        if (!ok) {
+            FlatHashTable::destroy(ht);
+            return make_void();
+        }
+        std::size_t hidx = 0;
+        {
+            // Issue #4860: index read, push and owner stamp are one section.
+            std::scoped_lock slock(ev.alloc_storage_lock_);
+            hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            aura_hash_stamp_new_table_owner();
+        }
+        return make_hash(hidx);
+    };
+    // The name of the definition enclosing a node ("" when not inside one), so
+    // a caller is named instead of identified by a bare node id.
+    auto enclosing_define_name = [&](aura::ast::NodeId node) -> std::string {
+        auto cur = node;
+        for (int guard = 0; guard < 4096; ++guard) {
+            if (cur == aura::ast::NULL_NODE || cur >= flat.size() || flat.is_free_slot(cur))
+                return {};
+            auto v = flat.get(cur);
+            if (v.tag == aura::ast::NodeTag::Define || v.tag == aura::ast::NodeTag::MacroDef ||
+                v.tag == aura::ast::NodeTag::DefineType) {
+                if (v.sym_id == aura::ast::INVALID_SYM)
+                    return {};
+                return std::string(pool.resolve(v.sym_id));
+            }
+            cur = flat.parent_of(cur);
+        }
+        return {};
+    };
+    EvalValue records = make_void();
+    std::vector<EvalValue> built;
+    for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+        if (flat.is_free_slot(id))
+            continue;
+        auto v = flat.get(id);
+        const bool is_define = v.tag == aura::ast::NodeTag::Define;
+        const bool is_macro = v.tag == aura::ast::NodeTag::MacroDef;
+        const bool is_type = v.tag == aura::ast::NodeTag::DefineType;
+        if (!is_define && !is_macro && !is_type)
+            continue;
+        if (v.sym_id == aura::ast::INVALID_SYM)
+            continue;
+        if (only_sym != aura::ast::INVALID_SYM && v.sym_id != only_sym)
+            continue;
+        const auto sym = v.sym_id;
+        const std::string name(pool.resolve(sym));
+        const auto tag_i = static_cast<std::size_t>(v.tag);
+        std::string kind = "<gap>";
+        if (tag_i >= 1 && tag_i <= aura::ast::kNodeTagNameCount)
+            kind = std::string(aura::ast::kNodeTagNames[tag_i - 1]);
+        // params: a function define names the Lambda child's parameters; a
+        // macro / type define carries its parameters on the node itself.
+        std::vector<std::string> params;
+        if (is_define && !v.children.empty()) {
+            auto body = flat.get(v.child(0));
+            if (body.tag == aura::ast::NodeTag::Lambda) {
+                for (auto ps : body.params)
+                    params.emplace_back(pool.resolve(ps));
+            }
+        } else {
+            for (auto ps : v.params)
+                params.emplace_back(pool.resolve(ps));
+        }
+        // callees: calls inside this definition's body, first-seen order.
+        std::vector<std::string> callees;
+        {
+            std::unordered_set<std::string> seen;
+            std::vector<aura::ast::NodeId> pending;
+            for (auto c : v.children)
+                if (c != aura::ast::NULL_NODE)
+                    pending.push_back(c);
+            std::size_t budget = 200000;
+            while (!pending.empty() && budget-- > 0) {
+                const auto cur = pending.back();
+                pending.pop_back();
+                if (cur >= flat.size() || flat.is_free_slot(cur))
+                    continue;
+                auto cv = flat.get(cur);
+                if (cv.tag == aura::ast::NodeTag::Call && !cv.children.empty()) {
+                    auto callee = flat.get(cv.child(0));
+                    if (callee.tag == aura::ast::NodeTag::Variable &&
+                        callee.sym_id != aura::ast::INVALID_SYM) {
+                        std::string cn(pool.resolve(callee.sym_id));
+                        if (seen.insert(cn).second)
+                            callees.push_back(std::move(cn));
+                    }
+                }
+                for (auto c : cv.children)
+                    if (c != aura::ast::NULL_NODE)
+                        pending.push_back(c);
+            }
+        }
+        // def-use / callers / effects: one pass over the flat.
+        std::vector<EvalValue> def_spans;
+        std::vector<EvalValue> use_spans;
+        std::vector<EvalValue> caller_spans;
+        std::vector<std::string> caller_names;
+        std::size_t write_count = 0;
+        for (aura::ast::NodeId other = 0; other < flat.size(); ++other) {
+            if (flat.is_free_slot(other))
+                continue;
+            auto ov = flat.get(other);
+            if (ov.sym_id == sym) {
+                if (ov.tag == aura::ast::NodeTag::Define ||
+                    ov.tag == aura::ast::NodeTag::MacroDef ||
+                    ov.tag == aura::ast::NodeTag::DefineType)
+                    def_spans.push_back(span_list(ov.line, ov.col));
+                else if (ov.tag == aura::ast::NodeTag::Variable)
+                    use_spans.push_back(span_list(ov.line, ov.col));
+                else if (ov.tag == aura::ast::NodeTag::Set)
+                    ++write_count;
+            }
+            if (ov.tag == aura::ast::NodeTag::Call && !ov.children.empty()) {
+                auto callee = flat.get(ov.child(0));
+                if (callee.tag == aura::ast::NodeTag::Variable && callee.sym_id == sym) {
+                    caller_spans.push_back(span_list(ov.line, ov.col));
+                    auto enclosing = enclosing_define_name(other);
+                    caller_names.push_back(std::move(enclosing));
+                }
+            }
+        }
+        // callers: one record per call site, (name line col).
+        EvalValue callers_list = make_void();
+        for (std::size_t i = 0; i < caller_spans.size(); ++i) {
+            EvalValue rec_c = make_void();
+            rec_c = cons(rec_c, caller_spans[i]);
+            const auto sid = ws.string_heap.mint(caller_names[i]);
+            rec_c = cons(rec_c, make_string(sid));
+            callers_list = cons(callers_list, rec_c);
+        }
+        EvalValue defs_list = make_void();
+        for (auto it = def_spans.rbegin(); it != def_spans.rend(); ++it)
+            defs_list = cons(defs_list, *it);
+        EvalValue uses_list = make_void();
+        for (auto it = use_spans.rbegin(); it != use_spans.rend(); ++it)
+            uses_list = cons(uses_list, *it);
+        EvalValue def_use = hash_of({{"defs", defs_list}, {"uses", uses_list}});
+        EvalValue effects =
+            hash_of({{"callers", make_int(static_cast<std::int64_t>(caller_spans.size()))},
+                     {"reads", make_int(static_cast<std::int64_t>(use_spans.size()))},
+                     {"writes", make_int(static_cast<std::int64_t>(write_count))}});
+        // stable-ref: the engine's (id . gen) handle for this definition.
+        // A dotted pair, not a two-element list — same shape query:stable-ref
+        // exports, so it can be handed straight back to mutate:*.
+        EvalValue stable_ref = make_void();
+        {
+            const auto ref = ev.make_stamped_ref(id);
+            const auto sr_pid = ws.pairs.size();
+            ws.push_stamped_pair({make_int(static_cast<std::int64_t>(ref.id)),
+                                  make_int(static_cast<std::int64_t>(ref.gen))});
+            stable_ref = make_pair(sr_pid);
+        }
+        EvalValue rec = hash_of({
+            {"name", make_string(ws.string_heap.mint(name))},
+            {"kind", make_string(ws.string_heap.mint(kind))},
+            {"span", span_list(v.line, v.col)},
+            {"name-span", span_list(v.name_line, v.name_col)},
+            {"params", string_list(params)},
+            {"callers", callers_list},
+            {"callees", string_list(callees)},
+            {"def-use", def_use},
+            {"effects", effects},
+            {"stable-ref", stable_ref},
+        });
+        built.push_back(rec);
+    }
+    for (auto it = built.rbegin(); it != built.rend(); ++it)
+        records = cons(records, *it);
+    return records;
+}
+
+
 // Issue #5031: core registration phase.
 void register_workspace_query_core_parts(WorkspaceQueryPrims& P, PrimRegistrar add) {
     auto& ws = P.ws;
@@ -902,14 +1152,34 @@ void register_workspace_query_core_parts(WorkspaceQueryPrims& P, PrimRegistrar a
         // Issue #2488: SoA shared lock for multi-column get() vs concurrent
         // add_node (workspace_mtx shared alone does not cover flatast_mutex_
         // size domain — structural_mtx_ is also independent).
+        //
+        // Issue #5249: find is a NAME LOCATOR, not a definition lookup. It
+        // returns every node that carries `name`, with the definitions first:
+        // a plain id-order walk could hand a bare reference (Variable) as
+        // element 0, and a caller doing (mutate :replace-subtree (car (query
+        // :find "f")) ...) then rewrote a reference as if it were the binding.
+        // Definitions before references makes element 0 the definition
+        // whenever one exists; the trailing elements stay name carriers
+        // (reads). Definition records (spans, kind, params) are
+        // define-lookup's job, and the def/use split is (query :def-use).
         auto soa = flat.try_acquire_soa_reader_lock();
-        for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
-            // Issue #1299/#1300: skip free/ghost orphan slots after rollback.
-            if (flat.is_free_slot(id))
-                continue;
-            auto v = flat.get(id);
-            if (v.sym_id == sym)
+        for (int pass = 0; pass < 2; ++pass) {
+            for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+                // Issue #1299/#1300: skip free/ghost orphan slots after rollback.
+                if (flat.is_free_slot(id))
+                    continue;
+                auto v = flat.get(id);
+                if (v.sym_id != sym)
+                    continue;
+                const bool is_definition_node = v.tag == aura::ast::NodeTag::Define ||
+                                                v.tag == aura::ast::NodeTag::MacroDef ||
+                                                v.tag == aura::ast::NodeTag::DefineType;
+                if (pass == 0 && !is_definition_node)
+                    continue;
+                if (pass == 1 && is_definition_node)
+                    continue; // already emitted in pass 0 — emit once
                 emit_find(id);
+            }
         }
         // Issue #2933: optional QueryResult binding (default bare list).
         return end_query_epoch_maybe_result(qe, &flat, result, as_query_result);
@@ -1259,11 +1529,26 @@ void register_workspace_query_handle_parts(WorkspaceQueryPrims& P, PrimRegistrar
             auto& flat = *ws.workspace_flat;
             auto v = flat.get(node);
 
-            // Build result: list of (tag-id value sym-name children-count)
+            // Build result: list of (tag-id value sym-name children-count kind-name).
+            // Each step prepends, so the first prepended element ends up last.
             EvalValue result = make_void();
 
-            // children-count
+            // Issue #5249: the kind NAME, appended after the historical fields so
+            // (car ...) / positional readers keep their meaning. Agents and the
+            // --query CLI must not have to map an integer tag back to a node
+            // kind; the name is the shared Wave B1 table kNodeTagNames.
+            std::string kind_name = "<gap>";
+            {
+                const auto tag_i = static_cast<std::size_t>(v.tag);
+                if (tag_i >= 1 && tag_i <= aura::ast::kNodeTagNameCount)
+                    kind_name = std::string(aura::ast::kNodeTagNames[tag_i - 1]);
+            }
             auto pid = ws.pairs.size();
+            ws.push_stamped_pair({make_string(ws.string_heap.mint(kind_name)), result});
+            result = make_pair(pid);
+
+            // children-count
+            pid = ws.pairs.size();
             ws.push_stamped_pair({make_int(static_cast<std::int64_t>(v.children.size())), result});
             result = make_pair(pid);
 
@@ -1872,20 +2157,54 @@ void register_workspace_query_lookup_parts(WorkspaceQueryPrims& P, PrimRegistrar
     // hash; Soft keeps the historical bare list.
     ev.primitives().add_hidden(
         "query:defines",
-        [ws, mev, begin_query_epoch, end_query_epoch_maybe_result](const auto& a) -> EvalValue {
+        [ws, mev, &ev, begin_query_epoch, end_query_epoch,
+         end_query_epoch_maybe_result](const auto& a) -> EvalValue {
             std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
-            if (a.size() > 1 || (a.size() == 1 && !is_string(a[0])))
-                return mev("bad-arg", "usage: (query :defines) or (query :defines name)");
             if (!ws.workspace_flat)
                 return mev("no-workspace", "no workspace AST loaded");
+            // Issue #5249: (query :defines :records [name]) is the program
+            // semantic view — one record per definition with public keys only
+            // (see build_define_records). Plain (query :defines) keeps the
+            // historical id list / schema-2 QueryResult contract unchanged.
+            bool as_records = false;
+            bool have_name = false;
+            EvalValue name_arg = make_void();
+            for (std::size_t ai = 0; ai < a.size(); ++ai) {
+                if (is_string(a[ai])) {
+                    if (have_name)
+                        return mev("bad-arg", "usage: (query :defines [:records] [name])");
+                    name_arg = a[ai];
+                    have_name = true;
+                    continue;
+                }
+                if (is_keyword(a[ai])) {
+                    auto kidx = as_keyword_idx(a[ai]);
+                    if (kidx < ws.keyword_table.size() && ws.keyword_table[kidx] == ":records") {
+                        as_records = true;
+                        continue;
+                    }
+                }
+                return mev("bad-arg", "usage: (query :defines [:records] [name])");
+            }
             aura::ast::SymId sym = aura::ast::INVALID_SYM;
-            if (a.size() == 1 && ws.workspace_pool) {
-                auto idx = as_string_idx(a[0]);
+            if (have_name && ws.workspace_pool) {
+                auto idx = as_string_idx(name_arg);
                 if (idx >= ws.string_heap.size())
                     return mev("bad-arg", "name string index out of range");
                 sym = ws.canonical_pool()->intern(ws.string_heap[idx]);
             }
             auto& flat = *ws.workspace_flat;
+            if (as_records) {
+                const auto rqe = begin_query_epoch(&flat); // Issue #2192
+                // A record list is a program view, not a QueryResult: it is
+                // finished through the epoch fence but never upgraded to the
+                // internal-key hash (#4088 covers the id-list exits only).
+                // The captured state copy is const inside this lambda; the
+                // builder appends pairs through push_stamped_pair, so hand it
+                // a mutable copy (the copy is a struct of arena references).
+                auto ws_mut = ws;
+                return end_query_epoch(rqe, &flat, build_define_records(ws_mut, ev, sym));
+            }
             const auto qe = begin_query_epoch(&flat); // Issue #2192
             EvalValue result = make_void();
             for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
@@ -1948,9 +2267,19 @@ void register_workspace_query_lookup_nav_parts(WorkspaceQueryPrims& P, PrimRegis
                 auto v = flat.get(id);
                 if (v.tag != aura::ast::NodeTag::Define || v.sym_id != sym)
                     continue;
-                // Record = (id line col); prepend-built in the ws.pairs
-                // arena, same list shape as the query:defines results.
+                // Record = (id line col name-line name-col); prepend-built in
+                // the ws.pairs arena, same list shape as the query:defines
+                // results. Issue #5249: the trailing pair is the span of the
+                // definition-name token — goto-definition and rename land on
+                // the name, not on the form head (line/col). 0 0 means the
+                // AST carries no name token (restored pre-#5249 image).
                 EvalValue rec = make_void();
+                auto p0 = ws.pairs.size();
+                ws.push_stamped_pair({make_int(static_cast<std::int64_t>(v.name_col)), rec});
+                rec = make_pair(p0);
+                auto pn = ws.pairs.size();
+                ws.push_stamped_pair({make_int(static_cast<std::int64_t>(v.name_line)), rec});
+                rec = make_pair(pn);
                 auto p1 = ws.pairs.size();
                 ws.push_stamped_pair({make_int(static_cast<std::int64_t>(v.col)), rec});
                 rec = make_pair(p1);
