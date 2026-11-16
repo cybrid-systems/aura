@@ -205,6 +205,30 @@ HOMES: tuple[Home, ...] = (
         ),
     ),
     _h(
+        "std/validation",
+        "aura",
+        "tests/suite/validate_split.aura",
+        (
+            "val:split",
+            "val:deflate",
+            "val:evidence",
+            "val:attach",
+            "std/validation",
+            "purge",
+            "embargo",
+            "deflated metric",
+        ),
+        tag="validation",
+        requires=("std/validation", "std/gate", "std/hyper-heuristic"),
+        body=('(check= 1 (val:split-count (val:split 100 (hash "train" 40 "test" 20))))'),
+        roots=("lib/std/validation.aura", "lib/std/gate.aura", "lib/std/hyper-heuristic.aura"),
+        note=(
+            "Time-ordered train/test splits with purge and embargo, the "
+            "deflated metric (#5316), and the out-of-sample evidence a "
+            "#5255 gate can require."
+        ),
+    ),
+    _h(
         "std/contract",
         "aura",
         "tests/suite/contracts_invariants.aura",

@@ -98,6 +98,10 @@
     (list "gate"
       (list "Unified acceptance gate: one feedback record + potential/objective + comparison + #5253 invariants -> KEEP/ROLLBACK with gate name, potential before/after and invariant evidence; agent:round / safe-refactor / hot-strategy:swap! / rule:apply consult it and evo:commit! / evo:trial accept the same object; no gate = gate=\"none\""
             "(require \"std/gate\" all:)(gate:keep? (gate:evaluate (gate:new (hash \"name\" \"g\" \"potential\" (lambda (fb) (list 0.0 1.0)) \"compare\" \"min\")) (hash)))"))
+    ; Issue #5316: time-ordered validation splits + the multiple-testing haircut
+    (list "validation"
+      (list "Time-ordered train/test splits with purge and embargo, plus the deflated (multi-testing corrected) out-of-sample metric; the evidence record a #5255 gate can require so tune:gate's training-only statistic is never KEEP proof"
+            "(require \"std/validation\" all:)(val:split-count (val:split 200 (hash \"train\" 60 \"test\" 20 \"purge\" 5 \"embargo\" 5)))"))
     ; Issue #5271: negative selection over already-accepted behaviour
     (list "negative"
       (list "Negative-selection anomaly detection: self = already-KEEP behaviour vectors, V-detectors fire only outside it; a hit is a queryable anomaly record and one #5253 detector-set source (warn by default, reject refuses through the same gate, no evidence reports skipped)"

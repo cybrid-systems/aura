@@ -1,0 +1,488 @@
+;
+; lib/std/validation.aura — time-ordered validation splits, purge/embargo,
+; and the multiple-testing haircut (#5316).
+;
+; A quant loop tunes parameters on a training slice and then reports a
+; holdout number. Two things make that number meaningless: adjacent samples
+; leak across the boundary, and the reported winner is the best of N tries.
+; This module is the pure, standard-library face of both corrections, and
+; the evidence class a #5255 gate can require.
+;
+; Import:
+;   (require "std/validation" all:)
+;
+;   (define s (val:split 500 (hash "train" 120 "test" 40
+;                                  "purge" 5 "embargo" 5)))
+;   (val:fold-slots s "test")        ; -> per-fold index lists
+;
+;   (define d (val:deflate 0.42 0.11 40 (hash)))   ; 40 candidates were tried
+;   (val:adjusted d)                 ; 0.42 - E[max of 40 normals] * 0.11
+;
+;   (define ev (val:evidence (list 0.5 0.42 0.38 0.44 0.36)
+;                            (hash "trials" 40 "min-windows" 3)))
+;   (val:attach feedback ev)         ; feedback + the "validation" slot
+;
+; ── Split semantics ───────────────────────────────────────────────
+; Time index 0..n-1, half-open windows. Fold i has
+;   train [train-start, train-end), test [test-start, test-end)
+; with test-start = train-end + purge. "purge" is the gap in front of the
+; test window: a label whose horizon reaches forward would otherwise sit in
+; train and test at once. "embargo" blocks the N samples right after a test
+; window from every later train window (a later fold whose train window
+; reaches past that boundary would otherwise train on the samples that
+; share the holdout's serial correlation). Walk-forward keeps moving
+; forward, so data older than a test window may return to a later train set;
+; what never returns is a sample adjacent to a boundary.
+;
+; mode "rolling" (default) keeps a fixed train length; "anchored" expands
+; from index 0. Failure is a record, not a throw: every constructor returns
+;   "ok" #f, "reason" "bad-n" | "bad-window" | "bad-gap" | "no-folds" |
+;   "no-train", plus a "detail" hash.
+;
+; ── Multiple-testing correction ──────────────────────────────────
+; The haircut is the deflated-metric form of Bailey & López de Prado: with N
+; independent tries the best in-sample number is biased upward by roughly
+; the expected maximum of N standard normals,
+;   E[max_N] = (1 - gamma) * Z^-1[1 - 1/N] + gamma * Z^-1[1 - 1/(N e)]
+; so the adjusted metric is observed - E[max_N] * se. E[max_N] is monotone
+; in N (and 0 for one try), so more tries can only make the evidence stricter.
+;
+; ── Evidence record (STABLE for #5255's gate) ────────────────────
+;   "kind"        "validation-evidence"
+;   "schema"      1
+;   "ok"          #t
+;   "class"       "out-of-sample-adjusted" | "out-of-sample" | "train-only"
+;   "windows"     number of out-of-sample windows
+;   "trials"      candidate attempts the metric is deflated by
+;   "observed"    window mean
+;   "se"          standard error of that mean
+;   "adjusted"    observed - E[max_trials] * se (#f for train-only)
+;   "deflated"    deflated-metric record | "none"
+;   "split"       validation-split record | "none"
+;   "min-windows" configured floor
+;   "passed"      #t only for out-of-sample, enough windows, adjusted > threshold
+;   "reason"      "" | "unadjusted" | "insufficient-windows" | "not-better"
+;
+; Pure: no primitives, no *-stats key, no engine state.
+;
+; Form order (#2769): export before require.
+
+(export val:schema val:help val:ok? val:error? val:reason
+        val:split val:split? val:split-folds val:split-count
+        val:fold-slots val:fold-train val:fold-test
+        val:deflate val:deflated? val:adjusted val:trials val:z-expected
+        val:evidence val:evidence? val:class val:windows val:passed?
+        val:attach val:validation
+        val:z-quantile val:z-expected-max)
+
+(require "std/string" all:)
+
+(define val-schema-version 1)
+
+(define (val:schema) val-schema-version)
+
+(define (val:help)
+  (string-append
+   "std/validation (#5316)\\n"
+   "  (val:split n (hash \"train\" 60 \"test\" 20 \"step\" 20 \"purge\" 0"
+   " \"embargo\" 0 \"mode\" \"rolling\"|\"anchored\")) -> split fold set\\n"
+   "  (val:fold-slots split \"train\"|\"test\") ; -> list of index lists\\n"
+   "  (val:deflate observed se trials) ; N-try haircut -> deflated metric\\n"
+   "  (val:evidence window-metrics opts) ; out-of-sample record for the gate\\n"
+   "  (val:attach feedback evidence) ; the feedback's \"validation\" slot\\n"
+   "  failures are records: (val:ok? r) / (val:reason r)\\n"))
+
+; ═══════════════════════════════════════════════════════════════════
+; Small shared helpers
+; ═══════════════════════════════════════════════════════════════════
+
+(define (val-as-int v def)
+  (if (number? v) (exact (trunc v)) def))
+
+(define (val-error reason detail)
+  (hash "kind" "validation-error"
+        "schema" val-schema-version
+        "ok" #f
+        "reason" reason
+        "detail" (if (hash? detail) detail (hash))))
+
+(define (val:ok? r)
+  (and (hash? r) (equal? (hash-ref r "ok" #f) #t)))
+
+(define (val:error? r)
+  (and (hash? r) (equal? (hash-ref r "ok" #f) #f)))
+
+(define (val:reason r)
+  (if (hash? r)
+      (let ((x (hash-ref r "reason" "")))
+        (if (string? x) x ""))
+      ""))
+
+(define (val-mean xs)
+  (if (null? xs) 0.0 (/ (foldl + 0.0 xs) (length xs))))
+
+(define (val-sd xs)
+  (if (< (length xs) 2) 0.0
+      (let* ((m (val-mean xs))
+             (ss (foldl (lambda (acc x) (+ acc (* (- x m) (- x m)))) 0.0 xs)))
+        (sqrt (/ ss (- (length xs) 1))))))
+
+; ═══════════════════════════════════════════════════════════════════
+; Time-ordered split with purge and embargo
+; ═══════════════════════════════════════════════════════════════════
+
+; A blocked interval [lo, hi): the embargo tail after an earlier test
+; window. Purge needs no interval — it is the train-end offset itself.
+(define (val-blocked? k zones)
+  (cond ((null? zones) #f)
+        ((and (>= k (car (car zones))) (< k (cdr (car zones)))) #t)
+        (else (val-blocked? k (cdr zones)))))
+
+(define (val-keep-indices lo hi zones)
+  (filter (lambda (k) (not (val-blocked? k zones))) (range lo hi)))
+
+; (val:split n opts) -> validation-split | validation-error.
+;   "train"     initial train length, default 60
+;   "test"      test window length, default 20
+;   "step"      roll step, default = test (non-overlapping windows)
+;   "purge"     gap before each test window, default 0
+;   "embargo"   tail blocked after each test window, default 0
+;   "mode"      "rolling" (default) | "anchored"
+;   "min-train" smallest train set a fold may keep, default 1
+(define (val:split n . opts)
+  (let* ((o (if (and (pair? opts) (hash? (car opts))) (car opts) (hash)))
+         (count (val-as-int n -1))
+         (train (val-as-int (hash-ref o "train" 60) -1))
+         (test (val-as-int (hash-ref o "test" 20) -1))
+         (step (val-as-int (hash-ref o "step" test) -1))
+         (purge (val-as-int (hash-ref o "purge" 0) -1))
+         (embargo (val-as-int (hash-ref o "embargo" 0) -1))
+         (min-train (val-as-int (hash-ref o "min-train" 1) 1))
+         (mode (if (equal? (hash-ref o "mode" "rolling") "anchored")
+                   "anchored" "rolling")))
+    (cond
+      ((< count 2)
+       (val-error "bad-n" (hash "n" count)))
+      ((or (< train 1) (< test 1) (< step 1) (< min-train 1))
+       (val-error "bad-window"
+                  (hash "train" train "test" test "step" step
+                        "min-train" min-train)))
+      ((or (< purge 0) (< embargo 0))
+       (val-error "bad-gap" (hash "purge" purge "embargo" embargo)))
+      ((>= purge train)
+       (val-error "bad-gap" (hash "purge" purge "train" train)))
+      (else
+       (let loop ((test-start (+ train purge)) (i 0)
+                  (acc (list)) (zones (list)))
+         (if (> (+ test-start test) count)
+             (if (null? acc)
+                 (val-error "no-folds"
+                            (hash "n" count "train" train "test" test
+                                  "purge" purge))
+                 (hash "kind" "validation-split"
+                       "schema" val-schema-version
+                       "ok" #t
+                       "reason" ""
+                       "n" count
+                       "train" train
+                       "test" test
+                       "step" step
+                       "purge" purge
+                       "embargo" embargo
+                       "mode" mode
+                       "folds" (reverse acc)
+                       "fold-count" (length acc)
+                       "oos-samples" (* test (length acc))
+                       "detail" (hash)))
+             (let* ((test-end (+ test-start test))
+                    (train-end (- test-start purge))
+                    (train-start (if (equal? mode "anchored")
+                                     0
+                                     (max 0 (- train-end train))))
+                    (raw (range train-start train-end))
+                    (kept (val-keep-indices train-start train-end zones))
+                    (fold (hash "index" i
+                                "train-start" train-start
+                                "train-end" train-end
+                                "test-start" test-start
+                                "test-end" test-end
+                                "train-count" (length kept)
+                                "test-count" test
+                                "train" kept
+                                "test" (range test-start test-end)
+                                "purge" purge
+                                "embargo" embargo
+                                "embargoed" (- (length raw) (length kept)))))
+               (if (< (length kept) min-train)
+                   (val-error "no-train"
+                              (hash "fold" i
+                                    "train-count" (length kept)
+                                    "min-train" min-train))
+                   (loop (+ test-start step)
+                         (+ i 1)
+                         (cons fold acc)
+                         (append zones
+                                 (list (cons test-end
+                                             (+ test-end embargo)))))))))))))
+
+(define (val:split? s)
+  (and (hash? s)
+       (equal? (hash-ref s "kind" #f) "validation-split")
+       (equal? (hash-ref s "ok" #f) #t)))
+
+(define (val:split-folds s)
+  (if (val:split? s)
+      (let ((fs (hash-ref s "folds" (list))))
+        (if (pair? fs) fs (list)))
+      (list)))
+
+(define (val:split-count s)
+  (length (val:split-folds s)))
+
+; (val:fold-slots s "train"|"test") -> list of index lists, one per fold.
+(define (val:fold-slots s key)
+  (map (lambda (f)
+         (let ((v (hash-ref f key (list))))
+           (if (pair? v) v (list))))
+       (val:split-folds s)))
+
+(define (val:fold-train f)
+  (if (hash? f)
+      (let ((v (hash-ref f "train" (list))))
+        (if (pair? v) v (list)))
+      (list)))
+
+(define (val:fold-test f)
+  (if (hash? f)
+      (let ((v (hash-ref f "test" (list))))
+        (if (pair? v) v (list)))
+      (list)))
+
+; ═══════════════════════════════════════════════════════════════════
+; Normal quantile and the expected maximum of N tries
+; ═══════════════════════════════════════════════════════════════════
+
+; Acklam's rational approximation (relative error < 1.2e-9). Coefficients
+; are highest degree first for val-poly's Horner loop.
+(define val-z-a
+  (list -39.69683028665376 220.9460984245205 -275.9285104469687
+        138.3577518672690 -30.66479806614716 2.506628277459239))
+(define val-z-b
+  (list -54.47609879812406 161.5858368580409 -155.6989798598866
+        66.80131188771972 -13.28068155288572))
+(define val-z-c
+  (list -0.007784894002430293 -0.3223964580411365 -2.400758277161838
+        -2.549732539343734 4.374664141464968 2.938163982698783))
+(define val-z-d
+  (list 0.007784695709041462 0.3224671290700398 2.445134137142996
+        3.754408661907416))
+
+(define (val-poly cs x)
+  (let loop ((rest cs) (acc 0.0))
+    (if (null? rest) acc
+        (loop (cdr rest) (+ (* acc x) (car rest))))))
+
+; (val:z-quantile p) -> Z^-1[p] for 0 < p < 1.
+(define (val:z-quantile p)
+  (let* ((p (if (< p 0.000000000001) 0.000000000001
+                (if (> p 0.999999999999) 0.999999999999 p))))
+    (cond
+      ((< p 0.02425)
+       (let* ((q (sqrt (* -2.0 (log p))))
+              (num (val-poly val-z-c q))
+              (den (+ (* (val-poly val-z-d q) q) 1.0)))
+         (/ num den)))
+      ((<= p 0.97575)
+       (let* ((q (- p 0.5))
+              (r (* q q))
+              (num (* (val-poly val-z-a r) q))
+              (den (+ (* (val-poly val-z-b r) r) 1.0)))
+         (/ num den)))
+      (else
+       (let* ((q (sqrt (* -2.0 (log (- 1.0 p)))))
+              (num (val-poly val-z-c q))
+              (den (+ (* (val-poly val-z-d q) q) 1.0)))
+         (- (/ num den)))))))
+
+; Expected maximum of N independent standard normals. 0 for one try, so a
+; single attempt is uncorrected by construction and every extra attempt can
+; only raise the haircut.
+(define (val:z-expected-max n)
+  (let ((k (val-as-int n 0)))
+    (if (<= k 1)
+        0.0
+        (let ((gamma 0.5772156649015329)
+              (e 2.718281828459045))
+          (+ (* (- 1.0 gamma) (val:z-quantile (- 1.0 (/ 1.0 k))))
+             (* gamma (val:z-quantile (- 1.0 (/ 1.0 (* k e))))))))))
+
+; ═══════════════════════════════════════════════════════════════════
+; Deflated (multiple-testing corrected) metric
+; ═══════════════════════════════════════════════════════════════════
+
+; (val:deflate observed se trials [opts]) -> deflated-metric | validation-error.
+;   observed  the out-of-sample metric (window mean)
+;   se        its standard error
+;   trials    candidate attempts (per-generation tries x generations)
+;   "threshold" keep bar after the haircut, default 0
+;   "alpha"     recorded for the report, default 0.05
+(define (val:deflate observed se trials . opts)
+  (let* ((o (if (and (pair? opts) (hash? (car opts))) (car opts) (hash)))
+         (obs (if (number? observed) (exact->inexact observed) #f))
+         (err (if (number? se) (exact->inexact se) #f))
+         (tries (val-as-int trials 0))
+         (thr (let ((t (hash-ref o "threshold" 0.0)))
+                (if (number? t) (exact->inexact t) 0.0)))
+         (alpha (let ((a (hash-ref o "alpha" 0.05)))
+                  (if (number? a) (exact->inexact a) 0.05))))
+    (cond
+      ((not obs)
+       (val-error "bad-observed" (hash "observed" observed)))
+      ((or (not err) (< err 0.0))
+       (val-error "bad-se" (hash "se" se)))
+      ((< tries 1)
+       (val-error "bad-trials" (hash "trials" trials)))
+      (else
+       (let* ((z-exp (val:z-expected-max tries))
+              (haircut (* z-exp err))
+              (adj (- obs haircut))
+              (z (if (> err 0.0) (/ obs err) #f)))
+         (hash "kind" "deflated-metric"
+               "schema" val-schema-version
+               "ok" #t
+               "reason" ""
+               "observed" obs
+               "se" err
+               "trials" tries
+               "alpha" alpha
+               "z-expected" z-exp
+               "haircut" haircut
+               "adjusted" adj
+               "z" z
+               "threshold" thr
+               "keep?" (> adj thr)
+               "class" "out-of-sample-adjusted"
+               "detail" (hash)))))))
+
+(define (val:deflated? d)
+  (and (hash? d) (equal? (hash-ref d "kind" #f) "deflated-metric")))
+
+(define (val:adjusted d)
+  (if (and (hash? d) (number? (hash-ref d "adjusted" #f)))
+      (hash-ref d "adjusted")
+      #f))
+
+(define (val:trials d)
+  (if (and (hash? d) (number? (hash-ref d "trials" #f)))
+      (hash-ref d "trials")
+      0))
+
+(define (val:z-expected d)
+  (if (and (hash? d) (number? (hash-ref d "z-expected" #f)))
+      (hash-ref d "z-expected")
+      0.0))
+
+; ═══════════════════════════════════════════════════════════════════
+; Evidence record for the gate
+; ═══════════════════════════════════════════════════════════════════
+
+; (val:evidence window-metrics [opts]) -> validation-evidence.
+; window-metrics are the per-window out-of-sample values (one per fold).
+;   "trials"       candidate attempts, default 1
+;   "min-windows"  floor for a usable holdout, default 3
+;   "threshold"    keep bar after the haircut, default 0
+;   "se"           override the window standard error
+;   "split"        the split record this came from (provenance)
+;   "class"        "train-only" marks the record as not evidence
+;   "adjust"       #f keeps it out-of-sample but undeflated
+(define (val:evidence window-metrics . opts)
+  (let* ((o (if (and (pair? opts) (hash? (car opts))) (car opts) (hash)))
+         (ws (let ((x window-metrics))
+               (if (pair? x) x (list))))
+         (nums (filter number? ws))
+         (k (length nums))
+         (tries (val-as-int (hash-ref o "trials" 1) 0))
+         (minw (val-as-int (hash-ref o "min-windows" 3) 3))
+         (thr (let ((t (hash-ref o "threshold" 0.0)))
+                (if (number? t) (exact->inexact t) 0.0)))
+         (split (hash-ref o "split" #f))
+         (asked (hash-ref o "class" ""))
+         (adjust (hash-ref o "adjust" #t))
+         (obs (val-mean nums))
+         (se (let ((s (hash-ref o "se" #f)))
+               (cond ((number? s) (exact->inexact s))
+                     ((< k 2) 0.0)
+                     (else (/ (val-sd nums) (sqrt k))))))
+         (want (cond ((equal? asked "train-only") "train-only")
+                     ((equal? adjust #f) "out-of-sample")
+                     (else "out-of-sample-adjusted")))
+         (def (if (equal? want "out-of-sample-adjusted")
+                  (val:deflate obs se (max 1 tries) (hash "threshold" thr))
+                  #f))
+         (adj (if (val:deflated? def) (val:adjusted def) #f)))
+    (cond
+      ((< tries 1)
+       (val-error "bad-trials" (hash "trials" tries)))
+      ((and (> k 0) (not (= k (length ws))))
+       (val-error "bad-windows" (hash "windows" (length ws)
+                                      "numbers" k)))
+      ((< minw 1)
+       (val-error "bad-min-windows" (hash "min-windows" minw)))
+      (else
+       (let* ((enough (>= k minw))
+              (better (if (number? adj) (> adj thr) #f))
+              (passed (and (not (equal? want "train-only")) enough
+                           (if (string=? want "out-of-sample") #t better)))
+              (reason (cond ((equal? want "train-only") "unadjusted")
+                            ((not enough) "insufficient-windows")
+                            ((and (string=? want "out-of-sample-adjusted")
+                                  (not better)) "not-better")
+                            (else ""))))
+         (hash "kind" "validation-evidence"
+               "schema" val-schema-version
+               "ok" #t
+               "class" want
+               "windows" k
+               "trials" (max 1 tries)
+               "observed" obs
+               "se" se
+               "adjusted" adj
+               "threshold" thr
+               "deflated" (if (val:deflated? def) def "none")
+               "split" (if (val:split? split) split "none")
+               "min-windows" minw
+               "passed" (if passed #t #f)
+               "reason" reason
+               "detail" (hash)))))))
+
+(define (val:evidence? e)
+  (and (hash? e) (equal? (hash-ref e "kind" #f) "validation-evidence")))
+
+(define (val:class e)
+  (if (val:evidence? e)
+      (let ((c (hash-ref e "class" "train-only")))
+        (if (string? c) c "train-only"))
+      "train-only"))
+
+(define (val:windows e)
+  (if (val:evidence? e)
+      (let ((w (hash-ref e "windows" 0)))
+        (if (number? w) w 0))
+      0))
+
+(define (val:passed? e)
+  (and (val:evidence? e) (equal? (hash-ref e "passed" #f) #t)))
+
+; (val:attach feedback evidence) -> the same feedback with the
+; "validation" slot a #5255 gate reads. The record is not copied.
+(define (val:attach fb ev)
+  (let ((rec (if (hash? ev) ev (hash))))
+    (if (hash? fb)
+        (hash-set fb "validation" rec)
+        (hash "validation" rec))))
+
+(define (val:validation fb)
+  (if (hash? fb)
+      (let ((v (hash-ref fb "validation" #f)))
+        (if (val:evidence? v) v (hash)))
+      (hash)))

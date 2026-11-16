@@ -1,0 +1,257 @@
+;
+; #5316 — validation splits and the multiple-testing haircut.
+;
+; Covers: a time-ordered split whose purge gap and embargo tail keep
+; adjacent samples out of train; a deflated metric that gets stricter with
+; every extra candidate attempt; a #5255 gate that refuses a KEEP when the
+; feedback carries training metrics only, with a queryable reason; the same
+; gate keeping a transform once out-of-sample, adjusted evidence is attached;
+; tune:gate keeping its old shape until a caller asks for holdout proof; and
+; failure records that are queried instead of thrown.
+(require "std/test" all:)
+(require "std/validation" all:)
+(require "std/gate" all:)
+(require "std/hyper-heuristic" all:)
+
+(test-file "validate_split.aura")
+
+; ── helpers ──────────────────────────────────────────────────────
+(define (vfb pnl)
+  (gate:feedback
+    (hash "transform" (hash "operator" "tune" "target" "f" "applied" #t)
+          "exec" (hash "result" "ok" "error-kind" "none"
+                       "error-code" "" "message" "")
+          "metrics" (hash "keys" (list "pnl")
+                          "before" (hash "pnl" 0.0)
+                          "after" (hash "pnl" pnl)
+                          "delta" (hash "pnl" pnl)))))
+
+(define (vpotential fb) (list 0.0 (gate:metric fb "pnl")))
+
+; Is any train index inside the fold's own holdout or its purge gap?
+(define (vleak-own f purge)
+  (let ((lo (- (hash-ref f "test-start") purge))
+        (hi (hash-ref f "test-end")))
+    (any (lambda (k) (and (>= k lo) (< k hi))) (val:fold-train f))))
+
+; Is any train index between lo and hi?
+(define (vin-range ks lo hi)
+  (filter (lambda (k) (and (>= k lo) (< k hi))) ks))
+
+; ═══════════════════════════════════════════════════════════════════
+; 1. Purged split: no adjacent sample reaches train
+; ═══════════════════════════════════════════════════════════════════
+(test-case "purged split keeps adjacent samples out of train"
+           (hash "issue" 5316 "tags" (list "validation" "split"))
+  (define s (val:split 200 (hash "train" 60 "test" 20 "purge" 5 "embargo" 5)))
+  (check (val:split? s))
+  (check= 6 (val:split-count s))
+  (check= 120 (hash-ref s "oos-samples"))
+  (define folds (val:split-folds s))
+  (define f0 (car folds))
+  ; the 5 samples before the holdout are purged: train ends at 59, test starts at 65
+  (check= (list 0 60 65 85)
+          (list (hash-ref f0 "train-start") (hash-ref f0 "train-end")
+                (hash-ref f0 "test-start") (hash-ref f0 "test-end")))
+  (check= 60 (hash-ref f0 "train-count"))
+  (check= 59 (last (val:fold-train f0)))
+  (check= (list) (vin-range (val:fold-train f0) 60 65))
+  ; every fold: no train index in its own holdout or purge gap
+  (check (every (lambda (f) (not (vleak-own f 5))) folds))
+  ; every test window is the declared length and moves forward
+  (check (every (lambda (f) (= 20 (length (val:fold-test f)))) folds))
+  (check= (list 65 85 105 125 145 165)
+          (map (lambda (f) (hash-ref f "test-start")) folds))
+  ; anchored mode expands from 0 and still purges/embargoes its boundaries
+  (define sa (val:split 200 (hash "train" 60 "test" 20 "purge" 5
+                                  "embargo" 5 "mode" "anchored")))
+  (check= (list 60 80 95 110 125 140)
+          (map (lambda (f) (hash-ref f "train-count")) (val:split-folds sa)))
+  (check (every (lambda (f) (not (vleak-own f 5))) (val:split-folds sa))))
+
+; ── and the embargo tail, on a gapped walk-forward ──────────────
+(test-case "the embargo tail is blocked from a later train window"
+           (hash "issue" 5316 "tags" (list "validation" "split" "embargo"))
+  (define s (val:split 200 (hash "train" 60 "test" 20 "step" 40
+                                 "purge" 5 "embargo" 5)))
+  (define f1 (car (cdr (val:split-folds s))))   ; test [105 125), train [40 100)
+  (check= 105 (hash-ref f1 "test-start"))
+  (check= 100 (hash-ref f1 "train-end"))
+  (check= 5 (hash-ref f1 "embargoed"))
+  (check= (list) (vin-range (val:fold-train f1) 85 90))
+  (check= (list 90 91 92 93 94 95 96 97 98 99)
+          (vin-range (val:fold-train f1) 90 100)))
+
+; ═══════════════════════════════════════════════════════════════════
+; 2. More attempts = a stricter correction
+; ═══════════════════════════════════════════════════════════════════
+(test-case "more candidate attempts only make the adjusted metric stricter"
+           (hash "issue" 5316 "tags" (list "validation" "deflate"))
+  (define (vadj n) (val:adjusted (val:deflate 0.15 0.10 n (hash))))
+  (define (vz n) (val:z-expected (val:deflate 0.15 0.10 n (hash))))
+  (check= 0.0 (vz 1))                     ; one try is uncorrected
+  (check (every (lambda (p) (> (car (cdr p)) (car p)))
+                (zip (map vz (list 1 2 5 20 100))
+                     (map vz (list 2 5 20 100 200)))))
+  (check (every (lambda (p) (> (car p) (car (cdr p))))
+                (zip (map vadj (list 1 2 5 20 100))
+                     (map vadj (list 2 5 20 100 200)))))
+  (define d1 (val:deflate 0.15 0.10 1 (hash)))
+  (define d20 (val:deflate 0.15 0.10 20 (hash)))
+  (define d100 (val:deflate 0.15 0.10 100 (hash)))
+  (check (val:deflated? d1))
+  (check (hash-ref d1 "keep?"))
+  (check (not (hash-ref d20 "keep?")))
+  (check (not (hash-ref d100 "keep?")))
+  (check (= 0.15 (* 1.0 (val:adjusted d1))))
+  (check= "out-of-sample-adjusted" (hash-ref d100 "class"))
+  ; the quantile the haircut is built on is the standard normal one
+  (check (< (abs (- 1.959964 (val:z-quantile 0.975))) 0.000001))
+  (check (< (abs (- 2.326348 (val:z-quantile 0.99))) 0.000001))
+  ; an attempt count of zero is a record, not a throw
+  (check (val:error? (val:deflate 0.15 0.10 0 (hash))))
+  (check= "bad-trials" (val:reason (val:deflate 0.15 0.10 0 (hash)))))
+
+; ═══════════════════════════════════════════════════════════════════
+; 3. The gate refuses training-only metrics, and says why
+; ═══════════════════════════════════════════════════════════════════
+(test-case "a gate refuses training metrics as KEEP evidence"
+           (hash "issue" 5316 "tags" (list "validation" "gate"))
+  (gate:uninstall!)
+  (define g (gate:new (hash "name" "pnl-oos"
+                            "potential" vpotential
+                            "compare" "min"
+                            "require" "out-of-sample-adjusted"
+                            "min-windows" 3)))
+  (check= "out-of-sample-adjusted" (gate:require g))
+  (check= 3 (gate:min-windows g))
+  (define v (gate:evaluate g (vfb -5.0)))
+  (check (not (gate:keep? v)))
+  (check= "ROLLBACK" (gate:decision v))
+  (check= "pnl-oos" (hash-ref v "gate"))
+  (check= "unadjusted" (gate:reason v))
+  (define ev (hash-ref v "evidence"))
+  (check (equal? #f (hash-ref ev "proven")))
+  (check= "train-only" (hash-ref ev "why"))
+  (check= "out-of-sample-adjusted" (hash-ref ev "required"))
+  (check= 0 (hash-ref ev "windows"))
+  ; the same feedback without the requirement keeps the pre-#5316 decision
+  (define plain-gate (gate:new (hash "name" "pnl" "potential" vpotential
+                                     "compare" "min")))
+  (check= "any" (gate:require plain-gate))
+  (check (gate:keep? (gate:evaluate plain-gate (vfb -5.0)))))
+
+(test-case "out-of-sample adjusted evidence turns the same transform into a KEEP"
+           (hash "issue" 5316 "tags" (list "validation" "gate"))
+  (define g (gate:new (hash "name" "pnl-oos" "potential" vpotential
+                            "compare" "min"
+                            "require" "out-of-sample-adjusted")))
+  (define ev (val:evidence (list 0.5 0.42 0.38 0.44 0.36)
+                           (hash "trials" 40 "min-windows" 3)))
+  (check (val:evidence? ev))
+  (check= "out-of-sample-adjusted" (val:class ev))
+  (check= 5 (val:windows ev))
+  (check (val:passed? ev))
+  (check= "" (val:reason ev))
+  (define v (gate:evaluate g (val:attach (vfb -5.0) ev)))
+  (check (gate:keep? v))
+  (check= "improved" (gate:reason v))
+  (check= "out-of-sample-adjusted" (hash-ref (hash-ref v "evidence") "class"))
+  (check= 5 (hash-ref (hash-ref v "evidence") "windows"))
+  (check= 40 (hash-ref (hash-ref v "evidence") "trials"))
+  (check (val:evidence? (val:validation (val:attach (vfb -5.0) ev)))))
+
+(test-case "thin or undeflated evidence is refused by name"
+           (hash "issue" 5316 "tags" (list "validation" "gate"))
+  (define g (gate:new (hash "name" "pnl-oos" "potential" vpotential
+                            "compare" "min"
+                            "require" "out-of-sample-adjusted")))
+  ; two windows are not a holdout
+  (define thin (val:evidence (list 0.4 0.42) (hash "trials" 40)))
+  (check (not (val:passed? thin)))
+  (check= "insufficient-windows" (val:reason thin))
+  (define vt (gate:evaluate g (val:attach (vfb -5.0) thin)))
+  (check (not (gate:keep? vt)))
+  (check= "insufficient-windows" (gate:reason vt))
+  (check= "insufficient-windows" (hash-ref (hash-ref vt "evidence") "why"))
+  ; four windows, but never deflated by the attempt count
+  (define plain (val:evidence (list 0.5 0.42 0.38 0.44)
+                              (hash "trials" 40 "adjust" #f)))
+  (check= "out-of-sample" (val:class plain))
+  (check= #f (hash-ref plain "adjusted"))
+  (define vp (gate:evaluate g (val:attach (vfb -5.0) plain)))
+  (check= "unadjusted" (gate:reason vp))
+  (check= "not-deflated" (hash-ref (hash-ref vp "evidence") "why"))
+  ; a gate that only asks for out-of-sample accepts the same record
+  (define loose (gate:new (hash "name" "pnl-holdout" "potential" vpotential
+                                "compare" "min" "require" "out-of-sample")))
+  (check (gate:keep? (gate:evaluate loose (val:attach (vfb -5.0) plain))))
+  ; a record that calls itself train-only never passes an adjusted gate
+  (define forged (hash "kind" "validation-evidence" "class" "train-only"
+                       "windows" 9 "trials" 40 "passed" #t))
+  (check= "unadjusted"
+          (gate:reason (gate:evaluate g (val:attach (vfb -5.0) forged)))))
+
+; ═══════════════════════════════════════════════════════════════════
+; 4. tune:gate: unchanged until asked, then it needs holdout evidence
+; ═══════════════════════════════════════════════════════════════════
+(test-case "tune:gate is unchanged until a caller asks for holdout evidence"
+           (hash "issue" 5316 "tags" (list "validation" "tune"))
+  (define cand (list 1.5 1.6 1.4 1.55 1.5))
+  (define base (list 1.0 1.0 0.9 1.0 1.05))
+  (define stat (tune:gate cand base (hash "alpha" 0.05)))
+  (check (hash-ref stat "keep"))
+  (check= 8 (length (hash-keys stat)))    ; exactly the old shape
+  (check (equal? #f (hash-ref stat "class" #f)))
+  (check (equal? #f (hash-ref stat "required" #f)))
+  (check (equal? #f (hash-ref stat "reason" #f)))
+  ; asked to prove holdout evidence, a training-only test cannot KEEP
+  (define hard (tune:gate cand base
+                          (hash "alpha" 0.05
+                                "require" "out-of-sample-adjusted")))
+  (check (not (hash-ref hard "keep")))
+  (check= "train-only" (hash-ref hard "class"))
+  (check= "out-of-sample-adjusted" (hash-ref hard "required"))
+  (check= "unadjusted" (hash-ref hard "reason"))
+  ; the same statistic with real evidence keeps
+  (define ev (val:evidence (list 0.5 0.42 0.38 0.44 0.36) (hash "trials" 40)))
+  (define good (tune:gate cand base
+                          (hash "alpha" 0.05
+                                "require" "out-of-sample-adjusted"
+                                "validation" ev)))
+  (check (hash-ref good "keep"))
+  (check= "out-of-sample-adjusted" (hash-ref good "class"))
+  (check= "" (hash-ref good "reason"))
+  ; a gate object carries its own requirement
+  (define g (gate:new (hash "name" "pnl-oos" "potential" vpotential
+                            "compare" "min"
+                            "require" "out-of-sample-adjusted")))
+  (define via-gate (tune:gate cand base (hash "alpha" 0.05 "gate" g)))
+  (check (not (hash-ref via-gate "keep")))
+  (check= "out-of-sample-adjusted" (hash-ref via-gate "required"))
+  ; a statistically insignificant result stays out even with evidence
+  (define flat (tune:gate (list 1.0 1.0 1.0) (list 1.0 1.0 1.0)
+                          (hash "alpha" 0.05
+                                "require" "out-of-sample-adjusted"
+                                "validation" ev)))
+  (check (not (hash-ref flat "keep")))
+  (check= "not-significant" (hash-ref flat "reason")))
+
+; ═══════════════════════════════════════════════════════════════════
+; 5. Failures are records
+; ═══════════════════════════════════════════════════════════════════
+(test-case "a split that cannot be built returns a queryable record"
+           (hash "issue" 5316 "tags" (list "validation" "split"))
+  (define none (val:split 10 (hash "train" 60 "test" 20)))
+  (check (val:error? none))
+  (check= "no-folds" (val:reason none))
+  (check= 10 (hash-ref (hash-ref none "detail") "n"))
+  (check= "bad-n" (val:reason (val:split 1 (hash))))
+  (check= "bad-gap"
+          (val:reason (val:split 100 (hash "train" 10 "test" 20 "purge" 10))))
+  (check= "bad-window"
+          (val:reason (val:split 100 (hash "train" 10 "test" 0))))
+  (check (not (val:split? none)))
+  (check= (list) (val:split-folds none)))
+
+(test-finish)
