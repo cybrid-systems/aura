@@ -202,8 +202,8 @@ public:
     // Issue #5144: a dispatch-only body keeps its PrimMeta and is enumera-
     // ble for gates/tests, without gaining a slot or a public catalog entry.
     [[nodiscard]] const PrimMeta* hidden_meta_for_name(std::string_view name) const {
-        const auto it = hidden_meta_.find(std::string{name});
-        return it == hidden_meta_.end() ? nullptr : &it->second;
+        const auto found = hidden_meta_.find(std::string{name});
+        return found == hidden_meta_.end() ? nullptr : &found->second;
     }
     [[nodiscard]] std::vector<std::string> hidden_names(std::string_view prefix) const {
         std::vector<std::string> out;
@@ -241,10 +241,10 @@ public:
         }
         if (aura::core::arena_policy::in_render_hotpath())
             cold_dispatch_fallback_.fetch_add(1, std::memory_order_relaxed);
-        const auto it = table_.find(name);
-        return it != table_.end() ? std::optional(it->second) : std::nullopt;
+        const auto found = table_.find(name);
+        return found != table_.end() ? std::optional(found->second) : std::nullopt;
     }
-    void set_string_heap(::aura::compiler::LockedStringHeap* h) { string_heap_ = h; }
+    void set_string_heap(::aura::compiler::LockedStringHeap* heap) { string_heap_ = heap; }
     // Issue #4461: integer `/` by zero becomes an error value, not 0.
     void set_error_sink(std::vector<types::EvalValue>* errs,
                         std::atomic<std::uint64_t>* counter) noexcept {
