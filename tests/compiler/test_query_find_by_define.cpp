@@ -125,8 +125,13 @@ int run_test_query_find_by_define() {
                      "flat.size() ---");
         const auto qwsp = read_src("src/compiler/evaluator_primitives_query_workspace.cpp");
         CHECK(!qwsp.empty(), "3390 AC4: query_workspace.cpp readable");
-        const auto find_idx = qwsp.find("find_define_by_name");
-        const auto loop_idx = qwsp.find("id < flat.size()");
+        // Scope the pin to the query:find handler: #5249 added an unrelated
+        // define-lookup walk earlier in this file, and a whole-file find()
+        // would read its loop as the fallback this AC is about.
+        const auto handler_idx = qwsp.find("Issue #3390 (I3)");
+        CHECK(handler_idx != std::string::npos, "3390 AC4: query:find handler located");
+        const auto find_idx = qwsp.find("find_define_by_name", handler_idx);
+        const auto loop_idx = qwsp.find("id < flat.size()", handler_idx);
         CHECK(find_idx != std::string::npos, "3390 AC4: find_define_by_name referenced in source");
         CHECK(loop_idx != std::string::npos,
               "3390 AC4: id < flat.size() loop still present (fallback)");

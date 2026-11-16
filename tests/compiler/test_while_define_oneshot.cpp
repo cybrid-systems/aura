@@ -754,10 +754,14 @@ static void ac5282_discarded_trial_keeps_inline() {
                                                          (evo:candidate-genome c)
                                                          "discard-1")
                                                 #t))
+                                  ; #5255 made a hard-constraint violation an
+                                  ; unsuccessful trial; this AC is about
+                                  ; isolation, so the measured row is feasible
+                                  ; (a zero violation magnitude, not 1.0).
                                   "evaluate" (lambda (c)
                                                (hash "objectives" (hash "ms" 1)
                                                      "constraints"
-                                                     (hash "checksum" 1.0)))))))
+                                                     (hash "checksum" 0.0)))))))
               (if (and (string=? (hash-ref trial "status") "ok")
                        (eq? (hash-ref trial "live-unchanged") #t)
                        (eq? (hash-ref trial "trial-applied") #t))
