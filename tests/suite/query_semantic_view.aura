@@ -1,0 +1,110 @@
+; Issue #5249: the program semantic view — (query :defines :records) /
+; query:define-records. One record per definition, public keys only: name,
+; kind, span (form head), name-span (definition-name token), params,
+; callers, callees, def-use, effects, stable-ref.
+;
+; Spans are reader positions, so a (define ghost ...) inside a comment or a
+; string is not a definition and must not produce a record. A record hash
+; must not carry engine metadata keys (issue-*, schema-*, query-result-*).
+(require "std/test" all:)
+(require "std/query" all:)
+(test-file "query_semantic_view.aura")
+
+; Two definitions with a call between them; then a fake define in a comment
+; and another inside a string literal — neither may become a record.
+(set-code "(define (f x) (+ x 1))\n(define g (f 2))\n; (define ghost 1)\n(define s \"(define ghost 2)\")\n")
+
+(define recs (query:define-records))
+(define f-rec (car (query:define-record "f")))
+(define g-rec (car (query:define-record "g")))
+
+(test-case "records are per definition and keyed by name" (hash "issue" 5249)
+  (check (list? recs))
+  (check (< 0 (length recs)))
+  (check (hash? f-rec))
+  (check= "f" (hash-ref f-rec "name"))
+  (check= "Define" (hash-ref f-rec "kind")))
+
+(test-case "spans are reader positions; name-span is the name token" (hash "issue" 5249)
+  (define span (hash-ref f-rec "span"))
+  (define nspan (hash-ref f-rec "name-span"))
+  (check (= 2 (length span)))
+  (check (= 2 (length nspan)))
+  (check= 1 (car span))
+  (check= 1 (car nspan))
+  ; (define (f x) ...) — the name token sits right of the form head.
+  (check (< (car (cdr span)) (car (cdr nspan)))))
+
+(test-case "params come from the lambda" (hash "issue" 5249)
+  (check= (list "x") (hash-ref f-rec "params")))
+
+(test-case "callers and callees" (hash "issue" 5249)
+  (check= (list "f") (hash-ref g-rec "callees"))
+  ; f is called from g exactly once; a caller record is (name line col).
+  (define f-callers (hash-ref f-rec "callers"))
+  (check (= 1 (length f-callers)))
+  (check= "g" (car (car f-callers)))
+  (check (= 2 (length (car (cdr (car f-callers)))))))
+
+(test-case "def-use and labelled effect groups" (hash "issue" 5249)
+  (define du (hash-ref f-rec "def-use"))
+  (check (hash? du))
+  (check (= 1 (length (hash-ref du "defs"))))
+  (check (< 0 (length (hash-ref du "uses"))))
+  (define eff (hash-ref f-rec "effects"))
+  (check (hash? eff))
+  (check (integer? (hash-ref eff "callers")))
+  (check (integer? (hash-ref eff "reads")))
+  (check (integer? (hash-ref eff "writes"))))
+
+(test-case "stable-ref is a usable handle" (hash "issue" 5249)
+  (define sr (hash-ref f-rec "stable-ref"))
+  (check (pair? sr))
+  (check (integer? (car sr)))
+  ; (id . gen), the same dotted shape (query :stable-ref) exports.
+  (check (integer? (cdr sr))))
+
+(test-case "no internal key leaks into a record" (hash "issue" 5249)
+  (define keys (hash-keys f-rec))
+  (check (= 10 (length keys)))
+  (check (member "name" keys))
+  (check (member "kind" keys))
+  (check (member "span" keys))
+  (check (member "name-span" keys))
+  (check (not (member "issue-2933" keys)))
+  (check (not (member "schema-2192" keys)))
+  (check (not (member "schema-3137" keys)))
+  (check (not (member "query-result-tag" keys)))
+  (check (not (member "matches" keys))))
+
+(test-case "a define in a comment or a string is not a record" (hash "issue" 5249)
+  (check= 0 (length (query:define-record "ghost"))))
+
+(test-case "find is a name locator: the definition comes first" (hash "issue" 5249)
+  ; The first find match must be the Define node, never a bare reference:
+  ; (query :node qr :index 0) reads that first match through the
+  ; QueryResult, so it is face-correct under the production audit too.
+  (define node0 (query :node (query :find "f") :index 0))
+  (check= 8 (car node0))                    ; NodeTag::Define
+  (check= "f" (car (cdr node0)))            ; the definition name
+  (check= "Define" (car (cdr (cdr (cdr node0))))))
+
+(test-case "reaches accepts a name" (hash "issue" 5249)
+  (define r (query :reaches "f"))
+  (check (pair? r))
+  ; (defs . uses): f is defined once and read in g.
+  (check (= 1 (length (car r))))
+  (check (< 0 (length (cdr r)))))
+
+(test-case "every callable query name has a help entry" (hash "issue" 5249)
+  (define topics (query:help-topics))
+  (check (< 40 (length topics)))
+  (check (member "reaches" topics))
+  (check (member "effects" topics))
+  (check (member "find" topics))
+  (check (member "defines" topics))
+  (check (member "stable-ref" topics))
+  (check (not (string=? "no help available for: effects" (query:help "effects"))))
+  (check (not (string=? "no help available for: reaches" (query:help "reaches")))))
+
+(test-finish)

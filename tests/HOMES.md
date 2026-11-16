@@ -90,6 +90,7 @@ Append there. Names `std/iter` re-exports are the `std/list` contract. Names
 | runtime/orch | `tests/suite/orchestrator.aura` | `runtime/orch`, `orchestrator` |
 | runtime/workspace | `tests/suite/workspace_source_ssot_2920.aura` | `runtime/workspace`, `workspace` |
 | typecheck oracle | `tests/suite/typecheck_three_paths.aura` | `typecheck-status`, `typecheck-current`, `--typecheck` |
+| query / query: semantic view | `tests/suite/query_semantic_view.aura` | `query:defines`, `query:define-records`, `query:reaches`, `query:help`, `define-lookup` |
 
 Touched paths are the fast-loop map. A trailing slash is a directory.
 A stem (no `.` in the last component) matches the end, `/`, `.`, or `_`.
@@ -107,6 +108,7 @@ A stem (no `.` in the last component) matches the end, `/`, `.`, or `_`.
 - runtime/orch: `src/orch/`, `lib/std/orch.aura`
 - runtime/workspace: `src/core/workspace`, `src/compiler/evaluator_workspace`, `src/compiler/evaluator_primitives_workspace`, `src/compiler/evaluator_primitives_query_workspace`, `lib/std/query-workspace.aura`
 - typecheck oracle: `src/compiler/evaluator_primitives_eval.cpp`, `src/compiler/evaluator_typecheck.cpp`, `src/compiler/service_typecheck.cpp`, `src/compiler/reg_split_parts_decl.inc`
+- query / query: semantic view: `src/compiler/evaluator_primitives_query`, `src/compiler/evaluator_defuse_index.cpp`, `lib/std/query.aura`
 
 Core, when a home is selected or one of these files changes:
 `lib/std/test.aura`, `lib/std/edsl-test-harness.aura`,

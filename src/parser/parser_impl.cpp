@@ -1108,6 +1108,11 @@ NodeId parse_define(ParserState& s) {
         // convention as parse_list (1-based).
         auto did = s.flat.add_define(s.pool.intern(fn.text), lambda);
         s.flat.set_loc(did, tok.line, tok.column);
+        // Issue #5249: the span of the definition name itself. line/col stay
+        // the form head (the `define` token); the name token is what
+        // goto-definition and rename must land on. Reader position, so a
+        // (define ghost ...) in a comment or a string can never produce one.
+        s.flat.set_name_loc(did, fn.line, fn.column);
         return did;
     }
     // Normal: (define name value)
@@ -1132,6 +1137,8 @@ NodeId parse_define(ParserState& s) {
     // Issue #4347: same parse-location face for (define name value).
     auto did = s.flat.add_define(s.pool.intern(n.text), v);
     s.flat.set_loc(did, tok.line, tok.column);
+    // Issue #5249: value-form define — name token span (see the shorthand path).
+    s.flat.set_name_loc(did, n.line, n.column);
     return did;
 }
 
@@ -1141,9 +1148,12 @@ NodeId parse_define_type(ParserState& s) {
     // Parse type name (possibly with params): Name or (Name params...)
     std::vector<SymId> params;
     SymId type_name;
+    // Issue #5249: the reader token of the type name, for the name span.
+    auto name_token = s.lex.peek();
     if (s.lex.peek().kind == TokenKind::LParen) {
         s.lex.consume(); // '('
         auto name_tok = s.lex.peek();
+        name_token = name_tok;
         if (name_tok.kind != TokenKind::Identifier) {
             skip_rparen(s);
             skip_rparen(s);
@@ -1163,6 +1173,7 @@ NodeId parse_define_type(ParserState& s) {
         s.lex.consume(); // ')'
     } else {
         auto name_tok = s.lex.peek();
+        name_token = name_tok;
         if (name_tok.kind != TokenKind::Identifier) {
             skip_rparen(s);
             return NULL_NODE;
@@ -1213,7 +1224,12 @@ NodeId parse_define_type(ParserState& s) {
     }
     s.lex.consume(); // ')'
 
-    return s.flat.add_define_type(type_name, params, ctors);
+    // Issue #5249: DefineType is a define record — stamp the form head and
+    // the type-name token span (#4347 gave Define a loc; DefineType had none).
+    auto tid = s.flat.add_define_type(type_name, params, ctors);
+    s.flat.set_loc(tid, tok.line, tok.column);
+    s.flat.set_name_loc(tid, name_token.line, name_token.column);
+    return tid;
 }
 
 NodeId parse_define_module(ParserState& s) {
@@ -1719,6 +1735,9 @@ NodeId parse_defmacro(ParserState& s, bool hygienic, bool preserve_dotted) {
     auto mid = s.flat.add_macrodef(s.pool.intern(name.text), params, body, dotted, hygienic,
                                    preserved_macro);
     s.flat.set_loc(mid, tok.line, tok.column);
+    // Issue #5249: define-hygienic-macro / define-hygienic-macro* are define
+    // records too — stamp the macro-name token span.
+    s.flat.set_name_loc(mid, name.line, name.column);
     return mid;
 }
 

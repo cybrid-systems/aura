@@ -269,6 +269,28 @@ HOMES: tuple[Home, ...] = (
         ),
     ),
     _h(
+        "query / query: semantic view",
+        "aura",
+        "tests/suite/query_semantic_view.aura",
+        (
+            "query:defines",
+            "query :defines :records",
+            "query:define-records",
+            "query:reaches",
+            "query:help",
+            "define-lookup",
+        ),
+        tag="query",
+        requires=("std/test", "std/query"),
+        body='(check (hash? (car (query:define-record "f"))))',
+        roots=(
+            "src/compiler/evaluator_primitives_query",
+            "src/compiler/evaluator_defuse_index.cpp",
+            "lib/std/query.aura",
+        ),
+        note="query: program semantic view: define records, spans, callers/callees, help coverage.",
+    ),
+    _h(
         "cli/help",
         "python",
         "tests/python/process/test_cli_help.py",

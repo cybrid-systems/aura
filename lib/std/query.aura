@@ -27,12 +27,13 @@
 ; wrapper needed — the engine primitives ARE the right API
 ; surface).
 
-(export query:list-categories query:help
+(export query:list-categories query:help query:help-topics
         query:nodes-with-marker query:find-by-name query:subtree
         query:defines query:defines-by-marker
         query:calls-by-marker
         query:node-marker query:ref-counts
-        query:ref-mutation-id query:ref-workspace-id)
+        query:ref-mutation-id query:ref-workspace-id
+        query:define-records query:define-record query:semantic-view)
 
 ; Issue #4345: (query:ref-counts node-id) — the engine registers this
 ; behind the stats_impl face, which has no bare-name Soft binding; the
@@ -73,26 +74,70 @@
         "stats"           ; all *-stats primitives
         "observability")) ; orchestration / primitive-error etc.
 
-; ── (query:help key) — return a short help string for a
-;     query namespace or primitive. Uses stdlib-level
-;     metadata; engine primitives should provide similar
-;     hints in diagnostic.cpp (#549 follow-up).
+; ── Issue #5249: (query:help key) — one short entry per callable query name. ──
+; The table below IS the coverage contract: every name the `(query :op)`
+; dispatcher can reach (the q_impls core ops, the hidden query:* primitives,
+; and the dispatcher-only reads) has an entry. query:help-topics returns the
+; covered names, so a test can prove coverage without copying the table.
+(define *query-help-table*
+  (list
+    (cons "node" "Node details for a node-id/stable-ref: (children value tag kind-name).")
+    (cons "children" "Child node-ids of a node, in source order.")
+    (cons "children-stable" "Child stable-refs as (id . gen) pairs; pass them back after a mutate.")
+    (cons "parent" "Parent node-id of a node.")
+    (cons "parent-stable" "Parent as a stable-ref (id . gen).")
+    (cons "find" "Name locator: every node carrying the name, definitions first. Element 0 is the definition when one exists; trailing elements are reads. Use define-lookup for definition records.")
+    (cons "def-use" "(def-use name) -> (defs uses) node-id lists for a name.")
+    (cons "defines" "All define node ids: (defines) or (defines name). Add :records for the program view (name kind span name-span params callers callees def-use effects stable-ref), which exposes no internal keys.")
+    (cons "defines-by-marker" "Define node ids whose SyntaxMarker matches (e.g. User).")
+    (cons "calls" "All call node ids: (calls) or (calls callee-name).")
+    (cons "calls-by-marker" "Call node ids whose SyntaxMarker matches.")
+    (cons "by-marker" "Nodes filtered by SyntaxMarker.")
+    (cons "node-marker" "SyntaxMarker of a node.")
+    (cons "node-type" "NodeTag of a node as a name string.")
+    (cons "node-types" "Census of node kinds as ((kind . count) ...).")
+    (cons "module-exports" "Exported symbols of a module.")
+    (cons "schema" "Schema descriptor of a node (when one is attached).")
+    (cons "stable-ref" "StableNodeRef (id . gen) for a node-id; validates before export.")
+    (cons "stable-ref-provenance" "Provenance fields of a held stable-ref.")
+    (cons "reaches" "(reaches name) or (reaches node-id/stable-ref) -> (defs uses) reachable from a definition.")
+    (cons "effects" "(effects name) -> (callers uses defs); callers first.")
+    (cons "root" "Root node-id of the workspace AST.")
+    (cons "code" "Authoritative workspace source text.")
+    (cons "mutation-log" "Mutation log entries, newest last.")
+    (cons "mutation-provenance" "Provenance record of a mutation id.")
+    (cons "last-mutation-provenance" "Provenance of the most recent mutation.")
+    (cons "node-provenance" "Provenance id stamped on a node.")
+    (cons "provenance-of" "Narrowing provenance of a variable name (add * for all names).")
+    (cons "provenance-of*" "Every variable name that has narrowing provenance.")
+    (cons "ensure-ref" "Validate/refresh a stable-ref before reuse.")
+    (cons "result-fresh?" "Is a held QueryResult still fresh?")
+    (cons "result-matches" "Matches of a held QueryResult.")
+    (cons "ref-valid?" "Validity of a packed stable-ref.")
+    (cons "type-feedback" "Recorded type feedback for a node.")
+    (cons "dirty-impact" "Dirty-propagation impact set of a node.")
+    (cons "dirty-subtree" "Nodes in a dirty subtree.")
+    (cons "mutations-since" "Mutations after a given mutation id.")
+    (cons "mutation-impact" "Impact record of a mutation.")
+    (cons "filter" "Filter node-ids by predicate primitive.")
+    (cons "where" "Keyword predicate used by query:filter.")
+    (cons "pattern" "Match nodes by the (tag, arity) index.")
+    (cons "siblings" "Sibling node-ids of a node.")
+    (cons "api-reference" "List the bound primitives on this engine.")
+    (cons "arena-offset" "Arena offset of the workspace.")
+    (cons "fiber-backend" "Spawn backend in use.")
+    (cons "auto-rollback-on-panic" "Whether a panic auto-rolls back the workspace.")
+        ))
+
 (define (query:help key)
-  (cond
-    ((string=? key "node")      "Return node-id for a symbol name.")
-    ((string=? key "parent")    "Return parent node-id of a node-id.")
-    ((string=? key "children")  "Return list of children node-ids.")
-    ((string=? key "siblings")  "Return list of sibling node-ids.")
-    ((string=? key "filter")    "Filter node-ids by a predicate primitive.")
-    ((string=? key "find")      "Find first node-id matching name.")
-    ((string=? key "where")     "Filter by a keyword-based predicate.")
-    ((string=? key "pattern")   "Match by (tag, arity) index.")
-    ((string=? key "by-marker") "Filter by SyntaxMarker.")
-    ((string=? key "def-use")   "Def-use query (reads defuse_index).")
-    ((string=? key "stable-ref")"StableNodeRef validity check.")
-    ((string=? key "module-exports") "Return exported symbols of a module.")
-    (else
-      (string-append "no help available for: " key))))
+  (let ((hit (assoc key *query-help-table*)))
+    (if hit
+        (cdr hit)
+        (string-append "no help available for: " key))))
+
+; Issue #5249: the names query:help covers, in table order.
+(define (query:help-topics)
+  (map car *query-help-table*))
 
 ; ── (query:nodes-with-marker marker) — high-level wrapper
 ;     around (query :by-marker marker) with safe input check.
@@ -100,6 +145,40 @@
   (if (string? marker)
     (query :by-marker marker)
     (list)))
+
+; ── Issue #5249: the program semantic view ──────────────────────
+; (query:define-records) returns one record per definition, in source
+; order. A record is a hash with these PUBLIC keys only:
+;
+;   name       definition name (a string)
+;   kind       "Define" | "MacroDef" | "DefineType"
+;   span       (line col) of the form head (the define token)
+;   name-span  (line col) of the definition-name token (goto-def / rename)
+;   params     parameter names, in order
+;   callers    one record per call site: (caller-name line col)
+;   callees    callee names called from the body
+;   def-use    hash {defs: ((line col) ...), uses: ((line col) ...)}
+;   effects    hash {callers: N, reads: N, writes: N} — labelled groups
+;   stable-ref (id . gen) handle to pass back through mutate:*
+;
+; Engine metadata (schema-*/issue-*/query-result-tag and the raw matches
+; spine) is never part of a record: the view is program state, not the
+; QueryResult wire. Spans come from the reader, so a (define ...) inside a
+; comment or a string is not a definition and produces no record.
+;
+; (query:define-records)  all definitions
+; (query:define-record n) the records for name n (empty list when absent)
+(define (query:define-records)
+  (query :defines :records))
+
+(define (query:define-record name)
+  (if (string? name)
+      (query :defines :records name)
+      (list)))
+
+; Alias with a program-level name; same view.
+(define (query:semantic-view)
+  (query:define-records))
 
 ; ── (query:find-by-name name) — high-level wrapper around
 ;     (query :find name) (case-sensitive string match).
