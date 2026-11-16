@@ -402,6 +402,139 @@
 (assert! (equal? after5296 (list 1 (list 2 3))) "variadic after trial")
 (assert! (= 2 (g5296 1)) "trial rebind did not leak into the parent")
 
+; ═══════════════════════════════════════════════════════════════════
+; Issue #5314 — a trial that rebinds a define from a module the seed
+; required must not leave that body in the live workspace. Last on
+; purpose: set-code replaces the workspace the cases above checked.
+; The module file is written here and deleted before the suite ends.
+; ═══════════════════════════════════════════════════════════════════
+(display "AC9 module define rolls back with the trial\n")
+(require "std/io" all:)
+; Literal paths: require resolves the argument as a module name, not a
+; variable. file-write runs first; a pre-exec miss is replayed in order.
+(file-write "/tmp/aura5314_suite_leakmod.aura"
+            "(export leak:probe5314 store:push5314 store:get5314)\n(define (leak:probe5314) 100)\n(define box5314 (list))\n(define (store:push5314 x) (set! box5314 (cons x box5314)) x)\n(define (store:get5314) box5314)\n")
+(file-write "/tmp/aura5314_suite_only.aura"
+            "(export only:probe5314)\n(define (only:probe5314) 50)\n")
+(set-code "(require \"/tmp/aura5314_suite_leakmod.aura\" all:)\n(define (seed-probe5314) (leak:probe5314))\n(define (seed-own5314) 40)\n")
+(eval-current)
+(require "/tmp/aura5314_suite_leakmod.aura" all:)
+(assert! (= 100 (leak:probe5314)) "module probe before trial")
+(assert! (= 100 (seed-probe5314)) "seed probe before trial")
+(define fp5314 (evo:source-fingerprint))
+(define tr5314
+  (evo:trial (evo:candidate "(define (leak:probe5314) 999)"
+                            (hash "target" "leak:probe5314" "thought" "leak"))
+             (hash "apply" (lambda (c)
+                             (if (eq? (mutate:rebind "leak:probe5314"
+                                                     (hash-ref c "genome" "")
+                                                     "t5314")
+                                      #t)
+                                 (begin (eval-current) #t)
+                                 #f))
+                   "evaluate" (lambda (c)
+                                (hash "objectives" (hash "v" (leak:probe5314))
+                                      "constraints" (hash "ok" 0.0)
+                                      "behavior" (hash "seen" (leak:probe5314))))
+                   "timeout-ms" 60000)))
+(assert! (string=? "ok" (hash-ref tr5314 "status" "?")) "module trial status ok")
+(assert! (eq? (hash-ref tr5314 "live-unchanged" #f) #t) "module trial live-unchanged")
+(assert! (= (hash-ref tr5314 "live-before" 0) (hash-ref tr5314 "live-after" 1))
+         "module trial fingerprint unchanged")
+(assert! (= fp5314 (evo:source-fingerprint)) "live fingerprint still the pre-trial value")
+(assert! (= 999 (hash-ref (hash-ref tr5314 "behavior" (hash)) "seen" 0))
+         "candidate body ran inside the trial")
+(define after5314 (try (leak:probe5314) (catch (e) e)))
+(assert! (equal? after5314 100) "module probe restored after trial")
+(define seed-after5314 (try (seed-probe5314) (catch (e) e)))
+(assert! (equal? seed-after5314 100) "seed probe still calls the restored module")
+
+; Rebind the closure that closes over the module box. The candidate
+; body is a constant so it can be eval'd from the workspace (the box
+; is not exported). After discard the live binding is the original
+; closure: it is still callable and still updates the box.
+(display "AC9b module closure stays callable\n")
+(define tr5314s
+  (evo:trial (evo:candidate "(define (store:push5314 x) 999)"
+                            (hash "target" "store:push5314" "thought" "box"))
+             (hash "apply" (lambda (c)
+                             (if (eq? (mutate:rebind "store:push5314"
+                                                     (hash-ref c "genome" "")
+                                                     "t5314s")
+                                      #t)
+                                 (begin (eval-current) #t)
+                                 #f))
+                   "evaluate" (lambda (c)
+                                (hash "objectives" (hash "v" (store:push5314 1))
+                                      "constraints" (hash "ok" 0.0)
+                                      "behavior" (hash "seen" (store:push5314 1))))
+                   "timeout-ms" 60000)))
+(assert! (string=? "ok" (hash-ref tr5314s "status" "?")) "closure trial status ok")
+(assert! (= 999 (hash-ref (hash-ref tr5314s "behavior" (hash)) "seen" 0))
+         "candidate closure ran inside the trial")
+(define push5314 (try (store:push5314 7) (catch (e) e)))
+(assert! (equal? push5314 7) "original store:push still callable")
+(define got5314 (try (store:get5314) (catch (e) e)))
+(assert! (and (pair? got5314) (equal? (car got5314) 7)) "original store:push still updates the box")
+
+; A define that lives in the seed itself still rolls back.
+(define tr5314o
+  (evo:trial (evo:candidate "(define (seed-own5314) 999)"
+                            (hash "target" "seed-own5314" "thought" "own"))
+             (hash "apply" (lambda (c)
+                             (if (eq? (mutate:rebind "seed-own5314"
+                                                     (hash-ref c "genome" "")
+                                                     "t5314o")
+                                      #t)
+                                 (begin (eval-current) #t)
+                                 #f))
+                   "evaluate" (lambda (c)
+                                (hash "objectives" (hash "v" (seed-own5314))
+                                      "constraints" (hash "ok" 0.0)
+                                      "behavior" (hash "seen" (seed-own5314))))
+                   "timeout-ms" 60000)))
+(assert! (string=? "ok" (hash-ref tr5314o "status" "?")) "seed define trial status ok")
+(assert! (= 999 (hash-ref (hash-ref tr5314o "behavior" (hash)) "seen" 0))
+         "seed define candidate ran inside the trial")
+(assert! (= 40 (seed-own5314)) "seed define restored after trial")
+
+; A module the script requires and the seed does not. The child may
+; rebind it; the live binding is still the original after the trial.
+(require "/tmp/aura5314_suite_only.aura" all:)
+(assert! (= 50 (only:probe5314)) "script-only module before trial")
+(define tr5314b
+  (evo:trial (evo:candidate "(define (only:probe5314) 999)"
+                            (hash "target" "only:probe5314" "thought" "only"))
+             (hash "apply" (lambda (c)
+                             (if (eq? (mutate:rebind "only:probe5314"
+                                                     (hash-ref c "genome" "")
+                                                     "t5314b")
+                                      #t)
+                                 (begin (eval-current) #t)
+                                 #f))
+                   "evaluate" (lambda (c)
+                                (hash "objectives" (hash "v" (only:probe5314))
+                                      "constraints" (hash "ok" 0.0)
+                                      "behavior" (hash "seen" (only:probe5314))))
+                   "timeout-ms" 60000)))
+(assert! (string=? "ok" (hash-ref tr5314b "status" "?")) "script-only trial status ok")
+(assert! (= 999 (hash-ref (hash-ref tr5314b "behavior" (hash)) "seen" 0))
+         "script-only candidate ran inside the trial")
+(define only-after5314 (try (only:probe5314) (catch (e) e)))
+(assert! (equal? only-after5314 50) "script-only module did not leak")
+
+; A live rebind of the imported name sticks, and the workspace source
+; fingerprint moves because the define is now on the root flat. Keep
+; this last: later restores must not wipe it.
+(define fp-live5314 (evo:source-fingerprint))
+(define live-rb5314 (mutate:rebind "leak:probe5314" "(define (leak:probe5314) 999)" "live5314"))
+(assert! (eq? live-rb5314 #t) "live rebind of the imported name")
+(eval-current)
+(assert! (= 999 (leak:probe5314)) "live rebind sticks")
+(assert! (not (= fp-live5314 (evo:source-fingerprint))) "live rebind changes the fingerprint")
+(file-delete "/tmp/aura5314_suite_leakmod.aura")
+(file-delete "/tmp/aura5314_suite_only.aura")
+
 (if (= *fails* 0)
     (begin (display "OK-4939 evo-core\n"))
     (begin

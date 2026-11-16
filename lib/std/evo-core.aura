@@ -99,7 +99,11 @@
 ;   vector-set!, and set-car! use the session Mutate grant; so do the
 ;   slot siblings hash-remove!, vector-fill!, and set-cdr!. set-code on
 ;   that child stays denied. A child mutate:rebind does not change the
-;   parent worldline.
+;   parent worldline. A define that lives in a required module is
+;   restored with the child (#5314): the shared import cell is put back,
+;   so an equal evo:source-fingerprint is isolation again. Rebinding that
+;   same name on the live root adds the define to the workspace, and the
+;   fingerprint changes with it.
 ; * In the log an empty parent set encodes as null (Aura's () IS the unit
 ;   value); a derived candidate carries its parent ids as a JSON array.
 ;

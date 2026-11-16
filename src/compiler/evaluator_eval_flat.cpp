@@ -9171,6 +9171,11 @@ Evaluator::FlatStep Evaluator::eval_flat_on_define(EvalFlatCursor& cur,
     // Re-define: leave prior cell untouched on failure.
     if (existing && is_cell(*existing)) {
         auto ci = as_cell_id(*existing);
+        // Issue #5314: remember a module import before this child define
+        // overwrites the shared cell. A parent define is left to the
+        // switch re-eval.
+        if (&eval_env == &top_)
+            snapshot_shadowed_import_cell_5314(name, static_cast<std::uint64_t>(ci));
         auto vv = eval_flat(*f, *p, val_id, eval_env);
         if (!vv)
             return FlatStep::ret(vv);
@@ -15267,7 +15272,120 @@ namespace {
         return h;
     }
 
+    bool flat_defines_name_5314(const aura::ast::FlatAST* flat, const aura::ast::StringPool* pool,
+                                std::string_view name) {
+        if (flat == nullptr || pool == nullptr || name.empty())
+            return false;
+        const auto root = flat->root;
+        if (root == aura::ast::NULL_NODE || root >= flat->size() || flat->is_free_slot(root))
+            return false;
+        std::vector<unsigned char> seen(static_cast<std::size_t>(flat->size()), 0);
+        std::vector<aura::ast::NodeId> pending;
+        pending.push_back(root);
+        while (!pending.empty()) {
+            const auto cur = pending.back();
+            pending.pop_back();
+            if (cur == aura::ast::NULL_NODE || cur >= flat->size() ||
+                seen[static_cast<std::size_t>(cur)] != 0 || flat->is_free_slot(cur))
+                continue;
+            seen[static_cast<std::size_t>(cur)] = 1;
+            const auto v = flat->get(cur);
+            if (v.tag == aura::ast::NodeTag::Define && v.sym_id != aura::ast::INVALID_SYM &&
+                pool->resolve(v.sym_id) == name)
+                return true;
+            for (const auto child : v.children)
+                pending.push_back(child);
+        }
+        return false;
+    }
+
 } // namespace
+
+void Evaluator::snapshot_shadowed_import_cell_5314(const std::string& name, std::uint64_t cell) {
+    if (name.empty() || workspace_tree_ == nullptr)
+        return;
+    auto* tree = static_cast<WorkspaceTree*>(workspace_tree_);
+    auto* node = tree->active();
+    // Only a child can leak into its parent. The root is the live worldline.
+    if (node == nullptr || node->is_root || node->parent_flat_ == nullptr ||
+        node->parent_pool_ == nullptr)
+        return;
+    // Pre-COW the child still shares the parent flat. A define on it is
+    // the parent's, and the switch re-eval puts that body back.
+    if (node->parent_flat_ == workspace_flat_)
+        return;
+    if (flat_defines_name_5314(node->parent_flat_, node->parent_pool_, name))
+        return;
+    if (cell >= cells().size())
+        return;
+    if (import_cell_shadows_5314_.contains(name))
+        return;
+    ImportCellShadow5314 row;
+    row.cell = cell;
+    row.original = cells()[static_cast<std::size_t>(cell)];
+    // The id alone is not enough. must-deopt / retire drop or poison this
+    // generation once the child body is published (#4779).
+    if (is_closure(row.original)) {
+        const auto cid = as_closure_id(row.original);
+        auto& shard = closures_shards_[closures_shard_index(cid)];
+        std::shared_lock<std::shared_mutex> rlock(shard.mu);
+        auto it = shard.map.find(cid);
+        if (it != shard.map.end() && it->second.lifetime_valid_for_views()) {
+            row.have_closure = true;
+            row.closure_id = cid;
+            row.closure_copy = it->second;
+            row.closure_copy.must_deopt_before_next_call = false;
+        }
+    }
+    import_cell_shadows_5314_.emplace(name, std::move(row));
+}
+
+void Evaluator::restore_shadowed_import_cells_5314() noexcept {
+    if (import_cell_shadows_5314_.empty())
+        return;
+    try {
+        for (auto& [name, row] : import_cell_shadows_5314_) {
+            if (flat_defines_name_5314(workspace_flat_, workspace_pool_, name))
+                continue;
+            if (row.cell >= cells().size())
+                continue;
+            auto restored = row.original;
+            if (row.have_closure) {
+                Closure published = row.closure_copy;
+                published.must_deopt_before_next_call = false;
+                stamp_closure_bridge_epoch(published);
+                bool live = false;
+                {
+                    auto& shard = closures_shards_[closures_shard_index(row.closure_id)];
+                    std::unique_lock<std::shared_mutex> wlock(shard.mu);
+                    auto it = shard.map.find(row.closure_id);
+                    // Same module body still registered: wash the poison the
+                    // child publication left on it. A retired id is republished
+                    // from the copy taken before that publication.
+                    if (it != shard.map.end() && it->second.lifetime_valid_for_views() &&
+                        it->second.flat == published.flat &&
+                        it->second.body_id == published.body_id) {
+                        it->second.must_deopt_before_next_call = false;
+                        it->second.bridge_epoch = published.bridge_epoch;
+                        it->second.linear_state = published.linear_state;
+                        live = true;
+                    }
+                }
+                if (!live) {
+                    const auto nid = register_active_closure(published);
+                    restored = make_closure(nid);
+                    row.closure_id = nid;
+                    row.original = restored;
+                    row.closure_copy = std::move(published);
+                }
+            }
+            cells()[static_cast<std::size_t>(row.cell)] = restored;
+        }
+    } catch (...) {
+        // [SILENCE-PRIM-#615] noexcept: leave whatever cells were already
+        // written. The caller is a workspace switch.
+    }
+}
 
 bool Evaluator::try_restore_switch_define_snap() {
     auto* flat = workspace_flat_;
@@ -15350,6 +15468,15 @@ void Evaluator::drop_switch_define_snap(const aura::ast::FlatAST* flat) noexcept
 }
 
 void Evaluator::rebind_workspace_defines_on_switch() noexcept {
+    // Issue #5314: put imported module closures back before any snap
+    // reinstall. The parent flat does not define those names, so the
+    // snap below would leave the child's closure in the shared cell.
+    try {
+        restore_shadowed_import_cells_5314();
+    } catch (...) {
+        // [SILENCE-PRIM-#615] noexcept: a throw here would terminate the
+        // switch primitive. The define walk below still runs.
+    }
     if (!workspace_flat_ || !workspace_pool_)
         return;
     auto* flat = workspace_flat_;
