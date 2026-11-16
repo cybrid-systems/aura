@@ -2140,7 +2140,8 @@ void RegSplitParts::register_mutate_check_primitive(PrimRegistrar add, Evaluator
     //   #t                             — parses and typechecks clean
     //   ("parse-error" "<message>")    — does not parse / is not a define
     //                                    for NAME
-    //   ("type-error" "<report>")      — new diagnostics vs. the workspace
+    //   ("type-error" (<record> ...))  — new diagnostics vs. the workspace,
+    //                                    #5240 records (typecheck-status shape)
     //
     // Why not snapshot+rebind+restore: that path mutates the shared workspace
     // (single writer only), appends mutation-log records and moves the epoch.
@@ -2220,7 +2221,7 @@ void RegSplitParts::register_mutate_check_primitive(PrimRegistrar add, Evaluator
             //     workspace baseline so pre-existing reports are not blamed on
             //     the candidate.
             auto typecheck_source = [&](const std::string& src,
-                                        std::vector<std::string>& out) -> bool {
+                                        std::vector<aura::diag::Diagnostic>& out) -> bool {
                 std::pmr::monotonic_buffer_resource tscratch;
                 const auto talloc = std::pmr::polymorphic_allocator<std::byte>{&tscratch};
                 aura::ast::StringPool pool(talloc);
@@ -2234,35 +2235,77 @@ void RegSplitParts::register_mutate_check_primitive(PrimRegistrar add, Evaluator
                 aura::diag::DiagnosticCollector diag;
                 (void)tc.infer_flat(flat, pool, flat.root, diag);
                 for (auto& d : diag.diagnostics())
-                    out.push_back(d.format());
+                    out.push_back(d);
                 return true;
             };
 
-            std::vector<std::string> composite_diags;
+            std::vector<aura::diag::Diagnostic> composite_diags;
             const std::string composite = workspace_src + "\n" + candidate;
             if (!typecheck_source(composite, composite_diags))
                 return tagged("parse-error", "candidate does not parse in workspace context");
             if (composite_diags.empty())
                 return make_bool(true);
 
-            std::vector<std::string> baseline_diags;
+            std::vector<aura::diag::Diagnostic> baseline_diags;
             if (!workspace_src.empty())
                 (void)typecheck_source(workspace_src, baseline_diags);
 
-            std::vector<std::string> fresh;
-            for (auto& msg : composite_diags) {
-                auto it = std::find(baseline_diags.begin(), baseline_diags.end(), msg);
+            std::vector<aura::diag::Diagnostic> fresh;
+            for (auto& d : composite_diags) {
+                auto it = std::find_if(
+                    baseline_diags.begin(), baseline_diags.end(),
+                    [&](const aura::diag::Diagnostic& b) { return b.format() == d.format(); });
                 if (it != baseline_diags.end())
                     baseline_diags.erase(it); // pre-existing diagnostic
                 else
-                    fresh.push_back(msg);
+                    fresh.push_back(d);
             }
             if (fresh.empty())
                 return make_bool(true);
-            std::string report;
-            for (auto& msg : fresh)
-                report += "  " + msg + "\n";
-            return tagged("type-error", report);
+            // #5250/#4266: the failure face is the #5240 record list (same
+            // schema as typecheck-status), so callers never parse English.
+            auto hash_fn = ev.primitives_.lookup("hash");
+            auto list_fn = ev.primitives_.lookup("list");
+            if (!hash_fn || !list_fn)
+                return tagged("type-error", "");
+            auto heap_str = [&ev](std::string_view s) {
+                return make_string(static_cast<std::uint64_t>(ev.push_string_heap(std::string(s))));
+            };
+            std::vector<EvalValue> records;
+            records.reserve(fresh.size());
+            for (const auto& d : fresh) {
+                std::vector<EvalValue> kv;
+                kv.push_back(heap_str("code"));
+                kv.push_back(heap_str(aura::diag::kind_ident(d.kind)));
+                kv.push_back(heap_str("message"));
+                kv.push_back(heap_str(d.message));
+                if (d.location.line > 0) {
+                    kv.push_back(heap_str("line"));
+                    kv.push_back(make_int(static_cast<std::int64_t>(d.location.line)));
+                    kv.push_back(heap_str("column"));
+                    kv.push_back(make_int(static_cast<std::int64_t>(d.location.column)));
+                }
+                if (!d.suggestion.empty()) {
+                    kv.push_back(heap_str("hint"));
+                    kv.push_back(heap_str(d.suggestion));
+                }
+                if (!d.context_stack.empty()) {
+                    std::vector<EvalValue> notes;
+                    notes.reserve(d.context_stack.size());
+                    for (const auto& n : d.context_stack)
+                        notes.push_back(heap_str(n));
+                    kv.push_back(heap_str("notes"));
+                    kv.push_back((*list_fn)(notes));
+                }
+                records.push_back((*hash_fn)(kv));
+            }
+            {
+                std::vector<EvalValue> out;
+                out.reserve(2);
+                out.push_back(heap_str("type-error"));
+                out.push_back((*list_fn)(records));
+                return (*list_fn)(out);
+            }
         });
 }
 
