@@ -1,13 +1,18 @@
 ; lib/std/evo.aura — experience layer over the evo:record! worldline (#5004)
 ;
-; The worldline is what evo:record! (#4910) already wrote: one JSON object
-; per line in AURA_EVO_LOG, each record carrying target / decision /
-; reason / evidence. This module reads that log and turns it into arm
-; statistics + a strategy choice. It never invents counters: with no log
-; (log off) every reader returns an empty worldline.
+; The worldline is what evo:record! (#4910) records: target / decision /
+; reason / evidence. Issue #5251 makes it in-process by default — the
+; bounded ring is read by (query "qr:evo-trace") and AURA_EVO_LOG is only
+; the optional JSONL spill. (evo:trace opts) is the one filtered entry; its
+; "source" key also adapts the other audit surfaces (mutation-audit-log,
+; security-audit-trail, or a caller-held meta:audit / prop:audit entry list)
+; read-only into the same hash-record shape. This module turns those
+; records into arm statistics + a strategy choice and never invents
+; counters: with every source off a reader returns an empty worldline.
 ;
 ; Exports
-;   worldline  : evo:records evo:worldline evo:parse-line evo:parse-log
+;   trace      : evo:trace evo:records
+;   worldline  : evo:worldline evo:parse-line evo:parse-log
 ;                evo:record-count evo:keep? evo:arm-of
 ;   statistics : evo:arm-stats evo:arms evo:best-arm evo:mean
 ;   selectors  : evo:choose evo:choose-fixed evo:choose-epsilon
@@ -126,21 +131,113 @@
                       (map (lambda (w) (if (string? w) (string-upcase w) w)) want)))
     (else #f)))
 
+; ── read-only aggregation of the other audit surfaces (#5251) ──
+; Each source keeps its own storage; this only adapts its entries into the
+; same hash-record shape, with "source" naming it and "raw" left intact.
+
+(define (evo-audit-unquote s)
+  (let ((n (string-length s)))
+    (if (and (>= n 2)
+             (string=? (substring s 0 1) "\"")
+             (string=? (substring s (- n 1) n) "\""))
+      (substring s 1 (- n 1))
+      s)))
+
+; "a=1 b=\"two words\"" -> (("a" . "1") ("b" . "two words"))
+(define (evo-audit-kv line)
+  (let loop ((toks (string-split (string-trim line) " ")) (acc (quote ())))
+    (if (null? toks)
+      (reverse acc)
+      (let* ((tok (car toks))
+             (parts (string-split tok "=")))
+        (loop (cdr toks)
+              (if (< (length parts) 2)
+                acc
+                (cons (cons (car parts) (evo-audit-unquote (string-join (cdr parts) "=")))
+                      acc)))))))
+
+(define (evo-audit-kv-hash kv)
+  (let loop ((xs kv) (h (hash)))
+    (if (null? xs)
+      h
+      (begin
+        (hash-set! h (car (car xs)) (cdr (car xs)))
+        (loop (cdr xs) h)))))
+
+(define (evo-audit-kv-ref kv key default)
+  (let loop ((xs kv))
+    (cond ((null? xs) default)
+          ((string=? (car (car xs)) key) (cdr (car xs)))
+          (else (loop (cdr xs))))))
+
+; One `key=val` audit line (mutation-audit-log / security-audit-trail).
+(define (evo-audit-line line source)
+  (let* ((kv (evo-audit-kv line))
+         (op (evo-audit-kv-ref kv "op" ""))
+         (kind (evo-audit-kv-ref kv "kind" op))
+         (denied (evo-audit-kv-ref kv "denied" "0")))
+    (hash "source" source
+          "kind" kind
+          "target" (evo-audit-kv-ref kv "target" "")
+          "decision" (if (string=? denied "1") "ROLLBACK" "KEEP")
+          "reason" (evo-audit-kv-ref kv "reason" "")
+          "mutation" (evo-audit-kv-ref kv "mutation_id" "")
+          "fields" (evo-audit-kv-hash kv)
+          "raw" line)))
+
+; A caller-held audit entry (meta:audit / prop:audit-entries / an evo-core
+; handle rows). A hash passes its own fields through.
+(define (evo-audit-entry e source)
+  (if (hash? e)
+    (hash "source" source
+          "kind" (evo-trace-field e "kind")
+          "target" (evo-trace-field e "target")
+          "decision" (evo-trace-field e "decision")
+          "reason" (evo-trace-field e "reason")
+          "raw" e)
+    (hash "source" source "kind" "" "target" "" "decision" "" "reason" ""
+          "raw" e)))
+
+(define (evo-audit-source-rows source o)
+  (cond
+    ((string=? source "mutation-audit")
+     (let ((v (try (query "query:mutation-audit-log" 20) (catch (e) (quote ())))))
+       (if (list? v) (map (lambda (line) (evo-audit-line line source)) v) (quote ()))))
+    ((string=? source "security")
+     (let ((v (try (query "query:security-audit-trail" 20) (catch (e) (quote ())))))
+       (if (list? v) (map (lambda (line) (evo-audit-line line source)) v) (quote ()))))
+    ((string=? source "entries")
+     (let ((v (hash-ref o "entries" (quote ()))))
+       (if (list? v) (map (lambda (e) (evo-audit-entry e source)) v) (quote ()))))
+    (else (quote ()))))
+
+(define (evo-trace-match? rec want-target want-decision want-run want-gate)
+  (and (evo-trace-want? (evo-trace-field rec "target") want-target)
+       (evo-trace-decision? (evo-trace-field rec "decision") want-decision)
+       (evo-trace-want? (evo-trace-field rec "run") want-run)
+       (evo-trace-want? (evo-trace-field rec "gate") want-gate)))
+
+; (evo:trace opts) — the one entry.
+;   opts: "source" ("trace" default | "mutation-audit" | "security" |
+;         "entries" with "entries" = a caller-held audit list), plus the
+;         target / decision / run / gate filters. Returns hash records.
 (define (evo:trace opts)
   (let* ((o (if (hash? opts) opts (hash)))
+         (source (let ((s (hash-ref o "source" "trace")))
+                   (if (string? s) s "trace")))
          (want-target (hash-ref o "target" #f))
          (want-decision (hash-ref o "decision" #f))
          (want-run (hash-ref o "run" #f))
-         (want-gate (hash-ref o "gate" #f)))
+         (want-gate (hash-ref o "gate" #f))
+         (rows (if (string=? source "trace")
+                 (evo-trace-all)
+                 (evo-audit-source-rows source o))))
     (if (and (not want-target) (not want-decision) (not want-run) (not want-gate))
-      (evo-trace-all)
+      rows
       (filter
         (lambda (rec)
-          (and (evo-trace-want? (evo-trace-field rec "target") want-target)
-               (evo-trace-decision? (evo-trace-field rec "decision") want-decision)
-               (evo-trace-want? (evo-trace-field rec "run") want-run)
-               (evo-trace-want? (evo-trace-field rec "gate") want-gate)))
-        (evo-trace-all)))))
+          (evo-trace-match? rec want-target want-decision want-run want-gate))
+        rows))))
 
 (define (evo:records)
   (evo:trace (hash)))

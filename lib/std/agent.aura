@@ -378,8 +378,8 @@
 
 ; ── agent:record — one worldline entry per round ──
 ; KEEP when the round committed, ROLLBACK otherwise. evo:record! is the
-; #4910 primitive; when AURA_EVO_LOG is off it returns #f and this phase
-; is a no-op (std/evo then reads an empty worldline).
+; #4910 primitive; since #5251 it writes to the in-process trace by default
+; and returns #f only when both the ring and the AURA_EVO_LOG spill are off.
 (define (agent:record round summary)
   (let ((d (agent-alist-ref ":decision" round 'rollback)))
     (try (evo:record! "agent:closed-loop"
