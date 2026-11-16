@@ -81,6 +81,7 @@ Append there. Names `std/iter` re-exports are the `std/list` contract. Names
 | std/vector | `tests/suite/vector_srfi_5133.aura` | `vector-ref`, `vector-map`, `std/vector` |
 | std/sort | `tests/suite/sort_srfi_5133.aura` | `sorted?`, `list-sort`, `std/sort`, `std/algorithm` |
 | std/json | `tests/suite/json_reg_split_5032.aura` | `json-parse`, `std/json` |
+| std/evo | `tests/suite/evo_trace_default.aura` | `evo:trace`, `evo:records`, worldline |
 | std/extract and std/agent extractors | `tests/suite/export_contracts_5198.aura` | `extract-code`, `llm:extract-code` |
 | lang/module | `tests/suite/module.aura` | `lang/module`, `overwrite warning` |
 | lang/parser | `tests/suite/paren_semi_comment_5199.aura` | `unclosed list`, `(;` |
@@ -96,6 +97,7 @@ A stem (no `.` in the last component) matches the end, `/`, `.`, or `_`.
 - std/vector: `lib/std/vector.aura`
 - std/sort: `lib/std/sort.aura`, `lib/std/algorithm.aura`
 - std/json: `lib/std/json.aura`
+- std/evo: `lib/std/evo.aura`, `lib/std/evo-core.aura`, `src/compiler/evo_log_4910.hh`, `src/compiler/evaluator_primitives_mutate`
 - std/extract: `lib/std/extract.aura`
 - lang/module: `src/compiler/evaluator_module_loader.cpp`, `src/compiler/evaluator_primitives_module.cpp`, `src/core/module_boundary.ixx`
 - lang/parser: `src/parser/`, `src/compiler/diag.ixx`, `src/compiler/evaluator_primitives_diagnostic.cpp`

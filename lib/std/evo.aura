@@ -23,7 +23,7 @@
 ;
 ; Import: (require "std/evo" all:)
 
-(export evo:records evo:worldline evo:parse-line evo:parse-log
+(export evo:records evo:trace evo:worldline evo:parse-line evo:parse-log
         evo:record-count evo:keep? evo:arm-of
         evo:arm-stats evo:arms evo:best-arm evo:mean
         evo:choose evo:choose-fixed evo:choose-epsilon evo:choose-ucb
@@ -56,11 +56,98 @@
         (let ((rec (evo:parse-line (car lines))))
           (loop (cdr lines) (if rec (cons rec acc) acc)))))))
 
-(define (evo:records)
+; Issue #5251: the trace is in process by default. (query "qr:evo-trace")
+; reads the bounded ring (oldest first); the JSONL file stays an optional
+; spill and is merged in by record id. One entry, (evo:trace
+opts), filters on target / decision / run / gate and returns hash records —
+; never "key=val" strings.
+
+(define (evo-trace-lines text)
+  (if (not (string? text))
+    (quote ())
+    (let loop ((lines (string-split text "\n")) (acc (quote ())))
+      (if (null? lines)
+        (reverse acc)
+        (let ((line (string-trim (car lines))))
+          ; trailing newline is an empty rest, not a record
+          (loop (cdr lines) (if (string=? line "") acc (cons line acc))))))))
+
+(define (evo-trace-ring-lines)
+  (let ((v (try (query "qr:evo-trace") (catch (e) (quote ())))))
+    (if (list? v) v (quote ()))))
+
+(define (evo-trace-file-lines)
   (let ((path (try (evo:log-path) (catch (e) #f))))
     (if (string? path)
-      (evo:parse-log (try (read-file path) (catch (e) "")))
+      (evo-trace-lines (try (read-file path) (catch (e) "")))
       (quote ()))))
+
+(define (evo-record-id rec)
+  (let ((id (if (hash? rec) (hash-ref rec "id" #f) #f)))
+    (if (string? id) id "")))
+
+; File first (it carries the earlier runs and the same current rows in
+; append order), then ring-only rows (a spill that failed). A record that
+; reached both is returned once, at its first position.
+(define (evo-trace-all)
+  (let loop ((lines (append (evo-trace-file-lines) (evo-trace-ring-lines)))
+             (seen (quote ())) (acc (quote ())))
+    (if (null? lines)
+      (reverse acc)
+      (let ((rec (evo:parse-line (car lines))))
+        (if (not rec)
+          (loop (cdr lines) seen acc)
+          (let ((id (evo-record-id rec)))
+            (if (and (not (string=? id "")) (member id seen))
+              (loop (cdr lines) seen acc)
+              (loop (cdr lines)
+                    (if (string=? id "") seen (cons id seen))
+                    (cons rec acc)))))))))
+
+(define (evo-trace-field rec name)
+  (let ((v (hash-ref rec name #f)))
+    (cond ((string? v) v)
+          ((number? v) (number->string v))
+          (else ""))))
+
+; want: #f (no filter), a string (exact), or a list of strings (any of).
+(define (evo-trace-want? val want)
+  (cond
+    ((not want) #t)
+    ((string? want) (string=? val want))
+    ((list? want)
+     (let loop ((ws want))
+       (cond ((null? ws) #f)
+             ((string=? val (car ws)) #t)
+             (else (loop (cdr ws))))))
+    (else #f)))
+
+; decision is an upper-case verb in the record; compare case-insensitively.
+(define (evo-trace-decision? val want)
+  (if (string? want)
+    (string=? (string-upcase val) (string-upcase want))
+    (evo-trace-want? (string-upcase val)
+                     (map (lambda (w) (if (string? w) (string-upcase w) w))
+                          (if (list? want) want (quote ()))))))
+
+(define (evo:trace opts)
+  (let* ((o (if (hash? opts) opts (hash)))
+         (want-target (hash-ref o "target" #f))
+         (want-decision (hash-ref o "decision" #f))
+         (want-run (hash-ref o "run" #f))
+         (want-gate (hash-ref o "gate" #f)))
+    (if (and (not want-target) (not want-decision) (not want-run) (not want-gate))
+      (evo-trace-all)
+      (filter
+        (lambda (rec)
+          (and (evo-trace-want? (evo-trace-field rec "target") want-target)
+               (evo-trace-decision? (evo-trace-field rec "decision") want-decision)
+               (evo-trace-want? (evo-trace-field rec "run") want-run)
+               (evo-trace-want? (evo-trace-field rec "gate") want-gate)))
+        (evo-trace-all)))))
+
+(define (evo:records)
+  (evo:trace (hash)))
 
 (define (evo:worldline)
   (evo:records))

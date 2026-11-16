@@ -1,0 +1,134 @@
+; Issue #5251 — the decision trace is queryable in process by default.
+;
+; AC1  no AURA_EVO_LOG: a rebind still lands in the bounded ring, and
+;      (evo:trace opts) answers with hash records.
+; AC2  one entry filters by target / decision / run / gate.
+; AC3  a restore keeps every rolled-back attempt, each a ROLLBACK row linked
+;      to the row it undid; the originals stay readable.
+; AC4  the gate / weight slots are written when a caller fills them (#5255).
+; AC5  a v=1 JSONL line still parses with its old field set.
+(require "std/test" all:)
+(require "std/evo" all:)
+(require "std/string" all:)
+(require "std/list" all:)
+(test-file "evo_trace_default.aura")
+
+; A define that came from a file is not in the live workspace AST, so install
+; it once with set-code + eval-current before any mutation runs.
+(set-code "(define (f x) (* x 2)) (define (g y) (+ y 1))")
+(eval-current)
+
+(define (rows-for target)
+  (evo:trace (hash "target" target)))
+
+(define (field rec key)
+  (let ((v (hash-ref rec key #f))) (if (string? v) v "")))
+
+(define (ids rows) (map (lambda (r) (field r "id")) rows))
+
+(define (count-links rows id)
+  (length (filter (lambda (r) (equal? (field r "link") id)) rows)))
+
+(define (attempt? reason)
+  (member reason (list "rb-a" "rb-b" "rb-c")))
+
+(test-case "trace default on without a log file"
+           (hash "issue" 5251 "tags" (list "std/evo"))
+  ; No AURA_EVO_LOG in a suite run: the file path is off, the ring is not.
+  (check (eq? (evo:log-path) #f))
+  (let ((before (length (rows-for "f"))))
+    (check (eq? #t (mutate :rebind "f" "(lambda (x) (* x 3))" "default-on")))
+    (let* ((rows (rows-for "f"))
+           (newest (car (reverse rows))))
+      (check= (+ before 1) (length rows))
+      (check (hash? newest))
+      (check= "mutate:rebind" (field newest "kind"))
+      (check= "KEEP" (field newest "decision"))
+      (check= "default-on" (field newest "reason"))
+      (check (> (string-length (field newest "id")) 0))
+      ; evo:records is the unfiltered read through the same entry.
+      (check (>= (length (evo:records)) (length rows)))
+      (check (hash? (car (evo:records)))))))
+
+(test-case "one entry filters target decision run gate"
+           (hash "issue" 5251 "tags" (list "std/evo"))
+  (let ((gid (evo:record! "holdout-gate" "KEEP" "gate evidence" (hash "ok" #t)
+                          "" 0 "" (hash "gate" "holdout" "weight" 0.71))))
+    (check (string? gid))
+    (let* ((by-gate (evo:trace (hash "gate" "holdout")))
+           (row (car by-gate)))
+      (check= 1 (length by-gate))
+      (check= gid (field row "id"))
+      (check= "holdout-gate" (field row "target"))
+      (check= 0.71 (hash-ref row "weight"))
+      ; the run named on the row selects it too
+      (check (> (length (evo:trace (hash "run" (field row "run")))) 0))))
+  ; decision compares case-insensitively; ROLLBACK rows exist below
+  (evo:record! "holdout-gate" "ROLLBACK" "below threshold" (hash "ok" #f))
+  (let* ((rolled (evo:trace (hash "decision" "rollback")))
+         (row (car rolled))
+         (both (evo:trace (hash "target" "holdout-gate" "decision" "ROLLBACK"))))
+    (check (> (length rolled) 0))
+    (check (equal? "ROLLBACK" (field row "decision")))
+    ; two filters compose
+    (check (> (length both) 0))
+    (check (equal? "holdout-gate" (field (car both) "target")))
+    ; a target with no rows is empty, not an error
+    (check= 0 (length (evo:trace (hash "target" "no-such-target"))))))
+
+(test-case "restore keeps every attempt as a linked ROLLBACK"
+           (hash "issue" 5251 "tags" (list "std/evo"))
+  (let ((snap (mutate :snapshot "trace-snap")))
+    (check (>= snap 0))
+    (mutate :rebind "g" "(lambda (y) (+ y 10))" "rb-a")
+    (mutate :rebind "g" "(lambda (y) (+ y 11))" "rb-b")
+    (mutate :rebind "g" "(lambda (y) (+ y 12))" "rb-c")
+    ; the three KEEP rows this restore will undo, in order
+    (let ((origin (filter (lambda (r)
+                            (and (equal? (field r "decision") "KEEP")
+                                 (attempt? (field r "reason"))))
+                          (rows-for "g"))))
+      (check= 3 (length origin))
+      (let* ((origin-ids (ids origin))
+             (_ (check (eq? #t (mutate :restore snap))))
+             (after (rows-for "g"))
+             (after-ids (ids after))
+             (rollbacks (filter (lambda (r)
+                                  (and (equal? (field r "decision") "ROLLBACK")
+                                       (equal? (field r "scope") "rollback")))
+                                after)))
+        ; AC3a: the originals are still queryable by id
+        (check (member (car origin-ids) after-ids))
+        (check (member (car (cdr origin-ids)) after-ids))
+        (check (member (car (cdr (cdr origin-ids))) after-ids))
+        ; AC3b: one ROLLBACK per attempt, naming the row it undoes
+        (check (>= (length rollbacks) 3))
+        (check= 1 (count-links rollbacks (car origin-ids)))
+        (check= 1 (count-links rollbacks (car (cdr origin-ids))))
+        (check= 1 (count-links rollbacks (car (cdr (cdr origin-ids)))))
+        ; each ROLLBACK inherits the kind and target of the row it undoes
+        (check= "mutate:rebind" (field (car rollbacks) "kind"))
+        (check= "g" (field (car rollbacks) "target"))
+        ; the restore itself is still one aggregate row, but not the only one
+        (check (>= (length (filter
+                            (lambda (r) (equal? (field r "kind") "mw:restore"))
+                            (evo:trace (hash))))
+                   1))))))
+
+(test-case "v=1 jsonl fields still parse"
+           (hash "issue" 5251 "tags" (list "std/evo"))
+  (let ((rec (evo:parse-line
+               "{\"v\":1,\"id\":\"oldrun#7\",\"parent\":\"\",\"run\":\"oldrun\",\"seq\":7,\"ts_ms\":1,\"kind\":\"mutate:rebind\",\"target\":\"f\",\"decision\":\"KEEP\",\"reason\":\"legacy\",\"evidence\":null,\"old\":\"a\",\"new\":\"b\",\"dur_ms\":0.500}")))
+    (check (hash? rec))
+    (check= 1 (hash-ref rec "v"))
+    (check= "oldrun#7" (hash-ref rec "id"))
+    (check= "mutate:rebind" (hash-ref rec "kind"))
+    (check= "f" (hash-ref rec "target"))
+    (check= "KEEP" (hash-ref rec "decision"))
+    (check= "a" (hash-ref rec "old"))
+    (check= "b" (hash-ref rec "new"))
+    ; a v=1 line carries no gate slot: the filter sees an empty gate
+    (check= 0 (length (filter (lambda (r) (equal? (field r "gate") "holdout"))
+                              (list rec))))))
+
+(test-finish)

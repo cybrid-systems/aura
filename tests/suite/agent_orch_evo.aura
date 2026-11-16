@@ -134,17 +134,16 @@
          "strategy:escalate bumps the value")
 (assert! (void? (strategy:active)) "strategy:active with no state is void")
 
-; worldline read path: empty when the log is off, records when it is on
+; Issue #5251: the trace is in process by default; (evo:log-path) still
+; reports the optional JSONL spill, and the record is readable either way.
 (define wl (evo:records))
 (define log-path (try (evo:log-path) (catch (e) #f)))
-(assert! (if (string? log-path) (> (length wl) 0) (= (length wl) 0))
-         "evo:records mirrors the AURA_EVO_LOG setting")
-(if (string? log-path)
-  (begin
-    (assert! (string? (evo:record! "suite" "KEEP" "suite" (hash "ok" #t)))
-             "evo:record! appends when the log is on")
-    (assert! (> (length (evo:records)) (length wl)) "new record is readable"))
-  #f)
+(assert! (list? wl) "evo:records is a list of hash records")
+(assert! (string? (evo:record! "suite" "KEEP" "suite" (hash "ok" #t)))
+         "evo:record! appends to the in-process trace")
+(assert! (> (length (evo:records)) (length wl)) "new record is readable")
+(assert! (if (string? log-path) (string? log-path) (eq? log-path #f))
+         "evo:log-path reports the file or #f")
 
 (if (= *fails* 0)
   (begin (display "OK-5004 agent/orch/evo\n"))

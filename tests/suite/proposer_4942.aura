@@ -321,12 +321,11 @@
 (assert! (= 16 (hash-ref entry "count")) "memory record counts entries")
 (assert! (string-contains? (hash-ref entry "memory") "m19") "memory record carries the text")
 (assert! (<= (string-length (hash-ref entry "memory")) 512) "memory record is bounded")
-; with the log off this is a refusal (no fake success); with it on the
-; suite's log check below sees the REFLECT line.
+; Issue #5251: the in-process trace is on by default, so the record is an
+; id whether or not AURA_EVO_LOG names a file.
 (define rec (prop:memory-record! mem refl-ctx))
 (assert! (or (eq? rec #f) (string? rec)) "memory record is an id or a refusal")
-(assert! (if (string? (try (evo:log-path) (catch (e) #f))) (string? rec) (eq? rec #f))
-         "memory record follows the evo log setting")
+(assert! (string? rec) "memory record lands in the in-process trace")
 
 ; ═══════════════════════════════════════════════════════════════════
 ; AC6 — MCTS-AHD: UCT, progressive widening, decay, backprop
