@@ -45,6 +45,8 @@
 (require "std/mutate" all:)
 ; #5253: the user-declared invariant / protection set every round consults.
 (require "std/contract" all:)
+; #5255: the one acceptance gate (agent:round's verify step).
+(require "std/gate" all:)
 ; #5004: experience layer (worldline selectors) + replacement steps.
 (require "std/evo" all:)
 (require "std/hot-update" all:)
@@ -382,24 +384,49 @@
 ; KEEP when the round committed, ROLLBACK otherwise. evo:record! is the
 ; #4910 primitive; since #5251 it writes to the in-process trace by default
 ; and returns #f only when both the ring and the AURA_EVO_LOG spill are off.
+; #5255: the record carries the gate name and the gate's potential in the
+; #5251 gate / weight slots, and the verdict evidence (potential before /
+; after, invariant result). With no gate the slots say gate="none" and the
+; evidence says proven=false: "the primitive did not error" is not evidence.
 (define (agent:record round summary)
-  (let ((d (agent-alist-ref ":decision" round 'rollback)))
+  (let* ((d (agent-alist-ref ":decision" round 'rollback))
+         (v (agent-alist-ref ":gate-verdict" round #f))
+         (extra (if (hash? v) (gate:trace-extra v) (hash "gate" "none" "weight" 0)))
+         (evidence (hash "summary" (if (string? summary) summary "closed-loop")
+                         "eval-ok" (if (agent-alist-ref ":eval-ok" round #f)
+                                       #t #f)
+                         "gate" (hash-ref extra "gate" "none")
+                         "potential-before" (if (hash? v)
+                                                (hash-ref v "potential-before" #f)
+                                                #f)
+                         "potential-after" (if (hash? v)
+                                               (hash-ref v "potential-after" #f)
+                                               #f)
+                         "gate-reason" (if (hash? v) (gate:reason v) "ungated")
+                         "invariants" (if (hash? v)
+                                          (hash-ref v "invariants" "none")
+                                          "none")
+                         "proven" (if (hash? v)
+                                      (hash-ref (hash-ref v "evidence" (hash)) "proven" #f)
+                                      #f)
+                         "why" (if (hash? v)
+                                   (hash-ref (hash-ref v "evidence" (hash)) "why" "ungated")
+                                   "ungated"))))
     (try (evo:record! "agent:closed-loop"
                       (if (agent-alist-ref ":ok" round #f) "KEEP" "ROLLBACK")
                       (symbol->string (if (symbol? d) d 'rollback))
-                      (hash "summary" (if (string? summary) summary "closed-loop")
-                            "eval-ok" (if (agent-alist-ref ":eval-ok" round #f)
-                                        #t #f)))
+                      evidence "" 0 "" extra)
          (catch (e) #f)))
   round)
 
-(define (agent-round-result ok decision eval-ok metrics summary bump)
+(define (agent-round-result ok decision eval-ok metrics summary bump . verdict)
   (if (string? bump) (agent-bump! bump) #f)
   (agent:record
     (list (cons ":ok" ok)
           (cons ":decision" decision)
           (cons ":eval-ok" eval-ok)
-          (cons ":metrics" metrics))
+          (cons ":metrics" metrics)
+          (cons ":gate-verdict" (if (pair? verdict) (car verdict) #f)))
     summary))
 
 ; ═══════════════════════════════════════════════════════════════
@@ -521,9 +548,37 @@
                     (agent-restore-source! pre-src))
                   (agent-contract-refused post-refused post-metrics summary
                                           "rollbacks"))
-                ; 6) record a committed round
-                (agent-round-result #t 'commit #t post-metrics summary
-                                    "commits"))))))))))))
+                ; 6) #5255: the acceptance gate. eval-ok alone is not a KEEP.
+                ; A configured gate that says ROLLBACK restores the round;
+                ; with none installed this is the pre-#5255 commit.
+                (let* ((fb (gate:feedback
+                             (hash "transform" (hash "operator" "agent:round"
+                                                     "target" (if (string? rebind-name)
+                                                                  rebind-name
+                                                                  "")
+                                                     "applied" #t)
+                                   "exec" (hash "result" "ok" "error-kind" "none"
+                                                "error-code" "" "message" "")
+                                   "contract" (if (hash? post-refused)
+                                                  post-refused "none")
+                                   "metrics" (hash "keys" (quote ())
+                                                   "before" pre-metrics
+                                                   "after" post-metrics
+                                                   "delta" (hash))
+                                   "engine" post-metrics
+                                   "count" 1)))
+                       (verdict (gate:evaluate (gate:installed) fb)))
+                  (if (gate:keep? verdict)
+                      ; 7) record a committed round
+                      (agent-round-result #t 'commit #t post-metrics summary
+                                          "commits" verdict)
+                      (begin
+                        (if (and (number? snap2) (>= snap2 0))
+                          (try (mutate :restore snap2)
+                               (catch (e) (agent-restore-source! pre-src)))
+                          (agent-restore-source! pre-src))
+                        (agent-round-result #f 'rollback #t post-metrics summary
+                                            "rollbacks" verdict)))))))))))))))
 
 ; Positional core — kept for auto-grow / edsl-fix callers; same round.
 (define (agent-closed-loop-core source mutations rebind-name rebind-body

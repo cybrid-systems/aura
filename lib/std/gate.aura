@@ -1,0 +1,525 @@
+;
+; lib/std/gate.aura — the unified acceptance gate (Issue #5255)
+;
+; One decision for one transformation, in one place. The input is a feedback
+; record (#5254, std/feedback) — or any hash carrying the same slots, plus an
+; evo evaluation hash for the evolution stack. The gate answers KEEP or
+; ROLLBACK with a reason, the gate's name, the potential before/after, and
+; the invariant result. Daily mutation paths and evo:commit! / evo:trial
+; consult the same object, so the same feedback gets the same decision.
+;
+;   (require "std/gate" all:)
+;
+;   (define g (gate:new (hash "name" "pnl-non-worse"
+;                             "potential" (lambda (fb) (list 0.0
+;                                                (gate:metric fb "pnl")))
+;                             "compare" "min"
+;                             "invariants" contract-set)))
+;   (gate:evaluate g record)     ; -> verdict hash
+;   (gate:keep? verdict)         ; -> #t | #f
+;   (gate:install! g)            ; daily paths use it when they get no gate
+;
+; ── Why potential + comparison, not a new language ─────────────────
+; The potential is an ordinary procedure over the feedback record; the
+; comparison is a string ("min" lower-is-better, "max", or "any" accept a
+; measured value). #5178's rule holds: this reuses evo:objective /
+; evo:constraint values and the evo accept callback, it does not invent a
+; decision language. (gate:from-evo ...) wraps a legacy accept closure.
+;
+; ── Invariants ─────────────────────────────────────────────────────
+; "invariants" is a #5253 contract set; (contract:check set) runs over the
+; current program view and a blocking violation is a ROLLBACK. The report
+; lands in the verdict's "invariants" slot and in the record's evidence.
+; A feedback record that already carries a refused "contract" slot is a
+; ROLLBACK too — the transform's own post-check is evidence, not a pass.
+;
+; ── No gate ────────────────────────────────────────────────────────
+; With nothing installed every daily path keeps its pre-#5255 decision and
+; records gate="none". That KEEP is explicitly unproven: the record says
+;   "evidence": {"proven": #f, "why": "ungated"}
+; so "the primitive did not error" is never presented as evidenced.
+;
+; ── Verdict hash (STABLE for #5252 / #5253 wave 2) ─────────────────
+;   "kind"              "gate-verdict"
+;   "schema"            1
+;   "gate"              gate name | "none"
+;   "decision"          "KEEP" | "ROLLBACK"
+;   "reason"            short string
+;   "potential-before"  number | #f
+;   "potential-after"   number | #f
+;   "delta"             number | #f
+;   "invariants"        #5253 report | "none"
+;   "evidence"          hash  (proven / why / invariant names / counts)
+;
+; Form order (#2769): export before require.
+
+(export gate:schema gate:help
+        gate:new gate:gate? gate:name gate:potential gate:compare
+        gate:invariants gate:accept gate:baseline gate:tolerance
+        gate:none? gate:from-contract gate:from-evo gate:with-invariants
+        gate:install! gate:installed gate:uninstall!
+        gate:current gate:effective-name
+        gate:evaluate gate:keep? gate:decision gate:reason
+        gate:feedback gate:feedback? gate:feedback-from-eval
+        gate:metric gate:potential-of gate:verifier gate:trace-extra)
+
+(require "std/string" all:)
+(require "std/list" all:)
+(require "std/contract" all:)
+
+(define gate-schema-version 1)
+
+; The installed default. #f is the zero-cost "no gate configured" path every
+; existing caller keeps.
+(define *gate-installed* #f)
+
+(define (gate:help)
+  "std/gate (#5255): one acceptance gate. (gate:new (hash \"name\" s \"potential\" f \"compare\" \"min\"|\"max\"|\"any\" \"invariants\" contract-set)) -> g; (gate:evaluate g feedback) -> verdict; (gate:keep? v); (gate:install! g) makes daily paths use it; nothing installed = gate=none, unchanged behaviour.")
+
+; ═══════════════════════════════════════════════════════════════════
+; Construction and accessors
+; ═══════════════════════════════════════════════════════════════════
+
+(define (gate-as-name v def)
+  (cond ((string? v) v)
+        ((symbol? v) (symbol->string v))
+        (else def)))
+
+(define (gate-as-compare v)
+  (cond ((not (string? v)) "min")
+        ((string=? v "max") "max")
+        ((string=? v "any") "any")
+        ((string=? v "min") "min")
+        (else "min")))
+
+; (gate:new opts) -> gate hash.
+;   "name"        string, default "gate"
+;   "potential"   procedure (fb -> number | (before after) | hash before/after
+;                 | #f) — or a string objective name, read through gate:metric
+;   "compare"     "min" (default) | "max" | "any"
+;   "baseline"    number | procedure (fb -> number) | #f
+;   "tolerance"   number, default 0
+;   "invariants"  #5253 contract set | #f
+;   "accept"      legacy predicate (fb -> truthy) | #f
+(define (gate:new opts)
+  (let* ((o (if (hash? opts) opts (hash)))
+         (name (gate-as-name (hash-ref o "name" "gate") "gate"))
+         (pot (hash-ref o "potential" #f))
+         (cmp (gate-as-compare (hash-ref o "compare" "min")))
+         (set (let ((s (hash-ref o "invariants" #f)))
+                (if (contract:set? s) s #f)))
+         (accept (hash-ref o "accept" #f)))
+    (hash "kind" "acceptance-gate"
+          "schema" gate-schema-version
+          "name" name
+          "potential" (if (or (procedure? pot) (string? pot)) pot #f)
+          "compare" cmp
+          "baseline" (hash-ref o "baseline" #f)
+          "tolerance" (let ((t (hash-ref o "tolerance" 0)))
+                        (if (number? t) t 0))
+          "invariants" set
+          "accept" (if (procedure? accept) accept #f))))
+
+(define (gate:gate? g)
+  (and (hash? g) (equal? (hash-ref g "kind" #f) "acceptance-gate")))
+
+(define (gate:name g)
+  (if (gate:gate? g) (hash-ref g "name" "gate") "none"))
+
+(define (gate:potential g) (if (gate:gate? g) (hash-ref g "potential" #f) #f))
+(define (gate:compare g) (if (gate:gate? g) (hash-ref g "compare" "min") "min"))
+(define (gate:invariants g) (if (gate:gate? g) (hash-ref g "invariants" #f) #f))
+(define (gate:accept g) (if (gate:gate? g) (hash-ref g "accept" #f) #f))
+(define (gate:baseline g) (if (gate:gate? g) (hash-ref g "baseline" #f) #f))
+(define (gate:tolerance g)
+  (if (gate:gate? g)
+      (let ((t (hash-ref g "tolerance" 0))) (if (number? t) t 0))
+      0))
+
+(define (gate:none? g) (not (gate:gate? g)))
+
+(define (gate:with-invariants g set)
+  (let* ((base (if (gate:gate? g) g (gate:new (hash))))
+         (next (hash-set base "invariants" (if (contract:set? set) set #f))))
+    next))
+
+; A gate from a contract set alone: invariants decide, no potential.
+(define (gate:from-contract set)
+  (if (contract:set? set)
+      (gate:new (hash "name" (string-append "contract:"
+                                            (number->string (hash-ref set "version" 1)))
+                      "invariants" set
+                      "compare" "any"))
+      #f))
+
+; #5178 compatibility: an existing accept callback is a gate whose only
+; condition is that predicate over the feedback.
+(define (gate:from-evo accept name)
+  (if (procedure? accept)
+      (gate:new (hash "name" (gate-as-name name "evo-accept")
+                      "accept" accept
+                      "compare" "any"))
+      #f))
+
+; ═══════════════════════════════════════════════════════════════════
+; The installed default
+; ═══════════════════════════════════════════════════════════════════
+
+(define (gate:install! g)
+  (if (gate:gate? g)
+      (begin (set! *gate-installed* g) g)
+      #f))
+
+(define (gate:installed) *gate-installed*)
+
+(define (gate:uninstall!)
+  (set! *gate-installed* #f)
+  #t)
+
+; (gate:current g) — the caller's gate when it passes one, else the
+; installed one, else #f (gate=none).
+(define (gate:current g)
+  (cond ((gate:gate? g) g)
+        ((gate:gate? *gate-installed*) *gate-installed*)
+        (else #f)))
+
+(define (gate:effective-name g)
+  (if (gate:gate? (gate:current g)) (gate:name (gate:current g)) "none"))
+
+; ═══════════════════════════════════════════════════════════════════
+; Feedback records
+; ═══════════════════════════════════════════════════════════════════
+
+; The slots the gate reads. A #5254 record already has all of them; this
+; constructor fills the ones a daily path may not carry, so one shape is
+; consumed everywhere (and an evo evaluation hash can be passed as
+; (gate:feedback-from-eval cand ev)).
+(define (gate:feedback slots)
+  (let ((s (if (hash? slots) slots (hash))))
+    (hash "kind" (hash-ref s "kind" "transform-feedback")
+          "schema" (hash-ref s "schema" 1)
+          "transform" (hash-ref s "transform"
+                                (hash "mutation-id" 0 "operator" ""
+                                      "target" "" "stable-ref" #f "applied" #t))
+          "diff" (hash-ref s "diff" "none")
+          "types" (hash-ref s "types" (hash "status" "unknown"
+                                            "diagnostics" (quote ()) "count" 0))
+          "contract" (hash-ref s "contract" "none")
+          "test" (hash-ref s "test" (hash "case" "" "issue" #f
+                                          "selected" #f "result" "none" "note" ""))
+          "exec" (hash-ref s "exec" (hash "result" "ok" "error-kind" "none"
+                                          "error-code" "" "message" ""))
+          "metrics" (hash-ref s "metrics" (hash "keys" (quote ())
+                                                "before" (hash)
+                                                "after" (hash)
+                                                "delta" (hash)))
+          "objectives" (hash-ref s "objectives" (hash))
+          "constraints" (hash-ref s "constraints" (hash))
+          "engine" (hash-ref s "engine" (hash))
+          "count" (hash-ref s "count" 0)
+          "status" (hash-ref s "status" "ok"))))
+
+(define (gate:feedback? fb)
+  (and (hash? fb) (equal? (hash-ref fb "kind" #f) "transform-feedback")))
+
+; An evo evaluation hash (or a candidate evaluation) as a feedback record.
+; A record that already has the #5254 kind is passed through, so the same
+; object reaches the gate on both paths.
+(define (gate:feedback-from-eval cand ev)
+  (cond
+    ((gate:feedback? ev) ev)
+    ((and (hash? ev) (equal? (hash-ref ev "kind" #f) "evo-candidate"))
+     ; evo:measured's "constraints-unknown" placeholder: no evidence yet.
+     (gate:feedback (hash "transform" (hash "operator" "evo:commit"
+                                            "target" (if (hash? cand)
+                                                         (hash-ref cand "target" #f)
+                                                         #f)
+                                            "applied" #f)
+                           "exec" (hash "result" "refused"
+                                        "error-kind" "UserError"
+                                        "error-code" "no-eval"
+                                        "message" "candidate was not measured")
+                           "status" "no-eval")))
+    ((hash? ev)
+     (let* ((st (hash-ref ev "status" "ok"))
+            (ok (and (string? st) (string=? st "ok")))
+            (err (hash-ref ev "error" #f)))
+       (gate:feedback
+         (hash "transform" (hash "mutation-id" 0
+                                 "operator" "evo:commit"
+                                 "target" (if (hash? cand)
+                                              (hash-ref cand "target" #f)
+                                              #f)
+                                 "stable-ref" #f
+                                 "applied" ok)
+               "exec" (hash "result" (if ok "ok" "raised")
+                            "error-kind" (if ok "none" "UserError")
+                            "error-code" (if ok "" "eval-error")
+                            "message" (if (string? err) err ""))
+               "objectives" (hash-ref ev "objectives" (hash))
+               "constraints" (hash-ref ev "constraints" (hash))
+               "metrics" (hash "keys" (quote ()) "before" (hash)
+                               "after" (hash) "delta" (hash))
+               "status" (if (string? st) st "ok")))))
+    (else
+     (gate:feedback (hash "transform" (hash "operator" "evo:commit"
+                                            "target" (if (hash? cand)
+                                                         (hash-ref cand "target" #f)
+                                                         #f)
+                                            "applied" #f)
+                           "exec" (hash "result" "refused" "error-kind" "UserError"
+                                        "error-code" "no-eval"
+                                        "message" "no evaluation")
+                           "status" "no-eval")))))
+
+; A named objective from a feedback record: the metric delta first (what a
+; before/after transform moved), then its after value, then a baseline
+; level, then an evo objective. #f when the record does not carry it.
+(define (gate:metric fb name)
+  (let* ((m (if (hash? fb) (hash-ref fb "metrics" (hash)) (hash)))
+         (delta (hash-ref m "delta" (hash)))
+         (after (hash-ref m "after" (hash)))
+         (before (hash-ref m "before" (hash)))
+         (objs (if (hash? fb) (hash-ref fb "objectives" (hash)) (hash))))
+    (cond ((and (hash? delta) (number? (hash-ref delta name #f)))
+           (hash-ref delta name #f))
+          ((and (hash? after) (number? (hash-ref after name #f)))
+           (hash-ref after name #f))
+          ((and (hash? objs) (number? (hash-ref objs name #f)))
+           (hash-ref objs name #f))
+          ((and (hash? before) (number? (hash-ref before name #f)))
+           (hash-ref before name #f))
+          (else #f))))
+
+; (gate:potential-of name [compare]) — the usual potential procedure over a
+; daily-path metric name. A delta-shaped metric (the default) compares 0 to
+; the value; "max" also uses 0 (higher is better).
+(define (gate:potential-of name . opts)
+  (let ((cmp (if (pair? opts) (gate-as-compare (car opts)) "min")))
+    (lambda (fb)
+      (let ((v (gate:metric fb name)))
+        (if (number? v) (list 0.0 v) #f)))))
+
+; ═══════════════════════════════════════════════════════════════════
+; Evaluation
+; ═══════════════════════════════════════════════════════════════════
+
+(define (gate-slot-hash fb key)
+  (let ((v (if (hash? fb) (hash-ref fb key #f) #f)))
+    (if (hash? v) v (hash))))
+
+(define (gate-exec-ok? fb)
+  (let ((e (gate-slot-hash fb "exec")))
+    (equal? (hash-ref e "result" "ok") "ok")))
+
+(define (gate-not-applied? fb)
+  (let ((t (gate-slot-hash fb "transform")))
+    (equal? (hash-ref t "applied" #t) #f)))
+
+(define (gate-contract-report fb)
+  (let ((c (if (hash? fb) (hash-ref fb "contract" #f) #f)))
+    (if (and (hash? c) (equal? (hash-ref c "kind" #f) "contract-check")) c #f)))
+
+(define (gate-invariant-names report)
+  (let loop ((vs (if (hash? report) (hash-ref report "violations" (quote ())) (quote ())))
+             (acc ""))
+    (cond ((null? vs) (if (string=? acc "") "unknown" acc))
+          (else
+           (let* ((v (car vs))
+                  (n (cond ((string? v) v)
+                           ((and (hash? v) (string? (hash-ref v "invariant" #f)))
+                            (hash-ref v "invariant" #f))
+                           (else "violation")))
+                  (next (if (string=? acc "") n (string-append acc "," n))))
+             (loop (cdr vs) next))))))
+
+(define (gate-count-violations report)
+  (let ((vs (if (hash? report) (hash-ref report "violations" (quote ())) (quote ()))))
+    (length vs)))
+
+; The potential value for one feedback record. Returns (before after) with
+; #f for an unknown side. The gate's "baseline" fills a missing before side.
+(define (gate-potential-pair g fb)
+  (let* ((pot (gate:potential g))
+         (b0 (gate:baseline g))
+         (v (cond ((procedure? pot)
+                   (try (pot fb) (catch (e) #f)))
+                  ((string? pot) (gate:metric fb pot))
+                  (else #f)))
+         (pair (cond ((and (list? v) (pair? v) (pair? (cdr v)))
+                      v)
+                     ((hash? v) (list (hash-ref v "before" #f)
+                                      (hash-ref v "after" #f)))
+                     ((number? v) (list #f v))
+                     (else (list #f #f))))
+         (before (car pair))
+         (after (car (cdr pair)))
+         (b (cond ((number? before) before)
+                  ((number? b0) b0)
+                  ((procedure? b0) (try (b0 fb) (catch (e) #f)))
+                  (else #f))))
+    (list (if (number? b) b #f)
+          (if (number? after) after #f))))
+
+(define (gate-verdict name decision reason before after invs evidence)
+  (hash "kind" "gate-verdict"
+        "schema" gate-schema-version
+        "gate" name
+        "decision" decision
+        "reason" reason
+        "potential-before" before
+        "potential-after" after
+        "delta" (if (and (number? before) (number? after)) (- after before) #f)
+        "invariants" (if (hash? invs) invs "none")
+        "evidence" (if (hash? evidence) evidence (hash))))
+
+; (gate:evaluate g feedback [ctx]) -> verdict.
+; g may be #f (no gate); ctx may carry "before" (a number) and "detectors"
+; (evidence for a #5253 detector-set invariant).
+(define (gate:evaluate g fb . ctx)
+  (let* ((gate (gate:current g))
+         (fb (gate:feedback fb))
+         (ctx (if (and (pair? ctx) (hash? (car ctx))) (car ctx) (hash))))
+    (if (not (gate:gate? gate))
+        ; gate=none: the pre-#5255 decision stands, but it is not evidence.
+        (gate-verdict "none" "KEEP" "ungated" #f #f #f
+                      (hash "proven" #f "why" "ungated"
+                            "note" "no gate configured; primitive success is not evidence"))
+        (gate-evaluate-gated gate fb ctx))))
+
+(define (gate-evaluate-gated gate fb ctx)
+  (let* ((name (gate:name gate))
+         (exec-ok (gate-exec-ok? fb))
+         (exec (gate-slot-hash fb "exec"))
+         (applied (not (gate-not-applied? fb)))
+         (crep (gate-contract-report fb))
+         (set (gate:invariants gate))
+         (report (and (hash? set)
+                      (try (contract:check set ctx) (catch (e) #f))))
+         (pair (gate-potential-pair gate fb))
+         (before (car pair))
+         (after (car (cdr pair)))
+         (set-ok (if (hash? report) (contract:report-ok? report) #t)))
+    (cond
+      ((not exec-ok)
+       (gate-verdict name "ROLLBACK"
+                     (string-append "exec:"
+                                    (let ((k (hash-ref exec "error-kind" "none")))
+                                      (if (string? k) k "error")))
+                     before after report
+                     (hash "proven" #t "why" "exec-not-ok"
+                           "exec" exec)))
+      ((not applied)
+       (gate-verdict name "ROLLBACK" "not-applied" before after report
+                     (hash "proven" #t "why" "transform-not-applied")))
+      ((and (hash? crep) (not (contract:report-ok? crep)))
+       (gate-verdict name "ROLLBACK"
+                     (string-append "contract:" (gate-invariant-names crep))
+                     before after report
+                     (hash "proven" #t "why" "contract-refused"
+                           "violations" (gate-count-violations crep))))
+      ((not set-ok)
+       (gate-verdict name "ROLLBACK"
+                     (string-append "invariant:" (gate-invariant-names report))
+                     before after report
+                     (hash "proven" #t "why" "invariant-violated"
+                           "violations" (gate-count-violations report))))
+      (else
+       (gate-accept gate fb before after report)))))
+
+; The acceptance half once structure and invariants passed.
+(define (gate-accept g fb before after report)
+  (let* ((name (gate:name g))
+         (acc (gate:accept g))
+         (acc-ok (if (procedure? acc)
+                     (try (let ((r (acc fb))) (not (equal? r #f)))
+                          (catch (e) #f))
+                     #t))
+         (cmp (gate:compare g))
+         (tol (gate:tolerance g))
+         (pot-config (or (procedure? (gate:potential g))
+                         (string? (gate:potential g))))
+         (bl (gate:baseline g))
+         (b (cond ((number? before) before)
+                  ((number? bl) bl)
+                  ((procedure? bl) (try (bl fb) (catch (e) #f)))
+                  (else #f))))
+    (cond
+      ((not acc-ok)
+       (gate-verdict name "ROLLBACK" "accept" b after report
+                     (hash "proven" #t "why" "accept-rejected")))
+      ((not pot-config)
+       ; No potential: a measured, invariant-clean transform is accepted.
+       (gate-verdict name "KEEP" "applied" b after report
+                     (hash "proven" (if (hash? report) #t #f)
+                           "why" "no-potential"
+                           "invariants" (if (hash? report) "checked" "none"))))
+      ((not (number? after))
+       (gate-verdict name "ROLLBACK" "no-potential" b after report
+                     (hash "proven" #t "why" "potential-unmeasured")))
+      ((string=? cmp "any")
+       (gate-verdict name "KEEP" "measured" b after report
+                     (hash "proven" #t "why" "potential-measured")))
+      ((not (number? b))
+       (gate-verdict name "ROLLBACK" "no-baseline" b after report
+                     (hash "proven" #t "why" "potential-baseline-unknown")))
+      ((string=? cmp "max")
+       (if (>= after (- b tol))
+           (gate-verdict name "KEEP" (if (> after (+ b tol)) "improved" "no-worse")
+                         b after report
+                         (hash "proven" #t "why" "potential-max"
+                               "delta" (- after b) "tolerance" tol))
+           (gate-verdict name "ROLLBACK" "worse" b after report
+                         (hash "proven" #t "why" "potential-worse"
+                               "delta" (- after b) "tolerance" tol))))
+      (else
+       (if (<= after (+ b tol))
+           (gate-verdict name "KEEP" (if (< after (- b tol)) "improved" "no-worse")
+                         b after report
+                         (hash "proven" #t "why" "potential-min"
+                               "delta" (- after b) "tolerance" tol))
+           (gate-verdict name "ROLLBACK" "worse" b after report
+                         (hash "proven" #t "why" "potential-worse"
+                               "delta" (- after b) "tolerance" tol)))))))
+
+; ── verdict readers ──────────────────────────────────────────────
+(define (gate:keep? v)
+  (and (hash? v) (equal? (hash-ref v "decision" #f) "KEEP")))
+
+(define (gate:decision v)
+  (if (hash? v) (hash-ref v "decision" "ROLLBACK") "ROLLBACK"))
+
+(define (gate:reason v)
+  (if (hash? v) (hash-ref v "reason" "") ""))
+
+; The evo:record! v=2 extras a KEEP row carries: gate name and the gate's
+; potential after-value (#5251 slots).
+(define (gate:trace-extra v)
+  (if (hash? v)
+      (hash "gate" (let ((n (hash-ref v "gate" "none")))
+                     (if (string? n) n "none"))
+            "weight" (let ((w (hash-ref v "potential-after" #f)))
+                       (if (number? w) w 0)))
+      (hash "gate" "none" "weight" 0)))
+
+; ── an intend verifier adapter ───────────────────────────────────
+; (gate:verifier g) -> (lambda (code-string) -> "#t" | error-string), the
+; shape the built-in intend primitive expects. The code the loop just wrote
+; is the transform being admitted; the gate decides. Without a gate this is
+; the pre-#5255 "no error means pass" verifier, recorded as none.
+(define (gate:verifier g)
+  (lambda (code)
+    (let* ((gate (gate:current g))
+           (fb (gate:feedback
+                 (hash "transform" (hash "operator" "intend:verifier"
+                                         "target" ""
+                                         "applied" #t)
+                       "exec" (hash "result" "ok" "error-kind" "none"
+                                    "error-code" "" "message" "")
+                       "count" 1)))
+           (v (gate:evaluate gate fb)))
+      (if (gate:keep? v)
+          "#t"
+          (string-append "gate:" (hash-ref v "gate" "none")
+                         ":" (gate:reason v))))))
+

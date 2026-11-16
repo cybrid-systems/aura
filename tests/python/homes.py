@@ -169,6 +169,42 @@ HOMES: tuple[Home, ...] = (
         ),
     ),
     _h(
+        "std/gate",
+        "aura",
+        "tests/suite/gate_unified.aura",
+        (
+            "gate:new",
+            "gate:evaluate",
+            "gate:install!",
+            "gate:keep?",
+            "gate:metric",
+            "std/gate",
+            "acceptance gate",
+        ),
+        tag="gate",
+        requires=(
+            "std/gate",
+            "std/contract",
+            "std/evo-core",
+            "std/evo",
+            "std/agent",
+        ),
+        body='(check (gate:keep? (gate:evaluate (gate:new (hash "potential" (lambda (fb) (list 1.0 0.0)))) (hash))))',
+        roots=(
+            "lib/std/gate.aura",
+            "lib/std/evo-core.aura",
+            "lib/std/agent.aura",
+            "lib/std/safe-refactor.aura",
+            "lib/std/hot-strategy.aura",
+            "lib/std/rule.aura",
+        ),
+        note=(
+            "One acceptance gate (#5255): a feedback record plus a potential "
+            "and #5253 invariants decide KEEP/ROLLBACK; daily paths and "
+            "evo:commit!/evo:trial share it; no gate records gate=none."
+        ),
+    ),
+    _h(
         "std/contract",
         "aura",
         "tests/suite/contracts_invariants.aura",

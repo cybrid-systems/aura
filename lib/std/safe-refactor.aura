@@ -45,6 +45,8 @@
 ; helpers return #f, so a caller that never declared constraints sees the
 ; pre-#5253 behavior exactly.
 (require "std/contract" all:)
+; #5255: the one acceptance gate.
+(require "std/gate" all:)
 
 ; ── (#5253) contract gate ──────────────────────────────────────────
 ; pre  : protected names / operator allow lists, before any write.
@@ -133,7 +135,24 @@
                      (begin
                        (mutate :restore snap-id)
                        (list 'rolled-back cref))
-                     (list 'applied apply-result))))))))))))
+                     ; #5255: and the unified gate. typecheck-status passing
+                     ; is not by itself a KEEP; a configured gate can still
+                     ; roll the workspace back.
+                     (let* ((fb (gate:feedback
+                                  (hash "transform" (hash "operator" "safe-refactor"
+                                                          "target" ""
+                                                          "applied" #t)
+                                        "exec" (hash "result" "ok"
+                                                     "error-kind" "none"
+                                                     "error-code" "" "message" "")
+                                        "contract" (if (hash? cref) cref "none")
+                                        "count" (if (number? apply-result) apply-result 1))))
+                            (verdict (gate:evaluate (gate:installed) fb)))
+                       (if (gate:keep? verdict)
+                           (list 'applied apply-result)
+                           (begin
+                             (mutate :restore snap-id)
+                             (list 'rolled-back verdict)))))))))))))))
 
 ; ── safe-refactor:rollback — restore last safe-refactor snapshot ──
 ;

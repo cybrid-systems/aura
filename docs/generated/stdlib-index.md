@@ -2,7 +2,7 @@
 
 # Standard library index (generated)
 
-**109** modules in `lib/std/`. Load: `(require "std/name" all:)`.
+**110** modules in `lib/std/`. Load: `(require "std/name" all:)`.
 
 | Module | Exports | Description |
 |--------|---------|-------------|
@@ -45,6 +45,7 @@
 | `std/ffi` | `c-load` `c-func` `c-alloc` `c-free` `c-opaque` `c-opaque?` `c-opaque->int` `c-struct-size` … (+14) | ffi.aura — C FFI host prims (Issue #3176) |
 | `std/fs` | `path-join` `path-dirname` `path-basename` `path-extname` `file-read` `file-write` `file-exists?` `file-size` … (+3) | lib/std/fs.aura — File system utilities |
 | `std/fss` | `fss:init` `fss:init-hash` `fss:step!` `fss:best` `fss:population` `fss:report` `fss:export` `fss:help` … (+8) | lib/std/fss.aura — Issue #2880 Fish School Search surface |
+| `std/gate` | `gate:schema` `gate:help` `gate:new` `gate:gate?` `gate:name` `gate:potential` `gate:compare` `gate:invariants` … (+23) | — |
 | `std/git` | `git-status` `git-diff` `git-log` `git-commit` `git-branch-current` `git-stage` `git-rev-parse` | git.aura — Git integration host prims (Issue #3174) |
 | `std/hash` | `hash-set` `hash-ref` `hash-get` `hash-remove` `hash-copy` `hash-keys` `hash-values` `hash-length` … (+39) | hash.aura -- Hash table operations. hash-set / hash-remove are COPY-ON-WRITE (#4614): they return a NEW hash and leave the argument unchanged. |
 | `std/heal` | `heal` | — |

@@ -129,6 +129,10 @@
         evo:rng evo:rng-next! evo:rng-int! evo:rng-float! evo:rng-pick! evo:rng-shuffle!
         evo:source-fingerprint evo:mock-proposer evo:default-apply)
 
+; #5255: the unified acceptance gate. evo:commit! and evo:trial accept the
+; same gate object the daily paths consult.
+(require "std/gate" all:)
+
 ; ═══════════════════════════════════════════════════════════════════
 ; Small helpers (private; keep the module dependency-free)
 ; ═══════════════════════════════════════════════════════════════════
@@ -411,15 +415,22 @@
 ; byte-identical.
 
 (define (evo-v2 s extra)
-  (hash "algo" (evo-opt s "algo" "generic")
-        "gen" (evo-opt s "gen" 0)
-        "search" (evo-opt s "id" "")
-        "slot" (evo-opt extra "slot" 0)
-        "candidate" (evo-opt extra "candidate" "")
-        "parents" (evo-opt extra "parents" (list))
-        "behavior" (evo-opt extra "behavior" (hash))
-        "objectives" (evo-opt extra "objectives" (hash))
-        "constraints" (evo-opt extra "constraints" (hash))))
+  (let* ((h (hash "algo" (evo-opt s "algo" "generic")
+                  "gen" (evo-opt s "gen" 0)
+                  "search" (evo-opt s "id" "")
+                  "slot" (evo-opt extra "slot" 0)
+                  "candidate" (evo-opt extra "candidate" "")
+                  "parents" (evo-opt extra "parents" (list))
+                  "behavior" (evo-opt extra "behavior" (hash))
+                  "objectives" (evo-opt extra "objectives" (hash))
+                  "constraints" (evo-opt extra "constraints" (hash))))
+         ; #5255: the #5251 gate / weight slots. Present only when the caller
+         ; knows them, so older rows keep their byte shape.
+         (g (evo-opt extra "gate" #f))
+         (w (evo-opt extra "weight" #f))
+         (h (if (string? g) (hash-set h "gate" g) h))
+         (h (if (number? w) (hash-set h "weight" w) h)))
+    h))
 
 (define (evo-audit s target decision reason evidence dur extra)
   ; #5069: the log's parent is a record id. "tip" is the committed candidate
@@ -692,44 +703,84 @@
                         "behavior" (evo-opt ev "behavior" (hash))))
        #f)
       (else
-       (let* ((gate (evo-opt s "accept" #f))
-              (ok (if gate (gate s cand ev) #t)))
-         (if (not ok)
+       (let* ((g (evo-opt s "accept" #f))
+              ; #5255: the same gate object the daily paths use. A plain
+              ; procedure keeps its pre-#5255 accept meaning.
+              (gobj (if (gate:gate? g) g #f))
+              (gv (if gobj
+                      (gate:evaluate gobj (gate:feedback-from-eval cand ev))
+                      #f))
+              (gok (cond (gv (gate:keep? gv))
+                         (g (not (equal? (g s cand ev) #f)))
+                         (else #t)))
+              (gname (cond (gv (hash-ref gv "gate" "none"))
+                           (g "evo-accept")
+                           (else "none")))
+              (gweight (if gv
+                           (let ((w (hash-ref gv "potential-after" #f)))
+                             (if (number? w) w 0))
+                           0))
+              (extra (hash "slot" (evo-opt cand "slot" 0)
+                           "candidate" id
+                           "parents" (evo-opt cand "parents" (list))
+                           "objectives" (evo-opt ev "objectives" (hash))
+                           "constraints" (evo-opt ev "constraints" (hash))
+                           "behavior" (evo-opt ev "behavior" (hash))
+                           "gate" gname
+                           "weight" gweight)))
+         (if (not gok)
              (begin
-               (evo-audit s id "ROLLBACK" "gate" (hash) 0
-                          (hash "slot" (evo-opt cand "slot" 0)
-                                "candidate" id
-                                "objectives" (evo-opt ev "objectives" (hash))
-                                "constraints" (evo-opt ev "constraints" (hash))))
+               (evo-audit s id "ROLLBACK"
+                          (string-append "gate:"
+                                         (if gv (hash-ref gv "reason" "rejected")
+                                             "rejected"))
+                          (if gv
+                              (hash "gate" gname
+                                    "reason" (hash-ref gv "reason" "")
+                                    "potential-before" (hash-ref gv "potential-before" #f)
+                                    "potential-after" (hash-ref gv "potential-after" #f)
+                                    "invariants" (hash-ref gv "invariants" "none")
+                                    "why" (hash-ref (hash-ref gv "evidence" (hash)) "why" ""))
+                              (hash "gate" gname))
+                          0 extra)
                #f)
              (let* ((apply-fn (evo-opt s "apply" #f))
                     (r (if apply-fn
                            (try (apply-fn s cand)
                                 (catch (e) (list 'evo-caught e)))
-                           #f))
-                    (extra (hash "slot" (evo-opt cand "slot" 0)
-                                 "candidate" id
-                                 "parents" (evo-opt cand "parents" (list))
-                                 "objectives" (evo-opt ev "objectives" (hash))
-                                 "constraints" (evo-opt ev "constraints" (hash))
-                                 "behavior" (evo-opt ev "behavior" (hash)))))
+                           #f)))
                (cond
                  ((evo-caught? r)
                   (evo-audit s id "ROLLBACK"
                              (string-append "apply-error: " (evo-caught-text r))
-                             (hash) 0 extra)
+                             (hash "gate" gname "why" "apply-error") 0 extra)
                   #f)
                  ((eq? r #t)
                   ; Audit first, then advance the candidate tip. Setting
                   ; "tip" before the write made the KEEP's parent its own
                   ; candidate id (#5069).
-                  (evo-audit s id "KEEP" "committed" (hash "violations" 0.0) 0 extra)
+                  (evo-audit s id "KEEP" "committed"
+                             (hash "violations" 0.0
+                                   "gate" gname
+                                   "gate-why" (if gv
+                                                  (hash-ref (hash-ref gv "evidence" (hash)) "why" "")
+                                                  "ungated")
+                                   "potential-before" (if gv
+                                                          (hash-ref gv "potential-before" #f)
+                                                          #f)
+                                   "potential-after" (if gv
+                                                         (hash-ref gv "potential-after" #f)
+                                                         #f)
+                                   "invariants" (if gv
+                                                    (hash-ref gv "invariants" "none")
+                                                    "none"))
+                             0 extra)
                   (hash-set! s "tip" id)
                   #t)
                  (else
                   (evo-audit s id "ROLLBACK"
                              (string-append "apply-failed: " (evo-reason-of r))
-                             (hash) 0 extra)
+                             (hash "gate" gname "why" "apply-failed") 0 extra)
                   #f)))))))))
 
 (define (evo-count-fn xs pred)
@@ -950,13 +1001,26 @@
              (err-val (and (not caught) (not refused) (error? res)))
              (over (and (> timeout 0) (> dur timeout)))
              (moved (not (= after before)))
-             (status (cond (caught "error")
-                           (refused "error")
-                           (err-val "error")
-                           (moved "isolation-violation")
-                           (over "timeout")
-                           (else "ok")))
+             ; #5255: a candidate that violates a hard constraint is not a
+             ; successful trial. Feasibility is the same test evo:commit!
+             ; applies, so trial and commit cannot disagree about it.
+             (status0 (cond (caught "error")
+                            (refused "error")
+                            (err-val "error")
+                            (moved "isolation-violation")
+                            (over "timeout")
+                            ((and (hash? res) (not (evo:feasible? res)))
+                             "infeasible")
+                            (else "ok")))
              (ev (if (and (hash? res) (not caught) (not refused)) res #f))
+             (g (gate:installed))
+             (gv (if (and (string=? status0 "ok") (gate:gate? g))
+                     (gate:evaluate g (gate:feedback-from-eval cand res))
+                     #f))
+             (status (if (and gv (not (gate:keep? gv))) "rejected" status0))
+             (gname (cond (gv (hash-ref gv "gate" "none"))
+                          ((gate:gate? g) (gate:name g))
+                          (else "none")))
              (why (cond ((string=? status "ok") "isolated")
                         (refused (string-append
                                    "trial-error: apply-failed: "
@@ -968,6 +1032,12 @@
                         ((string=? status "timeout")
                          (string-append "timeout: " (number->string dur)
                                         "ms > " (number->string timeout) "ms"))
+                        ((string=? status "infeasible")
+                         (string-append "infeasible: "
+                                        (evo-violation-names res)))
+                        ((string=? status "rejected")
+                         (string-append "gate:" gname ":"
+                                        (hash-ref gv "reason" "rejected")))
                         (else "isolation-violation: live source changed"))))
         (evo-audit (hash "algo" (evo-opt cand "algo" "trial")
                          "gen" (evo-opt cand "gen" 0)
@@ -980,6 +1050,8 @@
                          "dur-ms" dur
                          "live-before" before
                          "live-after" after
+                         "gate" gname
+                         "violations" (if (hash? res) (evo:violations res) 0.0)
                          "obj-count" (length (hash-keys (evo-opt ev "objectives" (hash)))))
                    dur
                    (hash "slot" (evo-opt cand "slot" 0)
@@ -987,10 +1059,23 @@
                          "parents" (evo-opt cand "parents" (list))
                          "behavior" (evo-opt ev "behavior" (hash))
                          "objectives" (evo-opt ev "objectives" (hash))
-                         "constraints" (evo-opt ev "constraints" (hash))))
+                         "constraints" (evo-opt ev "constraints" (hash))
+                         "gate" gname
+                         "weight" (if gv
+                                      (let ((w (hash-ref gv "potential-after" #f)))
+                                        (if (number? w) w 0))
+                                      0)))
         (hash "kind" "evo-trial" "schema" evo-schema-version
               "status" status
               "ok" (string=? status "ok")
+              "gate" gname
+              "weight" (if gv
+                            (let ((w (hash-ref gv "potential-after" #f)))
+                              (if (number? w) w 0))
+                            0)
+              "infeasible" (and (hash? res) (not (evo:feasible? res)))
+              "violations" (if (hash? res) (evo:violations res) 0.0)
+              "gate-evidence" (if gv (hash-ref gv "evidence" (hash)) (hash))
               "objectives" (evo-opt ev "objectives" (hash))
               "constraints" (evo-opt ev "constraints" (hash))
               "behavior" (evo-opt ev "behavior" (hash))
