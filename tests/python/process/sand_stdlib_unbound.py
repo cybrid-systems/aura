@@ -107,7 +107,14 @@ class TestIssue5169StdlibUnbound(unittest.TestCase):
         self.assertNotIn("query:callers-of", names)
         self.assertNotIn("mutate:rebind", names)
 
-    def test_refactor_inline_counts_callers(self) -> None:
+    def test_refactor_inline_refuses_when_mutation_denied(self) -> None:
+        # Issue #5169 kept this face unbound-free. Issue #5252 made
+        # refactor:inline-function actually inline ((mutate :inline-call)
+        # per call site) instead of counting callers and returning the
+        # count. The restricted dev face refuses that workspace mutation
+        # (persist-reject on the stock engine too), so the honest answer
+        # here is #f with the source untouched — not a count that claims
+        # work the workspace never saw.
         proc = run_aura(
             "\n".join(
                 [
@@ -119,6 +126,9 @@ class TestIssue5169StdlibUnbound(unittest.TestCase):
                     '(display "MISS5169 ")',
                     '(display (refactor:inline-function "missing"))',
                     "(newline)",
+                    '(display "SRC5169 ")',
+                    "(display (current-source :workspace))",
+                    "(newline)",
                     "",
                 ]
             ),
@@ -128,8 +138,10 @@ class TestIssue5169StdlibUnbound(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, blob)
         self.assertIn(DEV_CAPS, proc.stderr)
         self.assertNotIn("unbound variable", blob)
-        self.assertIn("REF5169 1", proc.stdout)
+        self.assertIn("REF5169 #f", proc.stdout)
         self.assertIn("MISS5169 #f", proc.stdout)
+        # Denied → nothing half-applied.
+        self.assertIn("(foo y)", proc.stdout)
 
     def test_strategy_non_string_uses_best(self) -> None:
         # hash-set copies through hash-set!, so the write needs the dev grant.

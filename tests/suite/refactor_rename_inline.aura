@@ -1,0 +1,113 @@
+; Issue #5252: refactor:* / safe-refactor:* move the workspace through the
+; registered small-step mutate:* ops instead of rewriting the whole source
+; string, and never report success for a no-op:
+;   rename-var      → (mutate :rename-symbol)
+;   inline-function → one (mutate :inline-call) per call site
+;   replace-fn      → (mutate :check) dry-run gate, then (mutate :rebind)
+(require "std/test" all:)
+(require "std/refactor" all:)
+(require "std/safe-refactor" all:)
+(require "std/string" all:)
+
+(test-file "refactor_rename_inline.aura")
+
+; ── rename-var: def + every reference (incl. nested) ────────────────
+(test-case "rename-var renames defs and references" (hash "issue" 5252 "tags" (list "refactor" "mutate"))
+  (set-code "(begin (define (add1 x) (+ x 1)) (define (twice x) (add1 (add1 x))))")
+  (eval-current)
+  (check (refactor:rename-var "add1" "plus1"))
+  (define src (current-source :workspace))
+  (check (not (string-contains? src "add1")))
+  (check (string-contains? src "(plus1 (plus1 x))"))
+  (eval-current)
+  (check= 2 (plus1 1))
+  (check= 3 (twice 1)))
+
+(test-case "rename-var refuses a missing name" (hash "issue" 5252 "tags" (list "refactor" "mutate"))
+  (set-code "(define (keep x) x)")
+  (eval-current)
+  (check (not (refactor:rename-var "absent-name" "other-name")))
+  (check (string-contains? (current-source :workspace) "keep")))
+
+(test-case "rename-var rolls back through a snapshot" (hash "issue" 5252 "tags" (list "refactor" "snapshot"))
+  (set-code "(define (before-rename x) (+ x 1))")
+  (eval-current)
+  (define before (current-source :workspace))
+  (define snap (mutate :snapshot "refactor-rename-5252"))
+  (check (>= snap 0))
+  (check (refactor:rename-var "before-rename" "after-rename"))
+  (check (mutate :restore snap))
+  (check= before (current-source :workspace)))
+
+; ── inline-function: really inlines every call site ─────────────────
+(test-case "inline-function inlines the call sites" (hash "issue" 5252 "tags" (list "refactor" "mutate"))
+  (set-code "(begin (define (inc x) (+ x 1)) (define (caller x) (inc x)))")
+  (eval-current)
+  (check= 1 (refactor:inline-function "inc"))
+  (define src (current-source :workspace))
+  (check (not (string-contains? src "(inc x)")))
+  (check (string-contains? src "(+ x 1)"))
+  (eval-current)
+  (check= 6 (caller 5)))
+
+(test-case "inline-function counts zero for an uncalled name" (hash "issue" 5252 "tags" (list "refactor" "mutate"))
+  (set-code "(define (lonely x) (+ x 2))")
+  (eval-current)
+  (check= 0 (refactor:inline-function "lonely"))
+  (check (string-contains? (current-source :workspace) "lonely")))
+
+(test-case "inline-function refuses a missing name" (hash "issue" 5252 "tags" (list "refactor" "mutate"))
+  (set-code "(define (present x) x)")
+  (eval-current)
+  (check (not (refactor:inline-function "never-defined"))))
+
+(test-case "inline-function rolls back through a snapshot" (hash "issue" 5252 "tags" (list "refactor" "snapshot"))
+  (set-code "(begin (define (callee x) (* x 2)) (define (caller x) (callee x)))")
+  (eval-current)
+  (define before (current-source :workspace))
+  (define snap (mutate :snapshot "refactor-inline-5252"))
+  (check (= 1 (refactor:inline-function "callee")))
+  (check (mutate :restore snap))
+  (check= before (current-source :workspace)))
+
+; ── replace-fn: in-place small step + type gate ─────────────────────
+(test-case "replace-fn replaces in place without a duplicate define" (hash "issue" 5252 "tags" (list "safe-refactor" "mutate"))
+  (set-code "(define (add2 (: x Int)) (+ x 2))")
+  (eval-current)
+  (define status (safe-refactor:replace-fn "add2" "(define (add2 (: x Int)) (+ x 3))"))
+  (check (equal? 'applied (car status)))
+  (define src (current-source :workspace))
+  ; One define, not two: the old whole-file append left a duplicate behind.
+  (check= 2 (length (string-split src "(define add2")))
+  (check (string-contains? src "(+ x 3)"))
+  (check (not (string-contains? src "(+ x 2)")))
+  (eval-current)
+  (check= 4 (add2 1)))
+
+(test-case "replace-fn rejects an ill-typed body and keeps the source" (hash "issue" 5252 "tags" (list "safe-refactor" "mutate"))
+  (set-code "(define (typed (: x Int)) (+ x 2))")
+  (eval-current)
+  (define before (current-source :workspace))
+  (define status (safe-refactor:replace-fn "typed" "(define (typed (: x Int)) (+ x \"oops\"))"))
+  (check (equal? 'rejected (car status)))
+  ; #4266 reason shape: the diagnostics block rides the reason slot.
+  (check (string-contains? (car (cdr status)) "diagnostics:"))
+  (check= before (current-source :workspace))
+  (eval-current)
+  (check= 3 (typed 1)))
+
+(test-case "replace-fn rejects a candidate for another name" (hash "issue" 5252 "tags" (list "safe-refactor" "mutate"))
+  (set-code "(define (orig (: x Int)) x)")
+  (eval-current)
+  (define status (safe-refactor:replace-fn "orig" "(define (other (: x Int)) x)"))
+  (check (equal? 'rejected (car status)))
+  (check (string-contains? (car (cdr status)) "parse-error")))
+
+(test-case "replace-fn rejects an empty body" (hash "issue" 5252 "tags" (list "safe-refactor" "mutate"))
+  (set-code "(define (keeper (: x Int)) x)")
+  (eval-current)
+  (define status (safe-refactor:replace-fn "keeper" ""))
+  (check (equal? 'rejected (car status)))
+  (check= "empty-source-or-body" (car (cdr status))))
+
+(test-finish)

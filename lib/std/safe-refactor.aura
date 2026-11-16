@@ -1,8 +1,8 @@
 ; lib/std/safe-refactor.aura — verification-gated refactoring
 ;
 ; Wraps a refactor operation with:
-;   1. ast:snapshot for rollback
-;   2. typecheck-current gate
+;   1. a (mutate :snapshot …) for rollback
+;   2. a dry-run (mutate :check …) type gate on the candidate
 ;   3. AURA_CONTRACT_POST verifier (user-supplied)
 ;   4. auto-restore on failure
 ;
@@ -102,76 +102,117 @@
                 (loop (cdr s)
                       (if (pair? entry) (car entry) last-id))))))))
 
-; ── safe-refactor:replace-fn — atomic function replacement with typecheck gate ──
+; ── mutate error text ──
 ;
-; Replaces a function body. Uses (set-code) on a synthesized module that
-; appends the new definition to the existing code, then typecheck-current.
-; If typecheck passes, keep the change. Otherwise restore.
+; A mutate:* rejection is (kind . (message . 0)) — a pair, never thrown.
+; Render it as "kind: message" so the reason slot is useful to an Agent.
+(define (safe-refactor:mutate-reason v)
+  (cond
+    ((and (pair? v) (string? (car v)))
+     (if (and (pair? (cdr v)) (string? (car (cdr v))))
+         (string-append (car v) ": " (car (cdr v)))
+         (car v)))
+    ((string? v) v)
+    (else "mutate-rejected")))
+
+; ── safe-refactor:replace-fn — atomic function replacement with a type gate ──
 ;
-; For simplicity, this version appends the new (define ...) to existing
-; code. Users should pass a body that re-defines the function with the
-; desired new implementation; the original definition will be shadowed
-; by the appended one.
+; Replaces the definition of fn-name with the (define …) form in new-body.
+;
+; Issue #5252: the old body appended new-body to the whole workspace source
+; and pushed it back with (set-code rebuilt) — a full-file rewrite that left
+; a duplicate define (and, for a body without a define wrapper, a nested
+; begin) behind. It was also one whole-file mutation, so it could not be
+; rolled back as a small step.
+;
+; Now it is two registered small-step ops:
+;   1. (mutate :check fn-name new-body) — dry-run gate: strict parse of the
+;      candidate plus a call-local typecheck of workspace+candidate, diffed
+;      against the workspace baseline. Nothing is installed (no mutation,
+;      no epoch bump), so an ill-typed body is refused *before* any write.
+;      This does not go through (typecheck-status) (#5250: that oracle can
+;      under-report); it is the mutate gate itself.
+;   2. (mutate :rebind fn-name new-body) — replaces the define's value in
+;      the live AST (hygiene + structural rollback log + post-mutate
+;      typecheck under a Hard gate).
+;
+; (typecheck-status) is kept as the final whole-workspace acceptance gate so
+; the #4266 contract (never report applied over a diagnostics report) holds
+; even when a pre-existing error lives outside the candidate.
+;
+; When fn-name has no define yet, (mutate :rebind) appends one — the append
+; path behaved the same way, so an unknown name is an add, not a silent
+; no-op.
 ;
 ; Returns:
-;   (list 'applied snap-id)        — refactor applied, structured typecheck
-;                                    status ok (#t)
-;   (list 'rejected "reason")      — empty source/body, throw during
-;                                    set-code/typecheck, or typecheck
-;                                    failed: the diagnostics report rides
-;                                    the reason slot (Issue #4266)
+;   (list 'applied snap-id)        — refactor applied, whole workspace clean
+;   (list 'rejected "reason")      — empty body, parse error, type error
+;                                    (the diagnostics report rides the
+;                                    reason slot, Issue #4266), or a mutate
+;                                    rejection
 ;   (list 'error "reason")         — unexpected internal status
 (define (safe-refactor:replace-fn fn-name new-body)
-  ; Issue #2918: user-script intent → :workspace (not current eval frame).
-  (let* ((current (try (current-source :workspace) (catch (e) "")))
-         (snap-id (mutate :snapshot (string-append "replace-" fn-name))))
-    (cond
-      ((or (= (string-length current) 0) (= (string-length new-body) 0))
-       (begin
-         (mutate :restore snap-id)
-         (list 'rejected "empty-source-or-body")))
-      (else
-       (let* ((rebuilt
-                (string-append
-                  current
-                  "\n;; --- safe-refactor:replace-fn added: "
-                  fn-name
-                  " ---\n"
-                  new-body
-                  "\n"))
-              (apply-result
-                (try
-                  (begin
-                    (set-code rebuilt)
-                    ; Issue #4266: structured status, never the raw
-                    ; (typecheck-current) report — that primitive embeds
-                    ; diagnostics in a returned STRING and returns normally
-                    ; on type errors, so the old (begin (set-code rebuilt)
-                    ; (typecheck-current) 'ok) arm reported 'applied for
-                    ; ill-typed replacements.
-                    (typecheck-status))
-                  (catch (e) 'tc-error-raised))))
-         (cond
-           ((equal? apply-result 'tc-error-raised)
-            (begin
-              (mutate :restore snap-id)
-              (list 'rejected "typecheck-failed")))
-           ; Issue #4266: applied ONLY on the structured ok status (#t).
-           ; Anything else (diagnostics report / #f) restores the snapshot
-           ; and is reported as rejected — the report rides the reason slot
-           ; so Agents get the details without parsing English to branch.
-           ((equal? apply-result #t)
-            (list 'applied snap-id))
-           (else
-            (begin
-              (mutate :restore snap-id)
-              (list 'rejected
-                    ; Issue #5250: (typecheck-status) returns the structured
-                    ; diagnostic list on failure (pre-#5250: a report string).
-                    ; Keep either in the reason slot so callers still get the
-                    ; code/message/line/column detail; #f (no workspace) and
-                    ; anything unrecognized keep the old token.
-                    (if (or (string? apply-result) (list? apply-result))
-                        apply-result
-                        "typecheck-status-not-ok"))))))))))
-
+  (cond
+    ((not (string? fn-name))
+     (list 'rejected "bad-fn-name"))
+    ((not (string? new-body))
+     (list 'rejected "empty-source-or-body"))
+    ((or (= (string-length fn-name) 0) (= (string-length new-body) 0))
+     (list 'rejected "empty-source-or-body"))
+    (else
+     (let ((gate (try (mutate :check fn-name new-body) (catch (e) 'check-error-raised))))
+       (cond
+         ((equal? gate 'check-error-raised)
+          (list 'rejected "check-error-raised"))
+         ((equal? gate #t)
+          ; Candidate parses and adds no new diagnostics — install it.
+          (let* ((snap-id (mutate :snapshot (string-append "replace-" fn-name)))
+                 (apply-result
+                   (try (mutate :rebind fn-name new-body)
+                        (catch (e) 'apply-error-raised)))
+                 (tc (if (equal? apply-result #t)
+                         (try (typecheck-status) (catch (e) 'tc-error-raised))
+                         #f)))
+            (cond
+              ((equal? apply-result 'apply-error-raised)
+               (begin
+                 (mutate :restore snap-id)
+                 (list 'rejected "apply-error-raised")))
+              ((not (equal? apply-result #t))
+               (begin
+                 (mutate :restore snap-id)
+                 (list 'rejected (safe-refactor:mutate-reason apply-result))))
+              ((equal? tc 'tc-error-raised)
+               (begin
+                 (mutate :restore snap-id)
+                 (list 'rejected "typecheck-failed")))
+              ; Issue #4266: applied ONLY on the structured ok status (#t).
+              ; Anything else (diagnostics report / #f) restores the snapshot
+              ; and is reported as rejected — the report rides the reason slot
+              ; so Agents get the details without parsing English to branch.
+              ((equal? tc #t)
+               (list 'applied snap-id))
+              (else
+               (begin
+                 (mutate :restore snap-id)
+                 (list 'rejected
+                       ; Issue #5250: (typecheck-status) yields a structured
+                       ; diagnostic list on failure; keep string or list detail.
+                       (if (or (string? tc) (list? tc))
+                           tc
+                           "typecheck-status-not-ok")))))))
+         ; ("parse-error" msg) / ("type-error" report) from the dry-run gate.
+         ((and (pair? gate) (string? (car gate)))
+          (let ((tag (car gate))
+                (detail (if (and (pair? (cdr gate)) (string? (car (cdr gate))))
+                            (car (cdr gate))
+                            "")))
+            (cond
+              ((string=? tag "type-error")
+               ; #4266 reason shape: carries a diagnostics block.
+               (list 'rejected (string-append "type-error\ndiagnostics:\n" detail)))
+              ((string=? tag "parse-error")
+               (list 'rejected (string-append "parse-error: " detail)))
+              (else (list 'rejected (string-append tag ": " detail))))))
+         (else
+          (list 'rejected (safe-refactor:mutate-reason gate))))))))
