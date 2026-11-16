@@ -20769,6 +20769,24 @@ private:
     // program is gone is swept on the next eval. Append-only at struct end.
     mutable std::shared_mutex eval_program_mu_;
     std::unordered_map<const aura::ast::StringPool*, std::weak_ptr<EvalProgram>> eval_programs_;
+    // Issue #5314: a child rebind of a required module's define writes the
+    // shared top_ cell. That name is not on the parent flat, so switch
+    // re-eval never puts the old closure back and the trial reports the
+    // live workspace unchanged. The payload from before the first overwrite
+    // is restored when the active flat does not define the name. The
+    // closure object is kept as well: the child publication retires or
+    // must-deopts that generation (#4779), and writing the bare id back
+    // is then an invalid closure.
+    struct ImportCellShadow5314 {
+        std::uint64_t cell = 0;
+        types::EvalValue original{};
+        bool have_closure = false;
+        ClosureId closure_id = 0;
+        Closure closure_copy{};
+    };
+    std::unordered_map<std::string, ImportCellShadow5314> import_cell_shadows_5314_;
+    void snapshot_shadowed_import_cell_5314(const std::string& name, std::uint64_t cell);
+    void restore_shadowed_import_cells_5314() noexcept;
 };
 
 

@@ -900,6 +900,12 @@ void RegSplitParts::register_workspace_lifecycle_primitives(
         if (ev.workspace_flat_ != ev.defines_bound_flat_) {
             ev.rebind_workspace_defines_on_switch();
             ev.defines_bound_flat_ = ev.workspace_flat_;
+        } else {
+            // Issue #5314: the child added a module define and eval-current
+            // did not move defines_bound_flat_. The parent pointer matches,
+            // so the re-eval above is skipped; the shared import cell still
+            // has to be put back.
+            ev.restore_shadowed_import_cells_5314();
         }
         return make_bool(true);
     }};
