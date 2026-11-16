@@ -94,6 +94,10 @@
     (list "contract"
       (list "Executable invariants + protection sets: declare what must stay true; agent:round / safe-refactor / refactor:* / hot-strategy / rule:apply refuse a violating commit and leave a queryable report; evo-meta's protected reads the same set"
             "(require \"std/contract\" all:)(contract:activate! (contract:protect (contract:set) \"gate\"))"))
+    ; Issue #5255: the one acceptance gate for daily paths + the evo stack
+    (list "gate"
+      (list "Unified acceptance gate: one feedback record + potential/objective + comparison + #5253 invariants -> KEEP/ROLLBACK with gate name, potential before/after and invariant evidence; agent:round / safe-refactor / hot-strategy:swap! / rule:apply consult it and evo:commit! / evo:trial accept the same object; no gate = gate=\"none\""
+            "(require \"std/gate\" all:)(gate:keep? (gate:evaluate (gate:new (hash \"name\" \"g\" \"potential\" (lambda (fb) (list 0.0 1.0)) \"compare\" \"min\")) (hash)))"))
     ; Issue #5271: negative selection over already-accepted behaviour
     (list "negative"
       (list "Negative-selection anomaly detection: self = already-KEEP behaviour vectors, V-detectors fire only outside it; a hit is a queryable anomaly record and one #5253 detector-set source (warn by default, reject refuses through the same gate, no evidence reports skipped)"

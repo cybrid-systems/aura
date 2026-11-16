@@ -19,6 +19,8 @@
 ; name(string) -> rule record, plus the insertion order for listing.
 ; #5253: every fix consults the active invariant / protection set.
 (require "std/contract" all:)
+; #5255: the one acceptance gate.
+(require "std/gate" all:)
 
 (define *rule-index* (make-hash))
 (define *rule-order* '())
@@ -293,6 +295,28 @@
                     (loop (cdr ns) (if (contract:report-ok? x) #f x)))))))))
 
 ; ── 内部: 应用单条规则到 workspace（带 scope 过滤）─────────
+; #5255: a rule rewrite still has to pass the unified gate. A ROLLBACK
+; restores the rule-apply snapshot and answers 0, the same int callers
+; already handle for a contract refusal.
+(define (rule-gate fixed snap)
+  (let* ((fb (gate:feedback
+               (hash "transform" (hash "operator" "rule:apply"
+                                       "target" ""
+                                       "applied" #t)
+                     "exec" (hash "result" "ok" "error-kind" "none"
+                                  "error-code" "" "message" "")
+                     "contract" "none"
+                     "metrics" (hash "keys" (quote ()) "before" (hash)
+                                     "after" (hash "rule/fixed" fixed)
+                                     "delta" (hash "rule/fixed" fixed))
+                     "count" fixed)))
+         (verdict (gate:evaluate (gate:installed) fb)))
+    (if (gate:keep? verdict)
+        fixed
+        (begin
+          (if (>= snap 0) (try (mutate :restore snap) (catch (e) #f)))
+          0))))
+
 (define (apply-rule r)
   (if (not (rule-enabled? r)) 0
     (let ((pattern (rule-pattern r))
@@ -332,11 +356,11 @@
                 (if (and (contract:active) (> fixed 0))
                     (let ((post (contract:check (contract:active))))
                       (if (contract:report-ok? post)
-                          fixed
+                          (rule-gate fixed snap)
                           (begin
                             (if (>= snap 0) (try (mutate :restore snap) (catch (e) #f)))
                             0)))
-                    fixed))))))))
+                    (if (> fixed 0) (rule-gate fixed snap) fixed)))))))))
 
 ; ── rule:apply — 应用单条规则 ──────────────────────────────
 (define (rule:apply name)

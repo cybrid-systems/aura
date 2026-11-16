@@ -11537,11 +11537,25 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     extras += ",\"mutations\":" + std::to_string(mutation_count);
                 version = 2;
             }
+            // Issue #5255: a bare mutate:* never consults an acceptance gate.
+            // Say so on the row, and do not let "the primitive returned
+            // something other than an error" read as evidenced acceptance.
+            // A gate-driven row is written by std/gate's callers through
+            // evo:record! and carries the gate name in this same slot.
+            std::string evidence_json;
+            if (decision != "FORK") {
+                if (!extras.empty())
+                    extras += ",";
+                extras += "\"gate\":\"none\"";
+                version = 2;
+                if (decision == "KEEP")
+                    evidence_json = "{\"proven\":false,\"why\":\"ungated\",\"gate\":\"none\"}";
+            }
             aura::evo::log_append({.kind = op,
                                    .target = target,
                                    .decision = decision,
                                    .reason = reason,
-                                   .evidence_json = {},
+                                   .evidence_json = evidence_json,
                                    .old_src = old_src,
                                    .new_src = new_src,
                                    .parent = {},

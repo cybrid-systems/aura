@@ -35,6 +35,8 @@
 (require "std/mutate" all:)
 ; #5253: the active invariant / protection set.
 (require "std/contract" all:)
+; #5255: the one acceptance gate.
+(require "std/gate" all:)
 
 
 ; ── Process-local strategy registry. One record per name (#5288). ──
@@ -183,11 +185,27 @@
                (try (mutate :restore pre) (catch (e) #f))
                (list #f *hs-version* pre post))
               (ok
-               (begin
-                 (set! *hs-name* name)
-                 (set! *hs-version* (+ *hs-version* 1))
-                 (hash-set! *hs-rules* name (list body pre prior))
-                 (list #t *hs-version* pre)))
+               ; #5255: eval-current not raising is not a KEEP. The gate
+               ; (installed) runs on the rebound state; a ROLLBACK restores
+               ; the prior expression and never promotes last-good.
+               (let* ((fb (gate:feedback
+                            (hash "transform" (hash "operator" "hot-strategy:swap!"
+                                                    "target" name
+                                                    "applied" #t)
+                                  "exec" (hash "result" "ok" "error-kind" "none"
+                                               "error-code" "" "message" "")
+                                  "contract" "none"
+                                  "count" 1)))
+                      (verdict (gate:evaluate (gate:installed) fb)))
+                 (if (gate:keep? verdict)
+                     (begin
+                       (set! *hs-name* name)
+                       (set! *hs-version* (+ *hs-version* 1))
+                       (hash-set! *hs-rules* name (list body pre prior))
+                       (list #t *hs-version* pre))
+                     (begin
+                       (try (mutate :restore pre) (catch (e) #f))
+                       (list #f *hs-version* pre verdict)))))
               (else (list #f *hs-version* pre))))))))
 
 ; One name, and the checkpoint is a whole-workspace snapshot: restore it.

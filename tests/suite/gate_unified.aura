@@ -1,0 +1,267 @@
+;
+; Issue #5255 — the unified acceptance gate.
+;
+; Covers: one gate over one feedback record (potential + comparison +
+; #5253 invariants); the same feedback decided the same way on a daily
+; path and through evo:commit!; a worse transform ROLLBACK with the gate
+; name and evidence; no gate = gate="none" and unchanged behaviour; an
+; infeasible evo:trial candidate is not ok; and the KEEP record's gate /
+; weight / invariant slots in the #5251 trace.
+(require "std/test" all:)
+(require "std/gate" all:)
+(require "std/contract" all:)
+(require "std/evo-core" all:)
+(require "std/evo" all:)
+(require "std/agent" all:)
+(require "std/hot-strategy" all:)
+
+(test-file "gate_unified.aura")
+
+; ── helpers ──────────────────────────────────────────────────────
+(define (gate-test-feedback pnl applied)
+  (gate:feedback
+    (hash "transform" (hash "operator" "test" "target" "f"
+                            "applied" applied)
+          "exec" (hash "result" "ok" "error-kind" "none"
+                       "error-code" "" "message" "")
+          "metrics" (hash "keys" (list "pnl")
+                          "before" (hash "pnl" 0.0)
+                          "after" (hash "pnl" pnl)
+                          "delta" (hash "pnl" pnl)))))
+
+(define (gate-test-potential fb)
+  (list 0.0 (gate:metric fb "pnl")))
+
+(define (gate-test-clean!)
+  (gate:uninstall!)
+  (contract:deactivate!)
+  (contract:reset-failures!))
+
+; ═══════════════════════════════════════════════════════════════════
+; 1. One gate, one record: potential and comparison decide
+; ═══════════════════════════════════════════════════════════════════
+(test-case "gate keeps an improving transform and rolls back a worse one"
+           (hash "issue" 5255 "tags" (list "gate" "evo"))
+  (gate-test-clean!)
+  (define g (gate:new (hash "name" "pnl-non-worse"
+                            "potential" gate-test-potential
+                            "compare" "min")))
+  (define keep (gate:evaluate g (gate-test-feedback -5.0 #t)))
+  (check (gate:keep? keep))
+  (check= "pnl-non-worse" (hash-ref keep "gate"))
+  (check= "improved" (hash-ref keep "reason"))
+  (check= -5.0 (hash-ref keep "delta"))
+  (check= -5.0 (hash-ref keep "potential-after"))
+  (define worse (gate:evaluate g (gate-test-feedback 5.0 #t)))
+  (check (not (gate:keep? worse)))
+  (check= "ROLLBACK" (gate:decision worse))
+  (check= "pnl-non-worse" (hash-ref worse "gate"))
+  (check= "worse" (hash-ref worse "reason"))
+  (check (equal? #t (hash-ref (hash-ref worse "evidence") "proven")))
+  (check (> (hash-ref worse "delta") 0))
+  ; no baseline and no baseline slot: unproven, so ROLLBACK
+  (define gb (gate:new (hash "name" "no-baseline"
+                             "potential" (lambda (fb) 3.0)
+                             "compare" "min")))
+  (check= "no-baseline"
+          (hash-ref (gate:evaluate gb (gate-test-feedback 0.0 #t)) "reason")))
+
+; ═══════════════════════════════════════════════════════════════════
+; 2. A #5253 invariant set is part of the same decision
+; ═══════════════════════════════════════════════════════════════════
+(test-case "a violated invariant is a ROLLBACK with invariant evidence"
+           (hash "issue" 5255 "tags" (list "gate" "contract"))
+  (gate-test-clean!)
+  (set-code "(define (f x) (* x 2))")
+  (eval-current)
+  (define s (contract:invariant (contract:set) "never"
+                                (lambda (v) #f) "error" (quote all)))
+  (define g (gate:new (hash "name" "inv-only" "invariants" s
+                            "potential" gate-test-potential
+                            "compare" "min")))
+  (define v (gate:evaluate g (gate-test-feedback -5.0 #t)))
+  (check (not (gate:keep? v)))
+  (check= "ROLLBACK" (gate:decision v))
+  (check (string-prefix? (gate:reason v) "invariant:"))
+  (check (hash? (hash-ref v "invariants" #f)))
+  (check (not (contract:report-ok? (hash-ref v "invariants"))))
+  ; a record whose own contract slot was refused is a ROLLBACK too
+  (define refused (contract:refuse s "test" "declared"))
+  (define fb (gate:feedback
+               (hash "transform" (hash "applied" #t)
+                     "exec" (hash "result" "ok" "error-kind" "none"
+                                  "error-code" "" "message" "")
+                     "contract" refused)))
+  (define v2 (gate:evaluate (gate:new (hash "name" "cref" "compare" "any")) fb))
+  (check (not (gate:keep? v2)))
+  (check (string-prefix? (gate:reason v2) "contract:")))
+
+; ═══════════════════════════════════════════════════════════════════
+; 3. No gate: unchanged decision, recorded as gate=none and unproven
+; ═══════════════════════════════════════════════════════════════════
+(test-case "no gate is gate=none and explicitly unproven"
+           (hash "issue" 5255 "tags" (list "gate"))
+  (gate-test-clean!)
+  (define v (gate:evaluate #f (gate-test-feedback 5.0 #t)))
+  (check (gate:keep? v))
+  (check= "none" (hash-ref v "gate"))
+  (check= "ungated" (hash-ref v "reason"))
+  (check (equal? #f (hash-ref (hash-ref v "evidence") "proven")))
+  ; agent:round with no gate still commits, and the trace row says none
+  (set-code "(define (f x) (* x 2))")
+  (eval-current)
+  (define r (agent:round #f (quote ()) "f" "(lambda (x) (* x 3))" "no-gate" #f))
+  (check (eq? (agent-alist-ref ":ok" r #f) #t))
+  (check (eq? (agent-alist-ref ":decision" r #f) (quote commit)))
+  (define rows (evo:trace (hash "target" "agent:closed-loop")))
+  (define newest (car (reverse rows)))
+  (check= "KEEP" (hash-ref newest "decision" ""))
+  (check= "none" (hash-ref newest "gate" ""))
+  (check (equal? #f (hash-ref (hash-ref newest "evidence" (hash)) "proven" #t))))
+
+; ═══════════════════════════════════════════════════════════════════
+; 4. Same feedback, same decision: daily path and evo:commit!
+; ═══════════════════════════════════════════════════════════════════
+(test-case "one gate and one feedback decide daily path and evo:commit! alike"
+           (hash "issue" 5255 "tags" (list "gate" "evo"))
+  (gate-test-clean!)
+  (define g (gate:new (hash "name" "parity"
+                            "potential" gate-test-potential
+                            "compare" "min")))
+  (gate:install! g)
+  ; the daily path: agent:round's verify step through the installed gate
+  (set-code "(define (f x) (* x 2))")
+  (eval-current)
+  (define good (gate-test-feedback -5.0 #t))
+  (define v-daily (gate:evaluate (gate:installed) good))
+  ; the evo path: the same record is the evaluation hash, the same gate the
+  ; accept callback. The candidate is feasible and applied.
+  (define cand (evo:candidate (list 1.0) (hash "id" "c1" "target" "f")))
+  (define s (evo:search (hash "algo" "es" "seed" 3 "budget" 1 "pop" 1
+                              "accept" g
+                              "apply" (lambda (st c) #t))))
+  (define committed (evo:commit! s cand good))
+  (check (eq? committed #t))
+  (check (gate:keep? v-daily))
+  ; now a worse record: both refuse
+  (define bad (gate-test-feedback 5.0 #t))
+  (define v-daily2 (gate:evaluate (gate:installed) bad))
+  (check (not (gate:keep? v-daily2)))
+  (define cand2 (evo:candidate (list 2.0) (hash "id" "c2" "target" "f")))
+  (define s2 (evo:search (hash "algo" "es" "seed" 4 "budget" 1 "pop" 1
+                               "accept" g
+                               "apply" (lambda (st c) #t))))
+  (define committed2 (evo:commit! s2 cand2 bad))
+  (check (equal? #f committed2))
+  ; both records carry the same gate name
+  (check= "parity" (hash-ref v-daily2 "gate"))
+  (define rows (evo:trace (hash "target" "c2")))
+  (check (pair? rows))
+  (check= "ROLLBACK" (hash-ref (car (reverse rows)) "decision" ""))
+  (gate:uninstall!))
+
+; ═══════════════════════════════════════════════════════════════════
+; 5. evo:trial: an infeasible candidate is not a successful trial
+; ═══════════════════════════════════════════════════════════════════
+(test-case "an infeasible trial is not ok and trial-ok? is false"
+           (hash "issue" 5255 "tags" (list "evo" "gate"))
+  (gate-test-clean!)
+  (define cand (evo:candidate (list 5.0) (hash "id" "lots-5" "target" "lots")))
+  (define r (evo:trial cand (hash "apply" (lambda (ctx c) #t)
+                                  "evaluate" (lambda (c)
+                                               (hash "objectives" (hash "pnl" 67.5)
+                                                     "constraints" (hash "max-lots" 1.0)
+                                                     "behavior" (hash)))
+                                  "timeout-ms" 5000)))
+  (check= "infeasible" (hash-ref r "status" ""))
+  (check (equal? #f (hash-ref r "ok" #t)))
+  (check (not (evo:trial-ok? r)))
+  (check (equal? #t (hash-ref r "infeasible" #f)))
+  (check= 1.0 (hash-ref r "violations" 0))
+  (check (string-prefix? (hash-ref r "error" "") "infeasible: max-lots"))
+  (define s (evo:search (hash "algo" "es" "seed" 1 "budget" 1 "pop" 1
+                              "apply" (lambda (st c) #t))))
+  (check (equal? #f (evo:commit! s cand r)))
+  ; the audit row is a ROLLBACK, never TRIAL
+  (define rows (evo:trace (hash "target" "lots-5")))
+  (check (pair? rows))
+  (check= "ROLLBACK" (hash-ref (car rows) "decision" "")))
+
+; ═══════════════════════════════════════════════════════════════════
+; 5b. evo:trial applies the same accept gate as commit
+; ═══════════════════════════════════════════════════════════════════
+(test-case "a feasible trial the gate rejects is not ok"
+           (hash "issue" 5255 "tags" (list "evo" "gate"))
+  (gate-test-clean!)
+  (define g (gate:new (hash "name" "trial-gate"
+                            "potential" (lambda (fb) (list 0.0 1.0))
+                            "compare" "min")))
+  (gate:install! g)
+  (define cand (evo:candidate (list 1.0) (hash "id" "t1" "target" "lots")))
+  (define r (evo:trial cand (hash "apply" (lambda (ctx c) #t)
+                                  "evaluate" (lambda (c)
+                                               (hash "objectives" (hash "pnl" 1.0)
+                                                     "constraints" (hash "ok" 0.0)
+                                                     "behavior" (hash)))
+                                  "timeout-ms" 5000)))
+  (check= "rejected" (hash-ref r "status" ""))
+  (check (not (evo:trial-ok? r)))
+  (check= "trial-gate" (hash-ref r "gate" ""))
+  (check (string-prefix? (hash-ref r "error" "") "gate:trial-gate:"))
+  (gate:uninstall!))
+
+; ═══════════════════════════════════════════════════════════════════
+; 5c. hot-strategy:swap! rolls back on a gate refusal
+; ═══════════════════════════════════════════════════════════════════
+(test-case "hot-strategy:swap! restores the prior body on a gate refusal"
+           (hash "issue" 5255 "tags" (list "gate" "hot-strategy"))
+  (gate-test-clean!)
+  (set-code "(define (h x) (* x 2))")
+  (eval-current)
+  (define g (gate:new (hash "name" "hs-gate"
+                            "potential" (lambda (fb) (list 0.0 1.0))
+                            "compare" "min")))
+  (gate:install! g)
+  (define before (current-source))
+  (define r (hot-strategy:swap! "h" "(lambda (x) (* x 7))" "gate-refused"))
+  (check (equal? #f (car r)))
+  (check= before (current-source))
+  (gate:uninstall!))
+
+; ═══════════════════════════════════════════════════════════════════
+; 6. A KEEP record carries gate / weight / invariant evidence
+; ═══════════════════════════════════════════════════════════════════
+(test-case "a KEEP record names the gate, its potential and invariants"
+           (hash "issue" 5255 "tags" (list "gate" "evo"))
+  (gate-test-clean!)
+  (define g (gate:new (hash "name" "trace-gate"
+                            "potential" (lambda (fb) (list 0.5 0.0))
+                            "compare" "min")))
+  (gate:install! g)
+  (set-code "(define (f x) (* x 2))")
+  (eval-current)
+  (define r (agent:round #f (quote ()) "f" "(lambda (x) (* x 4))" "gate-trace" #f))
+  (check (eq? (agent-alist-ref ":ok" r #f) #t))
+  (define rows (evo:trace (hash "target" "agent:closed-loop")))
+  (define newest (car (reverse rows)))
+  (check= "KEEP" (hash-ref newest "decision" ""))
+  (check= "trace-gate" (hash-ref newest "gate" ""))
+  (check (= 0.0 (hash-ref newest "weight" #f)))
+  (define ev (hash-ref newest "evidence" (hash)))
+  (check (= 0.0 (hash-ref ev "potential-after" #f)))
+  (check= "potential-min" (hash-ref ev "why" ""))
+  (check (equal? #t (hash-ref ev "proven" #f)))
+  ; a gate that refuses rolls the round back and leaves the source alone
+  (define bad (gate:new (hash "name" "trace-gate-bad"
+                              "potential" (lambda (fb) (list 0.0 1.0))
+                              "compare" "min")))
+  (gate:install! bad)
+  (define before (current-source))
+  (define r2 (agent:round #f (quote ()) "f" "(lambda (x) (* x 9))" "gate-bad" #f))
+  (check (equal? #f (agent-alist-ref ":ok" r2 #f)))
+  (check (eq? (agent-alist-ref ":decision" r2 #f) (quote rollback)))
+  (check= before (current-source))
+  (gate:uninstall!))
+
+(test-finish)
+
