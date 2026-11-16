@@ -20120,6 +20120,13 @@ public:
                               bool fine_rollback = false) noexcept;
 
         ~MutationBoundaryGuard();
+        // Issue #5243: extracted outermost pre-persist gates (linear/drain,
+        // post-mutate typecheck, occurrence SDO, proof-before-persist).
+        // Returns linear_pre_exit_enforced for the later exit path.
+        bool dtor_outermost_pre_persist_gates(bool& success, bool linear_ops_present_local,
+                                              std::uint64_t nodes_changed_local);
+        // Issue #5243: extracted outermost Occurrence persist arm.
+        void persist_occurrence_on_success(bool& success);
 
         MutationBoundaryGuard(const MutationBoundaryGuard&) = delete;
         MutationBoundaryGuard& operator=(const MutationBoundaryGuard&) = delete;

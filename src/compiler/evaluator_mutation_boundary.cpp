@@ -4876,6 +4876,335 @@ extern "C" void aura_evaluator_force_unlock_outermost_holder(std::uint64_t fiber
 }
 
 // ── destructor ───────────────────────────────────────────────────────────
+// Issue #5243: extracted outermost pre-persist gates from the Guard
+// destructor (linear/drain, post-mutate typecheck, occurrence SDO,
+// proof-before-persist). Bodies moved verbatim; success is passed by
+// reference because a deny flips it for the existing abort SSOT.
+// Issue #3614: linear deny + pending_full_solve drain gate BEFORE the
+// outermost persist helper freezes authority.
+bool Evaluator::MutationBoundaryGuard::dtor_outermost_pre_persist_gates(
+    bool& success, bool linear_ops_present_local, std::uint64_t nodes_changed_local) {
+    const bool outermost = is_outermost_;
+    bool linear_pre_exit_enforced = false;
+    if (outermost && success &&
+        (typed_audit::production_defaults_active() ||
+         typed_audit::get_strategy() == typed_audit::AuditStrategy::Full)) {
+        const auto lin = ev_->enforce_linear_boundary_consistency(
+            Evaluator::kLinearGcRootAuditTypedMutate, /*mark_all_linear=*/false);
+        linear_pre_exit_enforced = true;
+        // Pre-persist drain (#3190 face hoisted ahead of the persist
+        // write): non-SOLVED pending_full_solve must deny BEFORE
+        // maybe_persist_occurrence_snapshot freezes the snapshot. The
+        // in-helper drain stays as belt-and-suspenders for residuals
+        // that latch after this gate.
+        bool drain_pre_persist_ok = true;
+        if (auto* pre_gate_tc =
+                static_cast<aura::compiler::TypeChecker*>(ev_->commit_type_checker_handle())) {
+            std::vector<aura::compiler::Constraint> pre_gate_unresolved;
+            drain_pre_persist_ok =
+                pre_gate_tc->constraint_system().drain_pending_full_solve_before_commit(
+                    &pre_gate_unresolved) == aura::compiler::SolveResult::SOLVED;
+        }
+        const bool density_gate =
+            aura::compiler::castop_density::consume_density_gate_reject_pending();
+        if (!lin.all_safe || ev_->linear_synth_hard_fail_pending() || !drain_pre_persist_ok ||
+            density_gate) {
+            // Issue #4403: first match. Un-stamp stays before the exit stamp.
+            const char* gate_op = "density-streak";
+            if (!lin.all_safe || ev_->linear_synth_hard_fail_pending())
+                gate_op = "linear-boundary";
+            else if (!drain_pre_persist_ok)
+                gate_op = "pending-full-solve";
+            typed_audit::note_boundary_deny_op(gate_op);
+            typed_audit::clear_type_linear_commit_proof_on_abort();
+            typed_audit::publish_type_linear_proof_outcome(
+                typed_audit::kTypeLinearProofOutcomeReject);
+            aura_clear_occurrence_persist_buffer(ev_);
+            ev_->clear_type_export_authority();
+            ev_->clear_expected_occurrence_snapshot_fp();
+            success = false;
+            success_flag_store(flag_, false);
+        }
+    }
+    // Issue #3658: Production/Full outermost success structural mutate
+    // must complete this-boundary type dirty txn + mirror BEFORE persist
+    // and before exit_mutation_boundary IR cascade / invalidate_function
+    // drain. Complementary to #3655 (persist SDO vs type∪IR cone).
+    // rebind/set-body already ran infer_flat_partial_with_dirty_txn
+    // (type_dirty_txn_this_boundary_). replace-subtree / lockless /
+    // move-node do not. Phase-5 densify is not a type txn. Vacuous
+    // (no dirty/log) skips extra mirror. Soft/Off: no extra typecheck.
+    // lockless helpers must not infer; this outermost dtor runs once.
+    if (outermost && success &&
+        (typed_audit::production_defaults_active() ||
+         typed_audit::get_strategy() == typed_audit::AuditStrategy::Full) &&
+        !ev_->type_dirty_txn_this_boundary()) {
+        bool mutated = ev_->txn_dirty();
+        if (ev_->workspace_flat_) {
+            mutated = mutated ||
+                      ev_->workspace_flat_->mark_dirty_upward_call_count() > dirty_upward_at_enter_;
+            auto& stk = ev_->active_mutation_stack();
+            if (!stk.empty()) {
+                const auto enter_log = stk.back().mutation_log_size;
+                mutated = mutated || ev_->workspace_flat_->mutation_log_size() > enter_log;
+            }
+        }
+        if (mutated) {
+            if (!ev_->run_post_mutate_typecheck_no_lock() || !ev_->last_type_solve_solved()) {
+                typed_audit::note_boundary_deny_op("post-mutate-typecheck");
+                typed_audit::clear_type_linear_commit_proof_on_abort();
+                typed_audit::publish_type_linear_proof_outcome(
+                    typed_audit::kTypeLinearProofOutcomeReject);
+                aura_clear_occurrence_persist_buffer(ev_);
+                ev_->clear_type_export_authority();
+                ev_->clear_expected_occurrence_snapshot_fp();
+                success = false;
+                success_flag_store(flag_, false);
+            }
+        }
+    }
+    // Issue #3655: Production/Full persist must have this-boundary SDO
+    // (SOLVED infer or composite stage). rebind/set-body already ran
+    // run_post_mutate_typecheck + stage_expected. replace-subtree /
+    // tweak-literal / lockless eval_flat_apply_* do not — without this
+    // gate, expected_fp==0 && live==0 freezes an empty snapshot as
+    // Occurrence authority. Vacuous (no dirty/log delta) skips extra
+    // SDO. Soft/Off: no extra typecheck. lockless helpers must not
+    // infer (deadlock); this outermost dtor runs once under the lock.
+    if (outermost && success &&
+        (typed_audit::production_defaults_active() ||
+         typed_audit::get_strategy() == typed_audit::AuditStrategy::Full) &&
+        !ev_->occurrence_fp_staged()) {
+        bool mutated = ev_->txn_dirty();
+        if (ev_->workspace_flat_) {
+            mutated = mutated ||
+                      ev_->workspace_flat_->mark_dirty_upward_call_count() > dirty_upward_at_enter_;
+            auto& stk = ev_->active_mutation_stack();
+            if (!stk.empty()) {
+                const auto enter_log = stk.back().mutation_log_size;
+                mutated = mutated || ev_->workspace_flat_->mutation_log_size() > enter_log;
+            }
+        }
+        if (mutated) {
+            if (!ev_->run_post_mutate_typecheck_no_lock() || !ev_->last_type_solve_solved()) {
+                typed_audit::note_boundary_deny_op("occurrence-sdo");
+                typed_audit::clear_type_linear_commit_proof_on_abort();
+                typed_audit::publish_type_linear_proof_outcome(
+                    typed_audit::kTypeLinearProofOutcomeReject);
+                aura_clear_occurrence_persist_buffer(ev_);
+                ev_->clear_type_export_authority();
+                ev_->clear_expected_occurrence_snapshot_fp();
+                success = false;
+                success_flag_store(flag_, false);
+            }
+        }
+    }
+    // Issue #3653: Production/Full outermost — this-boundary type +
+    // invariant proof BEFORE persist freeze (#3614/#3517 residual —
+    // order, not a missing restore). #3614 already hoisted linear +
+    // drain; #3517 can flip Guard success after Full deny, but the
+    // persist helper had already published a Stamped green face for
+    // one beat (steal / query:type / IR). Check-only: composite_txn_commit
+    // / boundary_solve_proof_gate / finish_mutate_hard_gate /
+    // run_typed_mutation_invariant_audit return false without restore.
+    // Vacuous (no dirty/log) does not force finish_mutate_hard_gate's
+    // no-CS resync deny — that would abort happy Guards exit currently
+    // accepts. Vacuous still runs the invariant suite so ADT / type
+    // inject deny before freeze. Deny reuses the #3472 un-stamp set
+    // and flips success into the existing abort_restore SSOT. Soft/Off:
+    // this block does not run (persist helper stays zero-cost; no extra
+    // audit walk). Happy path may re-audit in exit_mutation_boundary.
+    if (outermost && success &&
+        (typed_audit::production_defaults_active() ||
+         typed_audit::get_strategy() == typed_audit::AuditStrategy::Full)) {
+        bool mutated = ev_->txn_dirty();
+        if (ev_->workspace_flat_) {
+            mutated = mutated ||
+                      ev_->workspace_flat_->mark_dirty_upward_call_count() > dirty_upward_at_enter_;
+            auto& stk = ev_->active_mutation_stack();
+            if (!stk.empty()) {
+                const auto enter_log = stk.back().mutation_log_size;
+                mutated = mutated || ev_->workspace_flat_->mutation_log_size() > enter_log;
+            }
+        }
+        bool audit_ok = true;
+        bool proof_trunc = false;
+        bool proof_force = false;
+        const bool batch_active =
+            ev_->workspace_flat_ && ev_->workspace_flat_->atomic_batch_active();
+        typed_audit::InvariantAuditResult inv{};
+        // Issue #4402: epoch pair is the Mutation epoch. mid_audit stays
+        // the session audit mid (mutation_id only).
+        const auto mut_epoch = ::aura::core::current_mutation_epoch();
+        // Issue #3778: join SSOT (cp.audit_mid / session / join_audit_and_se_mid)
+        // — never stamp defuse_version_ as the Typed/SE/Occurrence mid.
+        std::uint64_t mid_audit = 0;
+        {
+            auto& stk = ev_->active_mutation_stack();
+            if (!stk.empty() && stk.back().audit_mid != 0)
+                mid_audit = stk.back().audit_mid;
+            else if (session_mid_at_enter_ != 0)
+                mid_audit = session_mid_at_enter_;
+            else
+                mid_audit = typed_audit::join_audit_and_se_mid(0);
+        }
+        // Issue #4685: keep the audit verdict, not just adt_ok. A vacuous
+        // outermost (no dirty/log, no atomic batch) still freezes the
+        // Occurrence snapshot + may grant query:type; a false provenance
+        // (reflect) or type invariant must deny before that persist. The
+        // empty workspace stays successful: post_mutation_reflect_validate
+        // reports false for !ws/size==0, which is vacuous, not a failure.
+        // Linear !all_safe is already denied by the #3614 gate above
+        // (enforce_linear_boundary_consistency) — no extra sweep here.
+        const bool inv_ok = ev_->run_typed_mutation_invariant_audit(
+            mid_audit, "outermost-pre-persist", 0, mut_epoch, mut_epoch,
+            /*composite_mode=*/false, &inv);
+        const bool live_ws = ev_->workspace_flat_ && ev_->workspace_flat_->size() > 0;
+        if (!inv.adt_ok || (!mutated && !batch_active && live_ws && !inv_ok))
+            audit_ok = false;
+        if (batch_active) {
+            typed_audit::CompositeTxnCommitResult ccr{};
+            audit_ok = ev_->composite_txn_commit(mid_audit, "outermost-pre-persist", 0, mut_epoch,
+                                                 mut_epoch,
+                                                 /*nested=*/false, /*batch_active=*/true, &ccr) &&
+                       audit_ok;
+        } else if (mutated) {
+            const bool proof_ok = ev_->boundary_solve_proof_gate(
+                /*hard_gate=*/true, linear_ops_present_local, nodes_changed_local, &proof_trunc,
+                &proof_force);
+            audit_ok = audit_ok && proof_ok && !proof_force;
+            if (audit_ok) {
+                audit_ok = ev_->finish_mutate_hard_gate(
+                    nodes_changed_local, linear_ops_present_local, "outermost-pre-persist");
+            }
+        }
+        if (!audit_ok) {
+            typed_audit::clear_type_linear_commit_proof_on_abort();
+            typed_audit::publish_type_linear_proof_outcome(
+                typed_audit::kTypeLinearProofOutcomeReject);
+            aura_clear_occurrence_persist_buffer(ev_);
+            ev_->clear_type_export_authority();
+            ev_->clear_expected_occurrence_snapshot_fp();
+            success = false;
+            success_flag_store(flag_, false);
+        }
+    }
+    return linear_pre_exit_enforced;
+}
+
+
+// Issue #5243: extracted outermost Occurrence persist arm from the
+// Guard destructor. Body moved verbatim; success is passed by
+// reference because a persist reject flips it for the abort SSOT.
+void Evaluator::MutationBoundaryGuard::persist_occurrence_on_success(bool& success) {
+    const bool outermost = is_outermost_;
+    if (outermost && success) {
+        // Issue #3778: Occurrence persist mid == Typed/SE/grant/WAL join mid.
+        // Production/Full mid==0 refuse — never invent defuse_version_ as a
+        // phantom join key. Soft/Off: prefer join mid; else defuse observe.
+        std::uint64_t mid = 0;
+        {
+            auto& stk = ev_->active_mutation_stack();
+            if (!stk.empty() && stk.back().audit_mid != 0)
+                mid = stk.back().audit_mid;
+            else if (session_mid_at_enter_ != 0)
+                mid = session_mid_at_enter_;
+            else
+                mid = typed_audit::join_audit_and_se_mid(0);
+        }
+        const bool hard_3778 = typed_audit::production_defaults_active() ||
+                               typed_audit::get_strategy() == typed_audit::AuditStrategy::Full;
+        if (hard_3778 && mid == 0) {
+            // Issue #3778 / #3472: production mid==0 refuse applies when an
+            // Occurrence identity is actually required (mutated / staged).
+            // Vacuous empty MutationBoundaryGuard must not invent defuse
+            // OR abort — skip persist, keep success (happy AC3).
+            bool need_occurrence_mid = ev_->txn_dirty() || ev_->occurrence_fp_staged();
+            if (ev_->workspace_flat_) {
+                auto& stk = ev_->active_mutation_stack();
+                const auto enter_log = (!stk.empty()) ? stk.back().mutation_log_size : 0ull;
+                need_occurrence_mid =
+                    need_occurrence_mid || ev_->workspace_flat_->mutation_log_size() > enter_log ||
+                    ev_->workspace_flat_->mark_dirty_upward_call_count() > dirty_upward_at_enter_;
+            }
+            if (need_occurrence_mid) {
+                typed_audit::clear_type_linear_commit_proof_on_abort();
+                typed_audit::publish_type_linear_proof_outcome(
+                    typed_audit::kTypeLinearProofOutcomeReject);
+                aura_clear_occurrence_persist_buffer(ev_);
+                ev_->clear_type_export_authority();
+                ev_->clear_expected_occurrence_snapshot_fp();
+                success = false;
+                success_flag_store(flag_, false);
+            }
+            // else vacuous: no persist, success stays true
+        } else {
+            // Issue #3780: production fail-closed + force_wal — structural
+            // mutation WAL must land BEFORE Occurrence persist. #3734
+            // post-commit overflow alone is not crash-durable (cap 256,
+            // process-local). On miss: overflow still stamps
+            // mutation_wal_append_miss, then flip success into the
+            // existing !success abort_restore SSOT (no Occurrence commit).
+            // Soft / WAL-off: skip (fail-open; late emit in exit path).
+            // #3639 require_effect body deny is unchanged.
+            if (::aura::core::wal_slo::wal_append_fail_closed_active() &&
+                ::aura::core::audit_wal::g_mutation_audit_wal().is_enabled()) {
+                std::uint32_t nodes_changed_wal = 0;
+                std::uint32_t epoch_delta_wal = 0;
+                std::string_view audit_op_wal = "structural";
+                ast::NodeId audit_target_wal = ast::NULL_NODE;
+                if (ev_->workspace_flat_) {
+                    auto& stk = ev_->active_mutation_stack();
+                    const auto enter_log = (!stk.empty()) ? stk.back().mutation_log_size : 0ull;
+                    const auto post_size = ev_->workspace_flat_->all_mutations().size();
+                    if (post_size > enter_log)
+                        nodes_changed_wal = static_cast<std::uint32_t>(post_size - enter_log);
+                    const auto& log = ev_->workspace_flat_->all_mutations();
+                    if (post_size > enter_log && post_size <= log.size()) {
+                        const auto& rec = log[post_size - 1];
+                        audit_op_wal = rec.operator_name;
+                        audit_target_wal = rec.target_node;
+                    }
+                }
+                if (!ev_->emit_mutation_audit(nodes_changed_wal, epoch_delta_wal, audit_op_wal,
+                                              audit_target_wal)) {
+                    typed_audit::clear_type_linear_commit_proof_on_abort();
+                    typed_audit::publish_type_linear_proof_outcome(
+                        typed_audit::kTypeLinearProofOutcomeReject);
+                    aura_clear_occurrence_persist_buffer(ev_);
+                    ev_->clear_type_export_authority();
+                    ev_->clear_expected_occurrence_snapshot_fp();
+                    success = false;
+                    success_flag_store(flag_, false);
+                    g_tls_mutation_audit_wal_precommitted = false;
+                } else {
+                    g_tls_mutation_audit_wal_precommitted = true;
+                }
+            }
+            if (success) {
+                if (!hard_3778 && mid == 0)
+                    mid = ev_->defuse_version_.load(std::memory_order_relaxed);
+                aura_outermost_success_persist_occurrence(ev_, mid);
+                // Issue #3512: staging is one-shot for this outermost persist.
+                ev_->clear_expected_occurrence_snapshot_fp();
+                // Issue #3984: inject after persist helper so #3472 belt can
+                // fire without the #3614 pre-gate seeing the latch (test).
+                if (typed_audit::g_inject_linear_synth_after_persist_for_test.exchange(
+                        0, std::memory_order_acq_rel) != 0)
+                    ev_->note_linear_synth_hard_fail_pending();
+                if (typed_audit::consume_outermost_persist_reject_needs_restore()) {
+                    typed_audit::note_boundary_deny_op("persist-reject");
+                    typed_audit::drop_deferred_outermost_green_proof();
+                    success = false;
+                    success_flag_store(flag_, false);
+                }
+            }
+            // else: #3780 miss already un-stamped; skip Occurrence persist
+        }
+    }
+}
+
+
 Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
     // One pre-cascade audit per boundary exit (cascade marks + BFS drain).
     struct BoundaryPrepBatch : ::aura::core::NoCopy {
@@ -5602,314 +5931,9 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
     // walk beyond the current Soft observe). #3512: staging is one-shot —
     // the deny arm also clears expected_fp so a stale staged fingerprint
     // cannot poison the next outermost persist.
-    bool linear_pre_exit_enforced = false;
-    if (outermost && success &&
-        (typed_audit::production_defaults_active() ||
-         typed_audit::get_strategy() == typed_audit::AuditStrategy::Full)) {
-        const auto lin = ev_->enforce_linear_boundary_consistency(
-            Evaluator::kLinearGcRootAuditTypedMutate, /*mark_all_linear=*/false);
-        linear_pre_exit_enforced = true;
-        // Pre-persist drain (#3190 face hoisted ahead of the persist
-        // write): non-SOLVED pending_full_solve must deny BEFORE
-        // maybe_persist_occurrence_snapshot freezes the snapshot. The
-        // in-helper drain stays as belt-and-suspenders for residuals
-        // that latch after this gate.
-        bool drain_pre_persist_ok = true;
-        if (auto* pre_gate_tc =
-                static_cast<aura::compiler::TypeChecker*>(ev_->commit_type_checker_handle())) {
-            std::vector<aura::compiler::Constraint> pre_gate_unresolved;
-            drain_pre_persist_ok =
-                pre_gate_tc->constraint_system().drain_pending_full_solve_before_commit(
-                    &pre_gate_unresolved) == aura::compiler::SolveResult::SOLVED;
-        }
-        const bool density_gate =
-            aura::compiler::castop_density::consume_density_gate_reject_pending();
-        if (!lin.all_safe || ev_->linear_synth_hard_fail_pending() || !drain_pre_persist_ok ||
-            density_gate) {
-            // Issue #4403: first match. Un-stamp stays before the exit stamp.
-            const char* gate_op = "density-streak";
-            if (!lin.all_safe || ev_->linear_synth_hard_fail_pending())
-                gate_op = "linear-boundary";
-            else if (!drain_pre_persist_ok)
-                gate_op = "pending-full-solve";
-            typed_audit::note_boundary_deny_op(gate_op);
-            typed_audit::clear_type_linear_commit_proof_on_abort();
-            typed_audit::publish_type_linear_proof_outcome(
-                typed_audit::kTypeLinearProofOutcomeReject);
-            aura_clear_occurrence_persist_buffer(ev_);
-            ev_->clear_type_export_authority();
-            ev_->clear_expected_occurrence_snapshot_fp();
-            success = false;
-            success_flag_store(flag_, false);
-        }
-    }
-    // Issue #3658: Production/Full outermost success structural mutate
-    // must complete this-boundary type dirty txn + mirror BEFORE persist
-    // and before exit_mutation_boundary IR cascade / invalidate_function
-    // drain. Complementary to #3655 (persist SDO vs type∪IR cone).
-    // rebind/set-body already ran infer_flat_partial_with_dirty_txn
-    // (type_dirty_txn_this_boundary_). replace-subtree / lockless /
-    // move-node do not. Phase-5 densify is not a type txn. Vacuous
-    // (no dirty/log) skips extra mirror. Soft/Off: no extra typecheck.
-    // lockless helpers must not infer; this outermost dtor runs once.
-    if (outermost && success &&
-        (typed_audit::production_defaults_active() ||
-         typed_audit::get_strategy() == typed_audit::AuditStrategy::Full) &&
-        !ev_->type_dirty_txn_this_boundary()) {
-        bool mutated = ev_->txn_dirty();
-        if (ev_->workspace_flat_) {
-            mutated = mutated ||
-                      ev_->workspace_flat_->mark_dirty_upward_call_count() > dirty_upward_at_enter_;
-            auto& stk = ev_->active_mutation_stack();
-            if (!stk.empty()) {
-                const auto enter_log = stk.back().mutation_log_size;
-                mutated = mutated || ev_->workspace_flat_->mutation_log_size() > enter_log;
-            }
-        }
-        if (mutated) {
-            if (!ev_->run_post_mutate_typecheck_no_lock() || !ev_->last_type_solve_solved()) {
-                typed_audit::note_boundary_deny_op("post-mutate-typecheck");
-                typed_audit::clear_type_linear_commit_proof_on_abort();
-                typed_audit::publish_type_linear_proof_outcome(
-                    typed_audit::kTypeLinearProofOutcomeReject);
-                aura_clear_occurrence_persist_buffer(ev_);
-                ev_->clear_type_export_authority();
-                ev_->clear_expected_occurrence_snapshot_fp();
-                success = false;
-                success_flag_store(flag_, false);
-            }
-        }
-    }
-    // Issue #3655: Production/Full persist must have this-boundary SDO
-    // (SOLVED infer or composite stage). rebind/set-body already ran
-    // run_post_mutate_typecheck + stage_expected. replace-subtree /
-    // tweak-literal / lockless eval_flat_apply_* do not — without this
-    // gate, expected_fp==0 && live==0 freezes an empty snapshot as
-    // Occurrence authority. Vacuous (no dirty/log delta) skips extra
-    // SDO. Soft/Off: no extra typecheck. lockless helpers must not
-    // infer (deadlock); this outermost dtor runs once under the lock.
-    if (outermost && success &&
-        (typed_audit::production_defaults_active() ||
-         typed_audit::get_strategy() == typed_audit::AuditStrategy::Full) &&
-        !ev_->occurrence_fp_staged()) {
-        bool mutated = ev_->txn_dirty();
-        if (ev_->workspace_flat_) {
-            mutated = mutated ||
-                      ev_->workspace_flat_->mark_dirty_upward_call_count() > dirty_upward_at_enter_;
-            auto& stk = ev_->active_mutation_stack();
-            if (!stk.empty()) {
-                const auto enter_log = stk.back().mutation_log_size;
-                mutated = mutated || ev_->workspace_flat_->mutation_log_size() > enter_log;
-            }
-        }
-        if (mutated) {
-            if (!ev_->run_post_mutate_typecheck_no_lock() || !ev_->last_type_solve_solved()) {
-                typed_audit::note_boundary_deny_op("occurrence-sdo");
-                typed_audit::clear_type_linear_commit_proof_on_abort();
-                typed_audit::publish_type_linear_proof_outcome(
-                    typed_audit::kTypeLinearProofOutcomeReject);
-                aura_clear_occurrence_persist_buffer(ev_);
-                ev_->clear_type_export_authority();
-                ev_->clear_expected_occurrence_snapshot_fp();
-                success = false;
-                success_flag_store(flag_, false);
-            }
-        }
-    }
-    // Issue #3653: Production/Full outermost — this-boundary type +
-    // invariant proof BEFORE persist freeze (#3614/#3517 residual —
-    // order, not a missing restore). #3614 already hoisted linear +
-    // drain; #3517 can flip Guard success after Full deny, but the
-    // persist helper had already published a Stamped green face for
-    // one beat (steal / query:type / IR). Check-only: composite_txn_commit
-    // / boundary_solve_proof_gate / finish_mutate_hard_gate /
-    // run_typed_mutation_invariant_audit return false without restore.
-    // Vacuous (no dirty/log) does not force finish_mutate_hard_gate's
-    // no-CS resync deny — that would abort happy Guards exit currently
-    // accepts. Vacuous still runs the invariant suite so ADT / type
-    // inject deny before freeze. Deny reuses the #3472 un-stamp set
-    // and flips success into the existing abort_restore SSOT. Soft/Off:
-    // this block does not run (persist helper stays zero-cost; no extra
-    // audit walk). Happy path may re-audit in exit_mutation_boundary.
-    if (outermost && success &&
-        (typed_audit::production_defaults_active() ||
-         typed_audit::get_strategy() == typed_audit::AuditStrategy::Full)) {
-        bool mutated = ev_->txn_dirty();
-        if (ev_->workspace_flat_) {
-            mutated = mutated ||
-                      ev_->workspace_flat_->mark_dirty_upward_call_count() > dirty_upward_at_enter_;
-            auto& stk = ev_->active_mutation_stack();
-            if (!stk.empty()) {
-                const auto enter_log = stk.back().mutation_log_size;
-                mutated = mutated || ev_->workspace_flat_->mutation_log_size() > enter_log;
-            }
-        }
-        bool audit_ok = true;
-        bool proof_trunc = false;
-        bool proof_force = false;
-        const bool batch_active =
-            ev_->workspace_flat_ && ev_->workspace_flat_->atomic_batch_active();
-        typed_audit::InvariantAuditResult inv{};
-        // Issue #4402: epoch pair is the Mutation epoch. mid_audit stays
-        // the session audit mid (mutation_id only).
-        const auto mut_epoch = ::aura::core::current_mutation_epoch();
-        // Issue #3778: join SSOT (cp.audit_mid / session / join_audit_and_se_mid)
-        // — never stamp defuse_version_ as the Typed/SE/Occurrence mid.
-        std::uint64_t mid_audit = 0;
-        {
-            auto& stk = ev_->active_mutation_stack();
-            if (!stk.empty() && stk.back().audit_mid != 0)
-                mid_audit = stk.back().audit_mid;
-            else if (session_mid_at_enter_ != 0)
-                mid_audit = session_mid_at_enter_;
-            else
-                mid_audit = typed_audit::join_audit_and_se_mid(0);
-        }
-        // Issue #4685: keep the audit verdict, not just adt_ok. A vacuous
-        // outermost (no dirty/log, no atomic batch) still freezes the
-        // Occurrence snapshot + may grant query:type; a false provenance
-        // (reflect) or type invariant must deny before that persist. The
-        // empty workspace stays successful: post_mutation_reflect_validate
-        // reports false for !ws/size==0, which is vacuous, not a failure.
-        // Linear !all_safe is already denied by the #3614 gate above
-        // (enforce_linear_boundary_consistency) — no extra sweep here.
-        const bool inv_ok = ev_->run_typed_mutation_invariant_audit(
-            mid_audit, "outermost-pre-persist", 0, mut_epoch, mut_epoch,
-            /*composite_mode=*/false, &inv);
-        const bool live_ws = ev_->workspace_flat_ && ev_->workspace_flat_->size() > 0;
-        if (!inv.adt_ok || (!mutated && !batch_active && live_ws && !inv_ok))
-            audit_ok = false;
-        if (batch_active) {
-            typed_audit::CompositeTxnCommitResult ccr{};
-            audit_ok = ev_->composite_txn_commit(mid_audit, "outermost-pre-persist", 0, mut_epoch,
-                                                 mut_epoch,
-                                                 /*nested=*/false, /*batch_active=*/true, &ccr) &&
-                       audit_ok;
-        } else if (mutated) {
-            const bool proof_ok = ev_->boundary_solve_proof_gate(
-                /*hard_gate=*/true, linear_ops_present_local, nodes_changed_local, &proof_trunc,
-                &proof_force);
-            audit_ok = audit_ok && proof_ok && !proof_force;
-            if (audit_ok) {
-                audit_ok = ev_->finish_mutate_hard_gate(
-                    nodes_changed_local, linear_ops_present_local, "outermost-pre-persist");
-            }
-        }
-        if (!audit_ok) {
-            typed_audit::clear_type_linear_commit_proof_on_abort();
-            typed_audit::publish_type_linear_proof_outcome(
-                typed_audit::kTypeLinearProofOutcomeReject);
-            aura_clear_occurrence_persist_buffer(ev_);
-            ev_->clear_type_export_authority();
-            ev_->clear_expected_occurrence_snapshot_fp();
-            success = false;
-            success_flag_store(flag_, false);
-        }
-    }
-    if (outermost && success) {
-        // Issue #3778: Occurrence persist mid == Typed/SE/grant/WAL join mid.
-        // Production/Full mid==0 refuse — never invent defuse_version_ as a
-        // phantom join key. Soft/Off: prefer join mid; else defuse observe.
-        std::uint64_t mid = 0;
-        {
-            auto& stk = ev_->active_mutation_stack();
-            if (!stk.empty() && stk.back().audit_mid != 0)
-                mid = stk.back().audit_mid;
-            else if (session_mid_at_enter_ != 0)
-                mid = session_mid_at_enter_;
-            else
-                mid = typed_audit::join_audit_and_se_mid(0);
-        }
-        const bool hard_3778 = typed_audit::production_defaults_active() ||
-                               typed_audit::get_strategy() == typed_audit::AuditStrategy::Full;
-        if (hard_3778 && mid == 0) {
-            // Issue #3778 / #3472: production mid==0 refuse applies when an
-            // Occurrence identity is actually required (mutated / staged).
-            // Vacuous empty MutationBoundaryGuard must not invent defuse
-            // OR abort — skip persist, keep success (happy AC3).
-            bool need_occurrence_mid = ev_->txn_dirty() || ev_->occurrence_fp_staged();
-            if (ev_->workspace_flat_) {
-                auto& stk = ev_->active_mutation_stack();
-                const auto enter_log = (!stk.empty()) ? stk.back().mutation_log_size : 0ull;
-                need_occurrence_mid =
-                    need_occurrence_mid || ev_->workspace_flat_->mutation_log_size() > enter_log ||
-                    ev_->workspace_flat_->mark_dirty_upward_call_count() > dirty_upward_at_enter_;
-            }
-            if (need_occurrence_mid) {
-                typed_audit::clear_type_linear_commit_proof_on_abort();
-                typed_audit::publish_type_linear_proof_outcome(
-                    typed_audit::kTypeLinearProofOutcomeReject);
-                aura_clear_occurrence_persist_buffer(ev_);
-                ev_->clear_type_export_authority();
-                ev_->clear_expected_occurrence_snapshot_fp();
-                success = false;
-                success_flag_store(flag_, false);
-            }
-            // else vacuous: no persist, success stays true
-        } else {
-            // Issue #3780: production fail-closed + force_wal — structural
-            // mutation WAL must land BEFORE Occurrence persist. #3734
-            // post-commit overflow alone is not crash-durable (cap 256,
-            // process-local). On miss: overflow still stamps
-            // mutation_wal_append_miss, then flip success into the
-            // existing !success abort_restore SSOT (no Occurrence commit).
-            // Soft / WAL-off: skip (fail-open; late emit in exit path).
-            // #3639 require_effect body deny is unchanged.
-            if (::aura::core::wal_slo::wal_append_fail_closed_active() &&
-                ::aura::core::audit_wal::g_mutation_audit_wal().is_enabled()) {
-                std::uint32_t nodes_changed_wal = 0;
-                std::uint32_t epoch_delta_wal = 0;
-                std::string_view audit_op_wal = "structural";
-                ast::NodeId audit_target_wal = ast::NULL_NODE;
-                if (ev_->workspace_flat_) {
-                    auto& stk = ev_->active_mutation_stack();
-                    const auto enter_log = (!stk.empty()) ? stk.back().mutation_log_size : 0ull;
-                    const auto post_size = ev_->workspace_flat_->all_mutations().size();
-                    if (post_size > enter_log)
-                        nodes_changed_wal = static_cast<std::uint32_t>(post_size - enter_log);
-                    const auto& log = ev_->workspace_flat_->all_mutations();
-                    if (post_size > enter_log && post_size <= log.size()) {
-                        const auto& rec = log[post_size - 1];
-                        audit_op_wal = rec.operator_name;
-                        audit_target_wal = rec.target_node;
-                    }
-                }
-                if (!ev_->emit_mutation_audit(nodes_changed_wal, epoch_delta_wal, audit_op_wal,
-                                              audit_target_wal)) {
-                    typed_audit::clear_type_linear_commit_proof_on_abort();
-                    typed_audit::publish_type_linear_proof_outcome(
-                        typed_audit::kTypeLinearProofOutcomeReject);
-                    aura_clear_occurrence_persist_buffer(ev_);
-                    ev_->clear_type_export_authority();
-                    ev_->clear_expected_occurrence_snapshot_fp();
-                    success = false;
-                    success_flag_store(flag_, false);
-                    g_tls_mutation_audit_wal_precommitted = false;
-                } else {
-                    g_tls_mutation_audit_wal_precommitted = true;
-                }
-            }
-            if (success) {
-                if (!hard_3778 && mid == 0)
-                    mid = ev_->defuse_version_.load(std::memory_order_relaxed);
-                aura_outermost_success_persist_occurrence(ev_, mid);
-                // Issue #3512: staging is one-shot for this outermost persist.
-                ev_->clear_expected_occurrence_snapshot_fp();
-                // Issue #3984: inject after persist helper so #3472 belt can
-                // fire without the #3614 pre-gate seeing the latch (test).
-                if (typed_audit::g_inject_linear_synth_after_persist_for_test.exchange(
-                        0, std::memory_order_acq_rel) != 0)
-                    ev_->note_linear_synth_hard_fail_pending();
-                if (typed_audit::consume_outermost_persist_reject_needs_restore()) {
-                    typed_audit::note_boundary_deny_op("persist-reject");
-                    typed_audit::drop_deferred_outermost_green_proof();
-                    success = false;
-                    success_flag_store(flag_, false);
-                }
-            }
-            // else: #3780 miss already un-stamped; skip Occurrence persist
-        }
-    }
+    bool linear_pre_exit_enforced =
+        dtor_outermost_pre_persist_gates(success, linear_ops_present_local, nodes_changed_local);
+    persist_occurrence_on_success(success);
     // Issue #3472 / #3818: belt-and-suspenders post-persist linear deny.
     // The pre-persist #3614 gate above is the primary deny path now; retain
     // this walk for the case the persist helper's own drain / recover
