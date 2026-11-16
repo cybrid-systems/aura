@@ -283,6 +283,32 @@ HOMES: tuple[Home, ...] = (
         ),
     ),
     _h(
+        "std/contract (engine hard gate)",
+        "aura",
+        "tests/suite/contract_hard_gate.aura",
+        (
+            "contract-protected",
+            "protected-no-operator",
+            "contract:activate!",
+            "mutate:rebind",
+            "hard gate",
+        ),
+        tag="contract",
+        requires=("std/contract", "std/evo"),
+        body='(check (pair? (mutate :rebind "gate" "(lambda (x) 0)")))',
+        roots=(
+            "lib/std/contract.aura",
+            "src/compiler/mutate_type_gate.hh",
+            "src/compiler/evaluator_primitives_mutate.cpp",
+            "src/compiler/evo_log_4910.hh",
+        ),
+        note=(
+            "The #5253 structural half mirrored into the #5317 engine hard "
+            "gate: a direct mutate:* on a protected name is refused with a "
+            "queryable reason and a ROLLBACK row in the #5251 trace."
+        ),
+    ),
+    _h(
         "std/negative",
         "aura",
         "tests/suite/contracts_negative_selection.aura",

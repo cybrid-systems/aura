@@ -97,7 +97,23 @@ struct LogState {
     std::deque<TraceMeta> meta;
     std::size_t ring_bytes = 0;
     std::uint64_t ring_dropped = 0;
+    // Issue #5317: the structural digest std/contract publishes on this same
+    // trace (target "contract:constraints", reason "contract-digest cg1|...").
+    // It is the one std -> engine summary surface: no predicate crosses into
+    // C++, only the protected names / allow lists / version / detector
+    // registration. The C++ mutate gate reads it instead of parsing a ring
+    // line, so the read is an atomic load when nothing was ever declared.
+    std::string contract_digest;
 };
+
+// Issue #5317: bumped every time a digest record lands (under the state lock,
+// released after contract_digest is stored). 0 = no constraint was ever
+// published, which is the "behavior unchanged" path for every existing run.
+inline std::atomic<std::uint64_t> g_contract_digest_gen{0};
+
+// Issue #5317: the marker std/contract prefixes its digest reason with, so an
+// unrelated "contract:constraints" audit row is never mistaken for one.
+inline constexpr std::string_view kContractDigestReasonPrefix = "contract-digest ";
 
 inline LogState& log_state() noexcept {
     static LogState s;
@@ -261,6 +277,15 @@ inline std::string log_append(const Entry& e)
         line += e.extras_json;
     }
     line += "}\n";
+    // Issue #5317: a structural-contract digest row updates the engine's view
+    // of the active #5253 set. The text is stored under this lock and only
+    // then published by the generation bump, so a gate reader that sees gen
+    // N is guaranteed to copy digest N.
+    if (e.target == "contract:constraints" && e.reason.starts_with(kContractDigestReasonPrefix)) {
+        s.contract_digest.assign(e.reason.substr(kContractDigestReasonPrefix.size()));
+        g_contract_digest_gen.store(g_contract_digest_gen.load(std::memory_order_relaxed) + 1,
+                                    std::memory_order_release);
+    }
     // Issue #5251: keep the record in process whether or not a file is
     // configured, then trim oldest-first to the configured bound.
     if (ring_cap > 0 && line.size() <= kTraceRingBytes) {
@@ -339,10 +364,26 @@ inline std::optional<TraceMeta> trace_origin(std::uint64_t mutation_id) {
     return std::nullopt;
 }
 
+// Issue #5317: the active contract digest, if std/contract ever published one.
+// Reading is an atomic load; the copy takes the state lock only on change.
+[[nodiscard]] inline std::uint64_t contract_digest_gen() noexcept {
+    return g_contract_digest_gen.load(std::memory_order_acquire);
+}
+
+inline std::string contract_digest_copy() {
+    auto& s = log_state();
+    std::scoped_lock lk(s.mu);
+    return s.contract_digest;
+}
+
 // Tests only: re-read AURA_EVO_LOG on next use.
 inline void log_reset_for_test() noexcept {
     auto& s = log_state();
     std::scoped_lock lk(s.mu);
+    // Issue #5317: a reset run has no active constraint, so the structural
+    // digest goes with the rest of the trace state.
+    s.contract_digest.clear();
+    g_contract_digest_gen.store(0, std::memory_order_release);
     s.path.clear();
     s.run.clear();
     s.seq = 0;

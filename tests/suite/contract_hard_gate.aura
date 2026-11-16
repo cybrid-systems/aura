@@ -1,0 +1,169 @@
+;
+; Issue #5317 — the structural half of the #5253 constraint set in the
+; engine's C++ hard gate.
+;
+; Wave 1 (#5253) enforced protected names / operator allow lists on the std
+; daily paths; a direct (mutate :rebind "protected" ...) still went through.
+; Wave 2 mirrors the structural half (protected names, per-name allow lists,
+; version, detector registration) into the pre-commit mutate:* gate, while
+; the Aura predicates stay in std (no predicate crosses the boundary).
+;
+; Covers: a direct mutate:* of a protected name is refused with a queryable
+; reason and a ROLLBACK row in the #5251 trace; no declared constraint is
+; byte-identical to before; an engine-primitive allow list admits exactly
+; that primitive; a version change republishes; deactivation stands the
+; mirror down; and the engine refuses exactly what contract:check-mutation
+; refuses for the same structural input.
+(require "std/test" all:)
+(require "std/string" all:)
+(require "std/contract" all:)
+(require "std/evo" all:)
+
+(test-file "contract_hard_gate.aura")
+
+; Every case starts from a clean process state: nothing active, no failures
+; from a previous case, and a fresh live workspace.
+(define (contract-engine-reset! source)
+  (contract:deactivate!)
+  (contract:reset-failures!)
+  (set-code source)
+  (eval-current))
+
+; Field access helpers: a mutate:* refusal is a structured merr, never #f and
+; never a raised error.
+(define (contract-engine-kind r) (if (pair? r) (car r) #f))
+(define (contract-engine-msg r)
+  (if (and (pair? r) (pair? (cdr r))) (car (cdr r)) ""))
+
+(define (contract-engine-trace-has? target kind needle)
+  (let loop ((rows (evo:trace (hash "target" target))))
+    (cond ((null? rows) #f)
+          ((and (equal? (hash-ref (car rows) "kind" "") kind)
+                (equal? (hash-ref (car rows) "decision" "") "ROLLBACK")
+                (let ((why (hash-ref (car rows) "reason" "")))
+                  (and (string? why) (string-contains? why needle))))
+           #t)
+          (else (loop (cdr rows))))))
+
+; ═══════════════════════════════════════════════════════════════════
+; AC1 — a direct mutate:* of a protected name is refused by the engine
+; ═══════════════════════════════════════════════════════════════════
+(test-case "a direct rebind of a protected name is refused before the commit"
+           (hash "issue" 5317 "tags" (list "contract" "mutate" "hard-gate"))
+  (contract-engine-reset! "(define (gate x) (+ x 1))\n(define (free y) (* y 2))")
+  (define s (contract:protect (contract:set) "gate"))
+  (contract:activate! s)
+  (check= 2 (gate 1))
+  (define r (mutate :rebind "gate" "(lambda (x) (+ x 99))" "direct-bypass"))
+  ; a queryable reason, not #f and not a silent success
+  (check (pair? r))
+  (check= "contract-protected" (contract-engine-kind r))
+  (check (string-contains? (contract-engine-msg r) "protected-no-operator"))
+  (check (string-contains? (contract-engine-msg r) "constraint set v2"))
+  ; the body never moved
+  (check= 2 (gate 1))
+  ; and the decision trace carries the refusal as a ROLLBACK row
+  (check (contract-engine-trace-has? "gate" "mutate:rebind" "contract-protected")))
+
+; ═══════════════════════════════════════════════════════════════════
+; AC2 — no declared constraint: byte-identical to before #5317
+; ═══════════════════════════════════════════════════════════════════
+(test-case "with no declared constraint a direct rebind still commits"
+           (hash "issue" 5317 "tags" (list "contract" "mutate" "compat"))
+  (contract-engine-reset! "(define (gate x) (+ x 1))")
+  (check= #f (contract:active))
+  (check= #t (mutate :rebind "gate" "(lambda (x) (+ x 99))" "unconstrained"))
+  (check= 100 (gate 1))
+  ; a name that is simply not protected is untouched by the mirror
+  (check= #t (mutate :rebind "gate" "(lambda (x) 7)" "again"))
+  (check= 7 (gate 1)))
+
+; ═══════════════════════════════════════════════════════════════════
+; AC3 — an engine-primitive allow list admits exactly that primitive
+; ═══════════════════════════════════════════════════════════════════
+(test-case "an engine-primitive allow list admits one primitive and blocks the rest"
+           (hash "issue" 5317 "tags" (list "contract" "mutate" "allow-list"))
+  (contract-engine-reset! "(define (gate x) (+ x 1))")
+  (contract:activate! (contract:protect (contract:set) "gate" "mutate:rebind"))
+  ; the listed engine primitive goes through the mirror
+  (check= #t (mutate :rebind "gate" "(lambda (x) (+ x 5))" "listed"))
+  (check= 6 (gate 1))
+  ; a different primitive on the same name is refused with the allow list named
+  (contract:activate! (contract:protect (contract:set) "gate" "mutate:set-body"))
+  (define r (mutate :rebind "gate" "(lambda (x) 0)" "not-listed"))
+  (check= "contract-protected" (contract-engine-kind r))
+  (check (string-contains? (contract-engine-msg r) "protected-op-not-allowed"))
+  (check (string-contains? (contract-engine-msg r) "allowed: mutate:set-body"))
+  (check= 6 (gate 1)))
+
+; ═══════════════════════════════════════════════════════════════════
+; AC4 — version and detector registration travel with the digest
+; ═══════════════════════════════════════════════════════════════════
+(test-case "a version bump and a detector registration are mirrored"
+           (hash "issue" 5317 "tags" (list "contract" "mutate" "version"))
+  (contract-engine-reset! "(define (gate x) (+ x 1))\n(define (free y) (* y 2))")
+  (define s1 (contract:detector-set (contract:set) "shape-drift" (list "d1" "d2")
+                                    "error" (quote all)))
+  (define s2 (contract:protect s1 "gate"))
+  (check= 3 (contract:version s2))
+  (contract:activate! s2)
+  ; v3 refuses the direct rebind and names the version it was decided at
+  (define r3 (mutate :rebind "gate" "(lambda (x) 0)" "v3"))
+  (check (string-contains? (contract-engine-msg r3) "constraint set v3"))
+  (check= 2 (gate 1))
+  ; a further change republishes at v4 and covers the newly protected name
+  (define s3 (contract:protect (contract:active) "free"))
+  (check= 4 (contract:version s3))
+  (contract:activate! s3)
+  (define r4 (mutate :rebind "free" "(lambda (y) 0)" "v4"))
+  (check= "contract-protected" (contract-engine-kind r4))
+  (check (string-contains? (contract-engine-msg r4) "protects free"))
+  (check (string-contains? (contract-engine-msg r4) "constraint set v4"))
+  (check= 4 (free 2)))
+
+; ═══════════════════════════════════════════════════════════════════
+; AC5 — deactivation stands the engine mirror down with std
+; ═══════════════════════════════════════════════════════════════════
+(test-case "deactivating the set re-opens direct mutate"
+           (hash "issue" 5317 "tags" (list "contract" "mutate" "lifecycle"))
+  (contract-engine-reset! "(define (gate x) (+ x 1))")
+  (contract:activate! (contract:protect (contract:set) "gate"))
+  (check= "contract-protected"
+          (contract-engine-kind (mutate :rebind "gate" "(lambda (x) 0)" "blocked")))
+  (contract:deactivate!)
+  (check= #t (mutate :rebind "gate" "(lambda (x) (+ x 2))" "reopened"))
+  (check= 3 (gate 1)))
+
+; ═══════════════════════════════════════════════════════════════════
+; AC6 — the engine and the #5255 std gate refuse the same structure
+; ═══════════════════════════════════════════════════════════════════
+(test-case "engine and std gate agree on the same structural input"
+           (hash "issue" 5317 "tags" (list "contract" "mutate" "gate"))
+  (contract-engine-reset! "(define (gate x) (+ x 1))")
+  (define s (contract:protect (contract:set) "gate"))
+  (contract:activate! s)
+  ; the std structural check the daily paths run
+  (define rep (contract:check-mutation s "mutate:rebind" "gate"))
+  (check= #f (contract:report-ok? rep))
+  (check= "protected-no-operator" (hash-ref (car (contract:violations rep)) "detail" ""))
+  (check= 2 (hash-ref rep "version" -1))
+  ; the engine reaches the same detail and version for the same input
+  (define r (mutate :rebind "gate" "(lambda (x) 0)" "parity"))
+  (check (string-contains? (contract-engine-msg r) "protected-no-operator"))
+  (check (string-contains? (contract-engine-msg r) "constraint set v2")))
+
+; ═══════════════════════════════════════════════════════════════════
+; AC7 — a non-name first argument is not read as a define name
+; ═══════════════════════════════════════════════════════════════════
+(test-case "a snapshot tag equal to a protected name is not read as one"
+           (hash "issue" 5317 "tags" (list "contract" "mutate" "false-positive"))
+  (contract-engine-reset! "(define (gate x) (+ x 1))")
+  (contract:activate! (contract:protect (contract:set) "gate"))
+  ; mutate :snapshot's first argument is a tag, not a define name
+  (check (number? (mutate :snapshot "gate")))
+  (check= 2 (gate 1))
+  ; the name-addressed primitive on the same name is still refused
+  (check= "contract-protected"
+          (contract-engine-kind (mutate :rebind "gate" "(lambda (x) 0)" "tag-test"))))
+
+(test-finish)

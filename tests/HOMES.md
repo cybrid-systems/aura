@@ -85,6 +85,7 @@ Append there. Names `std/iter` re-exports are the `std/list` contract. Names
 | std/extract and std/agent extractors | `tests/suite/export_contracts_5198.aura` | `extract-code`, `llm:extract-code` |
 | std/refactor and std/safe-refactor | `tests/suite/refactor_rename_inline.aura` | `refactor:rename-var`, `refactor:inline-function`, `safe-refactor:replace-fn` |
 | std/contract (invariants + protection sets) | `tests/suite/contracts_invariants.aura` | `contract:set`, `contract:protect`, `contract:invariant`, `std/contract` |
+| std/contract (engine hard gate) | `tests/suite/contract_hard_gate.aura` | `contract-protected`, `protected-no-operator`, direct `mutate:*`, hard gate |
 | std/gate (unified acceptance gate) | `tests/suite/gate_unified.aura` | `gate:new`, `gate:evaluate`, `gate:install!`, `gate:keep?`, `std/gate` |
 | std/validation (splits + multiple-testing haircut) | `tests/suite/validate_split.aura` | `val:split`, `val:deflate`, `val:evidence`, `std/validation`, purge, embargo |
 | std/mutate (mutate:* operator catalog) | `tests/suite/mutate_catalog.aura` | `mutate:catalog`, `mutate:catalog-entry`, `mutate:catalog-check`, `std/mutate` |

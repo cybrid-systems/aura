@@ -6683,6 +6683,30 @@ EvalValue RegSplitParts::mutate_wrapped_call(Evaluator& ev, const MakeErrorVal& 
     if (auto err = RegSplitParts::mutate_effect_gate(ev, mev, op, a, target))
         return *err;
 
+    // Issue #5317: the structural half of the #5253 constraint set, mirrored
+    // from std/contract through the #5251 decision trace (the one std -> engine
+    // summary surface; predicates stay in Aura). One relaxed load when no
+    // constraint was ever activated, so an unconstrained process behaves
+    // exactly as before. A refusal returns a queryable merr, which the #4910
+    // wrapper above records as a ROLLBACK row carrying kind and reason.
+    {
+        const auto gen = aura::evo::contract_digest_gen();
+        if (gen != aura::compiler::mutate_type_gate::installed_contract_gen())
+            aura::compiler::mutate_type_gate::install_contract_digest(
+                gen == 0 ? std::string() : aura::evo::contract_digest_copy(), gen);
+        std::string_view contract_name;
+        if (!a.empty() && is_string(a[0])) {
+            const auto name_idx = as_string_idx(a[0]);
+            if (name_idx < ev.string_heap_.size())
+                contract_name = ev.string_at(name_idx);
+        }
+        const auto ruling =
+            aura::compiler::mutate_type_gate::check_contract_mutation(op, contract_name);
+        if (ruling.rejected)
+            return mev("contract-protected",
+                       aura::compiler::mutate_type_gate::contract_refusal_message(ruling, op));
+    }
+
     std::unique_ptr<Evaluator::MutationBoundaryGuard> wrapper_guard;
     bool wrapper_ok = true;
     std::uint64_t wraps_before = 0;
