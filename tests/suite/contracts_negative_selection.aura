@@ -1,0 +1,350 @@
+; tests/suite/contracts_negative_selection.aura — Issue #5271
+;
+; Negative selection as one #5253 detector-set source: self is the behaviour
+; of already-KEEP candidates, V-detectors fire on the rest. Covers: a
+; deterministic, versioned, exportable detector set (same seed -> same
+; detectors); the synthetic cluster experiment (out-of-cluster hit rate and
+; in-cluster false-positive rate under the declared thresholds); a queryable
+; anomaly record with detector, distance, nearest self sample and dimension
+; contributions; normal behaviour staying inside self; the default warn
+; severity leaving the accept decision alone; reject refusing through the
+; same #5253 gate with the reason queryable; no evidence reported as
+; skipped; coverage below the threshold reported as unreliable; version +
+; retrain audit; and self collected from the #5251 decision trace.
+(require "std/test" all:)
+(require "std/negative" all:)
+(require "std/contract" all:)
+(require "std/feedback" all:)
+(require "std/workspace" all:)
+(require "std/evo" all:)
+
+(test-file "contracts_negative_selection.aura")
+
+; Phrase features from the gate evolution (length, total gap, highest
+; hurdle). Two clusters: short phrases and long phrases.
+(define cns-self
+  (list (list 10 2.0 1) (list 11 2.4 0.8) (list 9.5 1.8 1.2)
+        (list 12 3.0 0.9) (list 10.5 2.2 1.1)
+        (list 40 12.0 3) (list 41 11.5 3.2) (list 39 12.5 2.8)
+        (list 40.5 12.2 3.1)))
+
+; In-cluster points: within 2% of each feature's self range.
+(define cns-normals
+  (list (list 10.3 2.05 1.0) (list 10.7 2.25 0.9) (list 9.9 1.9 1.05)
+        (list 11.1 2.5 0.85) (list 10.6 2.1 1.05)
+        (list 39.9 12.1 3.0) (list 40.4 11.9 3.0) (list 40.6 12.3 3.05)
+        (list 39.6 12.2 2.95) (list 40.2 12.15 3.05)))
+
+; Out-of-cluster points: outside at least one self range.
+(define cns-outliers
+  (list (list 180 95.0 9) (list 5 40.0 7) (list 100 1.0 1)
+        (list 60 2.0 1) (list 10 90.0 1) (list 10 2.0 8)))
+
+; In-range but in the empty gap between the two clusters.
+(define cns-gaps
+  (list (list 25 7.0 2.0) (list 30 10.0 2.5)
+        (list 20 4.0 3.0) (list 15 6.0 1.0)))
+
+; Declared acceptance for the synthetic experiment: every injected
+; out-of-cluster point must fire, and at most 1 in 20 in-cluster points may
+; (this set fires 0 of 10).
+(define cns-tp-threshold 0.95)
+(define cns-fp-threshold 0.05)
+
+(define (cns-ds) (negative:train "std-phrases" cns-self))
+
+(define (cns-fresh! source)
+  (contract:deactivate!)
+  (contract:reset-failures!)
+  (negative:reset-anomalies!)
+  (set-code source)
+  (eval-current))
+
+(define (cns-hits ds xs)
+  (length (filter (lambda (x) (negative:detect ds x)) xs)))
+
+(define (cns-rate hit n)
+  (if (= n 0) 0.0 (/ (* 1.0 hit) n)))
+
+(define (cns-sum xs)
+  (let loop ((ys xs) (s 0.0))
+    (if (null? ys) s (loop (cdr ys) (+ s (car ys))))))
+
+(define (cns-weight-sum an)
+  (cns-sum (map (lambda (c) (hash-ref c "weight" 0.0))
+                (hash-ref an "contributions" (list)))))
+
+(define (cns-self-ids ds)
+  (map (lambda (s) (hash-ref s "id" "")) (negative:self ds)))
+
+; ═══════════════════════════════════════════════════════════════════
+; The detector set is a value: deterministic, versioned, exportable
+; ═══════════════════════════════════════════════════════════════════
+(test-case "self behaviour trains a deterministic versioned detector set"
+  (hash "issue" 5271 "tags" (list "contract" "negative-selection"))
+  (define ds (cns-ds))
+  (define again (cns-ds))
+  (check (negative:detector-set? ds))
+  (check= "std-phrases" (negative:name ds))
+  (check= 1 (negative:version ds))
+  (check= 3 (length (negative:ranges ds)))
+  ; same seed + same samples -> byte-identical set
+  (check= (negative:export ds) (negative:export again))
+  (check (> (length (negative:detectors ds)) 0))
+  (check (= 9 (length (negative:self ds))))
+  (check (>= (negative:coverage ds) 0.0))
+  (check (<= (negative:coverage ds) 1.0))
+  ; the audit trail names the training and its parameters
+  (check= "train" (hash-ref (car (hash-ref ds "audit" (list))) "op" ""))
+  (check= 1 (length (hash-ref ds "audit" (list))))
+  (check (> (hash-ref (negative:params ds) "detectors" 0) 0))
+  ; export/import: same identity, ids and geometry
+  (define back (negative:import (negative:export ds)))
+  (check (negative:detector-set? back))
+  (check= (negative:name ds) (negative:name back))
+  (check= (negative:ids ds) (negative:ids back))
+  (check= (negative:coverage ds) (negative:coverage back))
+  (check (equal? (negative:ranges ds) (negative:ranges back)))
+  ; a different seed draws a different detector set
+  (check (not (equal? (negative:export ds)
+                      (negative:export (negative:train "std-phrases" cns-self
+                                                      (hash "seed" 99)))))))
+
+; ═══════════════════════════════════════════════════════════════════
+; AC1 — the synthetic experiment: cluster hit rate / false positives
+; ═══════════════════════════════════════════════════════════════════
+(test-case "out-of-cluster behaviour fires and in-cluster behaviour does not"
+  (hash "issue" 5271 "tags" (list "contract" "negative-selection" "experiment"))
+  (define ds (cns-ds))
+  (define tp (cns-hits ds cns-outliers))
+  (define fp (cns-hits ds cns-normals))
+  (check (>= (cns-rate tp (length cns-outliers)) cns-tp-threshold))
+  (check (<= (cns-rate fp (length cns-normals)) cns-fp-threshold))
+  ; the gap points are in range on every dimension, so they fire through a
+  ; detector rather than through the range test
+  (define gap-hit (negative:detect ds (car cns-gaps)))
+  (check (negative:anomaly? gap-hit))
+  (check= "detector" (hash-ref gap-hit "reason" ""))
+  (check (not (string=? (hash-ref gap-hit "detector" "") "")))
+  (check (> (hash-ref gap-hit "distance" 0.0) 0.0))
+  (check (< (hash-ref gap-hit "distance" 0.0) (hash-ref gap-hit "radius" 0.0)))
+  (check (member? (hash-ref gap-hit "nearest-self" "") (cns-self-ids ds)))
+  ; dimension contributions are a distribution over the dimensions
+  (check (< (abs (- 1.0 (cns-weight-sum gap-hit))) 1e-9))
+  (check= 3 (length (hash-ref gap-hit "contributions" (list))))
+  ; the anomaly also records how much of the non-self space the set covers
+  (check (>= (hash-ref gap-hit "coverage" 0.0) 0.0))
+  (check= (negative:reliable? ds) (hash-ref gap-hit "reliable" #f)))
+
+; ═══════════════════════════════════════════════════════════════════
+; AC2 — an anomaly record is queryable
+; ═══════════════════════════════════════════════════════════════════
+(test-case "a hit produces a queryable anomaly record"
+  (hash "issue" 5271 "tags" (list "contract" "negative-selection"))
+  (negative:reset-anomalies!)
+  (define ds (cns-ds))
+  (define an (negative:detect! ds (list 180 95.0 9)))
+  (check (negative:anomaly? an))
+  (check= "std-phrases" (hash-ref an "set" ""))
+  (check= 1 (hash-ref an "version" 0))
+  (define id (hash-ref an "id" ""))
+  (check (string=? id (string-append "std-phrases#" (hash-ref an "detector" ""))))
+  (check= id (hash-ref (negative:last-anomaly) "id" ""))
+  (check= 1 (length (negative:anomalies)))
+  (check= id (hash-ref (negative:anomaly-of id) "id" ""))
+  (check= #f (negative:anomaly-of "std-phrases#absent"))
+  ; a normal candidate records nothing
+  (negative:reset-anomalies!)
+  (check= #f (negative:detect! ds (car cns-normals)))
+  (check= 0 (length (negative:anomalies))))
+
+; ═══════════════════════════════════════════════════════════════════
+; AC2b — normal behaviour: no hit, a clean verdict, empty evidence
+; ═══════════════════════════════════════════════════════════════════
+(test-case "normal behaviour stays inside self"
+  (hash "issue" 5271 "tags" (list "contract" "negative-selection"))
+  (define ds (cns-ds))
+  (define normal (car cns-normals))
+  (check= #f (negative:detect ds normal))
+  (define a (negative:assess ds normal))
+  (check= "clean" (hash-ref a "status" ""))
+  (check= #f (hash-ref a "anomaly" #f))
+  (check= 0 (length (hash-keys (negative:evidence ds normal))))
+  (define outlier (negative:assess ds (car cns-outliers)))
+  (check= "anomaly" (hash-ref outlier "status" ""))
+  (check (negative:anomaly? (hash-ref outlier "anomaly" #f))))
+
+; ═══════════════════════════════════════════════════════════════════
+; AC3 — default warn does not change the accept decision
+; ═══════════════════════════════════════════════════════════════════
+(test-case "the default warn severity records the anomaly without refusing"
+  (hash "issue" 5271 "tags" (list "contract" "negative-selection" "feedback"))
+  (cns-fresh! "(define (f x) (+ x 1))")
+  (define ds (cns-ds))
+  (define ev (negative:evidence ds (car cns-outliers)))
+  (check= 1 (length (hash-keys ev)))
+  (define s (negative:register (contract:set) ds))
+  ; the registration is a #5253 detector-set source carried as a value
+  (define rec (car (contract:detectors s)))
+  (check= "contract-detector-set" (hash-ref rec "kind" ""))
+  (check= "std-phrases" (hash-ref rec "name" ""))
+  (check= "warn" (hash-ref rec "severity" ""))
+  (check= 1 (hash-ref rec "version" 1))
+  (check= (quote ()) (hash-ref rec "retrain" (quote ())))
+  (check= (negative:ids ds) (hash-ref rec "detectors" (list)))
+  (contract:activate! s)
+  ; the same gate sees the anomaly, but warn is not blocking
+  (define report (negative:check s ds (car cns-outliers)))
+  (check (contract:report-ok? report))
+  (check= 1 (length (contract:violations report)))
+  (check= "warn" (hash-ref (car (contract:violations report)) "severity" ""))
+  (check= (quote ()) (contract:blocking report))
+  ; the accepted transform still applies, and the record carries the warn
+  (define r (feedback:rebind "f" "(lambda (x) (* x 2))"
+                             (feedback:metrics-keys) (feedback:test-selection) ev))
+  (check= "ok" (hash-ref (hash-ref r "exec" (hash)) "result" ""))
+  (check= #t (hash-ref (hash-ref r "transform" (hash)) "applied" #f))
+  (check= #t (hash-ref (hash-ref r "contract" (hash)) "ok" #f))
+  (define gate (hash-ref (hash-ref r "contract" (hash)) "gate" #f))
+  (check= 1 (length (hash-ref gate "violations" (list))))
+  (check= "warn" (hash-ref (car (hash-ref gate "violations" (list))) "severity" ""))
+  ; and the anomaly detail travelled with the record
+  (define v (car (hash-ref gate "violations" (list))))
+  (check= "detector-fired" (hash-ref v "detail" ""))
+  (check (> (hash-ref (car (hash-ref v "detectors" (list))) "distance" 0.0) 0.0)))
+
+; ═══════════════════════════════════════════════════════════════════
+; AC4 — reject refuses through the same gate, the reason is queryable
+; ═══════════════════════════════════════════════════════════════════
+(test-case "declaring reject refuses and leaves a queryable reason"
+  (hash "issue" 5271 "tags" (list "contract" "negative-selection" "feedback"))
+  (cns-fresh! "(define (f x) (+ x 1))")
+  (define ds (cns-ds))
+  (define ev (negative:evidence ds (car cns-outliers)))
+  (define s (negative:register (contract:set) ds "reject"))
+  (check= "error" (hash-ref (car (contract:detectors s)) "severity" ""))
+  (contract:activate! s)
+  (define report (negative:check s ds (car cns-outliers)))
+  (check= #f (contract:report-ok? report))
+  (check= 1 (length (contract:blocking report)))
+  ; the failure ring names the detector set and carries the anomaly
+  (define lf (contract:last-failure))
+  (check (hash? lf))
+  (check= #f (hash-ref lf "ok" #t))
+  (define viol (car (hash-ref lf "violations" (list))))
+  (check= "std-phrases" (hash-ref viol "invariant" ""))
+  (check= "error" (hash-ref viol "severity" ""))
+  (check (> (hash-ref (car (hash-ref viol "detectors" (list))) "distance" 0.0) 0.0))
+  ; the #5254 record refuses before the thunk runs
+  (define r (feedback:rebind "f" "(lambda (x) (* x 2))"
+                             (feedback:metrics-keys) (feedback:test-selection) ev))
+  (check= "refused" (hash-ref (hash-ref r "exec" (hash)) "result" ""))
+  (check= "MutationRefused" (hash-ref (hash-ref r "exec" (hash)) "error-kind" ""))
+  (check= #f (hash-ref (hash-ref r "transform" (hash)) "applied" #t))
+  (check= 0 (hash-ref (hash-ref r "transform" (hash)) "mutation-id" 0))
+  (check= #f (hash-ref (hash-ref r "contract" (hash)) "ok" #t)))
+
+; ═══════════════════════════════════════════════════════════════════
+; AC5 — no evidence is skipped: unproven, not passed, not a violation
+; ═══════════════════════════════════════════════════════════════════
+(test-case "a registered set without evidence is skipped"
+  (hash "issue" 5271 "tags" (list "contract" "negative-selection"))
+  (contract:deactivate!)
+  (contract:reset-failures!)
+  (define ds (cns-ds))
+  (define s (negative:register (contract:set) ds))
+  (define r0 (contract:check s))
+  (check (contract:report-ok? r0))
+  (check= (list "std-phrases") (hash-ref r0 "skipped" (list)))
+  (check= (quote ()) (contract:violations r0))
+  ; an empty evidence hash means "ran and found nothing", not "no evidence"
+  (define r1 (contract:check s (hash "detectors" (hash))))
+  (check (contract:report-ok? r1))
+  (check= (quote ()) (hash-ref r1 "skipped" (list)))
+  (check= 1 (hash-ref (hash-ref r1 "checked" (hash)) "detector-sets" 0)))
+
+; ═══════════════════════════════════════════════════════════════════
+; AC6 — version and retrain audit
+; ═══════════════════════════════════════════════════════════════════
+(test-case "retraining bumps the versions and leaves an audit trail"
+  (hash "issue" 5271 "tags" (list "contract" "negative-selection" "audit"))
+  (contract:deactivate!)
+  (define ds (cns-ds))
+  (define ds2 (negative:retrain! ds (append cns-self (list (list 42 12.4 3.3)))))
+  (check= 2 (negative:version ds2))
+  (check= 2 (length (hash-ref ds2 "audit" (list))))
+  (check= "retrain" (hash-ref (car (hash-ref ds2 "audit" (list))) "op" ""))
+  (check= 1 (negative:version ds))
+  (define s0 (negative:register (contract:set) ds))
+  (define s1 (negative:retrain s0 "std-phrases" ds2))
+  (check (not (equal? (contract:hash s0) (contract:hash s1))))
+  (check= (+ 1 (contract:version s0)) (contract:version s1))
+  (define rec (car (contract:detectors s1)))
+  (check= 2 (hash-ref rec "version" 1))
+  (check= (negative:ids ds2) (hash-ref rec "detectors" (list)))
+  (check= "retrain" (hash-ref (car (hash-ref s1 "audit" (list))) "op" ""))
+  ; the retrain is a decision in the #5251 trace, like every constraint change
+  (define rows (evo:trace (hash "target" "contract:constraints")))
+  (check (>= (length rows) 1))
+  (check (let loop ((rs rows))
+           (cond ((null? rs) #f)
+                 ((equal? (hash-ref (car rs) "reason" "") "constraint-retrain") #t)
+                 (else (loop (cdr rs)))))))
+
+; ═══════════════════════════════════════════════════════════════════
+; AC7 — coverage below the threshold is "unreliable", not a silent pass
+; ═══════════════════════════════════════════════════════════════════
+(test-case "low coverage reports the detection as unreliable"
+  (hash "issue" 5271 "tags" (list "contract" "negative-selection" "coverage"))
+  (define ds (negative:train "sparse" cns-self
+                             (hash "detectors" 1 "tries" 5 "coverage-threshold" 0.99)))
+  (check= 1 (length (negative:detectors ds)))
+  (check (< (negative:coverage ds) 0.99))
+  (check= #f (negative:reliable? ds))
+  (define a (negative:assess ds (car cns-normals)))
+  (check= "unreliable" (hash-ref a "status" ""))
+  ; the check report says so too, and stays ok (unproven is not a violation)
+  (define s (negative:register (contract:set) ds))
+  (define r (negative:check s ds (car cns-normals)))
+  (check (contract:report-ok? r))
+  (check= (list "sparse") (hash-ref r "unreliable" (list)))
+  (check= (quote ()) (contract:violations r)))
+
+; ═══════════════════════════════════════════════════════════════════
+; AC8 — self from the decision trace; detection leaves KEEP/ROLLBACK alone
+; ═══════════════════════════════════════════════════════════════════
+(test-case "self comes from recent KEEP behaviour and KEEP stays unchanged"
+  (hash "issue" 5271 "tags" (list "contract" "negative-selection" "evo"))
+  (cns-fresh! "(define (f x) (+ x 1))")
+  (define target "cns:runner-phrase")
+  (define (cns-keep! behavior)
+    (evo:record! target "KEEP" "phrase-accepted" "" "" 0 ""
+                 (hash "behavior" behavior)))
+  (for-each (lambda (p) (cns-keep! (hash "len" (car p) "gap" (car (cdr p))
+                                         "hurdle" (car (cdr (cdr p))))))
+            cns-self)
+  ; a rejected phrase is not self
+  (evo:record! target "ROLLBACK" "phrase-rejected" "" "" 0 ""
+               (hash "behavior" (hash "len" 180 "gap" 95.0 "hurdle" 9)))
+  (define ds (negative:train-from-trace "runner-phrases"
+                                        (hash "target" target "n" 16)))
+  (check= (length cns-self) (length (negative:self ds)))
+  (define keeps-before (length (evo:trace (hash "target" target "decision" "KEEP"))))
+  (define rolls-before (length (evo:trace (hash "target" target "decision" "ROLLBACK"))))
+  ; an accepted phrase is inside self. A behaviour hash becomes a vector in
+  ; sorted key order (gap, hurdle, len), the same layout training used.
+  (check= #f (negative:detect ds (hash "len" 10 "gap" 2.0 "hurdle" 1)))
+  ; an outlier produces the record ...
+  (define an (negative:detect! ds (hash "len" 180 "gap" 95.0 "hurdle" 9)))
+  (check (negative:anomaly? an))
+  ; ... and no KEEP / ROLLBACK row was written by the detection
+  (check= keeps-before (length (evo:trace (hash "target" target "decision" "KEEP"))))
+  (check= rolls-before (length (evo:trace (hash "target" target "decision" "ROLLBACK"))))
+  ; the detection itself is audited in the worldline
+  (define rows (evo:trace (hash "target" "contract:detector-set")))
+  (check (let loop ((rs rows))
+           (cond ((null? rs) #f)
+                 ((equal? (hash-ref (car rs) "decision" "") "ANOMALY") #t)
+                 (else (loop (cdr rs)))))))
+
+(test-finish)

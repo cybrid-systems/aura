@@ -32,12 +32,12 @@
 ;    hash ("defines" record list from query:define-records, plus "source").
 ;    (contract:invariant-on ...) instead calls the predicate once per
 ;    in-scope define record, so a per-definition rule reads natural.
-; 3. Detector-set invariants: a reserved kind (#5271 will register these).
+; 3. Detector-set invariants: a detector-set source (std/negative, #5271).
 ;    It carries a detector name list, its own version and a retrain audit
-;    trail; the negative-selection algorithm is NOT implemented here.
-;    Evidence comes in through the check context ("detectors" hash
-;    name -> fired detector ids). With no evidence the entry is reported
-;    as "skipped" — unproven, not passed and not a violation.
+;    trail. Evidence comes in through the check context ("detectors" hash
+;    name -> fired detector ids or anomaly records; contract passes an
+;    entry through as-is). With no evidence the entry is reported as
+;    "skipped" — unproven, not passed and not a violation.
 ;
 ; ── Severity ───────────────────────────────────────────────────────
 ; "error" (default) blocks: report ok is #f, the daily path rolls back.
@@ -572,12 +572,15 @@
 (define (contract:check-mutation s op name)
   (contract-run s op name (hash)))
 
-; (contract:check-active op name) — the same against the active set;
+; (contract:check-active op name [ctx]) — the same against the active set;
 ; #f when no set is active (the zero-cost path for every existing caller).
-(define (contract:check-active op name)
-  (let ((s (contract:active)))
+; ctx is optional: a caller that holds detector evidence (std/negative's
+; anomaly records) passes (hash "detectors" evidence) here.
+(define (contract:check-active op name . ctx)
+  (let* ((s (contract:active))
+         (c (if (and (pair? ctx) (hash? (car ctx))) (car ctx) (hash))))
     (if (contract:set? s)
-        (contract-run s op name (hash))
+        (contract-run s op name c)
         #f)))
 
 ; (contract:refuse s op detail) — a refusal a daily path detects itself,

@@ -202,6 +202,35 @@ HOMES: tuple[Home, ...] = (
         ),
     ),
     _h(
+        "std/negative",
+        "aura",
+        "tests/suite/contracts_negative_selection.aura",
+        (
+            "negative:train",
+            "negative:detect",
+            "negative:register",
+            "negative:evidence",
+            "negative selection",
+            "std/negative",
+            "anomaly detector",
+        ),
+        tag="negative-selection",
+        requires=("std/negative", "std/contract", "std/feedback", "std/workspace"),
+        body='(check (negative:detector-set? (negative:train "t" (list (list 0.0 0.0)))))',
+        roots=(
+            "lib/std/negative.aura",
+            "lib/std/qd.aura",
+            "lib/std/qd.aura-type",
+            "lib/std/contract.aura",
+        ),
+        note=(
+            "Negative selection over a candidate's behaviour vector (#5271): "
+            "self = already-KEEP behaviour, V-detectors fire outside it, and "
+            "the hit is one #5253 detector-set source (warn by default, "
+            "reject refuses through the same gate; no evidence is skipped)."
+        ),
+    ),
+    _h(
         "std/feedback",
         "aura",
         "tests/suite/feedback_record.aura",
