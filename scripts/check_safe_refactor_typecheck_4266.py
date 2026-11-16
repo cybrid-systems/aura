@@ -10,7 +10,7 @@
 #      last_typecheck_ok_ exists beside last_typecheck_result_ in
 #      evaluator.ixx.
 # AC2: stdlib gate — safe-refactor:replace-fn calls (typecheck-status)
-#      AFTER (set-code rebuilt) and reports 'applied ONLY on the structured
+#      AFTER the workspace write and reports 'applied ONLY on the structured
 #      ok status (#t); the not-ok branch restores the snapshot and rides
 #      the diagnostics report in the rejected reason slot; NO live
 #      (non-comment) stdlib code gates on the raw (typecheck-current)
@@ -159,12 +159,28 @@ def main() -> int:
     # ── AC2: stdlib gate ──
     replace_body = _slice(stdlib_live, "(define (safe-refactor:replace-fn", "")
     must("(typecheck-status)" in replace_body, "AC2: replace-fn gates on the structured status")
+    # Issue #5252: the whole-file append ((set-code rebuilt)) is retired.
+    # The candidate is dry-run gated by (mutate :check …) BEFORE the
+    # small-step write ((mutate :rebind …)), and the structured status is
+    # still taken AFTER that write.
     must(
-        replace_body.find("(set-code rebuilt)") != -1
-        and replace_body.find("(set-code rebuilt)") < replace_body.find("(typecheck-status)"),
-        "AC2: status is taken AFTER set-code (the rebuilt workspace)",
+        "(set-code rebuilt)" not in replace_body,
+        "AC2: no whole-file rewrite (Issue #5252 retired the append path)",
     )
-    must("((equal? apply-result #t)" in replace_body, "AC2: applied ONLY on the structured ok status (#t)")
+    must("(mutate :check" in replace_body, "AC2: candidate is dry-run gated before writing")
+    must(
+        replace_body.find("(mutate :check") < replace_body.find("(mutate :rebind"),
+        "AC2: dry-run gate runs BEFORE the write step",
+    )
+    must(
+        replace_body.find("(mutate :rebind") != -1
+        and replace_body.find("(mutate :rebind") < replace_body.find("(typecheck-status)"),
+        "AC2: status is taken AFTER the workspace write",
+    )
+    must(
+        "(list 'applied snap-id)" in replace_body and "(equal? tc #t)" in replace_body,
+        "AC2: applied ONLY on the structured ok status (#t)",
+    )
     else_arm = _slice(replace_body, "(else", "")
     # Issue #5009: the write surface is (mutate :restore …); ast:restore is the
     # deprecated alias it forwards to, so accept either spelling.

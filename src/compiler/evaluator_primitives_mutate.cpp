@@ -9162,9 +9162,22 @@ void RegSplitParts::inline_call_clone_subtree(Evaluator& ev, aura::ast::FlatAST&
     using aura::ast::NodeTag;
     using aura::ast::SymId;
     old_to_new.assign(static_cast<std::size_t>(flat.size()), aura::ast::NULL_NODE);
-    {
+    // Issue #5252: a substituted parameter maps to a CLONE of the actual
+    // argument, never to the caller's node. Reusing it (a) let the scalar
+    // copy below write the parameter's int_value over a literal argument
+    // ((f 5) inlined as (+ 0 1)) and (b) rewired the caller's node under
+    // the clone, so the inlined body evaluated to void.
+    //
+    // Substitution runs ONLY while cloning the callee body: an argument's
+    // own subtree is the caller's code, so a Variable there that happens
+    // to share a formal param's name must be cloned verbatim (and must
+    // not re-enter the substitution, which looped forever). Args are
+    // cloned after the body for the same reason the body is cloned
+    // pre-order — a child never takes a lower NodeId than its parent.
+    std::vector<std::pair<NodeId, NodeId>> deferred_subst;
+    auto clone_from = [&](NodeId seed, bool allow_subst) {
         std::vector<NodeId> dfs_stack;
-        dfs_stack.push_back(func_body_node);
+        dfs_stack.push_back(seed);
         while (!dfs_stack.empty()) {
             auto cur = dfs_stack.back();
             dfs_stack.pop_back();
@@ -9188,12 +9201,15 @@ void RegSplitParts::inline_call_clone_subtree(Evaluator& ev, aura::ast::FlatAST&
                 case NodeTag::Variable: {
                     // Check if this param should be substituted
                     bool is_param = false;
-                    for (std::size_t pi = 0; pi < formal_params.size(); ++pi) {
-                        if (formal_params[pi] == v.sym_id) {
-                            // Substitute with actual argument — reuse the arg node
-                            new_id = actual_args[pi];
-                            is_param = true;
-                            break;
+                    if (allow_subst) {
+                        for (std::size_t pi = 0; pi < formal_params.size(); ++pi) {
+                            if (formal_params[pi] == v.sym_id) {
+                                // Point at the argument's clone (resolved
+                                // after both DFS passes, #5252).
+                                deferred_subst.emplace_back(cur, actual_args[pi]);
+                                is_param = true;
+                                break;
+                            }
                         }
                     }
                     if (!is_param)
@@ -9236,6 +9252,20 @@ void RegSplitParts::inline_call_clone_subtree(Evaluator& ev, aura::ast::FlatAST&
                 }
             }
         }
+    };
+    clone_from(func_body_node, /*allow_subst=*/true);
+    for (auto a : actual_args) {
+        if (a != aura::ast::NULL_NODE)
+            clone_from(a, /*allow_subst=*/false);
+    }
+
+    // Issue #5252: point every substituted parameter at its argument's
+    // clone. Both DFS passes above have run, so every clone exists (and
+    // its own children are connected below).
+    for (const auto& [body_var, arg] : deferred_subst) {
+        if (arg < old_to_new.size() && old_to_new[arg] != aura::ast::NULL_NODE &&
+            body_var < old_to_new.size())
+            old_to_new[body_var] = old_to_new[arg];
     }
 
     // Second pass: connect children in new nodes
@@ -9255,6 +9285,15 @@ void RegSplitParts::inline_call_clone_subtree(Evaluator& ev, aura::ast::FlatAST&
             continue;
 
         auto old_v = flat.get(static_cast<NodeId>(old_nid));
+        // Issue #5252: every node the first pass creates is EMPTY — the
+        // add_raw_node / add_lambda(tag, no-body) constructors reserve no
+        // child slots, and set_child() returns early when idx >= size()
+        // (ast.ixx set_child_locked). Without this pre-size every compound
+        // body inlined to `()` while the op still returned #t (a leaf body,
+        // e.g. `42`, was the only shape that worked). Insert NULL slots
+        // first, in index order, then the connects below land.
+        for (std::size_t ci = 0; ci < old_v.children.size(); ++ci)
+            flat.insert_child(new_id, static_cast<std::uint32_t>(ci), aura::ast::NULL_NODE);
         // For Lambda, copy body child then params (Issue #1266).
         if (old_v.tag == NodeTag::Lambda) {
             // Lambda params: set body child, then copy params

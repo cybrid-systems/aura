@@ -61,18 +61,19 @@ def main() -> int:
     eval_cpp = _read("src/compiler/evaluator_primitives_eval.cpp")
     must("2918" in eval_cpp, "AC: current-source docs cite #2918")
 
-    for path, needle in (
-        ("lib/std/safe-refactor.aura", "current-source :workspace"),
-        ("lib/std/refactor.aura", "current-source :workspace"),
-    ):
+    # Issue #5252: refactor / safe-refactor no longer read the workspace
+    # source at all — they drive the registered mutate:* small steps
+    # (rename-symbol / inline-call / check+rebind). A user-script-intent
+    # source read cannot be mis-targeted to the eval frame if there is no
+    # read left. The #2918 contract for these two files is therefore: any
+    # (current-source) they still contain must name :workspace (a bare
+    # read goes back to the eval frame, which is the bug #2918 fixed).
+    for path in ("lib/std/safe-refactor.aura", "lib/std/refactor.aura"):
         t = _read(path)
-        must(needle in t or "(current-source :workspace)" in t, f"AC4: {path} uses :workspace")
-        # bare (current-source) for user-script intent should be gone from these call sites
-        if path.endswith("safe-refactor.aura"):
-            must(
-                "(current-source)" not in t.replace("(current-source :workspace)", ""),
-                f"AC4: {path} residual bare current-source",
-            )
+        must(
+            "(current-source)" not in t.replace("(current-source :workspace)", ""),
+            f"AC4: {path} has no bare current-source (Issue #5252)",
+        )
 
     # #4274: std/workspace no longer reads eval-frame source. Merge goes
     # through workspace:sync-from; snapshots go through ast:snapshot, which

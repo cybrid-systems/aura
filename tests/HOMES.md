@@ -83,6 +83,7 @@ Append there. Names `std/iter` re-exports are the `std/list` contract. Names
 | std/json | `tests/suite/json_reg_split_5032.aura` | `json-parse`, `std/json` |
 | std/evo | `tests/suite/evo_trace_default.aura` | `evo:trace`, `evo:records`, worldline |
 | std/extract and std/agent extractors | `tests/suite/export_contracts_5198.aura` | `extract-code`, `llm:extract-code` |
+| std/refactor and std/safe-refactor | `tests/suite/refactor_rename_inline.aura` | `refactor:rename-var`, `refactor:inline-function`, `safe-refactor:replace-fn` |
 | lang/module | `tests/suite/module.aura` | `lang/module`, `overwrite warning` |
 | lang/parser | `tests/suite/paren_semi_comment_5199.aura` | `unclosed list`, `(;` |
 | runtime/fiber | `tests/suite/issue_5064_fiber_cancel_text.aura` | `fiber cancel` |

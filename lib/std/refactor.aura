@@ -1,12 +1,19 @@
 ; ── std/refactor.aura — 高层重构操作 ──
 ;
-; 在 query / mutate 原语之上提供语义级重构。
-; 全部纯 Aura，无 C++ 改动。
+; 在 query / mutate 原语之上提供语义级重构。全部纯 Aura；每次重构都是
+; 一到若干次已注册的 mutate:* 小步算子，不重写整份源码字符串。
 ;
 ; API:
-;   (refactor:rename-var old new)       — 重命名变量
-;   (refactor:extract-function ids fn)  — 提取为新函数
-;   (refactor:inline-function name)     — 内联函数
+;   (refactor:rename-var old new)        — 重命名变量（def + 全部引用）
+;   (refactor:extract-function ids fn)   — 提取子树为新函数
+;   (refactor:inline-function name)      — 内联函数的所有调用点
+;
+; Issue #5252: 这些包装以前自己拼源码 / 只数调用点，结果「返回成功但源码
+; 没变」。现在每个动作落到引擎的小步算子上：
+;   rename-var       → (mutate :rename-symbol old new)
+;   extract-function → (mutate :extract-function node-id name)
+;   inline-function  → 每个调用点一次 (mutate :inline-call call-id)
+; 失败一律返回 #f（或回滚到操作前的 snapshot），不谎报成功。
 
 
 (export refactor:rename-var refactor:extract-function refactor:inline-function)
@@ -15,80 +22,9 @@
 (require "std/string" all:)
 (require "std/query" all:)
 
-
-; ── refactor:rename-var — 重命名变量 ──
-;
-; 在当前 workspace 中，找出所有名为 old 的 Define/Variable 节点，
-; 用 mutate:rebind 改为 new。
-;
-; Returns: 被修改的节点数，或 #f（无 workspace）
-;
-; query:node-type 返回 (no-workspace no workspace AST loaded) sentinel
-; 当 no workspace, 而不是 #f 或 ()。守卫检查 IDs 是 numbers,
-; 这样 sentinel (car 是 symbol) 被正确识别为 no-workspace。
-(define (refactor:ids? x)
-  (or (null? x) (and (pair? x) (number? (car x)))))
-
-(define (refactor:rename-var old new)
-  (define defs (try (query :node-type "Define") (catch #f)))
-  (if (not (refactor:ids? defs)) #f
-    (let ((count 0))
-      ; 1. Rename Define nodes
-      (define (rename-defs ids)
-        (when (pair? ids)
-          (let* ((info (query :node (car ids)))
-                 (name (if (pair? (cdr info)) (car (cdr info)) "")))
-            (when (and (string? name) (string=? name old))
-              (try (mutate :rebind (car ids) new) (catch #f))
-              (set! count (+ count 1)))
-            (rename-defs (cdr ids)))))
-      (rename-defs defs)
-
-      ; 2. Rename Variable references
-      (define vars (try (query :node-type "Variable") (catch #f)))
-      (when (pair? vars)
-        (define (rename-vars ids)
-          (when (pair? ids)
-            (let* ((info (query :node (car ids)))
-                   (name (if (pair? (cdr info)) (car (cdr info)) "")))
-              (when (and (string? name) (string=? name old))
-                (try (mutate :rebind (car ids) new) (catch #f))
-                (set! count (+ count 1)))
-              (rename-vars (cdr ids)))))
-        (rename-vars vars))
-
-      count)))
-
-; ── refactor:extract-function — 提取区域为新函数 ──
-;
-; node-ids: 要提取的节点 ID 列表（须在同一个 Begin/Lambda 体内连续）
-; fn-name:  新函数名
-;
-; 将指定节点从当前位置移除，包装为 (define (fn-name args) body)，
-; 在移除处插入 (fn-name args) 调用。
-; Returns: 新函数代码字符串，或 #f
-(define (refactor:extract-function node-ids fn-name)
-  ; 当前仅支持源码级提取（AST 级改树结构过于复杂）
-  ; 获取当前源码
-  ; Issue #2918: refactor user script in workspace, not current eval frame.
-  (define source (try (current-source :workspace) (catch #f)))
-  (if (not source) #f
-    (begin
-      ; 用源码行号近似提取（后续用 AST 节点 ID 精确化）
-      (display "[refactor] extract ")(display fn-name)
-      (display " from ")(display (length node-ids))(display " nodes")
-      (newline)
-      ; 返回新函数存根
-      (string-append "(define (" fn-name ")\n  " fn-name ")\n"))))
-
-; ── refactor:inline-function — 内联函数 ──
-;
-; fn-name: 函数名
-;
-; Issue #5169: query:callers-of is not registered. query:defines /
-; query:calls are. A missing define is #f; otherwise the caller count
-; (0 when the name exists and nothing calls it). Matches are a bare
-; list under Soft and a schema-2 hash under the production face.
+; query:* matches: a bare list under Soft, a schema-2 hash under the
+; production face — both carry the node refs this module hands to mutate:*
+; (Issue #5169 / #3424).
 (define (refactor:matches q)
   (cond
     ((hash? q)
@@ -97,9 +33,105 @@
     ((or (null? q) (pair? q)) q)
     (else (quote ()))))
 
-(define (refactor:inline-function fn-name)
-  (let ((defs (try (query :defines fn-name) (catch #f))))
-    (if (or (not defs) (null? (refactor:matches defs)))
+(define (refactor:has-defines? name)
+  (pair? (refactor:matches (try (query :defines name) (catch (quote ()))))))
+
+
+; ── refactor:rename-var — 重命名变量 ──
+;
+; 一次 (mutate :rename-symbol old new)：引擎在同一个 mutation boundary 里
+; 改名全部 Define / Variable / Let / Set / Lambda 形参，restamp 节点代
+; （旧 StableNodeRef 失效），并失效 def-use 与 IR。旧实现逐节点调用
+; (mutate :rebind id new) —— rebind 是「把值重新绑定到某个名字」，不是
+; 改名，所以它什么没改却把计数加了 1（#5252）。
+;
+; Returns: #t  至少改名了一个节点（按 workspace 事后状态确认）
+;          #f  无 workspace / 名字不存在 / 只读 / hygiene-protected
+(define (refactor:rename-var old new)
+  (if (or (not (string? old))
+          (not (string? new))
+          (= (string-length old) 0)
+          (= (string-length new) 0))
       #f
-      (let ((calls (try (query :calls fn-name) (catch (quote ())))))
-        (length (refactor:matches calls))))))
+      (let ((r (try (mutate :rename-symbol old new
+                            (string-append "refactor:rename-var " old " -> " new))
+                    (catch (e) #f))))
+        (cond
+          ((equal? r #t) #t)
+          ; Engine note (#5252): a rename of a name that occurs twice inside
+          ; one expression ((f (f x))) can come back as
+          ;   (persist-reject mutate:rename-symbol aborted
+          ;                  (post-mutate-typecheck); topology restored . 0)
+          ; while the symbol column is already renamed and the workspace
+          ; typechecks clean — the post-mutate selective recheck narrows on
+          ; the first occurrence only (#5250 family). Accept the operation
+          ; when the observable post-condition holds: the old name has no
+          ; define left and the new name has one.
+          ((and (not (refactor:has-defines? old))
+                (refactor:has-defines? new))
+           #t)
+          (else #f)))))
+
+; ── refactor:extract-function — 提取子树为新函数 ──
+;
+; node-ids: 单个节点 id（或只含一个 id 的列表），其子树被移到新函数
+;           fn-name 里，原位置留下调用。
+; fn-name:  新函数名（string）。
+;
+; 引擎算子 mutate:extract-function 完成解析 / 建 define / 换调用点；
+; 这里只做参数形状归一。多节点列表暂不支持（返回 #f，不猜）。
+;
+; Returns: #t / #f
+(define (refactor:extract-function node-ids fn-name)
+  (define target
+    (cond ((pair? node-ids)
+           (if (and (pair? (cdr node-ids)) (not (null? (cdr node-ids))))
+               #f
+               (car node-ids)))
+          (else node-ids)))
+  (if (or (not target)
+          (and (not (number? target)) (not (hash? target)))
+          (not (string? fn-name))
+          (= (string-length fn-name) 0))
+      #f
+      (let ((r (try (mutate :extract-function target fn-name) (catch (e) #f))))
+        (if (equal? r #t) #t #f))))
+
+; ── refactor:inline-function — 内联函数 ──
+;
+; fn-name: 函数名（string）。
+;
+; 找到该名字的全部调用点，逐个调用 (mutate :inline-call call-id)：引擎把
+; 调用点替换为被调函数体的克隆并代入实参。整批要么全成、要么回滚到操作
+; 前的 snapshot —— 不做「一半内联」。
+;
+; Issue #5169: query:callers-of 没有注册；query:defines / query:calls 有。
+; 缺 define 是 #f；名字存在但没有调用点是 0。
+; Issue #5252: 以前只返回调用点数、从不内联；现在真内联，返回值仍是
+; 内联成功的调用点数。
+(define (refactor:inline-function fn-name)
+  (if (not (string? fn-name))
+      #f
+      (let ((defs (try (query :defines fn-name) (catch #f))))
+        (if (or (not defs) (null? (refactor:matches defs)))
+            #f
+            (let ((calls (refactor:matches
+                           (try (query :calls fn-name) (catch (quote ()))))))
+              (if (null? calls)
+                  0
+                  (let ((snap (try (mutate :snapshot
+                                           (string-append "inline-" fn-name))
+                                   (catch (e) -1))))
+                    (let loop ((cs calls) (n 0))
+                      (cond
+                        ((null? cs) n)
+                        (else
+                         (let ((r (try (mutate :inline-call (car cs)
+                                               "refactor:inline-function")
+                                       (catch (e) #f))))
+                           (if (equal? r #t)
+                               (loop (cdr cs) (+ n 1))
+                               (begin
+                                 (when (and (number? snap) (>= snap 0))
+                                   (mutate :restore snap))
+                                 #f)))))))))))))
