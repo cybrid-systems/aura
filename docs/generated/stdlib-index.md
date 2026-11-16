@@ -81,7 +81,7 @@
 | `std/pso` | `pso:init` `pso:init-hash` `pso:step!` `pso:best` `pso:population` `pso:report` `pso:export` `pso:help` … (+12) | lib/std/pso.aura — Issue #2877 Particle Swarm Optimization surface |
 | `std/qd` | `qd:map-elites` `qd:insert!` `qd:elites` `qd:coverage` `qd:qd-score` `qd:best` `qd:novelty` `qd:select-parent` … (+15) | lib/std/qd.aura — Issue #4941 (v0.2 P2): quality diversity and open-ended |
 | `std/query-workspace` | `query:macro-introduced-calls` `query:macro-introduced-defines` | — |
-| `std/query` | `query:list-categories` `query:help` `query:nodes-with-marker` `query:find-by-name` `query:subtree` `query:defines` `query:defines-by-marker` `query:calls-by-marker` … (+4) | lib/std/query.aura — query: namespace high-level Agent API |
+| `std/query` | `query:list-categories` `query:help` `query:help-topics` `query:nodes-with-marker` `query:find-by-name` `query:subtree` `query:defines` `query:defines-by-marker` … (+8) | lib/std/query.aura — query: namespace high-level Agent API |
 | `std/queue` | `make-queue` `enqueue` `dequeue` `queue-front` `queue-rest` `queue-empty?` `queue-length` `queue->list` … (+1) | queue.aura — FIFO queue (pair-based, immutable) |
 | `std/r7rs` | `r7rs:libraries` `r7rs:coverage` `r7rs:status` `r7rs:missing` `r7rs:library-exports` | lib/std/r7rs.aura — R7RS-small coverage table (Issue #5005) |
 | `std/random` | `make-random` `random-next` `random-integer` `random-float` `random-range` `random-vector` `shuffle` `random-seed` | random.aura — Simple pseudo-random number generator |

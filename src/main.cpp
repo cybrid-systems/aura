@@ -30,6 +30,7 @@
 #include "core/crash_handler.hh"          // #5211: shared fatal-signal handler
 #include "compiler/ir_buffer_abi.h"       // #4936 IrBufferPtr
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
+#include "reflect/node_tag_names.hh" // #5249: kind names for --query output
 // Issue #2076 / #2053: production security defaults (must be before import std).
 #include "compiler/security_defaults.hh"
 #include "compiler/jit_assumptions.hh" // #4569 --jit-session stats
@@ -5065,8 +5066,18 @@ static int run_cli_query(int argc, char** argv) {
     } else {
         auto results = engine.execute(qexpr);
         std::println("query: {} matches", results.size());
-        for (auto id : results)
-            std::println("  node[{}]: tag={}", id, static_cast<int>(flat.get(id).tag));
+        // Issue #5249: print the node kind NAME, not only the integer tag.
+        // Agents and scripts read this line; `tag=2` forced them to carry a
+        // copy of the NodeTag enum. kNodeTagNames is the shared Wave B1
+        // table (the same one query:node-types and (query :node) use).
+        for (auto id : results) {
+            const auto nv = flat.get(id);
+            const auto tag_i = static_cast<std::size_t>(nv.tag);
+            std::string_view kind = "<gap>";
+            if (tag_i >= 1 && tag_i <= aura::ast::kNodeTagNameCount)
+                kind = aura::ast::kNodeTagNames[tag_i - 1];
+            std::println("  node[{}]: {} (tag={})", id, kind, static_cast<int>(nv.tag));
+        }
     }
     return 0;
 }
