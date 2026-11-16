@@ -1401,8 +1401,10 @@ static void ac2722_1_release_hard_gate_exists() {
           "AC1: command-table registration (coverage)");
     // Main pre-push gate chain runs coverage-only (fast); full SOAK is
     // release.yml / command-table (AC4). Match the #2722 linter contract.
-    CHECK(build.find("or cmd_chaos_soak_hard_gate_2722_coverage()") != std::string::npos,
-          "AC1: wired into main gate command chain (coverage)");
+    // Issue #5246: the gate now has one shared coverage step; the command
+    // table entry above is the wiring, and run_checks.py owns the script.
+    CHECK(build.find("\"coverage\", lambda: _run_parallel_coverage_checks") != std::string::npos,
+          "AC1: main gate runs the shared coverage step");
     CHECK(build.find("Issue #2722") != std::string::npos, "AC1: build.py cites #2722");
 }
 
@@ -1621,8 +1623,8 @@ static void ac2755_5_source_and_linter() {
     CHECK(lint.find("2755") != std::string::npos, "AC5: linter covers #2755");
     CHECK(build.find("check_chaos_soak_residual_zero_2755") != std::string::npos,
           "AC5: build.py wires 2755 linter");
-    CHECK(build.find("or cmd_chaos_soak_residual_zero_2755_coverage()") != std::string::npos,
-          "AC5: main gate chain includes 2755 coverage");
+    CHECK(build.find("\"coverage\", lambda: _run_parallel_coverage_checks") != std::string::npos,
+          "AC5: main gate runs the shared coverage step");
     CHECK(build.find("\"chaos-soak-residual-zero-2755-coverage\": "
                      "cmd_chaos_soak_residual_zero_2755_coverage,") != std::string::npos,
           "AC5: command-table registration");

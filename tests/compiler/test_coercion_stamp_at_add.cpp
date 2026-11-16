@@ -405,7 +405,7 @@ static void ac3046_5_source_cites() {
           "3046 AC5: DCE sweep cites density keep");
     const auto lint = read_file("scripts/coverage/manifests/3046.json");
     CHECK(!lint.empty() && lint.find("#3046") != std::string::npos, "3046 AC5: linter");
-    CHECK(read_file("build.py").find("check_coercion_hf_lag_hot_residual_3046") !=
+    CHECK(read_file("build.py").find("\"coverage\", lambda: _run_parallel_coverage_checks") !=
               std::string::npos,
           "3046 AC5: build.py gate");
     CHECK(read_file("tests/compiler/test_issue_3046.cpp").empty(),
