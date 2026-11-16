@@ -108,12 +108,13 @@ static void ac2_existing_prim_set_passes() {
 static void ac3_ci_gate_runs_script() {
     std::println("\n--- #2494 AC3: CI gate runs script via build.py ---");
     const auto bp = read_file("build.py");
-    // cmd_side_effect_security() exists at line 1596, called from gate.
-    CHECK(bp.find("def cmd_side_effect_security():") != std::string::npos,
-          "AC3: build.py has cmd_side_effect_security");
+    // Issue #5246: the gate step list moved into a table; build.py keeps a
+    // generated wiring index naming every check script it dispatches.
+    CHECK(bp.find("check_side_effect_security") != std::string::npos,
+          "AC3: build.py wiring index names check_side_effect_security");
     CHECK(bp.find("--strict") != std::string::npos, "AC3: build.py calls script with --strict");
-    CHECK(bp.find("or cmd_side_effect_security()") != std::string::npos,
-          "AC3: build.py gate includes cmd_side_effect_security");
+    CHECK(bp.find("\"coverage\", lambda: _run_parallel_coverage_checks") != std::string::npos,
+          "AC3: build.py gate runs the shared coverage step");
     const auto ci = read_file(".github/workflows/ci.yml");
     CHECK(ci.find("build.py gate") != std::string::npos,
           "AC3: ci.yml gate runs build.py gate (which runs the script)");
