@@ -63,6 +63,25 @@ def main() -> int:
                 i += 1
             bwin = mx[bpos:i]
 
+    # Issue #5243: the restore call moved into the shared guard type.
+    gpos = mx.find("struct ExpandCheckpointGuard {")
+    gwin = ""
+    if gpos >= 0:
+        brace = mx.find("{", gpos)
+        if brace >= 0:
+            depth = 0
+            i = brace
+            while i < len(mx):
+                c = mx[i]
+                if c == "{":
+                    depth += 1
+                elif c == "}":
+                    depth -= 1
+                    if depth == 0:
+                        break
+                i += 1
+            gwin = mx[gpos:i]
+
     # AC1 production refuse-partial
     must("Issue #3062", "AC1 cite", mx)
     must("production_surface", "AC1 gate", bwin)
@@ -78,8 +97,13 @@ def main() -> int:
     must("if (inner_expand_production_limit_deny())", "AC1 deny-all delegates to the predicate", mx)
     must("3062 AC1", "AC1 test", lim_t)
 
-    # AC2 boundary restore
-    must("aura_evaluator_try_restore_macro_expand_checkpoint", "AC2 restore", bwin)
+    # AC2 boundary restore (clone frame calls it; the call lives in the
+    # shared guard's try_restore after #5243).
+    if (
+        "aura_evaluator_try_restore_macro_expand_checkpoint" not in bwin
+        and "aura_evaluator_try_restore_macro_expand_checkpoint" not in gwin
+    ):
+        fails.append("AC2 restore: missing 'aura_evaluator_try_restore_macro_expand_checkpoint'")
     must("install_macro_expand_checkpoint", "AC2 install", mx)
     must("3062 AC2", "AC2 test", lim_t)
 
