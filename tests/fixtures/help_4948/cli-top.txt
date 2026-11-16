@@ -12,6 +12,7 @@ Commands:
   repl   interactive REPL with hot reload
   evo    inspect a project's evolution worldline
   lsp    language server on stdio (see docs/editor.md)
+  config list AURA_* runtime knobs and their current values
   soft   run a file with Restricted Mutate on its workspace
   help   show help for a command
 
