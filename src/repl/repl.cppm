@@ -33,6 +33,7 @@ import std;
 import aura.compiler.service;
 import aura.compiler.evaluator;
 import aura.compiler.value;
+import aura.diag;
 
 export namespace aura {
 
@@ -675,12 +676,13 @@ public:
             return eval_quiet_(text);
         if (in_workspace_(name)) {
             std::string shown;
+            bool refused = false;
             const auto err = eval_quiet_("(mutate :rebind " + quote_(name) + " " +
                                              quote_(def->second.value) + " \"repl :undo\")",
-                                         &shown);
+                                         &shown, &refused);
             if (!err.empty())
                 return err;
-            if (shown == "#t" || shown.find("effect-denied") == std::string::npos)
+            if (shown == "#t" || !refused)
                 if (const auto ev = eval_quiet_(def->second.src); !ev.empty())
                     return ev;
         }
@@ -1369,10 +1371,27 @@ public:
     }
 
     // Evaluate without printing; returns "" on success, else the error text.
-    std::string eval_quiet_(const std::string& code, std::string* shown = nullptr) {
+    // Issue #5241: `refused` reports the structured kind of a sandbox /
+    // mutation refusal, so callers do not classify the displayed text.
+    std::string eval_quiet_(const std::string& code, std::string* shown = nullptr,
+                            bool* refused = nullptr) {
         auto r = cs_.eval(code);
-        if (!r)
+        if (!r) {
+            if (refused) {
+                const auto kind = r.error().display_kind();
+                *refused = kind == aura::diag::ErrorKind::EffectDenied ||
+                           kind == aura::diag::ErrorKind::MutationRefused;
+            }
             return r.error().format_with_source(code);
+        }
+        if (refused) {
+            const bool err_value =
+                aura::compiler::types::is_error(*r) && !aura::compiler::types::is_string(*r);
+            const auto kind =
+                err_value ? cs_.evaluator().error_value_kind(*r) : aura::diag::ErrorKind::TypeError;
+            *refused = err_value && (kind == aura::diag::ErrorKind::EffectDenied ||
+                                     kind == aura::diag::ErrorKind::MutationRefused);
+        }
         if (shown && !aura::compiler::types::is_void(*r))
             *shown = format_(*r);
         return {};
@@ -1504,12 +1523,13 @@ public:
             return err;
         }
         std::string shown;
+        bool refused = false;
         auto err = eval_quiet_("(mutate :rebind " + quote_(name) + " " + quote_(def.value) +
                                    " \"repl :reload\")",
-                               &shown);
+                               &shown, &refused);
         if (!err.empty() || shown == "#t")
             return err;
-        if (shown.find("effect-denied") != std::string::npos)
+        if (refused)
             return "mutate:rebind refused: " + shown;
         err = eval_quiet_(def.src);
         redefined = err.empty();
