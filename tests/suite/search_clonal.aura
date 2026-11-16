@@ -1,0 +1,183 @@
+; tests/suite/search_clonal.aura — Issue #5270
+; kind "clonal": clonal selection over numeric vectors, with optional
+; discrete gene tables. Cases cover the protocol shape, sphere/rastrigin/
+; discrete-table convergence, determinism, export → import resume (at a
+; generation boundary and mid-generation), bounds, and value isolation.
+
+(require "std/test" all:)
+(require "std/search" all:)
+
+(test-file "search_clonal.aura")
+
+(define (sphere v)
+  (let loop ((xs v) (s 0.0))
+    (if (null? xs) (- 0.0 s) (loop (cdr xs) (+ s (* (car xs) (car xs)))))))
+
+(define (rastrigin v)
+  (let loop ((xs v) (s 0.0))
+    (if (null? xs) (- 0.0 s)
+      (loop (cdr xs)
+            (+ s (- (* (car xs) (car xs))
+                    (* 10.0 (cos (* 6.283185307179586 (car xs)))))
+               10.0)))))
+
+; discrete operator table: a coordinate is a table index 0..3
+(define op-scores (list 0.0 0.4 -0.2 1.0))
+(define (decode x) (max 0 (min 3 (round x))))
+(define (op-fit v)
+  (let loop ((xs v) (s 0.0))
+    (if (null? xs) s (loop (cdr xs) (+ s (list-ref op-scores (decode (car xs))))))))
+
+(define bounds2 (list (list -5.12 5.12) (list -5.12 5.12)))
+(define opts (hash "dim" 2 "pop" 12 "bounds" bounds2 "seed" 7
+                   "select" 6 "replace" 2
+                   "clone-factor" 0.5 "mutation" 1.0))
+
+; The documented pool rule: one elite, round(β·N/rank) clones for each of
+; the top `select` ranks (at least one), and d fresh random individuals.
+(define (pool-size pop sel beta d)
+  (let loop ((r 1) (acc 0))
+    (if (> r sel)
+      (+ 1 acc d)
+      (loop (+ r 1) (+ acc (max 1 (round (/ (* beta pop) r))))))))
+
+(define (help-text kind)
+  (let loop ((rows (search:help)))
+    (cond ((null? rows) "")
+          ((string=? (car (car rows)) kind) (car (cdr (car rows))))
+          (else (loop (cdr rows))))))
+
+(define (in-bounds? v bounds)
+  (let loop ((xs v) (bs bounds))
+    (cond ((null? xs) #t)
+          ((null? bs) #t)
+          ((and (>= (car xs) (car (car bs)))
+                (<= (car xs) (car (cdr (car bs)))))
+           (loop (cdr xs) (cdr bs)))
+          (else #f))))
+
+(define (all-in-bounds? gen bounds)
+  (let loop ((gs gen))
+    (cond ((null? gs) #t)
+          ((in-bounds? (car gs) bounds) (loop (cdr gs)))
+          (else #f))))
+
+; Score one whole generation: step takes the score of the candidate at
+; the score cursor, which is pending[k] while k scores are recorded.
+(define (score-gen st fit)
+  (let loop ((s st) (k 0) (n (length (search:pending st))))
+    (if (>= k n)
+      s
+      (loop (search:step s (fit (list-ref (search:pending s) k))) (+ k 1) n))))
+
+(test-case "clonal is a kind with a help row" (hash "issue" 5270)
+  (check (member "clonal" (search:kinds)))
+  (check (string=? (search:kind (search:init "clonal" (hash "dim" 1))) "clonal"))
+  (check (= (length (search:help)) (length (search:kinds))))
+  (check (> (string-length (help-text "clonal")) 0))
+  (check (not (member "aiNet" (search:kinds)))))
+
+(test-case "init proposes a full generation inside bounds" (hash "issue" 5270)
+  (define st (search:init "clonal" opts))
+  (check= 12 (length (search:pending st)))
+  (check= 0 (search:gen st))
+  (check (not (search:complete? st)))
+  (check (all-in-bounds? (search:pending st) bounds2))
+  (check (not (pair? (search:best st)))))
+
+(test-case "sphere converges" (hash "issue" 5270)
+  (define st (search:run (search:init "clonal" opts) sphere 40))
+  (check (> (search:best-score st) -0.01))
+  (check (< (abs (car (search:best st))) 0.5))
+  (check= 40 (search:gen st))
+  (check= (pool-size 12 6 0.5 2) (length (search:pending st)))
+  (check (all-in-bounds? (search:pending st) bounds2)))
+
+(test-case "rastrigin converges" (hash "issue" 5270)
+  (define st (search:run (search:init "clonal"
+                                      (hash "dim" 2 "pop" 16 "bounds" bounds2
+                                            "seed" 3 "select" 8 "replace" 2))
+                         rastrigin 60))
+  (check (> (search:best-score st) -0.5))
+  (check (< (abs (car (search:best st))) 0.5)))
+
+(test-case "discrete gene table is searched by swapping" (hash "issue" 5270)
+  (define tab (list 0 1 2 3))
+  (define st (search:run (search:init "clonal"
+                                      (hash "dim" 3 "pop" 10 "seed" 5
+                                            "genes" (list tab tab tab)
+                                            "bounds" (list (list 0.0 3.0))))
+                         op-fit 20))
+  ; the table optimum is 3.0, and every gene stays a table entry
+  (check= 3.0 (search:best-score st))
+  (check (equal? (search:best st) (list 3 3 3)))
+  (check (all-in-bounds? (search:pending st) (list (list 0.0 3.0)))))
+
+(test-case "same seed gives the same trajectory" (hash "issue" 5270)
+  (define a (search:run (search:init "clonal" opts) sphere 12))
+  (define b (search:run (search:init "clonal" opts) sphere 12))
+  (check (equal? (search:best a) (search:best b)))
+  (check (= (search:best-score a) (search:best-score b)))
+  (check (equal? (search:pending a) (search:pending b))))
+
+(test-case "different seeds give different populations" (hash "issue" 5270)
+  (define a (search:init "clonal" opts))
+  (define b (search:init "clonal" (hash-set opts "seed" 99)))
+  (check (not (equal? (search:pending a) (search:pending b)))))
+
+(test-case "export/import resumes at a generation boundary" (hash "issue" 5270)
+  (define full (search:run (search:init "clonal" opts) sphere 40))
+  (define half (search:run (search:init "clonal" opts) sphere 15))
+  (define resumed (search:run (search:import (search:export half)) sphere 25))
+  (check (= 40 (search:gen resumed)))
+  (check (equal? (search:best resumed) (search:best full)))
+  (check (= (search:best-score resumed) (search:best-score full)))
+  (check (equal? (search:pending resumed) (search:pending full))))
+
+(test-case "export/import resumes mid-generation" (hash "issue" 5270)
+  (define g1 (score-gen (search:init "clonal" opts) sphere))
+  (define g2 (search:step g1 (sphere (list-ref (search:pending g1) 0))))
+  (define g3 (search:step g2 (sphere (list-ref (search:pending g2) 1))))
+  (define direct (score-gen g3 sphere))
+  (define resumed (score-gen (search:import (search:export g3)) sphere))
+  (check= 2 (length (hash-ref (search:export g3) "scored" (list))))
+  (check (equal? (search:best resumed) (search:best direct)))
+  (check (= (search:best-score resumed) (search:best-score direct)))
+  (check (= (search:gen resumed) (search:gen direct)))
+  (check (equal? (search:pending resumed) (search:pending direct))))
+
+(test-case "two clonal searches do not share state" (hash "issue" 5270)
+  (define a (search:init "clonal" opts))
+  (define b (search:init "clonal" (hash-set opts "seed" 99)))
+  ; interleave two steps each, then compare against the solo runs
+  (define a2 (search:step (search:step a sphere) sphere))
+  (define b2 (search:step (search:step b sphere) sphere))
+  (define solo-a (search:step (search:step a sphere) sphere))
+  (define solo-b (search:step (search:step b sphere) sphere))
+  (check (equal? (search:pending a2) (search:pending solo-a)))
+  (check (equal? (search:pending b2) (search:pending solo-b)))
+  (check (not (equal? (search:pending a2) (search:pending b2)))))
+
+(test-case "options select clone count and replacement" (hash "issue" 5270)
+  ; select 4 / replace 3: one elite, clones down the four ranks, and
+  ; three fresh random individuals; every candidate is in bounds
+  (define st (search:run (search:init "clonal"
+                                      (hash "dim" 2 "pop" 8 "bounds" bounds2
+                                            "seed" 11 "select" 4
+                                            "clone-factor" 0.5 "mutation" 3.0
+                                            "replace" 3))
+                         sphere 10))
+  (check= 12 (pool-size 8 4 0.5 3))
+  (check= 12 (length (search:pending st)))
+  (check (all-in-bounds? (search:pending st) bounds2))
+  (check (number? (search:best-score st)))
+  ; a bigger clone factor evaluates a bigger batch at the same population
+  (define wide (search:run (search:init "clonal"
+                                        (hash "dim" 2 "pop" 8 "bounds" bounds2
+                                              "seed" 11 "select" 4
+                                              "clone-factor" 1.0 "mutation" 3.0
+                                              "replace" 3))
+                           sphere 10))
+  (check (> (length (search:pending wide)) (length (search:pending st)))))
+
+(test-finish)
