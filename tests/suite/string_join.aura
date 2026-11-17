@@ -137,6 +137,55 @@
 (test-case "contains" (hash)
   (check (string-contains? "hello" "ell")))
 
+; Issue #5320: string-contains? must ride the native string-index scan
+; instead of minting one substring per position (a 213-character miss was
+; ~300x the native scan). Pin the contract on the edge shapes, then the
+; SHAPE of the work: N misses may cost at most ~10x the same N native
+; scans plus slack. Best-of-two keeps load noise out of the ratio, and the
+; slack absorbs a loaded box: the pre-fix per-position copy sat at ~300x.
+(define (string-5320-hay)
+  (let ((i 0)
+        (s ""))
+    (while (lambda () (< i 213))
+      (lambda ()
+        (set! s (string-append s "a"))
+        (set! i (+ i 1))))
+    s))
+
+(define (string-5320-ms th)
+  (let ((t0 (current-time-ms)))
+    (th)
+    (- (current-time-ms) t0)))
+
+(define (string-5320-best th)
+  (let ((a (string-5320-ms th)))
+    (let ((b (string-5320-ms th)))
+      (if (< a b) a b))))
+
+(test-case "contains edge shapes match string-index" (hash "issue" 5320)
+  (check (string-contains? "hello" "hello"))
+  (check (string-contains? "hello" ""))
+  (check (string-contains? "" ""))
+  (check (not (string-contains? "" "a")))
+  (check (not (string-contains? "hello" "hello!")))
+  (check (not (string-contains? "hello" "zz")))
+  (check (string-contains? "aé中😀b" "😀b"))
+  (check (string-contains? "aé中😀b" "é中")))
+
+(test-case "contains rides the native scan" (hash "issue" 5320)
+  (let ((hay (string-5320-hay))
+        (n 1000))
+    (check= 213 (string-length hay))
+    (let ((tc (string-5320-best
+                (lambda ()
+                  (let loop ((i 0))
+                    (if (< i n) (begin (string-contains? hay "zz") (loop (+ i 1))) #f)))))
+          (tn (string-5320-best
+                (lambda ()
+                  (let loop ((i 0))
+                    (if (< i n) (begin (string-index hay "zz" 0) (loop (+ i 1))) #f))))))
+      (check (<= tc (+ (* 10 tn) 300))))))
+
 ; Issue #3920: string-find (haystack, needle) returns an index or -1.
 (test-case "find interior" (hash "issue" 3920)
   (check= 2 (string-find "ab(lambda" "(lambda")))
