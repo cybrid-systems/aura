@@ -873,4 +873,40 @@
   (define h (let ((x (hash))) (hash-set! x "a" 1) (hash-set! x "b" 2) x))
   (check= "\"a\":1,\"b\":2" (json-obj-items h (list "a" "b") number->string))
   (check (< dt 5000)))
+;; Issue #5333: std/extract scanned with list-ref over the whole string'
+; char list, so every scan was O(n^2) (32k-char reply: 5.6 s).
+(test-case "extract:code blocks" (hash "issue" 5333)
+  (require "std/extract" all:)
+  (check= "(define (f x) (+ x 1))"
+          (extract-code "Some prose. ```aura
+(define (f x) (+ x 1))
+``` after"))
+  (check= "(lambda (x) x)"
+          (extract-code "中文说明 😀
+```scheme
+(lambda (x) x)
+```
+结束"))
+  (check= "(define (g) 1) after"
+          (extract-code "before (define (g) 1) after"))
+  (check= -1 (find-in-str "abc" "zz" 0))
+  (check= 1 (find-in-str "abc" "bc" 0))
+  (check= -1 (find-in-str "abc" "" 0))
+  (check= -1 (find-in-str "" "a" 0))
+  (check= -1 (find-in-str "ab" "abc" 0))
+  (check= "a b" (trim-str "  a b  "))
+  (check= "" (trim-str " \t\n\r ")))
+
+(test-case "extract:linear over 32k" (hash "issue" 5333)
+  (require "std/extract" all:)
+  (require "std/string" all:)
+  (define prog (string-repeat
+                "prose before. ```aura\n(define (f x) (+ x 1))\n``` after\n" 640))
+  (check (> (string-length prog) 32000))
+  (define t0 (monotonic-ms))
+  (check= "(define (f x) (+ x 1))" (extract-code prog))
+  (define dt (- (monotonic-ms) t0))
+  (check= -1 (find-in-str prog "lambda" 0))
+  ; ~90 ms here after the rewrite; the list-ref scans took ~20 s.
+  (check (< dt 3000)))
 (test-finish)
