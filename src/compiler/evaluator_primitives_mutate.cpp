@@ -4245,11 +4245,20 @@ template <typename Ctx> void RegSplitParts::register_mutate_rebind_primitive(Ctx
             ok = true;
             rebind_after_rejected.failed = false;
             // Keep the body's disarm from clearing state before the
-            // outermost commit. Nothing was armed; focus stays empty, so
-            // the wrapper's reinstall is a no-op. The skip flag makes that
-            // commit leave the process bridge epoch alone.
+            // outermost commit. The skip flag makes that commit leave the
+            // process bridge epoch alone.
             rebind_light_disarm.keep = true;
             ev.arm_rebind_skip_bridge_bump();
+            // Issue #5318: an identity rebind still publishes the define.
+            // A target that measures itself swaps the binding with set! and
+            // restores a closure it captured earlier; after an intervening
+            // rebind that restored value can be older than the AST. Returning
+            // #t without re-installing left the cell on that stale closure, so
+            // the last rebind was a no-op on the running program. Focus makes
+            // the wrapper's reinstall bind this define (and its callers) from
+            // the current body, exactly like the real-rebind path.
+            ev.note_rebind_light_focus(name);
+            ev.defines_bound_flat_ = ev.workspace_flat_;
             return make_bool(true);
         }
 
