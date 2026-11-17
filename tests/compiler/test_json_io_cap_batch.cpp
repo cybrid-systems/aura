@@ -33,7 +33,7 @@ int main() {
     using aura::test::g_passed;
     int members_failed = 0;
     int members_passed = 0;
-    std::println("=== test_json_io_cap_batch (11 members) ===");
+    std::println("=== test_json_io_cap_batch ===");
 
     std::println("\n──── test_channel_rendezvous ────");
     reset_member_face();
@@ -111,6 +111,24 @@ int main() {
         ++members_passed;
         std::println("OK member test_write_string_escape ({} checks)", g_passed);
     }
+    // #5322: the regex member is live — the parked worker removed the 1 ms
+    // per-call floor and AC6 bounds the short-call latency. The four members
+    // below still fail on main for their own reasons (list void AC drift,
+    // #4342 parse-error expectations, #3174 sys-open gating, tcp listen
+    // grants), so they stay out of the batch until each is repaired; the tail
+    // count prints the live member total.
+    std::println("\n──── test_regex_redos_timeout ────");
+    g_passed = 0;
+    g_failed = 0;
+    if (run_test_regex_redos_timeout() != 0 || g_failed != 0) {
+        ++members_failed;
+        std::println("FAIL member test_regex_redos_timeout ({}/{})", g_passed, g_failed);
+    } else {
+        ++members_passed;
+        std::println("OK member test_regex_redos_timeout ({} checks)", g_passed);
+    }
+
+
 #if 0
     std::println("\n──── test_list_end_of_list_void ────");
     g_passed = 0;
@@ -132,17 +150,6 @@ int main() {
     } else {
         ++members_passed;
         std::println("OK member test_load_cap_io_read ({} checks)", g_passed);
-    }
-
-    std::println("\n──── test_regex_redos_timeout ────");
-    g_passed = 0;
-    g_failed = 0;
-    if (run_test_regex_redos_timeout() != 0 || g_failed != 0) {
-        ++members_failed;
-        std::println("FAIL member test_regex_redos_timeout ({}/{})", g_passed, g_failed);
-    } else {
-        ++members_passed;
-        std::println("OK member test_regex_redos_timeout ({} checks)", g_passed);
     }
 
     std::println("\n──── test_sys_open_path_harden ────");
