@@ -673,20 +673,6 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
         ev->clear_expected_occurrence_snapshot_fp();
         ev->stage_expected_occurrence_snapshot_fp(live_fp);
     }
-    if (::std::getenv("AURA_GATE_TRACE") != nullptr)
-        std::fprintf(
-            stderr,
-            "[gate] persist live_fp=%llu expected=%llu goals=%zu scope=%d out=%d lastpf=%llu\n",
-            static_cast<unsigned long long>(live_fp),
-            static_cast<unsigned long long>(ev->expected_occurrence_snapshot_fp()),
-            static_cast<std::size_t>(live_truth.live_goal_count),
-            aura::compiler::typed_audit::g_delta_scope_proof_clean.load() ? 1 : 0,
-            aura::compiler::typed_audit::mid_abort_authority_outstanding(
-                aura::compiler::typed_audit::join_audit_and_se_mid(0))
-                ? 1
-                : 0,
-            static_cast<unsigned long long>(
-                aura::compiler::typed_audit::last_proof_goal_fingerprint_v_read()));
     // Issue #3418: n>16 prefix mix matches even when the tail drifted.
     // Production/Full fail-closed (reuse force_reason 16) before the
     // 16-prefix equality check. Soft/Off: mix 16, observe only.
