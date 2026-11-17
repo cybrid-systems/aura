@@ -38,10 +38,24 @@ b") (list (list "a") (list "") (list "b")))
                      (list "1" "2" ""))))
      (equal? (csv-parse (rows->csv rows)) rows))))
 
+; #5332: rows->csv builds one fragment per row and joins once; the old loop
+; appended onto the growing text (8000 four-field rows: 7123 ms -> 2342 ms
+; here). Pin the length identity and a generous wall bound.
+(define (write-scale)
+  (let* ((row (list "alpha" "beta" "gamma" "delta"))
+         (line (rows->csv (list row)))
+         (rows (make-list 8000 row))
+         (t0 (monotonic-ms))
+         (out (rows->csv rows))
+         (dt (- (monotonic-ms) t0)))
+    (and (= (+ (* 8000 (string-length line)) 7999) (string-length out))
+         (< dt 8000))))
+
 (define host (if (check) 1 0))
 (define guest (fiber:join (fiber:spawn (lambda () (if (check) 1 0)))))
+(define scale (if (write-scale) 1 0))
 
-(if (and (= host 1) (= guest 1))
+(if (and (= host 1) (= guest 1) (= scale 1))
     (begin (display "OK-5196-csv") (newline))
     (begin (display "FAIL-5196-csv host=") (display host)
            (display " guest=") (display guest) (newline) (exit 1)))

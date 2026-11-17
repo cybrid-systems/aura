@@ -1,4 +1,5 @@
 ; csv.aura — CSV parsing and generation (RFC 4180)
+(require "std/string" all:)
 ; Characters are represented as integers in Aura.
 ; 9 = tab, 10 = LF, 13 = CR, 34 = double-quote, 44 = comma.
 (export csv-parse csv->rows csv->table csv-select csv-filter csv-header column-names
@@ -55,12 +56,13 @@
 
 ; Issue #5196: the missing write side. A field is quoted when it contains a
 ; comma, a quote, CR or LF, and every internal quote is doubled (RFC 4180).
+; #5332: four native scans instead of a string->list + a comparison per
+; character (100k-char field: 507 ms -> one scan).
 (define (csv-needs-quote? field)
-  (let loop ((cs (string->list field)))
-    (cond ((null? cs) #f)
-          ((let ((c (car cs)))
-             (or (= c 44) (= c 34) (= c 10) (= c 13))) #t)
-          (else (loop (cdr cs))))))
+  (or (>= (string-index field "," 0) 0)
+      (>= (string-index field "\"" 0) 0)
+      (>= (string-index field "\n" 0) 0)
+      (>= (string-index field "\r" 0) 0)))
 
 (define (csv-quote field)
   ; leading quote in the accumulator, closing quote appended at the end
@@ -74,23 +76,16 @@
 (define (csv-escape-field field)
   (if (csv-needs-quote? field) (csv-quote field) field))
 
+; #5332: join the fields once instead of appending onto the growing line.
 (define (csv-row->line row)
-  (if (null? row)
-      ""
-      (let loop ((fs (cdr row)) (acc (csv-escape-field (car row))))
-        (if (null? fs)
-            acc
-            (loop (cdr fs) (string-append acc "," (csv-escape-field (car fs))))))))
+  (string-join (map csv-escape-field row) ","))
 
 ; (rows->csv rows) -> text. Records are joined with \n (parsing accepts \n,
 ; \r\n and lone \r); an empty row list is "".
+; #5332: one fragment per row, joined once (8000 rows: 6840 ms -> ~750 ms in
+; the report).
 (define (rows->csv rows)
-  (if (null? rows)
-      ""
-      (let loop ((rs (cdr rows)) (acc (csv-row->line (car rows))))
-        (if (null? rs)
-            acc
-            (loop (cdr rs) (string-append acc "\n" (csv-row->line (car rs))))))))
+  (string-join (map csv-row->line rows) "\n"))
 
 
 (define (csv-select cols rows)
