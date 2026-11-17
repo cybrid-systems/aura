@@ -810,4 +810,30 @@
   ; ~1.3 s here on this slow interpreter; the append-per-element shape
   ; took ~40 s.
   (check (< dt 8000)))
+;; Issue #5330: hash-keys-filter handed the key LIST back as the hash, and
+; (hash-keys list) silently returns (), so hash-map / hash-filter /
+; hash-merge! / hash-merge-into kept only the first key.
+(test-case "iter:hash helpers cover every key" (hash "issue" 5330)
+  (require "std/iter" all:)
+  (define (mk) (let ((h (hash))) (hash-set! h "a" 1) (hash-set! h "b" 2) (hash-set! h "c" 3) h))
+  (define mapped (hash-map (lambda (v) (* v 10)) (mk)))
+  (check= 3 (length (hash->alist mapped)))
+  (check= 30 (hash-ref mapped "c" 0))
+  (define filtered (hash-filter (lambda (v) #t) (mk)))
+  (check= 3 (length (hash->alist filtered)))
+  (check= 2 (hash-ref filtered "b" 0))
+  (define merged (let ((t (hash))) (hash-merge! t (mk))))
+  (check= 3 (length (hash->alist merged)))
+  (check= 3 (hash-ref merged "c" 0))
+  (define into (hash-merge-into (hash) (mk)
+                              (let ((x (hash))) (hash-set! x "d" 4) x)))
+  (check= 4 (length (hash->alist into)))
+  (check= 4 (hash-ref into "d" 0)))
+
+(test-case "iter:hash helpers walk 10000 keys" (hash "issue" 5330)
+  (require "std/iter" all:)
+  (define big (let loop ((i 0) (h (hash)))
+               (if (>= i 10000) h
+                   (begin (hash-set! h (number->string i) i) (loop (+ i 1) h)))))
+  (check= 10000 (length (hash->alist (hash-map (lambda (v) v) big)))))
 (test-finish)
