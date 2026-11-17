@@ -158,9 +158,10 @@
   (define t2 (monotonic-ms))
   (check= #t (every (lambda (x) (>= x 0)) big))
   (define te (- (monotonic-ms) t2))
-  ; The n-ary path allocated two lists and an apply per element (~20x a
-  ; hand-written walk on the pre-fix shape); eight times leaves room for
-  ; the closure call and a loaded box.
+  ; The closure call per element dominates this interpreter (base 40k ~300 ms,
+  ; any ~1750 ms). The n-ary path it replaced added two list allocations and
+  ; an apply per element (any 40k ~2730 ms); eight times base still fails
+  ; that shape while leaving room for a loaded box.
   (check (<= ta (+ (* 8 base) 200)))
   (check (<= te (+ (* 8 base) 200))))
 
