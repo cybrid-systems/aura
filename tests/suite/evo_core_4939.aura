@@ -585,7 +585,17 @@
 (define ev-t0 (monotonic-ms))
 (define ev-c (evo:candidate ev-g))
 (define ev-ms (- (monotonic-ms) ev-t0))
-(assert! (< ev-ms 500) "evo:candidate on a 16k list genome is linear")
+; #5339: the native FNV-1 32 primitive is bit-identical to the Aura walk
+; (code points, offset 2166136261, prime 16777619, mod 2^32), so the id
+; change is a speedup only.
+(define (ref-fnv str)
+  (let loop ((i 0) (h 2166136261))
+    (if (>= i (string-length str)) h
+      (loop (+ i 1) (modulo (* (+ h (char->integer (string-ref str i))) 16777619) 4294967296)))))
+(assert! (= (ref-fnv "") (string-fnv1-32 "")) "native FNV matches on empty")
+(assert! (= (ref-fnv "abcdef") (string-fnv1-32 "abcdef")) "native FNV matches on ASCII")
+(assert! (= (ref-fnv "aéb中😀") (string-fnv1-32 "aéb中😀")) "native FNV matches multibyte")
+(assert! (< ev-ms 200) "evo:candidate on a 16k list genome is under 200 ms")
 (assert! (string? (evo:candidate-id ev-c)) "16k genome still gets an id")
 (define ev-h1 (evo:candidate (hash "y" (list 2 3) "x" 1)))
 (define ev-h2 (evo:candidate (hash "x" 1 "y" (list 2 3))))

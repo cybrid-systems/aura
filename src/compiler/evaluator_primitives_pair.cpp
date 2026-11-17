@@ -1396,6 +1396,41 @@ void RegSplitParts::register_string_ops(PrimRegistrar add, Evaluator& ev,
         pure_general(1, "(string) -> int",
                      "Stable fixnum digest of the UTF-8 bytes (FNV-1a; may be negative). "
                      "A code outside the fixnum range flips bit 62."));
+    // Issue #5339 follow-up: the 32-bit FNV-1 digest std/evo-core computes
+    // in Aura (offset 2166136261, prime 16777619, per CODE POINT, modulo
+    // 2^32). The Aura loop is ~2.3 us per code point, which dominated a
+    // 16k-element candidate id; the native walk keeps the exact digest so
+    // every stored candidate id is unchanged.
+    register_prim(
+        add, ev, "string-fnv1-32",
+        [&ev, &string_heap, &error_values](std::span<const EvalValue> a) {
+            if (a.empty() || !is_string(a[0]))
+                return make_primitive_error(string_heap, error_values,
+                                            "string-fnv1-32: not a string",
+                                            ev.primitive_error_counter_ptr());
+            auto idx = as_string_idx(a[0]);
+            if (!ev.inrange_string_tenant_allows(idx, /*required_effects=*/0, "string-fnv1-32")) {
+                return ev.make_typed_error(
+                    "string-fnv1-32: cross-tenant string slot read denied (#4505)",
+                    aura::diag::ErrorKind::EffectDenied);
+            }
+            std::scoped_lock lock(ev.alloc_storage_lock_);
+            if (idx >= string_heap.size())
+                return make_primitive_error(string_heap, error_values,
+                                            "string-fnv1-32: corrupt slot",
+                                            ev.primitive_error_counter_ptr());
+            const std::string& s = string_heap[idx];
+            std::uint32_t h = 2166136261u;
+            std::size_t bi = 0;
+            Utf8Unit u;
+            while (utf8_unit_at(s, bi, u)) {
+                h = (h + static_cast<std::uint32_t>(u.cp)) * 16777619u;
+                bi += u.nbytes;
+            }
+            return make_int(static_cast<std::int64_t>(h));
+        },
+        pure_general(1, "(string) -> int",
+                     "32-bit FNV-1 over the string's code points (std/evo-core ids)."));
     register_prim(
         add, ev, "string-ref",
         [&ev, &string_heap, &error_values](std::span<const EvalValue> a) {
