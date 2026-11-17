@@ -1074,6 +1074,13 @@ void RegSplitParts::register_eval_primitive(PrimRegistrar add, Evaluator& ev) {
         // The registry holds a WEAK handle: the program is reclaimed when
         // its last holder is gone, not at ~Evaluator (#4359 / #4854).
         ev.register_eval_program(program);
+        // Issue #5342 follow-up: node ids are program-scoped, and a freed
+        // flat/pool pair can come back at the same two addresses. The
+        // per-flat name memo is keyed by those addresses, so a recycled
+        // bucket would answer this program's nodes with the previous
+        // program's values (a :fitness expression read the prior
+        // candidate's Void). Drop the memo before running a fresh program.
+        ev.clear_name_res_cache();
         // Issue #4373: a define inside the eval'd string calls set_pool
         // and re-keys top_ onto that string's pool. The outer define then
         // bind_symid's its name against the wrong pool, so the name stays
