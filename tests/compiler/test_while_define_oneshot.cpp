@@ -951,6 +951,22 @@ static void ac5334_hof_callback_side_effect_once() {
     CHECK(r.out == "(callback 600)\n600\n1\n", "5334: one callback, deep result, counter 1");
     CHECK(r.err.find("recursion depth exceeded") == std::string::npos,
           "5334: walker depth did not leak");
+
+    // A named callback that set!s a top-level value takes the same face:
+    // the counter and the display run once, and the deep result is right.
+    {
+        std::ofstream out(src);
+        out << "(define (deep n) (if (= n 0) 0 (+ 1 (deep (- n 1)))))\n"
+               "(define hits 0)\n"
+               "(define (cb n) (set! hits (+ hits 1))"
+               " (display (list \"named\" n)) (newline)"
+               " (display (deep n)) (newline))\n"
+               "(for-each cb (list 600))\n"
+               "(display hits) (newline)\n";
+    }
+    auto rn = run_file_4466(bin, src, "");
+    CHECK(rn.rc == 0, "5334: named callback exits 0");
+    CHECK(rn.out == "(named 600)\n600\n1\n", "5334: named callback runs once with the deep result");
 }
 
 } // namespace

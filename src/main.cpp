@@ -3457,13 +3457,7 @@ static bool is_toplevel_hof_5334(std::string_view form) {
 
 static bool oneshot_toplevel_hof_5334(const std::string& all_input) {
     for (const auto& tf : split_top_level_forms_4865(all_input)) {
-        if (!is_toplevel_hof_5334(tf.text))
-            continue;
-        // Inline callback only: an unwrapped prim-root call with a NAMED
-        // callback lowers the name to ConstVoid under IR and silently
-        // drops the walk (measured), which is worse than the old
-        // duplicate. A named-callback depth report stays on the old face.
-        if (std::string_view(tf.text).find("lambda") != std::string_view::npos)
+        if (is_toplevel_hof_5334(tf.text))
             return true;
     }
     return false;
@@ -3538,6 +3532,7 @@ static int eval_oneshot_force_soa(aura::compiler::CompilerService& cs, const std
                 // cells; the walker shortcut is what gives them that).
                 const bool wrap_begin = !value_define && !form.empty() && form[0] == '(' &&
                                         !form_head_is_definitional_4893(form) &&
+                                        !is_toplevel_hof_5334(form) &&
                                         !form_builds_closure_or_task_4892(form);
                 constexpr std::string_view kBeginPrefix4892 = "(begin ";
                 auto fr = cs.eval(positioned_form_4908(
