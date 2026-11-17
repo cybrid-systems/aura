@@ -1,9 +1,10 @@
 ; csv.aura — CSV parsing and generation (RFC 4180)
-(require "std/string" all:)
 ; Characters are represented as integers in Aura.
 ; 9 = tab, 10 = LF, 13 = CR, 34 = double-quote, 44 = comma.
 (export csv-parse csv->rows csv->table csv-select csv-filter csv-header column-names
         rows->csv)
+
+(require "std/string" all:)
 
 ; Issue #5196: parsing used to split the text on \n first and only then look
 ; for quotes per line, so a quoted field containing a newline was cut in two,
@@ -86,7 +87,6 @@
 ; the report).
 (define (rows->csv rows)
   (string-join (map csv-row->line rows) "\n"))
-
 
 (define (csv-select cols rows)
   (map (lambda (row) (map (lambda (c) (list-ref row c)) cols)) rows))
