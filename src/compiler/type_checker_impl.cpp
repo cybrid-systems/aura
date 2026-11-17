@@ -6725,7 +6725,20 @@ TypeId InferenceEngine::synthesize_flat_call(FlatAST& flat, StringPool& pool, No
                     // and a few named variants).
                     auto a_tag = reg_.tag_of(a_norm);
                     auto p_tag = reg_.tag_of(p_norm);
-                    if (a_tag != p_tag || reg_.name_of(a_norm) != reg_.name_of(p_norm)) {
+                    // Issue #5318: Int<->Float is the one intentional
+                    // numeric coercion (consistent_unify above returns
+                    // true for it under Issue #3202/#3622). The strict
+                    // second-guess must keep that carve-out: a call site
+                    // that feeds a fixnum into a Float parameter (or the
+                    // reverse) was clean before the mutation and must not
+                    // become a TypeError after it — the post-mutate gate
+                    // reserved that rejection for ground pairs that are
+                    // not numerically compatible.
+                    const bool numeric_coercion =
+                        (a_tag == TypeTag::INT && p_tag == TypeTag::FLOAT) ||
+                        (a_tag == TypeTag::FLOAT && p_tag == TypeTag::INT);
+                    if (!numeric_coercion &&
+                        (a_tag != p_tag || reg_.name_of(a_norm) != reg_.name_of(p_norm))) {
                         arg_exp_unify = false;
                     }
                 }
