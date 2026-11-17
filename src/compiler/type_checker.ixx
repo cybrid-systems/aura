@@ -2227,6 +2227,20 @@ public:
                        std::equal_to<>>
         declared_sigs_;
 
+    // Issue #5321: innermost node being synthesized (diagnostic attribution).
+    aura::ast::NodeId cur_node_ = ~0u;
+    aura::ast::NodeId cur_node() const noexcept { return cur_node_; }
+
+    // Issue #5321: engine-side filter for the production TypeError scan.
+    // nullptr keeps the historical behaviour (every diagnostic counts).
+    const std::unordered_set<std::uint32_t>* diag_scope_nodes_ = nullptr;
+    const std::unordered_set<std::uint64_t>* diag_scope_locs_ = nullptr;
+    void set_diag_scope(const std::unordered_set<std::uint32_t>* nodes,
+                        const std::unordered_set<std::uint64_t>* locs) noexcept {
+        diag_scope_nodes_ = nodes;
+        diag_scope_locs_ = locs;
+    }
+
     // Issue #72: per-engine incremental typecheck stats.
     // Accumulated on TypeChecker (via stats()) for visibility.
     struct InnerStats {
@@ -3212,6 +3226,22 @@ export struct TypeChecker {
     // written types as authority. Production / Full + not SOLVED →
     // false. Soft + TIMEOUT / CONFLICT (allow_timeout_commit included)
     // also false — half-solutions are never Agent-visible truth.
+    [[nodiscard]] bool delta_scope_active() const noexcept { return delta_scope_active_; }
+    // Issue #5321: a diagnostic identical (message + position) to one the last
+    // committed full check already reported is pre-existing, not this
+    // mutation's obligation.
+    [[nodiscard]] static std::uint64_t diag_fingerprint(const aura::diag::Diagnostic& d);
+    [[nodiscard]] bool diag_is_baseline(const aura::diag::Diagnostic& d) const;
+    void record_baseline_diagnostics(std::span<const aura::diag::Diagnostic> diags,
+                                     std::size_t from);
+    [[nodiscard]] bool delta_scope_allows(std::uint32_t node_id, std::uint64_t loc_key) const;
+    [[nodiscard]] static std::uint64_t diag_loc_key(std::uint32_t line,
+                                                    std::uint32_t col) noexcept {
+        return (static_cast<std::uint64_t>(line) << 32) | col;
+    }
+    void publish_delta_scope(const aura::ast::FlatAST& flat, std::uint32_t target_node,
+                             std::uint32_t parent_node,
+                             const std::vector<aura::ast::NodeId>& affected);
     [[nodiscard]] SolveResult last_delta_solve_status() const noexcept {
         return last_delta_solve_status_;
     }
@@ -3245,6 +3275,11 @@ export struct TypeChecker {
     }
     [[nodiscard]] bool last_type_export_authoritative() const noexcept {
         return type_export_is_authoritative();
+    }
+    // Issue #5321: a boundary that passed under the delta-scoped diagnostic
+    // face re-grants the export authority the unscoped face demoted.
+    void note_scoped_type_export_authoritative() noexcept {
+        last_type_export_authoritative_ = true;
     }
     void clear_last_type_export_authoritative() noexcept {
         last_type_export_authoritative_ = false;
@@ -3858,6 +3893,12 @@ public:
     bool last_partial_cs_live_ = false;
     // Issue #3003: last solve + type-export authority (Production fail-closed).
     SolveResult last_delta_solve_status_ = SolveResult::SOLVED;
+    // Issue #5321 (delta-scoped proof): node + position scope of the last
+    // partial pass. A TypeError outside it belongs to a re-typed caller body.
+    std::unordered_set<std::uint32_t> delta_scope_nodes_;
+    std::unordered_set<std::uint64_t> delta_scope_locs_;
+    bool delta_scope_active_ = false;
+    std::unordered_map<std::uint64_t, std::uint32_t> baseline_diag_counts_;
     bool last_type_export_authoritative_ = true;
     // Issue #2621: last partial cone truncate (soft/hard overflow #2560).
     bool last_partial_cone_truncated_ = false;

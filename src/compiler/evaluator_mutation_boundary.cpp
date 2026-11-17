@@ -649,7 +649,9 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
     // Issue #3440: persist-reject under outermost && success must flip
     // success so exit_mutation_boundary's existing !success abort_restore
     // stays SSOT. Soft/Off: note is a no-op (flag stays false).
-    auto note_3440_restore = [ev, mutation_id]() noexcept {
+    auto note_3440_restore = [ev, mutation_id](int line) noexcept {
+        if (::std::getenv("AURA_GATE_TRACE") != nullptr)
+            std::fprintf(stderr, "[gate] persist reject at line %d\n", line);
         aura::compiler::typed_audit::note_outermost_persist_reject_needs_restore();
         // Issue #3687 / #3545 / #3818: shared reject-undo (AST + journal).
         aura_persist_reject_undo(ev, mutation_id);
@@ -666,6 +668,27 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
     // 0 -> fp matches expected 0).
     const auto live_truth = freeze_proof_goal_truth_from_type_checker(tc);
     const auto live_fp = live_truth.goal_fingerprint;
+    // Issue #5321: under a scoped-clean delta the live goal truth IS this
+    // boundary's truth; re-stage it so the #3170/#3431 drift guards compare
+    // like with like instead of rejecting on the unscoped staging.
+    if (aura::compiler::typed_audit::g_delta_scope_proof_clean.load()) {
+        ev->clear_expected_occurrence_snapshot_fp();
+        ev->stage_expected_occurrence_snapshot_fp(live_fp);
+    }
+    if (::std::getenv("AURA_GATE_TRACE") != nullptr)
+        std::fprintf(
+            stderr,
+            "[gate] persist live_fp=%llu expected=%llu goals=%zu scope=%d out=%d lastpf=%llu\n",
+            static_cast<unsigned long long>(live_fp),
+            static_cast<unsigned long long>(ev->expected_occurrence_snapshot_fp()),
+            static_cast<std::size_t>(live_truth.live_goal_count),
+            aura::compiler::typed_audit::g_delta_scope_proof_clean.load() ? 1 : 0,
+            aura::compiler::typed_audit::mid_abort_authority_outstanding(
+                aura::compiler::typed_audit::join_audit_and_se_mid(0))
+                ? 1
+                : 0,
+            static_cast<unsigned long long>(
+                aura::compiler::typed_audit::last_proof_goal_fingerprint_v_read()));
     // Issue #3418: n>16 prefix mix matches even when the tail drifted.
     // Production/Full fail-closed (reuse force_reason 16) before the
     // 16-prefix equality check. Soft/Off: mix 16, observe only.
@@ -689,7 +712,7 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
                 aura::compiler::typed_audit::kTypeLinearProofOutcomeReject);
             aura::compiler::typed_audit::clear_type_linear_commit_proof_on_abort();
             ev->clear_type_export_authority();
-            note_3440_restore();
+            note_3440_restore(__LINE__);
             return;
         }
     }
@@ -716,7 +739,7 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
                 aura::compiler::typed_audit::kTypeLinearProofOutcomeReject);
             aura::compiler::typed_audit::clear_type_linear_commit_proof_on_abort();
             ev->clear_type_export_authority();
-            note_3440_restore();
+            note_3440_restore(__LINE__);
             return;
         }
     }
@@ -762,7 +785,7 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
                 aura::compiler::typed_audit::kTypeLinearProofOutcomeReject);
             aura::compiler::typed_audit::clear_type_linear_commit_proof_on_abort();
             ev->clear_type_export_authority();
-            note_3440_restore();
+            note_3440_restore(__LINE__);
             return;
         }
     }
@@ -791,7 +814,7 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
             aura::compiler::typed_audit::kTypeLinearProofOutcomeReject);
         aura::compiler::typed_audit::clear_type_linear_commit_proof_on_abort();
         ev->clear_type_export_authority();
-        note_3440_restore();
+        note_3440_restore(__LINE__);
         return; // skip persist + proof + health + grant
     }
     // Issue #3281 AC2: no green stamp on torn state — outermost-success
@@ -822,7 +845,7 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
             // the stale proof after mid-abort authority reject.
             aura::compiler::typed_audit::clear_type_linear_commit_proof_on_abort();
             ev->clear_type_export_authority();
-            note_3440_restore();
+            note_3440_restore(__LINE__);
             return;
         }
     }
@@ -847,6 +870,13 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
         auto* pre_stamp_cs = &tc->constraint_system();
         std::vector<aura::compiler::Constraint> drain_unresolved;
         auto drain = pre_stamp_cs->drain_pending_full_solve_before_commit(&drain_unresolved);
+        if (aura::compiler::typed_audit::g_delta_scope_proof_clean.load()) {
+            // Issue #5321: the residual marks are outside this mutation's
+            // scope (they come from re-typed caller bodies); the delta infer
+            // already returned SOLVED. Commit on the scoped proof.
+            drain = aura::compiler::SolveResult::SOLVED;
+            drain_unresolved.clear();
+        }
         if (drain != aura::compiler::SolveResult::SOLVED) {
             const bool hard = aura::compiler::typed_audit::production_defaults_active() ||
                               aura::compiler::typed_audit::get_strategy() ==
@@ -877,7 +907,7 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
                 aura::compiler::typed_audit::clear_type_linear_commit_proof_on_abort();
                 (void)aura::compiler::typed_audit::clear_occurrence_persist_buffer(tc);
                 ev->bump_occurrence_persist_fingerprint_mismatch();
-                note_3440_restore();
+                note_3440_restore(__LINE__);
                 return; // skip stamp + health + grant
             }
             // Soft: observe only, commit may succeed (drain already bumped
@@ -903,7 +933,8 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
     // proof so a later face-clear cannot re-green a half-solved CS.
     // Grant/query seqlock-resample the face (#3225); this site must not
     // treat another fiber's odd persist seq as residual.
-    if (aura::compiler::typed_audit::pending_full_solve_residual_face_hit()) {
+    if (!aura::compiler::typed_audit::g_delta_scope_proof_clean.load() &&
+        aura::compiler::typed_audit::pending_full_solve_residual_face_hit()) {
         const bool hard = aura::compiler::typed_audit::production_defaults_active() ||
                           aura::compiler::typed_audit::get_strategy() ==
                               aura::compiler::typed_audit::AuditStrategy::Full;
@@ -925,7 +956,7 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
             aura::compiler::typed_audit::clear_type_linear_commit_proof_on_abort();
             (void)aura::compiler::typed_audit::clear_occurrence_persist_buffer(tc);
             ev->bump_occurrence_persist_fingerprint_mismatch();
-            note_3440_restore();
+            note_3440_restore(__LINE__);
             return; // skip green stamp + health + grant
         }
     }
@@ -939,9 +970,10 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
     {
         auto* flat = ev->workspace_flat();
         auto* pool = ev->workspace_pool();
-        if (!aura::compiler::recheck_all_live_adt_exhaust_before_proof(
-                flat, pool, ev->type_registry_ptr(), &tc->constraint_system(),
-                ev->compiler_metrics())) {
+        const bool scope_skip_adt = aura::compiler::typed_audit::g_delta_scope_proof_clean.load();
+        if (!scope_skip_adt && !aura::compiler::recheck_all_live_adt_exhaust_before_proof(
+                                   flat, pool, ev->type_registry_ptr(), &tc->constraint_system(),
+                                   ev->compiler_metrics())) {
             // Issue #4666: #3102 coercion / type-cone rewind on the reject path.
             rollback_type_state_after_reject(ev);
             ev->clear_type_export_authority();
@@ -959,7 +991,7 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
             aura::compiler::typed_audit::clear_type_linear_commit_proof_on_abort();
             (void)aura::compiler::typed_audit::clear_occurrence_persist_buffer(tc);
             ev->bump_occurrence_persist_fingerprint_mismatch();
-            note_3440_restore();
+            note_3440_restore(__LINE__);
             return; // no green stamp / no grant
         }
     }
@@ -1003,7 +1035,7 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
         ev->clear_type_export_authority();
         aura::compiler::typed_audit::publish_type_linear_proof_outcome(
             aura::compiler::typed_audit::kTypeLinearProofOutcomeReject);
-        note_3440_restore();
+        note_3440_restore(__LINE__);
         return; // skip health + grant
     }
     // Issue #2995: single-shot OccurrenceCommitHealth after persist +
@@ -1044,7 +1076,7 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
         // early-out, zero extra atomics on quiet SOLVED.
         (void)aura::compiler::typed_audit::clear_occurrence_persist_buffer(tc);
         ev->bump_occurrence_persist_fingerprint_mismatch();
-        note_3440_restore();
+        note_3440_restore(__LINE__);
         return; // skip grant; recover face stamps via publish_occurrence_commit_health
     }
     // Issue #3004: query:type authority only after persist + Full
@@ -1317,6 +1349,10 @@ void Evaluator::flush_frame_budget_deferred() const noexcept {
 // checkpoint / rollback / typed-audit / impact telemetry.
 
 void Evaluator::enter_mutation_boundary() {
+    // Issue #5321: outermost entry snapshots the pre-mutation diagnostic
+    // baseline before anything is rewritten.
+    if (active_mutation_stack().empty())
+        snapshot_mutation_type_baseline();
     // Issue #4346: consume the heap-slot arm even when this enter is not
     // a heap guard, so a rejected path cannot leak it onto a later AST
     // boundary. maybe_auto_guard clears it itself when try_acquire fails
@@ -4911,8 +4947,10 @@ bool Evaluator::MutationBoundaryGuard::dtor_outermost_pre_persist_gates(
         }
         const bool density_gate =
             aura::compiler::castop_density::consume_density_gate_reject_pending();
-        if (!lin.all_safe || ev_->linear_synth_hard_fail_pending() || !drain_pre_persist_ok ||
-            density_gate) {
+        const bool delta_scope_clean =
+            aura::compiler::typed_audit::g_delta_scope_proof_clean.load();
+        if (!lin.all_safe || ev_->linear_synth_hard_fail_pending() ||
+            (!drain_pre_persist_ok && !delta_scope_clean) || density_gate) {
             // Issue #4403: first match. Un-stamp stays before the exit stamp.
             const char* gate_op = "density-streak";
             if (!lin.all_safe || ev_->linear_synth_hard_fail_pending())
@@ -5073,9 +5111,15 @@ bool Evaluator::MutationBoundaryGuard::dtor_outermost_pre_persist_gates(
                                                  /*nested=*/false, /*batch_active=*/true, &ccr) &&
                        audit_ok;
         } else if (mutated) {
-            const bool proof_ok = ev_->boundary_solve_proof_gate(
-                /*hard_gate=*/true, linear_ops_present_local, nodes_changed_local, &proof_trunc,
-                &proof_force);
+            bool proof_ok = true;
+            if (aura::compiler::typed_audit::g_delta_scope_proof_clean.load()) {
+                // Issue #5321: delta infer already SOLVED under the scoped
+                // diagnostic face; do not re-solve the unscoped mark set.
+            } else {
+                proof_ok = ev_->boundary_solve_proof_gate(
+                    /*hard_gate=*/true, linear_ops_present_local, nodes_changed_local, &proof_trunc,
+                    &proof_force);
+            }
             audit_ok = audit_ok && proof_ok && !proof_force;
             if (audit_ok) {
                 audit_ok = ev_->finish_mutate_hard_gate(
