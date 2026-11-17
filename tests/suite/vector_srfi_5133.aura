@@ -95,4 +95,32 @@
     (vector-copy! to 0 (vector 7 8))
     (check= (vector 7 8 0) to)))
 
+; Issue #5327: vector-append copies through the native list->vector path
+; instead of a vector-ref/vector-set! pair per element (two 160k vectors:
+; 3463 ms before, 141 ms here). Pin the arity results, independence from
+; the inputs, and the shape.
+(test-case "vector-append copies natively" (hash "issue" 5327)
+  (check= (vector) (vector-append))
+  (check= (vector 1 2) (vector-append (vector 1 2)))
+  (check= (vector 1 2 3) (vector-append (vector 1 2) (vector 3)))
+  (check= (vector 1 2 3) (vector-append (vector) (vector 1) (vector) (vector 2 3)))
+  (check= (vector 1 2 3) (vector-concatenate (list (vector 1) (vector 2 3))))
+  (define a (vector 1 2))
+  (define out (vector-append a))
+  (vector-set! a 0 99)
+  (check= 1 (vector-ref out 0)))
+
+(test-case "vector-append scale" (hash "issue" 5327)
+  (define a (make-vector 160000 7))
+  (define b (make-vector 160000 9))
+  (define t0 (monotonic-ms))
+  (define out (vector-append a b))
+  (define dt (- (monotonic-ms) t0))
+  (check= 320000 (vector-length out))
+  (check= 7 (vector-ref out 0))
+  (check= 9 (vector-ref out 160000))
+  ; 320k slots: the native path is ~140 ms on this box, the old element
+  ; loop ~3500 ms; 1500 ms separates them with room for a loaded box.
+  (check (< dt 1500)))
+
 (test-finish)
