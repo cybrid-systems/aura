@@ -54,6 +54,7 @@
     "K-HASH-HEAP": "hash and ihash readers: the table lives in the tenanted heap, entries carry per-slot tenant stamps and the deny path is a typed error; Aura cannot inspect slot ownership",
     "K-PARSE": "reader/parser surfaces (json, read-from-string, verify:parse-*): the body drives the FlatAST reader and mints strings, so the failure shapes and the parse state are kernel-owned",
     "K-ERR": "the assertion helpers build the engine error value through push_error_cause; an Aura (error ...) raises a different value, so moving them would change what a failing test observes",
+    "K-EXC-5339": "FNV-1 32 over code points is the candidate-id digest in std/evo-core (#5339). The Aura loop cost ~2.3 us per code point, so a 16k-genome candidate was 268 ms (target 200). The native walk keeps the exact offset/prime/per-code-point rule, so every stored id is unchanged; the primitive needs the string-heap read gate (K-STR-HEAP) and no removable registration was available in the same change.",
     "K-EXC-5313": "R7RS four-deep cxr (#5313). The cxr table already lists them as kernel primitives, and each step must run inrange_slot_tenant_allows (#4505) the way cadr/caddr do. The shorthand family does not fall through to the shared pair-slot face (#4111), so an Aura composition of car/cdr is a different reader. No registration was removable in the same change."
   },
   "kernel_exceptions": [
@@ -113,10 +114,11 @@
     "orch:scope-watch",
     "orch:send",
     "orch:spawn",
-    "orch:supervise-batch"
+    "orch:supervise-batch",
+    "string-fnv1-32"
   ],
   "counts": {
-    "kernel": 416,
+    "kernel": 417,
     "stdlib-candidate": 0,
     "delete": 1
   },
@@ -1566,6 +1568,10 @@
     "string-fill!": {
       "tier": "kernel",
       "rule": "K-STR-HEAP"
+    },
+    "string-fnv1-32": {
+      "tier": "kernel",
+      "rule": "K-EXC-5339"
     },
     "string-hash": {
       "tier": "kernel",
