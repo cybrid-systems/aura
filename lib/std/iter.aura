@@ -45,9 +45,12 @@
       (if (pred (car rest)) i
         (iter (+ i 1) (cdr rest))))))
 
+; #5331: an accumulator keeps the depth O(1) (the old non-tail form raised
+; recursion depth exceeded past ~510 elements).
 (define (count pred lst)
-  (if (null? lst) 0
-    (+ (if (pred (car lst)) 1 0) (count pred (cdr lst)))))
+  (let iter ((rest lst) (n 0))
+    (if (null? rest) n
+      (iter (cdr rest) (if (pred (car rest)) (+ n 1) n)))))
 
 (define (occurrences eq? lst)
   (let iter ((rest lst) (seen (hash)))
@@ -157,14 +160,18 @@
 ;; ── Generic iteration ──────────────────────────────────────
 
 ; (iterate f x n) — generate n elements: x, f(x), f(f(x)), ...
+; #5331: accumulate and reverse once (was (cons x (iterate ...)), depth n).
 (define (iterate f x n)
-  (if (<= n 0) (list)
-    (cons x (iterate f (f x) (- n 1)))))
+  (let iter ((i 0) (cur x) (acc (list)))
+    (if (>= i n) (reverse acc)
+      (iter (+ i 1) (f cur) (cons cur acc)))))
 
 ; (unfold p f g seed) — generate list until p holds
+; #5331: accumulate and reverse once (was (cons (f seed) (unfold ...))).
 (define (unfold p f g seed)
-  (if (p seed) (list)
-    (cons (f seed) (unfold p f g (g seed)))))
+  (let iter ((s seed) (acc (list)))
+    (if (p s) (reverse acc)
+      (iter (g s) (cons (f s) acc)))))
 
 ;; iota and vector-map are the std/list functions (list re-exports std/vector's
 ;; vector-map). (use) plus module-get copies the closure into a fresh cell.

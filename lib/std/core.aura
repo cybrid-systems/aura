@@ -35,11 +35,12 @@
 
 ; ── (core:zip-with f a b) ──
 ; Apply f element-wise to two lists; stops at the shorter.
+; #5331: accumulator + reverse (the non-tail cons raised the depth past
+; ~510 elements).
 (define (core:zip-with f a b)
-  (cond
-    ((or (null? a) (null? b)) (list))
-    (else (cons (f (car a) (car b))
-                (core:zip-with f (cdr a) (cdr b))))))
+  (let iter ((xs a) (ys b) (acc (list)))
+    (if (or (null? xs) (null? ys)) (reverse acc)
+      (iter (cdr xs) (cdr ys) (cons (f (car xs) (car ys)) acc)))))
 
 ; ── (core:group-by keyfn lst) ──
 ; Group elements by (keyfn x). Returns alist of (key group-list)
@@ -75,14 +76,16 @@
 
 ; ── (core:chunk n lst) ──
 ; Split lst into chunks of size n. Last chunk may be shorter.
+; #5331: the chunk list is built with an accumulator too; the old form was
+; one recursive frame per chunk (600 chunks of one element raised the depth).
 (define (core:chunk n lst)
-  (cond
-    ((or (null? lst) (<= n 0)) (list))
-    (else
-      (let take-n ((i 0) (src lst) (acc (list)))
-        (cond
-          ((or (null? src) (= i n)) (cons (reverse acc) (core:chunk n src)))
-          (else (take-n (+ i 1) (cdr src) (cons (car src) acc))))))))
+  (if (or (null? lst) (<= n 0)) (list)
+    (let iter ((src lst) (chunks (list)))
+      (if (null? src) (reverse chunks)
+        (let take-n ((i 0) (cur src) (acc (list)))
+          (if (or (null? cur) (= i n))
+            (iter cur (cons (reverse acc) chunks))
+            (take-n (+ i 1) (cdr cur) (cons (car cur) acc))))))))
 
 ; ── (core:running-sum lst) ──
 ; Return the running (cumulative) sum of lst.
