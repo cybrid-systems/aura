@@ -254,34 +254,35 @@
     (if (>= len width) s
       (string-append s (make-spaces (- width len))))))
 
-; Make a string of n spaces (helper) — iterative (#2770).
+; Make a string of n spaces (helper).
+; #5323: one repeat, not n appends onto a growing result.
 (define (make-spaces n)
-  (if (<= n 0) ""
-    (let ((result "")
-          (i 0))
-      (while (lambda () (< i n))
-        (lambda ()
-          (set! result (string-append result " "))
-          (set! i (+ i 1))))
-      result)))
+  (string-repeat " " n))
 
 ; Reverse a string
 (define (string-reverse s)
   (list->string (reverse (string->list s))))
 
-; Repeat string n times — iterative O(1) stack (#2770).
+; Repeat string n times.
 ; Needed so (string-split (string-repeat "a" 5000) …) does not blow
 ; the recursion cap while building the input.
+; #5323: double the accumulated string instead of appending one copy per
+; step. The old loop copied every byte already produced on each iteration
+; (O(n^2): 16000 copies took ~660 ms vs ~35 ms for one linear build); the
+; final substring trims the power-of-two overshoot in a single pass, so
+; the total copy work is O(result). Stack stays O(1) (#2770).
 (define (string-repeat s n)
-  (if (<= n 0) ""
-    (if (= n 1) s
-      (let ((result "")
-            (i 0))
-        (while (lambda () (< i n))
-          (lambda ()
-            (set! result (string-append result s))
-            (set! i (+ i 1))))
-        result))))
+  (define len (string-length s))
+  (if (or (<= n 0) (= len 0))
+    ""
+    (let ((want (* len n))
+          (acc s)
+          (have len))
+      (while (lambda () (< have want))
+        (lambda ()
+          (set! acc (string-append acc acc))
+          (set! have (* have 2))))
+      (if (= have want) acc (substring acc 0 want)))))
 
 ; Convert string to list of char codes
 (define (string->chars s)

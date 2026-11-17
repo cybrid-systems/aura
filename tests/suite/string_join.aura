@@ -196,4 +196,32 @@
 (test-case "find miss" (hash "issue" 3920)
   (check= -1 (string-find "abc" "(lambda")))
 
+; Issue #5323: string-repeat and make-spaces (the pad helpers) grew the
+; result with one string-append per copy, so every step copied all bytes
+; already produced (O(n^2): 16000 copies took ~660 ms in the report, 1.4 s
+; here). Repeat now doubles the accumulator and trims once; pad rides it.
+(test-case "repeat content and edges" (hash "issue" 5323)
+  (check= "" (string-repeat "ab" 0))
+  (check= "" (string-repeat "ab" -3))
+  (check= "ab" (string-repeat "ab" 1))
+  (check= "" (string-repeat "" 5))
+  (check= "ababab" (string-repeat "ab" 3))
+  (check= "aaaaa" (string-repeat "a" 5))
+  (check= (apply string-append (make-list 1000 "ab")) (string-repeat "ab" 1000))
+  (check= 32000 (string-length (string-repeat "ab" 16000)))
+  (check= "   x" (string-pad-left "x" 4))
+  (check= "x   " (string-pad-right "x" 4))
+  (check= "   x" (string-pad "x" 4))
+  (check= "abcd" (string-pad-left "abcd" 2)))
+
+(test-case "repeat and pad scale linearly" (hash "issue" 5323)
+  (let ((t4 (string-5320-best (lambda () (string-repeat "ab" 4000))))
+        (t16 (string-5320-best (lambda () (string-repeat "ab" 16000))))
+        (p16 (string-5320-best (lambda () (string-pad-left "x" 16000)))))
+    ; 16000 copies must stay far under the pre-fix shape (~1.4 s here,
+    ; ~660 ms in the report) and grow no faster than ~5x from 4000.
+    (check (< t16 150))
+    (check (< p16 150))
+    (check (<= t16 (+ (* 5 t4) 20)))))
+
 (test-finish)
