@@ -8761,10 +8761,39 @@ Evaluator::FlatStep Evaluator::eval_flat_on_set(EvalFlatCursor& cur, const aura:
             store_cell_value(*cell_idx, *val);
         return FlatStep::ret(*val);
     }
+    // Issue #5342 follow-up: the #4599 chain read answers a frame local
+    // from bindings_symid_, so a set! that writes only the string mirror
+    // leaves the fast path reading the pre-set! value (a parameter set!
+    // then spun its own while loop forever). Keep both mirrors in step.
+    auto store_name_value = [&](types::EvalValue& slot) {
+        if (is_cell(slot)) {
+            const auto ci = as_cell_id(slot);
+            if (ci < cells_.size())
+                store_cell_value(ci, *val);
+        } else {
+            slot = *val;
+        }
+    };
+    auto sync_symid_mirror = [&](Env& target) {
+        if (target.bindings_symid().empty())
+            return;
+        auto* pool = const_cast<aura::ast::StringPool*>(target.pool());
+        if (pool == nullptr)
+            return;
+        const auto sid = pool->intern(name);
+        auto& syms = target.bindings_symid_mut();
+        for (auto it = syms.rbegin(); it != syms.rend(); ++it) {
+            if (it->first != sid)
+                continue;
+            store_name_value(it->second);
+            return;
+        }
+    };
     // Fallback 1: direct binding in current env
     for (auto& b : const_cast<Env&>(eval_env).bindings()) {
         if (b.first == name) {
             b.second = *val;
+            sync_symid_mirror(const_cast<Env&>(eval_env));
             return FlatStep::ret(*val);
         }
     }
@@ -8775,6 +8804,7 @@ Evaluator::FlatStep Evaluator::eval_flat_on_set(EvalFlatCursor& cur, const aura:
             for (auto& b : const_cast<Env&>(*e).bindings()) {
                 if (b.first == name) {
                     b.second = *val;
+                    sync_symid_mirror(const_cast<Env&>(*e));
                     return FlatStep::ret(*val);
                 }
             }
@@ -9847,7 +9877,8 @@ Evaluator::FlatStep Evaluator::eval_flat_on_variable(EvalFlatCursor& cur,
             // them first, and #5059 defines "empty" as both arrays empty.
             // The old order declined on cs->live_safe_top before looking
             // at a call frame's own parameters, so every cross-unit call
-            // fell back to the string walk.
+            // fell back to the string walk. eval_flat_on_set keeps both
+            // binding mirrors in step, so a local set! stays visible here.
             if (start.pool() == p && start.binding_mirrors_aligned()) {
                 if (auto loc = start.local_symid_last(sym))
                     return loc;

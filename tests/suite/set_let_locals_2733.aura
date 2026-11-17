@@ -28,6 +28,24 @@
     okc))
 (assert! (= (soak 5) 5) "while let set!")
 
+;; Issue #5342 follow-up: set! on a PARAMETER must be visible to every
+;; later read in the body, including a while condition read from a child
+;; flat. The #4599 SymId mirror used to keep the pre-set! value, so a
+;; parameter-driven while loop spun forever (walk-5000 JIT timeouts).
+(display "param set! stays live\n")
+(define (bump-param x)
+  (set! x (+ x 1))
+  x)
+(assert! (= (bump-param 1) 2) "parameter set! visible after the write")
+
+(define (drain ys)
+  (let ((n 0))
+    (while (pair? ys)
+      (set! n (+ n 1))
+      (set! ys (cdr ys)))
+    n))
+(assert! (= (drain (list 1 2 3)) 3) "parameter set! drives a while condition")
+
 (display "top-level define after set-code\n")
 (define ROUNDS 16)
 (define SAMPLE-ARG 7)
