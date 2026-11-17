@@ -9417,31 +9417,31 @@ private:
         return *static_cast<NameResStore*>(c.name_res_cache.get());
     }
     std::vector<NameResEntry>& name_res_by_node() {
-        auto& st = name_res_store();
-        return st.by_flat[st.current].entries;
+        auto& store = name_res_store();
+        return store.by_flat[store.current].entries;
     }
     // Bind a new executing flat: its bucket is reused as-is when the pool did
     // not change, and dropped only when this flat was re-keyed.
-    void name_res_enter(const aura::ast::FlatAST* f, const aura::ast::StringPool* pool) {
-        if (f == nullptr)
+    void name_res_enter(const aura::ast::FlatAST* flat, const aura::ast::StringPool* pool) {
+        if (flat == nullptr)
             return;
-        auto& st = name_res_store();
-        st.current = f;
-        auto& b = st.by_flat[f];
-        if (b.pool != pool) {
-            b.entries.clear();
-            b.pool = pool;
+        auto& store = name_res_store();
+        store.current = flat;
+        auto& bucket = store.by_flat[flat];
+        if (bucket.pool != pool) {
+            bucket.entries.clear();
+            bucket.pool = pool;
         }
     }
-    void name_res_restore(const aura::ast::FlatAST* f) {
-        if (f != nullptr)
-            name_res_store().current = f;
+    void name_res_restore(const aura::ast::FlatAST* flat) {
+        if (flat != nullptr)
+            name_res_store().current = flat;
     }
     [[nodiscard]] const aura::ast::FlatAST* name_res_flat() {
-        auto& c = eval_ctx();
-        if (!c.name_res_cache)
+        auto& ctx = eval_ctx();
+        if (!ctx.name_res_cache)
             return nullptr;
-        return static_cast<NameResStore*>(c.name_res_cache.get())->current;
+        return static_cast<NameResStore*>(ctx.name_res_cache.get())->current;
     }
     // 0 unknown, 1 raw value, 2 cell. Flat-scoped, cleared with the name cache.
     // Issue #4717: per-body let-binding kind memo (see name_res_by_node()).
