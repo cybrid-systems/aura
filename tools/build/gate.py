@@ -182,6 +182,56 @@ def _gate_changed_runtime_suites() -> int:
     return rc
 
 
+def _cmd_cmake_no_llvm_configure() -> int:
+    """Issue #5343: a configure without LLVM must succeed.
+
+    LLVM is an optional JIT dependency; when it is absent the full-JIT
+    issue tests are excluded from the default build (cmake/AuraTest.cmake).
+    This pins the configure-time contract so a link helper cannot regress
+    to FATAL_ERROR on a machine without LLVM.
+    """
+    import shutil
+    import tempfile
+
+    cmake = shutil.which("cmake")
+    if not cmake or not shutil.which("ninja"):
+        info("cmake-no-llvm: cmake/ninja not on PATH — skipped")
+        return 0
+    with tempfile.TemporaryDirectory(prefix="aura-nollvm-") as tmp:
+        try:
+            proc = subprocess.run(
+                [
+                    cmake,
+                    "-S",
+                    str(ROOT),
+                    "-B",
+                    tmp,
+                    "-G",
+                    "Ninja",
+                    "-DCMAKE_BUILD_TYPE=Release",
+                    "-DCMAKE_DISABLE_FIND_PACKAGE_LLVM=ON",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=300,
+                cwd=str(ROOT),
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            fail(f"cmake-no-llvm: configure could not run: {exc}")
+            return 1
+        out = (proc.stdout or "") + (proc.stderr or "")
+        if proc.returncode != 0:
+            fail("cmake-no-llvm: configure failed without LLVM (#5343)")
+            print(out[-4000:])
+            return 1
+        if "full-JIT test excluded from the default build" not in out:
+            fail("cmake-no-llvm: configure did not report the full-JIT skip (#5343)")
+            print(out[-4000:])
+            return 1
+    ok("cmake-no-llvm: no-LLVM configure clean (#5343)")
+    return 0
+
+
 def _gate_steps(*, fix: bool, changed: bool, scripts_only: bool) -> list[tuple[str, Callable[[], int]]]:
     """Ordered gate pipeline: (label, callable); a non-zero return aborts.
 
@@ -209,6 +259,7 @@ def _gate_steps(*, fix: bool, changed: bool, scripts_only: bool) -> list[tuple[s
             ("catch-silent-swallow", cmd_catch_silent_swallow),
             ("aot-env-linear-stamp", cmd_aot_env_linear_stamp),
             ("legacy-test-inventory", cmd_legacy_test_inventory),
+            ("cmake-no-llvm", _cmd_cmake_no_llvm_configure),
             ("soak-pr-short-3387", cmd_soak_pr_short_3387_coverage),
             ("coverage", lambda: _run_parallel_coverage_checks(changed=changed)),
         ]
