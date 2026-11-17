@@ -1668,23 +1668,22 @@ void RegSplitParts::register_string_number_ops(
                 return ev.make_typed_error(
                     "string-index: cross-tenant string slot read denied (#4505)",
                     aura::diag::ErrorKind::EffectDenied);
-            auto haystack = (is_string(a[0]) && as_string_idx(a[0]) < string_heap.size())
-                                ? string_heap[as_string_idx(a[0])]
-                                : "";
-            auto needle = (is_string(a[1]) && as_string_idx(a[1]) < string_heap.size())
-                              ? string_heap[as_string_idx(a[1])]
-                              : "";
             // Issue #4472: start and the result are code-point indexes,
             // the same unit substring uses.
             auto start_cp =
                 (a.size() > 2 && is_int(a[2])) ? static_cast<std::size_t>(as_int(a[2])) : 0;
-            if (needle.empty())
-                return make_int(0);
-            auto start_b = utf8_byte_offset(haystack, start_cp);
-            auto pos = haystack.find(needle, start_b);
-            if (pos == std::string::npos)
+            if (!is_string(a[0]))
                 return make_int(-1);
-            return make_int(static_cast<std::int64_t>(utf8_units_before(haystack, pos)));
+            if (!is_string(a[1]))
+                return make_int(0);
+            // Issue #5341: the lookup reads both slots under the heap lock
+            // (no whole-string copies) and converts both offsets through
+            // the cached code-point index.
+            const auto cp =
+                ev.string_heap_find_from(as_string_idx(a[0]), as_string_idx(a[1]), start_cp);
+            if (cp == LockedStringHeap::npos)
+                return make_int(-1);
+            return make_int(static_cast<std::int64_t>(cp));
         },
         pure_general(3, "(string string int) -> int", "Code-point index of substring or -1."));
 

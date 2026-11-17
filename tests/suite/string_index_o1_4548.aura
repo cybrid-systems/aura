@@ -5,6 +5,7 @@
 (require "std/adaptive" all:)
 (require "std/hash" all:)
 (require "std/rule" all:)
+(require "std/string" all:)
 (test-file "string_index_o1_4548.aura")
 
 (define (dbl s k) (if (= k 0) s (dbl (string-append s s) (- k 1))))
@@ -53,6 +54,49 @@
   (check= 2 (string-index "abcd" "c" 2))
   (check= -1 (string-index "abcd" "c" 3))
   (check= -1 (string-index "abcd" "zz")))
+
+; Issue #5341: string-index no longer copies the haystack or walks from
+; byte 0 for start/result. Code-point indexes are preserved on multibyte
+; text, and repeated offset searches stay linear.
+(test-case "index at an offset is code-point exact" (hash "issue" 5341)
+  (check= 2 (string-index wide "中" 0))
+  (check= 7 (string-index wide "中" 3))
+  (check= 3 (string-index wide "😀b" 0))
+  (check= 10002 (string-index wide "中" 10000))
+  (check= -1 (string-index wide "中" 20480))
+  (check= -1 (string-index "abcd" "c" 3))
+  (check= 0 (string-index "abcd" "" 3))
+  (check= 2 (string-index "abcd" "c" 2)))
+
+(test-case "index scan is linear" (hash "issue" 5341)
+  (define (lines n) (string-join (make-list n "0123456789abcdefghij") "\n"))
+  (define (scan s)
+    (let loop ((i 0) (hits 0))
+      (let ((p (string-index s "\n" i)))
+        (if (= p -1) hits (loop (+ p 1) (+ hits 1))))))
+  (define small (lines 4000))
+  (define large (lines 16000))
+  (define t0 (monotonic-ms))
+  (check= 3999 (scan small))
+  (define dt-small (- (monotonic-ms) t0))
+  (define t1 (monotonic-ms))
+  (check= 15999 (scan large))
+  (define dt-large (- (monotonic-ms) t1))
+  ; The old copy + walk-from-zero shape was ~15x per 4x step (3.4 s at 16k).
+  (check (<= dt-large (* 5 (max 1 dt-small)))))
+
+(test-case "index near the tail is flat" (hash "issue" 5341)
+  (define flat (string-repeat "a" 320000))
+  (define (rep n th)
+    (let ((t0 (monotonic-ms)))
+      (let loop ((k 0)) (if (< k n) (begin (th) (loop (+ k 1))) #f))
+      (- (monotonic-ms) t0)))
+  (define idx-ms (rep 2000 (lambda () (string-index flat "b" 319990))))
+  (define sub-ms (rep 2000 (lambda () (substring flat 319990 320000))))
+  (check= -1 (string-index flat "b" 319990))
+  (check= 10 (string-length (substring flat 319990 320000)))
+  ; Same position, substring used to be ~100x cheaper than string-index.
+  (check (<= idx-ms (+ (* 2 sub-ms) 20))))
 
 ; std/hash and std/rule used to define their own for-each; the core
 ; primitive must stay visible after both requires.
