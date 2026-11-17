@@ -1331,7 +1331,16 @@ int run_test_mutate_type_gate() {
                             "(define (hr3 h) (let ((e (hash-ref h \\\"a\\\" #f))) e))"
                             "(define (tr s) (tcp-recv s 4096))"
                             "(define (tr1 s) (let ((m (tcp-recv s))) m))"
-                            "(define (tr2 s) (let ((m (tcp-recv s 4096))) m))";
+                            "(define (tr2 s) (let ((m (tcp-recv s 4096))) m))"
+                            // Issue #5318: a caller that feeds a fixnum into
+                            // a Float parameter is the one intentional
+                            // numeric coercion; the strict call-site
+                            // second-guess must not turn it into a
+                            // post-mutate TypeError when the callee is
+                            // rebound (the gate used to reject the whole
+                            // rebind, so the mutation never landed).
+                            "(define (mix n) (* n 1.0))"
+                            "(define (usemix) (mix 1))";
         auto rebind_true = [](CompilerService& cs, const char* expr, const std::string& label) {
             auto r = cs.eval(expr);
             const bool ok = r && is_bool(*r) && as_bool(*r);
@@ -1380,6 +1389,11 @@ int run_test_mutate_type_gate() {
                         "(mutate :rebind \"tr2\" \"(lambda (s) (let ((m (tcp-recv s 4096))) m))\" "
                         "\"id\")",
                         t + " tcp-recv 2 in let");
+            // Issue #5318: the callee takes a Float; the caller passes
+            // its own fixnum parameter. The rebind must commit (Hard used to
+            // reject it in the strict call-site second-guess).
+            rebind_true(cs, "(mutate :rebind \"mix\" \"(lambda (n) (* n 2.0))\" \"id\")",
+                        t + " int arg into float param");
             // The rebound default still reaches the runtime.
             auto d = cs.eval("(hr3 (hash))");
             CHECK(d && is_bool(*d) && !as_bool(*d), t + " hash-ref default #f at runtime");
