@@ -173,8 +173,10 @@ static void ac6_gate() {
 static void ac3174_std_process_surface() {
     std::println("\n--- #3174: sys-open not on core boot; std/process installs ---");
     CompilerService cs;
+    // An unbound name raises on the diagnostics face; either shape proves
+    // sys-open is not on core boot.
     auto unbound = cs.eval(R"((sys-open "/dev/null" 0))");
-    CHECK(unbound && is_error(*unbound), "3174: sys-open unbound before std/process");
+    CHECK(!unbound.has_value() || is_error(*unbound), "3174: sys-open unbound before std/process");
     auto inst = cs.evaluator().ensure_std_host_prims("std/process");
     CHECK(!is_error(inst), "3174: ensure_std_host_prims process ok (sandbox off)");
     auto r = cs.eval(R"((sys-open "/dev/null" 0))");
@@ -184,8 +186,12 @@ static void ac3174_std_process_surface() {
 
     CompilerService sandboxed;
     sandboxed.evaluator().set_sandbox_mode(true);
-    auto denied = sandboxed.evaluator().ensure_std_host_prims("std/process");
-    CHECK(is_error(denied), "3174: sandbox without exec grant refuses std/process");
+    // #4919: requiring a std module needs no grant; the effect is checked
+    // when the host prim is called.
+    auto installed = sandboxed.evaluator().ensure_std_host_prims("std/process");
+    CHECK(!is_error(installed), "3174: std/process installs under sandbox (#4919)");
+    auto denied = sandboxed.eval(R"((sys-open "/dev/null" 0))");
+    CHECK(!denied.has_value() || is_error(*denied), "3174: sandboxed sys-open call is denied");
     CHECK(read_file("docs/design/3174-io-net-git.md").empty(), "3174: no docs/design");
     CHECK(read_file("tests/compiler/test_issue_3174.cpp").empty(),
           "3174: no invent test_issue_3174");

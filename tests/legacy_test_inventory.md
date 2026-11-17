@@ -1,7 +1,7 @@
 # Legacy test inventory
 
 **Issue:** [#1957](https://github.com/cybrid-systems/aura/issues/1957)
-**Generated:** 2026-11-16 by `scripts/tools/inventory_legacy_tests.py`
+**Generated:** 2026-11-17 by `scripts/tools/inventory_legacy_tests.py`
 **Status:** generated inventory, not the how-to-add-a-test policy. Policy is tests/HOMES.md. Re-run this script after consolidations.
 
 ## Purpose
@@ -36,14 +36,14 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 96 | 96 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 282 | 282 | P0 — high volume; strong domain suite foothold |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 283 | 283 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 112 | 112 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 31 | 31 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 62 | 62 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 88 | 88 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 56 | 56 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 131 | 131 | P2 — often thin schema probes; collapse into obs matrix |
-| `uncategorized` | Uncategorized / mixed | 0 | 0 | 67 | 67 | P3 — review case-by-case |
+| `uncategorized` | Uncategorized / mixed | 0 | 0 | 66 | 66 | P3 — review case-by-case |
 
 ## Patterns, harness usage, coupling
 
@@ -137,7 +137,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_issues_819_829_batch.cpp` → theme `mutation_dirty`
 - `tests/compiler/test_jit_aot_hot_update_unit_batch.cpp` → theme `jit_incremental`
 - `tests/compiler/test_jit_batch_deopt_clear.cpp` → theme `jit_incremental`
-- `tests/compiler/test_json_io_cap_batch.cpp` → theme `uncategorized`
+- `tests/compiler/test_json_io_cap_batch.cpp` → theme `mutation_dirty`
 - `tests/compiler/test_linear_batch.cpp` → theme `mutation_dirty`
 - `tests/compiler/test_linear_misc_batch.cpp` → theme `linear_ownership`
 - `tests/compiler/test_linear_ownership_batch.cpp` → theme `linear_ownership`
@@ -1252,13 +1252,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_type_dep_epoch_prune.cpp` (—) [domain_suite, theme_compiler] — AC1: After set_cache_epoch(e+1), edges stamped at epoch e (e>0) drop;
 - `tests/compiler/test_workspace_switch.cpp` (—) [domain_suite, theme_compiler] — AC1: switch binds flat/pool + set_workspace_cow_epoch in one block
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (282)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (283)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (282)
+#### domain/ (283)
 
 - `tests/compiler/test_abort_ir_cache_fence_first.cpp` (—) [large, domain_suite, theme_compiler] — AC1: All 3 abort entry points in evaluator_mutation_boundary.cpp
 - `tests/core/test_add_node_builder_contract.cpp` (—) [domain_suite, theme_core] — AC1: single-threaded add_* path unchanged (builders work)
@@ -1382,6 +1382,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_isolation_audit_mid.cpp` (—) [domain_suite, theme_compiler] — AC1: Isolation deny SecurityEvent.mutation_id is Mutation epoch space,
 - `tests/compiler/test_issue_3095.cpp` (#3095) [domain_suite, theme_compiler] — AC1: After dual-topology abort, the helper is invoked; on a
 - `tests/compiler/test_issues_819_829_batch.cpp` (#819) [batch_driver, domain_suite, theme_compiler] — test_issues_819_829_batch.cpp — Phase 1 close for Issues #819–#829.
+- `tests/compiler/test_json_io_cap_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — test_json_io_cap_batch.cpp — thematic multi-TU batch
 - `tests/core/test_last_validated_generation_atomic.cpp` (—) [domain_suite, theme_core] — AC1: 4 threads validate_with_provenance on same ref — no race (TSAN)
 - `tests/compiler/test_linear_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — test_linear_batch.cpp
 - `tests/compiler/test_linear_enforce_boundary_align.cpp` (—) [domain_suite, theme_compiler] — AC1: Production → process Strict; sandbox-off → Soft; boundary enter
@@ -2077,13 +2078,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_verify_parse_shared_helper.cpp` (—) [domain_suite, theme_compiler] — Issue #1771 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_workspace_mtx_contention.cpp` (—) [domain_suite, theme_compiler] — AC1: Source cites #2523; residual strategy documented
 
-### `uncategorized` — Uncategorized / mixed (67)
+### `uncategorized` — Uncategorized / mixed (66)
 
 **Target:** manual triage before domain placement
 
 **Priority:** P3 — review case-by-case
 
-#### domain/ (67)
+#### domain/ (66)
 
 - `tests/core/test_address_bits_scratch.cpp` (—) [domain_suite, theme_core] — AC1: bit_cast round-trips a pointer and an integer address
 - `tests/compiler/test_and_or_error_value.cpp` (—) [domain_suite, theme_compiler] — (#4535 contract: only the UNCAUGHT face prints).
@@ -2111,7 +2112,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_hot_pass_contract_batch.cpp` (—) [small, batch_driver, domain_suite, theme_compiler] — test_hot_pass_contract_batch.cpp — thematic multi-TU batch
 - `tests/compiler/test_ir_const_string_intern.cpp` (—) [domain_suite, theme_compiler] — AC1: IR-path loop with a string literal: heap growth O(1) not O(N)
 - `tests/compiler/test_ir_optimize_type_info_chain.cpp` (—) [domain_suite, theme_compiler] — AC1: X→0→5 multi-step chain remaps uses to terminal source (not MAX)
-- `tests/compiler/test_json_io_cap_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — test_json_io_cap_batch.cpp — thematic multi-TU batch
 - `tests/compiler/test_json_parse_number_exception.cpp` (—) [domain_suite, theme_compiler] — AC1: oversized integer → error (not crash)
 - `tests/compiler/test_json_parse_object_grow.cpp` (—) [domain_suite, theme_compiler] — AC1: 8-key object retains all keys
 - `tests/core/test_linenoise_core.cpp` (—) [domain_suite, theme_core] — Issue #5041: direct key-by-key tests of the REPL line editor. No terminal.

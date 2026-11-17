@@ -144,7 +144,9 @@ static void ac5_linter() {
     const auto lint = read_file("scripts/coverage/checks/check_tcp_listen_accept_2771.py");
     CHECK(!lint.empty(), "AC5: linter present");
     const auto surface = read_file("scripts/coverage/checks/check_primitive_surface.py");
-    CHECK(surface.find("tcp-\": 8") != std::string::npos, "AC5: commercial budget tcp- = 8");
+    // The budget entry is the contract; its number follows the #1967 waves
+    // (45 today), so pin the key, not a stale count.
+    CHECK(surface.find("\"tcp-\":") != std::string::npos, "AC5: commercial budget declares tcp-");
     CHECK(read_file("docs/design/2771-tcp-listen-accept.md").empty(),
           "AC5: no docs/design/2771-* per #1655");
 }
