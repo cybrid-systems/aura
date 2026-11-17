@@ -34,10 +34,9 @@
 (define (hash-member? h k)
   (not (eq? (hash-ref h k *absent*) *absent*)))
 
-(define (set-copy s)
-  (let ((out (hash)))
-    (for-each (lambda (k) (hash-set! out k #t)) (hash-keys s))
-    out))
+; Issue #5338: hash-copy clones the whole table natively (same keys and
+; values), instead of one interpreted hash-set! per key.
+(define (set-copy s) (hash-copy s))
 
 (define (set-clear! s)
   (for-each (lambda (k) (hash-remove! s k)) (hash-keys s))
@@ -85,10 +84,16 @@
   s)
 
 ; ── whole-set operations (copy-on-write) ─────────────────────────
+; Issue #5338: copy the larger side once, then insert only the smaller
+; side's keys (union is symmetric; the result table is the same).
 (define (set-union a b)
-  (let ((out (set-copy a)))
-    (for-each (lambda (k) (hash-set! out k #t)) (hash-keys b))
-    out))
+  (if (>= (hash-length a) (hash-length b))
+      (let ((out (set-copy a)))
+        (for-each (lambda (k) (hash-set! out k #t)) (hash-keys b))
+        out)
+      (let ((out (set-copy b)))
+        (for-each (lambda (k) (hash-set! out k #t)) (hash-keys a))
+        out)))
 
 (define (set-intersection a b)
   (let ((out (hash)))
