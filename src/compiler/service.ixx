@@ -1773,8 +1773,16 @@ public:
                 const auto cal = flat.get(rv.child(0));
                 if (cal.tag == aura::ast::NodeTag::Variable) {
                     const auto head = pool.resolve(cal.sym_id);
-                    if (!head.empty() && evaluator_.primitives().slot_for_name(std::string(head)) <
-                                             evaluator_.primitives().slot_count()) {
+                    // Issue #5334: for-each / map must be able to run a
+                    // deep callback on the IR heap. A callback that hits
+                    // the walker's 512-frame C-stack guard aborts after its
+                    // side effects; the file face then re-runs the failing
+                    // form (effects twice). Route these two prim roots to
+                    // IR, where the heap frames carry the recursion.
+                    const bool hof_5334 = head == "for-each" || head == "map";
+                    if (!hof_5334 && !head.empty() &&
+                        evaluator_.primitives().slot_for_name(std::string(head)) <
+                            evaluator_.primitives().slot_count()) {
                         metrics_.tree_walker_fallback_total.fetch_add(1, std::memory_order_relaxed);
                         return TreeWalkerFallbackDisposition::TakeWalker;
                     }

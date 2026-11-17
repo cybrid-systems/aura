@@ -3430,15 +3430,56 @@ static void print_denseness_usage(const char*, std::ostream& out = std::cerr) {
     std::println(out, "Special modes: --serve, --serve-async, --ir, --jit, --help");
 }
 
+// Issue #5334: a top-level for-each / map with an inline callback must not
+// run on the tree-walker first. A callback that recurses past the walker's
+// 512 C-stack frames aborts after its side effects, and the file face then
+// re-runs the failing form on the IR path (every display / set! twice).
+// Take the form-by-form face from the start for such programs so the call
+// is lowered to IR and the recursion lives on the heap.
+static std::string_view toplevel_form_head_5334(std::string_view f) {
+    const auto is_ws = [](char c) { return c == 32 || c == 9 || c == 13 || c == 10; };
+    std::size_t s = 0;
+    while (s < f.size() && is_ws(f[s]))
+        ++s;
+    if (s == f.size() || f[s] != '(')
+        return {};
+    f.remove_prefix(s + 1);
+    std::size_t e = 0;
+    while (e < f.size() && !is_ws(f[e]) && f[e] != '(' && f[e] != ')')
+        ++e;
+    return f.substr(0, e);
+}
+
+static bool is_toplevel_hof_5334(std::string_view form) {
+    const auto head = toplevel_form_head_5334(form);
+    return head == "for-each" || head == "map";
+}
+
+static bool oneshot_toplevel_hof_5334(const std::string& all_input) {
+    for (const auto& tf : split_top_level_forms_4865(all_input)) {
+        if (!is_toplevel_hof_5334(tf.text))
+            continue;
+        // Inline callback only: an unwrapped prim-root call with a NAMED
+        // callback lowers the name to ConstVoid under IR and silently
+        // drops the walk (measured), which is worse than the old
+        // duplicate. A named-callback depth report stays on the old face.
+        if (std::string_view(tf.text).find("lambda") != std::string_view::npos)
+            return true;
+    }
+    return false;
+}
+
 // force-soa oneshot face. -1 means this process is not in that mode and the
-// caller should keep the single cs.eval path.
+// caller should keep the single cs.eval path. force_face takes the same
+// form-by-form route without the env var (Issue #5334).
 static int eval_oneshot_force_soa(aura::compiler::CompilerService& cs, const std::string& all_input,
-                                  bool stop_first_4909) {
+                                  bool stop_first_4909, bool force_face = false) {
     {
         const char* strict_env2 = ::aura::config::raw(::aura::config::Key::AURA_PIPELINE_STRICT);
         const std::string_view strict_v2 =
             strict_env2 ? std::string_view(strict_env2) : std::string_view{};
-        if (strict_v2 == "force-soa" || strict_v2 == "force_soa" || strict_v2 == "soa") {
+        if (force_face || strict_v2 == "force-soa" || strict_v2 == "force_soa" ||
+            strict_v2 == "soa") {
             // Issue #4865: same face as --load force-soa. A value define the
             // IR path cannot lower (fiber:spawn / agent forms) must still run
             // with correct semantics; block-forcing it would silently drop
@@ -4670,7 +4711,9 @@ static int run_oneshot_or_file(int argc, char** argv) {
     // cell (set! / hash-set! / channel:send lost). Evaluate form by form under
     // force-soa, exactly as --load does, so each define publishes its live
     // cell before a later form's closure is lowered.
-    if (const int forced = eval_oneshot_force_soa(cs, all_input, stop_first_4909); forced >= 0)
+    if (const int forced = eval_oneshot_force_soa(cs, all_input, stop_first_4909,
+                                                  oneshot_toplevel_hof_5334(all_input));
+        forced >= 0)
         return forced;
     if (auto r = cs.eval(all_input)) {
         if (!is_void(*r))

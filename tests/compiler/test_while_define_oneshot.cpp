@@ -926,6 +926,33 @@ static void ac5309_or_and_recursive_operand() {
     }
 }
 
+// Issue #5334: a non-tail callback recursion past the tree-walker's 512
+// C-stack frames used to abort the form after its side effects, and the file
+// face then re-ran the whole form (display / set! twice). The callback now
+// runs on the IR heap, so one pass yields the result and the counter is 1.
+static void ac5334_hof_callback_side_effect_once() {
+    std::println("\n--- #5334: for-each callback recurses once ---");
+    const auto bin = aura_binary_4466();
+    CHECK(!bin.empty(), "5334: aura binary");
+    if (bin.empty())
+        return;
+    const char* src = "/tmp/aura-5334.aura";
+    {
+        std::ofstream out(src);
+        out << "(define (deep n) (if (= n 0) 0 (+ 1 (deep (- n 1)))))\n"
+               "(define hits 0)\n"
+               "(for-each (lambda (n) (set! hits (+ hits 1))"
+               " (display (list \"callback\" n)) (newline)"
+               " (display (deep n)) (newline)) (list 600))\n"
+               "(display hits) (newline)\n";
+    }
+    auto r = run_file_4466(bin, src, "");
+    CHECK(r.rc == 0, "5334: exits 0");
+    CHECK(r.out == "(callback 600)\n600\n1\n", "5334: one callback, deep result, counter 1");
+    CHECK(r.err.find("recursion depth exceeded") == std::string::npos,
+          "5334: walker depth did not leak");
+}
+
 } // namespace
 
 int run_test_while_define_oneshot() {
@@ -943,6 +970,7 @@ int run_test_while_define_oneshot() {
     ac5282_discarded_trial_keeps_inline();
     ac5308_hof_callback_recursion();
     ac5309_or_and_recursive_operand();
+    ac5334_hof_callback_side_effect_once();
     std::println("\n=== #2571: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
