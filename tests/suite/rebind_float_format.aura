@@ -1,0 +1,22 @@
+;
+; Issue #5318 — a rebind must not change how an untouched define formats a
+; Float. The post-mutate re-inference used to see number->string as
+; (Int, Int) -> String, so a Float argument got a lossy Float->Int coercion
+; node: 0.0 printed "0" and the digest changed after the rebind.
+;
+(require "std/test" all:)
+
+(test-file "rebind_float_format.aura")
+
+(test-case "a rebind keeps the Float spelling at a two-hop callee"
+           (hash "issue" 5318 "tags" (list "mutate" "rebind" "float"))
+  (set-code "(define (hot x) (+ x 1.0))
+(define (mid p) (list (hot p)))
+(define (emit p) (string-append (number->string (car (mid p))) \"\"))")
+  (eval-current)
+  (check= "1.0" (emit 0.0))
+  (check= #t (mutate :rebind "hot" "(lambda (x) (+ x 2.0))" "t"))
+  (eval-current)
+  (check= "2.0" (emit 0.0)))
+
+(test-finish)

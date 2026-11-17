@@ -1301,6 +1301,16 @@ int run_test_mutate_type_gate() {
         CHECK(impl.find("register_primitive(\"tcp-recv\", {Dyn, Int}, String, true)") !=
                   std::string::npos,
               "tcp-recv optional maxlen");
+        // Issue #5318: number->string takes a number, not a fixnum. With an
+        // Int first parameter the post-mutate re-inference inserted a lossy
+        // Float->Int coercion at every Float call site, so (number->string
+        // 0.0) printed "0" after a rebind and the runner digest changed.
+        CHECK(impl.find("register_primitive(\"number->string\", {Dyn, Int}, String, true)") !=
+                  std::string::npos,
+              "number->string takes any number");
+        CHECK(impl.find("register_primitive(\"number->string\", {Int, Int}, String, true)") ==
+                  std::string::npos,
+              "no fixed-Int number->string");
         CHECK(impl.find("register_primitive(\"hash-ref\", {Dyn, Dyn}, Dyn)") == std::string::npos,
               "no fixed 2-arg hash-ref");
         CHECK(impl.find("register_primitive(\"tcp-recv\", {Dyn}, String)") == std::string::npos,

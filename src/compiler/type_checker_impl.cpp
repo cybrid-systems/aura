@@ -4561,7 +4561,13 @@ void InferenceEngine::init_primitive_env_part0(TypeId Int, TypeId Bool, TypeId F
     register_primitive("string<=?", {String, String}, Bool);
     // Issue #4472: optional radix. Dotted rest so one argument stays legal
     // and a second int (the radix) typechecks. Last string->number wins.
-    register_primitive("number->string", {Int, Int}, String, true);
+    // Issue #5318: the first argument is a number, not a fixnum. Declaring
+    // it Int made every Float call site a ground inconsistency, and the
+    // post-mutate re-inference then inserted a lossy Float->Int coercion
+    // node there: (number->string 0.0) printed "0" after a rebind and the
+    // runner's digest changed. Dyn matches the runtime (which formats any
+    // number) and the format/string->number registrations above.
+    register_primitive("number->string", {Dyn, Int}, String, true);
     register_primitive("string-index", {String, String, Int}, Int);
     register_primitive("string->number", {String}, Dyn);
     register_primitive("string->number", {String, Int}, Int, true);
