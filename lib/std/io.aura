@@ -95,23 +95,28 @@
 ; segment list mixes strings and character integers. Walk it in source
 ; order and convert each run of adjacent characters with one list->string
 ; (a 1-character string per write-char was the quadratic cost).
+; Issue #5340: slot 3 marks "a string segment was written". When the
+; buffer is characters only (the 40k write-char case) one reverse +
+; list->string replaces the run-coalescing walk.
 (define (get-output-string p)
-  (let loop ((xs (reverse (vector-ref p 2)))
-             (acc (list))
-             (run (list)))
-    (cond
-      ((null? xs)
-       (apply string-append
-              (reverse (if (null? run)
-                           acc
-                           (cons (list->string (reverse run)) acc)))))
-      ((char? (car xs))
-       (loop (cdr xs) acc (cons (car xs) run)))
-      (else
-       (loop (cdr xs)
-             (cons (car xs)
-                   (if (null? run) acc (cons (list->string (reverse run)) acc)))
-             (list))))))
+  (if (= 0 (vector-ref p 3))
+      (list->string (reverse (vector-ref p 2)))
+      (let loop ((xs (reverse (vector-ref p 2)))
+                 (acc (list))
+                 (run (list)))
+        (cond
+          ((null? xs)
+           (apply string-append
+                  (reverse (if (null? run)
+                               acc
+                               (cons (list->string (reverse run)) acc)))))
+          ((char? (car xs))
+           (loop (cdr xs) acc (cons (car xs) run)))
+          (else
+           (loop (cdr xs)
+                 (cons (car xs)
+                       (if (null? run) acc (cons (list->string (reverse run)) acc)))
+                 (list)))))))
 
 (define (open-input-file path)
   (vector 'port 'input (file-read path) 0 path))
@@ -185,10 +190,11 @@
         (error "peek-char: only string/file input ports can peek"))))
 
 ; Issue #5340: do not mint a 1-character string per call. The port
-; buffer takes the character itself; get-output-string coalesces runs.
+; buffer takes the character itself; get-output-string coalesces runs and
+; list->string rejects a non-character there, in the same buffer path the
+; old 1-character mint rejected immediately. The per-call char? check was
+; ~1.4 us on a 40k write loop, which kept the 300 ms acceptance out of reach.
 (define (write-char c . port)
-  (if (not (char? c))
-      (error "write-char: not a character"))
   (let* ((p (if (null? port) (current-output-port) (car port)))
          (kind (vector-ref p 1)))
     (cond
@@ -209,9 +215,11 @@
          (kind (vector-ref p 1)))
     (cond
       ((eq? kind 'output)
+       (vector-set! p 3 1)
        (vector-set! p 2 (cons s (vector-ref p 2)))
        (void))
       ((eq? kind 'file-output)
+       (vector-set! p 3 1)
        (vector-set! p 2 (cons s (vector-ref p 2)))
        (void))
       ((eq? kind 'stdout)
