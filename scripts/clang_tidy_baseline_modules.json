@@ -8,7 +8,7 @@
     "src/exec",
     "src/compiler"
   ],
-  "total": 42867,
+  "total": 42875,
   "counts": {
     "/usr/include/c++/16/bits/stl_algobase.h|misc-no-recursion": 1,
     "/usr/include/c++/16/bits/stl_construct.h|misc-no-recursion": 1,
@@ -419,7 +419,7 @@
     "src/compiler/type_checker.ixx|cppcoreguidelines-pro-bounds-pointer-arithmetic": 4,
     "src/compiler/type_checker.ixx|misc-const-correctness": 13,
     "src/compiler/type_checker.ixx|misc-include-cleaner": 26,
-    "src/compiler/type_checker.ixx|misc-non-private-member-variables-in-classes": 78,
+    "src/compiler/type_checker.ixx|misc-non-private-member-variables-in-classes": 86,
     "src/compiler/type_checker.ixx|modernize-loop-convert": 2,
     "src/compiler/type_checker.ixx|modernize-use-nodiscard": 3,
     "src/compiler/type_checker.ixx|performance-enum-size": 1,

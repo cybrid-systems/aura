@@ -152,11 +152,11 @@ export inline constexpr std::size_t kTypeDepBucketCap = 256;
 // AURA_MUTATION_HOLD_STRICT pattern in this codebase).
 [[nodiscard]] inline std::uint64_t delta_truncate_streak_threshold() noexcept {
     static const std::uint64_t cached = []() noexcept -> std::uint64_t {
-        const char* e = ::aura::config::raw(::aura::config::Key::AURA_DELTA_TRUNCATE_STREAK_FULL);
-        if (e == nullptr || e[0] == '\0')
+        const char* env = ::aura::config::raw(::aura::config::Key::AURA_DELTA_TRUNCATE_STREAK_FULL);
+        if (env == nullptr || env[0] == '\0')
             return 2ULL; // default 2 consecutive truncates → force full solve
         std::uint64_t v = 0;
-        for (const char* p = e; *p >= '0' && *p <= '9'; ++p) {
+        for (const char* p = env; *p >= '0' && *p <= '9'; ++p) {
             v = v * 10 + static_cast<std::uint64_t>(*p - '0');
         }
         return v > 0 ? v : 2ULL;
@@ -229,10 +229,10 @@ export inline GradualPermissiveness parse_gradual_permissiveness(std::string_vie
 }
 
 export inline GradualPermissiveness gradual_permissiveness_from_env() noexcept {
-    const char* e = ::aura::config::raw(::aura::config::Key::AURA_GRADUAL_PERMISSIVENESS);
-    if (e == nullptr || e[0] == '\0')
+    const char* env = ::aura::config::raw(::aura::config::Key::AURA_GRADUAL_PERMISSIVENESS);
+    if (env == nullptr || env[0] == '\0')
         return GradualPermissiveness::Balanced;
-    return parse_gradual_permissiveness(e);
+    return parse_gradual_permissiveness(env);
 }
 
 // Issue #2993: type-checker metrics tier. Performance notes:
@@ -274,10 +274,10 @@ export inline TypecheckMetricsTier parse_typecheck_metrics_tier(std::string_view
 }
 
 export inline TypecheckMetricsTier typecheck_metrics_tier_from_env() noexcept {
-    const char* e = ::aura::config::raw(::aura::config::Key::AURA_TYPECHECK_METRICS);
-    if (e == nullptr || e[0] == '\0')
+    const char* env = ::aura::config::raw(::aura::config::Key::AURA_TYPECHECK_METRICS);
+    if (env == nullptr || env[0] == '\0')
         return TypecheckMetricsTier::Minimal;
-    return parse_typecheck_metrics_tier(e);
+    return parse_typecheck_metrics_tier(env);
 }
 
 export inline std::atomic<std::uint8_t>& typecheck_metrics_tier_slot() noexcept {
