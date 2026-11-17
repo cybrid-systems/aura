@@ -732,4 +732,28 @@
   (check (string=? (url-join "http://example.com/" "path/to") "http://example.com/path/to"))
   (check (string=? (url-join "" "path") "path"))
   (check (string=? (url-join "http://a" "") "http://a/")))
+;; Issue #5325: re-split is the native regex-split now. The old loop asked
+;; re-find once per segment (a timed regex call each) and recursed on the
+;; remainder without tail position, so 510 segments raised "recursion depth
+;; exceeded". re-quote appended one character at a time (O(n^2)); it is one
+;; regex-replace now.
+(test-case "regex:split-scale" (hash "issue" 5325)
+  (require "std/regex" all:)
+  (require "std/string" all:)
+  (define big (string-join (make-list 2000 "ab") ","))
+  (define parts (re-split "," big))
+  (check= 2000 (length parts))
+  (check (string=? (car parts) "ab"))
+  (check (string=? (car (reverse parts)) "ab")))
+
+(test-case "regex:quote-scale" (hash "issue" 5325)
+  (require "std/regex" all:)
+  (require "std/string" all:)
+  (define s (string-repeat "a.c" 2667))
+  (define t0 (monotonic-ms))
+  (define q (re-quote s))
+  (define dt (- (monotonic-ms) t0))
+  (check= (+ (string-length s) 2667) (string-length q))
+  (check (string=? "a\\.c" (substring q 0 4)))
+  (check (< dt 150)))
 (test-finish)
