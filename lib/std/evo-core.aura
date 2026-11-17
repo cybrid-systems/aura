@@ -161,13 +161,10 @@
         ((number? v) (inexact->exact v))
         (else 0)))
 
-(define (evo-join xs sep)
-  (if (null? xs)
-      ""
-      (let loop ((ys (cdr xs)) (acc (car xs)))
-        (if (null? ys)
-            acc
-            (loop (cdr ys) (string-append acc sep (car ys)))))))
+; Issue #5339: the native string-join appends every piece once. The old
+; loop re-copied the whole prefix per element, so a long genome's
+; canonical text was quadratic.
+(define (evo-join xs sep) (string-join xs sep))
 
 (define evo-hex-digits
   (list "0" "1" "2" "3" "4" "5" "6" "7" "8" "9" "a" "b" "c" "d" "e" "f"))
