@@ -97,10 +97,12 @@
       h)
     result))
 
+; #5330: the recursion passed the KEY LIST as the hash, and (hash-keys list)
+; silently returns () — so hash-map / hash-filter / hash-merge! /
+; hash-merge-into only ever saw the first key. Walk the key list once; this
+; also drops the non-tail recursion (10k keys no longer grow the stack).
 (define (hash-keys-filter f h)
-  (let ((keys (hash-keys h)))
-    (if (null? keys) ()
-      (begin (f (car keys)) (hash-keys-filter f (cdr keys))))))
+  (for-each f (hash-keys h)))
 
 (define (hash-vals h)
   (hash-values h))
