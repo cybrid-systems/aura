@@ -56,12 +56,17 @@
         (hash-set! seen key (+ 1 (hash-ref seen key 0)))
         (iter (cdr rest) seen)))))
 
+; #5329: cons into each group and reverse the groups once at the end. The
+; old append copied the whole group per element (16000 elements: 8148 ms in
+; the report); the group order and the in-group order are unchanged.
 (define (group-by keyfn lst)
   (let iter ((rest lst) (groups (hash)))
-    (if (null? rest) (hash->alist groups)
+    (if (null? rest)
+      (map (lambda (pair) (cons (car pair) (reverse (cdr pair))))
+           (hash->alist groups))
       (let* ((key (keyfn (car rest)))
              (group (hash-ref groups key (list))))
-        (hash-set! groups key (append group (list (car rest))))
+        (hash-set! groups key (cons (car rest) group))
         (iter (cdr rest) groups)))))
 
 ;; Same counts as std/hash:frequencies. One implementation, so the two
