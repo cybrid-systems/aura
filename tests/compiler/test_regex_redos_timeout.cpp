@@ -125,31 +125,28 @@ static void ac3_size_limit() {
 // #2479's worker used to publish its result through a flag polled with a
 // fixed 1 ms sleep, so EVERY regex-* call cost at least one sleep however
 // short the subject. The worker now publishes through a packaged_task and
-// the caller wakes on completion; 100 short calls must stay far under the
-// old 100 ms floor.
+// the caller wakes on completion; 200 short calls must stay far under the
+// old 200 ms floor.
 static void ac6_call_latency() {
     std::println("\n--- #5322 AC6: short regex calls lost the 1 ms poll floor ---");
     CompilerService cs;
-    // Warm the parse path and the first compile, then time 100 calls.
-    (void)cs.eval(R"((regex-match? "a" "a"))");
-    constexpr int kCalls = 100;
-    int ok_calls = 0;
-    const auto t0 = std::chrono::steady_clock::now();
-    for (int i = 0; i < kCalls; ++i) {
-        auto r = cs.eval(R"((regex-match? "a" "a"))");
-        if (r.has_value() && is_int(*r) && as_int(*r) == 1)
-            ++ok_calls;
-    }
-    const auto us =
-        std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t0)
-            .count();
-    std::println("  {} calls, {} ok, {} us total (~{} us/call)", kCalls, ok_calls, us,
-                 kCalls == 0 ? 0 : us / kCalls);
-    CHECK(ok_calls == kCalls, "AC6: every short call matched");
-    // >= 1 ms/call before #5322, so 100 calls took >= 100 ms even idle.
-    // 60 ms leaves ~20x headroom over the fixed cost and still fails any
-    // return of the sleep floor.
-    CHECK(us < 60000, "AC6: 100 short regex calls under 60 ms");
+    // Time a COMPILED loop. Re-evaluating the source per call would time
+    // the parser instead of the primitive.
+    auto r = cs.eval(R"((let ((t0 (monotonic-ms)))
+                          (begin
+                            (let loop ((i 0))
+                              (if (< i 200)
+                                  (begin (regex-match? "a" "a") (loop (+ i 1)))
+                                  0))
+                            (- (monotonic-ms) t0))))");
+    CHECK(r.has_value() && is_int(*r), "AC6: compiled loop returns elapsed ms");
+    if (!r.has_value() || !is_int(*r))
+        return;
+    const auto ms = as_int(*r);
+    std::println("  regex-match? x200 in {} ms", ms);
+    // The pre-#5322 sleep floor made 200 calls cost >= 200 ms; 50 ms leaves
+    // headroom over the parked-worker path and still fails it.
+    CHECK(ms < 50, "AC6: 200 short regex calls under 50 ms");
 }
 
 // ── AC4: source ──
