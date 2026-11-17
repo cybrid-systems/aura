@@ -221,7 +221,7 @@ void Evaluator::snapshot_mutation_type_baseline() {
                 std::fprintf(stderr, "[gate]  base msg=%s\n", d.message.c_str());
         }
     } catch (...) {
-        // Baseline is best-effort: on failure the delta stays fail-closed.
+        // [SILENCE-PRIM] Baseline is best-effort: on failure the delta stays fail-closed.
     }
 }
 
