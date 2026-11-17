@@ -176,19 +176,15 @@
 (define (string-find haystack needle)
   (string-index haystack needle 0))
 
-; Check if string contains a substring — iterative O(1) stack (#2770).
+; Check if string contains a substring.
+; #5320: ride the native `string-index` scan (the same call string-find
+; makes) instead of minting one `substring` per position. A miss on a
+; 213-character haystack allocated 100+ substrings per call and ran ~300x
+; slower than the native scan; contains? is on the banned-word filter
+; path, where that is hundreds of ms per reply. The native scan keeps the
+; O(1) stack of the #2770 loop, and -1 is its miss value.
 (define (string-contains? haystack needle)
-  (define hlen (string-length haystack))
-  (define nlen (string-length needle))
-  (if (> nlen hlen) #f
-    (let ((i 0)
-          (found #f))
-      (while (lambda () (and (not found) (<= i (- hlen nlen))))
-        (lambda ()
-          (if (equal? (substring haystack i (+ i nlen)) needle)
-            (set! found #t)
-            (set! i (+ i 1)))))
-      found)))
+  (>= (string-index haystack needle 0) 0))
 
 ; Check if string starts with prefix
 (define (string-prefix? s prefix)
