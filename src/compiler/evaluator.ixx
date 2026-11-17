@@ -9304,8 +9304,12 @@ private:
         // node (in the #4745 probe: the and callee Variable, whose value is
         // the first-class and primitive; the #4747 face is a Void where an
         // Int was expected). The body's own last flat lives in its Context.
-        if (float_intern_flat_ctx() != f)
-            clear_name_res_cache();
+        // Issue #5342: switching flats keeps each flat's own name bucket;
+        // only the let-kind memo is flat-scoped and dropped here.
+        if (float_intern_flat_ctx() != f) {
+            let_bind_kind().clear();
+            name_res_enter(f, sym_intern_pool_ctx());
+        }
         if (float_intern_flat_shared_.load(std::memory_order_acquire) != f) {
             std::scoped_lock<std::mutex> lock(intern_cache_mtx_);
             if (float_intern_flat_shared_.load(std::memory_order_relaxed) != f) {
@@ -9322,8 +9326,15 @@ private:
         // shared atomic below can already hold the new pool because a
         // sibling stored it, which is not this body's switch (see
         // bind_float_intern_flat for the same residual).
+        // Issue #5342: pool switches no longer flush the name memo; each
+        // flat bucket is re-keyed by name_res_enter when its pool changes.
+        // Issue #5342: do NOT re-key the current flat here. At a cross-unit
+        // call this runs before bind_float_intern_flat, while "current" is
+        // still the CALLER's flat; tagging it with the callee's pool cleared
+        // the caller's bucket on every call. bind_float_intern_flat re-keys
+        // the flat it is about to enter with the pool in effect.
         if (sym_intern_pool_ctx() != p || intern_pool_gen_ctx() != gen)
-            clear_name_res_cache();
+            let_bind_kind().clear();
         const bool same = sym_intern_pool_shared_.load(std::memory_order_acquire) == p &&
                           intern_pool_gen_shared_.load(std::memory_order_relaxed) == gen;
         if (!same) {
@@ -9386,12 +9397,51 @@ private:
     };
     // Issue #4717: the #4599 name-resolution memo is per-body state. Two CLI
     // thread-backend bodies used to resize/write/read ONE vector.
-    std::vector<NameResEntry>& name_res_by_node() {
+    // Issue #5342: it is ALSO per-flat. A cross-unit call alternates node ids
+    // between the caller's flat and the callee's flat; one shared vector made
+    // each side evict the other's entries on every switch (a 160k-call loop
+    // missed ~960k times). Each flat keeps its own bucket now, so a switch
+    // neither clears nor aliases the other side.
+    struct NameResStore {
+        struct Bucket {
+            const aura::ast::StringPool* pool = nullptr;
+            std::vector<NameResEntry> entries;
+        };
+        std::unordered_map<const aura::ast::FlatAST*, Bucket> by_flat;
+        const aura::ast::FlatAST* current = nullptr;
+    };
+    NameResStore& name_res_store() {
         auto& c = eval_ctx();
-        if (!c.name_res_cache) {
-            c.name_res_cache = std::make_shared<std::vector<NameResEntry>>();
+        if (!c.name_res_cache)
+            c.name_res_cache = std::make_shared<NameResStore>();
+        return *static_cast<NameResStore*>(c.name_res_cache.get());
+    }
+    std::vector<NameResEntry>& name_res_by_node() {
+        auto& st = name_res_store();
+        return st.by_flat[st.current].entries;
+    }
+    // Bind a new executing flat: its bucket is reused as-is when the pool did
+    // not change, and dropped only when this flat was re-keyed.
+    void name_res_enter(const aura::ast::FlatAST* f, const aura::ast::StringPool* pool) {
+        if (f == nullptr)
+            return;
+        auto& st = name_res_store();
+        st.current = f;
+        auto& b = st.by_flat[f];
+        if (b.pool != pool) {
+            b.entries.clear();
+            b.pool = pool;
         }
-        return *static_cast<std::vector<NameResEntry>*>(c.name_res_cache.get());
+    }
+    void name_res_restore(const aura::ast::FlatAST* f) {
+        if (f != nullptr)
+            name_res_store().current = f;
+    }
+    [[nodiscard]] const aura::ast::FlatAST* name_res_flat() {
+        auto& c = eval_ctx();
+        if (!c.name_res_cache)
+            return nullptr;
+        return static_cast<NameResStore*>(c.name_res_cache.get())->current;
     }
     // 0 unknown, 1 raw value, 2 cell. Flat-scoped, cleared with the name cache.
     // Issue #4717: per-body let-binding kind memo (see name_res_by_node()).
@@ -9407,7 +9457,8 @@ private:
     // Issue #4717 step 2: shared top-env binding publication lock.
     mutable std::shared_mutex top_env_bindings_mu_;
     void clear_name_res_cache() noexcept {
-        name_res_by_node().clear();
+        name_res_store().by_flat.clear();
+        name_res_store().current = nullptr;
         let_bind_kind().clear();
     }
     [[nodiscard]] std::optional<EvalResult> try_eval_flat_hot(aura::ast::FlatAST& flat,

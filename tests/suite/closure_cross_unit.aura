@@ -1,0 +1,57 @@
+; Issue #5342: calling a closure defined in another compilation unit must
+; cost the same as calling one defined in the same unit. A module written to
+; /tmp supplies the cross-unit callee and loop; the same loop/body lives in
+; this file. Node ids are per-flat, so the evaluator's per-node name memo has
+; to keep one bucket per flat (one shared vector made each side evict the
+; other's entries).
+(require "std/test" all:)
+(require "std/io" all:)
+(require "std/string" all:)
+(test-file "closure_cross_unit.aura")
+
+(define cross-mod "/tmp/aura5342_cross_unit_mod.aura")
+(file-write cross-mod
+  (string-join
+    (list "(export m-any m-neg?)"
+          "(define (m-any pred xs) (let loop ((xs xs)) (if (null? xs) #f (let ((r (pred (car xs)))) (if r r (loop (cdr xs)))))))"
+          "(define (m-neg? x) (< x 0))")
+    "\n"))
+(require "/tmp/aura5342_cross_unit_mod.aura" all:)
+
+(define (f-any pred xs)
+  (let loop ((xs xs))
+    (if (null? xs) #f (let ((r (pred (car xs)))) (if r r (loop (cdr xs)))))))
+(define (iota0 n) (let loop ((i (- n 1)) (acc (list))) (if (< i 0) acc (loop (- i 1) (cons i acc)))))
+(define neg? (lambda (x) (< x 0)))
+(define big (iota0 160000))
+(define small (iota0 40000))
+
+(test-case "cross-unit closure results" (hash "issue" 5342)
+  (check= #t (m-any neg? (list 1 -1)))
+  (check= #f (m-any neg? (list 1 2)))
+  (check= #t (f-any m-neg? (list 1 -1)))
+  (check= #f (f-any m-neg? (list 1 2)))
+  (check= #f (m-any neg? (list))))
+
+(m-any neg? (list 1 -1))
+(f-any neg? (list 1 -1))
+(define (once th) (let ((t0 (monotonic-ms))) (th) (- (monotonic-ms) t0)))
+(define (best3 th) (min (once th) (min (once th) (once th))))
+
+(test-case "cross-unit call budget" (hash "issue" 5342)
+  (define fm (best3 (lambda () (f-any neg? big))))
+  (define mm (best3 (lambda () (m-any neg? big))))
+  ; Same process, back-to-back best-of-three: module loop + file callback
+  ; must stay within the same-unit budget.
+  (check (< mm (* 1.2 (max 1 fm)))))
+
+(test-case "cross-unit call scales" (hash "issue" 5342)
+  (define f40 (best3 (lambda () (f-any neg? small))))
+  (define f160 (best3 (lambda () (f-any neg? big))))
+  (define m40 (best3 (lambda () (m-any neg? small))))
+  (define m160 (best3 (lambda () (m-any neg? big))))
+  (check (<= f160 (* 5 (max 1 f40))))
+  (check (<= m160 (* 5 (max 1 m40)))))
+
+(file-delete cross-mod)
+(test-finish)

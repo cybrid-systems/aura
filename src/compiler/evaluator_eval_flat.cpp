@@ -9842,17 +9842,21 @@ Evaluator::FlatStep Evaluator::eval_flat_on_variable(EvalFlatCursor& cur,
         // Env::lookup path runs the live top_ consult.
         {
             const auto& cs = start.cap_snapshot();
-            const bool live_safe_empty =
-                cs ? cs->live_safe_top
-                   : (start.parent_id() != NULL_ENV_ID && start.bindings().empty());
-            if (live_safe_empty)
-                return std::nullopt;
-            // Locals of this env (params / let binds) win over the
-            // closure's capture — Env::lookup checks them first.
+            // Issue #5342: locals of THIS frame (params / let binds) win
+            // over the closure's live-safe capture — Env::lookup checks
+            // them first, and #5059 defines "empty" as both arrays empty.
+            // The old order declined on cs->live_safe_top before looking
+            // at a call frame's own parameters, so every cross-unit call
+            // fell back to the string walk.
             if (start.pool() == p && start.binding_mirrors_aligned()) {
                 if (auto loc = start.local_symid_last(sym))
                     return loc;
             }
+            const bool frame_empty = start.bindings().empty() && start.bindings_symid().empty();
+            const bool live_safe_empty = cs ? (frame_empty && cs->live_safe_top)
+                                            : (frame_empty && start.parent_id() != NULL_ENV_ID);
+            if (live_safe_empty)
+                return std::nullopt;
             // Issue #4595 follow-up (#4618): the capture snapshot is
             // CLOSER than the SoA chain, which starts at the capture
             // frame's PARENT. A top-level let cell binds in its own
@@ -10770,6 +10774,9 @@ Evaluator::FlatStep Evaluator::eval_flat_on_closure(EvalFlatCursor& cur,
             f = cl.flat;
             if (cl.pool)
                 p = cl.pool;
+            // Issue #5342: the callee body visits its own flat's bucket.
+            let_bind_kind().clear();
+            name_res_enter(f, p);
             current_env = &*tail_env;
             current_id = cl.body_id;
             return FlatStep::cont();
@@ -13099,6 +13106,14 @@ std::optional<EvalResult> Evaluator::eval_flat_prepare_visit(EvalFlatCursor& cur
         current_flat_.store(f, std::memory_order_relaxed);
     if (current_pool_.load(std::memory_order_relaxed) != p)
         current_pool_.store(p, std::memory_order_relaxed);
+    // Issue #5342: a nested eval body restores the caller's name-cache
+    // bucket when it returns; the callee body's entries stay in their own.
+    const auto* dbg_prev_nr_flat = name_res_flat();
+    struct NameResScope5342 {
+        Evaluator* ev;
+        const aura::ast::FlatAST* prev;
+        ~NameResScope5342() { ev->name_res_restore(prev); }
+    } nr_scope_5342{this, dbg_prev_nr_flat};
     // Issue #3457: SymId intern is pool-local. TCO / nested
     // eval / a fresh CompilerService::eval snippet swap `p`.
     bind_sym_intern_pool(p);
