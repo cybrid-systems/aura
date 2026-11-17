@@ -576,6 +576,22 @@
 (file-delete "/tmp/aura5314_suite_leakmod.aura")
 (file-delete "/tmp/aura5314_suite_only.aura")
 
+; Issue #5339: evo-join delegates to the native string-join; the canonical
+; text (and therefore every candidate id) is byte-identical.
+(define (ev-iota n) (let loop ((i (- n 1)) (acc (list))) (if (< i 0) acc (loop (- i 1) (cons i acc)))))
+(assert! (string=? "c97bf7b43" (evo:candidate-id (evo:candidate (list 1 2 3))))
+         "evo:candidate id for (list 1 2 3) is unchanged")
+(define ev-g (ev-iota 16000))
+(define ev-t0 (monotonic-ms))
+(define ev-c (evo:candidate ev-g))
+(define ev-ms (- (monotonic-ms) ev-t0))
+(assert! (< ev-ms 500) "evo:candidate on a 16k list genome is linear")
+(assert! (string? (evo:candidate-id ev-c)) "16k genome still gets an id")
+(define ev-h1 (evo:candidate (hash "y" (list 2 3) "x" 1)))
+(define ev-h2 (evo:candidate (hash "x" 1 "y" (list 2 3))))
+(assert! (string=? (evo:candidate-id ev-h1) (evo:candidate-id ev-h2))
+         "hash genome canonical text is key-sorted and stable")
+
 (if (= *fails* 0)
     (begin (display "OK-4939 evo-core\n"))
     (begin
