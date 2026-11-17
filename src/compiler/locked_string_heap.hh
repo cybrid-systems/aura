@@ -41,8 +41,13 @@
 // heap keeps an open-addressed FNV-1a index from content to slot, updated
 // on mint, release, note_write, claimed-batch publish, resize, clear and
 // replace. find_content is a lookup. A miss does not scan the heap.
-// Duplicate contents all stay indexed; the first probe hit is the earliest
-// inserted live slot whose bytes still match.
+// Issue #5335: the index holds ONE entry per distinct content, not one per
+// slot. Slots that repeat an already-indexed content join that entry's
+// insertion-ordered chain (dup_prev_/dup_next_), so N identical strings no
+// longer form an N-long linear-probe cluster. The entry's head is the
+// earliest still-live slot for that content, which keeps find_content's
+// "earliest inserted live slot" contract; releasing or rewriting a chain
+// node unlinks it and advances the head.
 #pragma once
 
 #include <algorithm>
@@ -728,22 +733,8 @@ public:
     [[nodiscard]] std::size_t find_content_locked(std::string_view s) const {
         if (content_.empty())
             return npos;
-        const auto h = hash::fnv1a_bytes(s);
-        const auto mask = content_.size() - 1;
-        for (std::size_t n = 0, i = static_cast<std::size_t>(h) & mask; n < content_.size();
-             ++n, i = (i + 1) & mask) {
-            const auto& e = content_[i];
-            if (e.state == 0)
-                return npos;
-            if (e.state != 1 || e.hash != h)
-                continue;
-            const auto idx = static_cast<size_type>(e.idx);
-            if (idx >= v_.size() || slot_is_free(idx) || slot_is_claimed(idx))
-                continue;
-            if (std::string_view(v_[idx]) == s)
-                return idx;
-        }
-        return npos;
+        const auto* e = find_content_entry_locked(hash::fnv1a_bytes(s), s);
+        return e == nullptr ? npos : static_cast<std::size_t>(e->idx);
     }
     // Issue #4714 Row 2: the generation is readable WITHOUT the lock. The
     // per-fiber slab path checks it per mint so a structural write
@@ -852,6 +843,16 @@ public:
             slot_indexed_.resize(n, 0);
             slot_hash_.resize(n, 0);
         }
+        // Issue #5335: the duplicate-chain vectors are index-parallel too.
+        if (dup_prev_.size() > n) {
+            dup_prev_.resize(n);
+            dup_next_.resize(n);
+            slot_chain_.resize(n);
+        } else if (n > dup_prev_.size()) {
+            dup_prev_.resize(n, kNoSlot32);
+            dup_next_.resize(n, kNoSlot32);
+            slot_chain_.resize(n, 0);
+        }
         std::erase_if(free_slots_, [n](size_type i) { return i >= n; });
     }
     void clear() noexcept {
@@ -889,6 +890,9 @@ public:
         content_reset();
         slot_hash_.assign(v_.size(), 0);
         slot_indexed_.assign(v_.size(), 0);
+        dup_prev_.assign(v_.size(), kNoSlot32);
+        dup_next_.assign(v_.size(), kNoSlot32);
+        slot_chain_.assign(v_.size(), 0);
         for (size_type i = 0; i < v_.size(); ++i)
             index_slot_locked(i);
     }
@@ -1007,9 +1011,18 @@ private:
     // stops), 1 is live, 2 is a tombstone (probe continues). The caller
     // holds the lock. A slot is indexed only while it is live and not
     // claimed; free and claimed slots are absent.
+    // Issue #5335: one entry per distinct content. idx is the head of the
+    // insertion-ordered duplicate chain (earliest live slot), tail the
+    // append point; chain is the stable id the per-slot vectors carry so a
+    // release/rewrite can unlink without trusting the (possibly advanced)
+    // head. kNoSlot32 terminates both chain directions.
+    static constexpr std::uint32_t kNoSlot32 = 0xFFFFFFFFu;
+
     struct ContentEnt {
         std::uint64_t hash = 0;
-        std::uint32_t idx = 0;
+        std::uint64_t chain = 0;
+        std::uint32_t idx = kNoSlot32;
+        std::uint32_t tail = kNoSlot32;
         std::uint8_t state = 0;
     };
 
@@ -1019,6 +1032,10 @@ private:
         content_fill_ = 0;
         slot_hash_.clear();
         slot_indexed_.clear();
+        dup_prev_.clear();
+        dup_next_.clear();
+        slot_chain_.clear();
+        next_chain_ = 1;
     }
 
     void content_rehash(std::size_t min_cap) {
@@ -1039,10 +1056,13 @@ private:
         content_fill_ = content_live_;
     }
 
-    // False only when the probe finds no empty slot. The load-factor
-    // rehash makes that unreachable; a false return leaves the slot
-    // unindexed instead of recording a hit that is not in the table.
-    bool content_insert(std::uint64_t h, std::uint32_t idx) {
+    // The load-factor rehash keeps an empty probe slot reachable; the
+    // content_.size() return leaves the slot unindexed instead of recording
+    // a hit that is not in the table.
+    // Insert a NEW distinct-content entry. Returns its slot in content_, or
+    // content_.size() when the probe found no empty slot (unreachable after
+    // the load-factor rehash). idx/tail are filled by index_slot_locked.
+    std::size_t content_insert(std::uint64_t h, std::uint64_t chain) {
         const std::size_t need = content_live_ + 1;
         if (content_.empty() || content_fill_ * 2 >= content_.size() || need * 2 >= content_.size())
             content_rehash(
@@ -1059,40 +1079,84 @@ private:
                     tomb = i;
                 continue;
             }
-            auto& dst = tomb == content_.size() ? e : content_[tomb];
+            const auto dst_i = tomb == content_.size() ? i : tomb;
+            auto& dst = content_[dst_i];
             if (tomb == content_.size())
                 ++content_fill_;
             dst.hash = h;
-            dst.idx = idx;
+            dst.chain = chain;
             dst.state = 1;
             ++content_live_;
-            return true;
+            return dst_i;
         }
-        return false;
+        return content_.size();
     }
 
-    void content_remove(std::uint64_t h, std::uint32_t idx) noexcept {
+    // Issue #5335: the entry for s, or nullptr. Only distinct contents have
+    // entries now, so a probe crosses at most the handful of distinct strings
+    // that share this hash. The head must still be live: release and
+    // note_write unlink the node they remove and advance the head.
+    ContentEnt* find_content_entry_locked(std::uint64_t h, std::string_view s) const {
         if (content_.empty())
-            return;
+            return nullptr;
         const auto mask = content_.size() - 1;
         for (std::size_t n = 0, i = static_cast<std::size_t>(h) & mask; n < content_.size();
              ++n, i = (i + 1) & mask) {
-            auto& e = content_[i];
+            const auto& e = content_[i];
             if (e.state == 0)
-                return;
-            if (e.state == 1 && e.hash == h && e.idx == idx) {
-                e.state = 2;
-                --content_live_;
-                return;
-            }
+                return nullptr;
+            if (e.state != 1 || e.hash != h)
+                continue;
+            const auto idx = static_cast<size_type>(e.idx);
+            if (idx >= v_.size() || slot_is_free(idx) || slot_is_claimed(idx))
+                continue;
+            if (std::string_view(v_[idx]) == s)
+                return const_cast<ContentEnt*>(&e);
         }
+        return nullptr;
     }
 
+    // Issue #5335: unlink this slot from its duplicate chain. The head and
+    // tail move when the removed node was an endpoint; an entry whose chain
+    // empties becomes a tombstone.
     void unindex_slot_locked(size_type idx) noexcept {
         if (idx >= slot_indexed_.size() || slot_indexed_[idx] == 0)
             return;
-        content_remove(slot_hash_[idx], static_cast<std::uint32_t>(idx));
+        const auto chain = slot_chain_[idx];
+        const auto h = slot_hash_[idx];
+        if (!content_.empty()) {
+            const auto mask = content_.size() - 1;
+            for (std::size_t n = 0, i = static_cast<std::size_t>(h) & mask; n < content_.size();
+                 ++n, i = (i + 1) & mask) {
+                auto& e = content_[i];
+                if (e.state == 0)
+                    break;
+                if (e.state != 1 || e.hash != h || e.chain != chain)
+                    continue;
+                const auto prev = dup_prev_[idx];
+                const auto next = dup_next_[idx];
+                if (prev != kNoSlot32)
+                    dup_next_[prev] = next;
+                else
+                    e.idx = next;
+                if (next != kNoSlot32)
+                    dup_prev_[next] = prev;
+                else
+                    e.tail = prev;
+                if (e.idx == kNoSlot32) {
+                    e.state = 2;
+                    --content_live_;
+                }
+                break;
+            }
+        }
         slot_indexed_[idx] = 0;
+        if (idx < dup_prev_.size())
+            dup_prev_[idx] = kNoSlot32;
+        if (idx < dup_next_.size())
+            dup_next_[idx] = kNoSlot32;
+        if (idx < slot_chain_.size())
+            slot_chain_[idx] = 0;
     }
 
     void index_slot_locked(size_type idx) {
@@ -1102,18 +1166,42 @@ private:
             return;
         try {
             const auto h = hash::fnv1a_bytes(std::string_view(v_[idx]));
-            if (idx < slot_indexed_.size() && slot_indexed_[idx] != 0) {
-                if (idx < slot_hash_.size() && slot_hash_[idx] == h)
-                    return;
+            if (idx < slot_indexed_.size() && slot_indexed_[idx] != 0)
                 unindex_slot_locked(idx);
-            }
             if (slot_hash_.size() <= idx) {
                 slot_hash_.resize(idx + 1, 0);
                 slot_indexed_.resize(idx + 1, 0);
+                dup_prev_.resize(idx + 1, kNoSlot32);
+                dup_next_.resize(idx + 1, kNoSlot32);
+                slot_chain_.resize(idx + 1, 0);
             }
-            if (!content_insert(h, static_cast<std::uint32_t>(idx)))
+            const std::string_view content(v_[idx]);
+            if (auto* e = find_content_entry_locked(h, content)) {
+                // Duplicate content: append behind the tail of its chain.
+                const auto tail = e->tail;
+                dup_prev_[idx] = tail;
+                dup_next_[idx] = kNoSlot32;
+                if (tail != kNoSlot32 && tail < dup_next_.size())
+                    dup_next_[tail] = static_cast<std::uint32_t>(idx);
+                else
+                    e->idx = static_cast<std::uint32_t>(idx);
+                e->tail = static_cast<std::uint32_t>(idx);
+                slot_hash_[idx] = h;
+                slot_chain_[idx] = e->chain;
+                slot_indexed_[idx] = 1;
                 return;
+            }
+            const auto chain = next_chain_++;
+            const auto slot = content_insert(h, chain);
+            if (slot == content_.size())
+                return;
+            auto& e = content_[slot];
+            e.idx = static_cast<std::uint32_t>(idx);
+            e.tail = static_cast<std::uint32_t>(idx);
+            dup_prev_[idx] = kNoSlot32;
+            dup_next_[idx] = kNoSlot32;
             slot_hash_[idx] = h;
+            slot_chain_[idx] = chain;
             slot_indexed_[idx] = 1;
         } catch (const std::bad_alloc&) {
             // [SILENCE-PRIM-#5146] OOM growing the index tables: leave the
@@ -1152,6 +1240,13 @@ private:
     std::size_t content_fill_ = 0;
     std::vector<std::uint64_t> slot_hash_;
     std::vector<std::uint8_t> slot_indexed_;
+    // Issue #5335: per-slot duplicate chain links and the chain id shared by
+    // every slot whose content is the same. Index-parallel to v_ and guarded
+    // by mu_ like slot_indexed_; kNoSlot32 terminates both directions.
+    std::vector<std::uint32_t> dup_prev_;
+    std::vector<std::uint32_t> dup_next_;
+    std::vector<std::uint64_t> slot_chain_;
+    std::uint64_t next_chain_ = 1;
 };
 
 // ── Issue #4717: the read-only string-pool view ──────────────────────────

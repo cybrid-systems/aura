@@ -407,6 +407,52 @@ void ac6_content_index_5146() {
     }
 }
 
+// Issue #5335: one index entry per distinct content. N identical mints used
+// to form an N-long probe cluster, so this loop was quadratic; it must stay
+// linear, and the earliest live duplicate must still be the intern hit.
+void ac7_duplicate_content_5335() {
+    std::println("\n--- AC7: #5335 duplicate content index ---");
+    LockedStringHeap h;
+    constexpr int kN = 20000;
+    // Slot 0 is the immortal empty string in release_unmarked, so seed a
+    // different slot first and let the duplicate chain start at index 1.
+    (void)h.mint(std::string("prefix"));
+    const std::size_t first = h.mint(std::string("same-content"));
+    const auto t0 = std::chrono::steady_clock::now();
+    for (int i = 0; i < kN; ++i) {
+        (void)h.mint(std::string("same-content"));
+        if (h.find_content("same-content") != first)
+            CHECK(false, "5335: duplicate mint keeps the earliest live hit");
+    }
+    const auto ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0)
+            .count();
+    std::println("  5335 {} identical mint+find: {} ms", kN, ms);
+    CHECK(h.size() == static_cast<std::size_t>(kN) + 2, "5335: every mint still appends a slot");
+    CHECK(h.find_content("same-content") == first, "5335: earliest live slot is the hit");
+    CHECK(ms < 2000, "5335: identical contents do not form a probe cluster");
+
+    // Releasing the head promotes the next duplicate; the contract is still
+    // "earliest still-live slot", not "some slot".
+    const auto second = first + 1;
+    std::vector<std::uint8_t> seen(h.size(), 1);
+    std::vector<std::uint8_t> free_at(h.size(), 0);
+    seen[first] = 0;
+    (void)h.release_unmarked(seen, free_at);
+    CHECK(h.find_content("same-content") == second,
+          "5335: releasing the head promotes the next duplicate");
+
+    // A middle-node rewrite leaves the chain intact and the old content
+    // resolves to the surviving earliest slot.
+    const auto mid = second + 5;
+    h[mid] = "other-content";
+    h.note_write(mid);
+    CHECK(h.find_content("other-content") == mid, "5335: note_write joins the new content");
+    CHECK(h.find_content("same-content") == second,
+          "5335: note_write of a middle node keeps the earliest hit");
+    CHECK(h.find_content("same-content") == second, "5335: duplicate lookup stays stable");
+}
+
 } // namespace
 
 int main() {
@@ -416,6 +462,7 @@ int main() {
     ac4_tenant_stamp_on_prim_mint();
     ac5_code_point_index();
     ac6_content_index_5146();
+    ac7_duplicate_content_5335();
     std::println("\n=== test_locked_string_heap: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
