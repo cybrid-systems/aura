@@ -12689,6 +12689,13 @@ public:
         std::scoped_lock lock(alloc_storage_lock_);
         return string_heap_.code_point_slice(idx, start, end, out);
     }
+    // Issue #5341: string-index lookup read under one lock; start and the
+    // result are code-point indexes. npos when absent/out of range.
+    [[nodiscard]] std::size_t string_heap_find_from(std::size_t hay_idx, std::size_t needle_idx,
+                                                    std::size_t start_cp) const {
+        std::scoped_lock lock(alloc_storage_lock_);
+        return string_heap_.find_from_code_point(hay_idx, needle_idx, start_cp);
+    }
     // Issue #2652: process-wide mutex for g_hash_tables mutation + string
     // key compare (hash-set! / hash-ref under multi-fiber stats-bump).
     // Nested with alloc_storage_lock_ when both are needed: take this outer,

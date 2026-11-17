@@ -795,6 +795,35 @@ public:
             out.assign(s, sb, eb - sb);
         return true;
     }
+    // Issue #5341: string-index without copying either slot. Both slots are
+    // read under one lock; start and the result are code-point indexes. An
+    // empty (or out-of-range) needle is 0, a missing haystack or needle is
+    // npos. The two offset conversions use the same cached code-point index
+    // as substring (#4548); ASCII stays the identity map.
+    [[nodiscard]] std::size_t find_from_code_point(size_type hay, size_type needle,
+                                                   std::size_t start_cp) const {
+        Guard g(mu_, lock_observer_);
+        if (needle >= v_.size() || v_[needle].empty())
+            return 0;
+        if (hay >= v_.size())
+            return npos;
+        const auto& s = v_[hay];
+        const std::string_view pat(v_[needle]);
+        std::size_t sb = 0;
+        if (s.size() < kCpIndexMinBytes) {
+            sb = utf8_byte_offset(s, start_cp);
+        } else {
+            const auto& m = cp_index(hay);
+            sb = start_cp >= m.cp_len ? s.size() : byte_offset_locked(s, m, start_cp);
+        }
+        const auto pos = s.find(pat, sb);
+        if (pos == std::string::npos)
+            return npos;
+        if (s.size() < kCpIndexMinBytes)
+            return utf8_units_before(s, pos);
+        const auto& m = cp_index(hay);
+        return m.ascii ? pos : code_point_index_locked(s, m, pos);
+    }
     [[nodiscard]] std::size_t cp_index_entries() const noexcept { return cp_meta_.size(); }
 
     // ── structural writes (locked) ─────────────────────────────────
@@ -965,6 +994,31 @@ private:
         }
         m.cp_len = n;
         return m;
+    }
+    // Issue #5341: byte offset -> code-point index through the stride cache.
+    // Mirrors utf8_units_before's boundary rule: a byte inside a unit counts
+    // the units that start strictly before it, not the straddling unit.
+    static std::size_t code_point_index_locked(const std::string& s, const CpIndex& m,
+                                               std::size_t byte_pos) noexcept {
+        if (m.ascii)
+            return byte_pos >= s.size() ? s.size() : byte_pos;
+        if (m.stride_offsets.empty())
+            return 0;
+        const auto it =
+            std::upper_bound(m.stride_offsets.begin(), m.stride_offsets.end(), byte_pos);
+        std::size_t k = 0;
+        if (it != m.stride_offsets.begin())
+            k = static_cast<std::size_t>((it - m.stride_offsets.begin()) - 1);
+        std::size_t cp = k * kCpIndexStride;
+        std::size_t b = m.stride_offsets[k];
+        Utf8Unit u;
+        while (b < byte_pos) {
+            if (!utf8_unit_at(s, b, u) || b + u.nbytes > byte_pos)
+                break;
+            b += u.nbytes;
+            ++cp;
+        }
+        return cp;
     }
     // Byte offset of code point cp < m.cp_len (non-ASCII: stride + walk).
     static std::size_t byte_offset_locked(const std::string& s, const CpIndex& m,
