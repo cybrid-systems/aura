@@ -649,9 +649,7 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
     // Issue #3440: persist-reject under outermost && success must flip
     // success so exit_mutation_boundary's existing !success abort_restore
     // stays SSOT. Soft/Off: note is a no-op (flag stays false).
-    auto note_3440_restore = [ev, mutation_id](int line) noexcept {
-        if (::std::getenv("AURA_GATE_TRACE") != nullptr)
-            std::fprintf(stderr, "[gate] persist reject at line %d\n", line);
+    auto note_3440_restore = [ev, mutation_id]() noexcept {
         aura::compiler::typed_audit::note_outermost_persist_reject_needs_restore();
         // Issue #3687 / #3545 / #3818: shared reject-undo (AST + journal).
         aura_persist_reject_undo(ev, mutation_id);
@@ -712,7 +710,7 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
                 aura::compiler::typed_audit::kTypeLinearProofOutcomeReject);
             aura::compiler::typed_audit::clear_type_linear_commit_proof_on_abort();
             ev->clear_type_export_authority();
-            note_3440_restore(__LINE__);
+            note_3440_restore();
             return;
         }
     }
@@ -739,7 +737,7 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
                 aura::compiler::typed_audit::kTypeLinearProofOutcomeReject);
             aura::compiler::typed_audit::clear_type_linear_commit_proof_on_abort();
             ev->clear_type_export_authority();
-            note_3440_restore(__LINE__);
+            note_3440_restore();
             return;
         }
     }
@@ -785,7 +783,7 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
                 aura::compiler::typed_audit::kTypeLinearProofOutcomeReject);
             aura::compiler::typed_audit::clear_type_linear_commit_proof_on_abort();
             ev->clear_type_export_authority();
-            note_3440_restore(__LINE__);
+            note_3440_restore();
             return;
         }
     }
@@ -814,7 +812,7 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
             aura::compiler::typed_audit::kTypeLinearProofOutcomeReject);
         aura::compiler::typed_audit::clear_type_linear_commit_proof_on_abort();
         ev->clear_type_export_authority();
-        note_3440_restore(__LINE__);
+        note_3440_restore();
         return; // skip persist + proof + health + grant
     }
     // Issue #3281 AC2: no green stamp on torn state — outermost-success
@@ -845,7 +843,7 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
             // the stale proof after mid-abort authority reject.
             aura::compiler::typed_audit::clear_type_linear_commit_proof_on_abort();
             ev->clear_type_export_authority();
-            note_3440_restore(__LINE__);
+            note_3440_restore();
             return;
         }
     }
@@ -907,7 +905,7 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
                 aura::compiler::typed_audit::clear_type_linear_commit_proof_on_abort();
                 (void)aura::compiler::typed_audit::clear_occurrence_persist_buffer(tc);
                 ev->bump_occurrence_persist_fingerprint_mismatch();
-                note_3440_restore(__LINE__);
+                note_3440_restore();
                 return; // skip stamp + health + grant
             }
             // Soft: observe only, commit may succeed (drain already bumped
@@ -956,7 +954,7 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
             aura::compiler::typed_audit::clear_type_linear_commit_proof_on_abort();
             (void)aura::compiler::typed_audit::clear_occurrence_persist_buffer(tc);
             ev->bump_occurrence_persist_fingerprint_mismatch();
-            note_3440_restore(__LINE__);
+            note_3440_restore();
             return; // skip green stamp + health + grant
         }
     }
@@ -991,7 +989,7 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
             aura::compiler::typed_audit::clear_type_linear_commit_proof_on_abort();
             (void)aura::compiler::typed_audit::clear_occurrence_persist_buffer(tc);
             ev->bump_occurrence_persist_fingerprint_mismatch();
-            note_3440_restore(__LINE__);
+            note_3440_restore();
             return; // no green stamp / no grant
         }
     }
@@ -1035,7 +1033,7 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
         ev->clear_type_export_authority();
         aura::compiler::typed_audit::publish_type_linear_proof_outcome(
             aura::compiler::typed_audit::kTypeLinearProofOutcomeReject);
-        note_3440_restore(__LINE__);
+        note_3440_restore();
         return; // skip health + grant
     }
     // Issue #2995: single-shot OccurrenceCommitHealth after persist +
@@ -1076,7 +1074,7 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
         // early-out, zero extra atomics on quiet SOLVED.
         (void)aura::compiler::typed_audit::clear_occurrence_persist_buffer(tc);
         ev->bump_occurrence_persist_fingerprint_mismatch();
-        note_3440_restore(__LINE__);
+        note_3440_restore();
         return; // skip grant; recover face stamps via publish_occurrence_commit_health
     }
     // Issue #3004: query:type authority only after persist + Full
