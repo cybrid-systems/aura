@@ -223,18 +223,29 @@
           (run-start 0)
           (parts (list))
           (found #f))
+      ; #5324: find the next hit with the native string-index instead of
+      ; minting one substring per position to compare (same defect #5320
+      ; fixed in string-contains?). One substring per unmatched run and the
+      ; scan jumps past each replacement, so a sparse hit costs one scan
+      ; (16000 chars: 203 ms -> ~1 ms).
       (while (lambda () (< i slen))
         (lambda ()
-          (if (and (<= (+ i olen) slen)
-                   (equal? (substring s i (+ i olen)) old))
-            (begin
-              (if (< run-start i)
-                  (set! parts (cons (substring s run-start i) parts)))
-              (set! parts (cons new parts))
-              (set! found #t)
-              (set! i (+ i olen))
-              (set! run-start i))
-            (set! i (+ i 1)))))
+          ; string-index matches the needle's bytes at a unit boundary, so an
+          ; ill-formed needle (a lone lead byte) can name a prefix inside a
+          ; well-formed unit (#5186 pinned that as a non-match). Confirm the
+          ; candidate by unit slice; a false candidate just advances one unit.
+          (let ((hit (string-index s old i)))
+            (if (or (< hit 0) (> (+ hit olen) slen))
+              (set! i slen)
+              (if (equal? (substring s hit (+ hit olen)) old)
+                (begin
+                  (if (< run-start hit)
+                      (set! parts (cons (substring s run-start hit) parts)))
+                  (set! parts (cons new parts))
+                  (set! found #t)
+                  (set! i (+ hit olen))
+                  (set! run-start i))
+                (set! i (+ hit 1)))))))
       (if (not found)
           s
           (begin
