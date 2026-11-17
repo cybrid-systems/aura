@@ -794,4 +794,20 @@
   ; The old append-per-element shape took ~45 s here for this size;
   ; the two-list queue is ~4 s on this slow interpreter.
   (check (< dt 12000)))
+;; Issue #5329: group-by conses into each group and reverses once; the old
+;; shape appended to the group per element (16000: 8148 ms in the report).
+(test-case "iter:group-by" (hash "issue" 5329)
+  (require "std/iter" all:)
+  (check= (list (list 0 0 4) (list 1 1 5) (list 2 2) (list 3 3))
+          (group-by (lambda (x) (modulo x 4)) (list 0 1 2 3 4 5)))
+  (define t0 (monotonic-ms))
+  (define big (group-by (lambda (x) (modulo x 4)) (iota 16000)))
+  (define dt (- (monotonic-ms) t0))
+  (check= 4 (length big))
+  (check= 4001 (length (car big)))
+  (check= 0 (car (car big)))
+  (check= 15996 (car (reverse (car big))))
+  ; ~1.3 s here on this slow interpreter; the append-per-element shape
+  ; took ~40 s.
+  (check (< dt 8000)))
 (test-finish)
