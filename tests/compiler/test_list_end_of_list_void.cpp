@@ -98,7 +98,9 @@ static void ac4_source() {
         CHECK(win.find("is_void(v)") != std::string::npos, "AC4: void-only end");
         CHECK(win.find("as_int(v) == 0") == std::string::npos, "AC4: no int-0 end check");
     }
-    auto npos = src.find("add(\"null?\"");
+    // #3174 register_prim shape: add, ev, "null?", ... (the old add("null?") call
+    // was the pre-scaffold form).
+    auto npos = src.find("\"null?\"");
     CHECK(npos != std::string::npos, "AC4: null? present");
     if (npos != std::string::npos) {
         auto win = src.substr(npos, 250);

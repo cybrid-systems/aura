@@ -6,6 +6,8 @@
 
 #include "compiler/pipeline_policy.hh"
 #include "compiler/typed_mutation_audit.h"
+#include "core/runtime_config.hh"
+#include "core/sandbox.hh"
 
 #include <print>
 
@@ -14,6 +16,13 @@ import std;
 static void reset_member_face() {
     aura::compiler::reset_tree_walker_fallback_policy_for_test();
     aura::compiler::typed_audit::apply_dev_audit_defaults();
+    // Batch hygiene: members mutate the process-global sandbox mode and the
+    // AURA_SANDBOX / AURA_PIPELINE_STRICT knobs, so a later member inherited
+    // its predecessor's wire (tcp-* call-time effect checks, load's toggles).
+    // Restore the face the suite harness uses before every member.
+    ::aura::config::test_setenv("AURA_SANDBOX", "off", /*overwrite=*/1);
+    ::aura::config::test_setenv("AURA_PIPELINE_STRICT", "0", /*overwrite=*/1);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
 }
 
 extern int run_test_channel_rendezvous();
@@ -95,11 +104,6 @@ int main() {
         std::println("OK member test_json_parse_object_grow ({} checks)", g_passed);
     }
 
-    // Leftover extra members after already-green Io/json ACs: list void
-    // AC drift, load mid==0 residual, sys-open path, tcp vector OOB abort.
-    // test_write_string_escape stays live (#2574 and #4468).
-    CHECK(true, "skip leftover list/load/sys-open/tcp extra members");
-
     std::println("\n──── test_write_string_escape ────");
     reset_member_face();
     g_passed = 0;
@@ -111,12 +115,9 @@ int main() {
         ++members_passed;
         std::println("OK member test_write_string_escape ({} checks)", g_passed);
     }
-    // #5322: the regex member is live — the parked worker removed the 1 ms
-    // per-call floor and AC6 bounds the short-call latency. The four members
-    // below still fail on main for their own reasons (list void AC drift,
-    // #4342 parse-error expectations, #3174 sys-open gating, tcp listen
-    // grants), so they stay out of the batch until each is repaired; the tail
-    // count prints the live member total.
+    // #5322: the parked worker removed the 1 ms per-call floor; AC6 bounds
+    // the short-call latency.
+    reset_member_face();
     std::println("\n──── test_regex_redos_timeout ────");
     g_passed = 0;
     g_failed = 0;
@@ -129,7 +130,7 @@ int main() {
     }
 
 
-#if 0
+    reset_member_face();
     std::println("\n──── test_list_end_of_list_void ────");
     g_passed = 0;
     g_failed = 0;
@@ -141,6 +142,7 @@ int main() {
         std::println("OK member test_list_end_of_list_void ({} checks)", g_passed);
     }
 
+    reset_member_face();
     std::println("\n──── test_load_cap_io_read ────");
     g_passed = 0;
     g_failed = 0;
@@ -152,6 +154,7 @@ int main() {
         std::println("OK member test_load_cap_io_read ({} checks)", g_passed);
     }
 
+    reset_member_face();
     std::println("\n──── test_sys_open_path_harden ────");
     g_passed = 0;
     g_failed = 0;
@@ -163,6 +166,7 @@ int main() {
         std::println("OK member test_sys_open_path_harden ({} checks)", g_passed);
     }
 
+    reset_member_face();
     std::println("\n──── test_tcp_listen_accept ────");
     g_passed = 0;
     g_failed = 0;
@@ -173,7 +177,6 @@ int main() {
         ++members_passed;
         std::println("OK member test_tcp_listen_accept ({} checks)", g_passed);
     }
-#endif
 
     std::println("\n=== {} members: {} ok, {} failed ===", members_passed + members_failed,
                  members_passed, members_failed);

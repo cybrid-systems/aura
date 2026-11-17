@@ -365,14 +365,19 @@ static void ac4342_unclosed_list_fail_closed() {
     }
     auto r = cs.eval("(load \"/tmp/aura_load_unclosed_4342.aura\")");
     CHECK(r.has_value(), "4342: eval returns a value");
-    CHECK(r && is_error(*r), "4342: unclosed list fails closed (parse error)");
+    // A load failure reports the (kind . message) merr record (#1397 / #4841
+    // error-cause store), not a tagged error value; a successful load returns
+    // the file's last value (an int here, void for an empty file).
+    CHECK(r && is_pair(*r), "4342: unclosed list fails closed (merr record)");
     // Fail closed = no partial swap: the good workspace stays bound and
     // the broken file's prefix did not bind.
     auto keep = cs.eval("load-cap-ok-2485");
     CHECK(keep.has_value() && !(keep && is_error(*keep)),
           "4342: good workspace intact (no partial swap)");
+    // An unbound name raises (the diagnostics face), so the fail-closed
+    // proof is "no value, or an error value".
     auto early = cs.eval("load-4342-early");
-    CHECK(early.has_value() && is_error(*early), "4342: broken prefix did not bind");
+    CHECK(!early.has_value() || is_error(*early), "4342: broken prefix did not bind");
     // Extra ')' at top level stays a hard parse error through load
     // (#4272 parity — both imbalance directions fail closed).
     {
@@ -380,7 +385,10 @@ static void ac4342_unclosed_list_fail_closed() {
         out << "(define load-4342-x 1)\n)\n";
     }
     auto r2 = cs.eval("(load \"/tmp/aura_load_extra_close_4342.aura\")");
-    CHECK(r2.has_value() && r2 && is_error(*r2), "4342: extra ')' fails closed (#4272 parity)");
+    CHECK(r2 && is_pair(*r2), "4342: extra ')' fails closed (#4272 parity)");
+    auto extra_bind = cs.eval("load-4342-x");
+    CHECK(!extra_bind.has_value() || is_error(*extra_bind),
+          "4342: extra ')' did not bind its define");
 }
 
 // ── Issue #4348: string literals unescape exactly once ──
