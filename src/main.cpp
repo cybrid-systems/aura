@@ -2881,6 +2881,11 @@ static void emit_register_primitive_dispatch(aura::compiler::CompilerService& cs
             AURA_STRING_LOW8) ")\n";
         code += "#define AURA_AOT_IS_FLOAT(x) ((((int64_t)(x)) & 0xFF) == " AURA_ABI_STR(
             AURA_FLOAT_LOW8) ")\n";
+        // Issue #4640: the AOT predicate wrappers need the fixnum / symbol
+        // tags; the fallback wrapper built a pair for every predicate.
+        code += "#define AURA_AOT_IS_FIXNUM(x) ((((int64_t)(x)) & 1) == 0)\n";
+        code += "#define AURA_AOT_IS_SYMBOL(x) ((((int64_t)(x)) & 0xFF) == " AURA_ABI_STR(
+            AURA_SYMBOL_LOW8) ")\n";
         code += "static inline int aura_aot_equal(int64_t a, int64_t b, int depth){\n";
         code += "  if(a==b) return 1;\n";
         code += "  if(depth>64) return 1;\n";
@@ -3000,7 +3005,37 @@ static void emit_register_primitive_dispatch(aura::compiler::CompilerService& cs
                 // Issue #4640: tagged #t / #f, not a raw 1 / 0 (see
                 // the comparison wrappers above).
                 code += "    return (c>0 && ((a[0]&3)==1)) ? AURA_AOT_TRUE : AURA_AOT_FALSE;\n";
-            else if (n == "cons")
+            else if (n == "number?")
+                // Issue #4640 (AOT face): the emitter had no wrapper for
+                // the type predicates, so the fallback built a tagged pair
+                // chain. The std/list assoc dispatch (number?/symbol?/
+                // boolean?, #5326) then took the wrong branch in
+                // --emit-binary images. Predicates answer the tagged #t / #f.
+                code +=
+                    "    int64_t v=c>0?a[0]:0; return "
+                    "(AURA_AOT_IS_FIXNUM(v)||AURA_AOT_IS_FLOAT(v))?AURA_AOT_TRUE:AURA_AOT_FALSE;\n";
+            else if (n == "integer?")
+                code += "    int64_t v=c>0?a[0]:0; return "
+                        "AURA_AOT_IS_FIXNUM(v)?AURA_AOT_TRUE:AURA_AOT_FALSE;\n";
+            else if (n == "boolean?")
+                code += "    int64_t v=c>0?a[0]:0; return "
+                        "(v==AURA_AOT_TRUE||v==AURA_AOT_FALSE)?AURA_AOT_TRUE:AURA_AOT_FALSE;\n";
+            else if (n == "symbol?")
+                code += "    int64_t v=c>0?a[0]:0; return "
+                        "AURA_AOT_IS_SYMBOL(v)?AURA_AOT_TRUE:AURA_AOT_FALSE;\n";
+            else if (n == "string?")
+                code += "    int64_t v=c>0?a[0]:0; return "
+                        "AURA_AOT_IS_STRING(v)?AURA_AOT_TRUE:AURA_AOT_FALSE;\n";
+            else if (n == "char?")
+                code += "    int64_t v=c>0?a[0]:0; return "
+                        "AURA_AOT_IS_FIXNUM(v)?AURA_AOT_TRUE:AURA_AOT_FALSE;\n";
+            else if (n == "zero?") {
+                code += "    int64_t v=c>0?a[0]:0;\n";
+                code += "    if(AURA_AOT_IS_FIXNUM(v))return v==0?AURA_AOT_TRUE:AURA_AOT_FALSE;\n";
+                code += "    if(AURA_AOT_IS_FLOAT(v))return "
+                        "aura_float_ref(v)==0.0?AURA_AOT_TRUE:AURA_AOT_FALSE;\n";
+                code += "    return AURA_AOT_FALSE;\n";
+            } else if (n == "cons")
                 code += "    return aura_alloc_pair(c>0?a[0]:0,c>1?a[1]:0);\n";
             else if (n == "car")
                 code += "    return (c>0)?aura_pair_car(a[0]):0;\n";
