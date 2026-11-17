@@ -198,6 +198,35 @@
 (assert! (not (string-has? bad-ant "car: not a pair"))
          "ant rejects bounds before car")
 
+; Issue #5337: search-zip / search-take are tail-recursive and one batch is
+; O(pop), so a population past the 512 frame limit no longer errors.
+(define sb (list (list -1.0 1.0) (list -1.0 1.0)))
+(define (sb-one kind pop)
+  (let* ((s (search:init kind (hash "dim" 2 "pop" pop "bounds" sb "seed" 7)))
+         (t0 (monotonic-ms))
+         (s2 (search:batch s (lambda (x) (foldl + 0.0 x))))
+         (dt (- (monotonic-ms) t0)))
+    (assert! (= 1 (hash-ref (search:export s2) "gen" 0))
+             (string-append kind ": pop " (number->string pop) " completes a generation"))
+    dt))
+(assert! (< (sb-one "grid" 600) 3000) "grid pop 600 is linear in pop")
+(assert! (< (sb-one "pso" 600) 4000) "pso pop 600 completes without a depth error")
+; The checkpoint still carries scored oldest-first and resumes mid-generation.
+(define s10 (search:init "grid" (hash "dim" 2 "pop" 10 "bounds" sb "seed" 3)))
+(define half (search:step (search:step s10 1.0) 2.0))
+(define blob (search:export half))
+(assert! (equal? (list 1.0 2.0) (hash-ref blob "scored" (list)))
+         "export scores are oldest-first, not reversed")
+(define resumed (search:import blob))
+(assert! (= (hash-ref blob "best-score" #f) (hash-ref (search:export resumed) "best-score" #f))
+         "import round-trips the best score")
+(define resumed2 (search:step resumed 3.0))
+(assert! (equal? (list 1.0 2.0 3.0)
+                 (hash-ref (search:export resumed2) "scored" (list)))
+         "import keeps scoring at the next pending candidate")
+(assert! (= 3.0 (hash-ref (search:export resumed2) "best-score" 0.0))
+         "import keeps the score in the best comparison")
+
 (if (= *fails* 0)
   (begin (display "OK-5007 search protocol\n"))
   (begin
