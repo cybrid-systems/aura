@@ -1779,8 +1779,17 @@ public:
                     // side effects; the file face then re-runs the failing
                     // form (effects twice). Route these two prim roots to
                     // IR, where the heap frames carry the recursion.
-                    const bool hof_5334 = head == "for-each" || head == "map";
-                    if (!hof_5334 && !head.empty() &&
+                    // Issue #5334: only an INLINE lambda callback can be
+                    // lowered to IR here. A named callback that set!s a
+                    // top-level value is refused by the #4513/#4618 rule,
+                    // and lowering the unknown name would ConstVoid the
+                    // call and drop the walk. Keep that form on the walker.
+                    bool hof_lambda_5334 = false;
+                    if ((head == "for-each" || head == "map") && rv.children.size() >= 2) {
+                        const auto arg0 = flat.get(rv.child(1));
+                        hof_lambda_5334 = arg0.tag == aura::ast::NodeTag::Lambda;
+                    }
+                    if (!hof_lambda_5334 && !head.empty() &&
                         evaluator_.primitives().slot_for_name(std::string(head)) <
                             evaluator_.primitives().slot_count()) {
                         metrics_.tree_walker_fallback_total.fetch_add(1, std::memory_order_relaxed);
