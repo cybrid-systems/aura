@@ -365,6 +365,13 @@ def render_cmake(profiles: dict[str, list[str]], all_extras: dict[str, dict]) ->
         "    endif()",
         "",
         "    add_test(NAME ${_target}_verification COMMAND ./${_target})",
+        "    # Issue #5343: the full-JIT profiles are excluded from the default",
+        "    # build when LLVM is absent; the link helper runs before add_test,",
+        "    # so the ctest entry is disabled after it exists.",
+        "    get_target_property(_aura_jit_skipped ${_target} AURA_FULL_JIT_SKIPPED)",
+        "    if(_aura_jit_skipped)",
+        "        set_tests_properties(${_target}_verification PROPERTIES DISABLED TRUE)",
+        "    endif()",
         "endfunction()",
         "",
     ]

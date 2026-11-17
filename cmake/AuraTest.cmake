@@ -164,6 +164,34 @@ function(aura_issue_test_link_light TARGET)
     aura_issue_test_keep_jit(${TARGET} aura_jit_light_test_objects)
 endfunction()
 
+# Issue #5343: LLVM is optional (CMakeLists.txt: "LLVM JIT (optional,
+# skipped if not found)"), so configuring on a machine without LLVM must
+# not die in the full-JIT link helpers. When LLVM is absent the target is
+# excluded from the default build and its ctest entry is disabled (the
+# binary cannot be built without the OrcJIT symbols). When LLVM WAS found
+# but aura_jit_test_objects is missing, that is a build-system bug, not a
+# missing prerequisite — keep it fatal.
+function(aura_issue_test_full_jit_ready TARGET FN _out)
+    if(TARGET aura_jit_test_objects)
+        set(${_out} TRUE PARENT_SCOPE)
+        return()
+    endif()
+    if(LLVM_FOUND)
+        message(FATAL_ERROR
+            "${FN}(${TARGET}): aura_jit_test_objects missing although LLVM "
+            "${LLVM_PACKAGE_VERSION} was found (CMakeLists.txt defines it under "
+            "if(LLVM_FOUND)); this is a build-system bug, not a missing prerequisite")
+    endif()
+    message(STATUS
+        "${FN}(${TARGET}): LLVM not found — full-JIT test excluded from the default build")
+    set_target_properties(${TARGET} PROPERTIES EXCLUDE_FROM_ALL TRUE)
+    set_property(TARGET ${TARGET} PROPERTY AURA_FULL_JIT_SKIPPED TRUE)
+    if(TEST ${TARGET}_verification)
+        set_tests_properties(${TARGET}_verification PROPERTIES DISABLED TRUE)
+    endif()
+    set(${_out} FALSE PARENT_SCOPE)
+endfunction()
+
 # Full LLVM OrcJIT via shared aura_jit_test_objects (see CMakeLists.txt).
 # Opt-in only: ~70MB per binary (PUBLIC llvm_libs). Use for tests that
 # actually compile/emit/run native code through AuraJIT.
@@ -171,10 +199,9 @@ endfunction()
 # dyndep scans that flaked CI with:
 #   when writing output to ...aura_jit_bridge.cpp.o.ddi.i: Invalid argument
 function(aura_issue_test_link_llvm_jit TARGET)
-    if(NOT TARGET aura_jit_test_objects)
-        message(FATAL_ERROR
-            "aura_issue_test_link_llvm_jit(${TARGET}): aura_jit_test_objects missing "
-            "(LLVM not found or library not defined yet)")
+    aura_issue_test_full_jit_ready(${TARGET} aura_issue_test_link_llvm_jit _aura_jit_ready)
+    if(NOT _aura_jit_ready)
+        return()
     endif()
     target_include_directories(${TARGET} PRIVATE src/compiler)
     target_sources(${TARGET} PRIVATE
@@ -187,9 +214,9 @@ endfunction()
 
 # LLVM JIT without observability headers (light JIT API tests).
 function(aura_issue_test_link_llvm_jit_minimal TARGET)
-    if(NOT TARGET aura_jit_test_objects)
-        message(FATAL_ERROR
-            "aura_issue_test_link_llvm_jit_minimal(${TARGET}): aura_jit_test_objects missing")
+    aura_issue_test_full_jit_ready(${TARGET} aura_issue_test_link_llvm_jit_minimal _aura_jit_ready)
+    if(NOT _aura_jit_ready)
+        return()
     endif()
     target_include_directories(${TARGET} PRIVATE src/compiler)
     aura_issue_test_keep_jit(${TARGET} aura_jit_test_objects)
@@ -231,9 +258,9 @@ endfunction()
 
 # Fiber + JIT stub sources (GC / env_frames issue tests).
 function(aura_issue_test_link_llvm_fiber_stubs TARGET)
-    if(NOT TARGET aura_jit_test_objects)
-        message(FATAL_ERROR
-            "aura_issue_test_link_llvm_fiber_stubs(${TARGET}): aura_jit_test_objects missing")
+    aura_issue_test_full_jit_ready(${TARGET} aura_issue_test_link_llvm_fiber_stubs _aura_jit_ready)
+    if(NOT _aura_jit_ready)
+        return()
     endif()
     target_include_directories(${TARGET} PRIVATE src/serve src/compiler)
     target_sources(${TARGET} PRIVATE

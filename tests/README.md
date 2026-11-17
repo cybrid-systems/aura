@@ -127,6 +127,7 @@ aura_add_issue_test_standalone(test_<feature>)             # 无 C++ modules
   `build/`). Binaries keep `BUILD_RPATH=$BUILD_DIR` so `ninja`/`ctest`
   resolve them without `LD_LIBRARY_PATH`. Full-JIT `.so` embeds LLVM once.
 - full-LLVM allow-list: `cmake/issue_tests_need_full_llvm.txt`（新 JIT 测试加入此表）。
+- **无 LLVM 的机器**（#5343）：`aura_issue_test_link_llvm_jit*` 的目标会被排除出默认构建（`EXCLUDE_FROM_ALL`）并 disable 对应的 ctest 项，configure 仍成功，`ninja aura` 可用；要跑 JIT 测试就装 LLVM 或用 `-DLLVM_DIR=/path/to/llvm/lib/cmake/llvm` 指定。LLVM 存在但 `aura_jit_test_objects` 缺失仍是 FATAL（构建系统 bug，不是缺依赖）。
 - **禁止**新 standalone 默认挂 `link_llvm_jit`。新 AC 优先:
   1. 扩已有 `test_*_unit_batch` / domain batch
   2. 否则 `link_light` standalone
