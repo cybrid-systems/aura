@@ -125,4 +125,43 @@
   (check= 79800 (foldr + 0 (range 0 400)))
   (check= 79800 (foldl + 0 (range 0 400))))
 
+; Issue #5326: member? / skip / assoc / assq ride the native walkers, and a
+; single-list any / every walks the spine without the n-ary map/apply pair.
+; Pin the edge results (including the negative-skip shape this module kept)
+; and the shape against a hand-written loop.
+(test-case "native walkers keep their edges" (hash "issue" 5326)
+  (check= () (skip 5 (list 1 2)))
+  (check= () (skip -1 (list 1 2)))
+  (check= (list 2) (skip 1 (list 1 2)))
+  (check= #t (member? 2 (list 1 2 3)))
+  (check= #f (member? 9 (list 1 2)))
+  (check= (cons "b" 2) (assoc "b" (list (cons "a" 1) (cons "b" 2))))
+  (check= #f (assoc "z" (list (cons "a" 1))))
+  (check= (cons 2 "b") (assoc 2 (list (cons 1 "a") (cons 2 "b"))))
+  (check= (cons 'b 2) (assq 'b (list (cons 'a 1) (cons 'b 2))))
+  (check= (cons 2 "b") (assq 2 (list (cons 1 "a") (cons 2 "b"))))
+  (check (any (lambda (x) (> x 2)) (list 1 2 3)))
+  (check= #f (any (lambda (x) #t) (list)))
+  (check (every (lambda (x) (> x 0)) (list 1 2)))
+  (check= #f (every (lambda (x) (> x 1)) (list 1 2))))
+
+(test-case "single-list any/every walk the spine" (hash "issue" 5326)
+  (define big (make-list 40000 1))
+  (define (loop-any ys)
+    (if (null? ys) #f (if (< (car ys) 0) #t (loop-any (cdr ys)))))
+  (define t0 (monotonic-ms))
+  (loop-any big)
+  (define base (- (monotonic-ms) t0))
+  (define t1 (monotonic-ms))
+  (check= #f (any (lambda (x) (< x 0)) big))
+  (define ta (- (monotonic-ms) t1))
+  (define t2 (monotonic-ms))
+  (check= #t (every (lambda (x) (>= x 0)) big))
+  (define te (- (monotonic-ms) t2))
+  ; The n-ary path allocated two lists and an apply per element (~20x a
+  ; hand-written walk on the pre-fix shape); eight times leaves room for
+  ; the closure call and a loaded box.
+  (check (<= ta (+ (* 8 base) 200)))
+  (check (<= te (+ (* 8 base) 200))))
+
 (test-finish)
