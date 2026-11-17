@@ -579,11 +579,20 @@
         "slot" (evo-opt cand "slot" 0)
         "search" (evo-opt cand "search" #f)))
 
-(define (evo-eval-ok? e)
+(define (evo-eval-measurable? e)
+  ; #5319: a constraint-violating trial is still a MEASUREMENT - its
+  ; constraints are the evidence that proves it infeasible, so tell! must
+  ; keep them instead of storing an empty "constraints-unknown" placeholder
+  ; that commit! would read as feasible. Only an eval that produced no
+  ; metrics (error, timeout, gate reject) stays unmeasured.
   (and (hash? e)
-       (let ((st (evo-opt e "status" "ok")))
-         (and (string? st) (string=? st "ok")))
-       (not (evo-opt e "error" #f))))
+       (let* ((st (evo-opt e "status" "ok"))
+              (inf (and (string? st) (string=? st "infeasible"))))
+         (and (string? st)
+              (or (string=? st "ok") inf)
+              ; an infeasible trial states its reason in "error"
+              ; ("infeasible: <names>"); that is not a failed eval.
+              (or inf (not (evo-opt e "error" #f)))))))
 
 (define (evo-archive-push s m)
   (let* ((maxn (evo-opt s "max-archive" 16))
@@ -598,7 +607,7 @@
 
 (define (evo-tell-one s c e)
   (let* ((id (evo:candidate-id c))
-         (ev (if (evo-eval-ok? e) e #f))
+         (ev (if (evo-eval-measurable? e) e #f))
          (m (if ev (evo-measure c ev) #f))
          (all (evo-opt s "evals" (hash))))
     (hash-set! all id (if m m (hash "kind" "evo-candidate" "id" id
@@ -694,6 +703,14 @@
       ((not ev)
        (evo-audit s id "ROLLBACK" "no-eval" (hash) 0
                   (hash "candidate" id))
+       #f)
+      ; #5319: a placeholder record (constraints-unknown #t) carries no
+      ; constraint evidence, so it can never prove feasibility. Refuse it
+      ; before the empty-constraints test reads it as feasible.
+      ((evo-opt ev "constraints-unknown" #f)
+       (evo-audit s id "ROLLBACK" "constraints-unknown" (hash) 0
+                  (hash "candidate" id
+                        "constraints" (evo-opt ev "constraints" (hash))))
        #f)
       ((not (evo:feasible? ev))
        (evo-audit s id "ROLLBACK"
