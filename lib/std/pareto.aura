@@ -95,10 +95,8 @@
   (let loop ((i 0) (acc (list)))
     (if (>= i n) acc (loop (+ i 1) (cons v acc)))))
 
-(define (pa-set-at lst i v)
-  (cond ((null? lst) (list))
-        ((= i 0) (cons v (cdr lst)))
-        (else (cons (car lst) (pa-set-at (cdr lst) (- i 1) v)))))
+; Issue #5336: pa-set-at (copy the whole list per update, non-tail) is gone.
+; Crowding distance updates a vector in place.
 
 (define (pa-dir-at dirs i)
   (if (< i (length dirs)) (list-ref dirs i) "max"))
@@ -421,29 +419,36 @@
       (begin (pa-rank-row! maxh violh counts doms n i (+ i 1))
              (pa-rank-rows! maxh violh counts doms n (+ i 1)))))
 
+; Issue #5336: accumulate in reverse (tail call) instead of consing on
+; the way back; the caller sorts the result, so order is irrelevant.
 (define (pa-relax-one! counts doms ds)
-  (if (null? ds)
-      (list)
-      (let* ((j (car ds))
-             (c (- (hash-ref counts j 0) 1)))
-        (hash-set! counts j c)
-        (if (= c 0)
-            (cons j (pa-relax-one! counts doms (cdr ds)))
-            (pa-relax-one! counts doms (cdr ds))))))
+  (let loop ((xs ds) (acc (list)))
+    (if (null? xs)
+        (reverse acc)
+        (let* ((j (car xs))
+               (c (- (hash-ref counts j 0) 1)))
+          (hash-set! counts j c)
+          (loop (cdr xs) (if (= c 0) (cons j acc) acc))))))
 
 (define (pa-relax! counts doms ks)
-  (if (null? ks)
-      (list)
-      (append (pa-relax-one! counts doms (hash-ref doms (car ks) (list)))
-              (pa-relax! counts doms (cdr ks)))))
+  (let loop ((xs ks) (acc (list)))
+    (if (null? xs)
+        (reverse acc)
+        (loop (cdr xs)
+              (let inner ((ys (pa-relax-one! counts doms (hash-ref doms (car xs) (list))))
+                          (a acc))
+                (if (null? ys) a (inner (cdr ys) (cons (car ys) a))))))))
 
-(define (pa-peel items counts doms cur acc)
+; Issue #5336: index the items vector once (list-ref per peeled index was
+; O(n) each and the recursion is per front, not per element).
+(define (pa-peel items counts doms cur acc itemsv)
   (if (null? cur)
       (reverse acc)
       (let ((idx (sort cur <)))
         (pa-peel items counts doms
                  (sort (pa-relax! counts doms idx) <)
-                 (cons (map (lambda (i) (list-ref items i)) idx) acc)))))
+                 (cons (map (lambda (i) (vector-ref itemsv i)) idx) acc)
+                 itemsv))))
 
 (define (pareto:nd-sort items . rest)
   (let* ((o (if (and (pair? rest) (hash? (car rest))) (car rest) (hash)))
@@ -463,50 +468,58 @@
                    counts doms n 0)
     (pa-peel items counts doms
              (pa-filter (lambda (i) (= 0 (hash-ref counts i 0))) (pa-iota n))
-             (list))))
+             (list)
+             (list->vector items))))
 
 ; ═══════════════════════════════════════════════════════════════════
 ; Crowding distance
 ; ═══════════════════════════════════════════════════════════════════
 
+; Issue #5336: the distance table and each point's objective row are
+; vectors now; updates are in-place vector-set! (the old list copy made
+; every objective O(n^2) and pa-set-at recursed once per index, so a
+; front above ~510 points hit the 512 recursion limit).
 (define (pareto:crowding front . rest)
   (let* ((o (if (and (pair? rest) (hash? (car rest))) (car rest) (hash)))
          (order (pa-opt o "objectives" #f))
          (dirs (pa-opt o "dirs" (list)))
          (n (length front))
-         (maxs (pa-index-hash (map (lambda (x) (pa-max-item x order dirs)) front))))
-    (cond ((<= n 1) (map (lambda (x) 1000000000.0) front))
-          ((< n 3) (map (lambda (x) 1000000000.0) front))
-          (else
-           (let ((m (if (null? front) 0 (length (hash-ref maxs 0 (list))))))
-             (let loop ((d 0) (dist (pa-repeat 0.0 n)))
-               (if (>= d m)
-                   dist
-                   (let* ((sorted
-                            (sort (pa-iota n)
-                                  (lambda (i j)
-                                    (let ((vi (list-ref (hash-ref maxs i (list)) d))
-                                          (vj (list-ref (hash-ref maxs j (list)) d)))
-                                      (cond ((< vi vj) #t)
-                                            ((> vi vj) #f)
-                                            (else (< i j)))))))
-                          (lo (list-ref (hash-ref maxs (car sorted) (list)) d))
-                          (hi (list-ref (hash-ref maxs (car (reverse sorted)) (list)) d))
-                          (span (- hi lo)))
-                     (if (<= span 0.0)
-                         (loop (+ d 1) dist)
-                         (let* ((d1 (pa-set-at dist (car sorted) 1000000000.0))
-                                (last (list-ref sorted (- n 1)))
-                                (d2 (pa-set-at d1 last 1000000000.0)))
-                           (let inner ((k 1) (acc d2))
-                             (if (>= k (- n 1))
-                                 (loop (+ d 1) acc)
-                                 (let* ((i (list-ref sorted k))
-                                        (pv (list-ref (hash-ref maxs (list-ref sorted (- k 1)) (list)) d))
-                                        (nv (list-ref (hash-ref maxs (list-ref sorted (+ k 1)) (list)) d))
-                                        (cur (list-ref acc i)))
-                                   (inner (+ k 1)
-                                          (pa-set-at acc i (+ cur (/ (- nv pv) span)))))))))))))))))
+         (maxs (pa-index-hash (map (lambda (x) (list->vector (pa-max-item x order dirs))) front))))
+    (if (< n 3)
+        (map (lambda (x) 1000000000.0) front)
+        (let ((m (if (= n 0) 0 (vector-length (hash-ref maxs 0))))
+              (dist (make-vector n 0.0)))
+          (let loop ((d 0))
+            (if (>= d m)
+                (vector->list dist)
+                (let* ((sorted
+                         (sort (pa-iota n)
+                               (lambda (i j)
+                                 (let ((vi (vector-ref (hash-ref maxs i) d))
+                                       (vj (vector-ref (hash-ref maxs j) d)))
+                                   (cond ((< vi vj) #t)
+                                         ((> vi vj) #f)
+                                         (else (< i j)))))))
+                       (sortedv (list->vector sorted))
+                       (first (vector-ref sortedv 0))
+                       (last (vector-ref sortedv (- n 1)))
+                       (lo (vector-ref (hash-ref maxs first) d))
+                       (hi (vector-ref (hash-ref maxs last) d))
+                       (span (- hi lo)))
+                  (if (<= span 0.0)
+                      (loop (+ d 1))
+                      (begin
+                        (vector-set! dist first 1000000000.0)
+                        (vector-set! dist last 1000000000.0)
+                        (let inner ((k 1))
+                          (if (>= k (- n 1))
+                              (loop (+ d 1))
+                              (let* ((i (vector-ref sortedv k))
+                                     (pv (vector-ref (hash-ref maxs (vector-ref sortedv (- k 1))) d))
+                                     (nv (vector-ref (hash-ref maxs (vector-ref sortedv (+ k 1))) d))
+                                     (cur (vector-ref dist i)))
+                                (vector-set! dist i (+ cur (/ (- nv pv) span)))
+                                (inner (+ k 1))))))))))))))
 
 ; ═══════════════════════════════════════════════════════════════════
 ; Hypervolume (exact 2/3 objectives, fixed-seed MC above that)

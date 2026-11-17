@@ -230,6 +230,28 @@
     (map (lambda (e) (hash-ref e "objs")) (nsga2:front s))))
 (assert! (equal? (short-run) (short-run)) "NSGA-II is reproducible from its seed")
 
+; ═══════════════════════════════════════════════════════════════════
+; AC6 — Issue #5336: crowding is vector-backed and nd-sort's relax walk is
+; tail-recursive, so a front past the 512 frame limit no longer errors.
+; ═══════════════════════════════════════════════════════════════════
+(display "AC6 scale\n")
+(define (pf-iota n) (let loop ((i (- n 1)) (acc (list))) (if (< i 0) acc (loop (- i 1) (cons i acc)))))
+(define pf-400 (map (lambda (i) (list (exact->inexact i) (exact->inexact (- 400 i)))) (pf-iota 400)))
+(define ct0 (monotonic-ms))
+(define crowd-400 (pareto:crowding pf-400))
+(define crowd-ms (- (monotonic-ms) ct0))
+(assert! (= 400 (length crowd-400)) "crowding returns one distance per point at n=400")
+(assert! (< crowd-ms 600) "crowding at n=400 is not O(n^2) with list copies")
+(assert! (>= (car crowd-400) 1e9) "n=400 left extreme stays infinite")
+(assert! (>= (car (reverse crowd-400)) 1e9) "n=400 right extreme stays infinite")
+(define pf-700 (map (lambda (i) (list (exact->inexact i) (exact->inexact (- 700 i)))) (pf-iota 700)))
+(assert! (= 700 (length (pareto:crowding pf-700))) "crowding n=700 no longer hits the depth limit")
+(define pf-dominated (cons (list 10000.0 10000.0) pf-700))
+(define nd-700 (pareto:nd-sort pf-dominated))
+(assert! (= 2 (length nd-700)) "one dominator still produces two fronts")
+(assert! (= 1 (length (car nd-700))) "the dominator is alone on the first front")
+(assert! (= 700 (length (car (cdr nd-700)))) "all 700 trade-off points follow")
+
 (if (= *fails* 0)
     (begin (display "OK-4940 pareto\n"))
     (begin
