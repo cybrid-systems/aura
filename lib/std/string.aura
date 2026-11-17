@@ -53,28 +53,22 @@
               (set! parts (cons (substring sep-str i (+ i 1)) parts))))
           (set! i (+ i 1))))
       (apply string-append (reverse parts))))
-  ; #2770 / #4795: code-point walk, full separator, O(1) stack.
+  ; #2770 / #4795 / #5322: one native string-index scan per separator,
+  ; full separator, O(1) stack. The code-point walk this replaced paid an
+  ; interpreter call per character, which is most of a short split's cost.
   (define (scan)
-    (define sep-code (string-ref sep-str 0))
-    (define (sep-at? i)
-      (if (= (string-ref s i) sep-code)
-        (if (= m 1)
-          #t
-          (if (> (+ i m) n)
-            #f
-            (string=? (substring s i (+ i m)) sep-str)))
-        #f))
     (let ((i 0)
           (start 0)
           (result (list)))
       (while (lambda () (< i n))
         (lambda ()
-          (if (sep-at? i)
-            (begin
-              (set! result (cons (substring s start i) result))
-              (set! start (+ i m))
-              (set! i (+ i m)))
-            (set! i (+ i 1)))))
+          (let ((hit (string-index s sep-str i)))
+            (if (< hit 0)
+              (set! i n)
+              (begin
+                (set! result (cons (substring s start hit) result))
+                (set! start (+ hit m))
+                (set! i (+ hit m)))))))
       (set! result (cons (substring s start n) result))
       (reverse result)))
   (if (and (string? sep) (= m 0))
@@ -83,13 +77,19 @@
       (list (substring s 0 n))
       ; A size-cap or timeout is caught as the message string.
       ; A successful split is a list, so string? tells them apart.
-      (let ((parts (try (regex-split (quote-sep) s)
-                        (catch (e) e))))
-        (if (string? parts)
-          (scan)
-          (if (string-suffix? s sep-str)
-            (append parts (list ""))
-            parts))))))
+      ; #5322: a short line is cheaper on the native scan — regex-split
+      ; pays a worker hand-off, an escaped pattern and the try glue. Long
+      ; text keeps regex-split: its per-character cost wins there
+      ; (tests/bench/string_split_regex_band.aura).
+      (if (<= n 256)
+        (scan)
+        (let ((parts (try (regex-split (quote-sep) s)
+                          (catch (e) e))))
+          (if (string? parts)
+            (scan)
+            (if (string-suffix? s sep-str)
+              (append parts (list ""))
+              parts)))))))
 
 ; Split by any whitespace (space, tab, newline) — O(1) stack (#2770).
 (define (string-split-words s)
