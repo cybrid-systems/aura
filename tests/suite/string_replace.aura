@@ -188,4 +188,17 @@
   (check (< (ms-5324 (lambda () (string-replace sparse "XYZ" "Q"))) 150))
   (check (< (ms-5324 (lambda () (string-replace sparse "ZZ" "Q"))) 150)))
 
+; #5324: dense hits grow with the hit count, not quadratically, and the
+; per-hit confirmation is skipped for a well-formed needle.
+(test-case "dense replace is linear" (hash "issue" 5324)
+  (define (mk n) (string-join (make-list n "ab") " "))
+  (define a (ms-5324 (lambda () (string-replace (mk 1000) " " "_"))))
+  (define b (ms-5324 (lambda () (string-replace (mk 4000) " " "_"))))
+  (define c (ms-5324 (lambda () (string-replace (mk 16000) " " "_"))))
+  (check= (string-join (make-list 16000 "ab") "_")
+          (string-replace (mk 16000) " " "_"))
+  (check (<= b (* 5 (max 1 a))))
+  (check (<= c (* 5 (max 1 b))))
+  (check (< c 400)))
+
 (test-finish)

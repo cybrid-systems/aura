@@ -56,21 +56,15 @@
   ; #2770 / #4795 / #5322: one native string-index scan per separator,
   ; full separator, O(1) stack. The code-point walk this replaced paid an
   ; interpreter call per character, which is most of a short split's cost.
+  ; #5322: a named-let scan. The while + two closures paid a call per
+  ; separator on every short split; the tail loop is the same native
+  ; string-index walk without that overhead.
   (define (scan)
-    (let ((i 0)
-          (start 0)
-          (result (list)))
-      (while (lambda () (< i n))
-        (lambda ()
-          (let ((hit (string-index s sep-str i)))
-            (if (< hit 0)
-              (set! i n)
-              (begin
-                (set! result (cons (substring s start hit) result))
-                (set! start (+ hit m))
-                (set! i (+ hit m)))))))
-      (set! result (cons (substring s start n) result))
-      (reverse result)))
+    (let loop ((i 0) (start 0) (result (list)))
+      (let ((hit (string-index s sep-str i)))
+        (if (< hit 0)
+          (reverse (cons (substring s start n) result))
+          (loop (+ hit m) (+ hit m) (cons (substring s start hit) result))))))
   (if (and (string? sep) (= m 0))
     (error "string-split: empty separator string")
     (if (= m 0)
@@ -208,50 +202,42 @@
 ; ~2s. Keeping a parts list but still minting one string per character
 ; stayed ~2s — the cost is the per-character mint (each construction
 ; can scan the live string heap, #5146), not only the accumulator.
-; Walk match segments instead. A miss only advances the index. A hit
-; records one `substring` of the unmatched run (if any) and `new`, then
-; skips `olen`. One `apply` of `string-append` builds the result, so
-; the intermediate strings are O(matches), not O(characters). No match
-; returns s unchanged. Unmatched runs are copied with `substring`, the
-; same code-point slices `equal?` compares, so a byte that is only a
-; prefix of a code unit is not re-encoded into a different character.
+; Issue #5324: walk the hits with the native string-index instead of
+; minting one substring per position; one substring per unmatched run, and
+; the scan jumps past each replacement. Each candidate is confirmed with a
+; unit slice (string=?, not the generic equal?) so an ill-formed needle —
+; a lone lead byte — keeps the #5186 non-match, and a false candidate just
+; advances one unit. No match returns the same s.
 (define (string-replace s old new)
   (define slen (string-length s))
   (define olen (string-length old))
   (if (or (= olen 0) (> olen slen)) s
-    (let ((i 0)
-          (run-start 0)
-          (parts (list))
-          (found #f))
-      ; #5324: find the next hit with the native string-index instead of
-      ; minting one substring per position to compare (same defect #5320
-      ; fixed in string-contains?). One substring per unmatched run and the
-      ; scan jumps past each replacement, so a sparse hit costs one scan
-      ; (16000 chars: 203 ms -> ~1 ms).
-      (while (lambda () (< i slen))
-        (lambda ()
-          ; string-index matches the needle's bytes at a unit boundary, so an
-          ; ill-formed needle (a lone lead byte) can name a prefix inside a
-          ; well-formed unit (#5186 pinned that as a non-match). Confirm the
-          ; candidate by unit slice; a false candidate just advances one unit.
-          (let ((hit (string-index s old i)))
-            (if (or (< hit 0) (> (+ hit olen) slen))
-              (set! i slen)
-              (if (equal? (substring s hit (+ hit olen)) old)
-                (begin
-                  (if (< run-start hit)
-                      (set! parts (cons (substring s run-start hit) parts)))
-                  (set! parts (cons new parts))
-                  (set! found #t)
-                  (set! i (+ hit olen))
-                  (set! run-start i))
-                (set! i (+ hit 1)))))))
-      (if (not found)
-          s
-          (begin
-            (if (< run-start slen)
-                (set! parts (cons (substring s run-start slen) parts)))
-            (apply string-append (reverse parts)))))))
+    ; #5324: a needle whose first unit is well-formed (ASCII, or a real
+    ; encoded code point) can only match at a unit boundary: continuation
+    ; bytes and stray lead bytes are their own units in the walker. Only an
+    ; ill-formed first unit (a lone lead/continuation byte, #5186) needs
+    ; the per-hit unit-slice confirmation.
+    (let ((safe-start
+            (let ((c (string-ref old 0)))
+              (or (< c 128)
+                  (string=? (substring old 0 1) (list->string (list c)))))))
+      ; #5324: a tail loop, not while + two closures per hit.
+      (let loop ((i 0) (run-start 0) (parts (list)) (found #f))
+        (let ((hit (string-index s old i)))
+          (if (or (< hit 0) (> (+ hit olen) slen))
+            (if (not found)
+                s
+                (apply string-append
+                       (reverse (if (< run-start slen)
+                                    (cons (substring s run-start slen) parts)
+                                    parts))))
+            (if (or safe-start (string=? (substring s hit (+ hit olen)) old))
+              (loop (+ hit olen) (+ hit olen)
+                    (if (< run-start hit)
+                        (cons new (cons (substring s run-start hit) parts))
+                        (cons new parts))
+                    #t)
+              (loop (+ hit 1) run-start parts found))))))))
 
 ; Pad string to width by adding spaces on the left
 (define (string-pad-left s width)
