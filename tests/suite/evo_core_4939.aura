@@ -2,6 +2,7 @@
 ; worldline-isolated trials, deterministic RNG streams (P0 of #4938).
 (require "std/test" all:)
 (require "std/evo-core" all:)
+(require "std/string" all:)
 
 (define *fails* 0)
 (define (assert! pred msg)
@@ -582,9 +583,6 @@
 (assert! (string=? "c97bf7b43" (evo:candidate-id (evo:candidate (list 1 2 3))))
          "evo:candidate id for (list 1 2 3) is unchanged")
 (define ev-g (ev-iota 16000))
-(define ev-t0 (monotonic-ms))
-(define ev-c (evo:candidate ev-g))
-(define ev-ms (- (monotonic-ms) ev-t0))
 ; #5339: the native FNV-1 32 primitive is bit-identical to the Aura walk
 ; (code points, offset 2166136261, prime 16777619, mod 2^32), so the id
 ; change is a speedup only.
@@ -595,7 +593,24 @@
 (assert! (= (ref-fnv "") (string-fnv1-32 "")) "native FNV matches on empty")
 (assert! (= (ref-fnv "abcdef") (string-fnv1-32 "abcdef")) "native FNV matches on ASCII")
 (assert! (= (ref-fnv "aéb中😀") (string-fnv1-32 "aéb中😀")) "native FNV matches multibyte")
-(assert! (< ev-ms 200) "evo:candidate on a 16k list genome is under 200 ms")
+; #5339 speed is pinned as a RATIO against the Aura per-char walk on the
+; same canonical text, not as an absolute wall-clock budget. An idle box
+; measured the native path at ~65 ms, but v0.2.6 build-test on a loaded
+; 4-vCPU runner descheduled the sample past 200 ms and failed a green tree
+; (215-226 ms with 12 CPU hogs pinned to 4 cores here). Both arms now run
+; back to back, best of three, so load drift cancels: native reads ~0.35x
+; the reference here and under load; the pre-#5339 shape (the Aura walk
+; itself) reads ~1.3x and still fails.
+(define ev-text (string-append "[" (string-join (map number->string ev-g) ",") "]"))
+(define (ev-time3 th)
+  (let ((a (let ((t0 (monotonic-ms))) (th) (- (monotonic-ms) t0))))
+    (let ((b (let ((t0 (monotonic-ms))) (th) (- (monotonic-ms) t0))))
+      (let ((c (let ((t0 (monotonic-ms))) (th) (- (monotonic-ms) t0))))
+        (min a (min b c))))))
+(define ev-c (evo:candidate ev-g))
+(define ev-ms (ev-time3 (lambda () (evo:candidate ev-g))))
+(define ev-ref-ms (ev-time3 (lambda () (ref-fnv ev-text))))
+(assert! (< ev-ms (* 0.9 ev-ref-ms)) "evo:candidate id stays on the native FNV walk")
 (assert! (string? (evo:candidate-id ev-c)) "16k genome still gets an id")
 (define ev-h1 (evo:candidate (hash "y" (list 2 3) "x" 1)))
 (define ev-h2 (evo:candidate (hash "x" 1 "y" (list 2 3))))
