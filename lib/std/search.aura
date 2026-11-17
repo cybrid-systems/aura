@@ -203,6 +203,11 @@
 (define (search-init-state kind opts gen pending pop extra)
   (list (cons "kind" kind) (cons "opts" opts) (cons "gen" gen)
         (cons "pop" pop) (cons "pending" pending) (cons "scored" (quote ()))
+        ; Issue #5337: the batch bookkeeping is O(1) per candidate. "scored"
+        ; stays the checkpoint form (oldest first); scored-rev accumulates
+        ; by cons, scored-n is its length, pending-left is the unscored tail.
+        (cons "scored-rev" (quote ())) (cons "scored-n" 0)
+        (cons "pending-left" pending) (cons "pending-n" (length pending))
         (cons "best" #f) (cons "best-score" -1000000000.0)
         (cons "seed" (oget opts "seed" 424242)) (cons "extra" extra)))
 
@@ -343,21 +348,26 @@
     state
     (search-step-pending state score)))
 
+; Issue #5337: O(1) per candidate. The old form called length twice and
+; appended the score to the growing list (O(n^2) a generation), and
+; list-ref'd the pending list from its head every time.
 (define (search-step-pending state score)
-  (let* ((pending (sget state "pending" (quote ())))
-         (scored (sget state "scored" (quote ())))
-         (idx (length scored))
-         (cand (if (< idx (length pending)) (list-ref pending idx) #f))
+  (let* ((left (sget state "pending-left" (sget state "pending" (quote ()))))
+         (idx (sget state "scored-n" 0))
+         (total (sget state "pending-n" (+ idx (length left))))
+         (cand (if (null? left) #f (car left)))
          (best (sget state "best" #f))
          (best-score (sget state "best-score" -1000000000.0))
          (num (if (number? score) score 0.0))
-         (state1 (sput state "scored" (append scored (list score))))
+         (state1 (sput (sput state "scored-rev" (cons score (sget state "scored-rev" (quote ()))))
+                       "scored-n" (+ idx 1)))
          (state2 (if (or (not best) (> num best-score))
                    (sput (sput state1 "best" cand) "best-score" num)
-                   state1)))
-    (if (>= (+ idx 1) (length pending))
-      (search-advance state2)
-      state2)))
+                   state1))
+         (state3 (sput state2 "pending-left" (if (null? left) (quote ()) (cdr left)))))
+    (if (>= (+ idx 1) total)
+      (search-advance state3)
+      state3)))
 
 (define (search:batch state fitness)
   (let ((pending (sget state "pending" (quote ()))))
@@ -376,28 +386,37 @@
          (opts (sget state "opts" (hash)))
          (gen (+ 1 (sget state "gen" 0)))
          (pending (sget state "pending" (quote ())))
-         (scores (sget state "scored" (quote ())))
+         (scores (reverse (sget state "scored-rev" (quote ()))))
          (pairs (search-zip pending scores))
-         (state1 (sput (sput (sput state "gen" gen) "scored" (quote ()))
-                       "pending" (quote ()))))
-    (cond
-      ((string=? kind "grid")
-       (sput state1 "pending"
-             (search-grid-batch opts gen (sget state "pop" 8))))
-      ((string=? kind "pso") (search-advance-pso state1 pairs))
-      ((string=? kind "abc") (search-advance-abc state1 pairs))
-      ((string=? kind "fss") (search-advance-fss state1 pairs))
-      ((string=? kind "ant") (search-advance-ant state1 pairs))
-      ((string=? kind "es") (search-advance-es state1 pairs))
-      ((string=? kind "anneal") (search-advance-anneal state1 pairs))
-      ((string=? kind "bandit") (search-advance-bandit state1 pairs))
-      ((string=? kind "beam") (search-advance-beam state1 pairs))
-      ((string=? kind "clonal") (search-advance-clonal state1 pairs))
-      (else state1))))
+         (s1 (sput state "gen" gen))
+         (s2 (sput s1 "scored" (quote ())))
+         (s3 (sput s2 "scored-rev" (quote ())))
+         (s4 (sput s3 "scored-n" 0))
+         (state1 (sput s4 "pending" (quote ()))))
+    (let ((next
+            (cond
+              ((string=? kind "grid")
+               (sput state1 "pending"
+                     (search-grid-batch opts gen (sget state "pop" 8))))
+              ((string=? kind "pso") (search-advance-pso state1 pairs))
+              ((string=? kind "abc") (search-advance-abc state1 pairs))
+              ((string=? kind "fss") (search-advance-fss state1 pairs))
+              ((string=? kind "ant") (search-advance-ant state1 pairs))
+              ((string=? kind "es") (search-advance-es state1 pairs))
+              ((string=? kind "anneal") (search-advance-anneal state1 pairs))
+              ((string=? kind "bandit") (search-advance-bandit state1 pairs))
+              ((string=? kind "beam") (search-advance-beam state1 pairs))
+              ((string=? kind "clonal") (search-advance-clonal state1 pairs))
+              (else state1))))
+      (let ((p (sget next "pending" (quote ()))))
+        (sput (sput next "pending-left" p) "pending-n" (length p))))))
 
+; Issue #5337: tail-recursive; the old shape recursed once per element
+; (pop > ~510 blew the 512-depth module limit).
 (define (search-zip a b)
-  (if (or (null? a) (null? b)) (quote ())
-    (cons (cons (car a) (car b)) (search-zip (cdr a) (cdr b)))))
+  (let loop ((xs a) (ys b) (acc (quote ())))
+    (if (or (null? xs) (null? ys)) (reverse acc)
+      (loop (cdr xs) (cdr ys) (cons (cons (car xs) (car ys)) acc)))))
 
 (define (search-pairs-best pairs)
   (if (null? pairs) #f
@@ -415,11 +434,13 @@
          (particles (sget state "extra" (quote ())))
          (gbest (car (search-pairs-best pairs)))
          (updated
-          (let loop ((ps particles) (i 0) (s (sget state "seed" 424242)) (acc (quote ())))
+          ; Issue #5337: walk pairs in lockstep with the particles; nth from
+          ; the head made one generation O(pop^2).
+          (let loop ((ps particles) (prs pairs) (s (sget state "seed" 424242)) (acc (quote ())))
             (if (null? ps) (cons (reverse acc) s)
               (let* ((p (car ps))
                      (pos (sget p "pos" (quote ())))
-                     (score (cdr (nth pairs i (cons #f 0.0))))
+                     (score (if (null? prs) 0.0 (cdr (car prs))))
                      (pb (sget p "pbest" pos))
                      (pb-score (sget p "pbest-score" -1000000000.0))
                      (new-pb (if (> score pb-score) pos pb))
@@ -442,7 +463,7 @@
                                  (xp (search-clip (+ (search-list-ref pos d) v)
                                                   (car b) (car (cdr b)))))
                             (loop2 (+ d 1) (cons v accv) (cons xp accp)))))))
-                (loop (cdr ps) (+ i 1) (cdr r2)
+                (loop (cdr ps) (if (null? prs) (quote ()) (cdr prs)) (cdr r2)
                       (cons (list (cons "pos" (car (cdr moved)))
                                   (cons "vel" (car moved))
                                   (cons "pbest" new-pb)
@@ -467,10 +488,11 @@
          (limit (oget opts "limit" 5))
          (foods (sget state "extra" (quote ())))
          (updated
-          (let loop ((fs foods) (i 0) (s (sget state "seed" 424242)) (acc (quote ())))
+          ; Issue #5337: walk pairs in lockstep with the foods (no nth scan).
+          (let loop ((fs foods) (prs pairs) (s (sget state "seed" 424242)) (acc (quote ())))
             (if (null? fs) (cons (reverse acc) s)
               (let* ((f (car fs))
-                     (score (cdr (nth pairs i (cons #f 0.0))))
+                     (score (if (null? prs) 0.0 (cdr (car prs))))
                      (pos (sget f "pos" (quote ())))
                      (b (search-bound opts 0))
                      (r (search-rand s))
@@ -484,15 +506,15 @@
                                                    (* scale (- (* 2.0 (car r)) 1.0)))
                                                 (car b) (car (cdr b)))))))
                 (if (> score (sget f "last-score" -1000000000.0))
-                  (loop (cdr fs) (+ i 1) (cdr r)
+                  (loop (cdr fs) (if (null? prs) (quote ()) (cdr prs)) (cdr r)
                         (cons (list (cons "pos" pos) (cons "trials" 0)
                                     (cons "last-score" score)) acc))
                   (if (>= trials limit)
                     (let ((rv (search-rand-vec opts (length pos) (cdr r))))
-                      (loop (cdr fs) (+ i 1) (cdr rv)
+                      (loop (cdr fs) (if (null? prs) (quote ()) (cdr prs)) (cdr rv)
                             (cons (list (cons "pos" (car rv)) (cons "trials" 0)
                                         (cons "last-score" -1000000000.0)) acc)))
-                    (loop (cdr fs) (+ i 1) (cdr r)
+                    (loop (cdr fs) (if (null? prs) (quote ()) (cdr prs)) (cdr r)
                           (cons (list (cons "pos" neighbor) (cons "trials" trials)
                                       (cons "last-score" score)) acc))))))))
          (fs2 (car updated)))
@@ -676,8 +698,9 @@
                       parents)
                  pairs))
          (sorted (search-sort-pairs-desc pool))
-         (next-parents (map car (search-take sorted mu)))
-         (next-scores (map cdr (search-take sorted mu)))
+         (taken (search-take sorted mu))
+         (next-parents (map car taken))
+         (next-scores (map cdr taken))
          (plist (let loop ((ps next-parents) (ss next-scores) (acc (quote ())))
                   (if (or (null? ps) (null? ss)) (reverse acc)
                     (loop (cdr ps) (cdr ss)
@@ -689,16 +712,19 @@
                 (list (cons "parents" plist) (cons "seed" (cdr off))))
           "pending" (car off))))
 
+; Issue #5337: tail-recursive (a is population-sized in the es/clonal paths).
 (define (search-append-pairs a b)
-  (cond ((null? a) b)
-        (else (cons (car a) (search-append-pairs (cdr a) b)))))
+  (let loop ((xs (reverse a)) (acc b))
+    (if (null? xs) acc (loop (cdr xs) (cons (car xs) acc)))))
 
 (define (search-sort-pairs-desc pairs)
   (sort pairs (lambda (a b) (> (cdr a) (cdr b)))))
 
+; Issue #5337: tail-recursive (n is the population size).
 (define (search-take lst n)
-  (if (or (null? lst) (<= n 0)) (quote ())
-    (cons (car lst) (search-take (cdr lst) (- n 1)))))
+  (let loop ((xs lst) (k n) (acc (quote ())))
+    (if (or (null? xs) (<= k 0)) (reverse acc)
+      (loop (cdr xs) (- k 1) (cons (car xs) acc)))))
 
 (define (search-rand-genes opts dim s)
   (let loop ((d 0) (acc (quote ())) (seed s))
@@ -1017,7 +1043,9 @@
         "seed" (sget state "seed" 424242)
         "opts" (sget state "opts" (hash))
         "pending" (sget state "pending" (quote ()))
-        "scored" (sget state "scored" (quote ()))
+        ; Issue #5337: the checkpoint form stays oldest-first even though
+        ; the live state accumulates reversed.
+        "scored" (reverse (sget state "scored-rev" (quote ())))
         "extra" (sget state "extra" (quote ()))))
 
 ; The other half of export: the same alist search:init builds, so a search
@@ -1039,5 +1067,13 @@
             (st1 (sput (sput st "best" (hash-ref blob "best" #f))
                        "best-score"
                        (hash-ref blob "best-score" -1000000000.0))))
-       (sput (sput st1 "scored" (hash-ref blob "scored" (quote ())))
-             "seed" (hash-ref blob "seed" 424242))))))
+       (let* ((scores (hash-ref blob "scored" (quote ())))
+              (k (length scores))
+              (pending (sget st1 "pending" (quote ())))
+              (left (let loop ((xs pending) (j k))
+                      (if (or (null? xs) (<= j 0)) xs (loop (cdr xs) (- j 1))))))
+         (sput (sput (sput (sput (sput st1 "scored" scores)
+                                "scored-rev" (reverse scores))
+                          "scored-n" k)
+                     "pending-left" left)
+               "seed" (hash-ref blob "seed" 424242)))))))
