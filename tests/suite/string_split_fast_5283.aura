@@ -70,4 +70,14 @@
   (check (string=? (car warm) "a"))
   (check (string=? (car (reverse warm)) "")))
 
+; #5322: a 27-char line split must stay far below the old 1.1 ms regex
+; floor; 500 calls include the scan loop's own per-call setup.
+(test-case "short line budget" (hash "issue" 5322)
+  (define line "key=value; other=thing; x=1")
+  (define (run n f) (let ((t0 (monotonic-ms))) (let loop ((i 0)) (if (< i n) (begin (f) (loop (+ i 1))) #f)) (- (monotonic-ms) t0)))
+  (define parts (string-split line ";"))
+  (check= 3 (length parts))
+  (check= "key=value" (car parts))
+  (check (< (run 500 (lambda () (string-split line ";"))) 100)))
+
 (test-finish)
