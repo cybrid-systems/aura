@@ -211,6 +211,47 @@
 (assert! (= 3 (hash-ref r "gen")) "3 batches of 2,2,1")
 
 ; ═══════════════════════════════════════════════════════════════════
+; AC4b (#5319) — an infeasible trial is measured, not dropped
+; #5255 makes evo:trial report status "infeasible" for a hard-constraint
+; violation. tell! used to keep only status "ok", so the record became an
+; empty "constraints-unknown" placeholder that commit! read as feasible and
+; applied to the live workspace.
+; ═══════════════════════════════════════════════════════════════════
+(display "AC4b infeasible trial tell/commit\n")
+; The search's own apply rebinds the live define, so a commit that got past
+; the feasibility gate would change (score 1) and the last assert says so.
+(define s5319
+  (evo:search (hash "algo" "mock" "seed" 5319 "budget" 4 "pop" 1
+                    "apply" (lambda (st c)
+                              (let ((body (string-append "(lambda (x) (* x "
+                                                          (evo:candidate-genome c)
+                                                          "))")))
+                                (if (equal? (mutate:rebind "score" body "t5319") #t)
+                                    (begin (eval-current) #t)
+                                    #f))))))
+(define bad5319 (evo:candidate "11" (hash "id" "u5319" "target" "score")))
+(define tr5319
+  (evo:trial bad5319
+             (hash "timeout-ms" 40000
+                   "apply" (lambda (c) #t)
+                   "evaluate" (lambda (c)
+                                (hash "objectives" (hash "fair" 0.0)
+                                      "constraints" (hash "reachable" 1.0 "safe" 0.0)
+                                      "behavior" (hash "band" 0.0))))))
+(assert! (string=? "infeasible" (hash-ref tr5319 "status" "?"))
+         "violating trial reports infeasible")
+(evo:tell! s5319 (list bad5319) (list tr5319))
+(define m5319 (evo:measured s5319 "u5319"))
+(assert! (hash? m5319) "infeasible trial is still measured")
+(assert! (not (hash-ref m5319 "constraints-unknown" #f))
+         "no constraints-unknown placeholder")
+(assert! (equal? 1.0 (evo:constraint m5319 "reachable")) "constraints kept")
+(assert! (not (evo:feasible? m5319)) "measured record stays infeasible")
+(define score-5319 (score 1))
+(assert! (not (evo:commit! s5319 bad5319)) "infeasible commit refused")
+(assert! (= score-5319 (score 1)) "live define unchanged by the refusal")
+
+; ═══════════════════════════════════════════════════════════════════
 ; AC5 — reproducible multi-objective run (in-process "3 reruns")
 ; ═══════════════════════════════════════════════════════════════════
 ; Issue #5059: this block runs AFTER AC4's first live mutate:rebind on
