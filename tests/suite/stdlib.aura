@@ -872,7 +872,9 @@
   (check= "" (json-arr-items (list) number->string))
   (define h (let ((x (hash))) (hash-set! x "a" 1) (hash-set! x "b" 2) x))
   (check= "\"a\":1,\"b\":2" (json-obj-items h (list "a" "b") number->string))
-  (check (< dt 5000)))
+  ; #5331: the native append join, not the tenant-checked per-element
+  ; string-join (10k pieces: ~11 ms here).
+  (check (< dt 500)))
 ;; Issue #5333: std/extract scanned with list-ref over the whole string'
 ; char list, so every scan was O(n^2) (32k-char reply: 5.6 s).
 (test-case "extract:code blocks" (hash "issue" 5333)
@@ -924,7 +926,8 @@
   (define small (go 10000))
   (define big (go 40000))
   (check (string=? (car (cdr big)) (string-repeat "a" 40000)))
-  (check (< (car big) 1200))
+  ; #5340: char-only buffers skip the coalescing walk (~230 ms here).
+  (check (< (car big) 500))
   (check (<= (car big) (* 5 (max 1 (car small)))))
   (define p (open-output-string))
   (write-char 104 p)
