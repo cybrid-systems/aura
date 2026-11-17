@@ -170,4 +170,22 @@
   (define big (repeat "abcdefghij" 1000))
   (check (eq? (string-replace big "ZZZ" "xy") big)))
 
+; Issue #5324: string-replace minted one substring per position to compare
+; (a sparse 16000-char hit cost ~1.2 s here, 203 ms in the report). It now
+; jumps between hits with the native string-index: same output, ~1 ms.
+(define (ms-5324 th)
+  (th)
+  (let ((t0 (monotonic-ms)))
+    (th)
+    (- (monotonic-ms) t0)))
+
+(test-case "replace rides the native scan" (hash "issue" 5324)
+  (define sparse (string-append (repeat "a" 16000) "XYZ"))
+  (define dense (repeat "abcdefghi " 1600))
+  (check= (string-append (repeat "a" 16000) "Q") (string-replace sparse "XYZ" "Q"))
+  (check= (repeat "abcdefghi_" 1600) (string-replace dense " " "_"))
+  (check= sparse (string-replace sparse "ZZ" "Q"))
+  (check (< (ms-5324 (lambda () (string-replace sparse "XYZ" "Q"))) 150))
+  (check (< (ms-5324 (lambda () (string-replace sparse "ZZ" "Q"))) 150)))
+
 (test-finish)
