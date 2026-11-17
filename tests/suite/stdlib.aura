@@ -923,12 +923,31 @@
       (define out (get-output-string p))
       (check= n (string-length out))
       (list (- (monotonic-ms) t0) out)))
-  (define small (go 10000))
-  (define big (go 40000))
+  ; Control: the pre-#5340 shape — one write-string per character, so the
+  ; buffer holds 40k one-character segments that get-output-string joins.
+  (define (go-str n)
+    (let ((p (open-output-string)) (t0 (monotonic-ms)))
+      (let loop ((i 0)) (if (< i n) (begin (write-string "a" p) (loop (+ i 1))) #f))
+      (list (- (monotonic-ms) t0) (get-output-string p))))
+  (define (best3 th)
+    (let ((a (th)))
+      (let ((b (th)))
+        (let ((c (th)))
+          (if (< (car a) (car b))
+              (if (< (car a) (car c)) a c)
+              (if (< (car b) (car c)) b c))))))
+  (define small (best3 (lambda () (go 10000))))
+  (define big (best3 (lambda () (go 40000))))
+  (define ctrl (best3 (lambda () (go-str 40000))))
   (check (string=? (car (cdr big)) (string-repeat "a" 40000)))
-  ; #5340: char-only buffers skip the coalescing walk (~230 ms here).
-  (check (< (car big) 500))
-  (check (<= (car big) (* 5 (max 1 (car small)))))
+  (check (= 40000 (string-length (car (cdr ctrl)))))
+  ; #5340: char-only buffers skip the coalescing walk. The old absolute
+  ; 500 ms bound was load-dependent: v0.2.6 build-test failed a green tree
+  ; at 827 ms (12 CPU hogs pinned to 4 cores read 1.8-2.2 s). Pin the shape
+  ; as a ratio against the 1-char-string control on the same box, best of
+  ; three each: ~0.6-0.65 now, ~1.2 for the pre-#5340 shape.
+  (check (< (car big) (car ctrl)))
+  (check (< (car big) (* 8 (max 1 (car small)))))
   (define p (open-output-string))
   (write-char 104 p)
   (write-string "ello" p)
