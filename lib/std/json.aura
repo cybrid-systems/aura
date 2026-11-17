@@ -4,6 +4,8 @@
 ;
 ; (json-stringify v) is the product alias of (json-encode v).
 
+(require "std/string" all:)
+
 ; json-parse / json-encode stay engine prims (available without require).
 ; json-parse refuses nesting deeper than 512 (json-parse: nesting too deep).
 ; A vector encodes as a JSON array, the same shape as a list (#5160).
@@ -29,8 +31,17 @@
 (define (json-value v) (json-stringify v))
 
 ; ── json-arr-items / json-obj-items -- kept for backward compat ──
+; #5331: map each element to its text and join once. The old nested
+; string-append + non-tail recursion cost two frames per element (255 items
+; raised recursion depth exceeded) and grew quadratically. Empty -> "",
+; one element -> no separator, unchanged.
 (define (json-arr-items lst json-fn)
-  (if (null? lst) "" (string-append (json-fn (car lst)) (if (null? (cdr lst)) "" (string-append (c2s 44) (json-arr-items (cdr lst) json-fn))))))
+  (string-join (map json-fn lst) (c2s 44)))
 
 (define (json-obj-items h keys json-fn)
-  (if (null? keys) "" (string-append (c2s 34) (json-escape (car keys)) (c2s 34) (c2s 58) (json-fn (hash-ref h (car keys))) (if (null? (cdr keys)) "" (string-append (c2s 44) (json-obj-items h (cdr keys) json-fn))))))
+  (string-join
+    (map (lambda (k)
+           (string-append (c2s 34) (json-escape k) (c2s 34) (c2s 58)
+                          (json-fn (hash-ref h k))))
+         keys)
+    (c2s 44)))
