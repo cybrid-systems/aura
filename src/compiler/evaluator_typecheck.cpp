@@ -4,6 +4,8 @@
 module;
 
 #include <optional>
+#include <cstdlib>
+#include <cstdio>
 #include "observability_metrics.h"
 #include "rebind_phase_stats.h"              // per-phase rebind timing (opt-in)
 #include "typed_mutation_audit.h"            // Issue #1614 / #2145 invariant audit + hard-gate
@@ -190,6 +192,38 @@ namespace {
         }
     }
 } // namespace
+
+void Evaluator::snapshot_mutation_type_baseline() {
+    // Issue #5321: fingerprint the diagnostics of the PRE-mutation workspace so
+    // the delta proof can tell an inherited ground join from a new failure.
+    if (::std::getenv("AURA_MUTATE_DIAG_SCOPE") == nullptr)
+        return;
+    if (!workspace_flat_ || !workspace_pool_)
+        return;
+    try {
+        auto& treg = *static_cast<aura::core::TypeRegistry*>(ensure_type_registry());
+        // Check a copy so the live flat keeps its dirty bits / node types.
+        aura::ast::FlatAST snapshot = *workspace_flat_;
+        aura::ast::StringPool pool_snapshot = *workspace_pool_;
+        TypeChecker tc(treg);
+        if (compiler_metrics_)
+            tc.set_metrics(compiler_metrics_);
+        aura::diag::DiagnosticCollector diags;
+        tc.infer_flat(snapshot, pool_snapshot, snapshot.root, diags);
+        pre_mutation_diag_baseline_.clear();
+        for (const auto& d : diags.diagnostics())
+            ++pre_mutation_diag_baseline_[TypeChecker::diag_fingerprint(d)];
+        if (::std::getenv("AURA_GATE_TRACE") != nullptr)
+            std::fprintf(stderr, "[gate] pre-mutation baseline diags=%zu unique=%zu\n",
+                         diags.diagnostics().size(), pre_mutation_diag_baseline_.size());
+        if (::std::getenv("AURA_GATE_TRACE") != nullptr) {
+            for (const auto& d : diags.diagnostics())
+                std::fprintf(stderr, "[gate]  base msg=%s\n", d.message.c_str());
+        }
+    } catch (...) {
+        // Baseline is best-effort: on failure the delta stays fail-closed.
+    }
+}
 
 std::string Evaluator::run_typecheck_no_lock() {
     try {
@@ -529,10 +563,90 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
             // Issue #2180/#2220: stash partial CS for composite_txn_commit; with
             // persistent TC the same solve_delta_cs_ is reused next call.
             stash_partial_constraint_state(static_cast<void*>(&tc));
+            // Issue #5321: a successful full (non-mutation) boundary is the
+            // pre-existing baseline later mutation boundaries are scoped to.
+            if (!selective && tc.last_delta_solve_status() == SolveResult::SOLVED &&
+                tc.last_type_export_authoritative()) {
+                tc.record_baseline_diagnostics(diag.diagnostics(), 0);
+            }
             // Issue #3003: Production + not SOLVED → rollback,
             // no stash, no query:type authority (I1/I5).
+            // Issue #5321: delta-scoped proof. The boundary collector also
+            // holds TypeErrors reported while re-typing caller bodies whose
+            // joins are pre-existing. Only an in-scope error (mutation
+            // subtree / affected use-site) is this mutation's obligation.
+            std::size_t out_of_scope_type_errors = 0;
+            bool in_scope_type_error = false;
+            if (tc.delta_scope_active()) {
+                for (const auto& d : diag.diagnostics()) {
+                    if (d.kind != aura::diag::ErrorKind::TypeError)
+                        continue;
+                    // set-code workspaces report line/col without a file id,
+                    // so location.valid() is false; a nonzero position still
+                    // attributes the diagnostic.
+                    const bool has_pos = d.location.line != 0 || d.location.column != 0;
+                    const auto key =
+                        has_pos ? TypeChecker::diag_loc_key(d.location.line, d.location.column) : 0;
+                    const auto fp = TypeChecker::diag_fingerprint(d);
+                    const auto pre_it = pre_mutation_diag_baseline_.find(fp);
+                    const bool preexisting =
+                        tc.diag_is_baseline(d) ||
+                        (pre_it != pre_mutation_diag_baseline_.end() && pre_it->second != 0);
+                    if (preexisting || !tc.delta_scope_allows(d.node_id, key)) {
+                        ++out_of_scope_type_errors;
+                    } else {
+                        in_scope_type_error = true;
+                        if (::std::getenv("AURA_GATE_TRACE") != nullptr)
+                            std::fprintf(stderr, "[gate] IN-SCOPE node=%u %u:%u msg=%s\n",
+                                         static_cast<unsigned>(d.node_id),
+                                         static_cast<unsigned>(d.location.line),
+                                         static_cast<unsigned>(d.location.column),
+                                         d.message.c_str());
+                    }
+                }
+            } else {
+                in_scope_type_error = true; // no scope: historical behaviour
+            }
+            const bool scoped_clean = tc.delta_scope_active() && !in_scope_type_error &&
+                                      tc.last_delta_solve_status() == SolveResult::SOLVED;
+            aura::compiler::typed_audit::g_delta_scope_proof_clean.store(scoped_clean);
+            if (scoped_clean) {
+                // Issue #5321: prune occurrence goals that belong to re-typed
+                // caller bodies. The proof fingerprint cap (16) counts the
+                // live table, so out-of-scope goals must not ride this commit.
+                {
+                    auto& goals_cs = tc.constraint_system();
+                    std::vector<std::uint32_t> drop_goals;
+                    for (const auto& g : goals_cs.occurrence_goals_for_test()) {
+                        const auto cid = g.predicate_cond_node;
+                        if (cid == 0)
+                            continue;
+                        std::uint64_t gkey = 0;
+                        if (workspace_flat_ && cid < workspace_flat_->size()) {
+                            const auto gv = workspace_flat_->get(cid);
+                            gkey = TypeChecker::diag_loc_key(gv.line, gv.col);
+                        }
+                        if (!tc.delta_scope_allows(cid, gkey))
+                            drop_goals.push_back(cid);
+                    }
+                    if (!drop_goals.empty())
+                        goals_cs.drop_occurrence_goals_for_conds(drop_goals);
+                }
+                // Issue #5321: the residual faces and the demoted export
+                // authority belong to the unscoped mark set, not to this
+                // mutation's scope. Re-grant them so persist can commit.
+                aura::compiler::typed_audit::note_pending_full_solve_residual(0, false);
+                aura::compiler::typed_audit::clear_occurrence_partial_drift_grant_refuse();
+                tc.note_scoped_type_export_authoritative();
+            }
+            if (::std::getenv("AURA_GATE_TRACE") != nullptr) {
+                std::fprintf(stderr, "[gate] scope=%d in_scope=%d out=%zu status=%d clean=%d\n",
+                             tc.delta_scope_active() ? 1 : 0, in_scope_type_error ? 1 : 0,
+                             out_of_scope_type_errors,
+                             static_cast<int>(tc.last_delta_solve_status()), scoped_clean ? 1 : 0);
+            }
             if (!tc.last_type_export_authoritative() &&
-                aura::compiler::typed_audit::production_defaults_active()) {
+                aura::compiler::typed_audit::production_defaults_active() && !scoped_clean) {
                 commit_cs_live_ = false;
                 clear_type_export_authority();
                 // Issue #5300: the prefix stays so existing checks still
@@ -834,6 +948,37 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
                 if (d.kind == aura::diag::ErrorKind::Note ||
                     d.kind == aura::diag::ErrorKind::Warning)
                     continue;
+                // Issue #5321: an inherited (pre-mutation) TypeError is not
+                // this mutation's obligation.
+                if (d.kind == aura::diag::ErrorKind::TypeError &&
+                    ::std::getenv("AURA_MUTATE_DIAG_SCOPE") != nullptr) {
+                    const auto fp_scope = TypeChecker::diag_fingerprint(d);
+                    const auto it_scope = pre_mutation_diag_baseline_.find(fp_scope);
+                    if (it_scope == pre_mutation_diag_baseline_.end() || it_scope->second == 0) {
+                        const bool has_pos = d.location.line != 0 || d.location.column != 0;
+                        const auto key =
+                            has_pos ? TypeChecker::diag_loc_key(d.location.line, d.location.column)
+                                    : 0;
+                        if (tc.delta_scope_active() && !tc.delta_scope_allows(d.node_id, key)) {
+                            if (::std::getenv("AURA_GATE_TRACE") != nullptr)
+                                std::fprintf(stderr, "[gate] out-of-scope msg=%s\n",
+                                             d.message.c_str());
+                            continue;
+                        }
+                    }
+                    const auto fp = TypeChecker::diag_fingerprint(d);
+                    const auto it = pre_mutation_diag_baseline_.find(fp);
+                    if (it != pre_mutation_diag_baseline_.end() && it->second != 0) {
+                        if (::std::getenv("AURA_GATE_TRACE") != nullptr)
+                            std::fprintf(stderr, "[gate] inherited msg=%s\n", d.message.c_str());
+                        continue;
+                    }
+                    if (::std::getenv("AURA_GATE_TRACE") != nullptr)
+                        std::fprintf(stderr, "[gate] NEW err node=%u %u:%u msg=%s\n",
+                                     static_cast<unsigned>(d.node_id),
+                                     static_cast<unsigned>(d.location.line),
+                                     static_cast<unsigned>(d.location.column), d.message.c_str());
+                }
                 filtered.push_back(std::move(d));
             }
             local_diags = std::move(filtered);
@@ -2828,8 +2973,16 @@ bool Evaluator::finish_mutate_hard_gate(std::uint64_t nodes_changed, bool linear
     // Issue #2260: type-proof hard gate before invariant suite.
     bool proof_truncated = false;
     bool proof_force = false;
-    const bool proof_ok = boundary_solve_proof_gate(
-        /*hard_gate=*/true, linear_ops_present, nodes_changed, &proof_truncated, &proof_force);
+    bool proof_ok = true;
+    if (aura::compiler::typed_audit::g_delta_scope_proof_clean.load()) {
+        // Issue #5321: the delta infer already returned SOLVED under the
+        // scoped diagnostic face; do not re-solve the unscoped mark set.
+        if (::std::getenv("AURA_GATE_TRACE") != nullptr)
+            std::fprintf(stderr, "[gate] boundary type-proof skipped (delta scope clean)\n");
+    } else {
+        proof_ok = boundary_solve_proof_gate(
+            /*hard_gate=*/true, linear_ops_present, nodes_changed, &proof_truncated, &proof_force);
+    }
     if (!proof_ok || proof_force) {
         last_mutate_error_ = format_invariant_deny_reason("type-proof", capability_tenant_id(), op);
         ac.hard_gate_force_rollback_total.fetch_add(1, std::memory_order_relaxed);

@@ -4222,6 +4222,117 @@ void InferenceEngine::seed_workspace_value_defines(FlatAST& flat, StringPool& po
 }
 
 
+void TypeChecker::publish_delta_scope(const FlatAST& flat, std::uint32_t target_node,
+                                      std::uint32_t parent_node,
+                                      const std::vector<NodeId>& affected) {
+    delta_scope_nodes_.clear();
+    delta_scope_locs_.clear();
+    auto add = [&](NodeId id) {
+        if (id == NULL_NODE || id >= flat.size())
+            return;
+        delta_scope_nodes_.insert(static_cast<std::uint32_t>(id));
+        const auto v = flat.get(id);
+        delta_scope_locs_.insert(diag_loc_key(v.line, v.col));
+        // Issue #5321: an argument/arity error is reported at the enclosing
+        // call, so the parent of an affected use-site is in scope too.
+        const auto p = flat.parent_of(id);
+        if (p != NULL_NODE && p < flat.size()) {
+            delta_scope_nodes_.insert(static_cast<std::uint32_t>(p));
+            const auto pv = flat.get(p);
+            delta_scope_locs_.insert(diag_loc_key(pv.line, pv.col));
+        }
+    };
+    // Issue #5321: only the mutated define's own subtree and the call sites
+    // of the rebound symbol are this mutation's obligations. Adding lifted
+    // caller bodies would import their pre-existing joins.
+    const aura::ast::SymId target_sym = (target_node != NULL_NODE && target_node < flat.size())
+                                            ? flat.get(target_node).sym_id
+                                            : aura::ast::INVALID_SYM;
+    if (target_sym != aura::ast::INVALID_SYM) {
+        for (NodeId id = 0; id < flat.size(); ++id) {
+            const auto v = flat.get(id);
+            if (v.tag != aura::ast::NodeTag::Call)
+                continue;
+            const auto callee = flat.children(id);
+            if (callee.empty() || callee[0] == NULL_NODE || callee[0] >= flat.size())
+                continue;
+            const auto cv = flat.get(callee[0]);
+            if (cv.tag == aura::ast::NodeTag::Variable && cv.sym_id == target_sym)
+                add(id);
+        }
+    }
+    add(static_cast<NodeId>(target_node));
+    // The mutated subtree itself is this mutation's own obligation.
+    std::vector<NodeId> stack;
+    if (target_node != NULL_NODE && target_node < flat.size())
+        stack.push_back(static_cast<NodeId>(target_node));
+    std::size_t visited = 0;
+    while (!stack.empty() && visited++ < flat.size()) {
+        const auto id = stack.back();
+        stack.pop_back();
+        if (id == NULL_NODE || id >= flat.size())
+            continue;
+        add(id);
+        for (auto c : flat.children(id)) {
+            if (c != NULL_NODE)
+                stack.push_back(c);
+        }
+    }
+    delta_scope_active_ = true;
+}
+
+std::uint64_t TypeChecker::diag_fingerprint(const aura::diag::Diagnostic& d) {
+    // Message-only: positions are not stable across passes (a set-code
+    // workspace reports the same join with and without a source position),
+    // and type-variable names (__tNNNN) are per-solver-pass. Normalize both.
+    std::uint64_t h = 1469598103934665603ull;
+    auto mix = [&](std::uint64_t v) {
+        h ^= v;
+        h *= 1099511628211ull;
+    };
+    std::size_t i = 0;
+    while (i < d.message.size()) {
+        if (d.message[i] == '_' && i + 2 < d.message.size() && d.message[i + 1] == '_' &&
+            d.message[i + 2] == 't') {
+            mix('_');
+            mix('_');
+            mix('t');
+            i += 3;
+            while (i < d.message.size() && d.message[i] >= '0' && d.message[i] <= '9')
+                ++i;
+            mix('#');
+            continue;
+        }
+        mix(static_cast<unsigned char>(d.message[i]));
+        ++i;
+    }
+    return h;
+}
+
+bool TypeChecker::diag_is_baseline(const aura::diag::Diagnostic& d) const {
+    const auto it = baseline_diag_counts_.find(diag_fingerprint(d));
+    return it != baseline_diag_counts_.end() && it->second != 0;
+}
+
+void TypeChecker::record_baseline_diagnostics(std::span<const aura::diag::Diagnostic> diags,
+                                              std::size_t from) {
+    for (std::size_t i = from; i < diags.size(); ++i)
+        ++baseline_diag_counts_[diag_fingerprint(diags[i])];
+    if (::std::getenv("AURA_GATE_TRACE") != nullptr)
+        std::fprintf(stderr, "[gate] baseline diags=%zu unique=%zu\n", diags.size() - from,
+                     baseline_diag_counts_.size());
+}
+
+bool TypeChecker::delta_scope_allows(std::uint32_t node_id, std::uint64_t loc_key) const {
+    if (!delta_scope_active_)
+        return true;
+    if (node_id != ~0u && delta_scope_nodes_.count(node_id) != 0)
+        return true;
+    if (loc_key == 0)
+        return true; // unknown position: fail closed (keep the diagnostic)
+    return delta_scope_locs_.count(loc_key) != 0;
+}
+
 bool InferenceEngine::is_coercible(TypeId from, TypeId to) {
     if (from == to)
         return true;
@@ -5118,7 +5229,7 @@ TypeId InferenceEngine::lub(TypeId a, TypeId b) {
             Diagnostic(ErrorKind::TypeError,
                        "incompatible ground types: if branches join " + reg_.format_type(pa) +
                            " and " + reg_.format_type(pb) + " under production typing",
-                       cur_loc_)
+                       cur_loc_, static_cast<std::uint32_t>(cur_node_))
                 .with_blame(BlameInfo{BlameParty::Implicit, "", "compile"})
                 .with_suggestion("add explicit type annotations so both if branches agree"));
         return reg_.void_type();
@@ -5723,6 +5834,22 @@ TypeId InferenceEngine::infer_flat(FlatAST& flat, StringPool& pool, NodeId id, b
         const auto diags_after = diag_.diagnostics();
         for (std::size_t i = diag_count_before_synthesis; i < diags_after.size(); ++i) {
             if (diags_after[i].kind == ErrorKind::TypeError) {
+                // Issue #5321: an error outside the mutation scope was already
+                // there before this mutation (a re-typed caller body) and must
+                // not demote this delta's type-export authority.
+                if (diag_scope_nodes_ != nullptr || diag_scope_locs_ != nullptr) {
+                    const auto nid = diags_after[i].node_id;
+                    const auto line = diags_after[i].location.line;
+                    const auto col = diags_after[i].location.column;
+                    if (nid != ~0u && diag_scope_nodes_ != nullptr) {
+                        if (diag_scope_nodes_->count(nid) == 0)
+                            continue;
+                    } else if (line != 0 || col != 0) {
+                        if (diag_scope_locs_ == nullptr ||
+                            diag_scope_locs_->count(TypeChecker::diag_loc_key(line, col)) == 0)
+                            continue;
+                    }
+                }
                 synth_type_error = true;
                 break;
             }
@@ -5860,6 +5987,12 @@ bool call_ground_type_error(const FlatAST& flat, NodeId id) noexcept {
 }
 
 TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId id, NodeView v) {
+    // Issue #5321: attribute diagnostics reported while typing this node.
+    struct CurNodeGuard {
+        NodeId& slot;
+        NodeId prev;
+        ~CurNodeGuard() { slot = prev; }
+    } cur_node_guard{cur_node_, id};
     // #5235: a type diagnostic must name the flat's own file. id 0 always
     // resolved to the entry program, so a set-code workspace (or a module)
     // reported its warnings at the outer probe file's line.
@@ -10104,6 +10237,9 @@ TypeId TypeChecker::infer_flat(FlatAST& flat, StringPool& pool, NodeId node,
         type_check_flat_pure(flat, pool, node, types, diag, type_sigs_, type_module_src_, strict_,
                              cache_epoch_, metrics_, bidirectional_mode_, gradual_permissiveness_,
                              registered_prim_probe_, registered_prim_ctx_, &host_visible_names_);
+    // Issue #5321: the diagnostics of a full (non-mutation) check form the
+    // pre-existing baseline the delta face is compared against.
+    record_baseline_diagnostics(diag.diagnostics(), diag_before);
     stats_.cache_hits += r.cache_hits;
     stats_.cache_misses += r.cache_misses;
     stats_.stale_cache += r.stale_cache;
@@ -12254,11 +12390,33 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
     if (partial_collect_affected(st))
         return 0;
     partial_expand_affected_cone(st);
+    // Issue #5321: publish the delta scope before the occurrence goals are
+    // seeded, so the goal table stays inside the mutation's obligations.
+    if (::std::getenv("AURA_MUTATE_DIAG_SCOPE") != nullptr) {
+        publish_delta_scope(st.flat, static_cast<std::uint32_t>(st.rec.target_node),
+                            static_cast<std::uint32_t>(st.rec.parent_id), st.affected);
+    }
     partial_collect_occurrence_targets(st);
+    if (delta_scope_active_) {
+        std::vector<aura::ast::NodeId> scoped;
+        scoped.reserve(st.occurrence_targets.size());
+        for (auto id : st.occurrence_targets) {
+            if (id == aura::ast::NULL_NODE || id >= st.flat.size())
+                continue;
+            const auto v = st.flat.get(id);
+            const auto key = diag_loc_key(v.line, v.col);
+            if (delta_scope_nodes_.count(static_cast<std::uint32_t>(id)) != 0 ||
+                delta_scope_locs_.count(key) != 0)
+                scoped.push_back(id);
+        }
+        st.occurrence_targets.swap(scoped);
+    }
     partial_truncate_cone_and_invalidate(st);
     partial_note_linear_occurrence(st);
     // Per-call engine. Stack allocated, same as the previous inline body.
     InferenceEngine engine(types, diag);
+    if (delta_scope_active_)
+        engine.set_diag_scope(&delta_scope_nodes_, &delta_scope_locs_);
     partial_bind_partial_engine(st, engine);
     partial_blame_and_selective_invalidate(st, engine);
     partial_renarrow_and_seed_adt(st, engine);

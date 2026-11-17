@@ -20552,6 +20552,14 @@ public:
     // Issue #1769: exception-safe (see run_typecheck_no_lock).
     bool run_post_mutate_typecheck_no_lock();
 
+    // Issue #5321: pre-mutation diagnostic baseline (flag
+    // AURA_MUTATE_DIAG_SCOPE). The delta proof only fails the mutation for
+    // type errors the pre-mutation program did not already have.
+    void snapshot_mutation_type_baseline();
+    [[nodiscard]] std::size_t pre_mutation_baseline_size() const noexcept {
+        return pre_mutation_diag_baseline_.size();
+    }
+
     // ── Issue #2220: long-lived TypeChecker for multi-round mutate ──
     // Reuses one TypeChecker (cs_cache_ / solve_delta_cs_ / inject_type_sigs)
     // across consecutive post-mutate / inline typechecks on this Evaluator.
@@ -20659,6 +20667,9 @@ private:
     void destroy_commit_type_checker() noexcept;
     // Issue #2220: primary long-lived TypeChecker for mutate/inline typecheck.
     aura::core::opaque_ptr persistent_typechecker_opaque_;
+
+    // Issue #5321: fingerprints of the pre-mutation workspace diagnostics.
+    std::unordered_map<std::uint64_t, std::uint32_t> pre_mutation_diag_baseline_;
     std::uint64_t persistent_tc_registry_gen_ = 0;
     std::uint64_t persistent_tc_workspace_gen_ = 0;
     std::uint64_t persistent_tc_create_total_ = 0;

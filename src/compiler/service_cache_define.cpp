@@ -44,6 +44,21 @@ EvalResult CompilerService::cache_define(std::string_view source, aura::ast::Fla
                 has_type_error = true;
             }
         }
+        // Issue #5321: this per-define check is where the workspace's
+        // pre-existing ground joins surface (as warnings) before any mutation
+        // has run. Keep them as the delta baseline so a later mutation is not
+        // rejected for joins it did not introduce.
+        if (::std::getenv("AURA_GATE_TRACE") != nullptr)
+            std::fprintf(stderr, "[gate] cache_define hook epoch=%llu tc=%d diags=%zu\n",
+                         static_cast<unsigned long long>(aura::core::current_mutation_epoch()),
+                         evaluator_.persistent_typechecker() != nullptr ? 1 : 0,
+                         diags.diagnostics().size());
+        if (aura::core::current_mutation_epoch() == 0) {
+            if (auto* tc_ptr = evaluator_.persistent_typechecker()) {
+                static_cast<aura::compiler::TypeChecker*>(tc_ptr)->record_baseline_diagnostics(
+                    diags.diagnostics(), 0);
+            }
+        }
         if (strict_mode_ && has_type_error) {
             return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::TypeError,
                                                           "type error (strict mode)"});

@@ -735,6 +735,12 @@ struct TypedMutationAuditCounters {
 
 inline TypedMutationAuditCounters g_typed_mutation_audit_counters{};
 
+// Issue #5321: set when the boundary typecheck passed under the delta-scoped
+// diagnostic face (pre-existing diagnostics only). The commit-CS occurrence
+// proof for the same boundary was already SOLVED during the delta infer, so
+// the boundary type-proof gate must not re-solve the unscoped mark set.
+inline std::atomic<bool> g_delta_scope_proof_clean{false};
+
 // Issue #2673: hard-path lock for densify linear-root consistency scan.
 // Test seam — injects a pending linear-root mismatch that the next
 // scan_linear_roots_after_densify call will consume. Mirrors the
