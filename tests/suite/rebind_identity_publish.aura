@@ -1,0 +1,43 @@
+;
+; Issue #5318 — a target that measures itself (set! a wrapper over a hot
+; define, run it, put the saved closure back) must not turn a later
+; identical rebind into a no-op on the binding.
+;
+(require "std/test" all:)
+
+(test-file "rebind_identity_publish.aura")
+
+(define (rebind-reset! source)
+  (set-code source)
+  (eval-current))
+
+(test-case "a rebind applies"
+           (hash "issue" 5318 "tags" (list "mutate" "rebind"))
+  (rebind-reset! "(define (f x) (+ x 1))")
+  (check= 2 (f 1))
+  (check= #t (mutate :rebind "f" "(lambda (x) (+ x 5))" "first"))
+  (eval-current)
+  (check= 6 (f 1)))
+
+(test-case "a self-measure wrapper swaps the binding"
+           (hash "issue" 5318 "tags" (list "mutate" "rebind"))
+  (rebind-reset! "(define (f x) (+ x 1))")
+  (mutate :rebind "f" "(lambda (x) (+ x 5))" "first")
+  (eval-current)
+  ; The wrapper perf-worldline-measure installs, then restores the closure
+  ; it saved before the rebind above: an interleaved measurement does this.
+  (set! f (lambda (x) (+ x 100)))
+  (check= 101 (f 1)))
+
+(test-case "an identical rebind re-publishes the define"
+           (hash "issue" 5318 "tags" (list "mutate" "rebind"))
+  (rebind-reset! "(define (f x) (+ x 1))")
+  (mutate :rebind "f" "(lambda (x) (+ x 5))" "first")
+  (eval-current)
+  (set! f (lambda (x) (+ x 100)))
+  (check= 101 (f 1))
+  (check= #t (mutate :rebind "f" "(lambda (x) (+ x 5))" "identical"))
+  (eval-current)
+  (check= 6 (f 1)))
+
+(test-finish)
