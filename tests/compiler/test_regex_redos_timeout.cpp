@@ -7,6 +7,7 @@
 //   AC3: size limit rejects oversized input
 //   AC4: source cites #2479 + run_regex_timed / timeout message
 //   AC5: gate wiring
+//   AC6 (#5322): a short regex call no longer pays a fixed 1 ms poll sleep
 
 #include "core/runtime_config.hh"
 #include "test_harness.hpp"
@@ -120,6 +121,37 @@ static void ac3_size_limit() {
     ::aura::config::test_unsetenv("AURA_REGEX_MAX_INPUT");
 }
 
+// ── AC6: per-call latency (issue #5322) ──
+// #2479's worker used to publish its result through a flag polled with a
+// fixed 1 ms sleep, so EVERY regex-* call cost at least one sleep however
+// short the subject. The worker now publishes through a packaged_task and
+// the caller wakes on completion; 100 short calls must stay far under the
+// old 100 ms floor.
+static void ac6_call_latency() {
+    std::println("\n--- #5322 AC6: short regex calls lost the 1 ms poll floor ---");
+    CompilerService cs;
+    // Warm the parse path and the first compile, then time 100 calls.
+    (void)cs.eval(R"((regex-match? "a" "a"))");
+    constexpr int kCalls = 100;
+    int ok_calls = 0;
+    const auto t0 = std::chrono::steady_clock::now();
+    for (int i = 0; i < kCalls; ++i) {
+        auto r = cs.eval(R"((regex-match? "a" "a"))");
+        if (r.has_value() && is_int(*r) && as_int(*r) == 1)
+            ++ok_calls;
+    }
+    const auto us =
+        std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t0)
+            .count();
+    std::println("  {} calls, {} ok, {} us total (~{} us/call)", kCalls, ok_calls, us,
+                 kCalls == 0 ? 0 : us / kCalls);
+    CHECK(ok_calls == kCalls, "AC6: every short call matched");
+    // >= 1 ms/call before #5322, so 100 calls took >= 100 ms even idle.
+    // 60 ms leaves ~20x headroom over the fixed cost and still fails any
+    // return of the sleep floor.
+    CHECK(us < 60000, "AC6: 100 short regex calls under 60 ms");
+}
+
 // ── AC4: source ──
 static void ac4_source() {
     std::println("\n--- #2479 AC4: source ReDoS guards ---");
@@ -167,6 +199,7 @@ int run_test_regex_redos_timeout() {
     ac3_size_limit();
     ac4_source();
     ac5_gate();
+    ac6_call_latency();
     std::println("\n=== #2479 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

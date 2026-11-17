@@ -16,7 +16,11 @@ module;
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdlib>
+#include <functional>
+#include <future>
+#include <mutex>
 #include <thread>
 
 // Default ON when the TU is compiled outside the CMake graph (tools/IDE).
@@ -152,39 +156,123 @@ namespace {
 
     enum class RegexRunStatus : std::uint8_t { Ok = 0, SyntaxError = 1, Timeout = 2 };
 
-    // Run Fn on a detached worker; poll until done or timeout_ms.
+    // #5322: one parked worker runs the regex work off the interpreter
+    // thread. Spawning a thread per call cost ~30 us of the ~50 us budget;
+    // a handoff to a waiting worker costs ~2 us. A job that outlives its
+    // budget (#2479 ReDoS) leaves this worker busy, so the caller retires
+    // it: the next call parks a fresh one and one catastrophic pattern
+    // cannot wedge the regex face.
+    struct RegexWorker {
+        std::mutex mu;
+        std::condition_variable cv;
+        std::function<void()> job;
+        bool has_job = false;
+        bool busy = false;
+        bool retired = false;
+    };
+
+    std::mutex& regex_pool_mu() {
+        static std::mutex m;
+        return m;
+    }
+
+    std::shared_ptr<RegexWorker>& regex_pool_slot() {
+        static std::shared_ptr<RegexWorker> slot;
+        return slot;
+    }
+
+    void regex_worker_loop(const std::shared_ptr<RegexWorker>& w) {
+        for (;;) {
+            std::function<void()> job;
+            {
+                std::unique_lock<std::mutex> lk(w->mu);
+                w->cv.wait(lk, [&] { return w->has_job || w->retired; });
+                if (w->retired && !w->has_job)
+                    return;
+                job = std::move(w->job);
+                w->has_job = false;
+                w->busy = true;
+            }
+            job();
+            {
+                std::lock_guard<std::mutex> lk(w->mu);
+                w->busy = false;
+            }
+        }
+    }
+
+    // Hand the job to the parked worker; nullptr when it had to use a
+    // temporary thread (the parked one is still inside a timed-out job).
+    std::shared_ptr<RegexWorker> regex_submit(std::function<void()> job) {
+        std::shared_ptr<RegexWorker> w;
+        {
+            std::lock_guard<std::mutex> lk(regex_pool_mu());
+            auto& slot = regex_pool_slot();
+            if (!slot) {
+                slot = std::make_shared<RegexWorker>();
+                std::thread([w = slot] { regex_worker_loop(w); }).detach();
+            }
+            w = slot;
+        }
+        {
+            std::lock_guard<std::mutex> lk(w->mu);
+            if (!w->busy && !w->has_job && !w->retired) {
+                w->job = std::move(job);
+                w->has_job = true;
+                w->cv.notify_one();
+                return w;
+            }
+        }
+        std::thread([job = std::move(job)]() mutable { job(); }).detach();
+        return nullptr;
+    }
+
+    void regex_retire(const std::shared_ptr<RegexWorker>& w) {
+        if (!w)
+            return;
+        {
+            std::lock_guard<std::mutex> lk(regex_pool_mu());
+            auto& slot = regex_pool_slot();
+            if (slot == w)
+                slot.reset();
+        }
+        {
+            std::lock_guard<std::mutex> lk(w->mu);
+            w->retired = true;
+        }
+        w->cv.notify_all();
+    }
+
+    // Run Fn on the parked worker; return as soon as it finishes, or Timeout.
+    // #5322: the old loop polled a completion flag with a fixed 1 ms sleep,
+    // so EVERY regex-* call cost at least one sleep (~1.1 ms measured) even
+    // for a one-character subject. The worker now publishes through a
+    // packaged_task and the caller blocks in wait_until, which wakes on the
+    // store instead of on the next tick.
     // Fn must return R by value; exceptions → SyntaxError.
-    // Note: on Timeout the worker may still be running (std::regex has no
-    // cancel). Length caps reduce orphan lifetime under attack.
+    // Note: on Timeout the job may still be running (std::regex has no
+    // cancel); the parked worker is retired so the next call gets a fresh
+    // one, and the length caps still bound the orphan.
     template <typename R, typename Fn>
     [[nodiscard]] std::pair<RegexRunStatus, R> run_regex_timed(Fn fn, int timeout_ms) {
-        struct Box {
-            std::atomic<int> state{0}; // 0 running, 1 ok, 2 error
-            R value{};
-        };
-        auto box = std::make_shared<Box>();
-        std::thread([box, fn = std::move(fn)]() mutable {
-            try {
-                box->value = fn();
-                box->state.store(1, std::memory_order_release);
-            } catch (...) {
-                // [SILENCE-PRIM-#615] invalid regex / regex_error → SyntaxError
-                // status; caller maps to PRIM_ERROR via bump_regex_error
-                // (#668 / #1669 / #2479).
-                box->state.store(2, std::memory_order_release);
-            }
-        }).detach();
+        auto task = std::make_shared<std::packaged_task<R()>>(std::move(fn));
+        auto done = task->get_future();
+        auto parked = regex_submit([task] { (*task)(); });
 
         const auto deadline =
             std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
-        while (box->state.load(std::memory_order_acquire) == 0) {
-            if (std::chrono::steady_clock::now() >= deadline)
-                return {RegexRunStatus::Timeout, R{}};
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        if (done.wait_until(deadline) != std::future_status::ready) {
+            regex_retire(parked);
+            return {RegexRunStatus::Timeout, R{}};
         }
-        if (box->state.load(std::memory_order_acquire) == 2)
+        try {
+            return {RegexRunStatus::Ok, done.get()};
+        } catch (...) {
+            // [SILENCE-PRIM-#615] invalid regex / regex_error → SyntaxError
+            // status; caller maps to PRIM_ERROR via bump_regex_error
+            // (#668 / #1669 / #2479).
             return {RegexRunStatus::SyntaxError, R{}};
-        return {RegexRunStatus::Ok, std::move(box->value)};
+        }
     }
 
     // Issue #4469: R7RS round. Halves go to the even integer.
