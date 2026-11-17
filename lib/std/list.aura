@@ -40,11 +40,10 @@
 ; two-parameter Scheme definition shadowed it after this module loaded and
 ; rejected every extra list at the closure arity check.
 
+; #5326: the native member already compares with equal?; the interpreted
+; loop paid one call per element (160k: 401 ms vs 1.9 ms).
 (define (member? elem lst)
-  (let loop ((xs lst))
-    (if (null? xs) #f
-      (if (equal? (car xs) elem) #t
-        (loop (cdr xs))))))
+  (if (member elem lst) #t #f))
 
 (define (zip a b)
   (let loop ((xs a) (ys b) (acc (list)))
@@ -121,10 +120,11 @@
 ; error. The primitive now owns that guard (it used to clamp silently, which
 ; is why this module shadowed it in the first place), so the export below
 ; resolves straight to the primitive. Do not redefine it.
+; #5326: the native drop walks the spine in C (160k: 195 ms vs 0.2 ms).
+; drop rejects a negative count, while this loop used to walk to () —
+; keep the old result for a negative n and pin it in the suite.
 (define (skip n lst)
-  (let loop ((k n) (xs lst))
-    (if (or (= k 0) (null? xs)) xs
-      (loop (- k 1) (cdr xs)))))
+  (if (< n 0) () (drop lst n)))
 
 (define (sum lst) (foldl + 0 lst))
 (define (product lst) (foldl * 1 lst))
@@ -176,19 +176,32 @@
             #t
             (loop (cdr xs))))))
 
+; #5326: the n-ary path allocates two lists per element (map car / map cdr
+; plus apply). The single-list call, which prelude code makes, walks the spine
+; directly: 160k elements 3024 -> ~430 ms in the issue's numbers.
 (define (any pred . lists)
-  (let loop ((ls lists))
-    (if (or (null? ls) (any-list-empty? ls))
-      #f
-      (let ((r (apply pred (map car ls))))
-        (if r r (loop (map cdr ls)))))))
+  (if (and (pair? lists) (null? (cdr lists)))
+    (let loop ((xs (car lists)))
+      (if (null? xs) #f
+        (let ((r (pred (car xs))))
+          (if r r (loop (cdr xs))))))
+    (let loop ((ls lists))
+      (if (or (null? ls) (any-list-empty? ls))
+        #f
+        (let ((r (apply pred (map car ls))))
+          (if r r (loop (map cdr ls))))))))
 
 (define (every pred . lists)
-  (let loop ((ls lists) (last #t))
-    (if (or (null? ls) (any-list-empty? ls))
-      last
-      (let ((r (apply pred (map car ls))))
-        (if r (loop (map cdr ls) r) #f)))))
+  (if (and (pair? lists) (null? (cdr lists)))
+    (let loop ((xs (car lists)) (last #t))
+      (if (null? xs) last
+        (let ((r (pred (car xs))))
+          (if r (loop (cdr xs) r) #f))))
+    (let loop ((ls lists) (last #t))
+      (if (or (null? ls) (any-list-empty? ls))
+        last
+        (let ((r (apply pred (map car ls))))
+          (if r (loop (map cdr ls) r) #f))))))
 
 (define (all pred . lists)
   (if (apply every (cons pred lists)) #t #f))
@@ -271,18 +284,22 @@
 ; ── Issue #4496: common R7RS list/vector bindings ─────────────────
 
 ; (assoc key alist) — first pair whose car is equal? to key, else #f
+; #5326: for a number, symbol or boolean key equal? and eqv? agree, so the
+; native assv answers it (160k: 448 ms vs 2.9 ms). Strings, pairs and
+; vectors keep the equal? walk: two equal strings need not be eqv?.
 (define (assoc key alist)
-  (let loop ((xs alist))
-    (cond ((null? xs) #f)
-          ((equal? (car (car xs)) key) (car xs))
-          (else (loop (cdr xs))))))
+  (if (or (number? key) (symbol? key) (boolean? key))
+    (assv key alist)
+    (let loop ((xs alist))
+      (cond ((null? xs) #f)
+            ((equal? (car (car xs)) key) (car xs))
+            (else (loop (cdr xs)))))))
 
 ; (assq key alist) — like assoc with eq?
+; #5326: R7RS leaves eq? on numbers and characters unspecified; assv is the
+; native eqv? walk (identical on symbols and booleans).
 (define (assq key alist)
-  (let loop ((xs alist))
-    (cond ((null? xs) #f)
-          ((eq? (car (car xs)) key) (car xs))
-          (else (loop (cdr xs))))))
+  (assv key alist))
 
 ; (iota n [start [step]]) — n numbers start, start+step, ...
 (define (iota n . opt)
