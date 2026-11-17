@@ -17,7 +17,9 @@
 ; Ports (#5005).  A port is #(port kind buffer pos path):
 ;   string input   kind 'input       buffer = string, pos = next index
 ;   stdin          kind 'stdin       buffer = #f until first read
-;   string output  kind 'output      buffer = reversed list of strings
+;   string output  kind 'output      buffer = reversed list of segments
+;                                   (strings from write-string, character
+;                                   integers from write-char)
 ;   file output    kind 'file-output buffer = reversed list, path = file
 ;   stdout/stderr  kind 'stdout / 'stderr
 ; port? checks the tag.  There is no separate port heap object — this is
@@ -89,8 +91,27 @@
 (define (open-output-string)
   (vector 'port 'output (list) 0 #f))
 
+; Issue #5340: write-char buffers the character itself, so the reversed
+; segment list mixes strings and character integers. Walk it in source
+; order and convert each run of adjacent characters with one list->string
+; (a 1-character string per write-char was the quadratic cost).
 (define (get-output-string p)
-  (apply string-append (reverse (vector-ref p 2))))
+  (let loop ((xs (reverse (vector-ref p 2)))
+             (acc (list))
+             (run (list)))
+    (cond
+      ((null? xs)
+       (apply string-append
+              (reverse (if (null? run)
+                           acc
+                           (cons (list->string (reverse run)) acc)))))
+      ((char? (car xs))
+       (loop (cdr xs) acc (cons (car xs) run)))
+      (else
+       (loop (cdr xs)
+             (cons (car xs)
+                   (if (null? run) acc (cons (list->string (reverse run)) acc)))
+             (list))))))
 
 (define (open-input-file path)
   (vector 'port 'input (file-read path) 0 path))
@@ -163,31 +184,40 @@
               (string-ref s i)))
         (error "peek-char: only string/file input ports can peek"))))
 
+; Issue #5340: do not mint a 1-character string per call. The port
+; buffer takes the character itself; get-output-string coalesces runs.
 (define (write-char c . port)
-  (let ((p (if (null? port) (current-output-port) (car port)))
-        (s (list->string (list c))))
+  (if (not (char? c))
+      (error "write-char: not a character"))
+  (let* ((p (if (null? port) (current-output-port) (car port)))
+         (kind (vector-ref p 1)))
     (cond
-      ((or (eq? (vector-ref p 1) 'output)
-           (eq? (vector-ref p 1) 'file-output))
-       (vector-set! p 2 (cons s (vector-ref p 2)))
+      ((eq? kind 'output)
+       (vector-set! p 2 (cons c (vector-ref p 2))))
+      ((eq? kind 'file-output)
+       (vector-set! p 2 (cons c (vector-ref p 2))))
+      ((eq? kind 'stdout)
+       (display (list->string (list c)))
        (void))
-      ((eq? (vector-ref p 1) 'stdout)
-       (display s)
-       (void))
-      ((eq? (vector-ref p 1) 'stderr)
-       (display s)
+      ((eq? kind 'stderr)
+       (display (list->string (list c)))
        (void))
       (else (error "write-char: not an output port")))))
 
 (define (write-string s . port)
-  (let ((p (if (null? port) (current-output-port) (car port))))
+  (let* ((p (if (null? port) (current-output-port) (car port)))
+         (kind (vector-ref p 1)))
     (cond
-      ((or (eq? (vector-ref p 1) 'output)
-           (eq? (vector-ref p 1) 'file-output))
+      ((eq? kind 'output)
        (vector-set! p 2 (cons s (vector-ref p 2)))
        (void))
-      ((or (eq? (vector-ref p 1) 'stdout)
-           (eq? (vector-ref p 1) 'stderr))
+      ((eq? kind 'file-output)
+       (vector-set! p 2 (cons s (vector-ref p 2)))
+       (void))
+      ((eq? kind 'stdout)
+       (display s)
+       (void))
+      ((eq? kind 'stderr)
        (display s)
        (void))
       (else (error "write-string: not an output port")))))
