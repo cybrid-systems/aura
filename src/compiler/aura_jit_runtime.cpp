@@ -5502,6 +5502,107 @@ static void drop_jit_fn_native_for_define_locked(std::string_view name) {
     g_jit_define_drop_gen.fetch_add(1, std::memory_order_release);
 }
 
+// Issue #4709: per-thread ownership of the compiler's IR cache gate.
+// The gate is a recursive_mutex owned by CompilerService; these hooks let
+// the native drop below park it (release every level, re-take it) so this
+// thread never waits for the workspace write lock while holding the gate.
+// That nesting (gate -> workspace here vs workspace -> gate in
+// eval-current) is the workspace_mtx_ <-> ir_cache_gate_ ABBA.
+namespace {
+    struct IrGateHold4709 {
+        std::recursive_mutex* m = nullptr;
+        int depth = 0;
+        int parked = 0;
+    };
+    constexpr int kIrGateSlots4709 = 4;
+    struct IrGateTls4709 {
+        IrGateHold4709 slots[kIrGateSlots4709];
+    };
+    IrGateTls4709& ir_gate_tls_4709() {
+        thread_local IrGateTls4709 t;
+        return t;
+    }
+    // Opt-in per scope: only paths that know they may hold the gate without
+    // the workspace (the #4709 cascade re-lower success arm) park it. Other
+    // drop callers may hold references into gate-protected containers across
+    // the drop, so they keep the historical behaviour.
+    bool& ir_gate_park_scope_4709() {
+        thread_local bool allow = false;
+        return allow;
+    }
+    IrGateHold4709* ir_gate_slot_4709(std::recursive_mutex* m) {
+        if (!m)
+            return nullptr;
+        auto& t = ir_gate_tls_4709();
+        for (auto& s : t.slots) {
+            if (s.m == m)
+                return &s;
+        }
+        return nullptr;
+    }
+} // namespace
+
+extern "C" bool aura_jit_drop_park_scope_4709(bool enable) noexcept {
+    bool& allow = ir_gate_park_scope_4709();
+    const bool prev = allow;
+    allow = enable;
+    return prev;
+}
+
+extern "C" void aura_ir_gate_note_acquire_4709(std::recursive_mutex* m) noexcept {
+    if (!m)
+        return;
+    if (auto* s = ir_gate_slot_4709(m)) {
+        ++s->depth;
+        return;
+    }
+    for (auto& s : ir_gate_tls_4709().slots) {
+        if (!s.m) {
+            s.m = m;
+            s.depth = 1;
+            s.parked = 0;
+            return;
+        }
+    }
+}
+
+extern "C" void aura_ir_gate_note_release_4709(std::recursive_mutex* m) noexcept {
+    auto* s = ir_gate_slot_4709(m);
+    if (!s || s->depth <= 0)
+        return;
+    if (--s->depth == 0 && s->parked == 0) {
+        s->m = nullptr;
+    }
+}
+
+// Release every level this thread holds of every gate, remembering the
+// depths. Returns the total number released (0 when no gate is held).
+extern "C" int aura_ir_gate_park_4709() noexcept {
+    int released = 0;
+    for (auto& s : ir_gate_tls_4709().slots) {
+        if (!s.m || s.depth <= 0)
+            continue;
+        for (int i = 0; i < s.depth; ++i)
+            s.m->unlock();
+        s.parked = s.depth;
+        s.depth = 0;
+        released += s.parked;
+    }
+    return released;
+}
+
+// Re-take what park released. Levels acquired again while parked are kept.
+extern "C" void aura_ir_gate_unpark_4709() noexcept {
+    for (auto& s : ir_gate_tls_4709().slots) {
+        if (!s.m || s.parked <= 0)
+            continue;
+        for (int i = 0; i < s.parked; ++i)
+            s.m->lock();
+        s.depth += s.parked;
+        s.parked = 0;
+    }
+}
+
 extern "C" void aura_drop_jit_fn_native_for_define(const char* name) {
     if (!name || name[0] == '\0')
         return;
@@ -5511,10 +5612,28 @@ extern "C" void aura_drop_jit_fn_native_for_define(const char* name) {
         drop_jit_fn_native_for_define_locked(name);
         return;
     }
+    // Issue #4709: never wait for the workspace write lock while owning
+    // the IR cache gate. Park the gate, then take g_closure_table_mtx ->
+    // workspace in the established order, do the drop, and re-take the
+    // gate only after both are released (unpark runs last, so it never
+    // nests under the table/workspace locks).
+    struct ParkGuard4709 {
+        int released = 0;
+        ParkGuard4709()
+            : released(ir_gate_park_scope_4709() ? aura_ir_gate_park_4709() : 0) {}
+        ParkGuard4709(const ParkGuard4709&) = delete;
+        ParkGuard4709& operator=(const ParkGuard4709&) = delete;
+        ~ParkGuard4709() {
+            if (released > 0)
+                aura_ir_gate_unpark_4709();
+        }
+    } park_guard;
     std::unique_lock<std::shared_mutex> tlock(g_closure_table_mtx);
     aura_lock_workspace_write();
+    struct WorkspaceUnlock4709 {
+        ~WorkspaceUnlock4709() { aura_unlock_workspace_write(); }
+    } ws_unlock;
     drop_jit_fn_native_for_define_locked(name);
-    aura_unlock_workspace_write();
 }
 
 // Issue #3441: #3412 only gated the slow named arm. Fast-path cache +
