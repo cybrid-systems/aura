@@ -84,6 +84,15 @@ vim.api.nvim_create_autocmd("FileType", {
 `gd` / `vim.lsp.buf.definition()` jumps across requires; diagnostics show on
 `:w`.
 
+### Emacs
+
+`editors/emacs/` holds the `aura-lang` package: `aura-mode` (derived
+from `lisp-data-mode`), an `inferior-aura` comint REPL, and registration
+with both lsp-mode and eglot.  It needs Emacs 29.1+ and no Doom.  Install
+it from a checkout with `use-package :load-path`, or with `package-vc-install`
+and `:lisp-dir "editors/emacs"`.  See `editors/emacs/README.md` for the
+three install recipes, the binary lookup order, and the REPL commands.
+
 ### Limits
 
 - Diagnostics are static: parse errors and names that are unbound at runtime
