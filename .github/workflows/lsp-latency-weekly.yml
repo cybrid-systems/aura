@@ -29,8 +29,14 @@ jobs:
     - name: Install Python CI deps
       run: pip install --break-system-packages -r requirements-dev.txt
 
+    # Target only the binary the bench spawns: build.py build also compiles
+    # every test target, which made this lane ~55 min on a cold runner.
     - name: Build aura
-      run: python3 build.py build
+      run: |
+        cmake -S . -B build -G Ninja -Wno-author \
+          -Werror=experimental -Wpolicy -Wdeprecated -Wstrict -Wnon-target-directive \
+          -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+        ninja -C build aura -j 4
 
     - name: LSP request latency (#5351, #5352)
       run: python3 tests/bench/lsp_latency.py --check
