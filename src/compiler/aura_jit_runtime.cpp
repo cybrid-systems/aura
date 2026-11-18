@@ -5602,6 +5602,25 @@ extern "C" void aura_ir_gate_unpark_4709() noexcept {
     }
 }
 
+namespace {
+    // Issue #4709: park the IR gate for the native drop, then unpark it after
+    // the table/workspace locks are released (declaration order makes unpark
+    // the last destructor to run). Park is opt-in per scope.
+    struct DropParkGuard4709 {
+        int released = 0;
+        DropParkGuard4709()
+            : released(ir_gate_park_scope_4709() ? aura_ir_gate_park_4709() : 0) {}
+        DropParkGuard4709(const DropParkGuard4709&) = delete;
+        DropParkGuard4709& operator=(const DropParkGuard4709&) = delete;
+        DropParkGuard4709(DropParkGuard4709&&) = delete;
+        DropParkGuard4709& operator=(DropParkGuard4709&&) = delete;
+        ~DropParkGuard4709() {
+            if (released > 0)
+                aura_ir_gate_unpark_4709();
+        }
+    };
+} // namespace
+
 extern "C" void aura_drop_jit_fn_native_for_define(const char* name) {
     if (!name || name[0] == '\0')
         return;
@@ -5612,23 +5631,8 @@ extern "C" void aura_drop_jit_fn_native_for_define(const char* name) {
         return;
     }
     // Issue #4709: never wait for the workspace write lock while owning
-    // the IR cache gate. Park the gate, then take g_closure_table_mtx ->
-    // workspace in the established order, do the drop, and re-take the
-    // gate only after both are released (unpark runs last, so it never
-    // nests under the table/workspace locks).
-    struct ParkGuard4709 {
-        int released = 0;
-        ParkGuard4709()
-            : released(ir_gate_park_scope_4709() ? aura_ir_gate_park_4709() : 0) {}
-        ParkGuard4709(const ParkGuard4709&) = delete;
-        ParkGuard4709& operator=(const ParkGuard4709&) = delete;
-        ParkGuard4709(ParkGuard4709&&) = delete;
-        ParkGuard4709& operator=(ParkGuard4709&&) = delete;
-        ~ParkGuard4709() {
-            if (released > 0)
-                aura_ir_gate_unpark_4709();
-        }
-    } park_guard;
+    // the IR cache gate.
+    DropParkGuard4709 park_guard;
     std::unique_lock<std::shared_mutex> tlock(g_closure_table_mtx);
     aura_lock_workspace_write();
     struct WorkspaceUnlock4709 {
