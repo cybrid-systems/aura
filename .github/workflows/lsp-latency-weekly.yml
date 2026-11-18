@@ -1,0 +1,36 @@
+# Issue #5351 / #5352: weekly LSP request-latency check.
+# Not on PRs: one run spawns ~120 fresh `aura lsp` processes (~8 min) and the
+# numbers are sensitive to runner load, so the issue asked for a scheduled
+# lane rather than the PR gate. `--check` enforces the issue targets:
+# 20k lines -> definition/hover <= 20 ms, references/completion <= 100 ms,
+# documentSymbol <= 60 ms, foldingRange <= 30 ms, and every 4x-line step <= 5x.
+name: LSP latency weekly
+
+on:
+  schedule:
+    - cron: "17 4 * * 1" # Mondays 04:17 UTC
+  workflow_dispatch:
+
+env:
+  AURA_BUILD_JOBS: "0"
+  CCACHE_DISABLE: 1
+
+jobs:
+  lsp-latency:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    container:
+      image: ghcr.io/cybrid-systems/aura-ci:v0.1.1
+    steps:
+    - uses: actions/checkout@v7
+
+    - uses: ./.github/actions/ci-krb5
+
+    - name: Install Python CI deps
+      run: pip install --break-system-packages -r requirements-dev.txt
+
+    - name: Build aura
+      run: python3 build.py build
+
+    - name: LSP request latency (#5351, #5352)
+      run: python3 tests/bench/lsp_latency.py --check

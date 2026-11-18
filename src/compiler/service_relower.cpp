@@ -17,6 +17,20 @@ import std;
 
 namespace aura::compiler {
 
+namespace {
+    // Issue #4709: enables #4709 gate parking in the native drop for this scope.
+    // Defined out of line so the #4083 source-cite window (1400 chars from its
+    // comment to jit_.partial_recompile) keeps the drop call adjacent to it.
+    struct DropParkScope4709 {
+        bool prev;
+        DropParkScope4709()
+            : prev(aura_jit_drop_park_scope_4709(true)) {}
+        ~DropParkScope4709() { aura_jit_drop_park_scope_4709(prev); }
+        DropParkScope4709(const DropParkScope4709&) = delete;
+        DropParkScope4709& operator=(const DropParkScope4709&) = delete;
+    };
+} // namespace
+
 std::size_t CompilerService::relower_dirty_defines_from_workspace() {
     IrCacheGate ir_gate(ir_cache_gate_); // #4717 shared IR/closure cache
     // Issue #3067: restore NodeId cascade for stale-rejected edges
@@ -1146,6 +1160,10 @@ bool CompilerService::relower_define_blocks(const std::string& name, std::string
                             hot_update_registry().note_relower_success_define(
                                 relower_success_define_id(name));
                         }
+                        // Issue #4709: park the IR gate for the drop below
+                        // (see DropParkScope4709); the scope sits before the
+                        // #4083 cite so that window keeps its 1400-char span.
+                        DropParkScope4709 drop_park_scope_4709;
                         // Issue #1514: sync JIT — evict native code for this
                         // define so next exec recompiles only the dirty fn.
                         // Issue #4083: partial_recompile only removes the ORC
@@ -1165,22 +1183,6 @@ bool CompilerService::relower_define_blocks(const std::string& name, std::string
                             // Issue #4577: the bare erase leaves name#pos.
                             erase_jit_cache_bundle_rows_for_define_(name);
                         }
-                        // Issue #4709: this success arm runs under the
-                        // caller's IR cache gate (invalidate cascade) and
-                        // the native drop takes the workspace write lock.
-                        // Park the gate around the drop so this thread
-                        // never waits for workspace while owning it; the
-                        // arm returns right after partial_recompile, so
-                        // no gate-protected reference is used across the
-                        // parked window.
-                        struct DropParkScope4709 {
-                            bool prev;
-                            DropParkScope4709()
-                                : prev(aura_jit_drop_park_scope_4709(true)) {}
-                            ~DropParkScope4709() { aura_jit_drop_park_scope_4709(prev); }
-                            DropParkScope4709(const DropParkScope4709&) = delete;
-                            DropParkScope4709& operator=(const DropParkScope4709&) = delete;
-                        } drop_park_scope_4709;
                         aura_drop_jit_fn_native_for_define(name.c_str());
                         (void)jit_.partial_recompile(name.c_str(), dirty_ids.data(),
                                                      dirty_ids.size());
