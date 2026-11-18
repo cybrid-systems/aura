@@ -47,6 +47,12 @@ inline std::size_t character_literal_length(std::string_view src, std::size_t i)
     return p - i;
 }
 
+// #5259: byte range of one top-level form in the source it was split from.
+struct FormSpan {
+    std::size_t begin = 0;
+    std::size_t end = 0; // one past the last character of the form
+};
+
 // Result of splitting an exec chunk into its top-level forms.
 struct FormSplit {
     std::vector<std::string> forms;
@@ -54,6 +60,13 @@ struct FormSplit {
     // Otherwise it is the ready-to-report diagnostic (line:col prefix
     // included) and `forms` holds nothing that may be evaluated.
     std::string error;
+    // #5259: byte range of each entry in `forms`, parallel to it. The LSP
+    // symbol layer reads definitions from these spans instead of searching
+    // the text for "(define ". Empty exactly when `forms` is empty.
+    std::vector<FormSpan> spans;
+    // #5259: every comment in the source. The LSP needs them for folding and
+    // to refuse a definition inside one; they are never part of a form.
+    std::vector<FormSpan> comments;
     bool ok() const noexcept { return error.empty(); }
 };
 
@@ -73,6 +86,11 @@ inline FormSplit split_top_level_forms(std::string_view src) {
     std::uint32_t col = 1;
     std::uint32_t open_line = 1;
     std::uint32_t open_col = 1;
+    // #5259: byte range of the form being collected (leading whitespace and
+    // the ' \` , prefixes are not part of it).
+    std::size_t form_begin = std::string_view::npos;
+    std::size_t form_end = std::string_view::npos;
+    constexpr std::size_t kNone = std::string_view::npos;
 
     // Advance the line/column cursor over the "count" characters that
     // start at "from" in the source.
@@ -91,6 +109,8 @@ inline FormSplit split_top_level_forms(std::string_view src) {
     // chunk by accident.
     auto at = [&](std::uint32_t l, std::uint32_t c, const char* what) {
         out.forms.clear();
+        out.spans.clear();
+        out.comments.clear();
         out.error = std::to_string(l) + ":" + std::to_string(c) + ": parse error: " + what;
     };
     auto push_form = [&]() {
@@ -107,31 +127,83 @@ inline FormSplit split_top_level_forms(std::string_view src) {
                 break;
             }
         }
-        if (!blank)
+        if (!blank) {
             out.forms.push_back(current);
+            if (form_begin != kNone)
+                out.spans.push_back({form_begin, form_end});
+        }
         current.clear();
+        form_begin = form_end = kNone;
+    };
+    // Append src[from .. from+count) to the form text and track its span.
+    auto take = [&](std::size_t from, std::size_t count) {
+        for (std::size_t k = 0; k < count; ++k) {
+            const char ch = src[from + k];
+            current += ch;
+            if (std::isspace(static_cast<unsigned char>(ch)))
+                continue;
+            if (form_begin == kNone)
+                form_begin = from + k;
+            form_end = from + k + 1;
+        }
     };
 
     for (std::size_t i = 0; i < src.size();) {
         const char c = src[i];
         if (in_string) {
-            current += c;
             if (c == '\\' && i + 1 < src.size()) {
-                current += src[i + 1];
+                take(i, 2);
                 advance(i, 2);
                 i += 2;
                 continue;
             }
+            take(i, 1);
             if (c == '"')
                 in_string = false;
             advance(i, 1);
             ++i;
             continue;
         }
+        if (c == '#' && i + 1 < src.size() && src[i + 1] == '|') {
+            // #5259: R7RS block comments hide their contents from the form
+            // splitter too — a "(define ghost …)" inside one is not a form.
+            // The newlines inside stay in the text so the line numbers of
+            // the following forms do not move. An unclosed "#|" is left to
+            // the parser (it reports the error) exactly as before.
+            std::size_t j = i;
+            int nest = 0;
+            bool closed = false;
+            while (j < src.size()) {
+                if (src[j] == '#' && j + 1 < src.size() && src[j + 1] == '|') {
+                    j += 2;
+                    ++nest;
+                    continue;
+                }
+                if (src[j] == '|' && j + 1 < src.size() && src[j + 1] == '#') {
+                    j += 2;
+                    if (--nest == 0) {
+                        closed = true;
+                        break;
+                    }
+                    continue;
+                }
+                ++j;
+            }
+            if (closed) {
+                out.comments.push_back({i, j});
+                for (; i < j; ++i) {
+                    const char cc = src[i];
+                    if (cc == '\n')
+                        current += '\n';
+                    advance(i, 1);
+                }
+                continue;
+            }
+        }
         if (c == '#') {
             const std::size_t lit = character_literal_length(src, i);
             if (lit > 0) {
-                current.append(src, i, lit);
+                take(i, lit);
                 advance(i, lit);
                 i += lit;
                 continue;
@@ -145,12 +217,13 @@ inline FormSplit split_top_level_forms(std::string_view src) {
             std::size_t j = i + 1;
             while (j < src.size() && src[j] != '\n')
                 ++j;
+            out.comments.push_back({i, j});
             advance(i, j - i);
             i = j;
             continue;
         }
         if (c == '"') {
-            current += c;
+            take(i, 1);
             in_string = true;
             advance(i, 1);
             ++i;
@@ -183,7 +256,7 @@ inline FormSplit split_top_level_forms(std::string_view src) {
                 open_line = line;
                 open_col = col;
             }
-            current += c;
+            take(i, 1);
             ++depth;
             advance(i, 1);
             ++i;
@@ -194,7 +267,7 @@ inline FormSplit split_top_level_forms(std::string_view src) {
                 at(line, col, c == ')' ? "unexpected ')'" : "unexpected ']'");
                 return out;
             }
-            current += c;
+            take(i, 1);
             --depth;
             advance(i, 1);
             ++i;
@@ -202,7 +275,7 @@ inline FormSplit split_top_level_forms(std::string_view src) {
                 push_form();
             continue;
         }
-        current += c;
+        take(i, 1);
         advance(i, 1);
         ++i;
     }

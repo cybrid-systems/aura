@@ -133,7 +133,7 @@ class LspDepth5155(unittest.TestCase):
 PROCESS_THEME = "lsp"
 PROCESS_TIER = "fast"
 PROCESS_TIMEOUT = 180
-PARTS = ("lsp_protocol", "lsp_format")
+PARTS = ("lsp_protocol", "lsp_format", "lsp_symbols")
 CASES = (
     (
         5155,
@@ -222,6 +222,49 @@ CASES = (
         5263,
         "test_tab_size_and_insert_spaces_are_honored",
         "lsp_format.LspFormat5263.test_tab_size_and_insert_spaces_are_honored",
+    ),
+    # #5259 reader-based symbol layer: comments/strings are not definitions,
+    # the definition forms the runtime really has, local bindings, outline,
+    # workspace symbols, folding, selection, and require links.
+    (
+        5259,
+        "test_comment_and_string_defines_are_not_symbols",
+        "lsp_symbols.LspSymbols5259.test_comment_and_string_defines_are_not_symbols",
+    ),
+    (
+        5259,
+        "test_definition_forms_and_the_two_that_are_not",
+        "lsp_symbols.LspSymbols5259.test_definition_forms_and_the_two_that_are_not",
+    ),
+    (
+        5259,
+        "test_nested_define_is_a_child_of_its_enclosing_scope",
+        "lsp_symbols.LspSymbols5259.test_nested_define_is_a_child_of_its_enclosing_scope",
+    ),
+    (
+        5259,
+        "test_let_and_lambda_bindings_definition_and_highlight",
+        "lsp_symbols.LspSymbols5259.test_let_and_lambda_bindings_definition_and_highlight",
+    ),
+    (
+        5259,
+        "test_workspace_symbol_sees_the_project_and_required_files",
+        "lsp_symbols.LspSymbols5259.test_workspace_symbol_sees_the_project_and_required_files",
+    ),
+    (
+        5259,
+        "test_folding_and_selection_ranges",
+        "lsp_symbols.LspSymbols5259.test_folding_and_selection_ranges",
+    ),
+    (
+        5259,
+        "test_document_link_resolves_require_paths",
+        "lsp_symbols.LspSymbols5259.test_document_link_resolves_require_paths",
+    ),
+    (
+        5259,
+        "test_capabilities_advertise_the_symbol_layer",
+        "lsp_symbols.LspSymbols5259.test_capabilities_advertise_the_symbol_layer",
     ),
 )
 

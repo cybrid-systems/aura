@@ -143,21 +143,6 @@ inline std::vector<Require> find_requires(std::string_view s) {
     return out;
 }
 
-// Top-level (define NAME / (define (NAME …: what goto-definition indexes.
-inline std::vector<std::string> top_level_names(const std::string& t) {
-    std::vector<std::string> out;
-    for (std::string_view head :
-         {"(define (", "(define ", "(define-syntax ", "(define-record-type "})
-        for (std::size_t at = t.find(head); at != std::string::npos; at = t.find(head, at + 1)) {
-            std::size_t b = at + head.size(), e = b;
-            while (e < t.size() && sym_char(t[e]))
-                ++e;
-            if (e > b)
-                out.emplace_back(t.substr(b, e - b));
-        }
-    return out;
-}
-
 inline std::string project_root(std::string dir) {
     for (auto d = std::filesystem::path(dir); !d.empty(); d = d.parent_path()) {
         std::error_code ec;
