@@ -5,6 +5,35 @@ import std;
 
 namespace aura::parser {
 
+Lexer::Lexer(std::string_view source, std::span<const SourceLineOrigin> origins)
+    : source_(source)
+    , origins_(origins) {
+    adopt_line_origin();
+}
+
+void Lexer::adopt_line_origin() {
+    if (origins_.empty())
+        return;
+    if (!origin_armed_) {
+        if (pos_ < origins_.front().offset)
+            return;
+        file_line_ = origins_.front().line;
+        origin_armed_ = true;
+        origin_i_ = 0;
+    }
+    while (origin_i_ + 1 < origins_.size() && pos_ >= origins_[origin_i_ + 1].offset) {
+        ++origin_i_;
+        file_line_ = origins_[origin_i_].line;
+    }
+}
+
+void Lexer::bump_line() {
+    ++line_;
+    ++file_line_;
+    col_ = 1;
+    adopt_line_origin();
+}
+
 Token Lexer::advance() {
     skip_ws();
     if (unterminated_block_comment_) {
@@ -24,7 +53,7 @@ Token Lexer::advance() {
             // Issue #5199: "(;" opens a real list; ';' then comments out the
             // rest of the line. Record that before skip_ws eats the comment.
             const bool semi = pos_ < source_.size() && source_[pos_] == ';';
-            open_parens_.push_back(OpenParenLoc{tok.line, tok.column, semi});
+            open_parens_.push_back(OpenParenLoc{tok.line, tok.column, semi, file_line_});
             return tok;
         }
         case ')':
@@ -102,7 +131,7 @@ Token Lexer::advance() {
                     pos_ += 2;
                     auto tok = make_tok(TokenKind::HashLParen, "#(");
                     const bool semi = pos_ < source_.size() && source_[pos_] == ';';
-                    open_parens_.push_back(OpenParenLoc{tok.line, tok.column, semi});
+                    open_parens_.push_back(OpenParenLoc{tok.line, tok.column, semi, file_line_});
                     return tok;
                 }
                 // Issue #4129: #\ character literals — named forms (#\space,
@@ -402,8 +431,7 @@ void Lexer::skip_ws() {
             col_++;
         } else if (c == '\n') {
             pos_++;
-            line_++;
-            col_ = 1;
+            bump_line();
         } else if (c == ';') {
             while (pos_ < source_.size() && source_[pos_] != '\n')
                 pos_++;
@@ -436,8 +464,7 @@ void Lexer::skip_ws() {
                 }
                 if (source_[pos_] == '\n') {
                     pos_++;
-                    line_++;
-                    col_ = 1;
+                    bump_line();
                 } else {
                     pos_++;
                     col_++;

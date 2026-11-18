@@ -199,10 +199,16 @@ struct DiagnosticsEngine {
             std::string spec;
         };
         std::vector<Segment> segs;
+        std::vector<std::string> parts;
+        // #5347: each segment's byte offset is a line baseline for the parser.
+        // Token locations stay buffer lines (the segment map below turns those
+        // into ranges); messages name the file's own line.
+        std::vector<aura::parser::SourceLineOrigin> origins;
         // #5262: a diagnostic inside a required module is explained by the
         // (require …) that pulled it in, so remember each edge.
         std::unordered_map<std::string, RequireSite> require_site;
         int line = 1;
+        std::size_t offset = 0;
         for (auto& f : files) {
             std::string t = store.text_of(f);
             for (auto& r : find_requires(t)) {
@@ -215,21 +221,66 @@ struct DiagnosticsEngine {
             if (!t.empty() && t.back() != '\n')
                 t += '\n';
             segs.push_back({line, f});
+            origins.push_back({offset, 1});
             line += static_cast<int>(std::ranges::count(t, '\n'));
+            offset += t.size();
             combined += t;
+            parts.push_back(std::move(t));
         }
         std::unordered_map<std::string, std::vector<Diag>> by_file;
         for (auto& f : files)
             by_file[f];
+        // #5347: an unclosed list in an earlier segment would otherwise
+        // swallow the files spliced after it, and the diagnostic would land
+        // in the wrong buffer. Parse each file on its own text first (its
+        // line baseline is 1). A blank segment is a (require …) that was
+        // masked out — nothing of that file remains to diagnose.
+        auto blank = [](std::string_view s) {
+            return std::ranges::all_of(
+                s, [](char c) { return c == ' ' || c == '\n' || c == '\t' || c == '\r'; });
+        };
+        bool parsed_apart = false;
+        if (parts.size() > 1) {
+            for (std::size_t i = 0; i < parts.size(); ++i) {
+                if (blank(parts[i]))
+                    continue;
+                aura::ast::ASTArena arena;
+                auto alloc = arena.allocator();
+                aura::ast::StringPool pool(alloc);
+                aura::ast::FlatAST flat(alloc);
+                auto pr = aura::parser::parse_to_flat(parts[i], flat, pool);
+                if (pr.success && pr.root != aura::ast::NULL_NODE)
+                    continue;
+                parsed_apart = true;
+                aura::diag::Diagnostic d =
+                    pr.errors.empty()
+                        ? aura::diag::Diagnostic{aura::diag::ErrorKind::ParseError,
+                                                 pr.error.empty() ? "parse error" : pr.error}
+                        : aura::diag::Diagnostic{aura::diag::ErrorKind::ParseError,
+                                                 pr.errors[0].message, pr.errors[0].location};
+                if (d.location.line == 0)
+                    continue;
+                Diag out;
+                out.line = static_cast<int>(d.location.line) - 1;
+                out.col = std::max(0, static_cast<int>(d.location.column) - 1);
+                out.kind = d.kind;
+                out.code = std::string(aura::diag::kind_ident(d.kind));
+                out.severity = severity_of(d.kind);
+                out.message = std::move(d.message);
+                by_file[files[i]].push_back(std::move(out));
+            }
+        }
         std::vector<aura::diag::Diagnostic> structured;
-        try {
-            aura::compiler::CompilerService cs;
-            auto tc = cs.typecheck_full(combined);
-            structured = std::move(tc.diagnostics);
-        } catch (const std::exception& e) {
-            aura::diag::Diagnostic d{aura::diag::ErrorKind::InternalError,
-                                     std::string("typecheck failed: ") + e.what()};
-            structured.push_back(std::move(d));
+        if (!parsed_apart) {
+            try {
+                aura::compiler::CompilerService cs;
+                auto tc = cs.typecheck_full(combined, origins);
+                structured = std::move(tc.diagnostics);
+            } catch (const std::exception& e) {
+                aura::diag::Diagnostic d{aura::diag::ErrorKind::InternalError,
+                                         std::string("typecheck failed: ") + e.what()};
+                structured.push_back(std::move(d));
+            }
         }
         for (const auto& d : structured) {
             if (d.location.line == 0)

@@ -381,6 +381,22 @@ CASES = (
         "test_did_you_mean_quickfix_replaces_the_name",
         "lsp_diagnostics.LspDiagnostics5262.test_did_you_mean_quickfix_replaces_the_name",
     ),
+    # #5347: a (require …) must not shift "opened at line N" off the file's line.
+    (
+        5347,
+        "test_require_std_string_unclosed_line_matches_range_and_cli",
+        "lsp_diagnostics.LspDiagnostics5262.test_require_std_string_unclosed_line_matches_range_and_cli",
+    ),
+    (
+        5347,
+        "test_unclosed_without_require_line_matches_range",
+        "lsp_diagnostics.LspDiagnostics5262.test_unclosed_without_require_line_matches_range",
+    ),
+    (
+        5347,
+        "test_unclosed_in_required_file_uses_that_files_line",
+        "lsp_diagnostics.LspDiagnostics5262.test_unclosed_in_required_file_uses_that_files_line",
+    ),
 )
 
 

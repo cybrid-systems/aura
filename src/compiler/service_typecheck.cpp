@@ -11,15 +11,19 @@ module aura.compiler.service;
 import std;
 import aura.compiler.type_checker; // TypeCheckWrap
 import aura.diag;
+import aura.parser.lexer; // SourceLineOrigin (#5347)
+import aura.parser.parser;
 
 namespace aura::compiler {
 
-CompilerService::TypecheckResult CompilerService::typecheck_full(std::string_view input) {
+CompilerService::TypecheckResult
+CompilerService::typecheck_full(std::string_view input,
+                                std::span<const aura::parser::SourceLineOrigin> origins) {
     TypecheckResult r;
     auto alloc = arena_.allocator();
     aura::ast::StringPool pool(alloc);
     aura::ast::FlatAST flat(alloc);
-    auto pr = aura::parser::parse_to_flat(input, flat, pool);
+    auto pr = aura::parser::parse_to_flat(input, flat, pool, origins);
     if (!pr.success || pr.root == aura::ast::NULL_NODE) {
         auto diag = parse_error_diag(pr);
         r.output = std::string("parse error: ") + diag.format() + "\n";

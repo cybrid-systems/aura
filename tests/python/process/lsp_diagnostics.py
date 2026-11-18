@@ -11,21 +11,49 @@ faces of the same diagnostic.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 
-from lsp_protocol import AURA, Client, env, last_publication
+from lsp_protocol import AURA, ROOT, Client, env, last_publication
 
 MEMQ = "(display (memq 1 (list 1 2)))\n"
 ARITY = "(define (f x) x)\n(display (f))\n"
 PARSE = "(display (+ 1 2)\n"
 TYPE_MISMATCH = '(define (g y) (+ y "s"))\n'
+# #5347: the '(' of `(define (b x)` is line 4. std/string.aura is 335 lines;
+# splicing it in front used to report "opened at line 339".
+PAREN_REQUIRE = '(require "std/string" all:)\n(define (a x) x)\n\n(define (b x)\n  (+ x 1)\n'
+PAREN_PLAIN = "(define (a x) x)\n\n(define (b x)\n  (+ x 1)\n"
+OPENED_AT = re.compile(r"opened at line (\d+), column (\d+)")
+
+
+def opened_at(message: str) -> tuple[int, int]:
+    found = OPENED_AT.search(message)
+    assert found is not None, message
+    return int(found.group(1)), int(found.group(2))
+
+
+def assert_message_line_matches_range(test: unittest.TestCase, diag: dict) -> tuple[int, int]:
+    """The message's 1-based line/column is the same point as the 0-based range."""
+    line, col = opened_at(diag["message"])
+    start = diag["range"]["start"]
+    test.assertEqual(line, start["line"] + 1, diag)
+    test.assertEqual(col, start["character"] + 1, diag)
+    return line, col
 
 
 def run_aura(args: list[str], cwd: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run([str(AURA), *args], cwd=cwd, capture_output=True, text=True, env=env(), timeout=120)
+
+
+def run_with_std(args: list[str], cwd: str) -> subprocess.CompletedProcess[str]:
+    # Same search path the LSP client below is given, so a require of std/string
+    # is the file the server splices in.
+    e = env({"AURA_PATH": str(ROOT / "lib"), "AURA_SANDBOX": "off"})
+    return subprocess.run([str(AURA), *args], cwd=cwd, capture_output=True, text=True, env=e, timeout=120)
 
 
 def last_json(text: str) -> dict:
@@ -277,3 +305,92 @@ class LspDiagnostics5262(unittest.TestCase):
         # Text only: the server did not rewrite the file.
         self.assertEqual(Path(uri[7:]).read_text(), before)
         self.assertEqual(diags[0]["code"], "UnboundVariable")
+
+    def _open_in(self, root: Path, name: str, text: str) -> tuple[list[dict], str]:
+        path = root / name
+        path.write_text(text)
+        uri = path.as_uri()
+        c = Client({"AURA_PATH": str(ROOT / "lib")})
+        try:
+            c.send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "initialize",
+                    "params": {"capabilities": {}, "rootUri": root.as_uri()},
+                }
+            )
+            c.pump(2.0)
+            c.clear()
+            c.did_open(uri, text)
+            frames = c.pump(3.0)
+            return frames, uri
+        finally:
+            c.close()
+
+    def test_require_std_string_unclosed_line_matches_range_and_cli(self) -> None:
+        # #5347. Range was already the file's line; the message counted
+        # std/string's 335 lines on top. CLI parses the file alone and was
+        # already right — the two faces must stay the same text.
+        root = Path(tempfile.mkdtemp(prefix="lspparse5347-"))
+        probe = root / "probe.aura"
+        probe.write_text('(require "std/string" all:)\n(display 1)\n')
+        proved = run_with_std(["probe.aura"], str(root))
+        self.assertEqual(proved.returncode, 0, proved.stderr)
+        self.assertIn("1", proved.stdout)
+        frames, uri = self._open_in(root, "paren_min3.aura", PAREN_REQUIRE)
+        pub = last_publication(frames, uri)
+        self.assertIsNotNone(pub, frames)
+        diags = pub["diagnostics"]
+        self.assertEqual(len(diags), 1, diags)
+        dx = diags[0]
+        self.assertEqual(dx["code"], "ParseError")
+        line, _col = assert_message_line_matches_range(self, dx)
+        self.assertEqual(line, 4, dx)
+        self.assertIn("unclosed list opened at line 4, column 1", dx["message"])
+        std_lines = len((ROOT / "lib" / "std" / "string.aura").read_text().splitlines())
+        self.assertNotIn(f"line {line + std_lines}", dx["message"])
+        cli = run_with_std(["--error-format=json", "paren_min3.aura"], str(root))
+        self.assertNotEqual(cli.returncode, 0, cli.stdout)
+        obj = last_json(cli.stderr)
+        self.assertEqual(obj["code"], "ParseError")
+        self.assertEqual(obj["message"], dx["message"])
+        self.assertEqual(obj["span"]["start"]["line"], line)
+        text = run_with_std(["paren_min3.aura"], str(root))
+        self.assertIn("unclosed list opened at line 4, column 1", text.stderr)
+        self.assertIn(":4:1:", text.stderr)
+
+    def test_unclosed_without_require_line_matches_range(self) -> None:
+        root = Path(tempfile.mkdtemp(prefix="lspparse5347b-"))
+        frames, uri = self._open_in(root, "paren_plain.aura", PAREN_PLAIN)
+        pub = last_publication(frames, uri)
+        self.assertIsNotNone(pub, frames)
+        diags = pub["diagnostics"]
+        self.assertEqual(len(diags), 1, diags)
+        dx = diags[0]
+        self.assertEqual(dx["code"], "ParseError")
+        line, _col = assert_message_line_matches_range(self, dx)
+        self.assertEqual(line, 3, dx)
+        cli = run_with_std(["--error-format=json", "paren_plain.aura"], str(root))
+        self.assertEqual(last_json(cli.stderr)["message"], dx["message"])
+        text = run_with_std(["paren_plain.aura"], str(root))
+        self.assertIn("unclosed list opened at line 3, column 1", text.stderr)
+
+    def test_unclosed_in_required_file_uses_that_files_line(self) -> None:
+        # The required file is not the first segment: std/string is spliced
+        # in front of it. The diagnostic stays on that file, numbered there.
+        root = Path(tempfile.mkdtemp(prefix="lspparse5347c-"))
+        dep = root / "dep.aura"
+        dep.write_text('(require "std/string" all:)\n(define (broken x\n')
+        frames, _uri = self._open_in(root, "main.aura", '(require "dep" all:)\n(define (ok x) x)\n')
+        pub = last_publication(frames, dep.as_uri())
+        self.assertIsNotNone(pub, frames)
+        diags = pub["diagnostics"]
+        self.assertEqual(len(diags), 1, diags)
+        dx = diags[0]
+        self.assertEqual(dx["code"], "ParseError")
+        line, _col = assert_message_line_matches_range(self, dx)
+        self.assertEqual(line, 2, dx)
+        self.assertNotIn("line 337", dx["message"])
+        cli = run_with_std(["--error-format=json", "dep.aura"], str(root))
+        self.assertEqual(last_json(cli.stderr)["message"], dx["message"])
