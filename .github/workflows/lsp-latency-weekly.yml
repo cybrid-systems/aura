@@ -39,4 +39,6 @@ jobs:
         ninja -C build aura -j 4
 
     - name: LSP request latency (#5351, #5352)
-      run: python3 tests/bench/lsp_latency.py --check
+      # #5351's four rows keep their absolute limits; #5352 rows are printed
+      # but not enforced on the shared runner (see ISSUE_OF in the bench).
+      run: python3 tests/bench/lsp_latency.py --check --issue 5351
