@@ -438,12 +438,21 @@ public:
             def_of_node_[root] = def;
             top_env_.push_back(binding_for(root));
         }
+        // #5351/#5352: one environment stack for the whole file. Every scope
+        // takes a checkpoint and restores it, instead of copying top_env_ (N
+        // ints) per top-level form and per define - that copy was quadratic
+        // and dominated documentSymbol/foldingRange at 20k lines.
+        std::vector<int> env;
+        env.reserve(top_env_.size() + 16);
+        for (int b : top_env_)
+            env_push(env, b);
         for (int f = 0; f < static_cast<int>(ix_.forms.size()); ++f) {
             const int root = ix_.forms[f].root;
             if (root < 0)
                 continue;
-            std::vector<int> env = top_env_;
+            const std::size_t checkpoint = env.size();
             walk(root, env);
+            env_restore(env, checkpoint);
         }
     }
 
@@ -452,6 +461,29 @@ private:
     std::unordered_map<int, int> def_of_node_; // list node -> def index
     std::vector<int> top_env_;
     std::vector<int> def_stack_; // open defs, innermost last
+    // #5351: name -> live bindings, innermost last. resolve() was a linear
+    // scan of the whole environment for every atom (O(N^2) on a file with N
+    // top-level defines); the stack mirrors env_push/env_pop exactly.
+    std::unordered_map<std::string, std::vector<int>, aura::core::TransparentStringHash,
+                       std::equal_to<>>
+        by_name_;
+    std::unordered_map<std::size_t, int> binding_at_; // name span begin -> binding
+
+    void env_push(std::vector<int>& env, int binding) {
+        env.push_back(binding);
+        by_name_[ix_.bindings[binding].name].push_back(binding);
+    }
+    void env_pop(std::vector<int>& env) {
+        const int binding = env.back();
+        auto it = by_name_.find(ix_.bindings[binding].name);
+        if (it != by_name_.end() && !it->second.empty() && it->second.back() == binding)
+            it->second.pop_back();
+        env.pop_back();
+    }
+    void env_restore(std::vector<int>& env, std::size_t checkpoint) {
+        while (env.size() > checkpoint)
+            env_pop(env);
+    }
 
     static bool is_define_head(std::string_view h) {
         return h == "define" || h == "define-hygienic-macro" || h == "define-hygienic-macro*" ||
@@ -513,25 +545,29 @@ private:
     }
 
     int add_binding(const SymNode& name_node) {
-        for (std::size_t i = 0; i < ix_.bindings.size(); ++i)
-            if (ix_.bindings[i].name_span.begin == name_node.span.begin &&
-                ix_.bindings[i].name_span.end == name_node.span.end)
-                return static_cast<int>(i);
+        // #5351: one name node is registered at most once; the span begin is
+        // unique, so the linear scan over every binding is not needed.
+        const auto found = binding_at_.find(name_node.span.begin);
+        if (found != binding_at_.end() &&
+            ix_.bindings[found->second].name_span.end == name_node.span.end)
+            return found->second;
         SymBinding b;
         b.name = name_node.text;
         b.name_span = name_node.span;
         b.definition = true;
         ix_.bindings.push_back(std::move(b));
-        return static_cast<int>(ix_.bindings.size()) - 1;
+        const int index = static_cast<int>(ix_.bindings.size()) - 1;
+        binding_at_[name_node.span.begin] = index;
+        return index;
     }
 
     int binding_for(int node) { return add_binding(ix_.nodes[define_target(node)]); }
 
-    int resolve(const std::vector<int>& env, std::string_view name) const {
-        for (auto it = env.rbegin(); it != env.rend(); ++it)
-            if (ix_.bindings[*it].name == name)
-                return *it;
-        return -1;
+    int resolve(std::string_view name) const {
+        const auto found = by_name_.find(name);
+        if (found == by_name_.end() || found->second.empty())
+            return -1;
+        return found->second.back();
     }
 
     void walk_seq(const std::vector<int>& kids, std::size_t from, std::vector<int>& env) {
@@ -542,7 +578,7 @@ private:
     void walk(int n, std::vector<int>& env) {
         const auto& node = ix_.nodes[n];
         if (node.kind == SymKind::Atom) {
-            ix_.occs.push_back({n, resolve(env, node.text)});
+            ix_.occs.push_back({n, resolve(node.text)});
             return;
         }
         if (node.kind == SymKind::Str)
@@ -576,7 +612,7 @@ private:
             let_like(n, env, h);
             return;
         }
-        ix_.occs.push_back({node.kids[0], resolve(env, h)});
+        ix_.occs.push_back({node.kids[0], resolve(h)});
         walk_seq(node.kids, 1, env);
     }
 
@@ -585,10 +621,9 @@ private:
         const auto found = def_of_node_.find(n);
         const int def = found != def_of_node_.end() ? found->second : make_def(n);
         def_of_node_[n] = def;
+        const std::size_t checkpoint = env.size();
         const int b = binding_for(n);
-        std::vector<int> body_env = env;
-        if (std::ranges::find(body_env, b) == body_env.end())
-            body_env.push_back(b);
+        env_push(env, b);
         const int target = node.kids[1];
         if (ix_.nodes[target].kind == SymKind::List) {
             // Function sugar: (define (f a b) …) binds the parameters.
@@ -596,13 +631,14 @@ private:
                 const int p = ix_.nodes[target].kids[k];
                 if (ix_.nodes[p].kind != SymKind::Atom || ix_.nodes[p].text == ".")
                     continue;
-                body_env.push_back(add_binding(ix_.nodes[p]));
+                env_push(env, add_binding(ix_.nodes[p]));
             }
         }
         def_stack_.push_back(def);
-        walk_seq(node.kids, 2, body_env);
+        walk_seq(node.kids, 2, env);
         def_stack_.pop_back();
-        env.push_back(b); // visible to the following siblings
+        env_restore(env, checkpoint);
+        env_push(env, b); // visible to the following siblings
     }
 
     void type_like(int n, std::vector<int>& env) {
@@ -612,22 +648,23 @@ private:
         const auto found = def_of_node_.find(n);
         const int def = found != def_of_node_.end() ? found->second : make_def(n);
         def_of_node_[n] = def;
-        env.push_back(binding_for(n));
+        env_push(env, binding_for(n));
     }
 
     void lambda_like(int n, std::vector<int>& env) {
         const auto& node = ix_.nodes[n];
-        std::vector<int> body_env = env;
+        const std::size_t checkpoint = env.size();
         if (node.kids.size() > 1)
-            bind_params(node.kids[1], body_env);
-        walk_seq(node.kids, 2, body_env);
+            bind_params(node.kids[1], env);
+        walk_seq(node.kids, 2, env);
+        env_restore(env, checkpoint);
     }
 
     void bind_params(int node, std::vector<int>& env) {
         const auto& p = ix_.nodes[node];
         if (p.kind == SymKind::Atom) {
             if (!p.text.empty() && p.text != ".")
-                env.push_back(add_binding(p));
+                env_push(env, add_binding(p));
             return;
         }
         if (p.kind != SymKind::List)
@@ -635,7 +672,7 @@ private:
         for (int kid : p.kids) {
             const auto& a = ix_.nodes[kid];
             if (a.kind == SymKind::Atom && !a.text.empty() && a.text != ".")
-                env.push_back(add_binding(a));
+                env_push(env, add_binding(a));
         }
     }
 
@@ -643,22 +680,32 @@ private:
         const auto& node = ix_.nodes[n];
         if (node.kids.size() < 2)
             return;
+        const std::size_t checkpoint = env.size();
+        const bool star = (h == "let*" || h == "letrec*");
+        const bool rec = (h == "letrec" || h == "letrec*");
         std::size_t cursor = 1;
-        std::vector<int> body_env = env;
-        // (let loop ((i 0)) …): the loop name is a binding of the body.
+        // (let loop ((i 0)) …): the loop name is a binding of the body. A
+        // plain let evaluates its inits outside that binding, so it is pushed
+        // only after them; let*/letrec have the name in scope from the start.
+        int loop_binding = -1;
         if (ix_.nodes[node.kids[1]].kind == SymKind::Atom) {
-            body_env.push_back(add_binding(ix_.nodes[node.kids[1]]));
+            loop_binding = add_binding(ix_.nodes[node.kids[1]]);
+            if (star || rec)
+                env_push(env, loop_binding);
             cursor = 2;
         }
-        if (cursor >= node.kids.size())
+        if (cursor >= node.kids.size()) {
+            env_restore(env, checkpoint);
             return;
+        }
         const int bindings = node.kids[cursor];
         const std::size_t body_from = cursor + 1;
         const auto& bl = ix_.nodes[bindings];
-        const bool star = (h == "let*" || h == "letrec*");
-        const bool rec = (h == "letrec" || h == "letrec*");
         if (bl.kind == SymKind::List) {
-            std::vector<int> seq = body_env; // let*: earlier names are visible
+            // let: every init runs in the outer scope and the names bind only
+            // the body, so they are pushed after the loop; let*: each init sees
+            // the names before it; letrec: all names are in scope in the inits.
+            std::vector<int> pending;
             for (int pair : bl.kids) {
                 const auto& p = ix_.nodes[pair];
                 if (p.kind != SymKind::List || p.kids.empty())
@@ -667,24 +714,26 @@ private:
                 if (nm.kind != SymKind::Atom)
                     continue;
                 if (rec) {
-                    const int bd = add_binding(nm);
-                    body_env.push_back(bd);
+                    env_push(env, add_binding(nm));
                     if (p.kids.size() > 1)
-                        walk(p.kids[1], body_env);
+                        walk(p.kids[1], env);
                 } else if (star) {
                     if (p.kids.size() > 1)
-                        walk(p.kids[1], seq);
-                    const int bd = add_binding(nm);
-                    seq.push_back(bd);
-                    body_env.push_back(bd);
+                        walk(p.kids[1], env);
+                    env_push(env, add_binding(nm));
                 } else {
                     if (p.kids.size() > 1)
                         walk(p.kids[1], env);
-                    body_env.push_back(add_binding(nm));
+                    pending.push_back(add_binding(nm));
                 }
             }
+            for (int b : pending)
+                env_push(env, b);
         }
-        walk_seq(node.kids, body_from, body_env);
+        if (loop_binding >= 0 && !star && !rec)
+            env_push(env, loop_binding);
+        walk_seq(node.kids, body_from, env);
+        env_restore(env, checkpoint);
     }
 };
 
