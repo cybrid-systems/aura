@@ -272,6 +272,7 @@ jobs:
     outputs:
       code: ${{ steps.filter.outputs.code }}
       issue_matrix: ${{ steps.filter.outputs.issue_matrix }}
+      editors: ${{ steps.filter.outputs.editors }}
     steps:
     - uses: actions/checkout@v7
     - uses: dorny/paths-filter@v4
@@ -298,6 +299,8 @@ jobs:
             - 'tests/**'
             - 'build.py'
             - 'contracts'
+          editors:
+            - 'editors/**'
 
   gate:
     runs-on: ubuntu-latest
@@ -820,20 +823,104 @@ jobs:
         targets=$(python3 scripts/clang_module_targets.py build_clang)
         ninja -C build_clang $targets
 
+  # Emacs acceptance (#5266): ERT through eglot and lsp-mode against the
+  # aura executable built from this commit.  Only aura is built (no test
+  # farm), so the job also runs for editors-only PRs where `code` is
+  # false; a failure turns ci-ok red.
+  #
+  # Emacs version policy: the CI container has no Emacs, so install
+  # emacs-nox (Ubuntu 29.3; Doom's minimum is 29.1).  Emacs 31.1 was
+  # verified locally with these same suites and lsp-mode; there is no
+  # 31.x apt package for this image and a source build would add ~10m to
+  # every run.  Keep this note with the job when bumping the image.
+  #
+  # OpenEuler arm64: this workflow has no arm64 runner, so the smoke is
+  # manual.  Run scripts/emacs-openeuler-arm64-smoke.sh on the host and
+  # record its transcript in issue #5266 (see the script header).
+  emacs-ert:
+    needs: [changes]
+    if: >-
+      github.event_name == 'push' ||
+      needs.changes.outputs.code == 'true' ||
+      needs.changes.outputs.editors == 'true'
+    timeout-minutes: 45
+    runs-on: ${{ vars.AURA_HEAVY_RUNNER || 'ubuntu-latest' }}
+    container:
+      image: ghcr.io/cybrid-systems/aura-ci:v0.1.1
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        fetch-depth: 1
+
+    - uses: ./.github/actions/ci-krb5
+
+    - name: Install Python CI deps
+      run: pip install --break-system-packages -r requirements-dev.txt
+
+    - name: Ensure mold / lld
+      run: |
+        set -e
+        need_apt=0
+        command -v mold >/dev/null 2>&1 || need_apt=1
+        command -v ld.lld >/dev/null 2>&1 || need_apt=1
+        if [ "$need_apt" = 1 ]; then
+          apt-get update -qq
+          command -v mold >/dev/null 2>&1 || apt-get install -y -qq mold || echo "::warning::mold not installed"
+          command -v ld.lld >/dev/null 2>&1 || apt-get install -y -qq lld || echo "::warning::lld not installed"
+        fi
+
+    - name: Install Emacs and lsp-mode
+      run: |
+        set -e
+        export DEBIAN_FRONTEND=noninteractive
+        apt-get update -qq
+        apt-get install -y -qq --no-install-recommends emacs-nox elpa-lsp-mode
+        emacs --version | head -1
+        # eglot ships with Emacs 29.1+; print the lsp-mode version the
+        # run actually used so a client regression is attributable.
+        emacs --batch --eval "(progn (require 'lsp-mode) (princ (format \"lsp-mode %s\\n\" (or (bound-and-true-p lsp-mode-version) \"unknown\"))))"
+
+    - name: Build aura
+      env:
+        AURA_ISSUE_BUILD: none
+        AURA_BUILD_TARGETS: aura
+        AURA_DEBUG_LEVEL: "1"
+      run: python3 build.py build
+
+    - name: ERT through eglot and lsp-mode
+      env:
+        AURA_LANG_TEST_BIN: ${{ github.workspace }}/build/aura
+        AURA_LSP_DEBOUNCE_MS: "250"
+        HOME: ${{ runner.temp }}
+      run: |
+        set -euo pipefail
+        mkdir -p "$RUNNER_TEMP/emacs-ert"
+        bash editors/emacs/test/run-ert.sh 2>&1 | tee "$RUNNER_TEMP/emacs-ert/run.log"
+
+    - name: Upload ERT log
+      if: always()
+      uses: actions/upload-artifact@v7
+      with:
+        name: emacs-ert-log
+        path: ${{ runner.temp }}/emacs-ert/run.log
+        if-no-files-found: warn
+        retention-days: 7
+
   ci-ok:
     name: ci-ok
     runs-on: ubuntu-latest
-    needs: [gate, build-test, issue-farm, clang-module-arm64]
+    needs: [gate, build-test, issue-farm, clang-module-arm64, emacs-ert]
     if: always()
     steps:
-    - name: Aggregate gate + build-test + issue-farm + arm64 modules
+    - name: Aggregate gate + build-test + issue-farm + arm64 + emacs
       run: |
         set -e
         gate="${{ needs.gate.result }}"
         bt="${{ needs.build-test.result }}"
         farm="${{ needs.issue-farm.result }}"
         arm="${{ needs.clang-module-arm64.result }}"
-        echo "gate=$gate build-test=$bt issue-farm=$farm clang-module-arm64=$arm"
+        emacs="${{ needs.emacs-ert.result }}"
+        echo "gate=$gate build-test=$bt issue-farm=$farm clang-module-arm64=$arm emacs-ert=$emacs"
         if [ "$gate" != "success" ]; then
           echo "❌ gate did not succeed ($gate)"
           exit 1
@@ -850,7 +937,11 @@ jobs:
           echo "❌ clang-module-arm64 did not succeed ($arm)"
           exit 1
         fi
-        echo "✓ ci-ok (gate=$gate, build-test=$bt, issue-farm=$farm, clang-module-arm64=$arm)"
+        if [ "$emacs" != "success" ] && [ "$emacs" != "skipped" ]; then
+          echo "❌ emacs-ert did not succeed ($emacs)"
+          exit 1
+        fi
+        echo "✓ ci-ok (gate=$gate, build-test=$bt, issue-farm=$farm, clang-module-arm64=$arm, emacs-ert=$emacs)"
 
   # ASAN track — main only (saves ~8–10m on PRs; PR gate is build-test).
   # Build + verify share one job/container: the old asan-verify job

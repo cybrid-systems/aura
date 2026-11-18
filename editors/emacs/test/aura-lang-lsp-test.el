@@ -1,0 +1,376 @@
+;;; aura-lang-lsp-test.el --- ERT: aura-mode through lsp-mode and eglot  -*- lexical-binding: t; -*-
+
+;;; Commentary:
+
+;; End-to-end tests for the two Emacs LSP clients against a real
+;; "aura lsp".  The client under test comes from AURA_LANG_EMACS_CLIENT
+;; (eglot or lsp-mode); test/run-ert.sh runs the same file once per
+;; client, which is what CI does.
+;;
+;; These tests use the public client entry points where they exist:
+;;
+;;   - eglot: eglot--connect + eglot--maybe-activate-editing-mode (batch
+;;     has no idle loop to run eglot-ensure), then Flymake for the
+;;     diagnostics the user sees.
+;;   - lsp-mode: lsp with lsp-auto-guess-root (aura.toml is a project
+;;     root through aura-lang-project-root), lsp-diagnostics for the
+;;     published set, and xref for jumps.
+;;
+;; The Aura binary comes from AURA_LANG_TEST_BIN, aura-lang-executable,
+;; or PATH.  Without one the tests skip; the driver script fails the CI
+;; job when the binary is missing instead.
+;;
+;; Expected failures, with their reasons:
+;;
+;;   - aura-lang-lsp-comment-definition-does-not-bind (A2): a definition
+;;     inside a line comment still counts as bound for later code, so a
+;;     real unbound use of that name is not reported.  A2 is not merged
+;;     into this tree; flip :expected-result when it lands.
+;;
+;; A6 (LSP formatting) is not merged either, so
+;; aura-lang-lsp-no-formatting-until-a6 asserts that the server does not
+;; advertise formatting.  When A6 lands, replace it with a real
+;; format-buffer round trip that keeps Chinese comments verbatim.
+
+;;; Code:
+
+(require 'ert)
+(require 'flymake)
+(require 'xref)
+(require 'aura-lang)
+
+(defconst aura-lang-lsp-test-timeout 30
+  "Seconds to wait for a client or a diagnostic.")
+
+(defun aura-lang-lsp-test--client ()
+  "Return the client under test, eglot or lsp-mode."
+  (intern (or (getenv "AURA_LANG_EMACS_CLIENT") "eglot")))
+
+(defun aura-lang-lsp-test--binary ()
+  "Return the Aura executable for the tests, or nil."
+  (let ((candidate (or (getenv "AURA_LANG_TEST_BIN")
+                       (ignore-errors (aura-lang-executable))
+                       (executable-find "aura"))))
+    (and candidate (file-executable-p candidate) candidate)))
+
+(defun aura-lang-lsp-test--wait (predicate &optional seconds)
+  "Wait until PREDICATE returns non-nil, or SECONDS elapse."
+  (let ((deadline (+ (float-time) (or seconds aura-lang-lsp-test-timeout))))
+    (while (and (< (float-time) deadline) (not (funcall predicate)))
+      (accept-process-output nil 0.2))
+    (funcall predicate)))
+
+(defun aura-lang-lsp-test--write-file (root name text)
+  "Write TEXT to NAME under ROOT, creating parent directories."
+  (let ((file (expand-file-name name root)))
+    (make-directory (file-name-directory file) t)
+    (with-temp-file file (insert text))))
+
+(defun aura-lang-lsp-test--project (files &optional prefix)
+  "Create a temporary project with FILES (an alist of name . text)."
+  (let* ((root (make-temp-file (or prefix "aura-lsp-test-") t))
+         (default-directory root))
+    (aura-lang-lsp-test--write-file root "aura.toml"
+                                    "[package]\nname = \"lsp-test\"\n")
+    (dolist (entry files)
+      (aura-lang-lsp-test--write-file root (car entry) (cdr entry)))
+    root))
+
+(defun aura-lang-lsp-test--connect (buffer)
+  "Connect BUFFER through the client under test and wait for readiness."
+  (with-current-buffer buffer
+    (flymake-mode 1)
+    (pcase (aura-lang-lsp-test--client)
+      ('eglot
+       (require 'eglot)
+       ;; eglot-ensure needs the idle loop; batch connects directly.
+       (apply #'eglot--connect (eglot--guess-contact))
+       (should (aura-lang-lsp-test--wait (lambda () (eglot-current-server))))
+       ;; aura exits once during eglot's first handshake and eglot
+       ;; reconnects; let that settle before binding didOpen/Flymake to
+       ;; the surviving server, or the edit test loses its backend.
+       (accept-process-output nil 1.0)
+       (when (eglot-current-server)
+         (eglot--maybe-activate-editing-mode)
+         ;; eglot 31 tracks a documented version; older eglot (Emacs
+         ;; 29.3) has no such variable and is left alone.
+         (when (and (boundp 'eglot--docver) (cl-minusp eglot--docver))
+           (eglot--signal-textDocument/didOpen))
+         ;; The Flymake backend is only installed once managed; without
+         ;; this start no push ever reaches flymake-diagnostics.
+         (flymake-mode 1)
+         (flymake-start))
+       (should (eglot-current-server)))
+      ('lsp-mode
+       (require 'lsp-mode)
+       (setq lsp-auto-guess-root t
+             lsp-restart 'ignore
+             lsp-lens-enable nil
+             lsp-enable-snippet nil)
+       (setq-local lsp-diagnostics-provider :flymake)
+       (lsp)
+       (should (aura-lang-lsp-test--wait
+                (lambda ()
+                  (and (lsp-workspaces)
+                       (eq (lsp--workspace-status (car (lsp-workspaces)))
+                           'initialized)))))
+       ;; didOpen follows the initialize callback; give it one turn.
+       (accept-process-output nil 0.5))
+      (other (error "Unknown AURA_LANG_EMACS_CLIENT: %S" other)))))
+
+(defun aura-lang-lsp-test--eglot-diagnostics ()
+  "Return (MESSAGE . TEXT) for the buffer's Flymake diagnostics."
+  (mapcar (lambda (diagnostic)
+            (cons (flymake-diagnostic-text diagnostic)
+                  (buffer-substring-no-properties
+                   (flymake-diagnostic-beg diagnostic)
+                   (flymake-diagnostic-end diagnostic))))
+          (flymake-diagnostics)))
+
+(defun aura-lang-lsp-test--lsp-mode-diagnostics ()
+  "Return (MESSAGE . TEXT) for lsp-mode's published diagnostics."
+  (when-let* ((workspace (car (lsp-workspaces)))
+              (file (buffer-file-name)))
+    (let ((table (lsp-diagnostics workspace))
+          (uri (lsp--path-to-uri file)))
+      (cl-loop for key being the hash-keys of table using (hash-value items)
+               when (or (equal key file) (equal key uri))
+               append (cl-loop for item in (cond ((vectorp items)
+                                                   (append items nil))
+                                                  ((listp items) items)
+                                                  (t (list items)))
+                               collect (cons (gethash "message" item)
+                                             (ignore-errors
+                                               (lsp--range-text
+                                                (gethash "range" item)))))))))
+
+(defun aura-lang-lsp-test--diagnostics ()
+  "Return the buffer's (MESSAGE . TEXT) diagnostics for this client."
+  (pcase (aura-lang-lsp-test--client)
+    ('eglot (aura-lang-lsp-test--eglot-diagnostics))
+    ('lsp-mode (aura-lang-lsp-test--lsp-mode-diagnostics))))
+
+(defun aura-lang-lsp-test--wait-diagnostic (regexp &optional seconds)
+  "Wait for a diagnostic whose message matches REGEXP; return it.
+A nil result after SECONDS means none arrived; a negative assertion
+should pass a short SECONDS instead of the full client timeout."
+  (aura-lang-lsp-test--wait
+   (lambda ()
+     (seq-find (lambda (entry) (string-match-p regexp (car entry)))
+               (aura-lang-lsp-test--diagnostics)))
+   seconds))
+
+(defun aura-lang-lsp-test--flush-changes ()
+  "Send the pending didChange that the client's idle timer would send.
+Batch Emacs never becomes idle, so both clients' idle timers stay
+armed; this calls the same sender the timer calls."
+  (pcase (aura-lang-lsp-test--client)
+    ('eglot (eglot--signal-textDocument/didChange))
+    ('lsp-mode (lsp--flush-delayed-changes))))
+
+(defun aura-lang-lsp-test--formatting-capability ()
+  "Return the server's documentFormattingProvider value."
+  (pcase (aura-lang-lsp-test--client)
+    ('eglot
+     (or (eglot-server-capable :documentFormattingProvider) :absent))
+    ('lsp-mode
+     (let ((caps (lsp--workspace-server-capabilities (car (lsp-workspaces)))))
+       (or (gethash "documentFormattingProvider" caps) :absent)))))
+
+(defun aura-lang-lsp-test--jump (context name)
+  "Jump to the definition of NAME, which follows CONTEXT.
+Return (FILE LINE LINE-TEXT)."
+  (goto-char (point-min))
+  (search-forward context)
+  (goto-char (+ (- (point) (length context))
+                (string-match (regexp-quote name) context)))
+  (let ((identifier (if (eq (aura-lang-lsp-test--client) 'lsp-mode)
+                        (propertize name 'identifier-at-point t)
+                      name)))
+    (xref-find-definitions identifier))
+  (list buffer-file-name
+        (line-number-at-pos)
+        (string-trim
+         (buffer-substring-no-properties (line-beginning-position)
+                                         (line-end-position)))))
+
+(defun aura-lang-lsp-test--shutdown ()
+  "Stop the client under test and its server process."
+  (pcase (aura-lang-lsp-test--client)
+    ('eglot
+     (when-let* ((server (eglot-current-server)))
+       (ignore-errors (eglot-shutdown server 2))
+       (when-let* ((process (jsonrpc--process server)))
+         (delete-process process))))
+    ('lsp-mode
+     (dolist (workspace (lsp-workspaces))
+       (when-let* ((process (lsp--workspace-proc workspace)))
+         (delete-process process))))))
+
+(defun aura-lang-lsp-test--with-project (files prefix function)
+  "Create a project with FILES and PREFIX, connect, call FUNCTION.
+FUNCTION runs in the connected main.aura buffer; the server is shut
+down and the project removed afterwards."
+  (let ((root (aura-lang-lsp-test--project files prefix)))
+    (let ((buffer (find-file-noselect (expand-file-name "main.aura" root))))
+      (unwind-protect
+          (with-current-buffer buffer
+            (aura-lang-lsp-test--connect buffer)
+            (funcall function))
+        (with-current-buffer buffer
+          (ignore-errors (aura-lang-lsp-test--shutdown)))
+        (when (buffer-live-p buffer) (kill-buffer buffer))
+        (delete-directory root t)))))
+
+(defun aura-lang-lsp-test--ready ()
+  "Skip the test unless a client and an Aura binary are available."
+  ;; skip-unless only expands inside ert-deftest bodies; this helper is a
+  ;; plain function, so it calls ert-skip directly.
+  (unless (memq (aura-lang-lsp-test--client) '(eglot lsp-mode))
+    (ert-skip "unknown AURA_LANG_EMACS_CLIENT"))
+  (let ((binary (aura-lang-lsp-test--binary)))
+    (unless binary
+      (ert-skip "aura binary not found"))
+    ;; AURA_LANG_TEST_BIN must win over an installed aura on PATH; the
+    ;; CI job tests the binary built from this commit.
+    (setq aura-lang-executable binary)
+    (message "aura-lang ERT binary: %s (%s)" binary (string-trim
+                                                     (shell-command-to-string
+                                                      (concat (shell-quote-argument binary)
+                                                              " --version"))))))
+
+(ert-deftest aura-lang-lsp-client-loads ()
+  "The selected client is installed and can start a server."
+  (pcase (aura-lang-lsp-test--client)
+    ('eglot
+     (require 'eglot)
+     (should (fboundp 'eglot-ensure))
+     (should (fboundp 'eglot--connect)))
+    ('lsp-mode
+     (require 'lsp-mode)
+     (should (fboundp 'lsp))
+     (should (fboundp 'lsp-request)))))
+
+(ert-deftest aura-lang-lsp-diagnostics-on-open ()
+  "Opening an .aura file immediately publishes its diagnostics."
+  (aura-lang-lsp-test--ready)
+  (aura-lang-lsp-test--with-project
+      '(("main.aura" . "(define (f x)\n  (memq x 1))\n")) nil
+    (lambda ()
+      (let ((diagnostic (aura-lang-lsp-test--wait-diagnostic
+                         "unbound variable: memq")))
+        (should diagnostic)
+        (should (equal (cdr diagnostic) "memq"))))))
+
+(ert-deftest aura-lang-lsp-diagnostics-unsaved-edit ()
+  "An edit that is not saved is analyzed after the debounce (A1)."
+  (aura-lang-lsp-test--ready)
+  (aura-lang-lsp-test--with-project
+      '(("main.aura" . "(define (f x)\n  x)\n")) nil
+    (lambda ()
+      (let ((file buffer-file-name))
+        (should-not (aura-lang-lsp-test--wait-diagnostic "unbound variable" 2))
+        (goto-char (point-max))
+        (insert "(display oops)\n")
+        (set-buffer-modified-p t)
+        (aura-lang-lsp-test--flush-changes)
+        (let ((diagnostic (aura-lang-lsp-test--wait-diagnostic
+                           "unbound variable: oops")))
+          (should diagnostic)
+          (should (buffer-modified-p))
+          ;; The disk file still has no oops: the server used didChange,
+          ;; not a didSave/file read.
+          (should-not (with-temp-buffer
+                        (insert-file-contents file)
+                        (string-match-p "oops" (buffer-string)))))))))
+
+(ert-deftest aura-lang-lsp-comment-definition-does-not-bind ()
+  "A definition inside a comment does not bind the name (A2)."
+  :expected-result :failed
+  ;; A2 is not in this tree: the analysis still sees the commented
+  ;; (define ghost 1), so ghost is considered bound and no unbound
+  ;; diagnostic is published.  This test names the desired behavior and
+  ;; must flip to unexpected-pass when A2 lands.
+  (aura-lang-lsp-test--ready)
+  (aura-lang-lsp-test--with-project
+      '(("main.aura" . "; (define ghost 1)\n(display ghost)\n")) nil
+    (lambda ()
+      ;; Five seconds is many debounce windows; the analysis itself is
+      ;; immediate on didOpen, so a nil result is the A2 gap, not slowness.
+      (should (aura-lang-lsp-test--wait-diagnostic "unbound variable: ghost" 5)))))
+
+(ert-deftest aura-lang-lsp-path-with-plus-and-at ()
+  "A project path containing + and @ still analyses the buffer (A1)."
+  (aura-lang-lsp-test--ready)
+  (aura-lang-lsp-test--with-project
+      '(("main.aura" . "(define (f x)\n  (memq x 1))\n"))
+      "aura-lsp+smoke@"
+    (lambda ()
+      (should (string-match-p "[+@]" (buffer-file-name)))
+      (should (aura-lang-lsp-test--wait-diagnostic "unbound variable: memq")))))
+
+(ert-deftest aura-lang-lsp-definition-same-file ()
+  "Definition of a local function jumps inside the same file."
+  (aura-lang-lsp-test--ready)
+  (aura-lang-lsp-test--with-project
+      '(("main.aura" . "(define (same x) x)\n(display (same 2))\n")) nil
+    (lambda ()
+      (let ((target (aura-lang-lsp-test--jump "(display (same" "same")))
+        (should (equal (file-truename (nth 0 target))
+                       (file-truename buffer-file-name)))
+        (should (equal (nth 1 target) 1))
+        (should (string-prefix-p "(define (same" (nth 2 target)))))))
+
+(ert-deftest aura-lang-lsp-definition-cross-require ()
+  "Definition in a required local module is found."
+  (aura-lang-lsp-test--ready)
+  (aura-lang-lsp-test--with-project
+      '(("main.aura" . "(require \"lib/util.aura\" all:)\n(display (helper 1))\n")
+        ("lib/util.aura" . "(define (helper x)\n  (+ x 1))\n")) nil
+    (lambda ()
+      (let ((target (aura-lang-lsp-test--jump "(display (helper" "helper")))
+        (should (string-suffix-p "lib/util.aura" (nth 0 target)))
+        (should (equal (nth 1 target) 1))
+        (should (string-prefix-p "(define (helper" (nth 2 target)))))))
+
+(ert-deftest aura-lang-lsp-definition-std ()
+  "Definition in a std module is found through module search."
+  (aura-lang-lsp-test--ready)
+  (aura-lang-lsp-test--with-project
+      '(("main.aura" . "(require \"std/list\" all:)\n(display (foldr + 0 (list 1 2)))\n")) nil
+    (lambda ()
+      (let ((target (aura-lang-lsp-test--jump "(display (foldr" "foldr")))
+        (should (string-suffix-p "std/list.aura" (nth 0 target)))
+        (should (string-prefix-p "(define (foldr" (nth 2 target)))))))
+
+(ert-deftest aura-lang-lsp-no-formatting-until-a6 ()
+  "The server must not advertise formatting before A6 ships."
+  (aura-lang-lsp-test--ready)
+  (aura-lang-lsp-test--with-project
+      '(("main.aura" . "(define (f x)\n  x)\n")) nil
+    (lambda ()
+      (should (eq (aura-lang-lsp-test--formatting-capability) :absent))
+      ;; A6's second wave owns the Chinese-comment round trip.  Until then
+      ;; the client must not offer format-buffer for Aura buffers.
+      (should-not (pcase (aura-lang-lsp-test--client)
+                    ('eglot (eglot-server-capable :documentFormattingProvider))
+                    ('lsp-mode (gethash "documentFormattingProvider"
+                                        (lsp--workspace-server-capabilities
+                                         (car (lsp-workspaces))))))))))
+
+(ert-deftest aura-lang-lsp-chinese-columns ()
+  "A diagnostic after Chinese text covers exactly the bad symbol."
+  (aura-lang-lsp-test--ready)
+  (aura-lang-lsp-test--with-project
+      '(("main.aura" . "(define s \"漢字\") (display oops)\n")) nil
+    (lambda ()
+      (let ((diagnostic (aura-lang-lsp-test--wait-diagnostic
+                         "unbound variable: oops")))
+        (should diagnostic)
+        ;; Both clients negotiate a real encoding (utf-8 with today's
+        ;; eglot/lsp-mode).  A byte offset copied without conversion would
+        ;; underline part of the string instead of oops.
+        (should (equal (cdr diagnostic) "oops"))))))
+
+(provide 'aura-lang-lsp-test)
+;;; aura-lang-lsp-test.el ends here
