@@ -83,6 +83,7 @@ import aura.compiler.ir_cache_pure;
 import aura.compiler.ast_walkers;
 import aura.core.type;
 import aura.parser.parser;
+import aura.parser.lexer; // SourceLineOrigin (#5347)
 import aura.core.mutation;
 import aura.core.lifetime_pin; // Issue #4683: linear_root_snapshot gate
 import aura.compiler.evaluator;
@@ -2057,7 +2058,11 @@ public:
         std::vector<aura::diag::Diagnostic> diagnostics;
     };
 
-    TypecheckResult typecheck_full(std::string_view input);
+    // `origins` is the per-file line baseline of a concatenated buffer
+    // (#5347). Empty for a single file. The parse error's location stays a
+    // buffer line (callers map it); the message text uses the file line.
+    TypecheckResult typecheck_full(std::string_view input,
+                                   std::span<const aura::parser::SourceLineOrigin> origins = {});
 
     // Issue #148 Phase 5: incremental type inference API.
     // Given a MutationRecord (typically obtained from
