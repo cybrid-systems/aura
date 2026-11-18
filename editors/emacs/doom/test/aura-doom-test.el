@@ -280,6 +280,89 @@ OUTPUT nil means no executable at all."
     (should (aura-doom-test--somewhere '+aura-lookup-documentation
                                        (aura-doom-test--last 'set-lookup-handlers!)))))
 
+(ert-deftest aura-doom-lookup-documentation-eglot-hover ()
+  "Under eglot, K shows the server hover and never starts the REPL.
+#5350: the module used to ask the REPL's :doc first, so eglot showed
+\"no such primitive\" for a function the server can describe."
+  (skip-unless (require 'eglot nil t))
+  (aura-doom-test--with-binary "aura 0.2.7"
+    (aura-doom-test--load-config)
+    (with-temp-buffer
+      (insert "(piece-x q)")
+      (goto-char (point-min))
+      (let ((sent nil))
+        (cl-letf (((symbol-function 'eglot-managed-p) (lambda (&optional _) t))
+                  ((symbol-function 'eglot-hover-eldoc-function)
+                   (lambda (cb &rest _) (funcall cb "(piece-x q)")))
+                  ((symbol-function '+aura--send)
+                   (lambda (&rest _) (setq sent t) nil)))
+          (should (+aura-lookup-documentation "piece-x"))
+          (should-not sent)
+          (with-current-buffer "*aura-doc*"
+            (should (string-match-p "(piece-x q)" (buffer-string)))))))))
+
+(ert-deftest aura-doom-lookup-documentation-lsp-mode ()
+  "lsp-mode keeps its own describe buffer for K."
+  (aura-doom-test--with-binary "aura 0.2.7"
+    (aura-doom-test--load-config)
+    (with-temp-buffer
+      (insert "(piece-x q)")
+      (goto-char (point-min))
+      (let ((described nil)
+            (old-lsp-mode (and (boundp 'lsp-mode) lsp-mode)))
+        (unwind-protect
+            (progn
+              ;; bound-and-true-p reads the global value; a lexical let
+              ;; would leave it void.
+              (setq lsp-mode t)
+              (cl-letf (((symbol-function 'eglot-managed-p) (lambda (&optional _) nil))
+                        ((symbol-function 'lsp-describe-thing-at-point)
+                         (lambda () (interactive) (setq described t)))
+                        ((symbol-function '+aura--send)
+                         (lambda (&rest _) (error "the REPL must not start"))))
+                (should (+aura-lookup-documentation "piece-x"))
+                (should described)))
+          (setq lsp-mode old-lsp-mode))))))
+
+(ert-deftest aura-doom-lookup-definition-primitive ()
+  "g d on a primitive stops with a message; point stays put."
+  (aura-doom-test--with-binary "aura 0.2.7"
+    (aura-doom-test--load-config)
+    (with-temp-buffer
+      (insert "(define (piece-x q) (car q))")
+      (goto-char (point-min))
+      (search-forward "car")
+      (let ((point-before (point))
+            (doc-answer nil))
+        (cl-letf (((symbol-function 'xref-find-definitions)
+                   (lambda (&rest _) (error "no definition")))
+                  ((symbol-function 'imenu--make-index-alist)
+                   (lambda (&rest _) nil))
+                  ((symbol-function 'imenu)
+                   (lambda (&rest _) (error "imenu must not run for a primitive")))
+                  ((symbol-function '+aura--send)
+                   (lambda (text) (setq doc-answer text) "car/1 (value x) -> y")))
+          (let ((err (should-error (+aura-lookup-definition "car")
+                                   :type 'user-error)))
+            (should (string-match-p "primitive" (error-message-string err))))
+          (should (equal doc-answer ":doc car"))
+          (should (= (point) point-before)))))))
+
+(ert-deftest aura-doom-lookup-definition-defined ()
+  "g d on a defined name still jumps through xref."
+  (aura-doom-test--with-binary "aura 0.2.7"
+    (aura-doom-test--load-config)
+    (with-temp-buffer
+      (insert "(piece-x q)")
+      (goto-char (point-min))
+      (let ((jumped nil))
+        (cl-letf (((symbol-function 'xref-find-definitions)
+                   (lambda (id &rest _) (setq jumped id) t))
+                  ((symbol-function '+aura--send)
+                   (lambda (&rest _) (error "the REPL must not start"))))
+          (should (+aura-lookup-definition "piece-x"))
+          (should (equal jumped "piece-x")))))))
+
 (ert-deftest aura-doom-localleader ()
   "The localleader holds goto, send, world, REPL and doc keys."
   (aura-doom-test--with-binary "aura 0.2.7"
