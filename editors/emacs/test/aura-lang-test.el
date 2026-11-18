@@ -157,6 +157,54 @@
        (should (member "m" names))
        (should (member "point" names))))))
 
+(ert-deftest aura-lang-autoloads-load-before-project ()
+  "Generated autoloads load in emacs -Q before project.el exists.
+`project-find-functions' is not bound until project.el is loaded.  After
+that load, `aura-lang-project-root' is on the list."
+  (let* ((root (make-temp-file "aura-loaddefs" t))
+         (src (expand-file-name "pkg" root))
+         (out (expand-file-name "aura-lang-autoloads.el" root))
+         (lib (or (locate-library "aura-lang.el" t)
+                  (let ((compiled (locate-library "aura-lang")))
+                    (and compiled
+                         (expand-file-name
+                          "aura-lang.el"
+                          (file-name-directory compiled))))))
+         (emacs (expand-file-name invocation-name invocation-directory)))
+    (unwind-protect
+        (progn
+          (should (and lib (file-readable-p lib)))
+          (should (string-suffix-p ".el" lib))
+          (make-directory src)
+          (copy-file lib (expand-file-name "aura-lang.el" src) t)
+          (require 'loaddefs-gen)
+          (loaddefs-generate src out)
+          (should (file-readable-p out))
+          (with-temp-buffer
+            (insert-file-contents out)
+            (goto-char (point-min))
+            (should (search-forward "(with-eval-after-load 'project" nil t))
+            ;; The registration must not run at top level.  The deferred
+            ;; form is indented inside `with-eval-after-load'.
+            (goto-char (point-min))
+            (should-not (re-search-forward
+                         "^\\((add-to-list 'project-find-functions\\)" nil t)))
+          (with-temp-buffer
+            (let ((status
+                   (call-process
+                    emacs nil (list t nil) nil
+                    "-Q" "--batch"
+                    "--eval" (format "(load %S)" out)
+                    "--eval" "(require 'project)"
+                    "--eval"
+                    (concat "(unless (and (boundp 'project-find-functions)"
+                            " (memq 'aura-lang-project-root project-find-functions))"
+                            " (error \"missing: %S\" project-find-functions))"))))
+              (unless (eq 0 status)
+                (error "emacs -Q autoload check failed (%s):\n%s"
+                       status (buffer-string))))))
+      (delete-directory root t))))
+
 (ert-deftest aura-lang-project-root ()
   "aura.toml marks the project root for project-current."
   (let* ((root (make-temp-file "aura-project" t))

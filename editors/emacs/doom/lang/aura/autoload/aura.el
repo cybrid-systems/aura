@@ -1,7 +1,15 @@
 ;;; lang/aura/autoload/aura.el -*- lexical-binding: t; -*-
 
-;; Doom loads module autoloads (including `doom doctor') before config.el, so
-;; the formatter gate lives here: both the startup config and doctor need it.
+;; The formatter gate lives in this file because both config.el and doctor.el
+;; need it, and `doom doctor' loads doctor.el without loading config.el.
+;;
+;; Do not rely on Doom's generated module loaddefs to define these symbols.
+;; `doom-module-from-path' decides which module directories are scanned by
+;; calling `file-in-directory-p', and that compares `file-truename's.  A
+;; module installed as a symlink whose target is outside
+;; `doom-module-load-path' fails that check, so autoload/aura.el is omitted
+;; from 60-doom-module-loaddefs.init.el (a plain copy of the directory is
+;; scanned).  config.el and doctor.el load this file themselves.
 
 ;;
 ;;; The `aura --fmt' gate

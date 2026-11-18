@@ -387,8 +387,16 @@ transient project so `project-current' works outside VC."
   (when-let* ((root (locate-dominating-file dir "aura.toml")))
     (cons 'transient (file-name-as-directory (expand-file-name root)))))
 
+;; `project-find-functions' lives in project.el, which Emacs does not preload.
+;; An autoload cookie copies this form into the package autoloads file, and
+;; that file is loaded at startup (`emacs -Q', package-quickstart, straight,
+;; `doom install') before project.el exists.  Touching the variable there is
+;; a void-variable error.  Defer the registration until project.el is loaded;
+;; `add-to-list' does not add a duplicate when both this form and a later
+;; load of this file run.
 ;;;###autoload
-(add-to-list 'project-find-functions #'aura-lang-project-root)
+(with-eval-after-load 'project
+  (add-to-list 'project-find-functions #'aura-lang-project-root))
 
 (add-to-list 'project-vc-extra-root-markers "aura.toml")
 

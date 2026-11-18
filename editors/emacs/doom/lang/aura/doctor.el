@@ -6,6 +6,16 @@
 ;; an Aura buffer happened to be opened in this session.
 (require 'aura-lang nil t)
 
+;; `doom doctor' does not load config.el.  Load the gate directly so a
+;; symlinked module, which Doom's autoload scan skips, still has
+;; `+aura-formatter-state'.  See autoload/aura.el.
+(let ((module-file (or load-file-name
+                       (bound-and-true-p byte-compile-current-file)
+                       buffer-file-name)))
+  (when module-file
+    (load (expand-file-name "autoload/aura.el" (file-name-directory module-file))
+          nil 'nomessage)))
+
 (defun +aura-doctor--state ()
   "Return the formatter gate's verdict as a plist.
 Without aura-lang the binary is unknown, which is also the :missing state."
