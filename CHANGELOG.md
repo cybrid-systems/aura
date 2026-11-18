@@ -2,9 +2,22 @@
 
 ## 0.2.7
 
-`aura lsp` is the editor surface; the VS Code-only extension is gone.
+Developer-experience release: `aura lsp` becomes a daily-usable language server, and Doom Emacs gets a one-line `:lang (aura +lsp)` integration. No new syntax. The API is still not stable.
 
+- LSP protocol (#5258): the server is split into transport, position, document, diagnostics and handler layers. It negotiates `positionEncoding` (utf-8 or utf-16), keys documents by normalized path so Emacs-style URIs (unescaped `+ @ :`, raw UTF-8, uppercase `%XX`) resolve to one buffer, publishes debounced diagnostics after `didChange` and answers pull diagnostics, clears them on `didClose`, returns `-32700`/`-32600` for malformed input, survives `initialize` without an id, reports the real binary version, reads `rootUri`/`workspaceFolders`, and resolves `AURA_PATH` and `std/` with the runtime's own module search.
+- Symbol layer (#5259): indexing is built on the reader's form spans instead of text search. Comments and strings can no longer define a name, `define`, `define-hygienic-macro`, `define-type` and `define-struct` are covered (`define-syntax`/`define-record-type` are not, they do not exist at runtime), nested defines are children of their scope, and `documentSymbol`, `workspace/symbol`, `foldingRange`, `selectionRange`, `documentLink`, `documentHighlight` and local binding goto work.
+- References and rename (#5260): references follow the binding, so a name defined in a required file is visible to its requirers and not the reverse; comment/string text and shadowed locals stay out. Rename returns a multi-file `WorkspaceEdit` only — it never calls `mutate:*` or touches the live workspace — and refuses primitives, `std/` definitions, illegal identifiers and names already bound in a file it would edit.
+- Hover, signatures and completion (#5261): primitive signature and documentation come from the same registry REPL `:doc` reads (a test compares them), user defines show their parameter list and adjacent comment, `require` strings show the resolved path, `signatureHelp` marks the active parameter, and completion offers primitives, visible defines and locals, and `require` paths across the project root, `AURA_PATH` and `std`. Type strings in hover wait on the type-observation contract.
+- Diagnostics (#5262): the server consumes structured diagnostics directly — `code`, class-based severity, `relatedInformation` for require edges, and a `source`-free message with the hint split out. Type errors arrive as Warnings by default, switchable to off or Error through `initializationOptions` or `didChangeConfiguration`, and a did-you-mean hint becomes a `codeAction` quickfix.
+- Formatting (#5263): `aura --fmt` keeps every comment (Chinese included), keeps `(define (f x) …)` sugar, does not wrap a multi-form file in `(begin …)`, is idempotent, refuses unparsable input, and no longer rewrites in place when it would lose trivia. `--unparse` keeps the old AST printer. `textDocument/formatting` and `rangeFormatting` call the same formatter.
+- Emacs and Doom (#5264, #5265, #5266): `editors/emacs/aura-lang.el` provides `aura-mode`, an `inferior-aura` REPL, binary discovery, and registration for both lsp-mode and eglot; `editors/emacs/doom/lang/aura/` adds the `:lang (aura +lsp)` module with REPL/eval/lookup bindings and a formatter gate that only enables `--fmt` on a version that preserves comments. A batch ERT job in CI drives both clients against the real server.
 - Editors (#5273): the TextMate grammar moves to `editors/grammar/aura.tmLanguage.json` as the single keyword and definition-form source, and the VS Code-specific extension (`editors/vscode/`) is removed. `aura lsp` is unchanged; any LSP client speaks to it over stdio.
+
+Not in this version:
+
+- Debugger and DAP, semantic tokens, inlay hints, tree-sitter grammar, TCP mode, MELPA/ELPA publication.
+- Type strings in hover and type-aware completion (waiting on the type-observation contract).
+- macOS, Windows, and other Linux distributions.
 
 ## 0.2.6
 
