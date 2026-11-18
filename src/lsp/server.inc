@@ -212,6 +212,126 @@ struct Server {
         return "[" + arr + "]";
     }
 
+
+    // ── references / prepareRename / rename (#5260) ────────────
+    // None of these edits anything. references answers Locations; the rename
+    // pair answers ranges (and a WorkspaceEdit) that the client applies. No
+    // mutate:* primitive, no evaluator workspace, no file write: the boundary
+    // with #5252 is that this is text, not a live-workspace mutation.
+    std::string request_key(const Json& params) const {
+        return DocumentStore::key_of(params.at("textDocument").at("uri").s);
+    }
+
+    std::size_t request_offset(const Json& params, const std::string& text) const {
+        const LineIndex li(text);
+        const int line = static_cast<int>(params.at("position").at("line").n);
+        const auto character = static_cast<long long>(params.at("position").at("character").n);
+        return std::min(text.size(), byte_offset_at(text, li, codec, line, character));
+    }
+
+    // textDocument/references: the declaration (when asked) plus every site
+    // that resolves to the same binding, across the require graph.
+    std::string references(const Json& params) {
+        const std::string key = request_key(params);
+        const std::string text = store.text_of(key);
+        RenameService svc{store, prims, workspace_files()};
+        const RefTarget t = svc.resolve(key, request_offset(params, text));
+        if (!t.ok)
+            return "[]"; // a comment, a string, a primitive, or a name with no definition
+        bool include_decl = true;
+        if (const Json* ctx = params.get("context"); ctx && ctx->t == Json::T::Obj)
+            if (const Json* inc = ctx->get("includeDeclaration"); inc && inc->t == Json::T::Bool)
+                include_decl = inc->b;
+        std::string arr;
+        for (const auto& s : svc.sites(t)) {
+            if (!include_decl && s.declaration)
+                continue;
+            if (!arr.empty())
+                arr += ',';
+            arr += location_json(s.key, s.span);
+        }
+        return "[" + arr + "]";
+    }
+
+    // A std/ declaration is listed by references but never rewritten: the
+    // reason names the file so the editor can show where the binding lives.
+    static std::string std_refusal(const RefTarget& t) {
+        return "aura lsp: cannot rename: '" + t.name + "' is defined in the standard library (" +
+               t.key + "); rename edits the program, never a shared std/ module";
+    }
+
+    // textDocument/prepareRename: the name token's range and placeholder, or a
+    // RequestError whose message says why this name may not be renamed.
+    bool prepare_rename(const Json& params, const Json& id) {
+        const std::string key = request_key(params);
+        const std::string text = store.text_of(key);
+        RenameService svc{store, prims, workspace_files()};
+        const RefTarget t = svc.resolve(key, request_offset(params, text));
+        if (!t.ok) {
+            reply_error(id, -32602, "aura lsp: cannot rename: " + t.reason);
+            return true;
+        }
+        if (t.std_file) {
+            reply_error(id, -32602, std_refusal(t));
+            return true;
+        }
+        const std::string dtext = store.text_of(t.key);
+        const LineIndex li(dtext);
+        reply(id, std::format(R"({{"range":{},"placeholder":{}}})",
+                              range_json(dtext, li, codec, t.decl), q(t.name)));
+        return true;
+    }
+
+    // textDocument/rename: a WorkspaceEdit (one changes entry per file) built
+    // from the same sites. Applying it is the client's job; the server keeps
+    // its hands off the files and the live workspace.
+    bool rename(const Json& params, const Json& id) {
+        const std::string key = request_key(params);
+        const std::string text = store.text_of(key);
+        const std::string new_name = params.at("newName").s;
+        RenameService svc{store, prims, workspace_files()};
+        const RefTarget t = svc.resolve(key, request_offset(params, text));
+        if (!t.ok) {
+            reply_error(id, -32602, "aura lsp: cannot rename: " + t.reason);
+            return true;
+        }
+        if (t.std_file) {
+            reply_error(id, -32602, std_refusal(t));
+            return true;
+        }
+        const auto sites = svc.sites(t);
+        if (const std::string why = svc.check_new_name(t, sites, new_name); !why.empty()) {
+            reply_error(id, -32602,
+                        "aura lsp: cannot rename '" + t.name + "' to '" + new_name + "': " + why);
+            return true;
+        }
+        // One entry per file (sorted, so the reply is stable): a changes map
+        // keyed by the URI the client already uses for that document.
+        std::vector<std::pair<std::string, std::string>> per_file;
+        for (const auto& s : sites) {
+            const std::string ftext = store.text_of(s.key);
+            const LineIndex li(ftext);
+            auto it = std::ranges::find_if(per_file,
+                                           [&](const auto& p) { return p.first == s.key; });
+            if (it == per_file.end()) {
+                per_file.emplace_back(s.key, std::string{});
+                it = per_file.end() - 1;
+            }
+            if (!it->second.empty())
+                it->second += ',';
+            it->second += std::format(R"({{"range":{},"newText":{}}})",
+                                      range_json(ftext, li, codec, s.span), q(new_name));
+        }
+        std::string changes;
+        for (const auto& [file, arr] : per_file) {
+            if (!changes.empty())
+                changes += ',';
+            changes += std::format("{}:[{}]", q(store.uri_of(file)), arr);
+        }
+        reply(id, "{\"changes\":{" + changes + "}}");
+        return true;
+    }
+
     std::string symbol_json(const DocIndex& ix, std::string_view text, const LineIndex& li,
                             int def) const {
         const auto& d = ix.defs[def];
@@ -605,7 +725,7 @@ struct Server {
         if (!id)
             return; // initialize as a notification: state is set, nothing to answer
         reply(*id, std::format(
-            R"({{"capabilities":{{"positionEncoding":{},"textDocumentSync":{{"openClose":true,"change":1,"save":{{"includeText":false}}}},"definitionProvider":true,"hoverProvider":true,"signatureHelpProvider":{{"triggerCharacters":["("," "]}},"completionProvider":{{"triggerCharacters":["("," ","\""],"resolveProvider":false}},"documentFormattingProvider":true,"documentRangeFormattingProvider":true,"documentHighlightProvider":true,"documentSymbolProvider":true,"workspaceSymbolProvider":true,"foldingRangeProvider":true,"selectionRangeProvider":true,"documentLinkProvider":{{"resolveProvider":false}},"diagnosticProvider":{{"identifier":"aura","interFileDependencies":true,"workspaceDiagnostics":false}}}},"serverInfo":{{"name":"aura-lsp","version":{}}}}})",
+            R"({{"capabilities":{{"positionEncoding":{},"textDocumentSync":{{"openClose":true,"change":1,"save":{{"includeText":false}}}},"definitionProvider":true,"hoverProvider":true,"signatureHelpProvider":{{"triggerCharacters":["("," "]}},"completionProvider":{{"triggerCharacters":["("," ","\""],"resolveProvider":false}},"documentFormattingProvider":true,"documentRangeFormattingProvider":true,"documentHighlightProvider":true,"documentSymbolProvider":true,"workspaceSymbolProvider":true,"foldingRangeProvider":true,"selectionRangeProvider":true,"documentLinkProvider":{{"resolveProvider":false}},"referencesProvider":true,"renameProvider":{{"prepareProvider":true}},"diagnosticProvider":{{"identifier":"aura","interFileDependencies":true,"workspaceDiagnostics":false}}}},"serverInfo":{{"name":"aura-lsp","version":{}}}}})",
             q(encoding), q(AURA_BUILD_VERSION)));
     }
 
@@ -692,6 +812,15 @@ struct Server {
         } else if (method == "textDocument/documentHighlight") {
             if (id)
                 reply(*id, highlight(params));
+        } else if (method == "textDocument/references") {
+            if (id)
+                reply(*id, references(params));
+        } else if (method == "textDocument/prepareRename") {
+            if (id)
+                prepare_rename(params, *id);
+        } else if (method == "textDocument/rename") {
+            if (id)
+                rename(params, *id);
         } else if (method == "textDocument/formatting") {
             if (id)
                 reply(*id, format_edits(params, false));

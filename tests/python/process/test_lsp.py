@@ -132,8 +132,11 @@ class LspDepth5155(unittest.TestCase):
 
 PROCESS_THEME = "lsp"
 PROCESS_TIER = "fast"
-PROCESS_TIMEOUT = 180
-PARTS = ("lsp_protocol", "lsp_format", "lsp_symbols", "lsp_semantic")
+# 180s was enough for the protocol/format/symbol/semantic themes; the
+# references+rename cases (#5260) push a full run past 160s, so the budget is
+# explicit headroom rather than a pass/fail coincidence.
+PROCESS_TIMEOUT = 300
+PARTS = ("lsp_protocol", "lsp_format", "lsp_symbols", "lsp_semantic", "lsp_refactor")
 CASES = (
     (
         5155,
@@ -301,6 +304,43 @@ CASES = (
         5261,
         "test_capabilities_advertise_hover_signature_and_completion",
         "lsp_semantic.LspSemantic5261.test_capabilities_advertise_hover_signature_and_completion",
+    ),
+    # #5260: references across requires, prepareRename/rename as a
+    # WorkspaceEdit (text only, never mutate:*), and the refusals.
+    (
+        5260,
+        "test_references_list_the_declaration_and_cross_require_uses",
+        "lsp_refactor.LspRefactor5260.test_references_list_the_declaration_and_cross_require_uses",
+    ),
+    (
+        5260,
+        "test_rename_produces_a_three_file_workspace_edit_and_the_program_runs",
+        "lsp_refactor.LspRefactor5260.test_rename_produces_a_three_file_workspace_edit_and_the_program_runs",
+    ),
+    (
+        5260,
+        "test_comment_string_and_shadowed_local_are_not_references",
+        "lsp_refactor.LspRefactor5260.test_comment_string_and_shadowed_local_are_not_references",
+    ),
+    (
+        5260,
+        "test_primitive_and_std_names_are_refused",
+        "lsp_refactor.LspRefactor5260.test_primitive_and_std_names_are_refused",
+    ),
+    (
+        5260,
+        "test_illegal_and_conflicting_new_names_are_refused",
+        "lsp_refactor.LspRefactor5260.test_illegal_and_conflicting_new_names_are_refused",
+    ),
+    (
+        5260,
+        "test_references_follow_aura_path_and_std_require",
+        "lsp_refactor.LspRefactor5260.test_references_follow_aura_path_and_std_require",
+    ),
+    (
+        5260,
+        "test_capabilities_advertise_references_and_rename",
+        "lsp_refactor.LspRefactor5260.test_capabilities_advertise_references_and_rename",
     ),
 )
 

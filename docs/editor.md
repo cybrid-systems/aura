@@ -58,6 +58,19 @@ another step without regenerating the prices.
 - **Goto-definition** for top-level `define`s across `(require "…")`, resolved
   like the runtime: relative to the requiring file, then the project root
   (the directory with `aura.toml`), with or without `.aura`.
+- **References and rename** (#5260). `textDocument/references` answers the
+  declaration and every use that resolves to the same binding, with or without
+  `includeDeclaration`, across `(require "…")` (project root,
+  `AURA_PATH`, `std/`). `textDocument/prepareRename` and
+  `textDocument/rename` answer from the same index; the rename result is a
+  `WorkspaceEdit` (one `TextEdit` per file) that the editor applies.
+  The server never writes a file and never calls a `mutate:*` primitive:
+  `refactor:*` / `mutate:rename-symbol` are the live-workspace
+  surface (#5252), and a rename here is text only. Text in a comment or a
+  string literal is not a reference, and a `let`/lambda binding that
+  shadows a top-level name is a different symbol. A primitive, a `std/`
+  name, a name with no definition, an illegal identifier, and a new name
+  already bound in a file the rename edits are all refused with a reason.
 - **Highlighting** comes from the shared TextMate grammar in
   `editors/grammar/aura.tmLanguage.json`. Any editor that speaks LSP can
   run `aura lsp` over stdio; no editor-specific extension is maintained.
@@ -154,5 +167,12 @@ tests run under plain Emacs (from `editors/emacs`):
   bindings visible at the cursor, and `require` specs (std/ modules, the
   project root, AURA_PATH) with the path each one resolves to.
 - Hover and signature help read the same primitive registry as the REPL's
-  `:doc`; hover never shows a type until #5250 lands. Rename is not
-  implemented.
+  `:doc`; hover never shows a type until #5250 lands.
+- References and rename (#5260) are per-name, not per-word: an unresolved atom
+  is a reference only in a file whose require closure contains the declaring
+  file, so text next to a same-spelled name that was never required stays out.
+  Rename refuses a new name that is bound anywhere in a file it would edit
+  (the conservative shadow check), refuses primitives, `std/` names, an
+  illegal identifier and a name with no definition, and it produces text edits
+  only: files change when the client applies the `WorkspaceEdit`. Nothing is
+  written by the server and no `mutate:*` path runs.
