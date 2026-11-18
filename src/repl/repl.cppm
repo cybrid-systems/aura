@@ -1024,7 +1024,13 @@ public:
             // printed a bare `<error>` and swallowed its cause. The file
             // faces already read the cause through soft_error_message.
             std::string val;
-            if (aura::compiler::types::is_error(*r) && !aura::compiler::types::is_string(*r))
+            // #5049/#5266: a soft error value has no type to name — the
+            // checker's synthesized var (list-elem for a car/cdr result) is
+            // not the value's type, and the editors' error face is keyed on
+            // the documented `- : unknown = ...` shape.
+            const bool soft_error =
+                aura::compiler::types::is_error(*r) && !aura::compiler::types::is_string(*r);
+            if (soft_error)
                 val = cs_.evaluator().soft_error_message(*r);
             else
                 val = aura::compiler::format_value(
@@ -1033,8 +1039,7 @@ public:
             // Issue #5038: the TTY prints the checker's type with the value,
             // in the OCaml shape: "- : Int = 3".
             const auto names = repl_defined_names(line);
-            if (!names.empty() &&
-                !(aura::compiler::types::is_error(*r) && !aura::compiler::types::is_string(*r))) {
+            if (!names.empty() && !soft_error) {
                 // A define answers with its name, not the bound cell value.
                 const std::string ty = type_of_(names.front());
                 if (ty == "unknown")
@@ -1042,7 +1047,8 @@ public:
                 else
                     std::fprintf(stdout, "- : %s = %s\n", ty.c_str(), names.front().c_str());
             } else {
-                std::fprintf(stdout, "- : %s = %s\n", type_of_(line).c_str(), val.c_str());
+                const std::string ty = soft_error ? std::string("unknown") : type_of_(line);
+                std::fprintf(stdout, "- : %s = %s\n", ty.c_str(), val.c_str());
             }
             std::fflush(stdout);
         } else {
