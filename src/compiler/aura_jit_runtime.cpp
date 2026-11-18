@@ -5510,7 +5510,7 @@ static void drop_jit_fn_native_for_define_locked(std::string_view name) {
 // eval-current) is the workspace_mtx_ <-> ir_cache_gate_ ABBA.
 namespace {
     struct IrGateHold4709 {
-        std::recursive_mutex* m = nullptr;
+        std::recursive_mutex* mutex = nullptr;
         int depth = 0;
         int parked = 0;
     };
@@ -5519,8 +5519,8 @@ namespace {
         IrGateHold4709 slots[kIrGateSlots4709];
     };
     IrGateTls4709& ir_gate_tls_4709() {
-        thread_local IrGateTls4709 t;
-        return t;
+        thread_local IrGateTls4709 tls;
+        return tls;
     }
     // Opt-in per scope: only paths that know they may hold the gate without
     // the workspace (the #4709 cascade re-lower success arm) park it. Other
@@ -5530,13 +5530,12 @@ namespace {
         thread_local bool allow = false;
         return allow;
     }
-    IrGateHold4709* ir_gate_slot_4709(std::recursive_mutex* m) {
-        if (!m)
+    IrGateHold4709* ir_gate_slot_4709(std::recursive_mutex* mutex) {
+        if (mutex == nullptr)
             return nullptr;
-        auto& t = ir_gate_tls_4709();
-        for (auto& s : t.slots) {
-            if (s.m == m)
-                return &s;
+        for (auto& slot : ir_gate_tls_4709().slots) {
+            if (slot.mutex == mutex)
+                return &slot;
         }
         return nullptr;
     }
@@ -5549,29 +5548,29 @@ extern "C" bool aura_jit_drop_park_scope_4709(bool enable) noexcept {
     return prev;
 }
 
-extern "C" void aura_ir_gate_note_acquire_4709(std::recursive_mutex* m) noexcept {
-    if (!m)
+extern "C" void aura_ir_gate_note_acquire_4709(std::recursive_mutex* mutex) noexcept {
+    if (mutex == nullptr)
         return;
-    if (auto* s = ir_gate_slot_4709(m)) {
-        ++s->depth;
+    if (auto* slot = ir_gate_slot_4709(mutex)) {
+        ++slot->depth;
         return;
     }
-    for (auto& s : ir_gate_tls_4709().slots) {
-        if (!s.m) {
-            s.m = m;
-            s.depth = 1;
-            s.parked = 0;
+    for (auto& slot : ir_gate_tls_4709().slots) {
+        if (slot.mutex == nullptr) {
+            slot.mutex = mutex;
+            slot.depth = 1;
+            slot.parked = 0;
             return;
         }
     }
 }
 
-extern "C" void aura_ir_gate_note_release_4709(std::recursive_mutex* m) noexcept {
-    auto* s = ir_gate_slot_4709(m);
-    if (!s || s->depth <= 0)
+extern "C" void aura_ir_gate_note_release_4709(std::recursive_mutex* mutex) noexcept {
+    auto* slot = ir_gate_slot_4709(mutex);
+    if (slot == nullptr || slot->depth <= 0)
         return;
-    if (--s->depth == 0 && s->parked == 0) {
-        s->m = nullptr;
+    if (--slot->depth == 0 && slot->parked == 0) {
+        slot->mutex = nullptr;
     }
 }
 
@@ -5579,27 +5578,27 @@ extern "C" void aura_ir_gate_note_release_4709(std::recursive_mutex* m) noexcept
 // depths. Returns the total number released (0 when no gate is held).
 extern "C" int aura_ir_gate_park_4709() noexcept {
     int released = 0;
-    for (auto& s : ir_gate_tls_4709().slots) {
-        if (!s.m || s.depth <= 0)
+    for (auto& slot : ir_gate_tls_4709().slots) {
+        if (slot.mutex == nullptr || slot.depth <= 0)
             continue;
-        for (int i = 0; i < s.depth; ++i)
-            s.m->unlock();
-        s.parked = s.depth;
-        s.depth = 0;
-        released += s.parked;
+        for (int level = 0; level < slot.depth; ++level)
+            slot.mutex->unlock();
+        slot.parked = slot.depth;
+        slot.depth = 0;
+        released += slot.parked;
     }
     return released;
 }
 
 // Re-take what park released. Levels acquired again while parked are kept.
 extern "C" void aura_ir_gate_unpark_4709() noexcept {
-    for (auto& s : ir_gate_tls_4709().slots) {
-        if (!s.m || s.parked <= 0)
+    for (auto& slot : ir_gate_tls_4709().slots) {
+        if (slot.mutex == nullptr || slot.parked <= 0)
             continue;
-        for (int i = 0; i < s.parked; ++i)
-            s.m->lock();
-        s.depth += s.parked;
-        s.parked = 0;
+        for (int level = 0; level < slot.parked; ++level)
+            slot.mutex->lock();
+        slot.depth += slot.parked;
+        slot.parked = 0;
     }
 }
 
@@ -5623,6 +5622,8 @@ extern "C" void aura_drop_jit_fn_native_for_define(const char* name) {
             : released(ir_gate_park_scope_4709() ? aura_ir_gate_park_4709() : 0) {}
         ParkGuard4709(const ParkGuard4709&) = delete;
         ParkGuard4709& operator=(const ParkGuard4709&) = delete;
+        ParkGuard4709(ParkGuard4709&&) = delete;
+        ParkGuard4709& operator=(ParkGuard4709&&) = delete;
         ~ParkGuard4709() {
             if (released > 0)
                 aura_ir_gate_unpark_4709();
@@ -5631,6 +5632,11 @@ extern "C" void aura_drop_jit_fn_native_for_define(const char* name) {
     std::unique_lock<std::shared_mutex> tlock(g_closure_table_mtx);
     aura_lock_workspace_write();
     struct WorkspaceUnlock4709 {
+        WorkspaceUnlock4709() = default;
+        WorkspaceUnlock4709(const WorkspaceUnlock4709&) = delete;
+        WorkspaceUnlock4709& operator=(const WorkspaceUnlock4709&) = delete;
+        WorkspaceUnlock4709(WorkspaceUnlock4709&&) = delete;
+        WorkspaceUnlock4709& operator=(WorkspaceUnlock4709&&) = delete;
         ~WorkspaceUnlock4709() { aura_unlock_workspace_write(); }
     } ws_unlock;
     drop_jit_fn_native_for_define_locked(name);
