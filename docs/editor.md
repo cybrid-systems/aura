@@ -93,6 +93,53 @@ it from a checkout with `use-package :load-path`, or with `package-vc-install`
 and `:lisp-dir "editors/emacs"`.  See `editors/emacs/README.md` for the
 three install recipes, the binary lookup order, and the REPL commands.
 
+### Doom Emacs
+
+`editors/emacs/doom/lang/aura/` is a Doom module built on the same package.
+Copy or symlink it to `$DOOMDIR/modules/lang/aura/`, add `(aura +lsp)` to the
+`:lang` group in `init.el`, then run `doom sync`:
+
+    (doom! :lang
+           (aura +lsp))
+
+`packages.el` pins `aura-lang` from this repository
+(`:files ("editors/emacs/*.el")`), so the Elisp client and the module come
+from one tree; keep both on the same release tag.  `+lsp` adds `lsp!` to
+`aura-mode-local-vars-hook`, and `:tools lsp` decides whether that starts
+lsp-mode or eglot (`+eglot`), as for the other `:lang` modules.
+
+Keys, on the localleader of `aura-mode`:
+
+| key | command |
+|---|---|
+| `SPC m '` | open or switch to the REPL (`aura repl`) |
+| `SPC m s d` / `s r` / `s b` | send the definition at point, the region, the buffer |
+| `SPC m w w` / `w s` / `w r` | `:worldline` / `:snapshot` / `:restore` |
+| `SPC m w k` | `:ws` (tracked definitions) |
+| `SPC m r` | `:reload` the visited file |
+| `SPC m g d`, `K` | definition (LSP, else imenu), documentation |
+
+With `(eval +overlay)` the answer appears at the end of the line; the REPL's
+error lines (`- : unknown = ...`) use the error face.
+
+Save-time formatting is gated on the binary:
+
+- `aura --fmt` kept comments only from #5263 wave 2 (commit `c04a44c3e`),
+  whose first release is 0.2.7.  Before that it deleted every comment and
+  still exited 0.
+- The module registers `+aura-fmt` only when `aura --version` reports a
+  release of 0.2.7 or later.  A nightly (`aura nightly (cf7353373)`) or a
+  source-tree build (`aura dev (<sha>)`) reports a commit, not a version,
+  so it is not trusted unless `+aura-trust-nightly-formatter` is set.
+- `doom doctor` prints the version it found and why no formatter was
+  registered; when the binary is missing from Emacs's PATH it points at
+  `doom env`.
+
+The module's README.org covers installation and troubleshooting.  Its ERT
+tests run under plain Emacs (from `editors/emacs`):
+
+    emacs -Q --batch -L . -l doom/test/aura-doom-test.el -f ert-run-tests-batch-and-exit
+
 ### Limits
 
 - Diagnostics are static: parse errors and names that are unbound at runtime
