@@ -61,26 +61,93 @@ struct Server {
     }
 
     void log_message(int type, std::string_view message) {
-        notify("window/logMessage",
-               std::format(R"({{"type":{},"message":{}}})", type, q(message)));
+        notify("window/logMessage", std::format(R"({{"type":{},"message":{}}})", type, q(message)));
     }
 
     // ── diagnostics ────────────────────────────────────────────
+    // #5262: one diagnostic object for every face (push, pull, codeAction).
+    // 'code' is the stable kind ident, 'message' is the producer's text with
+    // no prefix, 'severity' follows the kind, and notes / the require chain
+    // arrive as relatedInformation. The hint rides in 'data' so a codeAction
+    // can name the replacement without re-parsing prose.
+    std::string range_of(int line, int start, int end) const {
+        return std::format(
+            R"({{"start":{{"line":{},"character":{}}},"end":{{"line":{},"character":{}}}}})", line,
+            start, line, end);
+    }
+
+    std::string related_json(const std::vector<RelatedInfo>& items) const {
+        std::string arr;
+        for (const auto& r : items) {
+            const std::string text = store.text_of(r.key);
+            const auto line_text = line_at(text, static_cast<std::size_t>(r.line));
+            const int start = codec.from_byte(line_text, static_cast<std::size_t>(r.col));
+            const int end = codec.from_byte(line_text, static_cast<std::size_t>(r.end));
+            if (!arr.empty())
+                arr += ',';
+            arr += R"({"location":{"uri":)" + q(store.uri_of(r.key)) + R"(,"range":)" +
+                   range_of(r.line, start, end) + R"(},"message":)" + q(r.message) + "}";
+        }
+        return arr;
+    }
+
+    std::string item_json(const Diag& d, std::string_view text) const {
+        const auto line_text = line_at(text, static_cast<std::size_t>(d.line));
+        const int start = codec.from_byte(line_text, static_cast<std::size_t>(d.col));
+        const int end = codec.from_byte(line_text, static_cast<std::size_t>(d.end));
+        std::string out = R"({"range":)" + range_of(d.line, start, end) + R"(,"severity":)" +
+                          std::to_string(d.severity) + R"(,"source":"aura","code":)" + q(d.code) +
+                          R"(,"message":)" + q(d.message);
+        if (!d.related.empty())
+            out += R"(,"relatedInformation":[)" + related_json(d.related) + "]";
+        if (!d.hint.empty() || !d.fix_name.empty()) {
+            out += R"(,"data":{)";
+            if (!d.hint.empty())
+                out += R"("hint":)" + q(d.hint);
+            if (!d.fix_name.empty()) {
+                if (!d.hint.empty())
+                    out += ',';
+                out += R"("suggestion":)" + q(d.fix_name);
+            }
+            out += '}';
+        }
+        out += '}';
+        return out;
+    }
+
     std::string items_json(const std::vector<Diag>& items, std::string_view text) const {
         std::string arr;
         for (const auto& d : items) {
-            const auto line_text = line_at(text, static_cast<std::size_t>(d.line));
-            const int start = codec.from_byte(line_text, static_cast<std::size_t>(d.col));
-            const int end = codec.from_byte(line_text, static_cast<std::size_t>(d.end));
             if (!arr.empty())
                 arr += ',';
-            arr += std::format(
-                R"({{"range":{{"start":{{"line":{},"character":{}}},"end":{{"line":{},"character":{}}}}},)"
-                R"("severity":1,"source":"aura","code":{},"message":{}}})",
-                d.line, start, d.line, end, q(std::string(aura::diag::kind_ident(d.kind))),
-                q(d.msg));
+            arr += item_json(d, text);
         }
         return arr;
+    }
+
+    // #5262: the type-diagnostic mode. initializationOptions and
+    // workspace/didChangeConfiguration settings carry the same key
+    // ('typeDiagnostics': 'warning' | 'error' | 'off'); a nested
+    // {"aura": {...}} wrapper is accepted because editors differ.
+    bool apply_settings(const Json& settings) {
+        if (settings.t != Json::T::Obj)
+            return false;
+        bool changed = false;
+        if (const Json* v = settings.get("typeDiagnostics"); v && v->t == Json::T::Str)
+            changed = engine.set_type_mode(v->s) || changed;
+        if (const Json* nested = settings.get("aura"); nested && nested->t == Json::T::Obj)
+            changed = apply_settings(*nested) || changed;
+        return changed;
+    }
+
+    void reanalyze_open() {
+        std::vector<std::string> keys;
+        for (const auto& [key, doc] : store.docs) {
+            (void)doc;
+            keys.push_back(key);
+        }
+        for (const auto& key : keys)
+            analyze_and_publish(key);
     }
 
     void publish_runs(const std::string& main_key, const std::vector<FileDiagnostics>& runs) {
@@ -159,7 +226,8 @@ struct Server {
         const auto character = static_cast<long long>(params.at("position").at("character").n);
         const std::string text = store.text_of(key);
         const LineIndex li(text);
-        const std::size_t p = std::min(text.size(), byte_offset_at(text, li, codec, line, character));
+        const std::size_t p =
+            std::min(text.size(), byte_offset_at(text, li, codec, line, character));
         const DocIndex ix = DocIndex::build(text);
         if (!ix.inside_comment(p) && !ix.inside_string(p))
             if (const auto hit = ix.local_definition(p))
@@ -201,13 +269,15 @@ struct Server {
         const auto character = static_cast<long long>(params.at("position").at("character").n);
         const std::string text = store.text_of(key);
         const LineIndex li(text);
-        const std::size_t p = std::min(text.size(), byte_offset_at(text, li, codec, line, character));
+        const std::size_t p =
+            std::min(text.size(), byte_offset_at(text, li, codec, line, character));
         const DocIndex ix = DocIndex::build(text);
         std::string arr;
         for (const auto& [span, kind] : ix.highlights(p)) {
             if (!arr.empty())
                 arr += ',';
-            arr += std::format(R"({{"range":{},"kind":{}}})", range_json(text, li, codec, span), kind);
+            arr +=
+                std::format(R"({{"range":{},"kind":{}}})", range_json(text, li, codec, span), kind);
         }
         return "[" + arr + "]";
     }
@@ -311,8 +381,8 @@ struct Server {
         for (const auto& s : sites) {
             const std::string ftext = store.text_of(s.key);
             const LineIndex li(ftext);
-            auto it = std::ranges::find_if(per_file,
-                                           [&](const auto& p) { return p.first == s.key; });
+            auto it =
+                std::ranges::find_if(per_file, [&](const auto& p) { return p.first == s.key; });
             if (it == per_file.end()) {
                 per_file.emplace_back(s.key, std::string{});
                 it = per_file.end() - 1;
@@ -335,10 +405,10 @@ struct Server {
     std::string symbol_json(const DocIndex& ix, std::string_view text, const LineIndex& li,
                             int def) const {
         const auto& d = ix.defs[def];
-        std::string out = std::format(
-            R"({{"name":{},"detail":{},"kind":{},"range":{},"selectionRange":{}}})", q(d.name),
-            q(d.detail), d.kind, range_json(text, li, codec, d.span),
-            range_json(text, li, codec, d.name_span));
+        std::string out =
+            std::format(R"({{"name":{},"detail":{},"kind":{},"range":{},"selectionRange":{}}})",
+                        q(d.name), q(d.detail), d.kind, range_json(text, li, codec, d.span),
+                        range_json(text, li, codec, d.name_span));
         if (!d.children.empty()) {
             out.pop_back(); // the closing brace
             out += R"(,"children":[)";
@@ -402,7 +472,8 @@ struct Server {
         const auto character = static_cast<long long>(position.at("character").n);
         const std::string text = store.text_of(key);
         const LineIndex li(text);
-        const std::size_t p = std::min(text.size(), byte_offset_at(text, li, codec, line, character));
+        const std::size_t p =
+            std::min(text.size(), byte_offset_at(text, li, codec, line, character));
         const DocIndex ix = DocIndex::build(text);
         const auto chain = ix.chain_at(p);
         if (chain.empty())
@@ -433,8 +504,8 @@ struct Server {
                 continue;
             if (!arr.empty())
                 arr += ',';
-            arr += std::format(R"({{"range":{},"target":{}}})", range_json(text, li, codec, link.span),
-                               q(store.uri_of(*target)));
+            arr += std::format(R"({{"range":{},"target":{}}})",
+                               range_json(text, li, codec, link.span), q(store.uri_of(*target)));
         }
         return "[" + arr + "]";
     }
@@ -502,9 +573,9 @@ struct Server {
                     continue;
                 if (!arr.empty())
                     arr += ',';
-                arr += std::format(
-                    R"({{"name":{},"kind":{},"location":{{"uri":{},"range":{}}}}})", q(sym.name),
-                    sym.kind, q(store.uri_of(key)), range_json(text, li, codec, sym.name_span));
+                arr += std::format(R"({{"name":{},"kind":{},"location":{{"uri":{},"range":{}}}}})",
+                                   q(sym.name), sym.kind, q(store.uri_of(key)),
+                                   range_json(text, li, codec, sym.name_span));
             }
         }
         return "[" + arr + "]";
@@ -522,10 +593,60 @@ struct Server {
             last[key] = engine.analyze(key);
         }
         const auto& runs = last[key];
-        const auto run = std::ranges::find_if(runs, [&](const FileDiagnostics& r) { return r.key == key; });
+        const auto run =
+            std::ranges::find_if(runs, [&](const FileDiagnostics& r) { return r.key == key; });
         const std::vector<Diag> empty;
         const auto& items = run == runs.end() ? empty : run->items;
-        return std::format(R"({{"kind":"full","items":[{}]}})", items_json(items, store.text_of(key)));
+        return std::format(R"({{"kind":"full","items":[{}]}})",
+                           items_json(items, store.text_of(key)));
+    }
+
+    // textDocument/codeAction (#5262): the did-you-mean quickfix. The answer
+    // is a WorkspaceEdit the client applies; no mutate:* primitive runs and
+    // the server never writes a file (#5252 owns live-workspace edits).
+    std::string code_actions(const Json& params) {
+        const std::string key = request_key(params);
+        if (pending.contains(key)) {
+            pending.erase(key);
+            analyze_and_publish(key);
+        } else if (!last.contains(key)) {
+            last[key] = engine.analyze(key);
+        }
+        const auto& runs = last[key];
+        const auto run =
+            std::ranges::find_if(runs, [&](const FileDiagnostics& r) { return r.key == key; });
+        if (run == runs.end())
+            return "[]";
+        const std::string text = store.text_of(key);
+        int first_line = 0;
+        int last_line = 1 << 30;
+        if (const Json* range = params.get("range"); range && range->t == Json::T::Obj) {
+            first_line = static_cast<int>(range->at("start").at("line").n);
+            last_line = static_cast<int>(range->at("end").at("line").n);
+        }
+        std::string arr;
+        for (const auto& d : run->items) {
+            if (d.fix_name.empty() || d.line < first_line || d.line > last_line)
+                continue;
+            const auto line_text = line_at(text, static_cast<std::size_t>(d.line));
+            const std::size_t begin =
+                std::min<std::size_t>(static_cast<std::size_t>(d.col), line_text.size());
+            const std::size_t end =
+                std::min<std::size_t>(static_cast<std::size_t>(d.end), line_text.size());
+            const std::string current(line_text.substr(begin, end - begin));
+            if (current.empty() || current == d.fix_name)
+                continue;
+            const std::string edit = R"({"changes":{)" + q(store.uri_of(key)) + R"(:[{"range":)" +
+                                     range_of(d.line, codec.from_byte(line_text, begin),
+                                              codec.from_byte(line_text, end)) +
+                                     R"(,"newText":)" + q(d.fix_name) + "}]}}";
+            if (!arr.empty())
+                arr += ',';
+            arr += R"({"title":)" + q("replace '" + current + "' with '" + d.fix_name + "'") +
+                   R"(,"kind":"quickfix","isPreferred":true,"diagnostics":[)" + item_json(d, text) +
+                   R"(],"edit":)" + edit + "}";
+        }
+        return "[" + arr + "]";
     }
 
     // ── formatting ────────────────────────────────────────────
@@ -700,19 +821,22 @@ struct Server {
 
         // #5263: the client's default FormattingOptions. A formatting request
         // that carries its own options still wins (see format_edits).
-        if (const Json* opts = params.get("initializationOptions"); opts && opts->t == Json::T::Obj) {
+        if (const Json* opts = params.get("initializationOptions");
+            opts && opts->t == Json::T::Obj) {
             if (const Json* ts = opts->get("tabSize"); ts && ts->t == Json::T::Num && ts->n >= 1)
                 fmt_tab_size = static_cast<int>(std::min(8.0, ts->n));
             if (const Json* sp = opts->get("insertSpaces"); sp && sp->t == Json::T::Bool)
                 fmt_insert_spaces = sp->b;
+            // #5262: diagnostics settings (typeDiagnostics) travel here too.
+            apply_settings(*opts);
         }
 
         std::string root_path;
         const Json& root_uri = params.at("rootUri");
         if (root_uri.t == Json::T::Str && !root_uri.s.empty()) {
             root_path = uri_to_path(root_uri.s);
-        } else if (const Json* folders = params.get("workspaceFolders"); folders && folders->t == Json::T::Arr &&
-                                                                        !folders->a.empty()) {
+        } else if (const Json* folders = params.get("workspaceFolders");
+                   folders && folders->t == Json::T::Arr && !folders->a.empty()) {
             const Json& first_uri = folders->a.front().at("uri");
             if (first_uri.t == Json::T::Str)
                 root_path = uri_to_path(first_uri.s);
@@ -724,9 +848,11 @@ struct Server {
         const std::string encoding = codec.enc == Encoding::Utf8 ? "utf-8" : "utf-16";
         if (!id)
             return; // initialize as a notification: state is set, nothing to answer
-        reply(*id, std::format(
-            R"({{"capabilities":{{"positionEncoding":{},"textDocumentSync":{{"openClose":true,"change":1,"save":{{"includeText":false}}}},"definitionProvider":true,"hoverProvider":true,"signatureHelpProvider":{{"triggerCharacters":["("," "]}},"completionProvider":{{"triggerCharacters":["("," ","\""],"resolveProvider":false}},"documentFormattingProvider":true,"documentRangeFormattingProvider":true,"documentHighlightProvider":true,"documentSymbolProvider":true,"workspaceSymbolProvider":true,"foldingRangeProvider":true,"selectionRangeProvider":true,"documentLinkProvider":{{"resolveProvider":false}},"referencesProvider":true,"renameProvider":{{"prepareProvider":true}},"diagnosticProvider":{{"identifier":"aura","interFileDependencies":true,"workspaceDiagnostics":false}}}},"serverInfo":{{"name":"aura-lsp","version":{}}}}})",
-            q(encoding), q(AURA_BUILD_VERSION)));
+        reply(
+            *id,
+            std::format(
+                R"({{"capabilities":{{"positionEncoding":{},"textDocumentSync":{{"openClose":true,"change":1,"save":{{"includeText":false}}}},"definitionProvider":true,"hoverProvider":true,"signatureHelpProvider":{{"triggerCharacters":["("," "]}},"completionProvider":{{"triggerCharacters":["("," ","\""],"resolveProvider":false}},"documentFormattingProvider":true,"documentRangeFormattingProvider":true,"documentHighlightProvider":true,"documentSymbolProvider":true,"workspaceSymbolProvider":true,"foldingRangeProvider":true,"selectionRangeProvider":true,"documentLinkProvider":{{"resolveProvider":false}},"referencesProvider":true,"renameProvider":{{"prepareProvider":true}},"codeActionProvider":{{"codeActionKinds":["quickfix"]}},"diagnosticProvider":{{"identifier":"aura","interFileDependencies":true,"workspaceDiagnostics":false}}}},"serverInfo":{{"name":"aura-lsp","version":{}}}}})",
+                q(encoding), q(AURA_BUILD_VERSION)));
     }
 
     // ── JSON-RPC dispatch ─────────────────────────────────────
@@ -740,18 +866,19 @@ struct Server {
             // "nesting too deep" wording).
             const std::optional<std::string> id =
                 m.get("id") ? std::optional<std::string>(id_text(*m.get("id"))) : std::nullopt;
-            send(std::format(R"({{"jsonrpc":"2.0","id":{},"error":{{"code":-32700,"message":{}}}}})",
-                             id.value_or("null"),
-                             q(parser.nesting_refused ? "nesting too deep" : "Parse error")));
+            send(
+                std::format(R"({{"jsonrpc":"2.0","id":{},"error":{{"code":-32700,"message":{}}}}})",
+                            id.value_or("null"),
+                            q(parser.nesting_refused ? "nesting too deep" : "Parse error")));
             return std::nullopt;
         }
         if (m.t != Json::T::Obj) {
             // A top-level array is a batch request (unsupported: -32600
             // instead of the old silent drop); any other non-object is an
             // invalid request.
-            send(std::format(R"({{"jsonrpc":"2.0","id":null,"error":{{"code":-32600,"message":{}}}}})",
-                             q(m.t == Json::T::Arr ? "batch requests are not supported"
-                                                   : "invalid request")));
+            send(std::format(
+                R"({{"jsonrpc":"2.0","id":null,"error":{{"code":-32600,"message":{}}}}})",
+                q(m.t == Json::T::Arr ? "batch requests are not supported" : "invalid request")));
             return std::nullopt;
         }
         const Json* id = m.get("id");
@@ -830,6 +957,15 @@ struct Server {
         } else if (method == "textDocument/diagnostic") {
             if (id)
                 reply(*id, pull_diagnostics(params));
+        } else if (method == "textDocument/codeAction") {
+            if (id)
+                reply(*id, code_actions(params));
+        } else if (method == "workspace/didChangeConfiguration") {
+            // #5262: the same key as initializationOptions; a reanalysis
+            // republishes every open document so the new severity shows.
+            const Json* settings = params.get("settings");
+            if (apply_settings(settings ? *settings : params))
+                reanalyze_open();
         } else if (id) {
             reply_error(*id, -32601, "method not found: " + method);
         }

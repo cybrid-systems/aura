@@ -48,13 +48,28 @@ another step without regenerating the prices.
 
 `aura lsp` speaks the Language Server Protocol over stdio:
 
-- **Diagnostics** on open and save. The file is type-checked in process (the
-  same checker as `aura --typecheck`) together with every file it
-  `(require …)`s, so names defined in required modules resolve, and an error
-  inside a required module is reported on that module with its own
-  `line:column`. Example: writing `memq` (not provided; use `member`) in
-  `backtest.aura` underlines it on its line with
-  `unbound variable: memq`.
+- **Diagnostics** on open, change and save. The file is type-checked in
+  process (the same checker as `aura --typecheck`) together with every file
+  it `(require …)`s, so names defined in required modules resolve, and an
+  error inside a required module is reported on that module with its own
+  `line:column`. Each diagnostic is the structured one the CLI and `--serve`
+  JSON faces emit: `code` is the stable kind ident (`UnboundVariable`,
+  `ArityMismatch`, `ParseError`, `TypeError`, ...), `message` is the
+  producer's text with no kind prefix and no folded-in hint, and severity
+  follows the kind (error, warning, information). The did-you-mean hint
+  travels in `data.hint` / `data.suggestion`, so
+  `textDocument/codeAction` offers a `quickfix` that replaces the name in a
+  `WorkspaceEdit` the client applies; the server never calls `mutate:*`.
+  A diagnostic inside a required file lists the `(require …)` site in
+  `relatedInformation`, as do the producer's notes. Example: writing `memq`
+  (not provided; use `member`) underlines it with code `UnboundVariable`,
+  message `memq`, and a quickfix to `member`.
+- **Type diagnostics** are warnings by default. `(define (g y) (+ y "s"))`
+  reports `TypeError` with severity Warning and the same message
+  `--typecheck` prints. Set `typeDiagnostics` in `initializationOptions` or
+  in `workspace/didChangeConfiguration` settings to `"off"` to stop
+  publishing them, or `"error"` to raise their severity; a
+  `{"aura": {...}}` wrapper is accepted too.
 - **Goto-definition** for top-level `define`s across `(require "…")`, resolved
   like the runtime: relative to the requiring file, then the project root
   (the directory with `aura.toml`), with or without `.aura`.
@@ -155,11 +170,13 @@ tests run under plain Emacs (from `editors/emacs`):
 
 ### Limits
 
-- Diagnostics are static: parse errors and names that are unbound at runtime
+- Diagnostics are static: parse errors, names that are unbound at runtime
   (not defined in the file or its requires, not a primitive or std prelude
-  name). The type checker's type errors are not published: on dynamically
-  typed code most of them are false positives. Runtime-only errors still need
-  a run.
+  name), arity mismatches the runtime would reject, and the type checker's own
+  type diagnostics as warnings (`typeDiagnostics`, above). One diagnostic per
+  file is published: the first one the checker reports. Runtime-only errors
+  still need a run. The code action covers did-you-mean suggestions only;
+  extract/inline and other code actions are out of scope.
 - Definitions are top-level `define` / `define-syntax` / `define-record-type`;
   local `let` bindings are not indexed.
 - Completion (#5261) is a flat prefix list: primitives with their registry
