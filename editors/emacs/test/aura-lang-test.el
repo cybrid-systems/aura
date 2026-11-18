@@ -322,5 +322,71 @@
       (let ((kill-buffer-query-functions nil))
         (kill-buffer buffer)))))
 
+(ert-deftest aura-lang-repl-send-defun-multiline ()
+  "send-defun sends a multi-line definition as one form."
+  (skip-unless (executable-find "aura"))
+  (let ((source (generate-new-buffer " *aura-defun*"))
+        (repl nil))
+    (unwind-protect
+        (progn
+          (setq repl (run-aura))
+          (with-current-buffer source
+            (insert "(define (triple x)\n  (* x 3))\n")
+            (goto-char (point-min))
+            (aura-lang-send-defun))
+          (aura-lang--send-string "(triple 14)")
+          (let ((deadline (+ (float-time) 20)))
+            (while (and (< (float-time) deadline)
+                        (not (with-current-buffer repl
+                               (save-excursion
+                                 (goto-char (point-max))
+                                 (search-backward "- : Any = 42" nil t)))))
+              (accept-process-output (get-buffer-process repl) 0.2)))
+          (with-current-buffer repl
+            (should (save-excursion
+                      (goto-char (point-max))
+                      (search-backward "- : Any = 42" nil t)))))
+      (when (buffer-live-p source) (kill-buffer source))
+      (when (and repl (comint-check-proc repl))
+        (set-process-query-on-exit-flag (get-buffer-process repl) nil)
+        (kill-process (get-buffer-process repl)))
+      (when (and repl (buffer-live-p repl))
+        (let ((kill-buffer-query-functions nil))
+          (kill-buffer repl))))))
+
+(ert-deftest aura-lang-repl-car-error ()
+  "(car 1) reaches the REPL as a primitive error, not a plain value."
+  (skip-unless (executable-find "aura"))
+  (let ((buffer (run-aura)))
+    (unwind-protect
+        (progn
+          (aura-lang--send-string "(car 1)")
+          (let ((deadline (+ (float-time) 20)))
+            (while (and (< (float-time) deadline)
+                        (not (with-current-buffer buffer
+                               (save-excursion
+                                 (goto-char (point-max))
+                                 (search-backward "car: not a pair" nil t)))))
+              (accept-process-output (get-buffer-process buffer) 0.2)))
+          (with-current-buffer buffer
+            (should (save-excursion
+                      (goto-char (point-max))
+                      (search-backward "car: not a pair" nil t)))
+            ;; The PTY REPL prints errors as "- : <type> = <message>",
+            ;; with the prompt on the same buffer line.  The exact type
+            ;; name is a server detail; the error text is the contract.
+            (should (save-excursion
+                      (goto-char (point-max))
+                      (search-backward "car: not a pair" nil t)
+                      (string-match-p
+                       "- : [^=]+= car: not a pair"
+                       (buffer-substring-no-properties
+                        (line-beginning-position) (line-end-position)))))))
+      (when (comint-check-proc buffer)
+        (set-process-query-on-exit-flag (get-buffer-process buffer) nil)
+        (kill-process (get-buffer-process buffer)))
+      (let ((kill-buffer-query-functions nil))
+        (kill-buffer buffer)))))
+
 (provide 'aura-lang-test)
 ;;; aura-lang-test.el ends here
