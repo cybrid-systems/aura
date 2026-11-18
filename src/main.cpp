@@ -947,8 +947,11 @@ static std::string project_channel_4913() {
     return ok && dots == 2 && v.front() != '.' && v.back() != '.' ? std::string(v) : "nightly";
 }
 #include "cli_evo_4910.inc"
-#include "cli_lsp_4911.inc"
+// Issue #5263: the formatter is included first — the language server's
+// formatting handlers call cli_fmt_5263::reindent() directly (one C++
+// interface, no shell out, no new Aura primitive).
 #include "cli_fmt.inc" // Issue #5263: --fmt scanner / conservative reindent
+#include "cli_lsp_4911.inc"
 
 // Write one template's files under dir, substituting {{name}} / {{channel}}.
 // Returns the file count, or -1 after printing the write error.
@@ -5389,21 +5392,27 @@ static int run_cli_fmt(int argc, char** argv) {
     // Both still require a readable program: a file the reader rejects is
     // never rewritten, and exits nonzero.
     const bool unparse_mode = std::string_view(argv[1]) == "--unparse";
-    aura::compiler::CompilerService cs;
-    auto alloc = cs.arena().allocator();
-    aura::ast::StringPool pool(alloc);
-    aura::ast::FlatAST flat(alloc);
-    auto pr = aura::parser::parse_to_flat(input, flat, pool);
-    if (!pr.success || pr.root == aura::ast::NULL_NODE) {
-        std::println(std::cerr, "parse error{}", pr.error.empty() ? "" : ": " + pr.error);
-        return 1;
-    }
-    flat.root = pr.root;
     std::string source;
     if (unparse_mode) {
+        aura::compiler::CompilerService cs;
+        auto alloc = cs.arena().allocator();
+        aura::ast::StringPool pool(alloc);
+        aura::ast::FlatAST flat(alloc);
+        auto pr = aura::parser::parse_to_flat(input, flat, pool);
+        if (!pr.success || pr.root == aura::ast::NULL_NODE) {
+            std::println(std::cerr, "parse error{}", pr.error.empty() ? "" : ": " + pr.error);
+            return 1;
+        }
+        flat.root = pr.root;
         source = aura::compiler::unparse_node(flat, pool, flat.root);
         source += "\n";
     } else {
+        // Same gate as the language server's formatting request.
+        std::string err;
+        if (!cli_fmt_5263::parses(input, &err)) {
+            std::println(std::cerr, "parse error{}", err.empty() ? "" : ": " + err);
+            return 1;
+        }
         source = cli_fmt_5263::reindent(input);
     }
 

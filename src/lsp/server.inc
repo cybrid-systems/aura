@@ -56,8 +56,7 @@ struct Server {
     }
 
     void log_message(int type, std::string_view message) {
-        notify("window/logMessage",
-               std::format(R"({{"type":{},"message":{}}})", type, q(message)));
+        notify("window/logMessage", std::format(R"({{"type":{},"message":{}}})", type, q(message)));
     }
 
     // ── diagnostics ────────────────────────────────────────────
@@ -185,8 +184,7 @@ struct Server {
                     const int dl = static_cast<int>(
                         std::count(t.begin(), t.begin() + static_cast<std::ptrdiff_t>(s), '\n'));
                     const std::size_t ls = t.rfind('\n', s == 0 ? 0 : s - 1);
-                    const std::size_t dc_byte =
-                        ls == std::string::npos || s == 0 ? s : s - ls - 1;
+                    const std::size_t dc_byte = ls == std::string::npos || s == 0 ? s : s - ls - 1;
                     const auto def_line = line_at(t, static_cast<std::size_t>(dl));
                     const int start = codec.from_byte(def_line, dc_byte);
                     const int end = codec.from_byte(def_line, dc_byte + word.size());
@@ -197,6 +195,116 @@ struct Server {
             }
         }
         return "null";
+    }
+
+    // ── formatting ────────────────────────────────────────────
+    // One C++ formatter for both faces: cli_fmt_5263::reindent() is exactly
+    // what "aura --fmt" runs, so the editor and the CLI cannot drift. No
+    // shell out, no Aura primitive (#5002, #5263).
+    //
+    // Two deliberate limits:
+    //   - a buffer the reader rejects is never rewritten. The reply is an
+    //     empty TextEdit list plus one window/logMessage saying why; an error
+    //     reply would paint a half-typed form red on every save, and a
+    //     rewrite could destroy text the parser only misread.
+    //   - rangeFormatting formats the whole document and then keeps the
+    //     requested lines. Indentation is a property of a line and the
+    //     formatter never adds, drops or reorders lines, so the line span
+    //     maps 1:1; the edit range is widened to whole lines for the same
+    //     reason. A client that needs a byte-tight range gets whole lines.
+    int fmt_tab_size = 2;
+    bool fmt_insert_spaces = true;
+
+    struct FmtSpan {
+        std::size_t begin = 0; // byte offset of the first line's start
+        std::size_t end = 0;   // byte offset of the next line's start (or EOF)
+        int first_line = 0;
+        int last_line = 0;
+    };
+
+    static std::vector<std::size_t> line_starts(std::string_view t) {
+        std::vector<std::size_t> starts{0};
+        for (std::size_t i = 0; i < t.size(); ++i)
+            if (t[i] == '\n')
+                starts.push_back(i + 1);
+        return starts;
+    }
+
+    // Whole lines [first, last] (0-based, clamped) as byte offsets.
+    static FmtSpan line_span(std::string_view t, int first, int last) {
+        const auto starts = line_starts(t);
+        const int lines = static_cast<int>(starts.size());
+        FmtSpan s;
+        s.first_line = std::clamp(first, 0, lines - 1);
+        s.last_line = std::clamp(last, s.first_line, lines - 1);
+        s.begin = starts[static_cast<std::size_t>(s.first_line)];
+        // The span ends where the *next* line begins, so a replacement carries
+        // the newline that terminates the last line. The matching edit range
+        // ends at (last + 1, 0); a newText without that newline would eat it.
+        s.end =
+            s.last_line + 1 < lines ? starts[static_cast<std::size_t>(s.last_line) + 1] : t.size();
+        return s;
+    }
+
+    std::string format_edits(const Json& params, bool range_mode) {
+        const std::string uri = params.at("textDocument").at("uri").s;
+        const std::string key = DocumentStore::key_of(uri);
+        const std::string text = store.text_of(key);
+        if (text.empty())
+            return "[]";
+        // FormattingOptions travel with the request; initializationOptions
+        // hold the client's defaults for a request that omits them.
+        int tab = fmt_tab_size;
+        bool spaces = fmt_insert_spaces;
+        if (const Json* opts = params.get("options")) {
+            if (const Json* ts = opts->get("tabSize"); ts && ts->t == Json::T::Num && ts->n >= 1)
+                tab = static_cast<int>(std::min(8.0, ts->n));
+            if (const Json* sp = opts->get("insertSpaces"); sp && sp->t == Json::T::Bool)
+                spaces = sp->b;
+        }
+        std::string err;
+        if (!cli_fmt_5263::parses(text, &err)) {
+            log_message(2, "aura lsp: not formatting " + key +
+                               ": the reader rejects this buffer, so there is nothing safe to "
+                               "rewrite (" +
+                               err + ")");
+            return "[]";
+        }
+        const std::string formatted = cli_fmt_5263::reindent(text, tab, spaces);
+        const auto in_lines = line_starts(text);
+        int first = 0;
+        int last = static_cast<int>(in_lines.size()) - 1;
+        if (range_mode) {
+            const Json& range = params.at("range");
+            first = static_cast<int>(range.at("start").at("line").n);
+            last = static_cast<int>(range.at("end").at("line").n);
+        }
+        const FmtSpan in = line_span(text, first, last);
+        // The formatter only rewrites leading whitespace, so line N of the
+        // input is line N of the output and the requested span maps 1:1. If
+        // that ever stops holding, fall back to one whole-document edit
+        // instead of returning an edit whose lines do not correspond.
+        const bool aligned = line_starts(formatted).size() == in_lines.size();
+        const std::string before = aligned ? text.substr(in.begin, in.end - in.begin) : text;
+        const FmtSpan out =
+            line_span(formatted, aligned ? in.first_line : 0,
+                      aligned ? in.last_line : static_cast<int>(in_lines.size()) - 1);
+        const std::string after =
+            aligned ? formatted.substr(out.begin, out.end - out.begin) : formatted;
+        if (before == after)
+            return "[]";
+        const int lines = static_cast<int>(in_lines.size());
+        const int last_line = aligned ? in.last_line : lines - 1;
+        const bool has_next = last_line + 1 < lines;
+        const int end_line = has_next ? last_line + 1 : last_line;
+        // Ending at the next line's start needs character 0; at EOF it needs
+        // the last line's full width.
+        const auto end_line_text = line_at(text, static_cast<std::size_t>(end_line));
+        const int end_char = has_next ? 0 : codec.from_byte(end_line_text, end_line_text.size());
+        return std::format(
+            R"([{{"range":{{"start":{{"line":{},"character":0}},"end":{{"line":{},"character":{}}}}},)"
+            R"("newText":{}}}])",
+            aligned ? in.first_line : 0, end_line, end_char, q(after));
     }
 
     std::string pull_diagnostics(const Json& params) {
@@ -211,10 +319,12 @@ struct Server {
             last[key] = engine.analyze(key);
         }
         const auto& runs = last[key];
-        const auto run = std::ranges::find_if(runs, [&](const FileDiagnostics& r) { return r.key == key; });
+        const auto run =
+            std::ranges::find_if(runs, [&](const FileDiagnostics& r) { return r.key == key; });
         const std::vector<Diag> empty;
         const auto& items = run == runs.end() ? empty : run->items;
-        return std::format(R"({{"kind":"full","items":[{}]}})", items_json(items, store.text_of(key)));
+        return std::format(R"({{"kind":"full","items":[{}]}})",
+                           items_json(items, store.text_of(key)));
     }
 
     // ── lifecycle / sync ──────────────────────────────────────
@@ -276,12 +386,21 @@ struct Server {
                 wants_utf8 = true;
         codec.enc = wants_utf8 ? Encoding::Utf8 : Encoding::Utf16;
 
+        // #5263: the client's default FormattingOptions. A formatting request
+        // that carries its own options still wins (see format_edits).
+        if (const Json* opts = params.get("initializationOptions")) {
+            if (const Json* ts = opts->get("tabSize"); ts && ts->t == Json::T::Num && ts->n >= 1)
+                fmt_tab_size = static_cast<int>(std::min(8.0, ts->n));
+            if (const Json* sp = opts->get("insertSpaces"); sp && sp->t == Json::T::Bool)
+                fmt_insert_spaces = sp->b;
+        }
+
         std::string root_path;
         const Json& root_uri = params.at("rootUri");
         if (root_uri.t == Json::T::Str && !root_uri.s.empty()) {
             root_path = uri_to_path(root_uri.s);
-        } else if (const Json* folders = params.get("workspaceFolders"); folders && folders->t == Json::T::Arr &&
-                                                                        !folders->a.empty()) {
+        } else if (const Json* folders = params.get("workspaceFolders");
+                   folders && folders->t == Json::T::Arr && !folders->a.empty()) {
             const Json& first_uri = folders->a.front().at("uri");
             if (first_uri.t == Json::T::Str)
                 root_path = uri_to_path(first_uri.s);
@@ -293,9 +412,11 @@ struct Server {
         const std::string encoding = codec.enc == Encoding::Utf8 ? "utf-8" : "utf-16";
         if (!id)
             return; // initialize as a notification: state is set, nothing to answer
-        reply(*id, std::format(
-            R"({{"capabilities":{{"positionEncoding":{},"textDocumentSync":{{"openClose":true,"change":1,"save":{{"includeText":false}}}},"definitionProvider":true,"diagnosticProvider":{{"identifier":"aura","interFileDependencies":true,"workspaceDiagnostics":false}}}},"serverInfo":{{"name":"aura-lsp","version":{}}}}})",
-            q(encoding), q(AURA_BUILD_VERSION)));
+        reply(
+            *id,
+            std::format(
+                R"({{"capabilities":{{"positionEncoding":{},"textDocumentSync":{{"openClose":true,"change":1,"save":{{"includeText":false}}}},"definitionProvider":true,"documentFormattingProvider":true,"documentRangeFormattingProvider":true,"diagnosticProvider":{{"identifier":"aura","interFileDependencies":true,"workspaceDiagnostics":false}}}},"serverInfo":{{"name":"aura-lsp","version":{}}}}})",
+                q(encoding), q(AURA_BUILD_VERSION)));
     }
 
     // ── JSON-RPC dispatch ─────────────────────────────────────
@@ -309,18 +430,19 @@ struct Server {
             // "nesting too deep" wording).
             const std::optional<std::string> id =
                 m.get("id") ? std::optional<std::string>(id_text(*m.get("id"))) : std::nullopt;
-            send(std::format(R"({{"jsonrpc":"2.0","id":{},"error":{{"code":-32700,"message":{}}}}})",
-                             id.value_or("null"),
-                             q(parser.nesting_refused ? "nesting too deep" : "Parse error")));
+            send(
+                std::format(R"({{"jsonrpc":"2.0","id":{},"error":{{"code":-32700,"message":{}}}}})",
+                            id.value_or("null"),
+                            q(parser.nesting_refused ? "nesting too deep" : "Parse error")));
             return std::nullopt;
         }
         if (m.t != Json::T::Obj) {
             // A top-level array is a batch request (unsupported: -32600
             // instead of the old silent drop); any other non-object is an
             // invalid request.
-            send(std::format(R"({{"jsonrpc":"2.0","id":null,"error":{{"code":-32600,"message":{}}}}})",
-                             q(m.t == Json::T::Arr ? "batch requests are not supported"
-                                                   : "invalid request")));
+            send(std::format(
+                R"({{"jsonrpc":"2.0","id":null,"error":{{"code":-32600,"message":{}}}}})",
+                q(m.t == Json::T::Arr ? "batch requests are not supported" : "invalid request")));
             return std::nullopt;
         }
         const Json* id = m.get("id");
@@ -357,6 +479,12 @@ struct Server {
         } else if (method == "textDocument/diagnostic") {
             if (id)
                 reply(*id, pull_diagnostics(params));
+        } else if (method == "textDocument/formatting") {
+            if (id)
+                reply(*id, format_edits(params, false));
+        } else if (method == "textDocument/rangeFormatting") {
+            if (id)
+                reply(*id, format_edits(params, true));
         } else if (id) {
             reply_error(*id, -32601, "method not found: " + method);
         }
