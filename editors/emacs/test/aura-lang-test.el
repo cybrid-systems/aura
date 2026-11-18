@@ -439,5 +439,51 @@ that load, `aura-lang-project-root' is on the list."
       (let ((kill-buffer-query-functions nil))
         (kill-buffer buffer)))))
 
+(ert-deftest aura-lang-repl-primitive-error-classification ()
+  "The REPL's error face and a plain value stay distinguishable.
+#5349: the type name is a server detail (a nightly printed list-elem for
+a car error), so the keywords must key on the error value's own shape:
+both (car 1) and (vector-ref ...) are errors, while (+ 1 2) and
+(list 1) are values."
+  (skip-unless (executable-find "aura"))
+  (let* ((buffer (run-aura))
+         (result-line
+         (lambda (needle)
+           (let ((deadline (+ (float-time) 20)))
+             (while (and (< (float-time) deadline)
+                         (not (with-current-buffer buffer
+                                (save-excursion
+                                  (goto-char (point-max))
+                                  (search-backward needle nil t)))))
+               (accept-process-output (get-buffer-process buffer) 0.2))
+             (with-current-buffer buffer
+               (save-excursion
+                 (goto-char (point-max))
+                 (search-backward needle nil t)
+                 (let ((line (buffer-substring-no-properties
+                              (line-beginning-position) (line-end-position))))
+                   (should (string-match "- : " line))
+                   (substring line (string-match "- : " line))))))))
+        (error-line-p
+         (lambda (line)
+           (seq-some (lambda (keyword) (string-match-p (car keyword) line))
+                     aura-lang-repl-font-lock-keywords))))
+    (unwind-protect
+        (progn
+          (aura-lang--send-string "(car 1)")
+          (should (funcall error-line-p (funcall result-line "car: not a pair")))
+          (aura-lang--send-string "(vector-ref (vector 1) 5)")
+          (should (funcall error-line-p
+                           (funcall result-line "vector-ref: index 5 out of range")))
+          (aura-lang--send-string "(+ 1 2)")
+          (should-not (funcall error-line-p (funcall result-line "= 3")))
+          (aura-lang--send-string "(list 1)")
+          (should-not (funcall error-line-p (funcall result-line "= (1)"))))
+      (when (comint-check-proc buffer)
+        (set-process-query-on-exit-flag (get-buffer-process buffer) nil)
+        (kill-process (get-buffer-process buffer)))
+      (let ((kill-buffer-query-functions nil))
+        (kill-buffer buffer)))))
+
 (provide 'aura-lang-test)
 ;;; aura-lang-test.el ends here
