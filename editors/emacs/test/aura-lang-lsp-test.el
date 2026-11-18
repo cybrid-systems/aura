@@ -267,6 +267,19 @@ down and the project removed afterwards."
         (should diagnostic)
         (should (equal (cdr diagnostic) "memq"))))))
 
+(ert-deftest aura-lang-lsp-type-warning-does-not-mask-unbound ()
+  "A type warning does not hide a later unbound name (#5346).
+Both clients must surface memq, not only the earlier type warning."
+  (aura-lang-lsp-test--ready)
+  (aura-lang-lsp-test--with-project
+      '(("main.aura" . "(define (g y) (+ y \"s\"))\n(define (h x) (memq x (list 1 2)))\n")) nil
+    (lambda ()
+      (let ((unbound (aura-lang-lsp-test--wait-diagnostic "memq$"))
+            (warning (aura-lang-lsp-test--wait-diagnostic "expected Int")))
+        (should unbound)
+        (should (equal (cdr unbound) "memq"))
+        (should warning)))))
+
 (ert-deftest aura-lang-lsp-diagnostics-unsaved-edit ()
   "An edit that is not saved is analyzed after the debounce (A1)."
   (aura-lang-lsp-test--ready)
