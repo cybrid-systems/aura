@@ -49,6 +49,14 @@ Requires Emacs 29.1 or newer (eglot is built in from 29).
 `aura-lang.el` is self-contained, so the `:files` list only needs that one
 file.  This README and the ERT tests are not part of the installed package.
 
+### Doom Emacs
+
+`editors/emacs/doom/lang/aura/` is a Doom module that wraps this package
+(`(doom! :lang (aura +lsp))`).  It lives outside the installed package on
+purpose: copy or symlink it to `$DOOMDIR/modules/lang/aura/`.  See
+`docs/editor.md`, "Doom Emacs", for the keys, the `:tools lsp` client
+switch and the `aura --fmt` version gate.
+
 ## Finding the binary
 
 `aura-lang-executable` is consulted first.  When it is nil the package
