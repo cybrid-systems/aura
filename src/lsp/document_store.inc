@@ -46,8 +46,9 @@ inline std::string percent_encode(std::string_view s) {
     std::string out;
     out.reserve(s.size());
     for (const unsigned char c : s) {
-        const bool plain = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
-                           c == '/' || c == '-' || c == '_' || c == '.' || c == '~';
+        const bool plain = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+                           (c >= '0' && c <= '9') || c == '/' || c == '-' || c == '_' || c == '.' ||
+                           c == '~';
         if (plain) {
             out += static_cast<char>(c);
         } else {
@@ -227,6 +228,22 @@ struct DocumentStore {
         return read_file(key).value_or("");
     }
 
+    // #5351: one DocIndex per document text. definition, hover, references,
+    // completion, documentSymbol and the range requests each rebuilt the whole
+    // index per request, so a 20k-line file paid the build again for every
+    // keystroke-sized query. The cache returns the index diagnostics already
+    // built and rebuilds it only when the text actually changed; comparing the
+    // text costs a memcmp, the build costs milliseconds.
+    mutable std::unordered_map<std::string, DocIndex> index_cache_;
+
+    const DocIndex& index_of(const std::string& key) const {
+        const std::string text = text_of(key);
+        const auto found = index_cache_.find(key);
+        if (found != index_cache_.end() && found->second.text == text)
+            return found->second;
+        return index_cache_.insert_or_assign(key, DocIndex::build(text)).first->second;
+    }
+
     // The URI a client should see for this key: the original spelling for an
     // open document, a fresh file:// URI otherwise.
     std::string uri_of(const std::string& key) const {
@@ -247,7 +264,8 @@ struct DocumentStore {
     // directory of their own, so they search from the workspace root.
     std::optional<std::string> resolve(const std::string& from_key, const std::string& spec) const {
         if (from_key.starts_with("untitled:"))
-            return lsp_4911::resolve((root.empty() ? std::string(".") : root) + "/untitled.aura", spec);
+            return lsp_4911::resolve((root.empty() ? std::string(".") : root) + "/untitled.aura",
+                                     spec);
         return lsp_4911::resolve(from_key, spec);
     }
 

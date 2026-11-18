@@ -228,7 +228,7 @@ struct Server {
         const LineIndex li(text);
         const std::size_t p =
             std::min(text.size(), byte_offset_at(text, li, codec, line, character));
-        const DocIndex ix = DocIndex::build(text);
+        const DocIndex& ix = store.index_of(key);
         if (!ix.inside_comment(p) && !ix.inside_string(p))
             if (const auto hit = ix.local_definition(p))
                 return location_json(key, hit->span);
@@ -244,7 +244,7 @@ struct Server {
         if (!files.empty())
             std::ranges::rotate(files, files.end() - 1);
         for (auto& f : files) {
-            const DocIndex other = DocIndex::build(store.text_of(f));
+            const DocIndex& other = store.index_of(f);
             if (const int d = other.top_def(word); d >= 0)
                 return location_json(f, other.defs[d].name_span);
         }
@@ -271,7 +271,7 @@ struct Server {
         const LineIndex li(text);
         const std::size_t p =
             std::min(text.size(), byte_offset_at(text, li, codec, line, character));
-        const DocIndex ix = DocIndex::build(text);
+        const DocIndex& ix = store.index_of(key);
         std::string arr;
         for (const auto& [span, kind] : ix.highlights(p)) {
             if (!arr.empty())
@@ -427,7 +427,7 @@ struct Server {
         const std::string key = DocumentStore::key_of(uri);
         const std::string text = store.text_of(key);
         const LineIndex li(text);
-        const DocIndex ix = DocIndex::build(text);
+        const DocIndex& ix = store.index_of(key);
         std::string arr;
         for (const int d : ix.top) {
             if (!arr.empty())
@@ -442,7 +442,7 @@ struct Server {
         const std::string key = DocumentStore::key_of(uri);
         const std::string text = store.text_of(key);
         const LineIndex li(text);
-        const DocIndex ix = DocIndex::build(text);
+        const DocIndex& ix = store.index_of(key);
         std::string arr;
         for (const auto& [span, is_comment] : ix.folds()) {
             if (span.end <= span.begin)
@@ -474,7 +474,7 @@ struct Server {
         const LineIndex li(text);
         const std::size_t p =
             std::min(text.size(), byte_offset_at(text, li, codec, line, character));
-        const DocIndex ix = DocIndex::build(text);
+        const DocIndex& ix = store.index_of(key);
         const auto chain = ix.chain_at(p);
         if (chain.empty())
             return "null";
@@ -494,7 +494,7 @@ struct Server {
         const std::string key = DocumentStore::key_of(uri);
         const std::string text = store.text_of(key);
         const LineIndex li(text);
-        const DocIndex ix = DocIndex::build(text);
+        const DocIndex& ix = store.index_of(key);
         std::string arr;
         for (const auto& link : ix.links) {
             // The require graph and this link resolve through the same A1
@@ -566,7 +566,7 @@ struct Server {
             if (text.empty())
                 continue;
             const LineIndex li(text);
-            const DocIndex ix = DocIndex::build(text);
+            const DocIndex& ix = store.index_of(key);
             for (int d = 0; d < static_cast<int>(ix.defs.size()); ++d) {
                 const auto& sym = ix.defs[d];
                 if (!query.empty() && lowered(sym.name).find(query) == std::string::npos)

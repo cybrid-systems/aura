@@ -183,13 +183,13 @@ struct RenameService {
     }
 
     RefTarget resolve(const std::string& key, std::size_t p) const {
-        const DocIndex ix = DocIndex::build(store.text_of(key));
+        const DocIndex& ix = store.index_of(key);
         RefTarget t = target_at(ix, key, p);
         if (!t.ok && !t.external)
             return t;
         if (t.external) {
             for (const auto& f : closure_of(key)) {
-                const DocIndex dep = DocIndex::build(store.text_of(f));
+                const DocIndex& dep = store.index_of(f);
                 const int d = dep.top_def(t.name);
                 if (d < 0)
                     continue;
@@ -227,7 +227,7 @@ struct RenameService {
         std::vector<RefSite> out;
         if (!t.ok)
             return out;
-        const DocIndex ix = DocIndex::build(store.text_of(t.key));
+        const DocIndex& ix = store.index_of(t.key);
         out.push_back({t.key, t.decl, true});
         for (const auto& o : ix.occs) {
             if (o.binding < 0 || o.binding != t.binding)
@@ -239,7 +239,7 @@ struct RenameService {
         }
         if (t.top_level) {
             for (const auto& f : dependents(t.key)) {
-                const DocIndex dep = DocIndex::build(store.text_of(f));
+                const DocIndex& dep = store.index_of(f);
                 for (const auto& o : dep.occs) {
                     // Unresolved at reader level == a name the require graph
                     // provides. A shadowing let/lambda parameter is resolved
@@ -288,7 +288,7 @@ struct RenameService {
         std::ranges::sort(files);
         files.erase(std::unique(files.begin(), files.end()), files.end());
         for (const auto& f : files) {
-            const DocIndex ix = DocIndex::build(store.text_of(f));
+            const DocIndex& ix = store.index_of(f);
             for (const auto& b : ix.bindings) {
                 if (b.name != new_name)
                     continue;
