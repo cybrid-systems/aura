@@ -149,4 +149,10 @@ tests run under plain Emacs (from `editors/emacs`):
   a run.
 - Definitions are top-level `define` / `define-syntax` / `define-record-type`;
   local `let` bindings are not indexed.
-- No completion, hover, or rename yet.
+- Completion (#5261) is a flat prefix list: primitives with their registry
+  description, the document's and its requires' top-level defines, the
+  bindings visible at the cursor, and `require` specs (std/ modules, the
+  project root, AURA_PATH) with the path each one resolves to.
+- Hover and signature help read the same primitive registry as the REPL's
+  `:doc`; hover never shows a type until #5250 lands. Rename is not
+  implemented.

@@ -9,12 +9,15 @@
 #ifndef AURA_COMPILER_MODULE_SEARCH_HH
 #define AURA_COMPILER_MODULE_SEARCH_HH
 
+#include <algorithm>
 #include <cstdlib>
+#include <filesystem>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <utility>
 #include <vector>
 
 #include "core/runtime_config.hh"
@@ -113,6 +116,37 @@ inline std::optional<std::string> resolve(const std::string& path, std::string_v
     if (auto hit = try_load("./lib/" + path))
         return hit;
     return std::nullopt;
+}
+
+// #5261: the std/ module names a completion list offers. Both faces use this
+// one scan -- the REPL's Tab completion and the language server's require
+// completion -- so a module the editor suggests is a module the REPL knows.
+// The rule is the REPL's: lib/std next to the cwd, then the runtime's lib/std;
+// the first directory with any modules wins.
+inline std::vector<std::pair<std::string, std::string>> std_module_files() {
+    std::vector<std::pair<std::string, std::string>> out;
+    std::vector<std::filesystem::path> dirs{std::filesystem::path("lib/std")};
+    if (const char* rt = ::aura::config::raw(::aura::config::Key::AURA_RUNTIME_DIR); rt && *rt)
+        dirs.emplace_back(std::filesystem::path(rt) / "lib" / "std");
+    for (const auto& dir : dirs) {
+        std::error_code ec;
+        if (!std::filesystem::is_directory(dir, ec))
+            continue;
+        for (const auto& entry : std::filesystem::directory_iterator(dir, ec)) {
+            if (!entry.is_regular_file(ec))
+                continue;
+            const auto name = entry.path().filename().string();
+            if (name.ends_with(".aura"))
+                out.emplace_back("std/" + name.substr(0, name.size() - 5), entry.path().string());
+        }
+        if (!out.empty())
+            break;
+    }
+    std::ranges::sort(out, {}, [](const auto& p) { return p.first; });
+    out.erase(std::unique(out.begin(), out.end(),
+                          [](const auto& a, const auto& b) { return a.first == b.first; }),
+              out.end());
+    return out;
 }
 
 } // namespace aura::module_search

@@ -133,7 +133,7 @@ class LspDepth5155(unittest.TestCase):
 PROCESS_THEME = "lsp"
 PROCESS_TIER = "fast"
 PROCESS_TIMEOUT = 180
-PARTS = ("lsp_protocol", "lsp_format", "lsp_symbols")
+PARTS = ("lsp_protocol", "lsp_format", "lsp_symbols", "lsp_semantic")
 CASES = (
     (
         5155,
@@ -265,6 +265,42 @@ CASES = (
         5259,
         "test_capabilities_advertise_the_symbol_layer",
         "lsp_symbols.LspSymbols5259.test_capabilities_advertise_the_symbol_layer",
+    ),
+    # #5261: hover / signatureHelp / completion, first wave (no types).
+    (
+        5261,
+        "test_hover_matches_repl_doc_for_primitives",
+        "lsp_semantic.LspSemantic5261.test_hover_matches_repl_doc_for_primitives",
+    ),
+    (
+        5261,
+        "test_hover_on_a_user_define_shows_params_and_the_comment_above",
+        "lsp_semantic.LspSemantic5261.test_hover_on_a_user_define_shows_params_and_the_comment_above",
+    ),
+    (
+        5261,
+        "test_hover_on_a_require_string_shows_the_resolved_path",
+        "lsp_semantic.LspSemantic5261.test_hover_on_a_require_string_shows_the_resolved_path",
+    ),
+    (
+        5261,
+        "test_signature_help_marks_the_current_argument",
+        "lsp_semantic.LspSemantic5261.test_signature_help_marks_the_current_argument",
+    ),
+    (
+        5261,
+        "test_completion_offers_primitives_defines_and_visible_bindings",
+        "lsp_semantic.LspSemantic5261.test_completion_offers_primitives_defines_and_visible_bindings",
+    ),
+    (
+        5261,
+        "test_completion_lists_require_paths_from_root_std_and_aura_path",
+        "lsp_semantic.LspSemantic5261.test_completion_lists_require_paths_from_root_std_and_aura_path",
+    ),
+    (
+        5261,
+        "test_capabilities_advertise_hover_signature_and_completion",
+        "lsp_semantic.LspSemantic5261.test_capabilities_advertise_hover_signature_and_completion",
     ),
 )
 

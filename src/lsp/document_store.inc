@@ -104,6 +104,17 @@ inline bool sym_char(char c) {
            std::string_view("()[]'\"`,;").find(c) == std::string_view::npos;
 }
 
+// The symbol token around byte offset p ("", when there is none).
+inline std::string word_at(std::string_view text, std::size_t p) {
+    std::size_t b = std::min(p, text.size());
+    std::size_t e = b;
+    while (b > 0 && sym_char(text[b - 1]))
+        --b;
+    while (e < text.size() && sym_char(text[e]))
+        ++e;
+    return std::string(text.substr(b, e - b));
+}
+
 struct Require {
     std::size_t begin = 0, end = 0; // byte range of the (require …) form
     std::string spec;

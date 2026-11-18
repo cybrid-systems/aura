@@ -14,6 +14,8 @@
 //   lsp/document_store.inc URI normalization, documents, (require …) graph
 //   lsp/symbols.inc        reader-based symbol index (#5259)
 //   lsp/diagnostics.inc    typecheck of the document's require closure
+//   lsp/prims.inc          primitive signatures/docs from the registry (#5261)
+//   lsp/semantics.inc      hover / signatureHelp / completion (#5261)
 //   lsp/server.inc         dispatch, method handlers, debounce loop
 //
 // Pure std; no network, no extra dependencies.
@@ -23,6 +25,8 @@
 #include "lsp/document_store.inc"
 #include "lsp/symbols.inc"
 #include "lsp/diagnostics.inc"
+#include "lsp/prims.inc"     // #5261: the compiler's primitive registry
+#include "lsp/semantics.inc" // #5261: hover, signatureHelp, completion
 #include "lsp/server.inc"
 
 static int aura_lsp_4911() {
