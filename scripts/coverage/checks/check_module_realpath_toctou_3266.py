@@ -94,11 +94,18 @@ def main() -> int:
             fails.append(f"{label}: missing {n!r}")
 
     loader = _read("src/compiler/evaluator_module_loader.cpp")
+    # #5258: try_load() — the #3266 TOCTOU contract — moved to the shared module
+    # search header so the runtime and the LSP resolve modules the same way.
+    search = _read("src/compiler/module_search.hh")
     test = _read("tests/compiler/test_module_path_refuse.cpp")
     l3265 = _read("scripts/coverage/checks/check_jit_fn_marker_atomic_3265.py")
 
     pos = loader.find("auto try_load = [](const std::string& full)")
-    win = loader[pos : pos + 900] if pos >= 0 else ""
+    body_src = loader
+    if pos < 0:
+        pos = search.find("try_load(const std::string& full)")
+        body_src = search
+    win = body_src[pos : pos + 900] if pos >= 0 else ""
     must("Issue #3266", "AC1 cite", win)
     must("::realpath(candidate.c_str(), nullptr)", "AC1 realpath", win)
     must("::lstat(out.c_str(), &lst)", "AC1 lstat", win)
