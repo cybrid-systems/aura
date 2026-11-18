@@ -37,6 +37,14 @@ MESSY = r"""; 文件头注释：保留
 """
 COMMENT_LINES = ("; 文件头注释：保留", "; 行尾注释", "#| 块注释", "跨行：保留 |#")
 BROKEN = "(define (f x)\n  (+ x 1)\n"
+# #5348: the head of a body form ends the line, so its clauses must all land
+# at the same column. tabSize is a tab width, never the body indent.
+COND_EOL = """(define (f i)
+(cond
+((= i 0) 0.3)
+((= i 1) 0.7)
+(else 1.1)))
+"""
 
 
 def uri_for(path: Path) -> str:
@@ -45,6 +53,22 @@ def uri_for(path: Path) -> str:
 
 def skeleton(text: str) -> str:
     return "\n".join(line.lstrip(" \t") for line in text.split("\n"))
+
+
+def indent_columns(text: str, tab_size: int) -> list[int]:
+    """Column each line starts at, with a tab advancing to the next stop."""
+    columns = []
+    for line in text.split("\n"):
+        col = 0
+        for ch in line:
+            if ch == "\t":
+                col = (col // tab_size + 1) * tab_size
+            elif ch == " ":
+                col += 1
+            else:
+                break
+        columns.append(col)
+    return columns
 
 
 def offset(text: str, line: int, character: int) -> int:
@@ -144,6 +168,41 @@ class LspFormat5263(unittest.TestCase):
             self.assertEqual(cli.returncode, 0, cli.stderr)
             self.assertEqual(path.read_text(encoding="utf-8"), applied)
 
+    def test_tab_size_is_not_the_body_indent(self) -> None:
+        # #5348: FormattingOptions.tabSize is "size of a tab in spaces". The
+        # formatter must keep the CLI's two-column body indent for every
+        # tabSize, and insertSpaces = false must land on the same columns.
+        cli = subprocess.run(
+            [str(AURA), "--fmt"],
+            input=COND_EOL,
+            capture_output=True,
+            text=True,
+            env=env(),
+            timeout=60,
+        )
+        self.assertEqual(cli.returncode, 0, cli.stderr)
+        expected = cli.stdout
+        self.assertIn("  (cond\n    ((= i 0) 0.3)\n", expected)
+        for opts in (
+            {"tabSize": 2, "insertSpaces": True},
+            {"tabSize": 4, "insertSpaces": True},
+            {"tabSize": 8, "insertSpaces": True},
+            {"tabSize": 4, "insertSpaces": False},
+            {"tabSize": 8, "insertSpaces": False},
+        ):
+            with tempfile.TemporaryDirectory() as tmp:
+                client, _path, uri = self._open(tmp, COND_EOL)
+                applied = apply_edits(COND_EOL, client.format_document(uri, opts))
+                client.close()
+            if opts["insertSpaces"]:
+                self.assertEqual(applied, expected, opts)
+            else:
+                self.assertEqual(
+                    indent_columns(applied, opts["tabSize"]),
+                    indent_columns(expected, 2),
+                    opts,
+                )
+
     def test_formatting_is_idempotent_in_the_editor(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             client, _path, uri = self._open(tmp, MESSY)
@@ -191,15 +250,34 @@ class LspFormat5263(unittest.TestCase):
             self.assertEqual(code, 0, err)
 
     def test_tab_size_and_insert_spaces_are_honored(self) -> None:
+        # #5348: tabSize is the width of a tab, not the body indent — the text
+        # is the same for every tabSize. insertSpaces = false writes tabs only
+        # where an indent lands on a tab stop, so the columns never move.
         with tempfile.TemporaryDirectory() as tmp:
             client, _path, uri = self._open(tmp, MESSY)
-            four = apply_edits(MESSY, client.format_document(uri, options={"tabSize": 4, "insertSpaces": True}))
-            self.assertIn("\n    (+ x\n", four)
-            tabs = apply_edits(
-                MESSY, client.format_document(uri, options={"tabSize": 4, "insertSpaces": False}, rid=43)
+            two = apply_edits(MESSY, client.format_document(uri, options={"tabSize": 2, "insertSpaces": True}))
+            four = apply_edits(
+                MESSY,
+                client.format_document(uri, options={"tabSize": 4, "insertSpaces": True}, rid=42),
             )
-            self.assertIn("\n\t(+ x\n", tabs)
-            self.assertEqual(tabs.count("\t\t"), 0, tabs)
+            eight = apply_edits(
+                MESSY,
+                client.format_document(uri, options={"tabSize": 8, "insertSpaces": True}, rid=43),
+            )
+            self.assertEqual(four, two)
+            self.assertEqual(eight, two)
+            self.assertIn("\n  (+ x\n", two)
+            tabs2 = apply_edits(
+                MESSY,
+                client.format_document(uri, options={"tabSize": 2, "insertSpaces": False}, rid=44),
+            )
+            self.assertIn("\n\t(+ x\n", tabs2)
+            tabs4 = apply_edits(
+                MESSY,
+                client.format_document(uri, options={"tabSize": 4, "insertSpaces": False}, rid=45),
+            )
+            self.assertIn("\n  (+ x\n", tabs4)
+            self.assertEqual(tabs4.count("\t\t"), 0, tabs4)
             client.close()
 
 

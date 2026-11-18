@@ -122,10 +122,26 @@ namespace detail {
         std::size_t child_col = 0; // column a new subform line uses
         std::string head;          // head atom, while it is still being read
         bool head_open = true;
+        // #5348: lisp-indent-function's distinguished-argument count. With a
+        // head at end of line, those arguments start one body indent further
+        // in (open_col + 4), and the remaining subforms use open_col + 2 -
+        // what indent-region does for let/when/lambda/define.
+        int body_args = 0;
+        bool first_arg = false;         // the next subform is a distinguished arg
+        bool first_arg_started = false; // that subform has consumed input
     };
 
-    [[nodiscard]] inline bool body_form(std::string_view h) noexcept {
-        // Emacs scheme-indent-function 0 or 1: all subforms two columns in.
+    // lisp-indent-function for the form: >= 0 is a body form whose first
+    // N subforms are distinguished; -1 means "align under arg 1".
+    [[nodiscard]] inline int body_form_args(std::string_view h) noexcept {
+        static constexpr std::string_view kZero[] = {
+            "cond",         "do",    "and",         "or",           "begin",
+            "parameterize", "delay", "delay-force", "dynamic-wind", "syntax-rules",
+        };
+        for (const auto& form : kZero) {
+            if (h == form)
+                return 0;
+        }
         static constexpr std::string_view kBody[] = {
             "define",
             "define-values",
@@ -161,9 +177,13 @@ namespace detail {
         };
         for (const auto& form : kBody) {
             if (h == form)
-                return true;
+                return 1;
         }
-        return false;
+        return -1;
+    }
+
+    [[nodiscard]] inline bool body_form(std::string_view h) noexcept {
+        return body_form_args(h) >= 0;
     }
 
 } // namespace detail
@@ -172,12 +192,18 @@ namespace detail {
 // reindent(reindent(x)) == reindent(x).
 //
 // tab_size and insert_spaces are the editor's FormattingOptions (#5263):
-// tab_size is both the body-form offset and the column a tab advances to,
-// and insert_spaces = false writes one tab per completed step. The defaults
-// (2, spaces) are what the CLI uses and what lisp-indent-function means.
+// tab_size is the column a tab advances to (and the unit insert_spaces =
+// false writes), NOT the body-form offset — that stays the lisp-indent
+// width of 2 columns (#5348). The defaults (2, spaces) are what the CLI
+// uses and what lisp-indent-function means.
 [[nodiscard]] inline std::string reindent(std::string_view src, int tab_size = 2,
                                           bool insert_spaces = true) {
+    // #5348: FormattingOptions.tabSize is "size of a tab in spaces", not the
+    // Lisp body indent. The body offset stays the lisp-indent width (2, what
+    // the CLI uses); tab_size only sets the column a tab advances to, and an
+    // insertSpaces = false line still lands on the same columns.
     const std::size_t step = tab_size > 0 ? static_cast<std::size_t>(tab_size) : 2;
+    constexpr std::size_t kBodyIndent = 2;
     const std::size_t n = src.size();
     std::string out;
     out.reserve(n + n / 8 + 16);
@@ -214,12 +240,49 @@ namespace detail {
             return;
         f.head_open = false;
         if (f.head.empty()) { // head was '(' or a literal: align under it
+            f.body_args = -1;
             f.child_col = f.open_col + 1;
             return;
         }
-        f.child_col = detail::body_form(f.head)
-                          ? f.open_col + step
-                          : col + ((delim == '\n' || fmt_is_hspace(delim)) ? 1 : 0);
+        const int args = detail::body_form_args(f.head);
+        f.body_args = args;
+        f.child_col = args >= 0 ? f.open_col + kBodyIndent
+                                : col + ((delim == '\n' || fmt_is_hspace(delim)) ? 1 : 0);
+    };
+    // #5348: a head that ends the line has no first argument to align under.
+    // A body form still indents its subforms two columns past the paren; any
+    // other call keeps the lisp-indent column for that shape, open_col + 1.
+    // Finishing the head here is what makes the first clause line agree with
+    // the rest of a cond/let/when whose head sits at end of line.
+    const auto finish_head_eol = [&]() {
+        if (stack.empty())
+            return;
+        auto& f = stack.back();
+        if (!f.head_open)
+            return;
+        f.head_open = false;
+        const int args = detail::body_form_args(f.head);
+        f.body_args = args;
+        f.first_arg = args > 0;
+        f.first_arg_started = false;
+        f.child_col = args > 0    ? f.open_col + 2 * kBodyIndent
+                      : args == 0 ? f.open_col + kBodyIndent
+                                  : f.open_col + 1;
+    };
+    // The distinguished first argument ended: the rest of the form is body.
+    const auto end_first_arg = [&]() {
+        if (stack.empty())
+            return;
+        auto& f = stack.back();
+        if (!f.first_arg)
+            return;
+        f.first_arg = false;
+        f.first_arg_started = false;
+        f.child_col = f.open_col + kBodyIndent;
+    };
+    const auto mark_first_arg_started = [&]() {
+        if (!stack.empty() && stack.back().first_arg && !stack.back().first_arg_started)
+            stack.back().first_arg_started = true;
     };
 
     while (i < n) {
@@ -254,6 +317,9 @@ namespace detail {
         }
 
         if (c == '\n') {
+            finish_head_eol();
+            if (!stack.empty() && stack.back().first_arg && stack.back().first_arg_started)
+                end_first_arg();
             out.push_back('\n');
             col = 0;
             line_start = true;
@@ -262,6 +328,7 @@ namespace detail {
         }
         if (c == '"') { // string literal: byte-for-byte
             finish_head(c);
+            mark_first_arg_started();
             const std::size_t end = fmt_skip_string(src, i);
             for (; i < end; ++i)
                 raw(src[i]);
@@ -269,6 +336,7 @@ namespace detail {
         }
         if (c == '|') { // |symbol|
             finish_head(c);
+            mark_first_arg_started();
             const std::size_t end = fmt_skip_pipe_symbol(src, i);
             for (; i < end; ++i)
                 raw(src[i]);
@@ -280,6 +348,7 @@ namespace detail {
             continue;
         }
         if (c == '#' && i + 1 < n && src[i + 1] == '|') { // block comment, nests
+            mark_first_arg_started();
             int nest = 1;
             raw(src[i++]);
             raw(src[i++]);
@@ -302,6 +371,7 @@ namespace detail {
         }
         if (c == '#' && i + 1 < n && src[i + 1] == '\\') { // #\x character
             finish_head(c);
+            mark_first_arg_started();
             const std::size_t end = fmt_skip_character(src, i);
             for (; i < end; ++i)
                 raw(src[i]);
@@ -309,6 +379,7 @@ namespace detail {
         }
         if (c == '#' && i + 1 < n && src[i + 1] == '(') { // #( vector
             finish_head(c);
+            mark_first_arg_started();
             detail::Frame f;
             f.open_col = col;
             f.child_col = col + 1;
@@ -319,6 +390,7 @@ namespace detail {
         }
         if (c == '(') {
             finish_head(c);
+            mark_first_arg_started();
             detail::Frame f;
             f.open_col = col;
             f.child_col = col + 1;
@@ -330,17 +402,30 @@ namespace detail {
             finish_head(c);
             if (!stack.empty())
                 stack.pop_back();
+            // #5348: the closed form was the frame's distinguished first
+            // argument; the rest of that form is body-indented.
+            if (!stack.empty() && stack.back().first_arg)
+                end_first_arg();
             raw(src[i++]);
             continue;
         }
         if (fmt_is_hspace(c)) {
-            finish_head(c);
+            // A CR before the LF ends the line like the LF does; finishing the
+            // head twice is a no-op, so CRLF files take the EOL rule too.
+            if (c == '\r' && i + 1 < n && src[i + 1] == '\n')
+                finish_head_eol();
+            else
+                finish_head(c);
+            if (!stack.empty() && stack.back().first_arg && stack.back().first_arg_started)
+                end_first_arg();
             raw(src[i++]);
             continue;
         }
         // atom byte: part of the frame's head while the head is still open
         if (!stack.empty() && stack.back().head_open)
             stack.back().head.push_back(c);
+        else
+            mark_first_arg_started();
         raw(src[i++]);
     }
     return out;
