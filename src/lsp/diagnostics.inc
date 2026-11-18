@@ -103,6 +103,70 @@ inline int underline_end(std::string_view text, int line, int col) {
     return end <= col ? col + 1 : end;
 }
 
+// #5346: a file can carry a diagnostic on every form. Past this many the
+// publication keeps the earliest errors, then the earliest warnings and
+// notes, so a run of type warnings cannot push an error off the list.
+inline constexpr std::size_t kMaxDiagnosticsPerFile = 100;
+
+inline bool diag_before(const Diag& a, const Diag& b) {
+    if (a.line != b.line)
+        return a.line < b.line;
+    if (a.col != b.col)
+        return a.col < b.col;
+    if (a.kind != b.kind)
+        return static_cast<int>(a.kind) < static_cast<int>(b.kind);
+    return a.message < b.message;
+}
+
+inline bool same_published_diag(const Diag& a, const Diag& b) {
+    return a.line == b.line && a.col == b.col && a.kind == b.kind && a.message == b.message;
+}
+
+// The checker can report one site twice. Keep the copy that carries the
+// quickfix and the hint.
+inline void absorb_richer(Diag& keep, Diag& extra) {
+    if (keep.fix_name.empty() && !extra.fix_name.empty())
+        keep.fix_name = std::move(extra.fix_name);
+    if (keep.hint.empty() && !extra.hint.empty())
+        keep.hint = std::move(extra.hint);
+    if (keep.related.empty() && !extra.related.empty())
+        keep.related = std::move(extra.related);
+}
+
+inline void settle_diagnostics(std::vector<Diag>& diags) {
+    std::ranges::sort(diags, diag_before);
+    std::vector<Diag> uniq;
+    uniq.reserve(diags.size());
+    for (auto& d : diags) {
+        if (!uniq.empty() && same_published_diag(uniq.back(), d)) {
+            absorb_richer(uniq.back(), d);
+            continue;
+        }
+        uniq.push_back(std::move(d));
+    }
+    if (uniq.size() > kMaxDiagnosticsPerFile) {
+        std::vector<Diag> errors;
+        std::vector<Diag> rest;
+        errors.reserve(std::min(uniq.size(), kMaxDiagnosticsPerFile));
+        for (auto& d : uniq) {
+            if (d.severity == 1)
+                errors.push_back(std::move(d));
+            else
+                rest.push_back(std::move(d));
+        }
+        if (errors.size() > kMaxDiagnosticsPerFile)
+            errors.resize(kMaxDiagnosticsPerFile);
+        const std::size_t room = kMaxDiagnosticsPerFile - errors.size();
+        if (rest.size() > room)
+            rest.resize(room);
+        errors.insert(errors.end(), std::make_move_iterator(rest.begin()),
+                      std::make_move_iterator(rest.end()));
+        std::ranges::sort(errors, diag_before);
+        uniq = std::move(errors);
+    }
+    diags = std::move(uniq);
+}
+
 struct DiagnosticsEngine {
     const DocumentStore& store;
     // #5262: type diagnostics are warnings unless the client says otherwise.
@@ -291,9 +355,9 @@ struct DiagnosticsEngine {
                 continue;
             --seg;
             auto& v = by_file[seg->key];
-            // Keep the first diagnostic per file (CLI default: first error stops).
-            if (!v.empty())
-                continue;
+            // #5346: typecheck_full already returned every structured
+            // diagnostic. Publishing only the first let a type warning hide
+            // a later unbound name, an arity mismatch, and its quickfix.
             if (d.kind == aura::diag::ErrorKind::TypeError && type_mode == TypeMode::Off)
                 continue;
             Diag out;
@@ -327,9 +391,15 @@ struct DiagnosticsEngine {
             for (const int d : ix.top)
                 defined.insert(ix.defs[d].name);
         }
-        for (auto& [path, diags] : by_file)
+        for (auto& [path, diags] : by_file) {
+            (void)path;
             std::erase_if(diags,
                           [&](const Diag& d) { return !keep_diag(d.kind, d.message, defined); });
+            // Dedup, keep errors when the per-file cap binds, then order by
+            // source position. Related locations are attached afterwards so
+            // a dropped duplicate does not grow a require chain.
+            settle_diagnostics(diags);
+        }
         // #5262: follow the require chain upwards so the editor can show
         // where a required module (or a module it requires) came from.
         for (auto& [path, diags] : by_file) {
