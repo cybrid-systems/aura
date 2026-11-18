@@ -109,6 +109,11 @@ struct DocIndex {
     std::vector<SymOcc> occs;
     std::vector<Span> comments; // line and block comments
     std::vector<SymLink> links;
+    // #5351: completion asked "which node is this binding's name" and "is this
+    // a top-level define" by scanning nodes/defs for every binding, which is
+    // O(bindings x nodes) on a large file. Both answers are fixed at build.
+    std::unordered_map<std::size_t, int> atom_at_begin; // atom span begin -> node
+    std::unordered_set<std::size_t> top_name_begin;     // top-level define name spans
 
     static DocIndex build(std::string_view text);
 
@@ -253,7 +258,10 @@ struct SymReader {
         n.kind = k;
         n.span = {base + b, base + e};
         ix.nodes.push_back(std::move(n));
-        return static_cast<int>(ix.nodes.size()) - 1;
+        const int index = static_cast<int>(ix.nodes.size()) - 1;
+        if (k == SymKind::Atom)
+            ix.atom_at_begin.emplace(base + b, index);
+        return index;
     }
 
     void skip_trivia() {
@@ -537,9 +545,10 @@ private:
         }
         const int index = static_cast<int>(ix_.defs.size());
         ix_.defs.push_back(std::move(d));
-        if (def_stack_.empty())
+        if (def_stack_.empty()) {
             ix_.top.push_back(index);
-        else
+            ix_.top_name_begin.insert(ix_.defs[index].name_span.begin);
+        } else
             ix_.defs[def_stack_.back()].children.push_back(index);
         return index;
     }

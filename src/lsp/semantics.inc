@@ -113,12 +113,9 @@ inline std::optional<std::string> preceding_comment(const DocIndex& ix, std::siz
 // True when span is the name token of a top-level define (a file-wide name,
 // not a local binding).
 inline bool is_top_def_name(const DocIndex& ix, Span span) {
-    for (const int d : ix.top) {
-        const auto& name = ix.defs[d].name_span;
-        if (name.begin == span.begin && name.end == span.end)
-            return true;
-    }
-    return false;
+    // #5351: the build records every top-level define name; the linear scan
+    // over ix.top made completion O(bindings x defs).
+    return ix.top_name_begin.contains(span.begin);
 }
 
 // Bindings whose declaration is visible at p: a top-level define is visible in
@@ -134,13 +131,10 @@ inline std::vector<int> visible_bindings(const DocIndex& ix, std::size_t p) {
             out.push_back(static_cast<int>(b));
             continue;
         }
-        int node = -1;
-        for (std::size_t n = 0; n < ix.nodes.size(); ++n)
-            if (ix.nodes[n].kind == SymKind::Atom &&
-                ix.nodes[n].span.begin == bind.name_span.begin) {
-                node = static_cast<int>(n);
-                break;
-            }
+        // #5351: built once per index instead of scanning every node for
+        // every binding (the completion hot path on a large file).
+        const auto found = ix.atom_at_begin.find(bind.name_span.begin);
+        const int node = found == ix.atom_at_begin.end() ? -1 : found->second;
         int scope = -1;
         for (int up = node >= 0 ? ix.nodes[node].parent : -1; up >= 0; up = ix.nodes[up].parent) {
             const auto& list = ix.nodes[up];
@@ -244,7 +238,7 @@ struct Semantics {
         const LineIndex li(text);
         const std::size_t p =
             std::min(text.size(), byte_offset_at(text, li, codec, line, character));
-        const DocIndex ix = DocIndex::build(text);
+        const DocIndex& ix = store.index_of(key);
 
         // (require "...") : show where A1 resolves the spec.
         for (const auto& link : ix.links) {
@@ -335,7 +329,7 @@ struct Semantics {
         const LineIndex li(text);
         const std::size_t p =
             std::min(text.size(), byte_offset_at(text, li, codec, line, character));
-        const DocIndex ix = DocIndex::build(text);
+        const DocIndex& ix = store.index_of(key);
 
         // The innermost list with an atom head is the call being typed.
         int call = -1;
@@ -485,7 +479,7 @@ struct Semantics {
             items += '}';
         };
 
-        const DocIndex ix = DocIndex::build(text);
+        const DocIndex& ix = store.index_of(key);
         std::size_t content_start = 0;
         if (in_require_string(text, p, content_start)) {
             for (const auto& [spec, path] : require_candidates(key))
@@ -516,7 +510,7 @@ struct Semantics {
         for (const auto& f : files) {
             if (f == key)
                 continue;
-            const DocIndex other = DocIndex::build(store.text_of(f));
+            const DocIndex& other = store.index_of(f);
             for (const int d : other.top) {
                 const auto& def = other.defs[d];
                 const int kind = def.kind == 12 ? 3 : def.kind == 23 ? 22 : 6;

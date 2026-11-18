@@ -23,8 +23,8 @@
 
 #include "lsp/json_rpc.inc"
 #include "lsp/position.inc"
+#include "lsp/symbols.inc" // #5351: DocIndex first, the store caches one
 #include "lsp/document_store.inc"
-#include "lsp/symbols.inc"
 #include "lsp/diagnostics.inc"
 #include "lsp/prims.inc"     // #5261: the compiler's primitive registry
 #include "lsp/semantics.inc" // #5261: hover, signatureHelp, completion

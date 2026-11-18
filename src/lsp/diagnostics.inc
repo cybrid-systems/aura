@@ -387,7 +387,7 @@ struct DiagnosticsEngine {
         // longer hides a real unbound reference to ghost.
         std::unordered_set<std::string> defined;
         for (auto& f : files) {
-            const DocIndex ix = DocIndex::build(store.text_of(f));
+            const DocIndex& ix = store.index_of(f);
             for (const int d : ix.top)
                 defined.insert(ix.defs[d].name);
         }
