@@ -292,6 +292,67 @@ class LspSymbols5259(unittest.TestCase):
             finally:
                 c.close()
 
+    def _timed_symbol_request(self, text: str, method: str, runs: int = 3) -> float:
+        """Median request time in a fresh server, after the first publication."""
+        times = []
+        for _ in range(runs):
+            root = tempfile.mkdtemp(prefix="lspscale5352-")
+            path = Path(root) / "syn.aura"
+            path.write_text(text, encoding="utf-8")
+            client = Client()
+            try:
+                client.initialize(caps={}, root=Path(root).as_uri())
+                start = len(client.frames)
+                client.did_open(path.as_uri(), text)
+                _frames_after(client, start)
+                t0 = time.perf_counter()
+                client.send(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 77,
+                        "method": method,
+                        "params": {"textDocument": {"uri": path.as_uri()}},
+                    }
+                )
+                deadline = time.monotonic() + 20.0
+                while time.monotonic() < deadline:
+                    if any(f.get("id") == 77 for f in client.frames):
+                        break
+                    # A fine pump: a 50 ms slice would swamp the sub-10 ms
+                    # requests the ratio is about.
+                    client.pump(0.001)
+                times.append((time.perf_counter() - t0) * 1000.0)
+            finally:
+                client.close()
+        times.sort()
+        return times[len(times) // 2]
+
+    def test_symbol_queries_scale_with_the_file(self) -> None:
+        """#5352: documentSymbol/foldingRange locate lines through LineIndex.
+
+        range_json used to rescan the file from byte 0 for every symbol, so a
+        4x larger file cost ~12-15x.  The bound is loose enough for a shared
+        runner but rejects the quadratic shape (target is near-linear).
+        """
+
+        def gen(n: int) -> str:
+            lines = ['(require "std/string" all:)', ""]
+            for i in range(n):
+                prev = f"(syn-f{i - 1} (+ x 1))" if i else "x"
+                lines += [
+                    f"; synthetic function {i}",
+                    f"(define (syn-f{i} x)",
+                    "  (let ((y (* x 2)))",
+                    f"    (if (> y 100) y {prev})))",
+                ]
+            return "\n".join(lines) + "\n"
+
+        small, big = gen(312), gen(1250)
+        for method in ("textDocument/documentSymbol", "textDocument/foldingRange"):
+            a = self._timed_symbol_request(small, method)
+            b = self._timed_symbol_request(big, method)
+            self.assertLessEqual(b / max(a, 1.0), 6.0, (method, a, b))
+
     def test_capabilities_advertise_the_symbol_layer(self) -> None:
         c = Client()
         try:
