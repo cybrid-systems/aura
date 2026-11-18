@@ -179,6 +179,13 @@
     (th)
     (- (monotonic-ms) t0)))
 
+; The suite files run in parallel waves, so one sample can absorb a
+; scheduler/GC pause without the algorithm changing shape. CI run
+; 18be75e50 failed "dense replace is linear" on a single sample; the
+; linearity target is checked on the best of three per size.
+(define (best-ms-5324 th)
+  (min (ms-5324 th) (min (ms-5324 th) (ms-5324 th))))
+
 (test-case "replace rides the native scan" (hash "issue" 5324)
   (define sparse (string-append (repeat "a" 16000) "XYZ"))
   (define dense (repeat "abcdefghi " 1600))
@@ -192,9 +199,9 @@
 ; per-hit confirmation is skipped for a well-formed needle.
 (test-case "dense replace is linear" (hash "issue" 5324)
   (define (mk n) (string-join (make-list n "ab") " "))
-  (define a (ms-5324 (lambda () (string-replace (mk 1000) " " "_"))))
-  (define b (ms-5324 (lambda () (string-replace (mk 4000) " " "_"))))
-  (define c (ms-5324 (lambda () (string-replace (mk 16000) " " "_"))))
+  (define a (best-ms-5324 (lambda () (string-replace (mk 1000) " " "_"))))
+  (define b (best-ms-5324 (lambda () (string-replace (mk 4000) " " "_"))))
+  (define c (best-ms-5324 (lambda () (string-replace (mk 16000) " " "_"))))
   (check= (string-join (make-list 16000 "ab") "_")
           (string-replace (mk 16000) " " "_"))
   (check (<= b (* 5 (max 1 a))))
