@@ -22,6 +22,7 @@ PARTS = (
     "cli_build_info",
     "cli_mode_order",
     "cli_tool_file",
+    "cli_fmt",
 )
 CASES = (
     (
@@ -283,6 +284,36 @@ CASES = (
         5171,
         "test_help_states_the_rule",
         "cli_tool_file.TestIssue5171ToolFile.test_help_states_the_rule",
+    ),
+    (
+        5263,
+        "test_in_place_refuses_a_comment",
+        "cli_fmt.Fmt.test_in_place_refuses_a_comment",
+    ),
+    (
+        5263,
+        "test_check_refuses_a_comment",
+        "cli_fmt.Fmt.test_check_refuses_a_comment",
+    ),
+    (
+        5263,
+        "test_stdout_run_warns",
+        "cli_fmt.Fmt.test_stdout_run_warns",
+    ),
+    (
+        5263,
+        "test_literals_are_not_comments",
+        "cli_fmt.Fmt.test_literals_are_not_comments",
+    ),
+    (
+        5263,
+        "test_plain_input_still_formats",
+        "cli_fmt.Fmt.test_plain_input_still_formats",
+    ),
+    (
+        5263,
+        "test_help_names_the_refusal",
+        "cli_fmt.Fmt.test_help_names_the_refusal",
     ),
 )
 

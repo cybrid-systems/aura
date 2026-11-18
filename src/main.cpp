@@ -948,6 +948,7 @@ static std::string project_channel_4913() {
 }
 #include "cli_evo_4910.inc"
 #include "cli_lsp_4911.inc"
+#include "cli_fmt.inc" // Issue #5263: --fmt scanner / conservative reindent
 
 // Write one template's files under dir, substituting {{name}} / {{channel}}.
 // Returns the file count, or -1 after printing the write error.
@@ -3409,6 +3410,8 @@ static void print_denseness_usage(const char*, std::ostream& out = std::cerr) {
     std::println(out, "  A missing path (a slash, or a .aura name) is an error.");
     std::println(out, "  --fmt [--check] [-i] | --unparse   format; --check exits 1 when not "
                       "formatted");
+    std::println(out, "  --fmt refuses a file with comments (';' or '#| |#'): the current "
+                      "formatter drops them, so -i/--check exit 2 and write nothing");
     std::println(out, "  --typecheck | --auto-fix | --ir    diagnostics, fixes, evaluation");
     std::println(out, "  --query Q | --query-and-fix        queries over that same program");
     std::println(out, "  --evo-explain                 explain an evolution step (AURA_OBS=1)");
@@ -5375,6 +5378,28 @@ static int run_cli_fmt(int argc, char** argv) {
 
     if (input.empty())
         return 1;
+
+    // Issue #5263 (first wave): the reader keeps no trivia, so the unparser
+    // this path still uses deletes every comment and desugars
+    // (define (f x) ...). Never overwrite a file with that output, and never
+    // answer --check with a verdict that means "drop the comments".
+    const bool commented = cli_fmt_5263::has_comment(input);
+    const std::string where = in_path.empty() ? "stdin" : in_path;
+    if (commented && (in_place || check_only)) {
+        std::println(std::cerr,
+                     "error: refusing to {} {}: it contains comments (';' or '#| |#') and "
+                     "--fmt still writes the de-commented unparse (issue #5263)",
+                     in_place ? "rewrite" : "check", where);
+        std::println(std::cerr, "hint: nothing was written; use --check on a comment-free file, or "
+                                "--unparse to see the desugared form");
+        return 2;
+    }
+    if (commented) {
+        std::println(std::cerr,
+                     "warning: --fmt drops comments (';' and '#| |#'); the output for {} has "
+                     "none (issue #5263)",
+                     where);
+    }
 
     aura::compiler::CompilerService cs;
     auto alloc = cs.arena().allocator();
