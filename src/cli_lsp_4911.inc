@@ -16,6 +16,7 @@
 //   lsp/diagnostics.inc    typecheck of the document's require closure
 //   lsp/prims.inc          primitive signatures/docs from the registry (#5261)
 //   lsp/semantics.inc      hover / signatureHelp / completion (#5261)
+//   lsp/refactor.inc       references / prepareRename / rename (#5260)
 //   lsp/server.inc         dispatch, method handlers, debounce loop
 //
 // Pure std; no network, no extra dependencies.
@@ -27,6 +28,7 @@
 #include "lsp/diagnostics.inc"
 #include "lsp/prims.inc"     // #5261: the compiler's primitive registry
 #include "lsp/semantics.inc" // #5261: hover, signatureHelp, completion
+#include "lsp/refactor.inc"  // #5260: references, prepareRename, rename
 #include "lsp/server.inc"
 
 static int aura_lsp_4911() {
