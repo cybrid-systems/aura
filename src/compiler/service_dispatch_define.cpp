@@ -16,7 +16,7 @@ CompilerService::dispatch_ir_define_closure(aura::compiler::ClosureId cid,
     // lookups below run under the shared IR cache gate; every path that
     // RUNS a body drops it first (unique_lock) and pins the binding by
     // shared_ptr, so no body ever executes under the cache gate.
-    std::unique_lock<std::recursive_mutex> ir_gate(ir_cache_gate_, std::defer_lock);
+    IrGateLock4709 ir_gate(ir_cache_gate_);
     relock_ir_gate_(ir_gate); // #4765
     // Issue #4712: resolve the owning define by binding identity when
     // the cid->name index has no row. A workspace replace (set-code /
@@ -74,7 +74,7 @@ CompilerService::dispatch_ir_define_closure(aura::compiler::ClosureId cid,
                 bit != ir_define_env_bindings_.end() && bit->second && bit->second->interpreter) {
                 const std::shared_ptr<IRDefineEnvBinding> pinned = bit->second;
                 if (ir_gate.owns_lock())
-                    ir_gate.unlock();
+                    unlock_ir_gate_(ir_gate);
                 types::EvalValue out{};
                 const auto ran = run_pinned_ir_closure_(pinned, pinned->closure_id, args, 0, &out);
                 relock_ir_gate_(ir_gate); // #4765
@@ -92,7 +92,7 @@ CompilerService::dispatch_ir_define_closure(aura::compiler::ClosureId cid,
                 cell_cid && *cell_cid != cid && retired_resolve_depth_ < 4) {
                 ++retired_resolve_depth_;
                 if (ir_gate.owns_lock())
-                    ir_gate.unlock();
+                    unlock_ir_gate_(ir_gate);
                 auto resolved = evaluator_.apply_closure(*cell_cid, args);
                 relock_ir_gate_(ir_gate); // #4765
                 --retired_resolve_depth_;
@@ -137,7 +137,7 @@ CompilerService::dispatch_ir_define_closure(aura::compiler::ClosureId cid,
             // binding, drop the gate, then classify + run under exec_mtx.
             const std::shared_ptr<IRDefineEnvBinding> pinned = kv.second;
             if (ir_gate.owns_lock())
-                ir_gate.unlock();
+                unlock_ir_gate_(ir_gate);
             types::EvalValue out{};
             const auto ran = run_pinned_ir_closure_(pinned, cid, args, 1, &out);
             relock_ir_gate_(ir_gate); // #4765
@@ -161,7 +161,7 @@ CompilerService::dispatch_ir_define_closure(aura::compiler::ClosureId cid,
             if (!pinned || !pinned->interpreter)
                 continue;
             if (ir_gate.owns_lock())
-                ir_gate.unlock();
+                unlock_ir_gate_(ir_gate);
             types::EvalValue out{};
             const auto ran = run_value_define_closure_4815_(pinned, cid, args, &out);
             relock_ir_gate_(ir_gate); // #4765
@@ -216,7 +216,7 @@ CompilerService::dispatch_ir_define_closure(aura::compiler::ClosureId cid,
                 // that a sibling thread may rewrite once the gate drops.
                 auto params = func_it->second[0].params;
                 if (ir_gate.owns_lock())
-                    ir_gate.unlock();
+                    unlock_ir_gate_(ir_gate);
                 aura::compiler::Env ne(&evaluator_.top_env());
                 ne.set_primitives(&evaluator_.primitives());
                 ne.set_pool(pool_sp.get());
@@ -246,7 +246,7 @@ CompilerService::dispatch_ir_define_closure(aura::compiler::ClosureId cid,
         // is a body run, so drop the cache gate and hold exec_mtx.
         const std::shared_ptr<IRDefineEnvBinding> pinned = binding;
         if (ir_gate.owns_lock())
-            ir_gate.unlock();
+            unlock_ir_gate_(ir_gate);
         std::optional<types::EvalValue> nr;
         {
             ExecRunLock4765 exec(pinned->exec_mtx); // #4765
@@ -260,7 +260,7 @@ CompilerService::dispatch_ir_define_closure(aura::compiler::ClosureId cid,
     // run_pinned_ir_closure_ — it re-syncs the closure-id cursor from
     // the shared monotonic source and drains it back afterwards).
     if (ir_gate.owns_lock())
-        ir_gate.unlock();
+        unlock_ir_gate_(ir_gate);
     types::EvalValue out{};
     if (run_pinned_ir_closure_(binding, cid, args, 0, &out) != PinnedRun4717::Ok)
         return std::nullopt;

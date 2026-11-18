@@ -1165,6 +1165,22 @@ bool CompilerService::relower_define_blocks(const std::string& name, std::string
                             // Issue #4577: the bare erase leaves name#pos.
                             erase_jit_cache_bundle_rows_for_define_(name);
                         }
+                        // Issue #4709: this success arm runs under the
+                        // caller's IR cache gate (invalidate cascade) and
+                        // the native drop takes the workspace write lock.
+                        // Park the gate around the drop so this thread
+                        // never waits for workspace while owning it; the
+                        // arm returns right after partial_recompile, so
+                        // no gate-protected reference is used across the
+                        // parked window.
+                        struct DropParkScope4709 {
+                            bool prev;
+                            DropParkScope4709()
+                                : prev(aura_jit_drop_park_scope_4709(true)) {}
+                            ~DropParkScope4709() { aura_jit_drop_park_scope_4709(prev); }
+                            DropParkScope4709(const DropParkScope4709&) = delete;
+                            DropParkScope4709& operator=(const DropParkScope4709&) = delete;
+                        } drop_park_scope_4709;
                         aura_drop_jit_fn_native_for_define(name.c_str());
                         (void)jit_.partial_recompile(name.c_str(), dirty_ids.data(),
                                                      dirty_ids.size());

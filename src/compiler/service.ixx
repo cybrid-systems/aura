@@ -116,6 +116,15 @@ extern "C" int aura_hygiene_expand_deny_blocks_eval(void) noexcept;
 // after ORC prefix removal. Strong def in aura_jit_runtime.cpp.
 extern "C" void aura_drop_jit_fn_native_for_define(const char* name);
 
+// Issue #4709: per-thread IR cache gate ownership. The JIT native drop
+// parks the gate instead of waiting for the workspace mutex under it
+// (workspace_mtx_ <-> ir_cache_gate_ ABBA with eval-current). Strong defs
+// in aura_jit_runtime.cpp.
+extern "C" void aura_ir_gate_note_acquire_4709(std::recursive_mutex* m) noexcept;
+extern "C" void aura_ir_gate_note_release_4709(std::recursive_mutex* m) noexcept;
+// Issue #4709: opt this scope into parking the gate in the native drop.
+extern "C" bool aura_jit_drop_park_scope_4709(bool enable) noexcept;
+
 // Issue #4388: cache-hit republish samples epoch + define-drop generation.
 // Strong defs in aura_jit_runtime.cpp.
 extern "C" void aura_jit_cache_hit_republish_arm(std::uint64_t epoch, std::uint64_t drop_gen);
@@ -379,6 +388,7 @@ static void lock_park_aware_4765(std::recursive_mutex& m) {
 
 static void lock_ir_gate_body_safe_4765(std::recursive_mutex& gate) {
     lock_park_aware_4765(gate);
+    aura_ir_gate_note_acquire_4709(&gate); // #4709 per-thread gate depth
 }
 
 // Issue #4765: exec_mtx taken by a walker that HOLDS the IR cache gate.
@@ -6624,7 +6634,7 @@ public:
         // dispatch -> recursive_mutex::lock with the body as owner, the body
         // parked in dispatch on ir_cache_gate_). Lower the module, then drop
         // the gate for the run and re-take it for the binding writes.
-        std::unique_lock<std::recursive_mutex> ir_gate(ir_cache_gate_, std::defer_lock);
+        IrGateLock4709 ir_gate(ir_cache_gate_);
         relock_ir_gate_(ir_gate); // #4765
         auto cache_ptr = ir_cache_.empty() ? nullptr : &ir_cache_;
         auto cache_bridge_ptr = ir_cache_bridge_.empty() ? nullptr : &ir_cache_bridge_;
@@ -6669,8 +6679,7 @@ public:
         const std::string pending_key_4904 = std::string("\x01pending-4904:") + name_str;
         ir_value_define_closure_owners_[pending_key_4904] = binding;
         struct PendingOwnerErase4904 {
-            PendingOwnerErase4904(CompilerService* service,
-                                  std::unique_lock<std::recursive_mutex>& gate_lock,
+            PendingOwnerErase4904(CompilerService* service, IrGateLock4709& gate_lock,
                                   const std::string& erase_key)
                 : service_(service)
                 , gate_(gate_lock)
@@ -6687,12 +6696,12 @@ public:
 
         private:
             CompilerService* service_;
-            std::unique_lock<std::recursive_mutex>& gate_;
+            IrGateLock4709& gate_;
             const std::string& erase_key_;
         };
         const PendingOwnerErase4904 pending_erase_4904{this, ir_gate, pending_key_4904};
         if (ir_gate.owns_lock())
-            ir_gate.unlock();
+            unlock_ir_gate_(ir_gate);
         auto result = binding->interpreter->execute();
         relock_ir_gate_(ir_gate); // #4765
         ir_value_define_closure_owners_.erase(pending_key_4904);
@@ -9395,10 +9404,42 @@ private:
     mutable std::recursive_mutex ir_cache_gate_;
     // Issue #4765: every gate acquisition parks this thread's exec_mtx holds
     // while it waits (see lock_ir_gate_body_safe_4765).
-    void relock_ir_gate_(std::unique_lock<std::recursive_mutex>& g) const {
+    // Issue #4709: RAII for the gate on the relock sites. Unlike
+    // std::unique_lock<std::recursive_mutex>, whose dtor would unlock
+    // without pairing the per-thread depth, every release here pairs
+    // lock_ir_gate_body_safe_4765, so park() sees the exact depth.
+    struct IrGateLock4709 {
+        std::recursive_mutex& m;
+        bool owns = false;
+        explicit IrGateLock4709(std::recursive_mutex& mm)
+            : m(mm) {}
+        IrGateLock4709(const IrGateLock4709&) = delete;
+        IrGateLock4709& operator=(const IrGateLock4709&) = delete;
+        IrGateLock4709(IrGateLock4709&&) = delete;
+        IrGateLock4709& operator=(IrGateLock4709&&) = delete;
+        ~IrGateLock4709() {
+            if (owns) {
+                m.unlock();
+                aura_ir_gate_note_release_4709(&m);
+            }
+        }
+        void adopt() { owns = true; } // #4765: relock parked the gate already
+        [[nodiscard]] bool owns_lock() const { return owns; }
+        void unlock() {
+            if (!owns)
+                return;
+            m.unlock();
+            owns = false;
+            aura_ir_gate_note_release_4709(&m);
+        }
+    };
+    void relock_ir_gate_(IrGateLock4709& g) const {
         lock_ir_gate_body_safe_4765(ir_cache_gate_);
-        g = std::unique_lock<std::recursive_mutex>(ir_cache_gate_, std::adopt_lock);
+        g.adopt();
     }
+    // Issue #4709: pair the manual gate releases with the per-thread depth
+    // the native drop parks on.
+    void unlock_ir_gate_(IrGateLock4709& g) const { g.unlock(); }
     struct IrCacheGate {
         std::recursive_mutex& m;
         explicit IrCacheGate(std::recursive_mutex& gm)
@@ -9409,7 +9450,10 @@ private:
         IrCacheGate& operator=(const IrCacheGate&) = delete;
         IrCacheGate(IrCacheGate&&) = delete;
         IrCacheGate& operator=(IrCacheGate&&) = delete;
-        ~IrCacheGate() { m.unlock(); }
+        ~IrCacheGate() {
+            m.unlock();
+            aura_ir_gate_note_release_4709(&m); // #4709
+        }
     };
 
     std::unordered_map<aura::compiler::ClosureId, std::string> ir_define_closure_owner_;
