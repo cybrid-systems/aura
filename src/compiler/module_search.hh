@@ -21,10 +21,12 @@
 
 namespace aura::module_search {
 
-// One candidate path, with or without the .aura extension. realpath first
-// (no stat-then-realpath TOCTOU), then lstat: a symlink to a regular file is
-// accepted, a directory or a vanished target is not.
+// One candidate path, with or without the .aura extension. Issue #3266
+// (moved here from evaluator_module_loader.cpp by #5258): realpath first (no
+// stat-then-realpath TOCTOU), then lstat the canonical path — a symlink to a
+// regular file is accepted, a directory or a vanished target is not.
 inline std::optional<std::string> try_load(const std::string& full) {
+    // Issue #3266: realpath first, then lstat the canonical path.
     for (const std::string& candidate : {full, full + ".aura"}) {
         char* real = ::realpath(candidate.c_str(), nullptr);
         if (!real)
