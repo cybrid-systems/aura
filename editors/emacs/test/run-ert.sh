@@ -63,6 +63,13 @@ echo "===== ERT: aura-lang ====="
   -l "$root/test/aura-lang-test.el" \
   -f ert-run-tests-batch-and-exit || status=1
 
+echo "===== ERT: doom module ====="
+# shellcheck disable=SC2086
+"$emacs" ${AURA_LANG_EMACS_ARGS:-} --batch ${init:+--eval "$init"} $load_args \
+  -L "$root" \
+  -l "$root/doom/test/aura-doom-test.el" \
+  -f ert-run-tests-batch-and-exit || status=1
+
 for client in $clients; do
   echo "===== ERT: LSP client=$client ====="
   # shellcheck disable=SC2086

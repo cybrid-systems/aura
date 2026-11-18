@@ -5,11 +5,21 @@
 (declare-function lsp! "lsp-mode" ())
 (declare-function imenu--make-index-alist "imenu" (&optional noerror))
 
+;; Load the gate even when Doom's autoload scan skipped this module.  See the
+;; header of autoload/aura.el for why a symlinked module directory is skipped.
+(let ((module-file (or load-file-name
+                       (bound-and-true-p byte-compile-current-file)
+                       buffer-file-name)))
+  (when module-file
+    (load (expand-file-name "autoload/aura.el" (file-name-directory module-file))
+          nil 'nomessage)))
+
 ;;
 ;;; The `aura --fmt' gate
 
-;; The gate lives in autoload/aura.el: `doom doctor' asks the same question
-;; without loading config.el.  See `+aura-formatter-state'.
+;; The gate lives in autoload/aura.el, loaded above.  `doom doctor' asks the
+;; same question without loading config.el, so doctor.el loads that file too.
+;; See `+aura-formatter-state'.
 
 (defcustom +aura-repl-timeout 10.0
   "Seconds to wait for the Aura REPL to answer one input."
