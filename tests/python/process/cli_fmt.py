@@ -45,6 +45,34 @@ COMMENT_LINES = ("; 文件头注释：保留", "; 行尾注释", "#| 块注释",
 LITERALS = '(display "; not a comment")\n(display #\\;)\n(display |a;b|)\n'
 BROKEN = "(define (f x)\n  (+ x 1)\n"  # unclosed: the reader rejects it
 PLAIN = "(define (f x) (+ x 1))\n(display (f 41))\n"
+# #5348: a body head that ends the line has to indent its first subform like
+# every later one (cond clauses at 4, not 3). Bad on purpose.
+EOL_HEADS = """(define (f i)
+(cond
+((= i 0) 0.3)
+((= i 1) 0.7)
+(else 1.1)))
+(when
+#t
+1)
+(let
+((a 1)
+(b 2))
+(+ a b))
+"""
+EOL_HEADS_FMT = """(define (f i)
+  (cond
+    ((= i 0) 0.3)
+    ((= i 1) 0.7)
+    (else 1.1)))
+(when
+    #t
+  1)
+(let
+    ((a 1)
+     (b 2))
+  (+ a b))
+"""
 
 
 def run_aura(
@@ -140,6 +168,16 @@ class Fmt(unittest.TestCase):
             self.assertNotEqual(res.returncode, 0, res.stdout + res.stderr)
             self.assertIn("parse error", res.stderr)
             self.assertEqual(path.read_bytes(), before)
+
+    def test_body_head_at_end_of_line_indents_its_subforms(self) -> None:
+        # #5348: the head atom sits on the previous line, so the frame was
+        # still open when the newline arrived; the first clause used the push
+        # default (open_col + 1) while later ones took the body offset.
+        res = run_aura(["--fmt"], text=EOL_HEADS)
+        self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+        self.assertEqual(res.stdout, EOL_HEADS_FMT)
+        again = run_aura(["--fmt"], text=res.stdout)
+        self.assertEqual(again.stdout, res.stdout)
 
     def test_literals_are_not_comments(self) -> None:
         # A ';' in a string, a character literal or a |symbol| must not be
