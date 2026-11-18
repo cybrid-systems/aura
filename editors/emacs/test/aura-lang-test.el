@@ -288,7 +288,10 @@
                         (search-forward "textDocument/publishDiagnostics" nil t)))
               (should (save-excursion
                         (goto-char (point-min))
-                        (search-forward "unbound variable: memq" nil t)))
+                        (search-forward "\"code\":\"UnboundVariable\"" nil t)))
+              (should (save-excursion
+                        (goto-char (point-min))
+                        (search-forward "\"message\":\"memq\"" nil t)))
               (should (save-excursion
                         (goto-char (point-min))
                         (search-forward "\"languageId\":\"aura\"" nil t))))))

@@ -20,17 +20,10 @@
 ;; or PATH.  Without one the tests skip; the driver script fails the CI
 ;; job when the binary is missing instead.
 ;;
-;; Expected failures, with their reasons:
-;;
-;;   - aura-lang-lsp-comment-definition-does-not-bind (A2): a definition
-;;     inside a line comment still counts as bound for later code, so a
-;;     real unbound use of that name is not reported.  A2 is not merged
-;;     into this tree; flip :expected-result when it lands.
-;;
-;; A6 (LSP formatting) is not merged either, so
-;; aura-lang-lsp-no-formatting-until-a6 asserts that the server does not
-;; advertise formatting.  When A6 lands, replace it with a real
-;; format-buffer round trip that keeps Chinese comments verbatim.
+;; A2 and A6 are in this tree, so the comment-definition case is a normal
+;; expected pass and aura-lang-lsp-formatting-keeps-comments drives the
+;; client's format-buffer, asserting Chinese comments survive verbatim and
+;; a second format is a no-op.
 
 ;;; Code:
 
@@ -103,6 +96,17 @@
        (should (eglot-current-server)))
       ('lsp-mode
        (require 'lsp-mode)
+       ;; Ubuntu's elpa-lsp-mode is loaded from load-path in batch, so its
+       ;; autoloads file is not registered and the configure hook calls
+       ;; optional modeline commands that are not defined. Stub them: these
+       ;; are UI extras, and a void-function here aborts the workspace
+       ;; before any publishDiagnostics reaches the client.
+       (dolist (cmd '(lsp-modeline-workspace-status-mode
+                      lsp-modeline-diagnostics-mode
+                      lsp-modeline-code-actions-mode
+                      lsp-headerline-breadcrumb-mode))
+         (unless (fboundp cmd)
+           (defalias cmd #'ignore)))
        (setq lsp-auto-guess-root t
              lsp-restart 'ignore
              lsp-lens-enable nil
@@ -257,8 +261,9 @@ down and the project removed afterwards."
   (aura-lang-lsp-test--with-project
       '(("main.aura" . "(define (f x)\n  (memq x 1))\n")) nil
     (lambda ()
-      (let ((diagnostic (aura-lang-lsp-test--wait-diagnostic
-                         "unbound variable: memq")))
+      ;; #5262 sends the bare name as the message and moves the hint into
+      ;; data, so the old "unbound variable: X" prefix is gone.
+      (let ((diagnostic (aura-lang-lsp-test--wait-diagnostic "memq$")))
         (should diagnostic)
         (should (equal (cdr diagnostic) "memq"))))))
 
@@ -269,13 +274,12 @@ down and the project removed afterwards."
       '(("main.aura" . "(define (f x)\n  x)\n")) nil
     (lambda ()
       (let ((file buffer-file-name))
-        (should-not (aura-lang-lsp-test--wait-diagnostic "unbound variable" 2))
+        (should-not (aura-lang-lsp-test--wait-diagnostic "oops$" 2))
         (goto-char (point-max))
         (insert "(display oops)\n")
         (set-buffer-modified-p t)
         (aura-lang-lsp-test--flush-changes)
-        (let ((diagnostic (aura-lang-lsp-test--wait-diagnostic
-                           "unbound variable: oops")))
+        (let ((diagnostic (aura-lang-lsp-test--wait-diagnostic "oops$")))
           (should diagnostic)
           (should (buffer-modified-p))
           ;; The disk file still has no oops: the server used didChange,
@@ -286,18 +290,16 @@ down and the project removed afterwards."
 
 (ert-deftest aura-lang-lsp-comment-definition-does-not-bind ()
   "A definition inside a comment does not bind the name (A2)."
-  :expected-result :failed
-  ;; A2 is not in this tree: the analysis still sees the commented
-  ;; (define ghost 1), so ghost is considered bound and no unbound
-  ;; diagnostic is published.  This test names the desired behavior and
-  ;; must flip to unexpected-pass when A2 lands.
+  ;; A2 (reader-based symbol layer) is in this tree, so this is a normal
+  ;; expected pass: the comment must not define ghost and the unbound use
+  ;; must be reported.
   (aura-lang-lsp-test--ready)
   (aura-lang-lsp-test--with-project
       '(("main.aura" . "; (define ghost 1)\n(display ghost)\n")) nil
     (lambda ()
       ;; Five seconds is many debounce windows; the analysis itself is
-      ;; immediate on didOpen, so a nil result is the A2 gap, not slowness.
-      (should (aura-lang-lsp-test--wait-diagnostic "unbound variable: ghost" 5)))))
+      ;; immediate on didOpen, so a nil result would be a real regression.
+      (should (aura-lang-lsp-test--wait-diagnostic "ghost$" 5)))))
 
 (ert-deftest aura-lang-lsp-path-with-plus-and-at ()
   "A project path containing + and @ still analyses the buffer (A1)."
@@ -307,7 +309,7 @@ down and the project removed afterwards."
       "aura-lsp+smoke@"
     (lambda ()
       (should (string-match-p "[+@]" (buffer-file-name)))
-      (should (aura-lang-lsp-test--wait-diagnostic "unbound variable: memq")))))
+      (should (aura-lang-lsp-test--wait-diagnostic "memq$")))))
 
 (ert-deftest aura-lang-lsp-definition-same-file ()
   "Definition of a local function jumps inside the same file."
@@ -343,20 +345,27 @@ down and the project removed afterwards."
         (should (string-suffix-p "std/list.aura" (nth 0 target)))
         (should (string-prefix-p "(define (foldr" (nth 2 target)))))))
 
-(ert-deftest aura-lang-lsp-no-formatting-until-a6 ()
-  "The server must not advertise formatting before A6 ships."
+(ert-deftest aura-lang-lsp-formatting-keeps-comments ()
+  "A6: format-buffer through the client keeps Chinese comments verbatim."
   (aura-lang-lsp-test--ready)
   (aura-lang-lsp-test--with-project
-      '(("main.aura" . "(define (f x)\n  x)\n")) nil
+      '(("main.aura" . "; 中文注释：保留\n(define (f x)\n(+ x 1)) ; 行尾\n"))
+    nil
     (lambda ()
-      (should (eq (aura-lang-lsp-test--formatting-capability) :absent))
-      ;; A6's second wave owns the Chinese-comment round trip.  Until then
-      ;; the client must not offer format-buffer for Aura buffers.
-      (should-not (pcase (aura-lang-lsp-test--client)
-                    ('eglot (eglot-server-capable :documentFormattingProvider))
-                    ('lsp-mode (gethash "documentFormattingProvider"
-                                        (lsp--workspace-server-capabilities
-                                         (car (lsp-workspaces))))))))))
+      (should (aura-lang-lsp-test--formatting-capability))
+      (let ((format (lambda ()
+                      (pcase (aura-lang-lsp-test--client)
+                        ('eglot (eglot-format-buffer))
+                        ('lsp-mode (lsp-format-buffer))))))
+        (funcall format)
+        (should (string-match-p "中文注释：保留" (buffer-string)))
+        (should (string-match-p "行尾" (buffer-string)))
+        (should (string-match-p "(define (f x)" (buffer-string)))
+        (should-not (string-match-p "(define f (lambda" (buffer-string)))
+        ;; idempotent: a second format is a no-op
+        (let ((once (buffer-string)))
+          (funcall format)
+          (should (equal once (buffer-string))))))))
 
 (ert-deftest aura-lang-lsp-chinese-columns ()
   "A diagnostic after Chinese text covers exactly the bad symbol."
@@ -364,8 +373,7 @@ down and the project removed afterwards."
   (aura-lang-lsp-test--with-project
       '(("main.aura" . "(define s \"漢字\") (display oops)\n")) nil
     (lambda ()
-      (let ((diagnostic (aura-lang-lsp-test--wait-diagnostic
-                         "unbound variable: oops")))
+      (let ((diagnostic (aura-lang-lsp-test--wait-diagnostic "oops$")))
         (should diagnostic)
         ;; Both clients negotiate a real encoding (utf-8 with today's
         ;; eglot/lsp-mode).  A byte offset copied without conversion would
