@@ -117,21 +117,54 @@ use-package itself."
   (load (expand-file-name file (expand-file-name "../lang/aura" aura-doom-test--dir))
         nil t))
 
-(defun aura-doom-test--load-autoloads ()
-  "Load the module's autoload file, as doom-autoloads does."
-  (aura-doom-test--load "autoload/aura.el"))
-
 (defun aura-doom-test--load-config ()
-  "Load config.el fresh, with the stubs in place."
+  "Load config.el fresh, with the stubs in place.
+config.el loads autoload/aura.el itself.  Doom's generated loaddefs are
+not part of this path: a symlinked module never gets them."
   (setq aura-doom-test--calls nil)
-  (aura-doom-test--load-autoloads)
   (aura-doom-test--load "config.el"))
 
 (defun aura-doom-test--load-doctor ()
-  "Load doctor.el fresh, with the stubs in place."
+  "Load doctor.el fresh, with the stubs in place.
+doctor.el loads autoload/aura.el itself, as `doom doctor' does not load
+config.el and may not have the module's generated autoloads."
   (setq aura-doom-test--calls nil)
-  (aura-doom-test--load-autoloads)
   (aura-doom-test--load "doctor.el"))
+
+(defun aura-doom-test--unbind-gate ()
+  "Remove the formatter gate so the next load must define it again."
+  (when (fboundp '+aura-formatter-state)
+    (fmakunbound '+aura-formatter-state))
+  (dolist (symbol '(+aura-min-format-version +aura-fmt-fix-commit
+                    +aura-trust-nightly-formatter))
+    (when (boundp symbol)
+      (makunbound symbol))))
+
+(ert-deftest aura-doom-gate-defined-through-symlink ()
+  "A symlinked module directory still defines the formatter gate.
+Doom's autoload scan drops this layout.  config.el and doctor.el must
+define `+aura-formatter-state' without a generated loaddefs file."
+  (let* ((root (make-temp-file "aura-doom-link" t))
+         (link (expand-file-name "aura" root))
+         (real (file-truename
+                (expand-file-name "../lang/aura" aura-doom-test--dir))))
+    (unwind-protect
+        (progn
+          (make-symbolic-link real link)
+          (should (file-symlink-p link))
+          (should-not (file-in-directory-p link root))
+          (aura-doom-test--unbind-gate)
+          (load (expand-file-name "config.el" link) nil t)
+          (should (fboundp '+aura-formatter-state))
+          (should (boundp '+aura-min-format-version))
+          (should (memq (plist-get (+aura-formatter-state) :state)
+                        '(ok too-old nightly unparsed missing)))
+          (aura-doom-test--unbind-gate)
+          (setq aura-doom-test--calls nil)
+          (load (expand-file-name "doctor.el" link) nil t)
+          (should (fboundp '+aura-formatter-state))
+          (should (boundp '+aura-min-format-version)))
+      (delete-directory root t))))
 
 (defun aura-doom-test--warnings ()
   "Return the messages warn! and error! recorded."
