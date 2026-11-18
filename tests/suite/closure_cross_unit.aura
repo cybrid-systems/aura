@@ -51,11 +51,21 @@
   ; a single descheduled sample.
   (check (< mm (* 1.6 (max 1 fm)))))
 
+; CI run 37c1f59 failed this row on one 40k/160k sample pair: a single
+; descheduled walk inflates the 160k side much more than the 40k side, so the
+; measured ratio jumps although the shape is linear. Run each sample three
+; times (same work as a 3x longer input) so a fixed pause is a smaller share
+; of each timing; the 5x bound for the 4x size step is unchanged.
+(define (thrice th)
+  (th)
+  (th)
+  (th))
+
 (test-case "cross-unit call scales" (hash "issue" 5342)
-  (define f40 (best3 (lambda () (f-any neg? small))))
-  (define f160 (best3 (lambda () (f-any neg? big))))
-  (define m40 (best3 (lambda () (m-any neg? small))))
-  (define m160 (best3 (lambda () (m-any neg? big))))
+  (define f40 (best3 (lambda () (thrice (lambda () (f-any neg? small))))))
+  (define f160 (best3 (lambda () (thrice (lambda () (f-any neg? big))))))
+  (define m40 (best3 (lambda () (thrice (lambda () (m-any neg? small))))))
+  (define m160 (best3 (lambda () (thrice (lambda () (m-any neg? big))))))
   (check (<= f160 (* 5 (max 1 f40))))
   (check (<= m160 (* 5 (max 1 m40)))))
 
