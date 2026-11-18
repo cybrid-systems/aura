@@ -381,6 +381,27 @@ CASES = (
         "test_did_you_mean_quickfix_replaces_the_name",
         "lsp_diagnostics.LspDiagnostics5262.test_did_you_mean_quickfix_replaces_the_name",
     ),
+    # #5346: a type warning must not be the only diagnostic a file publishes.
+    (
+        5346,
+        "test_type_warning_does_not_mask_unbound_or_its_quickfix",
+        "lsp_diagnostics.LspDiagnostics5262.test_type_warning_does_not_mask_unbound_or_its_quickfix",
+    ),
+    (
+        5346,
+        "test_type_warning_does_not_mask_arity_mismatch",
+        "lsp_diagnostics.LspDiagnostics5262.test_type_warning_does_not_mask_arity_mismatch",
+    ),
+    (
+        5346,
+        "test_two_unbound_names_and_type_diagnostics_off",
+        "lsp_diagnostics.LspDiagnostics5262.test_two_unbound_names_and_type_diagnostics_off",
+    ),
+    (
+        5346,
+        "test_per_file_cap_keeps_the_earliest_errors",
+        "lsp_diagnostics.LspDiagnostics5262.test_per_file_cap_keeps_the_earliest_errors",
+    ),
 )
 
 

@@ -180,10 +180,13 @@ tests run under plain Emacs (from `editors/emacs`):
 - Diagnostics are static: parse errors, names that are unbound at runtime
   (not defined in the file or its requires, not a primitive or std prelude
   name), arity mismatches the runtime would reject, and the type checker's own
-  type diagnostics as warnings (`typeDiagnostics`, above). One diagnostic per
-  file is published: the first one the checker reports. Runtime-only errors
-  still need a run. The code action covers did-you-mean suggestions only;
-  extract/inline and other code actions are out of scope.
+  type diagnostics as warnings (`typeDiagnostics`, above). Every diagnostic
+  the checker reports for a file is published, in source order, after
+  duplicates at the same position are dropped. A file is capped at 100;
+  the earliest errors are kept first, then warnings and notes, so a type
+  warning cannot hide a later error or its quickfix. Runtime-only errors
+  still need a run. The code action covers a did-you-mean suggestion on
+  each unbound name; extract/inline and other code actions are out of scope.
 - Definitions are top-level `define` / `define-syntax` / `define-record-type`;
   local `let` bindings are not indexed.
 - Completion (#5261) is a flat prefix list: primitives with their registry
