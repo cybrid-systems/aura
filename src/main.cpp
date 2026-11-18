@@ -51,6 +51,7 @@ import aura.compiler.value;
 import aura.compiler.type_checker;
 import aura.core.type;
 import aura.parser.parser;
+import aura.parser.lexer; // SourceLineOrigin (#5347)
 import aura.compiler.ir;
 import aura.diag;
 import aura.compiler.cache;
@@ -5203,8 +5204,9 @@ static int run_cli_query_and_fix(int argc, char** argv) {
 // blanked to spaces so they do not read as calls, and newlines are kept so a
 // diagnostic maps back to its file by line offset.
 struct TypecheckSegment5250 {
-    int first_line = 1; // 1-based line of this segment's first line
+    int first_line = 1; // 1-based line of this segment's first line in the buffer
     std::string path;
+    std::size_t offset = 0; // byte where this file starts in the combined text
 };
 
 static void typecheck_collect_5250(const std::string& path, std::vector<std::string>& order,
@@ -5229,6 +5231,7 @@ static std::string typecheck_combined_5250(const std::string& entry,
         return {};
     std::string combined;
     int line = 1;
+    std::size_t offset = 0;
     for (auto& path : order) {
         auto text = lsp_4911::read_file(path).value_or("");
         for (auto& r : lsp_4911::find_requires(text))
@@ -5237,8 +5240,9 @@ static std::string typecheck_combined_5250(const std::string& entry,
                     text[i] = ' ';
         if (text.empty() || text.back() != '\n')
             text += '\n';
-        segs.push_back({line, path});
+        segs.push_back({line, path, offset});
         line += static_cast<int>(std::ranges::count(text, '\n'));
+        offset += text.size();
         combined += text;
     }
     return combined;
@@ -5272,23 +5276,65 @@ static int run_cli_typecheck(int argc, char** argv) {
     // Issue #79: use the structured result so we can return a proper
     // exit code. The old code parsed the output for "diagnostics:"
     // which the formatter never produces (always returned 0).
-    auto result = cs.typecheck_full(input);
+    // #5347: the parser numbers message text from each file's own baseline.
+    // Locations stay buffer lines so the segment map below is unchanged.
+    std::vector<aura::parser::SourceLineOrigin> origins;
+    origins.reserve(segs.size());
+    for (const auto& s : segs)
+        origins.push_back({s.offset, 1});
+    // #5347: a missing ')' in an earlier segment swallows everything spliced
+    // after it, so the combined parse blames the wrong file. Diagnose each
+    // file against its own text first. A blank slice is a masked (require …).
+    if (segs.size() > 1) {
+        bool failed = false;
+        for (std::size_t i = 0; i < segs.size(); ++i) {
+            const std::size_t begin = segs[i].offset;
+            const std::size_t end = (i + 1 < segs.size()) ? segs[i + 1].offset : input.size();
+            const std::string_view slice(input.data() + begin, end - begin);
+            const bool blank = std::ranges::all_of(
+                slice, [](char c) { return c == ' ' || c == '\n' || c == '\t' || c == '\r'; });
+            if (blank)
+                continue;
+            aura::ast::ASTArena arena;
+            auto alloc = arena.allocator();
+            aura::ast::StringPool pool(alloc);
+            aura::ast::FlatAST flat(alloc);
+            auto pr = aura::parser::parse_to_flat(slice, flat, pool);
+            if (pr.success && pr.root != aura::ast::NULL_NODE)
+                continue;
+            failed = true;
+            const aura::diag::Diagnostic d =
+                pr.errors.empty()
+                    ? aura::diag::Diagnostic{aura::diag::ErrorKind::ParseError,
+                                             pr.error.empty() ? "parse error" : pr.error}
+                    : aura::diag::Diagnostic{aura::diag::ErrorKind::ParseError,
+                                             pr.errors[0].message, pr.errors[0].location};
+            if (d.location.valid())
+                std::print("{}{}\n", segs[i].path + ":", d.format());
+            else
+                std::print("{}: {}\n", segs[i].path, d.format());
+        }
+        if (failed)
+            return 1;
+    }
+    auto result = cs.typecheck_full(input, origins);
     if (segs.empty()) {
         std::print("{}", result.output);
         return result.has_errors ? 1 : 0;
     }
-    // A combined text that does not parse keeps the plain face: there is no
-    // per-file map to attribute yet, and the message already names the form.
-    if (result.output.rfind("type: ", 0) != 0) {
-        std::print("{}", result.output);
-        return 1;
-    }
     // Multi-file program: name the file each diagnostic came from, with the
     // line local to that file (the combined text keeps every segment's
-    // newlines, so a global line maps back by segment offset).
-    const auto type_eol = result.output.find('\n');
-    if (type_eol != std::string::npos)
-        std::print("{}\n", result.output.substr(0, type_eol));
+    // newlines, so a global line maps back by segment offset). A parse
+    // failure used to print the buffer coordinate; the message is already
+    // the file's line, and the same map fixes the location prefix.
+    if (result.output.rfind("type: ", 0) == 0) {
+        const auto type_eol = result.output.find('\n');
+        if (type_eol != std::string::npos)
+            std::print("{}\n", result.output.substr(0, type_eol));
+    } else if (result.diagnostics.empty()) {
+        std::print("{}", result.output);
+        return result.has_errors ? 1 : 0;
+    }
     if (result.diagnostics.empty()) {
         std::print("no errors\n");
         return 0;
