@@ -69,39 +69,35 @@ inline std::string clean_comment(std::string_view raw) {
 // The comment immediately above form_begin, if only whitespace separates them.
 // A run of adjacent line comments counts as one block.
 inline std::optional<std::string> preceding_comment(const DocIndex& ix, std::size_t form_begin) {
-    const Span* best = nullptr;
-    for (const auto& c : ix.comments) {
-        if (c.end > form_begin || c.begin >= form_begin)
-            continue;
-        bool gap_ok = true;
-        for (std::size_t i = c.end; i < form_begin; ++i) {
-            if (!std::isspace(static_cast<unsigned char>(ix.text[i]))) {
-                gap_ok = false;
-                break;
-            }
-        }
-        if (gap_ok && (!best || c.begin > best->begin))
-            best = &c;
-    }
-    if (!best)
+    // #5351: comments are recorded in source order, and completion asks for the
+    // comment above every define. Two passes over every comment per define made
+    // completion O(defs x comments) on a large file; the nearest comment is a
+    // binary search and the adjacent run is a walk backwards from it.
+    const auto& comments = ix.comments;
+    const auto after =
+        std::upper_bound(comments.begin(), comments.end(), form_begin,
+                         [](std::size_t pos, const Span& c) { return pos < c.begin; });
+    if (after == comments.begin())
         return std::nullopt;
-    Span block = *best;
-    for (;;) {
-        const Span* prev = nullptr;
-        for (const auto& c : ix.comments) {
-            if (c.end > block.begin || c.begin >= block.begin)
-                continue;
-            // Adjacent lines: at most one newline between the two comments.
-            const auto between = std::string_view(ix.text).substr(c.end, block.begin - c.end);
-            if (between.find_first_not_of(" \t\n") != std::string_view::npos ||
-                std::ranges::count(between, '\n') > 1)
-                continue;
-            if (!prev || c.begin > prev->begin)
-                prev = &c;
-        }
-        if (!prev)
+    auto cur = after - 1;
+    if (cur->end > form_begin)
+        return std::nullopt;
+    for (std::size_t i = cur->end; i < form_begin; ++i) {
+        if (!std::isspace(static_cast<unsigned char>(ix.text[i])))
+            return std::nullopt;
+    }
+    Span block = *cur;
+    while (cur != comments.begin()) {
+        const Span& prev = *(cur - 1);
+        if (prev.end > block.begin)
             break;
-        block.begin = prev->begin;
+        // Adjacent lines: at most one newline between the two comments.
+        const auto between = std::string_view(ix.text).substr(prev.end, block.begin - prev.end);
+        if (between.find_first_not_of(" \t\n") != std::string_view::npos ||
+            std::ranges::count(between, '\n') > 1)
+            break;
+        block.begin = prev.begin;
+        --cur;
     }
     const auto text =
         clean_comment(std::string_view(ix.text).substr(block.begin, block.end - block.begin));
