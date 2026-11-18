@@ -1,0 +1,306 @@
+"""Symbol-layer cases for aura lsp (#5259).
+
+The index is the reader's: comments and string literals never produce
+definitions, nested defines belong to their enclosing scope, and the outline
+/ workspace symbol / folding / selection / link capabilities are queries over
+the same tree. Everything here drives the real binary over Content-Length
+framed stdio.
+"""
+
+from __future__ import annotations
+
+import os
+import select
+import tempfile
+import time
+import unittest
+from pathlib import Path
+
+from lsp_protocol import Client, publications, starts
+
+
+def _frames_after(c: Client, start: int) -> list[dict]:
+    """Pump until a new frame arrives; no fixed sleep, so the theme stays
+    well inside its process-tier timeout."""
+    end = time.monotonic() + 20.0
+    while time.monotonic() < end:
+        if len(c.frames) > start:
+            return c.frames[start:]
+        try:
+            ready, _, _ = select.select([c.p.stdout], [], [], 0.05)
+        except (ValueError, OSError):
+            break
+        if not ready:
+            continue
+        chunk = os.read(c.p.stdout.fileno(), 1 << 16)
+        if not chunk:
+            break
+        c.buf += chunk
+        c._parse()
+    return c.frames[start:]
+
+
+def request(c: Client, method: str, params: dict, rid: int = 21) -> object:
+    start = len(c.frames)
+    c.send({"jsonrpc": "2.0", "id": rid, "method": method, "params": params})
+    end = time.monotonic() + 20.0
+    while time.monotonic() < end:
+        for f in c.frames[start:]:
+            if f.get("id") == rid:
+                return f.get("result")
+        # The didOpen publication can arrive before the reply; keep pumping.
+        _frames_after(c, len(c.frames))
+    return "no reply"
+
+
+def definition(c: Client, uri: str, line: int, character: int) -> object:
+    return request(c, "textDocument/definition", at(uri, line, character))
+
+
+def wait_publication(c: Client, uri: str, start: int = 0) -> object:
+    end = time.monotonic() + 20.0
+    seen = start
+    while time.monotonic() < end:
+        found = [p for p in publications(c.frames[seen:]) if p.get("uri") == uri]
+        if found:
+            return found[-1]
+        seen = len(c.frames)
+        _frames_after(c, seen)
+    return None
+
+
+def at(uri: str, line: int, character: int) -> dict:
+    return {"textDocument": {"uri": uri}, "position": {"line": line, "character": character}}
+
+
+def names(symbols: object) -> list[str]:
+    assert isinstance(symbols, list), symbols
+    return [s["name"] for s in symbols]
+
+
+class LspSymbols5259(unittest.TestCase):
+    def test_comment_and_string_defines_are_not_symbols(self) -> None:
+        text = '; (define ghost 1)\n#| (define ghost 2) |#\n(display "(define ghost 3)")\n(display ghost)\n'
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "ghost.aura"
+            path.write_text(text)
+            uri = path.as_uri()
+            c = Client()
+            try:
+                c.initialize()
+                before = len(c.frames)
+                c.did_open(uri, text)
+                pub = wait_publication(c, uri, before)
+                self.assertIsNotNone(pub)
+                self.assertEqual(starts(pub), [(3, 9)], "the comment must not bind ghost")
+
+                pulled = request(c, "textDocument/diagnostic", {"textDocument": {"uri": uri}}, rid=22)
+                self.assertEqual(
+                    [(i["range"]["start"]["line"], i["range"]["start"]["character"]) for i in pulled["items"]],
+                    [(3, 9)],
+                )
+
+                self.assertIsNone(definition(c, uri, 3, 10), "ghost has no definition")
+                self.assertIsNone(definition(c, uri, 0, 11), "a position inside a comment")
+                self.assertIsNone(definition(c, uri, 1, 11), "a position inside a block comment")
+                self.assertEqual(names(request(c, "textDocument/documentSymbol", {"textDocument": {"uri": uri}})), [])
+            finally:
+                c.close()
+
+    def test_definition_forms_and_the_two_that_are_not(self) -> None:
+        text = (
+            "(define-hygienic-macro (twice x) (+ x x))\n"
+            "(define-type Tree (leaf val) (node left right))\n"
+            "(define-struct point (x y))\n"
+            "(display (twice 2))\n"
+        )
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "forms.aura"
+            path.write_text(text)
+            uri = path.as_uri()
+            c = Client()
+            try:
+                c.initialize()
+                c.did_open(uri, text)
+                symbols = request(c, "textDocument/documentSymbol", {"textDocument": {"uri": uri}})
+                self.assertEqual(names(symbols), ["twice", "Tree", "point"])
+                kinds = {s["name"]: s["kind"] for s in symbols}
+                self.assertEqual(kinds["twice"], 12, "a macro with parameters is a function")
+                self.assertEqual(kinds["Tree"], 23, "define-type is a struct symbol")
+                self.assertEqual(kinds["point"], 23, "define-struct is a struct symbol")
+
+                target = definition(c, uri, 3, 10)
+                self.assertIsInstance(target, dict, target)
+                self.assertEqual((target["range"]["start"]["line"], target["range"]["start"]["character"]), (0, 24))
+            finally:
+                c.close()
+
+        legacy = "(define-syntax legacy 1)\n(define-record-type rec (make-rec) rec?)\n(display rec)\n"
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "legacy.aura"
+            path.write_text(legacy)
+            uri = path.as_uri()
+            c = Client()
+            try:
+                c.initialize()
+                c.did_open(uri, legacy)
+                self.assertEqual(
+                    names(request(c, "textDocument/documentSymbol", {"textDocument": {"uri": uri}})),
+                    [],
+                    "define-syntax / define-record-type are not runtime definitions",
+                )
+                self.assertIsNone(definition(c, uri, 2, 10))
+            finally:
+                c.close()
+
+    def test_nested_define_is_a_child_of_its_enclosing_scope(self) -> None:
+        text = "(define (outer x)\n  (define (inner y) (+ x y))\n  (inner x))\n(define second 2)\n"
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "nested.aura"
+            path.write_text(text)
+            uri = path.as_uri()
+            c = Client()
+            try:
+                c.initialize()
+                c.did_open(uri, text)
+                symbols = request(c, "textDocument/documentSymbol", {"textDocument": {"uri": uri}})
+                self.assertEqual(names(symbols), ["outer", "second"])
+                self.assertEqual(names(symbols[0].get("children", [])), ["inner"])
+                self.assertNotIn("inner", names(symbols))
+
+                # The nested define is reachable, and it resolves to its own line.
+                target = definition(c, uri, 2, 3)
+                self.assertIsInstance(target, dict, target)
+                self.assertEqual(target["range"]["start"]["line"], 1)
+            finally:
+                c.close()
+
+    def test_let_and_lambda_bindings_definition_and_highlight(self) -> None:
+        text = "(define (f a)\n  (let ((b 1))\n    (+ b a b)))\n(define g (lambda (c) (+ c 1)))\n"
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "local.aura"
+            path.write_text(text)
+            uri = path.as_uri()
+            c = Client()
+            try:
+                c.initialize()
+                c.did_open(uri, text)
+
+                b = definition(c, uri, 2, 7)
+                self.assertIsInstance(b, dict, b)
+                self.assertEqual((b["range"]["start"]["line"], b["range"]["start"]["character"]), (1, 9))
+
+                hits = request(c, "textDocument/documentHighlight", at(uri, 2, 7))
+                got = sorted((h["range"]["start"]["line"], h["range"]["start"]["character"], h["kind"]) for h in hits)
+                self.assertEqual(got, [(1, 9, 3), (2, 7, 2), (2, 11, 2)])
+
+                c_param = definition(c, uri, 3, 25)
+                self.assertIsInstance(c_param, dict, c_param)
+                self.assertEqual((c_param["range"]["start"]["line"], c_param["range"]["start"]["character"]), (3, 19))
+                param_hits = request(c, "textDocument/documentHighlight", at(uri, 3, 25))
+                self.assertEqual(len(param_hits), 2, param_hits)
+            finally:
+                c.close()
+
+    def test_workspace_symbol_sees_the_project_and_required_files(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            proj = Path(d) / "proj"
+            proj.mkdir()
+            (proj / "aura.toml").write_text('[project]\nname = "p"\n')
+            main = proj / "main.aura"
+            main.write_text('(require "lib")\n(define hello 1)\n(display (helper 2))\n')
+            (proj / "lib.aura").write_text("(define (helper x) (+ x 1))\n")
+            uri = main.as_uri()
+            c = Client()
+            try:
+                c.initialize({}, proj.as_uri())
+                c.did_open(uri, main.read_text())
+                found = request(c, "workspace/symbol", {"query": "hel"})
+                self.assertEqual(sorted(s["name"] for s in found), ["hello", "helper"])
+                uris = {s["name"]: s["location"]["uri"] for s in found}
+                self.assertTrue(uris["helper"].endswith("lib.aura"), uris)
+                self.assertTrue(uris["hello"].endswith("main.aura"), uris)
+                self.assertEqual(request(c, "workspace/symbol", {"query": "zzz"}), [])
+            finally:
+                c.close()
+
+    def test_folding_and_selection_ranges(self) -> None:
+        text = "#| block\ncomment |#\n(define (f x)\n  (let ((y x))\n    (+ x y)))\n(display (f 1))\n"
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "fold.aura"
+            path.write_text(text)
+            uri = path.as_uri()
+            c = Client()
+            try:
+                c.initialize()
+                c.did_open(uri, text)
+                folds = request(c, "textDocument/foldingRange", {"textDocument": {"uri": uri}})
+                self.assertIn({"startLine": 0, "endLine": 1, "kind": "comment"}, folds)
+                self.assertIn({"startLine": 2, "endLine": 4, "kind": "region"}, folds)
+                self.assertIn({"startLine": 3, "endLine": 4, "kind": "region"}, folds)
+
+                sel = request(
+                    c,
+                    "textDocument/selectionRange",
+                    {"textDocument": {"uri": uri}, "positions": [{"line": 4, "character": 6}]},
+                )
+                self.assertIsInstance(sel, list, sel)
+                node = sel[0]
+                depth = 0
+                prev = None
+                while node:
+                    rng = node["range"]
+                    if prev is not None:
+                        # prev is the inner range, rng the outer one: the
+                        # inner starts no earlier and ends no later.
+                        self.assertGreaterEqual(
+                            (prev["start"]["line"], prev["start"]["character"]),
+                            (rng["start"]["line"], rng["start"]["character"]),
+                        )
+                        self.assertLessEqual(
+                            (prev["end"]["line"], prev["end"]["character"]),
+                            (rng["end"]["line"], rng["end"]["character"]),
+                        )
+                    prev = rng
+                    depth += 1
+                    node = node.get("parent")
+                self.assertGreaterEqual(depth, 3, sel)
+                self.assertEqual(prev["start"]["line"], 2, "the outermost range is the top-level form")
+            finally:
+                c.close()
+
+    def test_document_link_resolves_require_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            proj = Path(d) / "proj"
+            proj.mkdir()
+            (proj / "aura.toml").write_text('[project]\nname = "p"\n')
+            (proj / "lib.aura").write_text("(define lib-name 1)\n")
+            main = proj / "main.aura"
+            text = '(require "lib")\n(display lib-name)\n; (require "missing")\n'
+            main.write_text(text)
+            uri = main.as_uri()
+            c = Client()
+            try:
+                c.initialize({}, proj.as_uri())
+                c.did_open(uri, text)
+                links = request(c, "textDocument/documentLink", {"textDocument": {"uri": uri}})
+                self.assertEqual(len(links), 1, "a commented require is not a link")
+                link = links[0]
+                self.assertEqual(link["range"]["start"], {"line": 0, "character": 10})
+                self.assertEqual(link["range"]["end"], {"line": 0, "character": 13})
+                self.assertTrue(link["target"].endswith("lib.aura"), link)
+            finally:
+                c.close()
+
+    def test_capabilities_advertise_the_symbol_layer(self) -> None:
+        c = Client()
+        try:
+            caps = c.initialize()["capabilities"]
+            self.assertTrue(caps["documentSymbolProvider"])
+            self.assertTrue(caps["workspaceSymbolProvider"])
+            self.assertTrue(caps["foldingRangeProvider"])
+            self.assertTrue(caps["selectionRangeProvider"])
+            self.assertTrue(caps["documentHighlightProvider"])
+            self.assertEqual(caps["documentLinkProvider"]["resolveProvider"], False)
+        finally:
+            c.close()

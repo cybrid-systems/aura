@@ -12,6 +12,7 @@
 //   lsp/json_rpc.inc       JSON model, parser, Content-Length framing
 //   lsp/position.inc       positionEncoding negotiation and conversion
 //   lsp/document_store.inc URI normalization, documents, (require …) graph
+//   lsp/symbols.inc        reader-based symbol index (#5259)
 //   lsp/diagnostics.inc    typecheck of the document's require closure
 //   lsp/server.inc         dispatch, method handlers, debounce loop
 //
@@ -20,6 +21,7 @@
 #include "lsp/json_rpc.inc"
 #include "lsp/position.inc"
 #include "lsp/document_store.inc"
+#include "lsp/symbols.inc"
 #include "lsp/diagnostics.inc"
 #include "lsp/server.inc"
 

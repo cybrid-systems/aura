@@ -56,7 +56,8 @@ struct Server {
     }
 
     void log_message(int type, std::string_view message) {
-        notify("window/logMessage", std::format(R"({{"type":{},"message":{}}})", type, q(message)));
+        notify("window/logMessage",
+               std::format(R"({{"type":{},"message":{}}})", type, q(message)));
     }
 
     // ── diagnostics ────────────────────────────────────────────
@@ -137,30 +138,42 @@ struct Server {
     }
 
     // ── goto-definition ───────────────────────────────────────
+    // #5259: the index is the reader's, so a name written in a comment or in a
+    // string literal is not a definition, and a position inside one is null.
+    std::string location_json(const std::string& key, Span s) const {
+        const std::string text = store.text_of(key);
+        const LineIndex li(text);
+        return std::format(R"({{"uri":{},"range":{}}})", q(store.uri_of(key)),
+                           range_json(text, li, codec, s));
+    }
+
+    static std::string word_at(std::string_view text, std::size_t p) {
+        std::size_t b = std::min(p, text.size());
+        std::size_t e = b;
+        while (b > 0 && sym_char(text[b - 1]))
+            --b;
+        while (e < text.size() && sym_char(text[e]))
+            ++e;
+        return std::string(text.substr(b, e - b));
+    }
+
     std::string definition(const Json& params) {
         const std::string uri = params.at("textDocument").at("uri").s;
         const std::string key = DocumentStore::key_of(uri);
         const int line = static_cast<int>(params.at("position").at("line").n);
         const auto character = static_cast<long long>(params.at("position").at("character").n);
         const std::string text = store.text_of(key);
-        std::size_t line_off = 0;
-        for (int k = 0; k < std::max(0, line); ++k) {
-            const auto nl = text.find('\n', line_off);
-            if (nl == std::string::npos)
-                return "null";
-            line_off = nl + 1;
-        }
-        const auto line_text = line_at(text, static_cast<std::size_t>(std::max(0, line)));
-        const std::size_t byte = codec.to_byte(line_text, character);
-        std::size_t p = std::min(text.size(), line_off + byte);
-        std::size_t b = p, e = p;
-        while (b > line_off && sym_char(text[b - 1]))
-            --b;
-        while (e < text.size() && sym_char(text[e]))
-            ++e;
-        if (b == e)
+        const LineIndex li(text);
+        const std::size_t p = std::min(text.size(), byte_offset_at(text, li, codec, line, character));
+        const DocIndex ix = DocIndex::build(text);
+        if (!ix.inside_comment(p) && !ix.inside_string(p))
+            if (const auto hit = ix.local_definition(p))
+                return location_json(key, hit->span);
+        const std::string word = word_at(text, p);
+        if (word.empty())
             return "null";
-        const std::string word = text.substr(b, e - b);
+        if (const int d = ix.top_def(word); d >= 0)
+            return location_json(key, ix.defs[d].name_span);
         std::vector<std::string> files;
         std::unordered_set<std::string> seen;
         store.collect(key, files, seen);
@@ -168,33 +181,236 @@ struct Server {
         if (!files.empty())
             std::ranges::rotate(files, files.end() - 1);
         for (auto& f : files) {
-            const std::string t = store.text_of(f);
-            for (std::string_view head :
-                 {"(define (", "(define ", "(define-syntax ", "(define-record-type "}) {
-                for (std::size_t at = t.find(head); at != std::string::npos;
-                     at = t.find(head, at + 1)) {
-                    std::size_t s = at + head.size();
-                    while (s < t.size() && t[s] == ' ')
-                        ++s;
-                    std::size_t se = s;
-                    while (se < t.size() && sym_char(t[se]))
-                        ++se;
-                    if (t.compare(s, se - s, word) != 0 || se - s != word.size())
-                        continue;
-                    const int dl = static_cast<int>(
-                        std::count(t.begin(), t.begin() + static_cast<std::ptrdiff_t>(s), '\n'));
-                    const std::size_t ls = t.rfind('\n', s == 0 ? 0 : s - 1);
-                    const std::size_t dc_byte = ls == std::string::npos || s == 0 ? s : s - ls - 1;
-                    const auto def_line = line_at(t, static_cast<std::size_t>(dl));
-                    const int start = codec.from_byte(def_line, dc_byte);
-                    const int end = codec.from_byte(def_line, dc_byte + word.size());
-                    return std::format(
-                        R"({{"uri":{},"range":{{"start":{{"line":{},"character":{}}},"end":{{"line":{},"character":{}}}}}}})",
-                        q(store.uri_of(f)), dl, start, dl, end);
-                }
-            }
+            const DocIndex other = DocIndex::build(store.text_of(f));
+            if (const int d = other.top_def(word); d >= 0)
+                return location_json(f, other.defs[d].name_span);
         }
         return "null";
+    }
+
+    // ── symbol layer (#5259) ──────────────────────────────────
+    static std::string lowered(std::string_view s) {
+        std::string out;
+        out.reserve(s.size());
+        for (const char c : s)
+            out += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        return out;
+    }
+
+    // textDocument/documentHighlight: the declaration plus every reference
+    // that resolves to the same binding (#5259, reader-level scope).
+    std::string highlight(const Json& params) {
+        const std::string uri = params.at("textDocument").at("uri").s;
+        const std::string key = DocumentStore::key_of(uri);
+        const int line = static_cast<int>(params.at("position").at("line").n);
+        const auto character = static_cast<long long>(params.at("position").at("character").n);
+        const std::string text = store.text_of(key);
+        const LineIndex li(text);
+        const std::size_t p = std::min(text.size(), byte_offset_at(text, li, codec, line, character));
+        const DocIndex ix = DocIndex::build(text);
+        std::string arr;
+        for (const auto& [span, kind] : ix.highlights(p)) {
+            if (!arr.empty())
+                arr += ',';
+            arr += std::format(R"({{"range":{},"kind":{}}})", range_json(text, li, codec, span), kind);
+        }
+        return "[" + arr + "]";
+    }
+
+    std::string symbol_json(const DocIndex& ix, std::string_view text, const LineIndex& li,
+                            int def) const {
+        const auto& d = ix.defs[def];
+        std::string out = std::format(
+            R"({{"name":{},"detail":{},"kind":{},"range":{},"selectionRange":{}}})", q(d.name),
+            q(d.detail), d.kind, range_json(text, li, codec, d.span),
+            range_json(text, li, codec, d.name_span));
+        if (!d.children.empty()) {
+            out.pop_back(); // the closing brace
+            out += R"(,"children":[)";
+            for (std::size_t k = 0; k < d.children.size(); ++k) {
+                if (k > 0)
+                    out += ',';
+                out += symbol_json(ix, text, li, d.children[k]);
+            }
+            out += "]}";
+        }
+        return out;
+    }
+
+    std::string document_symbol(const Json& params) {
+        const std::string uri = params.at("textDocument").at("uri").s;
+        const std::string key = DocumentStore::key_of(uri);
+        const std::string text = store.text_of(key);
+        const LineIndex li(text);
+        const DocIndex ix = DocIndex::build(text);
+        std::string arr;
+        for (const int d : ix.top) {
+            if (!arr.empty())
+                arr += ',';
+            arr += symbol_json(ix, text, li, d);
+        }
+        return "[" + arr + "]";
+    }
+
+    std::string folding_ranges(const Json& params) {
+        const std::string uri = params.at("textDocument").at("uri").s;
+        const std::string key = DocumentStore::key_of(uri);
+        const std::string text = store.text_of(key);
+        const LineIndex li(text);
+        const DocIndex ix = DocIndex::build(text);
+        std::string arr;
+        for (const auto& [span, is_comment] : ix.folds()) {
+            if (span.end <= span.begin)
+                continue;
+            const int l1 = li.line_of(span.begin);
+            const int l2 = li.line_of(span.end - 1);
+            if (l2 <= l1)
+                continue;
+            if (!arr.empty())
+                arr += ',';
+            arr += std::format(R"({{"startLine":{},"endLine":{},"kind":"{}"}})", l1, l2,
+                               is_comment ? "comment" : "region");
+        }
+        return "[" + arr + "]";
+    }
+
+    std::string selection_range(const Json& params) {
+        const std::string uri = params.at("textDocument").at("uri").s;
+        const std::string key = DocumentStore::key_of(uri);
+        // LSP sends a positions array; a single position is accepted too so a
+        // hand-written probe does not need the wrapper.
+        const Json& positions = params.at("positions");
+        const Json& position = positions.t == Json::T::Arr && !positions.a.empty()
+                                   ? positions.a.front()
+                                   : params.at("position");
+        const int line = static_cast<int>(position.at("line").n);
+        const auto character = static_cast<long long>(position.at("character").n);
+        const std::string text = store.text_of(key);
+        const LineIndex li(text);
+        const std::size_t p = std::min(text.size(), byte_offset_at(text, li, codec, line, character));
+        const DocIndex ix = DocIndex::build(text);
+        const auto chain = ix.chain_at(p);
+        if (chain.empty())
+            return "null";
+        // The chain is outermost first; LSP wants the innermost range as the
+        // element and each wider range under "parent", so wrap outward-in.
+        std::string out;
+        for (const int n : chain) {
+            const std::string range = range_json(text, li, codec, ix.nodes[n].span);
+            out = out.empty() ? std::format(R"({{"range":{}}})", range)
+                              : std::format(R"({{"range":{},"parent":{}}})", range, out);
+        }
+        return "[" + out + "]";
+    }
+
+    std::string document_links(const Json& params) {
+        const std::string uri = params.at("textDocument").at("uri").s;
+        const std::string key = DocumentStore::key_of(uri);
+        const std::string text = store.text_of(key);
+        const LineIndex li(text);
+        const DocIndex ix = DocIndex::build(text);
+        std::string arr;
+        for (const auto& link : ix.links) {
+            // The require graph and this link resolve through the same A1
+            // function, so a link and a jump can never disagree.
+            const auto target = store.resolve(key, link.spec);
+            if (!target)
+                continue;
+            if (!arr.empty())
+                arr += ',';
+            arr += std::format(R"({{"range":{},"target":{}}})", range_json(text, li, codec, link.span),
+                               q(store.uri_of(*target)));
+        }
+        return "[" + arr + "]";
+    }
+
+    // Files a workspace query looks at: the open documents, their require
+    // closure, and the project root's .aura files.
+    std::vector<std::string> workspace_files() const {
+        std::vector<std::string> out;
+        std::unordered_set<std::string> seen;
+        std::vector<std::string> open_keys;
+        for (const auto& [key, doc] : store.docs) {
+            (void)doc;
+            open_keys.push_back(key);
+        }
+        for (const auto& key : open_keys)
+            if (seen.insert(key).second)
+                out.push_back(key);
+        for (const auto& key : open_keys) {
+            std::vector<std::string> files;
+            std::unordered_set<std::string> closure_seen;
+            store.collect(key, files, closure_seen);
+            for (const auto& f : files)
+                if (seen.insert(f).second)
+                    out.push_back(f);
+        }
+        if (!store.root.empty()) {
+            std::error_code ec;
+            std::filesystem::recursive_directory_iterator it(
+                store.root, std::filesystem::directory_options::skip_permission_denied, ec);
+            const std::filesystem::recursive_directory_iterator end;
+            for (; !ec && it != end && out.size() < 2000; it.increment(ec)) {
+                const auto& p = it->path();
+                std::error_code dir_ec;
+                if (it->is_directory(dir_ec)) {
+                    const std::string name = p.filename().string();
+                    if (name == ".git" || name == "build" || name == "node_modules" ||
+                        name == ".cache")
+                        it.disable_recursion_pending();
+                    continue;
+                }
+                if (p.extension() != ".aura")
+                    continue;
+                const std::string key = normalize_path(p.string());
+                if (seen.insert(key).second)
+                    out.push_back(key);
+            }
+        }
+        return out;
+    }
+
+    std::string workspace_symbol(const Json& params) {
+        std::string query;
+        if (const Json* qn = params.get("query"); qn && qn->t == Json::T::Str)
+            query = lowered(qn->s);
+        std::string arr;
+        for (const auto& key : workspace_files()) {
+            const std::string text = store.text_of(key);
+            if (text.empty())
+                continue;
+            const LineIndex li(text);
+            const DocIndex ix = DocIndex::build(text);
+            for (int d = 0; d < static_cast<int>(ix.defs.size()); ++d) {
+                const auto& sym = ix.defs[d];
+                if (!query.empty() && lowered(sym.name).find(query) == std::string::npos)
+                    continue;
+                if (!arr.empty())
+                    arr += ',';
+                arr += std::format(
+                    R"({{"name":{},"kind":{},"location":{{"uri":{},"range":{}}}}})", q(sym.name),
+                    sym.kind, q(store.uri_of(key)), range_json(text, li, codec, sym.name_span));
+            }
+        }
+        return "[" + arr + "]";
+    }
+
+    std::string pull_diagnostics(const Json& params) {
+        const std::string uri = params.at("textDocument").at("uri").s;
+        const std::string key = DocumentStore::key_of(uri);
+        if (pending.contains(key)) {
+            // A pull racing the debounce must see the edited buffer (and the
+            // push stays consistent with it).
+            pending.erase(key);
+            analyze_and_publish(key);
+        } else if (!last.contains(key)) {
+            last[key] = engine.analyze(key);
+        }
+        const auto& runs = last[key];
+        const auto run = std::ranges::find_if(runs, [&](const FileDiagnostics& r) { return r.key == key; });
+        const std::vector<Diag> empty;
+        const auto& items = run == runs.end() ? empty : run->items;
+        return std::format(R"({{"kind":"full","items":[{}]}})", items_json(items, store.text_of(key)));
     }
 
     // ── formatting ────────────────────────────────────────────
@@ -307,25 +523,6 @@ struct Server {
             aligned ? in.first_line : 0, end_line, end_char, q(after));
     }
 
-    std::string pull_diagnostics(const Json& params) {
-        const std::string uri = params.at("textDocument").at("uri").s;
-        const std::string key = DocumentStore::key_of(uri);
-        if (pending.contains(key)) {
-            // A pull racing the debounce must see the edited buffer (and the
-            // push stays consistent with it).
-            pending.erase(key);
-            analyze_and_publish(key);
-        } else if (!last.contains(key)) {
-            last[key] = engine.analyze(key);
-        }
-        const auto& runs = last[key];
-        const auto run =
-            std::ranges::find_if(runs, [&](const FileDiagnostics& r) { return r.key == key; });
-        const std::vector<Diag> empty;
-        const auto& items = run == runs.end() ? empty : run->items;
-        return std::format(R"({{"kind":"full","items":[{}]}})",
-                           items_json(items, store.text_of(key)));
-    }
 
     // ── lifecycle / sync ──────────────────────────────────────
     void did_open(const Json& params) {
@@ -388,7 +585,7 @@ struct Server {
 
         // #5263: the client's default FormattingOptions. A formatting request
         // that carries its own options still wins (see format_edits).
-        if (const Json* opts = params.get("initializationOptions")) {
+        if (const Json* opts = params.get("initializationOptions"); opts && opts->t == Json::T::Obj) {
             if (const Json* ts = opts->get("tabSize"); ts && ts->t == Json::T::Num && ts->n >= 1)
                 fmt_tab_size = static_cast<int>(std::min(8.0, ts->n));
             if (const Json* sp = opts->get("insertSpaces"); sp && sp->t == Json::T::Bool)
@@ -399,8 +596,8 @@ struct Server {
         const Json& root_uri = params.at("rootUri");
         if (root_uri.t == Json::T::Str && !root_uri.s.empty()) {
             root_path = uri_to_path(root_uri.s);
-        } else if (const Json* folders = params.get("workspaceFolders");
-                   folders && folders->t == Json::T::Arr && !folders->a.empty()) {
+        } else if (const Json* folders = params.get("workspaceFolders"); folders && folders->t == Json::T::Arr &&
+                                                                        !folders->a.empty()) {
             const Json& first_uri = folders->a.front().at("uri");
             if (first_uri.t == Json::T::Str)
                 root_path = uri_to_path(first_uri.s);
@@ -412,11 +609,9 @@ struct Server {
         const std::string encoding = codec.enc == Encoding::Utf8 ? "utf-8" : "utf-16";
         if (!id)
             return; // initialize as a notification: state is set, nothing to answer
-        reply(
-            *id,
-            std::format(
-                R"({{"capabilities":{{"positionEncoding":{},"textDocumentSync":{{"openClose":true,"change":1,"save":{{"includeText":false}}}},"definitionProvider":true,"documentFormattingProvider":true,"documentRangeFormattingProvider":true,"diagnosticProvider":{{"identifier":"aura","interFileDependencies":true,"workspaceDiagnostics":false}}}},"serverInfo":{{"name":"aura-lsp","version":{}}}}})",
-                q(encoding), q(AURA_BUILD_VERSION)));
+        reply(*id, std::format(
+            R"({{"capabilities":{{"positionEncoding":{},"textDocumentSync":{{"openClose":true,"change":1,"save":{{"includeText":false}}}},"definitionProvider":true,"documentFormattingProvider":true,"documentRangeFormattingProvider":true,"documentHighlightProvider":true,"documentSymbolProvider":true,"workspaceSymbolProvider":true,"foldingRangeProvider":true,"selectionRangeProvider":true,"documentLinkProvider":{{"resolveProvider":false}},"diagnosticProvider":{{"identifier":"aura","interFileDependencies":true,"workspaceDiagnostics":false}}}},"serverInfo":{{"name":"aura-lsp","version":{}}}}})",
+            q(encoding), q(AURA_BUILD_VERSION)));
     }
 
     // ── JSON-RPC dispatch ─────────────────────────────────────
@@ -430,19 +625,18 @@ struct Server {
             // "nesting too deep" wording).
             const std::optional<std::string> id =
                 m.get("id") ? std::optional<std::string>(id_text(*m.get("id"))) : std::nullopt;
-            send(
-                std::format(R"({{"jsonrpc":"2.0","id":{},"error":{{"code":-32700,"message":{}}}}})",
-                            id.value_or("null"),
-                            q(parser.nesting_refused ? "nesting too deep" : "Parse error")));
+            send(std::format(R"({{"jsonrpc":"2.0","id":{},"error":{{"code":-32700,"message":{}}}}})",
+                             id.value_or("null"),
+                             q(parser.nesting_refused ? "nesting too deep" : "Parse error")));
             return std::nullopt;
         }
         if (m.t != Json::T::Obj) {
             // A top-level array is a batch request (unsupported: -32600
             // instead of the old silent drop); any other non-object is an
             // invalid request.
-            send(std::format(
-                R"({{"jsonrpc":"2.0","id":null,"error":{{"code":-32600,"message":{}}}}})",
-                q(m.t == Json::T::Arr ? "batch requests are not supported" : "invalid request")));
+            send(std::format(R"({{"jsonrpc":"2.0","id":null,"error":{{"code":-32600,"message":{}}}}})",
+                             q(m.t == Json::T::Arr ? "batch requests are not supported"
+                                                   : "invalid request")));
             return std::nullopt;
         }
         const Json* id = m.get("id");
@@ -476,15 +670,33 @@ struct Server {
         } else if (method == "textDocument/definition") {
             if (id)
                 reply(*id, definition(params));
-        } else if (method == "textDocument/diagnostic") {
+        } else if (method == "textDocument/documentSymbol") {
             if (id)
-                reply(*id, pull_diagnostics(params));
+                reply(*id, document_symbol(params));
+        } else if (method == "workspace/symbol") {
+            if (id)
+                reply(*id, workspace_symbol(params));
+        } else if (method == "textDocument/foldingRange") {
+            if (id)
+                reply(*id, folding_ranges(params));
+        } else if (method == "textDocument/selectionRange") {
+            if (id)
+                reply(*id, selection_range(params));
+        } else if (method == "textDocument/documentLink") {
+            if (id)
+                reply(*id, document_links(params));
+        } else if (method == "textDocument/documentHighlight") {
+            if (id)
+                reply(*id, highlight(params));
         } else if (method == "textDocument/formatting") {
             if (id)
                 reply(*id, format_edits(params, false));
         } else if (method == "textDocument/rangeFormatting") {
             if (id)
                 reply(*id, format_edits(params, true));
+        } else if (method == "textDocument/diagnostic") {
+            if (id)
+                reply(*id, pull_diagnostics(params));
         } else if (id) {
             reply_error(*id, -32601, "method not found: " + method);
         }

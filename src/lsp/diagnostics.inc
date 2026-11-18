@@ -161,10 +161,15 @@ struct DiagnosticsEngine {
         // dynamically typed code and "unbound" for runtime primitives / std
         // prelude names / forward references are noise in an editor. Keep
         // parse errors and unbound names that really are unbound at runtime.
+        // #5259: the unbound filter consumes the same reader-based index as
+        // goto-definition. A (define ghost …) in a comment or a string no
+        // longer hides a real unbound reference to ghost.
         std::unordered_set<std::string> defined;
-        for (auto& f : files)
-            for (auto& n : top_level_names(store.text_of(f)))
-                defined.insert(n);
+        for (auto& f : files) {
+            const DocIndex ix = DocIndex::build(store.text_of(f));
+            for (const int d : ix.top)
+                defined.insert(ix.defs[d].name);
+        }
         for (auto& [path, diags] : by_file)
             std::erase_if(diags, [&](const Diag& d) { return !keep_diag(d.kind, d.raw, defined); });
         std::vector<FileDiagnostics> runs;
