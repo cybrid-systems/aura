@@ -202,8 +202,10 @@ static std::string brace_block_after(const std::string& text, std::size_t from) 
 
 static void ac3266_1_realpath_then_lstat() {
     std::println("\n--- #3266 AC1: realpath first, then lstat canonical ---");
-    const auto loader = read_file("src/compiler/evaluator_module_loader.cpp");
-    auto pos = loader.find("auto try_load = [](const std::string& full)");
+    // #5258 moved try_load into the shared module search header so the
+    // runtime and the language server resolve requires with one rule.
+    const auto loader = read_file("src/compiler/module_search.hh");
+    auto pos = loader.find("inline std::optional<std::string> try_load(const std::string& full)");
     CHECK(pos != std::string::npos, "3266 AC1: try_load");
     auto win = loader.substr(pos, 900);
     CHECK(win.find("Issue #3266") != std::string::npos, "3266 AC1: cite");
