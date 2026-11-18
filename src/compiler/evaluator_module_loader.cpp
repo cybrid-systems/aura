@@ -12,8 +12,9 @@ module;
 #include "lock_order_audit.h" // Issue #2354: Module rank
 #include "primitives_detail.h"
 #include "security_capabilities.h"
-#include "core/ownership.hh"    // #4936 unique_c_ptr
-#include "compiler/chunk_io.hh" // #4936 std::array file chunks
+#include "core/ownership.hh"         // #4936 unique_c_ptr
+#include "compiler/chunk_io.hh"      // #4936 std::array file chunks
+#include "compiler/module_search.hh" // #5258: shared require search path
 
 #include "core/runtime_config.hh"
 module aura.compiler.evaluator;
@@ -73,113 +74,12 @@ using types::make_void;
 // ── Module path resolution ──────────────────────────────────
 // Issue #967: heap realpath/getcwd (no 4096 stack cap); skip empty AURA_PATH.
 std::string Evaluator::resolve_module_path(const std::string& path) const {
-    auto try_load = [](const std::string& full) -> std::optional<std::string> {
-        for (auto candidate : {full, full + ".aura"}) {
-            // Issue #3266 / #1131: realpath first (no stat-then-realpath
-            // TOCTOU). Then lstat the canonical path — reject if it is
-            // not a regular file. Missing candidates: realpath returns
-            // null (zero extra).
-            const ::aura::core::unique_c_ptr<char> real{::realpath(candidate.c_str(), nullptr)};
-            if (!real)
-                continue;
-            std::string out(real.get());
-            struct stat lst;
-            if (::lstat(out.c_str(), &lst) != 0 || !S_ISREG(lst.st_mode))
-                continue;
-            return out;
-        }
-        return std::nullopt;
-    };
-
-    if (!path.empty() && path[0] == '/') {
-        auto hit = try_load(path);
-        if (hit)
-            return *hit;
-        return {};
-    }
-
-    // Issue #4918: "./x" and "../x" are relative to the requiring file:
-    // the module whose body is running, else the entry file. stdin / -e
-    // have no base and keep the cwd search below.
-    if (path.starts_with("./") || path.starts_with("../")) {
-        const auto base = module_base_dir();
-        if (!base.empty()) {
-            if (auto hit = try_load(base + "/" + path))
-                return *hit;
-        }
-    }
-
-    // Search CWD first
-    {
-        if (const ::aura::core::unique_c_ptr<char> cwd{::getcwd(nullptr, 0)}) {
-            auto hit = try_load(std::string(cwd.get()) + "/" + path);
-            if (hit)
-                return *hit;
-        }
-    }
-
-    // Search AURA_PATH (skip empty entries from "::" or leading/trailing ':')
-    auto* env = ::aura::config::raw(::aura::config::Key::AURA_PATH);
-    if (env) {
-        std::string aura_path(env);
-        std::size_t start = 0, end = std::string::npos;
-        while ((end = aura_path.find(':', start)) != std::string::npos) {
-            auto dir = aura_path.substr(start, end - start);
-            if (!dir.empty()) {
-                auto hit = try_load(dir + "/" + path);
-                if (hit)
-                    return *hit;
-            }
-            start = end + 1;
-        }
-        if (start < aura_path.size()) {
-            auto dir = aura_path.substr(start);
-            if (!dir.empty()) {
-                auto hit = try_load(dir + "/" + path);
-                if (hit)
-                    return *hit;
-            }
-        }
-    }
-
-    // Issue #4824: executable-relative stdlib discovery. The cwd-relative
-    // probes below only work when cwd happens to be build/; a copied or
-    // installed binary (bin/aura + bin/lib, prefix/bin + prefix/lib) must
-    // find its own lib/ wherever it is run from. AURA_PATH stays first.
-    {
-        static const std::string exe_dir = [] {
-            std::array<char, 4096> buf{};
-            const auto n = ::readlink("/proc/self/exe", buf.data(), buf.size() - 1);
-            if (n <= 0)
-                return std::string{};
-            std::string exe(buf.data(), static_cast<std::size_t>(n));
-            const auto slash = exe.rfind('/');
-            return slash == std::string::npos ? std::string{} : exe.substr(0, slash);
-        }();
-        if (!exe_dir.empty()) {
-            for (const char* rel : {"/lib/", "/../lib/"}) {
-                auto hit = try_load(exe_dir + rel + path);
-                if (hit)
-                    return *hit;
-            }
-        }
-    }
-
-    // Auto-discover: try ../lib/ and ./lib/ (relative to CWD)
-    {
-        // Try ../lib/ (common for build/aura → lib/ layout)
-        auto hit = try_load("../lib/" + path);
-        if (hit)
-            return *hit;
-    }
-    {
-        // Try ./lib/ (cwd-relative)
-        auto hit = try_load("./lib/" + path);
-        if (hit)
-            return *hit;
-    }
-
-    return {};
+    // Issue #5258: one search rule for the runtime and `aura lsp` — see
+    // compiler/module_search.hh. Absolute paths, "./"/"../" against the
+    // requiring file, CWD, AURA_PATH, the executable's lib/ (a copied or
+    // installed bin/aura finds its own std/), then the cwd-relative
+    // build/ → lib/ probes. A miss is "".
+    return aura::module_search::resolve(path, module_base_dir()).value_or(std::string{});
 }
 
 // Issue #4918: the entry program's directory ("" when it has none).
