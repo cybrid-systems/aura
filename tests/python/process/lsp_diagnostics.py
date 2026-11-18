@@ -1,4 +1,4 @@
-"""Diagnostics upgrade for aura lsp (#5262).
+"""Diagnostics upgrade for aura lsp (#5262, #5346).
 
 The server consumes the structured diagnostic (#5240) instead of re-parsing
 typecheck output: one code (the stable kind ident the CLI and serve JSON faces
@@ -28,6 +28,17 @@ TYPE_MISMATCH = '(define (g y) (+ y "s"))\n'
 PAREN_REQUIRE = '(require "std/string" all:)\n(define (a x) x)\n\n(define (b x)\n  (+ x 1)\n'
 PAREN_PLAIN = "(define (a x) x)\n\n(define (b x)\n  (+ x 1)\n"
 OPENED_AT = re.compile(r"opened at line (\d+), column (\d+)")
+# #5346: a type warning earlier in the file used to be the only diagnostic.
+MASK = '(define (g y) (+ y "s"))\n(define (h x) (memq x (list 1 2)))\n'
+# Minimized aura-runner lib/thing.aura: an if-branch type warning, then a
+# call with the wrong number of arguments further down.
+IF_ARITY = "(define (g x)\n  (if x 1 #t))\n(define (f a) a)\n(f)\n"
+# assq is bound at runtime (it reaches std/list and fails as assv), so the
+# editor filter drops it. no-such-zz is unbound on both faces.
+TWO_UNBOUND = '(define (g y) (+ y "s"))\n(display (memq 1 (list 1)))\n(display (no-such-zz 1))\n'
+# A form the file runner actually evaluates, so --error-format=json emits
+# the runtime diagnostic the static set must still contain.
+MASK_RUN = '(define (g y) (+ y "s"))\n(display (memq 1 (list 1 2)))\n'
 
 
 def opened_at(message: str) -> tuple[int, int]:
@@ -88,6 +99,114 @@ def open_diagnostics(text: str, init_opts: dict | None = None) -> tuple[list[dic
         pub = last_publication(frames, uri)
         assert pub is not None, frames
         return pub["diagnostics"], d, uri
+    finally:
+        c.close()
+
+
+def json_objects(text: str) -> list[dict]:
+    return [json.loads(ln) for ln in text.splitlines() if ln.startswith("{")]
+
+
+def typecheck_keys(stdout: str) -> list[tuple[str, int, int]]:
+    """(code, 0-based line, 0-based column) from `aura --typecheck` text."""
+    phrase = {
+        "parse error": "ParseError",
+        "unbound variable": "UnboundVariable",
+        "arity mismatch": "ArityMismatch",
+        "type error": "TypeError",
+    }
+    found = []
+    for ln in stdout.splitlines():
+        head, sep, rest = ln.partition(": ")
+        if not sep:
+            continue
+        bits = head.split(":")
+        if len(bits) != 2 or not bits[0].isdigit() or not bits[1].isdigit():
+            continue
+        kind, _, _msg = rest.partition(": ")
+        code = phrase.get(kind)
+        if code is None:
+            continue
+        found.append((code, int(bits[0]) - 1, int(bits[1]) - 1))
+    return found
+
+
+def lsp_keys(diags: list[dict]) -> set[tuple[str, int, int]]:
+    keys = set()
+    for dx in diags:
+        start = dx["range"]["start"]
+        keys.add((dx["code"], start["line"], start["character"]))
+    return keys
+
+
+def by_code(diags: list[dict], code: str) -> dict:
+    matches = [dx for dx in diags if dx["code"] == code]
+    assert len(matches) == 1, (code, diags)
+    return matches[0]
+
+
+def covered(text: str, dx: dict) -> str:
+    line = text.splitlines()[dx["range"]["start"]["line"]]
+    start = dx["range"]["start"]["character"]
+    end = dx["range"]["end"]["character"]
+    return line[start:end]
+
+
+def drive(
+    text: str,
+    init_opts: dict | None = None,
+    carets: tuple[tuple[int, int], ...] = (),
+    wait: float = 3.0,
+) -> tuple[list[dict], list[dict], dict[tuple[int, int], list[dict]], str, str]:
+    """Open one file and return (push diagnostics, pull items, code actions, dir, uri)."""
+    d = tempfile.mkdtemp(prefix="lspdiag5346-")
+    path = Path(d) / "a.aura"
+    path.write_text(text)
+    uri = path.as_uri()
+    c = Client()
+    try:
+        c.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "capabilities": {"general": {"positionEncodings": ["utf-16"]}},
+                    "rootUri": Path(d).as_uri(),
+                    "initializationOptions": init_opts or {},
+                },
+            }
+        )
+        c.pump(wait)
+        c.clear()
+        c.did_open(uri, text)
+        frames = c.pump(wait)
+        pub = last_publication(frames, uri)
+        assert pub is not None, frames
+        pulled = c.pull(uri)
+        assert isinstance(pulled, dict), pulled
+        actions: dict[tuple[int, int], list[dict]] = {}
+        for n, (line, character) in enumerate(carets):
+            req = 80 + n
+            c.send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": req,
+                    "method": "textDocument/codeAction",
+                    "params": {
+                        "textDocument": {"uri": uri},
+                        "range": {
+                            "start": {"line": line, "character": character},
+                            "end": {"line": line, "character": character},
+                        },
+                        "context": {"diagnostics": []},
+                    },
+                }
+            )
+            reply = next((f for f in c.pump(wait) if f.get("id") == req), None)
+            assert reply is not None, f"no codeAction reply for {line}:{character}"
+            actions[(line, character)] = reply.get("result") or []
+        return pub["diagnostics"], pulled["items"], actions, d, uri
     finally:
         c.close()
 
@@ -394,3 +513,133 @@ class LspDiagnostics5262(unittest.TestCase):
         self.assertNotIn("line 337", dx["message"])
         cli = run_with_std(["--error-format=json", "dep.aura"], str(root))
         self.assertEqual(last_json(cli.stderr)["message"], dx["message"])
+
+    def test_type_warning_does_not_mask_unbound_or_its_quickfix(self) -> None:
+        # #5346 diag_mask.aura: the type warning is first, and memq still
+        # publishes with a quickfix. Pull matches the push.
+        diags, pulled, actions, d, uri = drive(MASK, carets=((1, 15),))
+        self.assertEqual(pulled, diags)
+        self.assertEqual(
+            [(dx["code"], dx["severity"]) for dx in diags],
+            [("TypeError", 2), ("UnboundVariable", 1)],
+            diags,
+        )
+        warning, unbound = diags
+        self.assertIn("expected Int", warning["message"])
+        self.assertNotIn("type error:", warning["message"])
+        self.assertEqual(
+            warning["range"],
+            {"start": {"line": 0, "character": 19}, "end": {"line": 0, "character": 20}},
+        )
+        self.assertEqual(unbound["message"], "memq")
+        self.assertEqual(unbound["data"]["suggestion"], "member")
+        self.assertEqual(
+            unbound["range"],
+            {"start": {"line": 1, "character": 15}, "end": {"line": 1, "character": 19}},
+        )
+        self.assertEqual(covered(MASK, unbound), "memq")
+        fixes = actions[(1, 15)]
+        self.assertEqual(len(fixes), 1, fixes)
+        fix = fixes[0]
+        self.assertEqual(fix["kind"], "quickfix")
+        self.assertNotIn("command", fix)
+        edit = fix["edit"]["changes"][uri][0]
+        self.assertEqual(edit["newText"], "member")
+        self.assertEqual(edit["range"], unbound["range"])
+
+        tc = run_aura(["--typecheck", "a.aura"], d)
+        self.assertNotEqual(tc.returncode, 0)
+        static = typecheck_keys(tc.stdout)
+        self.assertEqual(static, [("TypeError", 0, 19), ("UnboundVariable", 1, 15)], tc.stdout)
+        published = lsp_keys(diags)
+        for key in static:
+            self.assertIn(key, published, (key, diags))
+
+        # The file runner stops at the first error (#4909). Whatever it
+        # emits, the LSP set contains it (equal, or a superset).
+        ran = run_aura(["--error-format=json", "a.aura"], d)
+        for obj in json_objects(ran.stderr):
+            span = obj["span"]["start"]
+            self.assertIn((obj["code"], span["line"] - 1, span["column"] - 1), published, obj)
+
+        # A program that actually calls memq makes the JSON face non-empty.
+        run_dir = tempfile.mkdtemp(prefix="lspdiag5346-run-")
+        (Path(run_dir) / "a.aura").write_text(MASK_RUN)
+        executed = run_aura(["--error-format=json", "a.aura"], run_dir)
+        emitted = json_objects(executed.stderr)
+        self.assertTrue(emitted, executed.stderr)
+        live, _pulled, _actions, _live_dir, _live_uri = drive(MASK_RUN)
+        live_keys = lsp_keys(live)
+        self.assertIn(("TypeError", 2), [(dx["code"], dx["severity"]) for dx in live])
+        self.assertIn(("UnboundVariable", 1), [(dx["code"], dx["severity"]) for dx in live])
+        for obj in emitted:
+            span = obj["span"]["start"]
+            self.assertIn((obj["code"], span["line"] - 1, span["column"] - 1), live_keys, (obj, live))
+
+    def test_type_warning_does_not_mask_arity_mismatch(self) -> None:
+        # Minimized thing.aura: the if joins Int and Bool (a type warning),
+        # then (f) is called with the wrong number of arguments.
+        diags, pulled, _actions, d, _uri = drive(IF_ARITY)
+        self.assertEqual(pulled, diags)
+        warning = by_code(diags, "TypeError")
+        arity = by_code(diags, "ArityMismatch")
+        self.assertEqual(warning["severity"], 2, warning)
+        self.assertIn("if branches join Int and Bool", warning["message"])
+        # The join is blamed on the Bool branch, so the range covers #t.
+        self.assertEqual(
+            warning["range"],
+            {"start": {"line": 1, "character": 10}, "end": {"line": 1, "character": 12}},
+        )
+        self.assertEqual(covered(IF_ARITY, warning), "#t")
+        self.assertEqual(arity["severity"], 1, arity)
+        self.assertIn("call 'f'", arity["message"])
+        self.assertEqual(
+            arity["range"],
+            {"start": {"line": 3, "character": 1}, "end": {"line": 3, "character": 2}},
+        )
+        self.assertEqual(covered(IF_ARITY, arity), "f")
+        starts = [(dx["range"]["start"]["line"], dx["range"]["start"]["character"]) for dx in diags]
+        self.assertEqual(starts, sorted(starts), diags)
+        self.assertLess(warning["range"]["start"]["line"], arity["range"]["start"]["line"])
+        static = typecheck_keys(run_aura(["--typecheck", "a.aura"], d).stdout)
+        published = lsp_keys(diags)
+        for key in static:
+            self.assertIn(key, published, (key, diags, static))
+
+    def test_two_unbound_names_and_type_diagnostics_off(self) -> None:
+        diags, _pulled, actions, _d, uri = drive(TWO_UNBOUND, carets=((1, 10), (2, 10)))
+        self.assertEqual([dx["code"] for dx in diags], ["TypeError", "UnboundVariable", "UnboundVariable"])
+        self.assertEqual([dx["severity"] for dx in diags], [2, 1, 1])
+        self.assertEqual([dx["message"] for dx in diags[1:]], ["memq", "no-such-zz"])
+        self.assertEqual(covered(TWO_UNBOUND, diags[1]), "memq")
+        self.assertEqual(covered(TWO_UNBOUND, diags[2]), "no-such-zz")
+        memq = actions[(1, 10)]
+        other = actions[(2, 10)]
+        self.assertEqual(len(memq), 1, memq)
+        self.assertEqual(memq[0]["kind"], "quickfix")
+        self.assertEqual(memq[0]["edit"]["changes"][uri][0]["newText"], "member")
+        self.assertEqual(memq[0]["edit"]["changes"][uri][0]["range"], diags[1]["range"])
+        # no-such-zz has no did-you-mean token, so it publishes with no quickfix.
+        self.assertEqual(other, [])
+
+        off, _pulled, off_actions, _d, off_uri = drive(TWO_UNBOUND, {"typeDiagnostics": "off"}, carets=((1, 10),))
+        self.assertEqual([dx["code"] for dx in off], ["UnboundVariable", "UnboundVariable"], off)
+        self.assertTrue(all(dx["severity"] == 1 for dx in off), off)
+        self.assertEqual([dx["message"] for dx in off], ["memq", "no-such-zz"])
+        self.assertEqual(off_actions[(1, 10)][0]["edit"]["changes"][off_uri][0]["newText"], "member")
+
+    def test_per_file_cap_keeps_the_earliest_errors(self) -> None:
+        # One type warning plus more arity errors than the per-file cap.
+        # The published slice is the earliest 100 errors, still in order.
+        lines = ['(define (g y) (+ y "s"))', "(define (f a) a)", *["(f)"] * 120]
+        text = "\n".join(lines) + "\n"
+        diags, pulled, _actions, _d, _uri = drive(text, wait=8.0)
+        self.assertEqual(pulled, diags)
+        self.assertEqual(len(diags), 100, [dx["code"] for dx in diags[:3]])
+        self.assertTrue(all(dx["code"] == "ArityMismatch" and dx["severity"] == 1 for dx in diags), diags[0])
+        starts = [(dx["range"]["start"]["line"], dx["range"]["start"]["character"]) for dx in diags]
+        self.assertEqual(starts, sorted(starts))
+        # Line 0 is the warning, line 1 is (define (f a) a), calls start at line 2.
+        self.assertEqual(starts[0][0], 2)
+        self.assertEqual(starts[-1][0], 101)
+        self.assertNotIn("TypeError", [dx["code"] for dx in diags])
