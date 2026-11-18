@@ -21,7 +21,8 @@ RUNTIME = "ghcr.io/cybrid-systems/aura:"
 
 # Jobs that compile Aura inside the toolchain container.
 PINNED = {
-    ".github/workflows/ci.yml": 9,
+    # emacs-ert (#5266) also compiles aura inside the toolchain image.
+    ".github/workflows/ci.yml": 10,
     ".github/workflows/dist.yml": 1,
     ".github/workflows/nightly.yml": 7,
     ".github/workflows/release.yml": 1,
@@ -30,7 +31,8 @@ PINNED = {
 # downloaded binary, so ci.yml has one fewer action use than image pins.
 KRB5_ACTION = "uses: ./.github/actions/ci-krb5"
 KRB5_USES = {
-    ".github/workflows/ci.yml": 8,
+    # 9 with emacs-ert (#5266); deployment-health still runs a binary only.
+    ".github/workflows/ci.yml": 9,
     ".github/workflows/dist.yml": 1,
     ".github/workflows/nightly.yml": 7,
     ".github/workflows/release.yml": 1,
