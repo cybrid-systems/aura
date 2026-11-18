@@ -205,11 +205,68 @@ process, so the REPL's workspace is the one that changes."
 ;;
 ;;; Lookup
 
+(defun +aura--lsp-client ()
+  "Return the LSP client managing the current buffer, or nil.
+eglot wins when both answer: under `(lsp +eglot)' its hover is what K has
+to use, because lsp-mode's own K handler is not installed there."
+  (cond ((and (fboundp 'eglot-managed-p) (eglot-managed-p)) 'eglot)
+        ((bound-and-true-p lsp-mode) 'lsp-mode)
+        (t nil)))
+
+(defun +aura--show-documentation (id text)
+  "Show ID and TEXT in *aura-doc* and return t."
+  (let ((buffer (get-buffer-create "*aura-doc*")))
+    (with-current-buffer buffer
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (insert (format "%s\n\n%s\n" id text)))
+      (special-mode)
+      (goto-char (point-min)))
+    (display-buffer buffer)
+    t))
+
+(defun +aura--hover-documentation ()
+  "Return the LSP hover text for the symbol at point, or nil.
+eglot publishes hover as an eldoc function; call it and wait briefly for
+the asynchronous answer.  lsp-mode displays its own describe buffer, so it
+does not come through here."
+  (when (and (eq (+aura--lsp-client) 'eglot)
+             (fboundp 'eglot-hover-eldoc-function))
+    (let ((text nil)
+          (done nil))
+      (condition-case nil
+          (eglot-hover-eldoc-function
+           (lambda (doc &rest _)
+             (when (stringp doc) (setq text doc))
+             (setq done t)))
+        (error nil))
+      (let ((deadline (+ (float-time) 1.0)))
+        (while (and (not done) (< (float-time) deadline))
+          (accept-process-output nil 0.05)))
+      (when (and (stringp text) (not (string-empty-p (string-trim text))))
+        text))))
+
+(defun +aura--repl-documentation (id)
+  "Show the REPL's `:doc' answer for ID in *aura-doc*."
+  (let ((output (and id (+aura--send (concat ":doc " id)))))
+    (when (and output (not (string-empty-p output)))
+      (+aura--show-documentation id output))))
+
+(defun +aura--primitive-p (id)
+  "Return non-nil when the REPL knows ID as a primitive.
+A primitive has no source definition, so `g d' must not fall through to
+the project-wide search (which lands on an unrelated use of the name)."
+  (let ((answer (ignore-errors (+aura--send (concat ":doc " id)))))
+    (and (stringp answer)
+         (not (string-empty-p (string-trim answer)))
+         (not (string-match-p "no such primitive\\|no description" answer)))))
+
 (defun +aura-lookup-definition (&optional identifier)
   "Jump to the definition of IDENTIFIER.
 The LSP server answers through xref when it is running (lsp-mode or eglot);
 without one this falls back to the buffer's imenu, which aura-mode fills
-from its definition forms."
+from its definition forms.  A primitive has no source definition, so it
+stops the lookup instead of letting the generic fallback jump elsewhere."
   (interactive)
   (let ((id (or identifier (thing-at-point 'symbol t))))
     (unless id
@@ -219,30 +276,32 @@ from its definition forms."
           (error nil))
         t
       (let ((entry (assoc-string id (imenu--make-index-alist t))))
-        (if entry
-            (progn (imenu entry) t)
+        (cond
+         (entry (imenu entry) t)
+         ((+aura--primitive-p id)
+          (user-error "%s is a primitive (no source definition)" id))
+         (t
           ;; Nothing in this buffer: let imenu ask for a name.
           (imenu)
-          t)))))
+          t))))))
 
 (defun +aura-lookup-documentation (&optional identifier)
-  "Show the documentation of IDENTIFIER in *aura-doc*.
-The server publishes no hover documentation yet (docs/editor.md), so this
-asks the REPL, whose `:doc' knows the primitives, and shows the answer in
-its own window."
+  "Show the documentation of IDENTIFIER.
+With an LSP client on the buffer this uses the server's hover (eglot) or
+lsp-mode's describe buffer; those carry the hover the server has served
+since the symbol layer landed.  Without a client it asks the REPL, whose
+`:doc' knows the primitives."
   (interactive)
   (let* ((id (or identifier (thing-at-point 'symbol t)))
-         (output (and id (+aura--send (concat ":doc " id)))))
-    (when (and output (not (string-empty-p output)))
-      (let ((buffer (get-buffer-create "*aura-doc*")))
-        (with-current-buffer buffer
-          (let ((inhibit-read-only t))
-            (erase-buffer)
-            (insert (format "%s\n\n%s\n" id output)))
-          (special-mode)
-          (goto-char (point-min)))
-        (display-buffer buffer)
-        t))))
+         (client (+aura--lsp-client))
+         (hover (and (eq client 'eglot) (+aura--hover-documentation))))
+    (unless id
+      (user-error "No symbol at point"))
+    (cond
+     (hover (+aura--show-documentation id hover))
+     ((and (eq client 'lsp-mode) (fboundp 'lsp-describe-thing-at-point))
+      (call-interactively #'lsp-describe-thing-at-point))
+     (t (+aura--repl-documentation id)))))
 
 ;;
 ;;; Packages

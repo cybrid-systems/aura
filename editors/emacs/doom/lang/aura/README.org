@@ -110,14 +110,18 @@ error face.  Without ~+overlay~ it goes to the echo area.
 
 ** Lookup
 
-| key        | command                                   |
-|------------+-------------------------------------------|
-| ~K~        | documentation: ~*aura-doc*~ from ~:doc~   |
-| ~SPC m g d~ | definition: LSP (xref), else imenu        |
-| ~SPC m h~  | documentation                             |
+| key        | command                                            |
+|------------+----------------------------------------------------|
+| ~K~        | documentation: LSP hover, else ~:doc~              |
+| ~SPC m g d~ | definition: LSP (xref), else imenu; primitive: stop |
+| ~SPC m h~  | documentation                                      |
 
-The server has no hover or completion yet, so documentation comes from the
-REPL's ~:doc~ and shows the primitive's own text.
+With an LSP client on the buffer, ~K~ shows the server's hover (eglot goes
+through ~eglot-hover-eldoc-function~; lsp-mode keeps its own describe
+buffer).  Without one it asks the REPL's ~:doc~ and shows the primitive's
+own text.  A primitive has no source definition, so ~g d~ reports that
+instead of jumping to an unrelated use; a real definition still jumps
+through xref or imenu.
 
 * Configuration
 #+begin_src emacs-lisp
