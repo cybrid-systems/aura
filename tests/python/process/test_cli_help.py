@@ -311,6 +311,11 @@ CASES = (
         "cli_fmt.Fmt.test_literals_are_not_comments",
     ),
     (
+        5348,
+        "test_body_head_at_end_of_line_indents_its_subforms",
+        "cli_fmt.Fmt.test_body_head_at_end_of_line_indents_its_subforms",
+    ),
+    (
         5263,
         "test_unparse_keeps_the_ast_contract",
         "cli_fmt.Fmt.test_unparse_keeps_the_ast_contract",

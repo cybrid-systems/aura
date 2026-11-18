@@ -424,6 +424,18 @@ CASES = (
         "test_unclosed_in_required_file_uses_that_files_line",
         "lsp_diagnostics.LspDiagnostics5262.test_unclosed_in_required_file_uses_that_files_line",
     ),
+    # #5348: tabSize is a tab width; the body indent stays two columns.
+    (
+        5348,
+        "test_tab_size_is_not_the_body_indent",
+        "lsp_format.LspFormat5263.test_tab_size_is_not_the_body_indent",
+    ),
+    # #5352: the symbol requests scale with the file (was quadratic).
+    (
+        5352,
+        "test_symbol_queries_scale_with_the_file",
+        "lsp_symbols.LspSymbols5259.test_symbol_queries_scale_with_the_file",
+    ),
 )
 
 
