@@ -58,22 +58,12 @@ another step without regenerating the prices.
 - **Goto-definition** for top-level `define`s across `(require "…")`, resolved
   like the runtime: relative to the requiring file, then the project root
   (the directory with `aura.toml`), with or without `.aura`.
-- **Highlighting** comes from the TextMate grammar in
-  `editors/vscode/syntaxes/aura.tmLanguage.json`.
+- **Highlighting** comes from the shared TextMate grammar in
+  `editors/grammar/aura.tmLanguage.json`. Any editor that speaks LSP can
+  run `aura lsp` over stdio; no editor-specific extension is maintained.
 - **Nesting.** A JSON-RPC message nested deeper than 64 is answered with
   a parse error (`nesting too deep`, code -32700) and the server keeps
   reading. The same bound as `aura evo log`.
-
-### VS Code
-
-```
-cd editors/vscode
-npm install                         # vscode-languageclient
-ln -s "$PWD" ~/.vscode/extensions/aura-lang
-```
-
-Restart VS Code. Set `aura.path` if `aura` is not on `PATH` (for example a
-wrapper script that runs the binary in the dev container).
 
 ### Neovim (0.10+)
 

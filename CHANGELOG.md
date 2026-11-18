@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.7
+
+`aura lsp` is the editor surface; the VS Code-only extension is gone.
+
+- Editors (#5273): the TextMate grammar moves to `editors/grammar/aura.tmLanguage.json` as the single keyword and definition-form source, and the VS Code-specific extension (`editors/vscode/`) is removed. `aura lsp` is unchanged; any LSP client speaks to it over stdio.
+
 ## 0.2.6
 
 Patch release on the 0.2 channel. It lands the self-improvement loop's acceptance stack in `std` (contract invariants, one feedback record, a KEEP/ROLLBACK gate, validation splits, negative selection, clonal search, and a filtered evolution trace), a program semantic view in `std/query`, and a native-scan performance wave across strings and collections; it also fixes the evaluator regressions that wave exposed and lets a machine without LLVM configure and build `aura`. No new syntax. The API is still not stable.

@@ -4,7 +4,7 @@
 //     its (require …) modules appended, so names from required files resolve
 //     and a diagnostic inside a required file is published on that file;
 //   - goto-definition across (require "…"): top-level (define …) lookup;
-//   - highlighting ships as a TextMate grammar (editors/vscode).
+//   - highlighting ships as a TextMate grammar (editors/grammar).
 // Pure std; no network, no extra dependencies.
 
 namespace lsp_4911 {
