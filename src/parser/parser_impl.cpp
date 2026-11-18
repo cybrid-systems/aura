@@ -66,10 +66,15 @@ namespace {
 
 } // namespace
 
-FlatParseResult parse(ParserState& s, std::string_view src) {
+FlatParseResult parse(ParserState& s, std::string_view src,
+                      std::span<const SourceLineOrigin> origins) {
     FlatParseResult r;
     try {
-        s.lex = Lexer(src);
+        // #5347: this assignment is the lexer the parse actually reads.
+        // The one built in parse_to_flat is replaced here, so the file
+        // baselines have to be applied again or a concatenated buffer
+        // reports buffer lines in the message.
+        s.lex = Lexer(src, origins);
 
         // Helper: record a parse error and skip to next recoverable point
         // Token kind to readable string for error messages
@@ -3037,9 +3042,10 @@ using namespace aura::ast;
 // allocation, no hidden state visible to caller), walks the
 // source, returns the result. The ParserState is destroyed on
 // return — no state escapes this function.
-FlatParseResult parse_to_flat(std::string_view source, FlatAST& flat, StringPool& pool) {
-    detail::ParserState s{flat, pool, Lexer(source), 0};
-    auto result = detail::parse(s, source);
+FlatParseResult parse_to_flat(std::string_view source, FlatAST& flat, StringPool& pool,
+                              std::span<const SourceLineOrigin> origins) {
+    detail::ParserState s{flat, pool, Lexer(source, origins), 0};
+    auto result = detail::parse(s, source, origins);
     // Issue #273: define-module (and similar) append body exprs via
     // insert_child, which bumps generation_ per op. Refresh all live
     // node_gen_ entries so eval_flat / typecheck see valid NodeIds.

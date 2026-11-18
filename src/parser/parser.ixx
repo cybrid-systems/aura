@@ -95,7 +95,17 @@ namespace detail {
                 if (auto open = lex.innermost_open_paren()) {
                     deferred_line = open->line;
                     deferred_column = open->column;
-                    msg += std::format("; unclosed list opened at line {}, column {}", open->line,
+                    // #5347: every missing-')' message (list, lambda, export,
+                    // parameter list) is built here. `line` is the buffer
+                    // coordinate a concatenated require closure uses to map
+                    // the range; `file_line` is the owning file's line, snapped
+                    // from the caller's SourceLineOrigin when '(' was read.
+                    // No other diagnostic message on this path interpolates a
+                    // source line — type errors carry the line only on
+                    // SourceLocation, which the segment map already rewrites.
+                    const std::uint32_t reported =
+                        open->file_line != 0 ? open->file_line : open->line;
+                    msg += std::format("; unclosed list opened at line {}, column {}", reported,
                                        open->column);
                     if (open->followed_by_semi) {
                         msg += "; '(' before ';' opened a real list and the rest of the line "
@@ -119,7 +129,8 @@ namespace detail {
     // namespace — not exported). parse_to_flat (the exported
     // public API) constructs a ParserState, calls detail::parse(),
     // and returns the result.
-    FlatParseResult parse(ParserState& s, std::string_view source);
+    FlatParseResult parse(ParserState& s, std::string_view source,
+                          std::span<const SourceLineOrigin> origins = {});
 
     aura::ast::NodeId parse_expr(ParserState& s);
     aura::ast::NodeId parse_number(ParserState& s, Token tok);
@@ -168,7 +179,11 @@ namespace detail {
 // and discarded on return). Calling it twice on the same input
 // yields identical results — the determinism property that
 // the [[deprecated]] FlatParser class could not guarantee.
-export [[nodiscard]] FlatParseResult
-parse_to_flat(std::string_view source, aura::ast::FlatAST& flat, aura::ast::StringPool& pool);
+// `origins` names each file inside a concatenated buffer (#5347). Empty
+// means the source is one file and lines start at 1 — the CLI face.
+export [[nodiscard]] FlatParseResult parse_to_flat(std::string_view source,
+                                                   aura::ast::FlatAST& flat,
+                                                   aura::ast::StringPool& pool,
+                                                   std::span<const SourceLineOrigin> origins = {});
 
 } // namespace aura::parser
