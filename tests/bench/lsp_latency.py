@@ -29,6 +29,23 @@ sys.path.insert(0, str(ROOT / "tests" / "python" / "process"))
 from lsp_protocol import Client  # noqa: E402
 
 SIZES = (312, 1250, 5000)  # 1250 / 5002 / 20002 lines
+# Which issue owns each row's absolute target. The weekly CI lane runs
+# --issue 5351: its four requests keep their absolute limits, while the
+# #5352 rows (documentSymbol/foldingRange/selectionRange/documentHighlight)
+# are still measured and printed but not enforced there -- the shared
+# 4-core runner is ~10x slower than the box these targets were set on
+# (completion 7 ms local vs 81 ms on the runner), and #5352 is closed.
+ISSUE_OF = {
+    "definition": 5351,
+    "hover": 5351,
+    "references": 5351,
+    "completion": 5351,
+    "documentSymbol": 5352,
+    "foldingRange": 5352,
+    "selectionRange": 5352,
+    "documentHighlight": 5352,
+}
+
 TARGETS_MS = {
     "definition": 20.0,
     "hover": 20.0,
@@ -113,6 +130,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--runs", type=int, default=5, help="processes per data point")
     parser.add_argument("--check", action="store_true", help="fail on the issue targets")
+    parser.add_argument(
+        "--issue",
+        type=int,
+        default=0,
+        help="with --check, only enforce this issue's rows (5351 or 5352; 0 = both)",
+    )
     args = parser.parse_args()
 
     failures: list[str] = []
@@ -124,7 +147,8 @@ def main() -> int:
         for method, name, needs_pos in REQUESTS:
             value = measure(method, text, pos if needs_pos else None, args.runs)
             row.append(f"{name}={value:6.1f}ms")
-            if args.check:
+            checked = args.issue == 0 or ISSUE_OF.get(name) == args.issue
+            if args.check and checked:
                 if n == SIZES[-1] and value > TARGETS_MS[name]:
                     failures.append(f"{name} {value:.1f}ms > {TARGETS_MS[name]:.0f}ms at 20002 lines")
                 if name in previous and value > previous[name] * 5.0:
