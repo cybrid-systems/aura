@@ -170,7 +170,14 @@ namespace detail {
 
 // Reindent src. The result is a pure function of the input text, so
 // reindent(reindent(x)) == reindent(x).
-[[nodiscard]] inline std::string reindent(std::string_view src) {
+//
+// tab_size and insert_spaces are the editor's FormattingOptions (#5263):
+// tab_size is both the body-form offset and the column a tab advances to,
+// and insert_spaces = false writes one tab per completed step. The defaults
+// (2, spaces) are what the CLI uses and what lisp-indent-function means.
+[[nodiscard]] inline std::string reindent(std::string_view src, int tab_size = 2,
+                                          bool insert_spaces = true) {
+    const std::size_t step = tab_size > 0 ? static_cast<std::size_t>(tab_size) : 2;
     const std::size_t n = src.size();
     std::string out;
     out.reserve(n + n / 8 + 16);
@@ -184,9 +191,20 @@ namespace detail {
         if (c == '\n') {
             col = 0;
             line_start = false; // a copied newline is not a line to re-indent
+        } else if (c == '\t') {
+            col = (col / step + 1) * step; // a copied tab still moves the column
         } else if (c != '\r') {
             ++col;
         }
+    };
+    const auto put_indent = [&](std::size_t target) {
+        if (insert_spaces) {
+            out.append(target, ' ');
+        } else {
+            out.append(target / step, '\t');
+            out.append(target % step, ' ');
+        }
+        col = target;
     };
     const auto finish_head = [&](char delim) {
         if (stack.empty())
@@ -200,7 +218,7 @@ namespace detail {
             return;
         }
         f.child_col = detail::body_form(f.head)
-                          ? f.open_col + 2
+                          ? f.open_col + step
                           : col + ((delim == '\n' || fmt_is_hspace(delim)) ? 1 : 0);
     };
 
@@ -229,8 +247,7 @@ namespace detail {
                 std::size_t ind = 0;
                 if (!stack.empty())
                     ind = (src[j] == ')') ? stack.back().open_col : stack.back().child_col;
-                out.append(ind, ' ');
-                col = ind;
+                put_indent(ind);
             }
             i = j;
             continue;
@@ -327,6 +344,23 @@ namespace detail {
         raw(src[i++]);
     }
     return out;
+}
+
+// Syntax gate shared by the CLI and the language server: true when the reader
+// accepts src. Callers that are about to rewrite a buffer call this first —
+// a file the reader rejects is never reformatted (--fmt -i exits nonzero, the
+// LSP formatting request answers with no edits).
+[[nodiscard]] inline bool parses(std::string_view src, std::string* error = nullptr) {
+    aura::compiler::CompilerService cs;
+    auto alloc = cs.arena().allocator();
+    aura::ast::StringPool pool(alloc);
+    aura::ast::FlatAST flat(alloc);
+    auto pr = aura::parser::parse_to_flat(src, flat, pool);
+    if (pr.success && pr.root != aura::ast::NULL_NODE)
+        return true;
+    if (error != nullptr)
+        *error = pr.error;
+    return false;
 }
 
 } // namespace cli_fmt_5263

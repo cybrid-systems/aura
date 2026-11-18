@@ -133,7 +133,7 @@ class LspDepth5155(unittest.TestCase):
 PROCESS_THEME = "lsp"
 PROCESS_TIER = "fast"
 PROCESS_TIMEOUT = 180
-PARTS = ("lsp_protocol",)
+PARTS = ("lsp_protocol", "lsp_format")
 CASES = (
     (
         5155,
@@ -191,6 +191,37 @@ CASES = (
         5258,
         "test_untitled_buffer_gets_diagnostics",
         "lsp_protocol.LspProtocol5258.test_untitled_buffer_gets_diagnostics",
+    ),
+    # #5263: textDocument/formatting + rangeFormatting call the CLI formatter.
+    (
+        5263,
+        "test_formatting_returns_a_text_edit_and_keeps_comments",
+        "lsp_format.LspFormat5263.test_formatting_returns_a_text_edit_and_keeps_comments",
+    ),
+    (
+        5263,
+        "test_formatting_matches_cli_fmt",
+        "lsp_format.LspFormat5263.test_formatting_matches_cli_fmt",
+    ),
+    (
+        5263,
+        "test_formatting_is_idempotent_in_the_editor",
+        "lsp_format.LspFormat5263.test_formatting_is_idempotent_in_the_editor",
+    ),
+    (
+        5263,
+        "test_range_formatting_keeps_other_lines",
+        "lsp_format.LspFormat5263.test_range_formatting_keeps_other_lines",
+    ),
+    (
+        5263,
+        "test_unparsable_buffer_returns_no_edits",
+        "lsp_format.LspFormat5263.test_unparsable_buffer_returns_no_edits",
+    ),
+    (
+        5263,
+        "test_tab_size_and_insert_spaces_are_honored",
+        "lsp_format.LspFormat5263.test_tab_size_and_insert_spaces_are_honored",
     ),
 )
 
