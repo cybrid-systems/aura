@@ -20,6 +20,11 @@ struct Server {
     DocumentStore store;
     DiagnosticsEngine engine{store};
     PositionCodec codec;
+    // #5261: primitive signatures/docs come from the compiler registry (the
+    // same one the REPL's :doc reads), and the three semantic handlers query
+    // it together with the A2 symbol index.
+    PrimRegistryView prims;
+    Semantics sem{store, codec, prims};
     // key → the analysis last published/served for it
     std::unordered_map<std::string, std::vector<FileDiagnostics>> last;
     // main key → file keys currently carrying diagnostics from that analysis
@@ -145,16 +150,6 @@ struct Server {
         const LineIndex li(text);
         return std::format(R"({{"uri":{},"range":{}}})", q(store.uri_of(key)),
                            range_json(text, li, codec, s));
-    }
-
-    static std::string word_at(std::string_view text, std::size_t p) {
-        std::size_t b = std::min(p, text.size());
-        std::size_t e = b;
-        while (b > 0 && sym_char(text[b - 1]))
-            --b;
-        while (e < text.size() && sym_char(text[e]))
-            ++e;
-        return std::string(text.substr(b, e - b));
     }
 
     std::string definition(const Json& params) {
@@ -610,7 +605,7 @@ struct Server {
         if (!id)
             return; // initialize as a notification: state is set, nothing to answer
         reply(*id, std::format(
-            R"({{"capabilities":{{"positionEncoding":{},"textDocumentSync":{{"openClose":true,"change":1,"save":{{"includeText":false}}}},"definitionProvider":true,"documentFormattingProvider":true,"documentRangeFormattingProvider":true,"documentHighlightProvider":true,"documentSymbolProvider":true,"workspaceSymbolProvider":true,"foldingRangeProvider":true,"selectionRangeProvider":true,"documentLinkProvider":{{"resolveProvider":false}},"diagnosticProvider":{{"identifier":"aura","interFileDependencies":true,"workspaceDiagnostics":false}}}},"serverInfo":{{"name":"aura-lsp","version":{}}}}})",
+            R"({{"capabilities":{{"positionEncoding":{},"textDocumentSync":{{"openClose":true,"change":1,"save":{{"includeText":false}}}},"definitionProvider":true,"hoverProvider":true,"signatureHelpProvider":{{"triggerCharacters":["("," "]}},"completionProvider":{{"triggerCharacters":["("," ","\""],"resolveProvider":false}},"documentFormattingProvider":true,"documentRangeFormattingProvider":true,"documentHighlightProvider":true,"documentSymbolProvider":true,"workspaceSymbolProvider":true,"foldingRangeProvider":true,"selectionRangeProvider":true,"documentLinkProvider":{{"resolveProvider":false}},"diagnosticProvider":{{"identifier":"aura","interFileDependencies":true,"workspaceDiagnostics":false}}}},"serverInfo":{{"name":"aura-lsp","version":{}}}}})",
             q(encoding), q(AURA_BUILD_VERSION)));
     }
 
@@ -670,6 +665,15 @@ struct Server {
         } else if (method == "textDocument/definition") {
             if (id)
                 reply(*id, definition(params));
+        } else if (method == "textDocument/hover") {
+            if (id)
+                reply(*id, sem.hover(params));
+        } else if (method == "textDocument/signatureHelp") {
+            if (id)
+                reply(*id, sem.signature_help(params));
+        } else if (method == "textDocument/completion") {
+            if (id)
+                reply(*id, sem.completion(params));
         } else if (method == "textDocument/documentSymbol") {
             if (id)
                 reply(*id, document_symbol(params));

@@ -27,6 +27,7 @@ module;
 #endif
 
 #include "core/runtime_config.hh"
+#include "compiler/module_search.hh" // #5261: one std/ scan for Tab and the LSP
 export module aura.repl;
 
 import std;
@@ -764,28 +765,14 @@ public:
         return head.ends_with("(require");
     }
 
+    // #5261: the scan itself lives in module_search.hh so the language
+    // server's require completion lists exactly these modules.
     std::vector<std::string> std_modules_() const {
         std::vector<std::string> out;
-        std::vector<std::filesystem::path> dirs{std::filesystem::path("lib/std")};
-        if (const char* rt = ::aura::config::raw(::aura::config::Key::AURA_RUNTIME_DIR); rt && *rt)
-            dirs.emplace_back(std::filesystem::path(rt) / "lib" / "std");
-        for (const auto& dir : dirs) {
-            std::error_code ec;
-            if (!std::filesystem::is_directory(dir, ec))
-                continue;
-            for (const auto& entry : std::filesystem::directory_iterator(dir, ec)) {
-                if (!entry.is_regular_file(ec))
-                    continue;
-                const auto name = entry.path().filename().string();
-                if (!name.ends_with(".aura"))
-                    continue;
-                out.push_back("std/" + name.substr(0, name.size() - 5));
-            }
-            if (!out.empty())
-                break;
+        for (const auto& [spec, path] : module_search::std_module_files()) {
+            (void)path;
+            out.push_back(spec);
         }
-        std::sort(out.begin(), out.end());
-        out.erase(std::unique(out.begin(), out.end()), out.end());
         return out;
     }
 
