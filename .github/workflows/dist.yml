@@ -146,7 +146,18 @@ jobs:
         if: github.event_name == 'push'
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-          docker push "$IMAGE:${GITHUB_SHA::9}-${{ matrix.arch }}"
+          tag="$IMAGE:${GITHUB_SHA::9}-${{ matrix.arch }}"
+          # 3810462de x86_64: the registry answered "unknown blob" on a layer
+          # after two layers had already been pushed; the arm64 sibling
+          # pushed fine. Re-push the tag (completed layers are skipped).
+          for attempt in 1 2 3; do
+            if docker push "$tag"; then
+              exit 0
+            fi
+            echo "::warning::docker push $tag failed (attempt $attempt/3); retrying"
+            sleep $((attempt * 10))
+          done
+          exit 1
 
   publish:
     needs: verify
