@@ -4,18 +4,38 @@
 // request and the push both consume one result. Columns stay in the engine's
 // own unit (0-based bytes, #5235/#5240); the server converts them to the
 // negotiated position encoding exactly once.
+//
+// #5262: this is the structured consumer. 'code' is the stable kind ident the
+// CLI/serve JSON faces already print, 'message' is the producer's text with
+// no kind prefix and no folded-in hint, the hint stays separate (it is what a
+// quickfix replaces with), and the notes plus the require chain become LSP
+// relatedInformation.
 #ifndef AURA_LSP_DIAGNOSTICS_INC
 #define AURA_LSP_DIAGNOSTICS_INC
 
 namespace lsp_4911 {
 
+// A location that explains a diagnostic: another document, or another line of
+// this one. LSP relatedInformation wants a Location plus a message.
+struct RelatedInfo {
+    std::string key;
+    int line = 0; // 0-based line in that file
+    int col = 0;  // 0-based byte column
+    int end = 0;  // 0-based byte column, exclusive
+    std::string message;
+};
+
 struct Diag {
-    int line = 0;  // 0-based line in the file
-    int col = 0;   // 0-based byte column
-    int end = 1;   // 0-based byte column, exclusive
+    int line = 0; // 0-based line in the file
+    int col = 0;  // 0-based byte column
+    int end = 1;  // 0-based byte column, exclusive
     aura::diag::ErrorKind kind = aura::diag::ErrorKind::InternalError;
-    std::string raw;
-    std::string msg;
+    std::string code;     // aura::diag::kind_ident(kind)
+    int severity = 1;     // LSP DiagnosticSeverity: 1 Error, 2 Warning, 3 Info
+    std::string message;  // d.message, byte for byte (shared with the JSON faces)
+    std::string hint;     // d.suggestion; never folded into the message
+    std::string fix_name; // the name a quickfix would substitute ("" = none)
+    std::vector<RelatedInfo> related;
 };
 
 struct FileDiagnostics {
@@ -23,7 +43,45 @@ struct FileDiagnostics {
     std::vector<Diag> items;
 };
 
-// End of the symbol starting at `col`, in bytes; never shorter than one
+// The type checker's own errors. #5250 made the static face, the runtime and
+// --typecheck agree, so they are published as warnings by default and the
+// client may turn them off or promote them to errors.
+enum class TypeMode { Off, Warning, Error };
+
+// LSP severity for a kind: a Note is information, a Warning is a warning,
+// every error kind is an error. TypeError is decided in analyze() because its
+// severity follows TypeMode.
+inline int severity_of(aura::diag::ErrorKind kind) {
+    using K = aura::diag::ErrorKind;
+    switch (kind) {
+        case K::Note:
+            return 3; // Information
+        case K::Warning:
+            return 2; // Warning
+        default:
+            return 1; // Error
+    }
+}
+
+// "did you mean 'member'? (…)" -> "member". #5235 owns the wording; a quickfix
+// replaces the underlined name with exactly this token, so a suggestion that
+// is not a plain symbol (a module path, say) yields no fix.
+inline std::string suggested_name(std::string_view hint) {
+    constexpr std::string_view kPrefix = "did you mean '";
+    const auto at = hint.find(kPrefix);
+    if (at == std::string_view::npos)
+        return {};
+    const auto rest = hint.substr(at + kPrefix.size());
+    const auto close = rest.find('\'');
+    if (close == std::string_view::npos || close == 0)
+        return {};
+    std::string name(rest.substr(0, close));
+    if (name.find_first_of(":/") != std::string::npos)
+        return {};
+    return std::ranges::all_of(name, sym_char) ? name : std::string{};
+}
+
+// End of the symbol starting at 'col', in bytes; never shorter than one
 // character.
 inline int underline_end(std::string_view text, int line, int col) {
     std::size_t off = 0;
@@ -47,9 +105,36 @@ inline int underline_end(std::string_view text, int line, int col) {
 
 struct DiagnosticsEngine {
     const DocumentStore& store;
+    // #5262: type diagnostics are warnings unless the client says otherwise.
+    TypeMode type_mode = TypeMode::Warning;
     // One runtime session (std prelude loaded) answers "is NAME bound?".
     std::unique_ptr<aura::compiler::CompilerService> rt;
     std::unordered_map<std::string, bool> bound_cache;
+
+    // Accepts "warning"/"warn"/"true"/"on", "error", "off"/"none"/"false".
+    static bool parse_type_mode(std::string_view raw, TypeMode& out) {
+        if (raw == "off" || raw == "none" || raw == "false" || raw == "disabled") {
+            out = TypeMode::Off;
+            return true;
+        }
+        if (raw == "warning" || raw == "warn" || raw == "true" || raw == "on") {
+            out = TypeMode::Warning;
+            return true;
+        }
+        if (raw == "error") {
+            out = TypeMode::Error;
+            return true;
+        }
+        return false;
+    }
+
+    bool set_type_mode(std::string_view raw) {
+        TypeMode mode;
+        if (!parse_type_mode(raw, mode))
+            return false;
+        type_mode = mode;
+        return true;
+    }
 
     bool runtime_bound(const std::string& name) {
         if (name.empty() || !std::ranges::all_of(name, sym_char))
@@ -72,50 +157,61 @@ struct DiagnosticsEngine {
     }
 
     // #5240: classify on the structured kind, not on the formatted prefix.
-    bool keep_diag(aura::diag::ErrorKind kind, const std::string& raw,
+    bool keep_diag(aura::diag::ErrorKind kind, const std::string& message,
                    const std::unordered_set<std::string>& defined) {
         using K = aura::diag::ErrorKind;
         if (kind == K::TypeError)
-            return false;
+            return type_mode != TypeMode::Off;
         // The static signature table lags runtime primitives with optional
         // arguments (mutate :rebind name src [reason]); trust the runtime for
         // callees the project does not define itself.
         if (kind == K::ArityMismatch) {
             static constexpr std::string_view kCall = "call '";
-            const auto at = std::string_view(raw).find(kCall);
+            const auto at = std::string_view(message).find(kCall);
             if (at == std::string_view::npos)
                 return true;
-            const auto rest = std::string_view(raw).substr(at + kCall.size());
+            const auto rest = std::string_view(message).substr(at + kCall.size());
             const auto callee = std::string(rest.substr(0, rest.find('\'')));
             return defined.contains(callee) || !runtime_bound(callee);
         }
         if (kind != K::UnboundVariable)
             return true;
-        auto name = raw.substr(0, raw.find('\n'));
+        auto name = message.substr(0, message.find('\n'));
         return !defined.contains(name) && !runtime_bound(name);
     }
 
-    // One analysis of `main_key` and its closure; the caller publishes it,
+    // One analysis of 'main_key' and its closure; the caller publishes it,
     // serves it from textDocument/diagnostic, or both.
     std::vector<FileDiagnostics> analyze(const std::string& main_key) {
         std::vector<std::string> files;
         std::unordered_set<std::string> seen;
         store.collect(main_key, files, seen);
-        // Masked texts (requires → spaces, newlines kept) concatenated; each
+        // Masked texts (requires -> spaces, newlines kept) concatenated; each
         // segment remembers its first line so diagnostics map back.
         std::string combined;
         struct Segment {
             int first_line = 1;
             std::string key;
         };
+        struct RequireSite {
+            std::string key; // the requiring file
+            Span span;       // the (require …) form in that file
+            std::string spec;
+        };
         std::vector<Segment> segs;
+        // #5262: a diagnostic inside a required module is explained by the
+        // (require …) that pulled it in, so remember each edge.
+        std::unordered_map<std::string, RequireSite> require_site;
         int line = 1;
         for (auto& f : files) {
             std::string t = store.text_of(f);
-            for (auto& r : find_requires(t))
+            for (auto& r : find_requires(t)) {
+                if (auto p = store.resolve(f, r.spec); p && !require_site.contains(*p))
+                    require_site.emplace(*p, RequireSite{f, Span{r.begin, r.end}, r.spec});
                 for (std::size_t i = r.begin; i < r.end; ++i)
                     if (t[i] != '\n')
                         t[i] = ' ';
+            }
             if (!t.empty() && t.back() != '\n')
                 t += '\n';
             segs.push_back({line, f});
@@ -125,8 +221,6 @@ struct DiagnosticsEngine {
         std::unordered_map<std::string, std::vector<Diag>> by_file;
         for (auto& f : files)
             by_file[f];
-        // #5240: consume the structured diagnostics directly. The old path
-        // formatted them into text and recovered line/column with a regex.
         std::vector<aura::diag::Diagnostic> structured;
         try {
             aura::compiler::CompilerService cs;
@@ -149,13 +243,25 @@ struct DiagnosticsEngine {
             // Keep the first diagnostic per file (CLI default: first error stops).
             if (!v.empty())
                 continue;
-            // #5240: keep_diag() now keys on the structured kind and the
-            // raw message; the composed text is wire-only.
-            std::string msg = std::string(aura::diag::kind_name(d.kind)) + ": " + d.message;
-            if (!d.suggestion.empty())
-                msg += "\n" + d.suggestion;
-            v.push_back({gl - seg->first_line, std::max(0, static_cast<int>(d.location.column) - 1), 0,
-                         d.kind, d.message, std::move(msg)});
+            if (d.kind == aura::diag::ErrorKind::TypeError && type_mode == TypeMode::Off)
+                continue;
+            Diag out;
+            out.line = gl - seg->first_line;
+            out.col = std::max(0, static_cast<int>(d.location.column) - 1);
+            out.kind = d.kind;
+            out.code = std::string(aura::diag::kind_ident(d.kind));
+            out.severity = d.kind == aura::diag::ErrorKind::TypeError
+                               ? (type_mode == TypeMode::Error ? 1 : 2)
+                               : severity_of(d.kind);
+            out.message = d.message;
+            out.hint = d.suggestion;
+            if (d.kind == aura::diag::ErrorKind::UnboundVariable)
+                out.fix_name = suggested_name(d.suggestion);
+            // #5262: the producer's notes become relatedInformation. They
+            // carry no range of their own, so they point at the diagnostic.
+            for (const auto& note : d.context_stack)
+                out.related.push_back({seg->key, out.line, out.col, 0, note});
+            v.push_back(std::move(out));
         }
         // The static checker is stricter than the runtime: type errors on
         // dynamically typed code and "unbound" for runtime primitives / std
@@ -171,12 +277,48 @@ struct DiagnosticsEngine {
                 defined.insert(ix.defs[d].name);
         }
         for (auto& [path, diags] : by_file)
-            std::erase_if(diags, [&](const Diag& d) { return !keep_diag(d.kind, d.raw, defined); });
+            std::erase_if(diags,
+                          [&](const Diag& d) { return !keep_diag(d.kind, d.message, defined); });
+        // #5262: follow the require chain upwards so the editor can show
+        // where a required module (or a module it requires) came from.
+        for (auto& [path, diags] : by_file) {
+            if (path == main_key)
+                continue;
+            for (auto& d : diags) {
+                std::string cur = path;
+                for (int depth = 0; depth < 8; ++depth) {
+                    const auto it = require_site.find(cur);
+                    if (it == require_site.end())
+                        break;
+                    const std::string& parent = it->second.key;
+                    const std::string ptext = store.text_of(parent);
+                    const LineIndex li(ptext);
+                    const std::size_t b = std::min(it->second.span.begin, ptext.size());
+                    const std::size_t e = std::min(it->second.span.end, ptext.size());
+                    const int rline = li.line_of(b);
+                    const auto ltext = line_at(ptext, static_cast<std::size_t>(rline));
+                    const int rcol = static_cast<int>(b - li.start_of(rline));
+                    const std::size_t lb = li.start_of(rline);
+                    const int rend =
+                        static_cast<int>(std::min<std::size_t>(ltext.size(), e > lb ? e - lb : 0));
+                    d.related.push_back(
+                        {parent, rline, rcol, rend, "required here: \"" + it->second.spec + "\""});
+                    if (parent == main_key)
+                        break;
+                    cur = parent;
+                }
+            }
+        }
         std::vector<FileDiagnostics> runs;
         for (auto& [path, diags] : by_file) {
             const std::string text = store.text_of(path);
-            for (auto& d : diags)
+            for (auto& d : diags) {
                 d.end = underline_end(text, d.line, d.col);
+                // A note points at the same token as its diagnostic.
+                for (auto& r : d.related)
+                    if (r.key == path && r.line == d.line && r.col == d.col && r.end <= r.col)
+                        r.end = d.end;
+            }
             runs.push_back({path, std::move(diags)});
         }
         return runs;

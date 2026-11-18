@@ -136,7 +136,14 @@ PROCESS_TIER = "fast"
 # references+rename cases (#5260) push a full run past 160s, so the budget is
 # explicit headroom rather than a pass/fail coincidence.
 PROCESS_TIMEOUT = 300
-PARTS = ("lsp_protocol", "lsp_format", "lsp_symbols", "lsp_semantic", "lsp_refactor")
+PARTS = (
+    "lsp_protocol",
+    "lsp_format",
+    "lsp_symbols",
+    "lsp_semantic",
+    "lsp_refactor",
+    "lsp_diagnostics",
+)
 CASES = (
     (
         5155,
@@ -341,6 +348,38 @@ CASES = (
         5260,
         "test_capabilities_advertise_references_and_rename",
         "lsp_refactor.LspRefactor5260.test_capabilities_advertise_references_and_rename",
+    ),
+    # #5262: structured diagnostics (code/severity/relatedInformation), type
+    # warnings with a configuration switch, and the did-you-mean quickfix.
+    (
+        5262,
+        "test_codes_severity_and_message_match_the_json_faces",
+        "lsp_diagnostics.LspDiagnostics5262.test_codes_severity_and_message_match_the_json_faces",
+    ),
+    (
+        5262,
+        "test_unbound_arity_and_parse_errors_are_errors",
+        "lsp_diagnostics.LspDiagnostics5262.test_unbound_arity_and_parse_errors_are_errors",
+    ),
+    (
+        5262,
+        "test_type_diagnostic_is_a_warning_that_matches_typecheck",
+        "lsp_diagnostics.LspDiagnostics5262.test_type_diagnostic_is_a_warning_that_matches_typecheck",
+    ),
+    (
+        5262,
+        "test_type_mode_off_and_error_from_both_configuration_channels",
+        "lsp_diagnostics.LspDiagnostics5262.test_type_mode_off_and_error_from_both_configuration_channels",
+    ),
+    (
+        5262,
+        "test_require_chain_is_related_information",
+        "lsp_diagnostics.LspDiagnostics5262.test_require_chain_is_related_information",
+    ),
+    (
+        5262,
+        "test_did_you_mean_quickfix_replaces_the_name",
+        "lsp_diagnostics.LspDiagnostics5262.test_did_you_mean_quickfix_replaces_the_name",
     ),
 )
 
