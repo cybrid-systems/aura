@@ -3410,8 +3410,9 @@ static void print_denseness_usage(const char*, std::ostream& out = std::cerr) {
     std::println(out, "  A missing path (a slash, or a .aura name) is an error.");
     std::println(out, "  --fmt [--check] [-i] | --unparse   format; --check exits 1 when not "
                       "formatted");
-    std::println(out, "  --fmt refuses a file with comments (';' or '#| |#'): the current "
-                      "formatter drops them, so -i/--check exit 2 and write nothing");
+    std::println(out, "  --fmt reindents only: comments (';', '#| |#'), string and character "
+                      "literals, and (define (f x) ...) are kept byte for byte");
+    std::println(out, "  --unparse re-prints the AST instead: it drops comments and desugars");
     std::println(out, "  --typecheck | --auto-fix | --ir    diagnostics, fixes, evaluation");
     std::println(out, "  --query Q | --query-and-fix        queries over that same program");
     std::println(out, "  --evo-explain                 explain an evolution step (AURA_OBS=1)");
@@ -5372,35 +5373,22 @@ static int run_cli_fmt(int argc, char** argv) {
         if (prog.from_file)
             in_path = prog.path;
     } else {
-        // Read from stdin
-        std::getline(std::cin, input);
+        // Issue #5263: --fmt is line-oriented, so it needs the whole program.
+        // getline() used to hand the formatter only the first line, which
+        // silently truncated a multi-line stdin program.
+        std::ostringstream stdin_buf;
+        stdin_buf << std::cin.rdbuf();
+        input = stdin_buf.str();
     }
 
     if (input.empty())
         return 1;
 
-    // Issue #5263 (first wave): the reader keeps no trivia, so the unparser
-    // this path still uses deletes every comment and desugars
-    // (define (f x) ...). Never overwrite a file with that output, and never
-    // answer --check with a verdict that means "drop the comments".
-    const bool commented = cli_fmt_5263::has_comment(input);
-    const std::string where = in_path.empty() ? "stdin" : in_path;
-    if (commented && (in_place || check_only)) {
-        std::println(std::cerr,
-                     "error: refusing to {} {}: it contains comments (';' or '#| |#') and "
-                     "--fmt still writes the de-commented unparse (issue #5263)",
-                     in_place ? "rewrite" : "check", where);
-        std::println(std::cerr, "hint: nothing was written; use --check on a comment-free file, or "
-                                "--unparse to see the desugared form");
-        return 2;
-    }
-    if (commented) {
-        std::println(std::cerr,
-                     "warning: --fmt drops comments (';' and '#| |#'); the output for {} has "
-                     "none (issue #5263)",
-                     where);
-    }
-
+    // Issue #5263: --fmt is the comment-preserving reindent; --unparse keeps
+    // the old de-sugaring unparser (its contract is the AST, not the source).
+    // Both still require a readable program: a file the reader rejects is
+    // never rewritten, and exits nonzero.
+    const bool unparse_mode = std::string_view(argv[1]) == "--unparse";
     aura::compiler::CompilerService cs;
     auto alloc = cs.arena().allocator();
     aura::ast::StringPool pool(alloc);
@@ -5411,8 +5399,13 @@ static int run_cli_fmt(int argc, char** argv) {
         return 1;
     }
     flat.root = pr.root;
-    auto source = aura::compiler::unparse_node(flat, pool, flat.root);
-    source += "\n";
+    std::string source;
+    if (unparse_mode) {
+        source = aura::compiler::unparse_node(flat, pool, flat.root);
+        source += "\n";
+    } else {
+        source = cli_fmt_5263::reindent(input);
+    }
 
     if (check_only) {
         if (source == input) {

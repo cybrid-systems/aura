@@ -287,18 +287,23 @@ CASES = (
     ),
     (
         5263,
-        "test_in_place_refuses_a_comment",
-        "cli_fmt.Fmt.test_in_place_refuses_a_comment",
+        "test_format_keeps_comments_and_sugar",
+        "cli_fmt.Fmt.test_format_keeps_comments_and_sugar",
     ),
     (
         5263,
-        "test_check_refuses_a_comment",
-        "cli_fmt.Fmt.test_check_refuses_a_comment",
+        "test_format_is_idempotent",
+        "cli_fmt.Fmt.test_format_is_idempotent",
     ),
     (
         5263,
-        "test_stdout_run_warns",
-        "cli_fmt.Fmt.test_stdout_run_warns",
+        "test_check_tracks_the_reindent",
+        "cli_fmt.Fmt.test_check_tracks_the_reindent",
+    ),
+    (
+        5263,
+        "test_unreadable_input_is_not_rewritten",
+        "cli_fmt.Fmt.test_unreadable_input_is_not_rewritten",
     ),
     (
         5263,
@@ -307,13 +312,13 @@ CASES = (
     ),
     (
         5263,
-        "test_plain_input_still_formats",
-        "cli_fmt.Fmt.test_plain_input_still_formats",
+        "test_unparse_keeps_the_ast_contract",
+        "cli_fmt.Fmt.test_unparse_keeps_the_ast_contract",
     ),
     (
         5263,
-        "test_help_names_the_refusal",
-        "cli_fmt.Fmt.test_help_names_the_refusal",
+        "test_help_names_the_split",
+        "cli_fmt.Fmt.test_help_names_the_split",
     ),
 )
 
