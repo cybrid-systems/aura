@@ -135,7 +135,13 @@ PROCESS_TIER = "fast"
 # 180s was enough for the protocol/format/symbol/semantic themes; the
 # references+rename cases (#5260) push a full run past 160s, so the budget is
 # explicit headroom rather than a pass/fail coincidence.
-PROCESS_TIMEOUT = 300
+# #5346/#5347 added six more server round-trips on top of #5262's diagnostics
+# cases: the last green dist run (a97ad49f) spent 291.8s of this 300s budget
+# for 48 cases, and the next push died at exactly 300s (rc=124, 28/52). The
+# 52 cases take 306.6s locally on an idle box, so 300 was below the work
+# itself, not a margin. Give the heavy theme the same 900s headroom as ci/p0;
+# the run still finishes on its own and a hang is caught by this cap.
+PROCESS_TIMEOUT = 900
 PARTS = (
     "lsp_protocol",
     "lsp_format",
