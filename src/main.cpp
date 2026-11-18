@@ -10,7 +10,10 @@
 #include "compiler/observability_metrics.h"
 #include "compiler/observability_logger.h" // for snapshot_to_json
 #include <unistd.h>
-#include "compiler/json_escape.hh" // #5234: one RFC 8259 escaper
+#include "compiler/json_escape.hh"   // #5234: one RFC 8259 escaper
+#include "compiler/module_search.hh" // #5258: one require search path (runtime + LSP)
+#include <cerrno>                    // #5258: LSP transport read errors
+#include <poll.h>                    // #5258: LSP debounce without blocking reads
 #include <signal.h>
 #include <stdlib.h>
 #if defined(__linux__) && !defined(__APPLE__)

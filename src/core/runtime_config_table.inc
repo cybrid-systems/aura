@@ -100,6 +100,7 @@ AURA_CONFIG_ENTRY(AURA_LINEAR_CROSS_CLOSURE_HARD, "AURA_LINEAR_CROSS_CLOSURE_HAR
 AURA_CONFIG_ENTRY(AURA_LINEAR_ENFORCE, "AURA_LINEAR_ENFORCE", Text, "", "Linear capability enforcement mode.")
 AURA_CONFIG_ENTRY(AURA_LOCK_ORDER_AUDIT, "AURA_LOCK_ORDER_AUDIT", Flag, "", "Enable lock-order auditing.")
 AURA_CONFIG_ENTRY(AURA_LOCK_ORDER_CANARY, "AURA_LOCK_ORDER_CANARY", Flag, "", "Arm the lock-order canary.")
+AURA_CONFIG_ENTRY(AURA_LSP_DEBOUNCE_MS, "AURA_LSP_DEBOUNCE_MS", Duration, "", "LSP didChange debounce before publishDiagnostics, in milliseconds (default 300).")
 AURA_CONFIG_ENTRY(AURA_MACRO_HYGIENE_DEPTH_CAP, "AURA_MACRO_HYGIENE_DEPTH_CAP", Integer, "", "Macro expansion depth cap for hygiene checks.")
 AURA_CONFIG_ENTRY(AURA_MACRO_HYGIENE_PASS_CAP, "AURA_MACRO_HYGIENE_PASS_CAP", Integer, "", "Macro pass count cap for hygiene checks.")
 AURA_CONFIG_ENTRY(AURA_MAILBOX_DEFER_STARVATION_MS, "AURA_MAILBOX_DEFER_STARVATION_MS", Duration, "", "Mailbox defer starvation threshold in milliseconds.")
