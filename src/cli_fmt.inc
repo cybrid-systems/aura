@@ -5,10 +5,11 @@
 // formatter has to work on the raw source text. This file is the one lexical
 // scanner both halves of #5263 use:
 //
-//   - has_comment():  wave one refuses to overwrite a file whose comments the
-//                     current unparser would silently delete;
-//   - reindent():     wave two's conservative formatter -- line-leading
-//                     whitespace only, every other byte copied verbatim.
+// reindent() is the conservative formatter: line-leading whitespace only,
+// every other byte copied verbatim. The first wave of the fix (refusing to
+// overwrite a comment-bearing file) used the scanner's comment test; now
+// that comments survive, that refusal is gone and only the skip helpers
+// remain.
 //
 // It is a copy of the reader's literal rules, not a second parser: string
 // escapes, |symbol| quoting, character literals (#\ ) and nested block
@@ -24,12 +25,29 @@ namespace cli_fmt_5263 {
     if (std::isalnum(static_cast<unsigned char>(c)) != 0)
         return true;
     switch (c) {
-    case '_': case '+': case '*': case '-': case '/': case '=': case '<': case '>':
-    case '!': case '?': case ':': case '&': case '%': case '.': case '^': case '~':
-    case '$': case '@': case '\'': case ',':
-        return true;
-    default:
-        return false;
+        case '_':
+        case '+':
+        case '*':
+        case '-':
+        case '/':
+        case '=':
+        case '<':
+        case '>':
+        case '!':
+        case '?':
+        case ':':
+        case '&':
+        case '%':
+        case '.':
+        case '^':
+        case '~':
+        case '$':
+        case '@':
+        case '\'':
+        case ',':
+            return true;
+        default:
+            return false;
     }
 }
 
@@ -88,34 +106,227 @@ namespace cli_fmt_5263 {
     return i + 1;
 }
 
-// True when the source contains a ';' line comment or a '#| ... |#' block
-// comment outside every string, |symbol| and character literal.
-[[nodiscard]] inline bool has_comment(std::string_view s) noexcept {
-    const std::size_t n = s.size();
-    std::size_t i = 0;
-    while (i < n) {
-        const char c = s[i];
-        if (c == ';')
-            return true;
-        if (c == '"') {
-            i = fmt_skip_string(s, i);
-            continue;
-        }
-        if (c == '|') {
-            i = fmt_skip_pipe_symbol(s, i);
-            continue;
-        }
-        if (c == '#' && i + 1 < n) {
-            if (s[i + 1] == '|')
+// ── Conservative reindent (second wave) ─────────────────────────────────────
+//
+// Only the leading whitespace of a line may change. Every other byte —
+// comment text, string and character literals, |symbol| quoting, the
+// (define (f x) ...) sugar, the number of top-level forms — is copied
+// through unchanged. Indentation follows the lisp-indent-function shape:
+// a body form (define, lambda, let, when, ...) indents its subforms two
+// columns past the open paren; any other call aligns its arguments under
+// the first argument; a line that starts with ')' aligns with its opener.
+namespace detail {
+
+    struct Frame {
+        std::size_t open_col = 0;  // column of the '(' on the output line
+        std::size_t child_col = 0; // column a new subform line uses
+        std::string head;          // head atom, while it is still being read
+        bool head_open = true;
+    };
+
+    [[nodiscard]] inline bool body_form(std::string_view h) noexcept {
+        // Emacs scheme-indent-function 0 or 1: all subforms two columns in.
+        static constexpr std::string_view kBody[] = {
+            "define",
+            "define-values",
+            "define-syntax",
+            "define-macro",
+            "define-hygienic-macro",
+            "define-record-type",
+            "lambda",
+            "let",
+            "let*",
+            "letrec",
+            "letrec*",
+            "let-values",
+            "let*-values",
+            "let-syntax",
+            "letrec-syntax",
+            "when",
+            "unless",
+            "begin",
+            "cond",
+            "case",
+            "do",
+            "and",
+            "or",
+            "if",
+            "parameterize",
+            "guard",
+            "dynamic-wind",
+            "match",
+            "syntax-rules",
+            "delay",
+            "delay-force",
+        };
+        for (const auto& form : kBody) {
+            if (h == form)
                 return true;
-            if (s[i + 1] == '\\') {
-                i = fmt_skip_character(s, i);
+        }
+        return false;
+    }
+
+} // namespace detail
+
+// Reindent src. The result is a pure function of the input text, so
+// reindent(reindent(x)) == reindent(x).
+[[nodiscard]] inline std::string reindent(std::string_view src) {
+    const std::size_t n = src.size();
+    std::string out;
+    out.reserve(n + n / 8 + 16);
+    std::vector<detail::Frame> stack;
+    std::size_t col = 0; // columns emitted on the current output line
+    bool line_start = true;
+    std::size_t i = 0;
+
+    const auto raw = [&](char c) {
+        out.push_back(c);
+        if (c == '\n') {
+            col = 0;
+            line_start = false; // a copied newline is not a line to re-indent
+        } else if (c != '\r') {
+            ++col;
+        }
+    };
+    const auto finish_head = [&](char delim) {
+        if (stack.empty())
+            return;
+        auto& f = stack.back();
+        if (!f.head_open)
+            return;
+        f.head_open = false;
+        if (f.head.empty()) { // head was '(' or a literal: align under it
+            f.child_col = f.open_col + 1;
+            return;
+        }
+        f.child_col = detail::body_form(f.head)
+                          ? f.open_col + 2
+                          : col + ((delim == '\n' || fmt_is_hspace(delim)) ? 1 : 0);
+    };
+
+    while (i < n) {
+        const char c = src[i];
+        if (line_start) {
+            line_start = false;
+            std::size_t j = i;
+            while (j < n && (src[j] == ' ' || src[j] == '\t'))
+                ++j;
+            if (j >= n) { // trailing blank at EOF
+                i = n;
+                break;
+            }
+            if (src[j] == '\n' || src[j] == '\r') { // blank line: no indent
+                i = j;
                 continue;
             }
+            // A block comment's column is part of its text: leave that line
+            // (and everything inside the comment) exactly as written.
+            const bool verbatim = src[j] == '#' && j + 1 < n && src[j + 1] == '|';
+            if (verbatim) {
+                for (std::size_t k = i; k < j; ++k)
+                    raw(src[k]);
+            } else {
+                std::size_t ind = 0;
+                if (!stack.empty())
+                    ind = (src[j] == ')') ? stack.back().open_col : stack.back().child_col;
+                out.append(ind, ' ');
+                col = ind;
+            }
+            i = j;
+            continue;
         }
-        ++i;
+
+        if (c == '\n') {
+            out.push_back('\n');
+            col = 0;
+            line_start = true;
+            ++i;
+            continue;
+        }
+        if (c == '"') { // string literal: byte-for-byte
+            finish_head(c);
+            const std::size_t end = fmt_skip_string(src, i);
+            for (; i < end; ++i)
+                raw(src[i]);
+            continue;
+        }
+        if (c == '|') { // |symbol|
+            finish_head(c);
+            const std::size_t end = fmt_skip_pipe_symbol(src, i);
+            for (; i < end; ++i)
+                raw(src[i]);
+            continue;
+        }
+        if (c == ';') { // to end of line
+            while (i < n && src[i] != '\n')
+                raw(src[i++]);
+            continue;
+        }
+        if (c == '#' && i + 1 < n && src[i + 1] == '|') { // block comment, nests
+            int nest = 1;
+            raw(src[i++]);
+            raw(src[i++]);
+            while (i < n && nest > 0) {
+                if (src[i] == '#' && i + 1 < n && src[i + 1] == '|') {
+                    raw(src[i++]);
+                    raw(src[i++]);
+                    ++nest;
+                    continue;
+                }
+                if (src[i] == '|' && i + 1 < n && src[i + 1] == '#') {
+                    raw(src[i++]);
+                    raw(src[i++]);
+                    --nest;
+                    continue;
+                }
+                raw(src[i++]);
+            }
+            continue;
+        }
+        if (c == '#' && i + 1 < n && src[i + 1] == '\\') { // #\x character
+            finish_head(c);
+            const std::size_t end = fmt_skip_character(src, i);
+            for (; i < end; ++i)
+                raw(src[i]);
+            continue;
+        }
+        if (c == '#' && i + 1 < n && src[i + 1] == '(') { // #( vector
+            finish_head(c);
+            detail::Frame f;
+            f.open_col = col;
+            f.child_col = col + 1;
+            stack.push_back(f);
+            raw(src[i++]);
+            raw(src[i++]);
+            continue;
+        }
+        if (c == '(') {
+            finish_head(c);
+            detail::Frame f;
+            f.open_col = col;
+            f.child_col = col + 1;
+            stack.push_back(f);
+            raw(src[i++]);
+            continue;
+        }
+        if (c == ')') {
+            finish_head(c);
+            if (!stack.empty())
+                stack.pop_back();
+            raw(src[i++]);
+            continue;
+        }
+        if (fmt_is_hspace(c)) {
+            finish_head(c);
+            raw(src[i++]);
+            continue;
+        }
+        // atom byte: part of the frame's head while the head is still open
+        if (!stack.empty() && stack.back().head_open)
+            stack.back().head.push_back(c);
+        raw(src[i++]);
     }
-    return false;
+    return out;
 }
 
 } // namespace cli_fmt_5263
