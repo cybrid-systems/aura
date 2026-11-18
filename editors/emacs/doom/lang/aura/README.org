@@ -51,6 +51,13 @@ Enable it in ~init.el~:
 …then ~doom sync~ (which also builds ~aura-lang~ from the recipe in
 ~packages.el~).
 
+A directory copy and a symlink both work.  Doom's module autoload scan
+(~doom-module-from-path~) compares ~file-truename~s, so a symlink whose
+target is outside the modules tree is omitted from the generated loaddefs
+and ~;;;###autoload~ in ~autoload/aura.el~ is not installed.  ~config.el~
+and ~doctor.el~ load that file themselves; ~+aura-formatter-state~ does not
+depend on the scan.
+
 Install the Aura binary as well; ~install.sh~ links it to ~~/.local/bin/aura~:
 
 #+begin_src sh

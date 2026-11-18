@@ -125,7 +125,14 @@ three install recipes, the binary lookup order, and the REPL commands.
 
 `editors/emacs/doom/lang/aura/` is a Doom module built on the same package.
 Copy or symlink it to `$DOOMDIR/modules/lang/aura/`, add `(aura +lsp)` to the
-`:lang` group in `init.el`, then run `doom sync`:
+`:lang` group in `init.el`, then run `doom sync`.  A copy and a symlink both
+work.  Doom builds `60-doom-module-loaddefs.init.el` by scanning module
+directories, and `doom-module-from-path` accepts a directory only when
+`file-in-directory-p` says it is inside the modules tree.  That check uses
+`file-truename`, so a symlink whose target lives outside `$DOOMDIR/modules`
+is left out of the loaddefs and `;;;###autoload` in `autoload/aura.el` never
+runs.  The module loads that file from `config.el` and from `doctor.el`, so
+`+aura-formatter-state` is defined either way:
 
     (doom! :lang
            (aura +lsp))

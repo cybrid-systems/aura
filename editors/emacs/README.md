@@ -53,9 +53,13 @@ file.  This README and the ERT tests are not part of the installed package.
 
 `editors/emacs/doom/lang/aura/` is a Doom module that wraps this package
 (`(doom! :lang (aura +lsp))`).  It lives outside the installed package on
-purpose: copy or symlink it to `$DOOMDIR/modules/lang/aura/`.  See
-`docs/editor.md`, "Doom Emacs", for the keys, the `:tools lsp` client
-switch and the `aura --fmt` version gate.
+purpose: copy or symlink it to `$DOOMDIR/modules/lang/aura/`.  Both
+layouts work.  Doom's autoload scan skips a symlinked module directory
+whose target is outside the modules tree (`doom-module-from-path` compares
+`file-truename`s), so `config.el` and `doctor.el` load `autoload/aura.el`
+themselves and do not depend on that scan.  See `docs/editor.md`, "Doom
+Emacs", for the keys, the `:tools lsp` client switch and the `aura --fmt`
+version gate.
 
 ## Finding the binary
 
