@@ -132,8 +132,8 @@ class LspDepth5155(unittest.TestCase):
 
 PROCESS_THEME = "lsp"
 PROCESS_TIER = "fast"
-PROCESS_TIMEOUT = 60
-PARTS = ()
+PROCESS_TIMEOUT = 180
+PARTS = ("lsp_protocol",)
 CASES = (
     (
         5155,
@@ -144,6 +144,53 @@ CASES = (
         5155,
         "test_crash_handler_prints_diagnostics",
         "LspDepth5155.test_crash_handler_prints_diagnostics",
+    ),
+    # #5258 protocol base: encoding, URI spellings, debounce/pull/close,
+    # JSON-RPC errors, AURA_PATH/std definition, untitled buffers.
+    (
+        5258,
+        "test_initialize_negotiates_encoding_and_reports_real_version",
+        "lsp_protocol.LspProtocol5258.test_initialize_negotiates_encoding_and_reports_real_version",
+    ),
+    (
+        5258,
+        "test_uri_spellings_hit_one_document",
+        "lsp_protocol.LspProtocol5258.test_uri_spellings_hit_one_document",
+    ),
+    (
+        5258,
+        "test_range_change_is_refused_not_applied_as_fragment",
+        "lsp_protocol.LspProtocol5258.test_range_change_is_refused_not_applied_as_fragment",
+    ),
+    (
+        5258,
+        "test_debounced_change_publishes_then_pull_matches_then_close_clears",
+        "lsp_protocol.LspProtocol5258.test_debounced_change_publishes_then_pull_matches_then_close_clears",
+    ),
+    (
+        5258,
+        "test_invalid_json_and_batch_get_error_replies",
+        "lsp_protocol.LspProtocol5258.test_invalid_json_and_batch_get_error_replies",
+    ),
+    (
+        5258,
+        "test_initialize_without_id_does_not_crash",
+        "lsp_protocol.LspProtocol5258.test_initialize_without_id_does_not_crash",
+    ),
+    (
+        5258,
+        "test_positions_follow_the_negotiated_encoding",
+        "lsp_protocol.LspProtocol5258.test_positions_follow_the_negotiated_encoding",
+    ),
+    (
+        5258,
+        "test_aura_path_and_stdlib_definition",
+        "lsp_protocol.LspProtocol5258.test_aura_path_and_stdlib_definition",
+    ),
+    (
+        5258,
+        "test_untitled_buffer_gets_diagnostics",
+        "lsp_protocol.LspProtocol5258.test_untitled_buffer_gets_diagnostics",
     ),
 )
 
