@@ -212,15 +212,18 @@ struct DocIndex {
     // Folding candidates: every list (top-level forms and the nested ones an
     // editor folds inside them) and every block comment.
     std::vector<std::pair<Span, bool>> folds() const {
+        // #5352: the dedup used a linear scan of the output for every node,
+        // which is quadratic on a file with N lists. The set makes it one
+        // lookup per candidate.
         std::vector<std::pair<Span, bool>> out;
-        const auto seen = [&](std::size_t begin) {
-            return std::ranges::any_of(out, [&](const auto& p) { return p.first.begin == begin; });
-        };
+        out.reserve(nodes.size() + forms.size() + comments.size());
+        std::unordered_set<std::size_t> seen;
+        const auto first_time = [&](std::size_t begin) { return seen.insert(begin).second; };
         for (const auto& n : nodes)
-            if (n.kind == SymKind::List && !seen(n.span.begin))
+            if (n.kind == SymKind::List && first_time(n.span.begin))
                 out.push_back({n.span, false});
         for (const auto& f : forms)
-            if (!seen(f.span.begin))
+            if (first_time(f.span.begin))
                 out.push_back({f.span, false});
         for (const auto& c : comments)
             if (c.end > c.begin + 1 && text.compare(c.begin, 2, "#|") == 0)
@@ -738,13 +741,23 @@ inline std::size_t byte_offset_at(std::string_view text, const LineIndex& li,
     return start + codec.to_byte(line_text, character);
 }
 
+// #5352: the bytes of one line, located through the index. line_at() walks
+// from the top of the file, and range_json runs once per symbol, which made
+// documentSymbol/foldingRange quadratic; the line start is already indexed.
+inline std::string_view line_view(std::string_view text, const LineIndex& li, int line) {
+    const std::size_t begin = li.start_of(line);
+    const std::size_t next = li.start_of(line + 1);
+    const std::size_t end = next > begin ? next - 1 : text.size();
+    return text.substr(begin, std::min(end, text.size()) - begin);
+}
+
 inline std::string range_json(std::string_view text, const LineIndex& li,
                               const PositionCodec& codec, Span s) {
     const auto clamp = [&](std::size_t off) { return std::min(off, text.size()); };
     const int l1 = li.line_of(clamp(s.begin));
     const int l2 = li.line_of(clamp(s.end));
-    const auto line1 = line_at(text, static_cast<std::size_t>(l1));
-    const auto line2 = line_at(text, static_cast<std::size_t>(l2));
+    const auto line1 = line_view(text, li, l1);
+    const auto line2 = line_view(text, li, l2);
     const int c1 = codec.from_byte(line1, clamp(s.begin) - li.start_of(l1));
     const int c2 = codec.from_byte(line2, clamp(s.end) - li.start_of(l2));
     return std::format(
