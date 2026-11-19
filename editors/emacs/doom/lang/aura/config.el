@@ -252,14 +252,49 @@ does not come through here."
     (when (and output (not (string-empty-p output)))
       (+aura--show-documentation id output))))
 
+(defun +aura--lsp-hover-text ()
+  "Return the LSP hover text for the symbol at point, or nil.
+The server answers primitives from the registry its hover already uses,
+so `g d' can decide without starting a REPL (#5357)."
+  (pcase (+aura--lsp-client)
+    ('eglot (+aura--hover-documentation))
+    ('lsp-mode
+     (when (and (fboundp 'lsp-request)
+                (fboundp 'lsp--text-document-position-params))
+       (let* ((result (ignore-errors
+                        (lsp-request
+                         "textDocument/hover"
+                         (lsp--text-document-position-params))))
+              (contents (and (hash-table-p result)
+                             (gethash "contents" result)))
+              (text (cond ((stringp contents) contents)
+                          ((hash-table-p contents)
+                           (gethash "value" contents))
+                          ((and (listp contents) contents)
+                           (mapconcat
+                            (lambda (part)
+                              (cond ((stringp part) part)
+                                    ((hash-table-p part)
+                                     (or (gethash "value" part) ""))
+                                    (t "")))
+                            contents "\n")))))
+         (and (stringp text)
+              (not (string-empty-p (string-trim text)))
+              text))))))
+
 (defun +aura--primitive-p (id)
-  "Return non-nil when the REPL knows ID as a primitive.
-A primitive has no source definition, so `g d' must not fall through to
-the project-wide search (which lands on an unrelated use of the name)."
-  (let ((answer (ignore-errors (+aura--send (concat ":doc " id)))))
-    (and (stringp answer)
-         (not (string-empty-p (string-trim answer)))
-         (not (string-match-p "no such primitive\\|no description" answer)))))
+  "Return non-nil when ID is a primitive, which has no source definition.
+A primitive must not fall through to the project-wide search, which lands
+on an unrelated use of the name (#5357).  With an LSP client the server's
+own registry answers, so `g d' does not start a REPL; without one the
+REPL's `:doc` is the only source."
+  (let ((client (+aura--lsp-client)))
+    (if (and client (equal id (thing-at-point 'symbol t)))
+        (+aura--lsp-hover-text)
+      (let ((answer (ignore-errors (+aura--send (concat ":doc " id)))))
+        (and (stringp answer)
+             (not (string-empty-p (string-trim answer)))
+             (not (string-match-p "no such primitive\\|no description" answer)))))))
 
 (defun +aura-lookup-definition (&optional identifier)
   "Jump to the definition of IDENTIFIER.
@@ -279,7 +314,13 @@ stops the lookup instead of letting the generic fallback jump elsewhere."
         (cond
          (entry (imenu entry) t)
          ((+aura--primitive-p id)
-          (user-error "%s is a primitive (no source definition)" id))
+          ;; #5357: a `user-error' here is what broke `g d'.  Doom's
+          ;; `+lookup--run-handlers' records any error as a failed handler and
+          ;; moves on, so the project-search fallback jumped to an unrelated
+          ;; use of the name.  Return non-nil to end the chain, and say why
+          ;; nothing moved.
+          (message "%s is a primitive (no source definition)" id)
+          t)
          (t
           ;; Nothing in this buffer: let imenu ask for a name.
           (imenu)
