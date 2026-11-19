@@ -119,7 +119,7 @@
     "name": "tc_macro_def",
     "code": "(defmacro (twice x) (+ x x))",
     "pipeline": "typecheck",
-    "expected": "(__t0 -> __t0)"
+    "expected": "(? -> ?)"
   },
   {
     "name": "tc_map",

@@ -3201,15 +3201,19 @@ int main() {
                 ProdScope prod;
                 TypeRegistry treg;
                 auto r = infer_src("(if p 1 \"a\")", treg);
-                if (r.saw_gate_te && r.ty == treg.void_type() && !r.authoritative) {
+                // #5363: a refused join yields an unknown fresh variable, not
+                // Void, so the enclosing expression does not inherit a bogus
+                // "no value" type. The gate TypeError and the demoted export
+                // are the contract that stays.
+                if (r.saw_gate_te && treg.is_var(r.ty) && !r.authoritative) {
                     ++ts_passed;
                     std::println("TS OK: ac4107_1_if_join_prod_not_authoritative");
                 } else {
                     ++ts_failed;
                     std::println(
                         std::cerr,
-                        "TS FAIL: ac4107_1_if_join_prod_not_authoritative te={} void={} auth={}",
-                        r.saw_gate_te, r.ty == treg.void_type(), r.authoritative);
+                        "TS FAIL: ac4107_1_if_join_prod_not_authoritative te={} var={} auth={}",
+                        r.saw_gate_te, treg.is_var(r.ty), r.authoritative);
                 }
             }
 
@@ -3490,8 +3494,8 @@ int main() {
                         other_te = true;
                 }
                 if (pr.success && if_id != aura::ast::NULL_NODE && gate_te && !other_te &&
-                    ty == treg.void_type() && !tc.type_export_is_authoritative() &&
-                    flat.is_dirty(if_id) && flat.type_cache_gen(if_id) == 0 &&
+                    treg.is_var(ty) && !tc.type_export_is_authoritative() && flat.is_dirty(if_id) &&
+                    flat.type_cache_gen(if_id) == 0 &&
                     flat.node_error(if_id) == static_cast<std::uint8_t>(ErrorKind::TypeError)) {
                     ++ts_passed;
                     std::println("TS OK: ac4684_1_dynamic_arm_gate_prod");
@@ -3502,9 +3506,9 @@ int main() {
                     ++ts_failed;
                     std::println(std::cerr,
                                  "TS FAIL: ac4684_1_dynamic_arm_gate_prod parse={} if={} gate={} "
-                                 "other={} void={} auth={} dirty={} err={} gen={}",
+                                 "other={} var={} auth={} dirty={} err={} gen={}",
                                  pr.success, if_id != aura::ast::NULL_NODE, gate_te, other_te,
-                                 ty == treg.void_type(), tc.type_export_is_authoritative(),
+                                 treg.is_var(ty), tc.type_export_is_authoritative(),
                                  if_id != aura::ast::NULL_NODE && flat.is_dirty(if_id),
                                  if_id != aura::ast::NULL_NODE
                                      ? static_cast<int>(flat.node_error(if_id))
@@ -3554,20 +3558,21 @@ int main() {
             }
 
             // AC3: #4107 stays landed — two distinct grounds on the
-            // production arm still report the gate TypeError and Void.
+            // production arm still report the gate TypeError; #5363 makes the
+            // resulting type an unknown variable instead of Void.
             {
                 ProdScope prod;
                 TypeRegistry treg;
                 auto r = infer_src("(if p 1 \"a\")", treg);
-                if (r.saw_gate_te && r.ty == treg.void_type() && !r.authoritative) {
+                if (r.saw_gate_te && treg.is_var(r.ty) && !r.authoritative) {
                     ++ts_passed;
                     std::println("TS OK: ac4684_3_4107_two_grounds_preserved");
                 } else {
                     ++ts_failed;
                     std::println(
                         std::cerr,
-                        "TS FAIL: ac4684_3_4107_two_grounds_preserved te={} void={} auth={}",
-                        r.saw_gate_te, r.ty == treg.void_type(), r.authoritative);
+                        "TS FAIL: ac4684_3_4107_two_grounds_preserved te={} var={} auth={}",
+                        r.saw_gate_te, treg.is_var(r.ty), r.authoritative);
                 }
             }
 
@@ -3711,14 +3716,13 @@ int main() {
                 TypeRegistry treg;
                 auto r = infer_src("(lambda (x prev) (if (= prev 1) 1 \"a\"))", treg);
                 const auto* ft = treg.func_of(r.ty);
-                if (r.saw_gate_te && ft && ft->ret == treg.void_type()) {
+                if (r.saw_gate_te && ft && treg.is_var(ft->ret)) {
                     ++ts_passed;
                     std::println("TS OK: ac5303_6_int_string_still_gated");
                 } else {
                     ++ts_failed;
-                    std::println(std::cerr,
-                                 "TS FAIL: ac5303_6_int_string_still_gated te={} void={}",
-                                 r.saw_gate_te, ft && ft->ret == treg.void_type());
+                    std::println(std::cerr, "TS FAIL: ac5303_6_int_string_still_gated te={} var={}",
+                                 r.saw_gate_te, ft && treg.is_var(ft->ret));
                 }
             }
             {
