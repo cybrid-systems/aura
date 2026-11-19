@@ -67,6 +67,7 @@ jobs:
         AURA_SANDBOX: "off"
         AURA_IR_DIRTY_BATCH_ONLY: "0"
         AURA_ISSUE_BUILD_JOBS: "2"
+      shell: bash
       run: |
         set -uo pipefail
         n="${{ github.event.inputs.runs }}"
@@ -74,7 +75,7 @@ jobs:
         for i in $(seq 1 "$n"); do
           echo "=== shard run $i ==="
           python3 build.py ci-issues --test-only | tee /tmp/shard.log
-          rc=${PIPESTATUS[0]}
+          rc=$?
           if [ $rc -ne 0 ]; then
             echo "SHARD FAILED on iteration $i rc=$rc"
             grep -a 'FAIL: \[terminate\]' /tmp/shard.log | tail -5 || true
