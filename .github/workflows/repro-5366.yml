@@ -48,24 +48,29 @@ jobs:
         set -euo pipefail
         python3 build.py ci-issues --build-only
 
-    - name: Run the batch until it crashes
+    - name: Run the shard tests
       env:
+        AURA_ISSUES_TIER: full
+        AURA_RUNTIME_DIR: ${{ github.workspace }}
+        AURA_ISSUE_BUILD: all
+        AURA_ISSUE_SHARD: 1/4
+        AURA_SKIP_AURA_BUILD: "1"
+        AURA_DEBUG_LEVEL: "1"
         AURA_SANDBOX: "off"
         AURA_IR_DIRTY_BATCH_ONLY: "0"
-        AURA_RUNTIME_DIR: ${{ github.workspace }}
-        AURA_SRC_ROOT: ${{ github.workspace }}
+        AURA_ISSUE_BUILD_JOBS: "2"
       run: |
         set -uo pipefail
         n="${{ github.event.inputs.runs }}"
-        [ -n "$n" ] || n=80
+        [ -n "$n" ] || n=3
         for i in $(seq 1 "$n"); do
-          ./build/test_shape_soa_storm_batch > /tmp/run.log 2>&1
-          rc=$?
+          echo "=== shard run $i ==="
+          python3 build.py ci-issues --test-only | tee /tmp/shard.log
+          rc=${PIPESTATUS[0]}
           if [ $rc -ne 0 ]; then
-            echo "CRASHED on iteration $i rc=$rc"
-            grep -a 'FAIL: \[terminate\]' /tmp/run.log | tail -5 || true
-            tail -20 /tmp/run.log
+            echo "SHARD FAILED on iteration $i rc=$rc"
+            grep -a 'FAIL: \[terminate\]' /tmp/shard.log | tail -5 || true
             exit 1
           fi
         done
-        echo "ALL $n RUNS PASSED"
+        echo "ALL $n SHARD RUNS PASSED"
