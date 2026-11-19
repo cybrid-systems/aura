@@ -396,7 +396,32 @@ Both clients must surface memq, not only the earlier type warning."
         ;; Both clients negotiate a real encoding (utf-8 with today's
         ;; eglot/lsp-mode).  A byte offset copied without conversion would
         ;; underline part of the string instead of oops.
-        (should (equal (cdr diagnostic) "oops"))))))
+        (should (equal (cdr diagnostic) "oops"))
+        (should (string-match-p "unbound variable: oops" (car diagnostic)))))))
+
+(ert-deftest aura-lang-lsp-diagnostics-are-not-duplicated ()
+  "A pull-capable client sees each diagnostic once (#5359).
+eglot 1.24 and later report both the pushed and the pulled set, so the
+server must send one channel when the client declares
+textDocument.diagnostic; lsp-mode does not declare it and keeps the push."
+  (aura-lang-lsp-test--ready)
+  (aura-lang-lsp-test--with-project
+      '(("main.aura" .
+         "(define (g y) (+ y \"s\"))\n(define (h x) (memq x (list 1 2)))\n(define (k) (undefined-fn 1))\n"))
+      nil
+    (lambda ()
+      (should (aura-lang-lsp-test--wait-diagnostic "undefined-fn$"))
+      ;; Let a second publication (or a late pull) arrive before counting.
+      (accept-process-output nil 1.0)
+      (let ((diagnostics (aura-lang-lsp-test--diagnostics))
+            (seen nil)
+            (duplicates nil))
+        (dolist (entry diagnostics)
+          (if (member entry seen)
+              (push entry duplicates)
+            (push entry seen)))
+        (should diagnostics)
+        (should-not duplicates)))))
 
 (defun aura-lang-lsp-test--diagnostic-severity (regexp)
   "Return the lsp-mode severity of the first diagnostic matching REGEXP."
@@ -413,6 +438,7 @@ Both clients must surface memq, not only the earlier type warning."
                                 when (string-match-p regexp (gethash "message" item))
                                 return (gethash "severity" item))))))
 
+;; #5358: lsp-mode sends the aura section it is configured with.
 (ert-deftest aura-lang-lsp-custom-settings-are-sent ()
   "lsp-mode sends the aura section, so aura.typeDiagnostics works (#5358).
 The client used to register no :initialized-fn and no
