@@ -420,11 +420,12 @@ project-search fallback from jumping to an unrelated use of the name."
                                   messages))))
           (setq lsp-mode old-lsp-mode))))))
 
-(ert-deftest aura-doom-lookup-definition-primitive-lsp-mode ()
-  "Under lsp-mode, the client's handler chain stops on a primitive (#5357).
-The lsp-mode chain is (+lsp-lookup-definition-handler
-+aura-lookup-definition t); the server's hover is what decides, so no
-REPL process is started."
+(defun aura-doom-test--primitive-lsp-mode (hover)
+  "Run the #5357 primitive-guard scenario with HOVER as the lsp reply.
+HOVER is whatever `lsp-request' returns for textDocument/hover: a hash
+table in a default lsp-mode build, a plist under Doom's
+LSP_USE_PLISTS=1 (#5368).  The guard must stop the lookup chain in
+every shape, without starting a REPL."
   (aura-doom-test--with-binary "aura 0.2.7"
     (aura-doom-test--load-config)
     (with-temp-buffer
@@ -435,11 +436,7 @@ REPL process is started."
             (fallback nil)
             (sends 0)
             (messages nil)
-            (hover (make-hash-table :test 'equal))
-            (contents (make-hash-table :test 'equal))
             (old-lsp-mode (and (boundp 'lsp-mode) lsp-mode)))
-        (puthash "value" "car/1 (value x) -> y" contents)
-        (puthash "contents" contents hover)
         (unwind-protect
             (progn
               ;; bound-and-true-p reads the global value.
@@ -461,7 +458,14 @@ REPL process is started."
                         ((symbol-function 'lsp-request)
                          (lambda (&rest _) hover))
                         ((symbol-function 'lsp--text-document-position-params)
-                         (lambda (&rest _) nil)))
+                         (lambda (&rest _) nil))
+                        ;; lsp-mode's own mode-aware accessor; the stub
+                        ;; answers both shapes like lsp-protocol does.
+                        ((symbol-function 'lsp-get)
+                         (lambda (from key)
+                           (if (hash-table-p from)
+                               (gethash (substring (symbol-name key) 1) from)
+                             (plist-get from key)))))
                 (should (aura-doom-test--lookup-chain
                          (list '+aura-lookup-definition) "car"
                          (lambda () (setq fallback t))))
@@ -471,6 +475,31 @@ REPL process is started."
                 (should (seq-some (lambda (text) (string-match-p "primitive" text))
                                   messages))))
           (setq lsp-mode old-lsp-mode))))))
+
+(ert-deftest aura-doom-lookup-definition-primitive-lsp-mode ()
+  "Under lsp-mode, the client's handler chain stops on a primitive (#5357).
+The lsp-mode chain is (+lsp-lookup-definition-handler
++aura-lookup-definition t); the server's hover is what decides, so no
+REPL process is started.  This is the hash-table reply shape."
+  (let ((hover (make-hash-table :test 'equal))
+        (contents (make-hash-table :test 'equal)))
+    (puthash "value" "car/1 (value x) -> y" contents)
+    (puthash "contents" contents hover)
+    (aura-doom-test--primitive-lsp-mode hover)))
+
+(ert-deftest aura-doom-lookup-definition-primitive-lsp-mode-plists ()
+  "The same guard under Doom's plist-mode lsp-mode (#5368).
+Doom's :tools lsp builds and runs lsp-mode with LSP_USE_PLISTS=1, so
+`lsp-request' answers plists; the guard must not fall through to the
+project search there."
+  (aura-doom-test--primitive-lsp-mode
+   '(:contents (:kind "markdown" :value "car/1 (value x) -> y"))))
+
+(ert-deftest aura-doom-lookup-definition-primitive-lsp-mode-plists-array ()
+  "The guard with a MarkupContent[] reply in plist mode (#5368).
+The array arrives as a vector of plists; every part's value counts."
+  (aura-doom-test--primitive-lsp-mode
+   '(:contents [(:kind "markdown" :value "car/1 (value x) -> y")])))
 
 (ert-deftest aura-doom-lookup-definition-defined ()
   "g d on a defined name still jumps through xref."
