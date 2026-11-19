@@ -2385,6 +2385,11 @@ public:
     // following integer branch look like Dynamic~Int and trip the #4684
     // gate. A different ground still fails that gate.
     std::unordered_map<std::uint32_t, aura::core::TypeTag> join_ground_;
+    // Issue #5363: source positions (line<<32|col) that already reported an
+    // "if branches join …" TypeError. A cond lowers to nested ifs at one
+    // range, and a recheck revisits the same if; one range gets one
+    // understandable join diagnostic instead of a contradictory stack.
+    std::unordered_set<std::uint64_t> join_error_locs_;
 
     // Issue #281: per-condition memoization for analyze_predicate_flat.
     // Keyed by cond NodeId + the epoch at which the predicate was

@@ -1185,8 +1185,24 @@ std::string TypeRegistry::format_type(TypeId id) const {
             }
             return s + " -> " + format_type(f->ret) + ")";
         }
-        case TypeTag::TYPE_VAR:
-            return std::string(name_of(id));
+        case TypeTag::TYPE_VAR: {
+            const auto name = name_of(id);
+            // Issue #5363: an auto-generated unification variable (`__tNNNN`,
+            // see ConstraintSystem::fresh_var_named) is an internal solver id.
+            // Printing it in a user-facing diagnostic ("expected (__t5059 ->
+            // __t5063), got Void") leaks an implementation detail the reader
+            // cannot name or annotate; render it as an unknown instead. Named
+            // variables (a parameter hint, `list-elem`) keep their name.
+            if (name.size() > 3 && name.substr(0, 3) == "__t") {
+                bool digits = true;
+                for (const char c : name.substr(3))
+                    if (c < '0' || c > '9')
+                        digits = false;
+                if (digits)
+                    return std::string("?");
+            }
+            return std::string(name);
+        }
         case TypeTag::FORALL: {
             auto* ft = forall_of(id);
             if (!ft)
