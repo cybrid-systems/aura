@@ -4,9 +4,37 @@
 
 #include "test_harness.hpp"
 
+#include <execinfo.h>
+#include <unistd.h>
+
+#include <cstdio>
+#include <exception>
+#include <functional>
 #include <print>
 
 import std;
+
+// CI 的 issue-farm 在收尾时偶发 std::system_error: Resource deadlock
+// avoided (rc=134)，本地与单独重跑都不复现；terminate 默认不打印栈，
+// 无法定位。这个 handler 只在 abort 时多打一段：tid、异常文本和
+// backtrace（PIE 下是 二进制(+0x…) 形式，可用 addr2line 映射）。
+static void aura_terminate_trace() {
+    std::fprintf(stderr, "[terminate] tid=%zu\n",
+                 std::hash<std::thread::id>{}(std::this_thread::get_id()));
+    if (auto e = std::current_exception()) {
+        try {
+            std::rethrow_exception(e);
+        } catch (const std::exception& ex) {
+            std::fprintf(stderr, "[terminate] what=%s\n", ex.what());
+        } catch (...) {
+            std::fprintf(stderr, "[terminate] non-std exception\n");
+        }
+    }
+    void* frames[64];
+    const int n = ::backtrace(frames, 64);
+    ::backtrace_symbols_fd(frames, n, 2);
+    std::abort();
+}
 
 extern int run_test_dirty_aware_shape_linear_passes();
 extern int run_test_hot_pass_dirty_soa();
@@ -24,6 +52,7 @@ extern int run_test_hot_children_columnar();
 extern int run_test_validate_post_restore_soa();
 
 int main() {
+    std::set_terminate(aura_terminate_trace);
     using aura::test::g_failed;
     using aura::test::g_passed;
     int members_failed = 0;
