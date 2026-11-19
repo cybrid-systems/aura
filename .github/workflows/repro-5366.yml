@@ -1,0 +1,71 @@
+name: repro-5366
+
+# Issue #5366: the issue-farm shard 1/4 crashes in
+# test_shape_soa_storm_batch at teardown with
+# std::system_error: Resource deadlock avoided (rc=134) on x86 CI only,
+# roughly half the runs. This workflow builds the shard and runs the batch
+# in a loop so a failing iteration yields the terminate backtrace the
+# batch prints (FAIL: [terminate] ...).
+
+on:
+  workflow_dispatch:
+    inputs:
+      runs:
+        description: iterations
+        required: false
+        default: "80"
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  loop:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    container:
+      image: ghcr.io/cybrid-systems/aura-ci:v0.1.1
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        fetch-depth: 1
+
+    - name: Ensure mold / lld
+      run: |
+        set -euo pipefail
+        command -v mold >/dev/null 2>&1 || (apt-get update -qq && apt-get install -y -qq mold)
+        command -v ld.lld >/dev/null 2>&1 || (apt-get update -qq && apt-get install -y -qq lld)
+
+    - name: Build shard 1/4
+      env:
+        AURA_ISSUES_TIER: full
+        AURA_RUNTIME_DIR: ${{ github.workspace }}
+        AURA_ISSUE_BUILD: all
+        AURA_ISSUE_SHARD: 1/4
+        AURA_SKIP_AURA_BUILD: "1"
+        AURA_DEBUG_LEVEL: "1"
+      run: |
+        set -euo pipefail
+        python3 build.py ci-issues --build-only
+
+    - name: Run the batch until it crashes
+      env:
+        AURA_SANDBOX: "off"
+        AURA_IR_DIRTY_BATCH_ONLY: "0"
+        AURA_RUNTIME_DIR: ${{ github.workspace }}
+        AURA_SRC_ROOT: ${{ github.workspace }}
+      run: |
+        set -uo pipefail
+        n="${{ github.event.inputs.runs }}"
+        [ -n "$n" ] || n=80
+        for i in $(seq 1 "$n"); do
+          ./build/test_shape_soa_storm_batch > /tmp/run.log 2>&1
+          rc=$?
+          if [ $rc -ne 0 ]; then
+            echo "CRASHED on iteration $i rc=$rc"
+            grep -a 'FAIL: \[terminate\]' /tmp/run.log | tail -5 || true
+            tail -20 /tmp/run.log
+            exit 1
+          fi
+        done
+        echo "ALL $n RUNS PASSED"
