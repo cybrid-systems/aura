@@ -50,6 +50,21 @@ Nil or 0 keeps it until the next result.  Only used with :tools eval
         (setq size (buffer-size)
               quiet 0)))))
 
+(defconst +aura--repl-banner-patterns
+  '("aura: repl preset="
+    "AI-native Lisp"
+    "(quit) to exit"
+    ":help for REPL commands")
+  "Lines the REPL prints before it accepts input (#5361).
+The first send can capture them when the banner is flushed after the
+process mark is recorded, so they are stripped from the answer.")
+
+(defun +aura--banner-line-p (line)
+  "Return non-nil when LINE is part of the REPL's startup banner."
+  (seq-some (lambda (needle)
+              (string-match-p (regexp-quote needle) line))
+            +aura--repl-banner-patterns))
+
 (defun +aura--repl-buffer ()
   "Return a live, ready Aura REPL buffer, starting one if necessary."
   (let* ((buffer (get-buffer aura-lang-repl-buffer))
@@ -57,12 +72,17 @@ Nil or 0 keeps it until the next result.  Only used with :tools eval
     (unless live
       (setq buffer (run-aura))
       ;; The banner is printed before the REPL accepts input; sending into a
-      ;; process that has not printed it yet interleaves the two.
+      ;; process that has not printed all of it yet interleaves the two.
       (with-current-buffer buffer
-        (let ((deadline (+ (float-time) 3.0)))
-          (while (and (zerop (buffer-size)) (< (float-time) deadline))
-            (accept-process-output (get-buffer-process buffer) 0.05)))
-        (+aura--wait-quiet (get-buffer-process buffer))))
+        (let ((process (get-buffer-process buffer))
+              (deadline (+ (float-time) 3.0)))
+          (while (and process
+                      (not (save-excursion
+                             (goto-char (point-max))
+                             (search-backward ":help for REPL commands" nil t)))
+                      (< (float-time) deadline))
+            (accept-process-output process 0.05))
+          (+aura--wait-quiet process))))
     buffer))
 
 (defun +aura--strip-prompt (line)
@@ -86,6 +106,10 @@ The REPL prints its prompt as ordinary output (\"> \" or the continuation
 both have to go before the answer can be shown."
   (let ((out (mapcar #'+aura--strip-prompt (split-string raw "\n")))
         (echo (split-string (string-trim input) "\n")))
+    ;; #5361: the first send can start after the process mark but before the
+    ;; banner is flushed, which leaves the banner at the head of RAW.
+    (while (and out (+aura--banner-line-p (car out)))
+      (setq out (cdr out)))
     (while (and out echo
                 (string= (string-trim (car out)) (string-trim (car echo))))
       (setq out (cdr out)
