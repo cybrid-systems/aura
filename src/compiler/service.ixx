@@ -6657,6 +6657,13 @@ public:
             std::move(ir_mod), evaluator_.primitives(), &type_registry_, &metrics_, &evaluator_);
         binding->interpreter =
             std::make_unique<aura::compiler::IRInterpreter>(binding->module, binding->context);
+        // Issue #4715 residual: let the interpreter hand a foreign closure id
+        // (another binding's publication / runtime mint) to the dispatcher.
+        binding->context.dispatch_closure_fn =
+            [this](std::uint64_t cid,
+                   std::span<const types::EvalValue> call_args) -> std::optional<types::EvalValue> {
+            return dispatch_ir_define_closure(cid, call_args);
+        };
         if (!types::is_ir_closure_id(next_ir_define_closure_id_.load(std::memory_order_acquire)))
             next_ir_define_closure_id_.store(types::make_ir_closure_id(0),
                                              std::memory_order_release);
@@ -6871,6 +6878,13 @@ public:
             ir_mod, evaluator_.primitives(), &type_registry_, &metrics_, &evaluator_);
         binding->interpreter =
             std::make_unique<aura::compiler::IRInterpreter>(binding->module, binding->context);
+        // Issue #4715 residual: cross-binding closure dispatch (see the value
+        // define site above).
+        binding->context.dispatch_closure_fn =
+            [this](std::uint64_t cid,
+                   std::span<const types::EvalValue> call_args) -> std::optional<types::EvalValue> {
+            return dispatch_ir_define_closure(cid, call_args);
+        };
         // Issue #4357: disjoint closure ids. Two defines used to both mint
         // kClosureIdHighBit, and the owner map kept only the later name, so
         // a call of the first re-entered the second (hang or a 0 result).

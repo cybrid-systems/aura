@@ -2460,9 +2460,21 @@ namespace {
                                         return IrFlow::ret_eval(std::unexpected(std::move(*diag)));
                                 }
                                 locals[ops[3]] = *tw;
-                            } else
+                            } else {
+                                // Issue #4715 residual: route a foreign id to
+                                // the service dispatcher, which resolves
+                                // cross-binding ids instead of failing a live
+                                // body.
+                                if (st.context.dispatch_closure_fn) {
+                                    if (auto via =
+                                            st.context.dispatch_closure_fn(closure_id, call_args)) {
+                                        locals[ops[3]] = *via;
+                                        break;
+                                    }
+                                }
                                 return IrFlow::ret_eval(std::unexpected(Diagnostic{
                                     ErrorKind::InvalidClosure, "invalid closure reference"}));
+                            }
                             break;
                         }
                         return IrFlow::ret_eval(std::unexpected(
