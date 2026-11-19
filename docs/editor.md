@@ -10,8 +10,10 @@ Doom Emacs is the supported editor. The module in
 - Emacs 29.1 or newer.
 - Doom Emacs.
 
-Doom snapshots `PATH` with `doom env`. After installing Aura, run `doom env`
-and restart Emacs.
+Doom loads a snapshot of the shell environment. After installing Aura, run
+`doom sync --env` and restart Emacs. Bare `doom env` exits 1: it requires an
+output file and prints that `doom sync --env` is the command that writes the
+snapshot.
 
 ## Install
 
@@ -49,7 +51,7 @@ or eglot with `+eglot`. `+lsp` with no `:tools lsp` leaves `lsp!` undefined;
 `doom doctor` reports that.
 
 ```sh
-doom sync
+doom sync --env
 ```
 
 ## Keys
@@ -63,7 +65,7 @@ server has no declaration provider, so that binding has no Aura target.
 
 | key | action |
 |---|---|
-| `g d`, `SPC m g d` | definition. A primitive has no source definition; lookup stops with an error |
+| `g d`, `SPC m g d` | definition |
 | `g D`, `SPC c D` | references |
 | `K`, `SPC m h` | documentation: LSP hover, otherwise the REPL `:doc` |
 | `SPC c r` | rename (`WorkspaceEdit`; the server does not write the file) |
@@ -78,6 +80,10 @@ server has no declaration provider, so that binding has no Aura target.
 | `g r` / `g R` | send the region / the buffer and show the answer (`:tools eval`) |
 | `SPC m r` | `:reload` the visited file |
 | `SPC m w w` / `w s` / `w r` / `w k` | `:worldline` / `:snapshot` / `:restore` / `:ws` |
+
+On a primitive such as `car`, `g d` does not stop. `+lookup--run-handlers`
+treats the module's `user-error` as a failed handler and continues; the
+project search then jumps to another use of the name.
 
 Rename refuses a primitive, a `std/` name, a name with no definition, an
 illegal identifier, and a new name already bound in a file the edit touches.
@@ -111,17 +117,27 @@ a commit. `doom doctor` prints the binary it found and why no formatter was
 registered. `(format +onsave)` formats on save through that same gate;
 `SPC c f` does too.
 
-`typeDiagnostics` is read from LSP `initializationOptions` and from
+`typeDiagnostics` is a string, read from LSP `initializationOptions` or from
 `workspace/didChangeConfiguration`. A `{"aura": {...}}` wrapper is accepted.
 `"warning"` is the default (also `warn`, `true`, `on`); `"error"` raises the
 severity; `"off"` stops publishing type diagnostics (also `none`, `false`,
-`disabled`).
+`disabled`). A JSON boolean `false` is ignored. The string `"false"` is
+accepted.
+
+The aura lsp-mode client registers no `:initialized-fn` and no
+`:synchronize-sections`, so `lsp-register-custom-settings` is never sent.
+Push the setting after the server connects. Eglot sends
+`eglot-workspace-configuration` on its own.
 
 ```elisp
 ;; lsp-mode
-(after! lsp-mode
-  (lsp-register-custom-settings
-   '(("aura.typeDiagnostics" "off"))))
+(add-hook 'lsp-after-initialize-hook
+          (lambda ()
+            (when (eq (lsp--client-server-id
+                       (lsp--workspace-client lsp--cur-workspace))
+                      'aura-lsp)
+              (lsp-notify "workspace/didChangeConfiguration"
+                          '(:settings (:typeDiagnostics "off"))))))
 
 ;; (lsp +eglot)
 (setq-default eglot-workspace-configuration
@@ -136,10 +152,15 @@ two columns. A formatting request that carries its own options uses those.
 
 - `doom doctor` reports a missing binary, the formatter gate, and `+lsp`
   without `:tools lsp`.
-- "Aura executable not found": Emacs does not see the binary. Run `doom env`
-  after installing Aura, or set `aura-lang-executable`, then restart Emacs.
+- "Aura executable not found": Emacs does not see the binary. `doom doctor`
+  still says to run `doom env`; that command exits 1. Run `doom sync --env`,
+  or set `aura-lang-executable`, then restart Emacs.
 - No diagnostics: `(aura +lsp)` and `:tools lsp` are both on, then
-  `doom sync`. The modeline names `aura-lsp` once a buffer is open.
+  `doom sync --env`. Once a buffer is open, lsp-mode's lighter is
+  `aura-lsp:PID` and eglot shows the project name.
+- First Aura buffer under lsp-mode: the prompt offers "Import project root".
+  Pick the directory that contains `aura.toml` (`i` when that path is the
+  suggestion, otherwise `I`).
 - Saving does not format: the formatter gate has not passed. `doom doctor`
   prints the reason. `SPC c f` uses the same gate.
 - LSP log and restart:
