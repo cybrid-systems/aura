@@ -34,6 +34,11 @@ struct Server {
     std::chrono::steady_clock::time_point pending_due;
     int debounce_ms = kDefaultDebounceMs;
     bool initialized = false;
+    // #5359: the client declared textDocument/diagnostic in its initialize
+    // capabilities, so it pulls. It gets exactly one channel: the pull
+    // answer. A client without the capability (lsp-mode, flycheck) keeps
+    // the push it has always used.
+    bool client_pulls_diagnostics = false;
 
     Server() { debounce_ms = read_debounce_ms(); }
 
@@ -151,6 +156,13 @@ struct Server {
     }
 
     void publish_runs(const std::string& main_key, const std::vector<FileDiagnostics>& runs) {
+        // #5359: eglot asks for pull diagnostics and also listens to
+        // publishDiagnostics; it feeds both to flymake without deduplicating,
+        // so every diagnostic showed up twice. A pull-capable client is
+        // served by textDocument/diagnostic only (analyze_and_publish still
+        // stores the run for it). The push stays for everyone else.
+        if (client_pulls_diagnostics)
+            return;
         auto& previous = published_for[main_key];
         std::unordered_set<std::string> current;
         for (const auto& run : runs) {
@@ -204,6 +216,8 @@ struct Server {
         pending.erase(key);
         last.erase(key);
         published_for.erase(key);
+        if (client_pulls_diagnostics)
+            return; // #5359: nothing was pushed, so there is nothing to clear
         send(std::format(
             R"({{"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{{"uri":{},"diagnostics":[]}}}})",
             q(uri)));
@@ -818,6 +832,15 @@ struct Server {
             if (e.t == Json::T::Str && e.s == "utf-8")
                 wants_utf8 = true;
         codec.enc = wants_utf8 ? Encoding::Utf8 : Encoding::Utf16;
+
+        // #5359: LSP 3.17 pull diagnostics. The capability is
+        // textDocument.diagnostic (an object, possibly empty); its presence
+        // means the client will call textDocument/diagnostic itself.
+        if (const Json* td = params.at("capabilities").get("textDocument");
+            td && td->t == Json::T::Obj) {
+            const Json* pull = td->get("diagnostic");
+            client_pulls_diagnostics = pull && pull->t == Json::T::Obj;
+        }
 
         // #5263: the client's default FormattingOptions. A formatting request
         // that carries its own options still wins (see format_edits).

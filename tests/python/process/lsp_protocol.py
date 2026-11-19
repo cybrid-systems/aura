@@ -197,6 +197,9 @@ class Client:
         return "no reply"
 
 
+PULL_CAPS = {"textDocument": {"diagnostic": {"dynamicRegistration": False, "relatedDocumentSupport": False}}}
+
+
 def publications(frames: list[dict]) -> list[dict]:
     return [f["params"] for f in frames if f.get("method") == "textDocument/publishDiagnostics"]
 
@@ -210,6 +213,75 @@ def starts(publication: dict | None) -> list[tuple[int, int]]:
     if not publication:
         return []
     return [(d["range"]["start"]["line"], d["range"]["start"]["character"]) for d in publication.get("diagnostics", [])]
+
+
+class LspProtocol5359(unittest.TestCase):
+    """One channel per client: pull displaces the push, and only for pull clients.
+
+    eglot 1.24 declares textDocument.diagnostic and also feeds
+    publishDiagnostics to flymake (eglot--flymake-report-push+pulled reports
+    both, no dedup), so the same set arrived twice and every diagnostic was
+    shown twice. A client that declares the capability is answered by
+    textDocument/diagnostic alone; a client that does not keeps the push
+    (lsp-mode relies on it).
+    """
+
+    def test_pull_client_gets_pull_only_and_push_client_keeps_the_push(self) -> None:
+        text = "(display oops)\n"
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "p.aura"
+            path.write_text(text)
+            uri = path.as_uri()
+
+            # eglot: declares the pull capability. One delivery, not two.
+            c = Client()
+            try:
+                caps = c.initialize(PULL_CAPS)
+                self.assertIn("diagnosticProvider", caps["capabilities"])
+                c.did_open(uri, text)
+                frames = c.pump(2.0)
+                self.assertEqual(publications(frames), [], "a pull client must not also be pushed")
+                pulled = c.pull(uri)
+                self.assertEqual(
+                    [(i["range"]["start"]["line"], i["range"]["start"]["character"]) for i in pulled["items"]],
+                    [(0, 9)],
+                    "the pull answer is the one and only set",
+                )
+                # A change must not switch the channel back on either.
+                c.clear()
+                c.did_change(uri, "(define ok 1)\n(display oops)\n")
+                self.assertEqual(publications(c.pump(1.5)), [])
+                pulled = c.pull(uri)
+                self.assertEqual([i["range"]["start"]["line"] for i in pulled["items"]], [1])
+            finally:
+                c.close()
+
+            # lsp-mode: no pull capability, so the push is unchanged.
+            c = Client()
+            try:
+                c.initialize({"general": {"positionEncodings": ["utf-16"]}})
+                c.did_open(uri, text)
+                frames = c.pump(2.0)
+                self.assertEqual(starts(last_publication(frames, uri)), [(0, 9)])
+                self.assertEqual(len(publications(frames)), 1, frames)
+            finally:
+                c.close()
+
+    def test_diagnostic_capability_must_be_an_object(self) -> None:
+        # The capability is an object in the spec; a null/absent value is a
+        # client that does not pull, and must keep the push.
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "n.aura"
+            text = "(display oops)\n"
+            path.write_text(text)
+            uri = path.as_uri()
+            c = Client()
+            try:
+                c.initialize({"textDocument": {"diagnostic": None}})
+                c.did_open(uri, text)
+                self.assertEqual(starts(last_publication(c.pump(2.0), uri)), [(0, 9)])
+            finally:
+                c.close()
 
 
 class LspProtocol5258(unittest.TestCase):
