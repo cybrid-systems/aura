@@ -208,6 +208,18 @@ CASES = (
         "test_untitled_buffer_gets_diagnostics",
         "lsp_protocol.LspProtocol5258.test_untitled_buffer_gets_diagnostics",
     ),
+    # #5359: eglot declares textDocument.diagnostic (pull) and also reads
+    # publishDiagnostics, so the same set was delivered twice. One channel.
+    (
+        5359,
+        "test_pull_client_gets_pull_only_and_push_client_keeps_the_push",
+        "lsp_protocol.LspProtocol5359.test_pull_client_gets_pull_only_and_push_client_keeps_the_push",
+    ),
+    (
+        5359,
+        "test_diagnostic_capability_must_be_an_object",
+        "lsp_protocol.LspProtocol5359.test_diagnostic_capability_must_be_an_object",
+    ),
     # #5263: textDocument/formatting + rangeFormatting call the CLI formatter.
     (
         5263,
