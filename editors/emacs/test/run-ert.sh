@@ -81,4 +81,35 @@ for client in $clients; do
       --eval "(ert-run-tests-batch-and-exit \"^aura-lang-lsp-\")" || status=1
 done
 
+# #5367: Doom/straight byte-compiles aura-lang.el without an LSP client
+# loaded, so a macro called as a function only breaks in the .elc — the
+# source passes above cannot catch that.  Compile the client here in a
+# clean Emacs (no lsp-mode on the compile load path, exactly the straight
+# build condition) and run the lsp-mode suite against the .elc, loaded
+# before the test file so its `require' is a no-op.
+case " $clients " in
+  *" lsp-mode "*)
+    echo "===== ERT: LSP client=lsp-mode (byte-compiled aura-lang) ====="
+    elc_dir=$(mktemp -d)
+    if "$emacs" -Q --batch \
+         --eval "(setq byte-compile-error-on-warn t)" \
+         --eval "(setq byte-compile-dest-file-function
+                       (lambda (_) (expand-file-name \"aura-lang.elc\" \"$elc_dir\")))" \
+         --eval "(byte-compile-file \"$root/aura-lang.el\")"; then
+      # shellcheck disable=SC2086
+      AURA_LANG_EMACS_CLIENT=lsp-mode \
+      AURA_LSP_DEBOUNCE_MS=${AURA_LSP_DEBOUNCE_MS:-250} \
+        "$emacs" ${AURA_LANG_EMACS_ARGS:-} --batch ${init:+--eval "$init"} $load_args \
+          -L "$root" \
+          --eval "(load \"$elc_dir/aura-lang.elc\" nil t)" \
+          -l "$root/test/aura-lang-lsp-test.el" \
+          --eval "(ert-run-tests-batch-and-exit \"^aura-lang-lsp-\")" || status=1
+    else
+      echo "run-ert: byte-compiling aura-lang.el failed" >&2
+      status=1
+    fi
+    rm -rf "$elc_dir"
+    ;;
+esac
+
 exit $status

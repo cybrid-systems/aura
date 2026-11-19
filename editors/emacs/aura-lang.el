@@ -475,7 +475,7 @@ release and :version \"0.2.6\"; nightlies such as
 (declare-function lsp-stdio-connection "lsp-mode" (command &optional test-command))
 (declare-function lsp--set-configuration "lsp-mode" (settings))
 (declare-function lsp-configuration-section "lsp-mode" (section))
-(declare-function with-lsp-workspace "lsp-mode" (workspace &rest body))
+(defvar lsp--cur-workspace)
 (defvar lsp-language-id-configuration)
 
 (with-eval-after-load 'lsp-mode
@@ -493,7 +493,11 @@ release and :version \"0.2.6\"; nightlies such as
     ;; later change to them) take effect.
     :initialized-fn
     (lambda (workspace)
-      (with-lsp-workspace workspace
+      ;; #5367: `with-lsp-workspace' is a macro.  Calling it here with only
+      ;; a declare-function compiles to a function call in the .elc, which
+      ;; signals invalid-function at runtime and aborts the initialize
+      ;; handshake (the workspace stays `starting').  Use its expansion.
+      (let ((lsp--cur-workspace workspace))
         (lsp--set-configuration (lsp-configuration-section "aura")))))))
 
 (defvar eglot-server-programs)
