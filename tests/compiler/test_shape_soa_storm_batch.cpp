@@ -3,6 +3,7 @@
 // Members: run_<stem>(); standalones keep main via #ifndef AURA_ISSUE_BATCH_MEMBER.
 
 #include "test_harness.hpp"
+#include "compiler/lock_order_audit.h"
 
 #include <execinfo.h>
 #include <unistd.h>
@@ -73,6 +74,7 @@ static void aura_terminate_trace() {
     // must ride stderr — one frame per line, newest first (#5366).
     std::fprintf(stderr, "[terminate] tid=%zu what=%s\n",
                  std::hash<std::thread::id>{}(std::this_thread::get_id()), what.c_str());
+    aura::compiler::lock_order::dump_held_ranks(stderr);
     std::fflush(stderr);
     for (int i = 0; i < 16; ++i) {
         if (names[i].empty())
