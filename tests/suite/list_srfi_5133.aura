@@ -104,6 +104,33 @@
   (check= (list 1 2 3 4 5) (flatten (list 1 (list 2 (list 3 4)) 5)))
   (check= (list 1 2 3) (flatten (list (list 1) (list 2) (list 3)))))
 
+; The native-splice fast path must stay equivalent to the work stack on
+; every shape: deep inners, empty inners, mixed elements, improper lists.
+; A one-level splice silently keeps deep sublists and drops improper
+; tails (native map/apply stop at an atom), so these are the guard cases.
+(test-case "flatten shapes" (hash)
+  (check= (list 1 2 3) (flatten (list (list 1 (list 2)) (list 3))))
+  (check= (list) (flatten (list (list (list)))))
+  (check= (list 1) (flatten (list (list) (list 1) (list))))
+  (check= (list) (flatten (list (list) (list))))
+  (check= (list 1 2 3 4) (flatten (list (list 1 2) 3 (list 4))))
+  (check= (list 1 2 3) (flatten (list (cons 1 2) (list 3))))
+  (check= (list 1 2 3) (flatten (list (list 1) (cons 2 3))))
+  (check= (list 1 2 3) (flatten (cons (list 1 2) 3)))
+  (check= (list 5) (flatten 5))
+  (check= (list 1 2 3 4 5 6)
+          (flatten (list (list 1 2) (list 3 4) (list 5 6))))
+  (let* ((wide (foldl (lambda (acc i) (cons (list i (+ i 1)) acc))
+                      (list) (range 0 100)))
+         (flat (flatten wide)))
+    (check= 200 (length flat))
+    (check= 99 (car flat))
+    (check= 1 (last flat)))
+  (let* ((long (list (range 0 500)))
+         (flat (flatten long)))
+    (check= 500 (length flat))
+    (check= 499 (last flat))))
+
 (test-case "foldr difference" (hash)
   (check= 2 (foldr - 0 (list 1 2 3))))
 
