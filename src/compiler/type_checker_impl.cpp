@@ -6752,7 +6752,16 @@ TypeId InferenceEngine::synthesize_flat_call(FlatAST& flat, StringPool& pool, No
     }
 
     auto func_id = v.child(0);
+    // #5362: the call's own position, in case the callee has none either.
+    const auto call_loc = cur_loc_;
     TypeId func_type = synthesize_flat(flat, pool, func_id, flat.get(func_id));
+    // #5362: the arity diagnostic is the call site's, and cur_loc_ is a
+    // scratch slot: every nested synthesis overwrites it, and an Int literal
+    // carries no line, so `(two 1)` reported the mismatch at {0, 0} — which
+    // the LSP drops (line 0 is "no position") and --typecheck prints without
+    // `file:line:col`. The callee's name is what the runtime face points at
+    // ("2:11: arity mismatch: two expects 2 arguments, got 1").
+    const auto arity_loc = cur_loc_.valid() ? cur_loc_ : call_loc;
 
     // Special inference for arithmetic primitives: constrain return via arg types.
     // This gives us (Int, Int) -> Int inference inside lambdas where args are type vars,
@@ -6990,21 +6999,21 @@ TypeId InferenceEngine::synthesize_flat_call(FlatAST& flat, StringPool& pool, No
                     auto msg = std::string("call '") + std::string(pool.resolve(callee_v.sym_id)) +
                                "': expected at least " + std::to_string(fixed) +
                                " arguments, got " + std::to_string(num_args);
-                    diag_.report(Diagnostic(ErrorKind::ArityMismatch, std::move(msg), cur_loc_));
+                    diag_.report(Diagnostic(ErrorKind::ArityMismatch, std::move(msg), arity_loc));
                     flat.set_node_error(v.id, static_cast<std::uint8_t>(ErrorKind::ArityMismatch));
                 } else if (optional_max != 0 && num_args > optional_max) {
                     auto msg = std::string("call '") + std::string(pool.resolve(callee_v.sym_id)) +
                                "': expected " + std::to_string(fixed) + " to " +
                                std::to_string(optional_max) + " arguments, got " +
                                std::to_string(num_args);
-                    diag_.report(Diagnostic(ErrorKind::ArityMismatch, std::move(msg), cur_loc_));
+                    diag_.report(Diagnostic(ErrorKind::ArityMismatch, std::move(msg), arity_loc));
                     flat.set_node_error(v.id, static_cast<std::uint8_t>(ErrorKind::ArityMismatch));
                 }
             } else if (num_args != ft.args.size()) {
                 auto msg = std::string("call '") + std::string(pool.resolve(callee_v.sym_id)) +
                            "': expected " + std::to_string(ft.args.size()) + " arguments, got " +
                            std::to_string(num_args);
-                diag_.report(Diagnostic(ErrorKind::ArityMismatch, std::move(msg), cur_loc_));
+                diag_.report(Diagnostic(ErrorKind::ArityMismatch, std::move(msg), arity_loc));
                 // Issue #79: tag the call node so AuraQuery can find it.
                 flat.set_node_error(v.id, static_cast<std::uint8_t>(ErrorKind::ArityMismatch));
             }

@@ -436,6 +436,13 @@ CASES = (
         "test_unclosed_in_required_file_uses_that_files_line",
         "lsp_diagnostics.LspDiagnostics5262.test_unclosed_in_required_file_uses_that_files_line",
     ),
+    # #5362: a wrong argument count is a diagnostic at the call site, like
+    # the runtime and the JSON faces say.
+    (
+        5362,
+        "test_arity_mismatch_in_a_nested_call_reports_the_call_site",
+        "lsp_diagnostics.LspDiagnostics5362.test_arity_mismatch_in_a_nested_call_reports_the_call_site",
+    ),
     # #5348: tabSize is a tab width; the body indent stays two columns.
     (
         5348,
