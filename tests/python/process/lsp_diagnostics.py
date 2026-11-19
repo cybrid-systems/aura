@@ -260,13 +260,17 @@ class LspDiagnostics5262(unittest.TestCase):
         dx = diags[0]
         self.assertEqual(dx["code"], "UnboundVariable")
         self.assertEqual(dx["severity"], 1)
-        self.assertEqual(dx["message"], "memq")
+        # #5364: the message carries the CLI's wording, not just the name.
+        self.assertEqual(dx["message"], "unbound variable: memq")
         self.assertNotIn("did you mean", dx["message"])
         self.assertEqual(dx["data"]["suggestion"], "member")
 
         obj = last_json(run_aura(["--error-format=json", "a.aura"], d).stderr)
         self.assertEqual(obj["code"], dx["code"])
-        self.assertEqual(obj["message"], dx["message"])
+        # The JSON faces keep the producer's bare message; the LSP prefixes
+        # the kind because lsp-mode shows the message alone.
+        self.assertEqual(obj["message"], "memq")
+        self.assertEqual(dx["message"], "unbound variable: " + obj["message"])
         self.assertEqual(obj["span"]["start"]["line"] - 1, dx["range"]["start"]["line"])
         self.assertEqual(obj["span"]["start"]["column"] - 1, dx["range"]["start"]["character"])
 
@@ -282,12 +286,13 @@ class LspDiagnostics5262(unittest.TestCase):
         )
         self.assertEqual(served["status"], "error")
         self.assertEqual(served["code"], dx["code"])
-        self.assertEqual(served["message"], dx["message"])
+        self.assertEqual(served["message"], obj["message"])
+        self.assertIn(dx["message"], served["msg"])
         self.assertEqual(served["span"]["start"], obj["span"]["start"])
 
     def test_unbound_arity_and_parse_errors_are_errors(self) -> None:
         for text, code, message in (
-            (MEMQ, "UnboundVariable", "memq"),
+            (MEMQ, "UnboundVariable", "unbound variable: memq"),
             (ARITY, "ArityMismatch", None),
             (PARSE, "ParseError", None),
         ):
@@ -531,7 +536,7 @@ class LspDiagnostics5262(unittest.TestCase):
             warning["range"],
             {"start": {"line": 0, "character": 19}, "end": {"line": 0, "character": 20}},
         )
-        self.assertEqual(unbound["message"], "memq")
+        self.assertEqual(unbound["message"], "unbound variable: memq")
         self.assertEqual(unbound["data"]["suggestion"], "member")
         self.assertEqual(
             unbound["range"],
@@ -610,7 +615,10 @@ class LspDiagnostics5262(unittest.TestCase):
         diags, _pulled, actions, _d, uri = drive(TWO_UNBOUND, carets=((1, 10), (2, 10)))
         self.assertEqual([dx["code"] for dx in diags], ["TypeError", "UnboundVariable", "UnboundVariable"])
         self.assertEqual([dx["severity"] for dx in diags], [2, 1, 1])
-        self.assertEqual([dx["message"] for dx in diags[1:]], ["memq", "no-such-zz"])
+        self.assertEqual(
+            [dx["message"] for dx in diags[1:]],
+            ["unbound variable: memq", "unbound variable: no-such-zz"],
+        )
         self.assertEqual(covered(TWO_UNBOUND, diags[1]), "memq")
         self.assertEqual(covered(TWO_UNBOUND, diags[2]), "no-such-zz")
         memq = actions[(1, 10)]
@@ -625,7 +633,7 @@ class LspDiagnostics5262(unittest.TestCase):
         off, _pulled, off_actions, _d, off_uri = drive(TWO_UNBOUND, {"typeDiagnostics": "off"}, carets=((1, 10),))
         self.assertEqual([dx["code"] for dx in off], ["UnboundVariable", "UnboundVariable"], off)
         self.assertTrue(all(dx["severity"] == 1 for dx in off), off)
-        self.assertEqual([dx["message"] for dx in off], ["memq", "no-such-zz"])
+        self.assertEqual([dx["message"] for dx in off], ["unbound variable: memq", "unbound variable: no-such-zz"])
         self.assertEqual(off_actions[(1, 10)][0]["edit"]["changes"][off_uri][0]["newText"], "member")
 
     def test_per_file_cap_keeps_the_earliest_errors(self) -> None:
@@ -679,3 +687,97 @@ class LspDiagnostics5362(unittest.TestCase):
         self.assertNotEqual(tc.returncode, 0)
         self.assertIn("2:11: arity mismatch: call 'two': expected 2 arguments, got 1", tc.stdout)
         self.assertEqual(typecheck_keys(tc.stdout), [("ArityMismatch", 1, 10)], tc.stdout)
+
+
+# #5364 point 3: http-post is a deferred std host primitive, not a boot one
+# (evaluator_module_loader.cpp: ensure_std_host_prims installs http-*/tcp-*
+# when std/net, std/socket or std/llm loads). A file that requires none of
+# them has no binding, so the diagnostic matches the runtime and stays.
+HTTP_POST = '(define (post-it url body)\n  (try (http-post url body) (catch (e) "")))\n'
+
+
+class LspDiagnostics5364(unittest.TestCase):
+    def test_unbound_message_is_readable_and_the_filter_still_keys_on_the_name(self) -> None:
+        diags, _d, _uri = open_diagnostics(MEMQ)
+        self.assertEqual(len(diags), 1, diags)
+        self.assertEqual(diags[0]["message"], "unbound variable: memq")
+        self.assertIn("memq", diags[0]["message"])
+
+        # The name filter is unchanged: assq is bound at runtime (it reaches
+        # std/list), so it is dropped even though its message is now prefixed.
+        filtered, _d, _uri = open_diagnostics("(display (assq 1 (list 1)))\n")
+        self.assertEqual(filtered, [], filtered)
+
+    def test_type_diagnostics_accepts_json_booleans(self) -> None:
+        # (define (g y) (+ y "s")) is the type warning; the memq call in (h …)
+        # is the error that must survive.
+        off, _pulled, _actions, _d, _uri = drive(MASK, {"typeDiagnostics": False})
+        self.assertEqual([dx["code"] for dx in off], ["UnboundVariable"], off)
+        self.assertEqual(off[0]["severity"], 1, off[0])
+
+        on, _pulled, _actions, _d, _uri = drive(MASK, {"typeDiagnostics": True})
+        self.assertEqual([dx["code"] for dx in on], ["TypeError", "UnboundVariable"], on)
+        self.assertEqual(on[0]["severity"], 2, on[0])
+
+        # The same value over workspace/didChangeConfiguration.
+        d = tempfile.mkdtemp(prefix="lspdiagbool5364-")
+        path = Path(d) / "a.aura"
+        path.write_text(MASK)
+        uri = path.as_uri()
+        c = Client()
+        try:
+            c.send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "initialize",
+                    "params": {"capabilities": {}, "rootUri": Path(d).as_uri()},
+                }
+            )
+            c.pump(2.0)
+            c.clear()
+            c.did_open(uri, MASK)
+            self.assertEqual(
+                [dx["code"] for dx in last_publication(c.pump(2.0), uri)["diagnostics"]],
+                ["TypeError", "UnboundVariable"],
+            )
+            c.clear()
+            c.send(
+                {
+                    "jsonrpc": "2.0",
+                    "method": "workspace/didChangeConfiguration",
+                    "params": {"settings": {"typeDiagnostics": False}},
+                }
+            )
+            self.assertEqual(
+                [dx["code"] for dx in last_publication(c.pump(2.0), uri)["diagnostics"]],
+                ["UnboundVariable"],
+            )
+        finally:
+            c.close()
+
+    def test_http_post_without_std_net_is_unbound_on_every_face(self) -> None:
+        diags, _d, _uri = open_diagnostics(HTTP_POST)
+        # The try/catch also earns a type warning about the joined branches;
+        # the unbound name is the first (earliest) diagnostic.
+        self.assertIn(("UnboundVariable", 1), [(dx["code"], dx["severity"]) for dx in diags], diags)
+        self.assertEqual(diags[0]["code"], "UnboundVariable", diags)
+        self.assertEqual(diags[0]["message"], "unbound variable: http-post")
+        self.assertEqual(diags[0]["range"]["start"], {"line": 1, "character": 8})
+
+        # The runtime agrees: not a false positive, so it is reported.
+        probe = tempfile.mkdtemp(prefix="lspdiaghttp5364-")
+        (Path(probe) / "b.aura").write_text('(display (http-post "http://127.0.0.1:1" ""))\n')
+        ran = run_aura(["--error-format=json", "b.aura"], probe)
+        self.assertNotEqual(ran.returncode, 0, ran.stdout)
+        obj = last_json(ran.stderr)
+        self.assertEqual(obj["code"], "UnboundVariable")
+        self.assertEqual(obj["message"], "http-post")
+
+        # …and it is bound once std/net loads, which is why the name exists at
+        # all: the primitive is installed by the module, not at boot.
+        root = Path(tempfile.mkdtemp(prefix="lspdiaghttp5364b-"))
+        (root / "net.aura").write_text('(require "std/net" all:)\n(display (procedure? http-post))\n')
+        loaded = run_with_std(["net.aura"], str(root))
+        self.assertEqual(loaded.returncode, 0, loaded.stderr)
+        self.assertIn("#t", loaded.stdout)
