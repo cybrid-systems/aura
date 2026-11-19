@@ -6960,12 +6960,20 @@ public:
     tw_tier_hook_thunk_4682_(void* ctx, types::EvalValue fn, std::string_view name,
                              const void* flat, std::uint32_t body_id, std::uint64_t lv,
                              std::span<const types::EvalValue> args) {
-        return static_cast<CompilerService*>(ctx)->tw_tier_try_4682_(fn, name, flat, body_id, lv,
-                                                                     args);
+        // A teardown can clear the hook while a fiber body is between its
+        // two reads; never dereference a null context (arm64 dist crash:
+        // test_agent_ask_answers, tw_tier_try_4682_+80 at si_addr=0x2a8).
+        auto* svc = static_cast<CompilerService*>(ctx);
+        if (svc == nullptr)
+            return std::nullopt;
+        return svc->tw_tier_try_4682_(fn, name, flat, body_id, lv, args);
     }
 
     static void exit_quiesce_thunk_(void* ctx) noexcept {
-        static_cast<CompilerService*>(ctx)->quiesce_background_workers();
+        auto* svc = static_cast<CompilerService*>(ctx);
+        if (svc == nullptr)
+            return;
+        svc->quiesce_background_workers();
     }
 
     // Issue #4705: stop+join the background workers before a hard process

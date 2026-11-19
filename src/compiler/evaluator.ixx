@@ -2868,8 +2868,20 @@ public:
                                                       std::uint64_t lifetime_version,
                                                       std::span<const EvalValue> args);
     void set_tw_tier_hook_4682(TwTierHookFn fn, void* ctx) noexcept {
-        tw_tier_ctx_4682_ = ctx;
-        tw_tier_hook_4682_ = fn;
+        // Issue #4715 crash follow-up: a fiber body reads these two fields one
+        // after the other (evaluator_eval_flat), so install must publish the
+        // context BEFORE the entry point and a clear must drop the entry
+        // point BEFORE the context. ~CompilerService used to null the context
+        // first, leaving a window where a body saw a live fn with a null ctx
+        // and the thunk dereferenced null (SIGSEGV in tw_tier_try_4682_, arm64
+        // dist: test_agent_ask_answers).
+        if (fn != nullptr) {
+            tw_tier_ctx_4682_ = ctx;
+            tw_tier_hook_4682_ = fn;
+        } else {
+            tw_tier_hook_4682_ = nullptr;
+            tw_tier_ctx_4682_ = nullptr;
+        }
     }
     // Issue #4705: a hard process exit does NOT unwind the stack, so the
     // owning CompilerService is never destroyed and its background
@@ -2880,14 +2892,22 @@ public:
     // calls quiesce_before_exit() before std::exit().
     using ExitQuiesceFn = void (*)(void* ctx) noexcept;
     void set_exit_quiesce_hook(ExitQuiesceFn fn, void* ctx) noexcept {
-        exit_quiesce_ctx_ = ctx;
-        exit_quiesce_hook_ = fn;
+        // Same publish/clear order as set_tw_tier_hook_4682: ctx first on
+        // install, fn first on clear.
+        if (fn != nullptr) {
+            exit_quiesce_ctx_ = ctx;
+            exit_quiesce_hook_ = fn;
+        } else {
+            exit_quiesce_hook_ = nullptr;
+            exit_quiesce_ctx_ = nullptr;
+        }
     }
     // Stop+join every background worker this evaluator's owner owns.
     // Idempotent: the tier worker refuses new jobs once stopped.
     void quiesce_before_exit() noexcept {
-        if (exit_quiesce_hook_)
-            exit_quiesce_hook_(exit_quiesce_ctx_);
+        void* quiesce_ctx = exit_quiesce_ctx_;
+        if (exit_quiesce_hook_ && quiesce_ctx != nullptr)
+            exit_quiesce_hook_(quiesce_ctx);
     }
     // Set the IR closure bridge for cross-evaluator closure calls
     void set_closure_bridge(ClosureBridgeFn bridge) { closure_bridge_ = std::move(bridge); }

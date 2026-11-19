@@ -10671,10 +10671,11 @@ Evaluator::FlatStep Evaluator::eval_flat_on_closure(EvalFlatCursor& cur,
         // Issue #4682 (6b): opt-in native tier (exact; the
         // hook returns nullopt unless the native body ran
         // to a fixnum/bool result under its guards).
-        if (tw_tier_hook_4682_ && !cl.dotted && !cl.must_deopt_before_next_call &&
-            !cl.name.empty()) {
+        void* tw_tier_ctx = tw_tier_ctx_4682_;
+        if (tw_tier_hook_4682_ && tw_tier_ctx != nullptr && !cl.dotted &&
+            !cl.must_deopt_before_next_call && !cl.name.empty()) {
             if (auto tr = tw_tier_hook_4682_(
-                    tw_tier_ctx_4682_, *fn, cl.name, cl.flat, cl.body_id, cl.lifetime_version,
+                    tw_tier_ctx, *fn, cl.name, cl.flat, cl.body_id, cl.lifetime_version,
                     std::span<const EvalValue>(provided.data(), provided.size())))
                 return FlatStep::ret(*tr);
         }
