@@ -7,6 +7,8 @@
 #include <execinfo.h>
 #include <unistd.h>
 
+#include <cxxabi.h>
+
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
@@ -35,14 +37,30 @@ static void aura_terminate_trace() {
     void* frames[64];
     const int n = ::backtrace(frames, 64);
     ::backtrace_symbols_fd(frames, n, 2);
-    // The CI runner keeps only the last few stderr lines, so put a single
-    // line with every frame LAST: that is the copy that reaches the log.
+    // The CI runner keeps only the tail of stderr and cuts long lines, so
+    // the LAST line must be short: the innermost few frames, function name
+    // only (demangled, arguments stripped, tail-truncated).
     if (char** syms = ::backtrace_symbols(frames, n)) {
-        std::string summary = "[terminate-summary] frames=";
-        for (int i = 0; i < n; ++i) {
-            if (i)
-                summary += " | ";
-            summary += syms[i] ? syms[i] : "?";
+        std::string summary = "[ts]";
+        for (int i = 0; i < n && i < 6; ++i) {
+            std::string name = syms[i] ? syms[i] : "?";
+            const auto lp = name.rfind('(');
+            const auto plus = name.rfind('+');
+            const auto rp = name.rfind(')');
+            if (lp != std::string::npos && plus != std::string::npos && rp != std::string::npos &&
+                lp < plus && plus < rp) {
+                const std::string mangled = name.substr(lp + 1, plus - lp - 1);
+                int status = 0;
+                if (char* dm = abi::__cxa_demangle(mangled.c_str(), nullptr, nullptr, &status)) {
+                    name = dm;
+                    std::free(dm);
+                }
+            }
+            if (const auto args = name.find('('); args != std::string::npos)
+                name.resize(args);
+            if (name.size() > 46)
+                name = name.substr(name.size() - 46);
+            summary += "|" + std::to_string(i) + "=" + name;
         }
         std::fprintf(stderr, "%s\n", summary.c_str());
         std::free(syms);
