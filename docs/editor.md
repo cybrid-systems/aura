@@ -125,20 +125,15 @@ severity; `"off"` stops publishing type diagnostics (also `none`, `false`,
 `disabled`). A JSON boolean `false` is ignored. The string `"false"` is
 accepted.
 
-The aura lsp-mode client registers no `:initialized-fn` and no
-`:synchronize-sections`, so `lsp-register-custom-settings` is never sent.
-Push the setting after the server connects. Eglot sends
-`eglot-workspace-configuration` on its own.
+The aura lsp-mode client sends the `aura` section once the workspace is
+initialized, so `lsp-register-custom-settings` works as usual; eglot sends
+`eglot-workspace-configuration` on its own (#5358).
 
 ```elisp
 ;; lsp-mode
-(add-hook 'lsp-after-initialize-hook
-          (lambda ()
-            (when (eq (lsp--client-server-id
-                       (lsp--workspace-client lsp--cur-workspace))
-                      'aura-lsp)
-              (lsp-notify "workspace/didChangeConfiguration"
-                          '(:settings (:typeDiagnostics "off"))))))
+(after! lsp-mode
+  (lsp-register-custom-settings
+   '(("aura.typeDiagnostics" "off"))))
 
 ;; (lsp +eglot)
 (setq-default eglot-workspace-configuration
