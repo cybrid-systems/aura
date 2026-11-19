@@ -65,28 +65,38 @@ class TestNeverJoinedAgentStacks4890(unittest.TestCase):
             + f"""
 (define N {n})
 (define la0 (pool "lazy-allocs"))
+(define h0 (pool "pool-hits"))
 (let loop ((r 0))
   (when (< r N)
     (orch:spawn-agent (format "nj4890-~a" r) (lambda () 1))
     (when (= 0 (modulo r 25)) (gc-heap))
     (loop (+ r 1))))
-;; let the spawn backlog run (bodies Done, never joined)
+;; let the spawn backlog run (bodies Done, never joined). Wait until every
+;; agent has acquired its mutation + yield stacks (2N acquires) and the Done
+;; edge has returned them; an early sample measures the startup burst, not
+;; the pool-reuse contract.
 (define t0 (monotonic-ms))
 (let wait ()
-  (when (and (< (- (monotonic-ms) t0) 8000)
-             (or (< (pool "live-stacks") 0) (> (pool "live-stacks") 8)))
+  (when (and (< (- (monotonic-ms) t0) 15000)
+             (or (< (- (+ (pool "pool-hits") (pool "lazy-allocs")) (+ h0 la0)) (* 2 N))
+                 (> (pool "live-stacks") 8)))
     (gc-heap) (wait)))
-(display (format "lazy-delta=~a live-stacks=~a\\n" (- (pool "lazy-allocs") la0) (pool "live-stacks")))
+(display (format "hits-delta=~a lazy-delta=~a live-stacks=~a\\n"
+                 (- (pool "pool-hits") h0)
+                 (- (pool "lazy-allocs") la0)
+                 (pool "live-stacks")))
 """
         )
         p = _run(src)
         self.assertEqual(p.returncode, 0, p.stderr[-2000:])
-        lazy = _field(p.stdout, "lazy-delta")
+        hits = _field(p.stdout, "hits-delta")
         live = _field(p.stdout, "live-stacks")
-        # Before: every never-joined agent held its own stack (lazy-delta ~ N,
-        # one pool miss per agent; no live-stacks gauge). After: the Done
-        # edge returns them, so later agents hit the pool.
-        self.assertLess(lazy, n // 4, p.stdout)
+        # Before: a never-joined agent held its stack until ~Fiber, so every
+        # acquire missed the (empty) pool (hits ~ 0, lazy ~ 2N). After: the
+        # Done edge returns them, so later agents reuse pooled stacks; only
+        # the spawn burst can miss, so pin reuse (hits >= N) and the drained
+        # live gauge rather than a raw miss count that tracks concurrency.
+        self.assertGreaterEqual(hits, n, p.stdout)
         self.assertGreaterEqual(live, 0, p.stdout)
         self.assertLessEqual(live, 8, p.stdout)
 
