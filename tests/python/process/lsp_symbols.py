@@ -202,6 +202,53 @@ class LspSymbols5259(unittest.TestCase):
             finally:
                 c.close()
 
+    def test_highlight_collects_cross_file_uses_in_this_document(self) -> None:
+        """#5360: a name declared by a required file is highlighted here.
+
+        The reader cannot resolve a cross-file reference (binding -1), so the
+        document's own occurrences came back empty even though the declaring
+        file is one require away.  A let/lambda binding of the same spelling is
+        resolved, so it is not one of those uses.
+        """
+        text_a = "(define (pa q) (car q))\n"
+        text_b = (
+            '(require "lib/a")\n'
+            "(define (f x)\n"
+            "  (let ((y (pa (pa x))))\n"
+            "    (pa y)))\n"
+            "(define (k r) (let ((z (add r (pa r) r))) z))\n"
+            "(define (add a b c) (+ a b c))\n"
+            "(define (shadow pa) (pa 1))\n"
+        )
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "aura.toml").write_text("")
+            (root / "lib").mkdir()
+            (root / "lib" / "a.aura").write_text(text_a)
+            path = root / "lib" / "b.aura"
+            path.write_text(text_b)
+            uri = path.as_uri()
+            c = Client()
+            try:
+                c.initialize(root=root.as_uri())
+                c.did_open(uri, text_b)
+                hits = request(c, "textDocument/documentHighlight", at(uri, 3, 5))
+                got = sorted((h["range"]["start"]["line"], h["range"]["start"]["character"], h["kind"]) for h in hits)
+                self.assertEqual(got, [(2, 12, 2), (2, 16, 2), (3, 5, 2), (4, 31, 2)])
+                # The shadowing parameter of (define (shadow pa) …) is a local
+                # binding, not a use of the required define.
+                shadow = request(c, "textDocument/documentHighlight", at(uri, 6, 17))
+                shadow_hits = sorted(
+                    (h["range"]["start"]["line"], h["range"]["start"]["character"], h["kind"]) for h in shadow
+                )
+                self.assertEqual(shadow_hits, [(6, 16, 3), (6, 21, 2)])
+                # A primitive is still not a name this layer highlights, and
+                # neither is a position inside the require string.
+                self.assertEqual(request(c, "textDocument/documentHighlight", at(uri, 5, 21)), [])
+                self.assertEqual(request(c, "textDocument/documentHighlight", at(uri, 0, 3)), [])
+            finally:
+                c.close()
+
     def test_workspace_symbol_sees_the_project_and_required_files(self) -> None:
         with tempfile.TemporaryDirectory() as d:
             proj = Path(d) / "proj"

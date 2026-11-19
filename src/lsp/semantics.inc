@@ -182,6 +182,19 @@ inline bool in_require_string(std::string_view text, std::size_t p, std::size_t&
     return true;
 }
 
+// The span of the symbol token at p. The hover range is this token in the
+// document that asked, never the definition's name in its own file (#5360).
+inline Span token_span(std::string_view text, std::size_t p) {
+    const std::size_t at = std::min(p, text.size());
+    const std::string word = word_at(text, p);
+    if (word.empty())
+        return Span{at, at};
+    std::size_t b = at;
+    while (b > 0 && sym_char(text[b - 1]))
+        --b;
+    return Span{b, b + word.size()};
+}
+
 struct Semantics {
     const DocumentStore& store;
     const PositionCodec& codec;
@@ -203,8 +216,8 @@ struct Semantics {
     }
 
     // -- hover ------------------------------------------------
-    std::string define_hover(std::string_view text, const LineIndex& li, const DocIndex& ix,
-                             int d) const {
+    // The hover paragraph for one define: its signature and the comment above.
+    static std::string define_markup(const DocIndex& ix, int d) {
         const auto& def = ix.defs[d];
         std::string sig = def.name;
         if (def.kind == 12)
@@ -212,7 +225,12 @@ struct Semantics {
         std::string md = code_block(sig);
         if (const auto comment = preceding_comment(ix, def.span.begin))
             md += "\n\n" + *comment;
-        return hover_result(md, text, li, def.name_span);
+        return md;
+    }
+
+    std::string define_hover(std::string_view text, const LineIndex& li, const DocIndex& ix,
+                             int d) const {
+        return hover_result(define_markup(ix, d), text, li, ix.defs[d].name_span);
     }
 
     std::string prim_hover(const PrimView& prim, std::string_view text, const LineIndex& li,
@@ -270,24 +288,42 @@ struct Semantics {
         for (const auto& f : files) {
             if (f == key)
                 continue;
-            const std::string other_text = store.text_of(f);
-            const DocIndex other = DocIndex::build(other_text);
+            const DocIndex& other = store.index_of(f);
             const int d = other.top_def(word);
             if (d < 0)
                 continue;
-            const LineIndex other_li(other_text);
-            return define_hover(other_text, other_li, other, d);
+            // The text comes from the declaring file; the range is the token
+            // under the cursor in *this* document (#5360).
+            return hover_result(define_markup(other, d), text, li, token_span(text, p));
         }
 
         if (const PrimView* prim = prims.find(word)) {
             // The hover range is the whole token, not just the part after the
             // cursor.
-            std::size_t b = std::min(p, text.size());
-            while (b > 0 && sym_char(text[b - 1]))
-                --b;
-            return prim_hover(*prim, text, li, Span{b, b + word.size()});
+            return prim_hover(*prim, text, li, token_span(text, p));
         }
         return "null";
+    }
+
+    // The declaration of the file-wide name NAME: this document first, then
+    // each file of its require closure. std::nullopt when nothing in the
+    // closure declares it. #5360: hover already resolved through the closure;
+    // signatureHelp stopped at this document and answered null.
+    std::optional<SymDef> declaring_def(const std::string& key, const DocIndex& ix,
+                                        std::string_view name) const {
+        if (const int d = ix.top_def(name); d >= 0)
+            return ix.defs[d];
+        std::vector<std::string> files;
+        std::unordered_set<std::string> seen;
+        store.collect(key, files, seen);
+        for (const auto& f : files) {
+            if (f == key)
+                continue;
+            const DocIndex& other = store.index_of(f);
+            if (const int d = other.top_def(name); d >= 0)
+                return other.defs[d]; // copied: the store's cache may rehash
+        }
+        return std::nullopt;
     }
 
     // -- signatureHelp ----------------------------------------
@@ -357,11 +393,13 @@ struct Semantics {
             label = prim->call_label();
             arg_labels = prim_param_labels(*prim);
         } else {
-            const int d = ix.top_def(callee);
-            if (d < 0)
+            // #5360: the callee may be declared by a required file; the reader
+            // leaves such a call unresolved, so look through the closure.
+            const auto def = declaring_def(key, ix, callee);
+            if (!def)
                 return "null";
-            label = "(" + ix.defs[d].detail + ")";
-            arg_labels = define_params(ix.defs[d]);
+            label = "(" + def->detail + ")";
+            arg_labels = define_params(*def);
         }
 
         std::string plist;
