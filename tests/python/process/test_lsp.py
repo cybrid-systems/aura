@@ -484,6 +484,28 @@ CASES = (
         "test_highlight_collects_cross_file_uses_in_this_document",
         "lsp_symbols.LspSymbols5259.test_highlight_collects_cross_file_uses_in_this_document",
     ),
+    # #5363: type noise on code that runs — Void joins, an internal __tNNNN
+    # in a message, and several contradictory joins at one range.
+    (
+        5363,
+        "test_noise_min_file_runs_and_publishes_no_void_noise",
+        "lsp_diagnostics.LspDiagnostics5363.test_noise_min_file_runs_and_publishes_no_void_noise",
+    ),
+    (
+        5363,
+        "test_typecheck_face_is_quiet_on_the_same_file",
+        "lsp_diagnostics.LspDiagnostics5363.test_typecheck_face_is_quiet_on_the_same_file",
+    ),
+    (
+        5363,
+        "test_internal_type_variable_never_reaches_a_message",
+        "lsp_diagnostics.LspDiagnostics5363.test_internal_type_variable_never_reaches_a_message",
+    ),
+    (
+        5363,
+        "test_a_genuine_type_error_still_reports",
+        "lsp_diagnostics.LspDiagnostics5363.test_a_genuine_type_error_still_reports",
+    ),
 )
 
 

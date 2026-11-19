@@ -4478,6 +4478,10 @@ void InferenceEngine::maybe_report_ground_inconsistency(TypeId inferred, TypeId 
         return;
     if (inferred == reg_.dynamic_type() || expected == reg_.dynamic_type())
         return;
+    // Issue #5363: Void is "no value", not a ground the gradual boundary can
+    // contradict; "expected X, got Void" was noise on code that runs.
+    if (inferred == reg_.void_type() || expected == reg_.void_type())
+        return;
     if (reg_.is_var(inferred) || reg_.is_var(expected))
         return;
     if (reg_.func_of(inferred) || reg_.func_of(expected))
@@ -5154,7 +5158,10 @@ TypeId InferenceEngine::lub(TypeId a, TypeId b) {
     // stays a variable that remembers that scalar (#5300): publishing
     // Dynamic made the next integer branch look like Dynamic~Int and
     // fail-closed solve_delta. A different ground still reports a hard
-    // TypeError and yields void_type() — never a successful Dynamic.
+    // TypeError — never a successful Dynamic — but the refused join now
+    // yields an unknown (#5363: a fresh variable, see below) instead of
+    // void_type(), so the mismatch cannot cascade into "got Void" errors
+    // one expression away.
     // infer_flat demotes the type-export authority when that error was
     // reported (last_type_export_authoritative_).
     if (!(aura::compiler::typed_audit::production_hard_face_active() ||
@@ -5165,6 +5172,18 @@ TypeId InferenceEngine::lub(TypeId a, TypeId b) {
     b = cs_.normalize(b);
     if (a == b)
         return a;
+
+    // Issue #5363: Void is "no value", not a ground a gradual join can
+    // contradict. `(if p 1 (display …))`, a cond arm whose body is a
+    // statement, and an if with no else (its implicit Void arm) all join a
+    // value with Void. Reporting "if branches join Int and Void" for code
+    // that runs is noise, and returning void_type() from a failed join
+    // poisoned every later use of the result ("argument 0: expected s, got
+    // Void", "if branches join Bool and Void" one level up). A Void arm adds
+    // no constraint, so the join is the other side.
+    const auto void_ty = reg_.void_type();
+    if (a == void_ty || b == void_ty)
+        return a == void_ty ? b : a;
 
     const auto dyn_ty = reg_.dynamic_type();
     auto project = [&](TypeId t) -> TypeId {
@@ -5226,14 +5245,29 @@ TypeId InferenceEngine::lub(TypeId a, TypeId b) {
     // ground disagrees and a real Dynamic joined with a ground (#4684).
     if (!pa_var && !pb_var && pa != pb) {
         last_join_gate_error_ = true;
-        diag_.report(
-            Diagnostic(ErrorKind::TypeError,
-                       "incompatible ground types: if branches join " + reg_.format_type(pa) +
-                           " and " + reg_.format_type(pb) + " under production typing",
-                       cur_loc_, static_cast<std::uint32_t>(cur_node_))
-                .with_blame(BlameInfo{BlameParty::Implicit, "", "compile"})
-                .with_suggestion("add explicit type annotations so both if branches agree"));
-        return reg_.void_type();
+        // Issue #5363: one join site can be reached more than once (a cond
+        // lowers to nested ifs, all at one range) and each pass saw the
+        // previous failure's Void, so one range stacked contradictory
+        // "join X and Void" lines. Report the first join at a range; later
+        // joins there are the same fact restated.
+        const std::uint64_t loc_key =
+            (static_cast<std::uint64_t>(cur_loc_.line) << 32) | cur_loc_.column;
+        if (join_error_locs_.insert(loc_key).second) {
+            diag_.report(
+                Diagnostic(ErrorKind::TypeError,
+                           "incompatible ground types: if branches join " + reg_.format_type(pa) +
+                               " and " + reg_.format_type(pb) + " under production typing",
+                           cur_loc_, static_cast<std::uint32_t>(cur_node_))
+                    .with_blame(BlameInfo{BlameParty::Implicit, "", "compile"})
+                    .with_suggestion("add explicit type annotations so both if branches agree"));
+        }
+        // Issue #5363: the refused join's result is an unknown value, not a
+        // value-less one. Returning void_type() here propagated Void into
+        // every enclosing expression (argument checks, the next branch's
+        // join, an enclosing call's return) and manufactured errors far from
+        // the real mismatch. A fresh variable keeps the result gradual
+        // without publishing an authoritative Dynamic (#4107).
+        return cs_.fresh_var();
     }
 
     // Same concrete type, but one side is still a variable (a parameter
@@ -6892,7 +6926,17 @@ TypeId InferenceEngine::synthesize_flat_call(FlatAST& flat, StringPool& pool, No
                     }
                 }
             }
-            if (!arg_exp_unify) {
+            // Issue #5363: a Void argument carries no value information, so
+            // "expected X, got Void" states nothing the caller can act on —
+            // it is the fingerprint of an upstream expression that produced
+            // no value (a statement position, or a callee whose return the
+            // synthesis could not pin). The issue's minimal repro (code that
+            // runs and prints) reported "argument 0: expected s, got Void"
+            // from a nested string-replace for exactly this shape. Stay
+            // gradual; a genuine ground-vs-ground mismatch (e.g. String
+            // passed to +) is unaffected.
+            const bool arg_is_void = cs_.find(arg_type) == reg_.void_type();
+            if (!arg_exp_unify && !arg_is_void) {
                 // Issue #79: tag the offending argument node with the error
                 // kind so AuraQuery `(has-error? N)` can find it directly.
                 flat.set_node_error(arg_id, static_cast<std::uint8_t>(ErrorKind::TypeError));
@@ -7359,9 +7403,12 @@ std::optional<TypeId> InferenceEngine::synthesize_flat_call_arith(FlatAST& flat,
                 // `(+ "a")` hole). Soft keeps the historical pass-through;
                 // a Dynamic operand keeps the gradual escape in both faces.
                 auto tag0 = reg_.tag_of(t0);
+                // Issue #5363: a Void operand is "no value", not a
+                // contradicting ground; it stays gradual like Dynamic.
+                const bool gradual0 = tag0 == TypeTag::DYNAMIC || tag0 == TypeTag::VOID;
                 if ((aura::compiler::typed_audit::production_hard_face_active() ||
                      aura::compiler::typed_audit::production_defaults_active()) &&
-                    tag0 != TypeTag::INT && tag0 != TypeTag::FLOAT && tag0 != TypeTag::DYNAMIC) {
+                    tag0 != TypeTag::INT && tag0 != TypeTag::FLOAT && !gradual0) {
                     diag_.report(
                         Diagnostic(ErrorKind::TypeError,
                                    "incompatible ground types: arithmetic operand " +
@@ -7409,10 +7456,14 @@ std::optional<TypeId> InferenceEngine::synthesize_flat_call_arith(FlatAST& flat,
     // runtime-coerce Int; a Dynamic operand keeps the gradual escape in
     // both faces.
     if (!reg_.is_var(t0) && !reg_.is_var(t1)) {
+        // Issue #5363: Void on either side is "no value", not a ground that
+        // contradicts the numeric face; both stay gradual like Dynamic.
+        const bool gradual_pair = tag0 == TypeTag::DYNAMIC || tag1 == TypeTag::DYNAMIC ||
+                                  tag0 == TypeTag::VOID || tag1 == TypeTag::VOID;
         if ((aura::compiler::mutate_type_gate::is_hard() ||
              aura::compiler::typed_audit::production_hard_face_active() ||
              aura::compiler::typed_audit::production_defaults_active()) &&
-            tag0 != TypeTag::DYNAMIC && tag1 != TypeTag::DYNAMIC) {
+            !gradual_pair) {
             diag_.report(Diagnostic(ErrorKind::TypeError,
                                     "incompatible ground types: arithmetic operands " +
                                         reg_.format_type(t0) + " and " + reg_.format_type(t1) +
@@ -7435,8 +7486,10 @@ std::optional<TypeId> InferenceEngine::synthesize_flat_call_arith(FlatAST& flat,
                                 aura::compiler::typed_audit::production_hard_face_active() ||
                                 aura::compiler::typed_audit::production_defaults_active();
         auto ground_non_numeric = [&](TypeId t, TypeTag tag) {
+            // Issue #5363: Void joined a numeric operand reads as "no value",
+            // not as a non-numeric ground.
             return !reg_.is_var(t) && tag != TypeTag::INT && tag != TypeTag::FLOAT &&
-                   tag != TypeTag::DYNAMIC;
+                   tag != TypeTag::DYNAMIC && tag != TypeTag::VOID;
         };
         if (hard_arith && (ground_non_numeric(t0, tag0) || ground_non_numeric(t1, tag1))) {
             const bool first = ground_non_numeric(t0, tag0);

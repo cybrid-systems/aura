@@ -781,3 +781,73 @@ class LspDiagnostics5364(unittest.TestCase):
         loaded = run_with_std(["net.aura"], str(root))
         self.assertEqual(loaded.returncode, 0, loaded.stderr)
         self.assertIn("#t", loaded.stdout)
+
+
+# #5363: type noise on code that runs. The issue's minimal file prints
+# "bbds2" but published "argument 0: expected s, got Void" and two
+# contradictory "if branches join ... and Void" warnings at one range.
+NOISE_MIN = (
+    '(require "std/string")\n'
+    '(define (one s) (string-replace (string-replace s "a" "b") "c" "d"))\n'
+    "(define (pick form)\n"
+    "  (cond\n"
+    "    ((or (not form) (not (pair? form))) #f)\n"
+    '    ((string? (car form)) "s")\n'
+    "    (else #f)))\n"
+    "(define (shape src)\n"
+    "  (let ((form (if src (car src) #f)))\n"
+    "    (if (not (pair? (cdr form))) 1 2)))\n"
+    '(display (one "abc"))\n'
+    '(display (pick (list "x")))\n'
+    "(display (shape (list (list 1 2))))\n"
+)
+# #5363: a branch that joins a ground with a mismatched one used to return
+# Void, and the next use of that value rendered the solver's internal
+# variable name: "argument 0: expected (__t191 -> __t195), got Void".
+NOISE_VOID_CAR = '(define (g p x) (if p 0 (if x "a" 1)))\n(define (h v) (car (g #t #t)))\n(display (h 1))\n'
+
+
+class LspDiagnostics5363(unittest.TestCase):
+    def test_noise_min_file_runs_and_publishes_no_void_noise(self) -> None:
+        # The file is valid: it must keep evaluating to bbds2.
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "type_noise_min.aura"
+            path.write_text(NOISE_MIN)
+            ran = run_with_std([str(path)], d)
+            self.assertEqual(ran.stdout, "bbds2", ran.stderr)
+
+        diags, _d, _uri = open_diagnostics(NOISE_MIN)
+        messages = [dx["message"] for dx in diags]
+        self.assertFalse([m for m in messages if "expected s, got Void" in m], messages)
+        self.assertFalse([m for m in messages if "__t" in m], messages)
+        self.assertFalse([m for m in messages if "and Void" in m], messages)
+        # The cond on line 7 gets at most one TypeError, whatever its range
+        # width: the contradictory stack was several lines at one position.
+        line_seven = [dx for dx in diags if dx["code"] == "TypeError" and dx["range"]["start"]["line"] == 6]
+        self.assertLessEqual(len(line_seven), 1, line_seven)
+
+    def test_typecheck_face_is_quiet_on_the_same_file(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "type_noise_min.aura"
+            path.write_text(NOISE_MIN)
+            ran = run_with_std(["--typecheck", str(path)], d)
+            both = ran.stdout + ran.stderr
+            self.assertNotIn("expected s, got Void", both)
+            self.assertNotIn("__t", both)
+            sevens = [ln for ln in both.splitlines() if "type_noise_min.aura:7:" in ln]
+            self.assertLessEqual(len(sevens), 1, sevens)
+
+    def test_internal_type_variable_never_reaches_a_message(self) -> None:
+        diags, _d, _uri = open_diagnostics(NOISE_VOID_CAR)
+        messages = [dx["message"] for dx in diags]
+        self.assertFalse([m for m in messages if "__t" in m], messages)
+        self.assertFalse([m for m in messages if "got Void" in m], messages)
+
+    def test_a_genuine_type_error_still_reports(self) -> None:
+        # #5346 acceptance: a value fed to + where the runtime requires a
+        # number keeps its TypeError; silencing Void noise must not silence
+        # a real mismatch.
+        diags, _d, _uri = open_diagnostics(TYPE_MISMATCH)
+        dx = by_code(diags, "TypeError")
+        self.assertIn("expected Int", dx["message"])
+        self.assertIn("String", dx["message"])
