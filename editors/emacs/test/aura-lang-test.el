@@ -322,24 +322,28 @@ that load, `aura-lang-project-root' is on the list."
             (setq server (eglot-current-server))
             (should server)
             (eglot--maybe-activate-editing-mode)
+            (flymake-start)
+            ;; #5359: a client that declares textDocument.diagnostic gets the
+            ;; same set through pull, not push, so read what eglot reports to
+            ;; flymake instead of grepping the event log for
+            ;; textDocument/publishDiagnostics.
             (let ((tries 50))
-              (while (and (> tries 0)
-                          (not (with-current-buffer (jsonrpc-events-buffer server)
-                                 (save-excursion
-                                   (goto-char (point-min))
-                                   (search-forward "textDocument/publishDiagnostics" nil t)))))
+              (while (and (> tries 0) (null (flymake-diagnostics)))
                 (accept-process-output nil 0.2)
                 (setq tries (1- tries))))
+            (let ((diagnostics (flymake-diagnostics)))
+              (should diagnostics)
+              ;; #5364: the message carries the CLI wording.
+              (should (seq-some
+                       (lambda (diagnostic)
+                         (and (string-match-p "unbound variable: memq"
+                                              (flymake-diagnostic-text diagnostic))
+                              (equal "memq"
+                                     (buffer-substring-no-properties
+                                      (flymake-diagnostic-beg diagnostic)
+                                      (flymake-diagnostic-end diagnostic)))))
+                       diagnostics)))
             (with-current-buffer (jsonrpc-events-buffer server)
-              (should (save-excursion
-                        (goto-char (point-min))
-                        (search-forward "textDocument/publishDiagnostics" nil t)))
-              (should (save-excursion
-                        (goto-char (point-min))
-                        (search-forward "\"code\":\"UnboundVariable\"" nil t)))
-              (should (save-excursion
-                        (goto-char (point-min))
-                        (search-forward "\"message\":\"memq\"" nil t)))
               (should (save-excursion
                         (goto-char (point-min))
                         (search-forward "\"languageId\":\"aura\"" nil t))))))

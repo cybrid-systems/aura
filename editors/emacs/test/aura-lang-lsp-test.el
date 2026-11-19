@@ -169,7 +169,9 @@ should pass a short SECONDS instead of the full client timeout."
 Batch Emacs never becomes idle, so both clients' idle timers stay
 armed; this calls the same sender the timer calls."
   (pcase (aura-lang-lsp-test--client)
-    ('eglot (eglot--signal-textDocument/didChange))
+    ;; #5359: a pull client has no push to wait for, so start the
+    ;; diagnostics backend the way the idle loop would.
+    ('eglot (eglot--signal-textDocument/didChange) (flymake-start))
     ('lsp-mode (lsp--flush-delayed-changes))))
 
 (defun aura-lang-lsp-test--formatting-capability ()
@@ -427,15 +429,36 @@ never reached the server."
                "(define (g y) (+ y \"s\"))\n(define (h x) (memq x (list 1 2)))\n"))
             nil
           (lambda ()
-            (should (aura-lang-lsp-test--wait-diagnostic "memq"))
-            (should-not (aura-lang-lsp-test--wait-diagnostic "expected Int" 2))
-            ;; Promote the same key: didChangeConfiguration must reanalyze.
-            (lsp-register-custom-settings '(("aura.typeDiagnostics" "error")))
-            (lsp--set-configuration (lsp-configuration-section "aura"))
-            (should (aura-lang-lsp-test--wait-diagnostic "expected Int"))
-            (should (equal 1
-                           (aura-lang-lsp-test--diagnostic-severity
-                            "expected Int"))))))
+            ;; Pull on demand: batch Emacs has no idle loop to trigger the
+            ;; client's own refresh, and the point is what the server holds.
+            (let* ((uri (lsp--path-to-uri buffer-file-name))
+                   (pull (lambda ()
+                           (lsp-request
+                            "textDocument/diagnostic"
+                            (list :textDocument (list :uri uri)))))
+                   (items (lambda (result)
+                            (append (and result (gethash "items" result)) nil))))
+              (let ((first (funcall items (funcall pull))))
+                (should (seq-find (lambda (item)
+                                    (string-match-p "unbound variable: memq"
+                                                    (gethash "message" item)))
+                                  first))
+                (should-not (seq-find (lambda (item)
+                                        (string-match-p "expected Int"
+                                                        (gethash "message" item)))
+                                      first)))
+              ;; Promote the same key: didChangeConfiguration must reanalyze.
+              (lsp-register-custom-settings '(("aura.typeDiagnostics" "error")))
+              (with-lsp-workspace (car (lsp-workspaces))
+                (lsp--set-configuration (lsp-configuration-section "aura")))
+              (let* ((second (funcall items (funcall pull)))
+                     (promoted (seq-find
+                                (lambda (item)
+                                  (string-match-p "expected Int"
+                                                  (gethash "message" item)))
+                                second)))
+                (should promoted)
+                (should (equal 1 (gethash "severity" promoted))))))))
     ;; Leave the default registered for the tests that follow.
     (lsp-register-custom-settings '(("aura.typeDiagnostics" "warning")))))
 
