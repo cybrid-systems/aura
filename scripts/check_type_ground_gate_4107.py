@@ -137,7 +137,18 @@ def main() -> int:
     must("Issue #4107", "AC2 cites the issue", arith_pair)
     must("production_hard_face_active()", "AC2 hard-face gate", arith_pair)
     must("production_defaults_active()", "AC2 production-defaults gate", arith_pair)
-    must("tag0 != TypeTag::DYNAMIC && tag1 != TypeTag::DYNAMIC", "AC2 Dynamic operand escape retained", arith_pair)
+    # #5363 moved the escape into a named gradual gate and treats Void the
+    # same way; the Dynamic escape itself is what this AC pins.
+    must(
+        "tag0 == TypeTag::DYNAMIC || tag1 == TypeTag::DYNAMIC",
+        "AC2 Dynamic operand escape retained",
+        arith_pair,
+    )
+    must(
+        "tag0 == TypeTag::VOID || tag1 == TypeTag::VOID",
+        "AC2 Void operand stays gradual (#5363)",
+        arith_pair,
+    )
     must(
         'ErrorKind::TypeError,\n                                    "incompatible ground types: arithmetic operands "',
         "AC2 hard TypeError",
@@ -155,9 +166,16 @@ def main() -> int:
     must("Issue #4107", "AC3 cites the issue", arith_one)
     must("production_hard_face_active()", "AC3 hard-face gate", arith_one)
     must("production_defaults_active()", "AC3 production-defaults gate", arith_one)
+    # #5363 replaced the inline tag chain with the same predicate plus a
+    # named gradual gate (Dynamic or Void); pin that live shape.
     must(
-        "tag0 != TypeTag::INT && tag0 != TypeTag::FLOAT && tag0 != TypeTag::DYNAMIC",
+        "tag0 == TypeTag::DYNAMIC || tag0 == TypeTag::VOID",
         "AC3 numeric + Dynamic escape retained",
+        arith_one,
+    )
+    must(
+        "tag0 != TypeTag::INT && tag0 != TypeTag::FLOAT && !gradual0",
+        "AC3 numeric gate still excludes Dynamic under the hard face",
         arith_one,
     )
     must('"incompatible ground types: arithmetic operand "', "AC3 hard TypeError", arith_one)
