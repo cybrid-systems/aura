@@ -864,17 +864,39 @@ jobs:
         command -v mold >/dev/null 2>&1 || need_apt=1
         command -v ld.lld >/dev/null 2>&1 || need_apt=1
         if [ "$need_apt" = 1 ]; then
-          apt-get update -qq
-          command -v mold >/dev/null 2>&1 || apt-get install -y -qq mold || echo "::warning::mold not installed"
-          command -v ld.lld >/dev/null 2>&1 || apt-get install -y -qq lld || echo "::warning::lld not installed"
+          apt-get -o Acquire::Retries=5 update -qq || echo "::warning::apt update failed; using cached indexes"
+          command -v mold >/dev/null 2>&1 || apt-get -o Acquire::Retries=5 install -y -qq mold || echo "::warning::mold not installed"
+          command -v ld.lld >/dev/null 2>&1 || apt-get -o Acquire::Retries=5 install -y -qq lld || echo "::warning::lld not installed"
         fi
 
     - name: Install Emacs and lsp-mode
       run: |
-        set -e
+        set -eu
         export DEBIAN_FRONTEND=noninteractive
-        apt-get update -qq
-        apt-get install -y -qq --no-install-recommends emacs-nox elpa-lsp-mode
+        # The GH runner -> archive.ubuntu.com path drops often enough that a
+        # bare update+install reds this job (2026-11-19: `Unable to connect`
+        # then "Unable to locate package emacs-nox"). Retry the pair with the
+        # apt-native Acquire::Retries plus backoff, and refresh the failed
+        # partial index between attempts.
+        install_emacs() {
+          apt-get -o Acquire::Retries=5 update -qq &&
+            apt-get -o Acquire::Retries=5 install -y -qq --no-install-recommends \
+              emacs-nox elpa-lsp-mode
+        }
+        for attempt in 1 2 3 4; do
+          if install_emacs; then
+            break
+          fi
+          if [ "$attempt" -eq 4 ]; then
+            echo "::error::apt could not install emacs-nox/elpa-lsp-mode after ${attempt} attempts"
+            exit 1
+          fi
+          sleep_s=$((attempt * 15))
+          echo "::warning::apt install failed (attempt ${attempt}); retrying in ${sleep_s}s"
+          rm -rf /var/lib/apt/lists/partial 2>/dev/null || true
+          sleep "$sleep_s"
+        done
+        command -v emacs
         emacs --version | head -1
         # eglot ships with Emacs 29.1+; print the lsp-mode version the
         # run actually used so a client regression is attributable.
