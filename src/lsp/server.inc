@@ -134,12 +134,19 @@ struct Server {
     // workspace/didChangeConfiguration settings carry the same key
     // ('typeDiagnostics': 'warning' | 'error' | 'off'); a nested
     // {"aura": {...}} wrapper is accepted because editors differ.
+    // #5364: elisp writes :typeDiagnostics :json-false (or nil), and JSON
+    // says that is a boolean, not the string "false". Accept both: false is
+    // off, true is the default warning mode.
     bool apply_settings(const Json& settings) {
         if (settings.t != Json::T::Obj)
             return false;
         bool changed = false;
-        if (const Json* v = settings.get("typeDiagnostics"); v && v->t == Json::T::Str)
-            changed = engine.set_type_mode(v->s) || changed;
+        if (const Json* v = settings.get("typeDiagnostics")) {
+            if (v->t == Json::T::Str)
+                changed = engine.set_type_mode(v->s) || changed;
+            else if (v->t == Json::T::Bool)
+                changed = engine.set_type_mode(v->b ? "true" : "false") || changed;
+        }
         if (const Json* nested = settings.get("aura"); nested && nested->t == Json::T::Obj)
             changed = apply_settings(*nested) || changed;
         return changed;

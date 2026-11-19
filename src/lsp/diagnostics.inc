@@ -81,6 +81,18 @@ inline std::string suggested_name(std::string_view hint) {
     return std::ranges::all_of(name, sym_char) ? name : std::string{};
 }
 
+// #5364: lsp-mode and flycheck print only the message, so a bare "memq" read
+// as a name with no explanation. Publish the wording the CLI uses
+// ("unbound variable: memq"). keep_diag() strips it again, because the
+// unbound filter keys on the bare name.
+inline constexpr std::string_view kUnboundPrefix = "unbound variable: ";
+
+inline std::string_view unbound_name_of(std::string_view message) {
+    if (message.starts_with(kUnboundPrefix))
+        message.remove_prefix(kUnboundPrefix.size());
+    return message.substr(0, message.find('\n'));
+}
+
 // End of the symbol starting at 'col', in bytes; never shorter than one
 // character.
 inline int underline_end(std::string_view text, int line, int col) {
@@ -240,7 +252,7 @@ struct DiagnosticsEngine {
         }
         if (kind != K::UnboundVariable)
             return true;
-        auto name = message.substr(0, message.find('\n'));
+        const std::string name(unbound_name_of(message));
         return !defined.contains(name) && !runtime_bound(name);
     }
 
@@ -368,7 +380,10 @@ struct DiagnosticsEngine {
             out.severity = d.kind == aura::diag::ErrorKind::TypeError
                                ? (type_mode == TypeMode::Error ? 1 : 2)
                                : severity_of(d.kind);
-            out.message = d.message;
+            // #5364: one readable line, the same words the CLI prints.
+            out.message = d.kind == aura::diag::ErrorKind::UnboundVariable
+                              ? std::string(kUnboundPrefix) + d.message
+                              : d.message;
             out.hint = d.suggestion;
             if (d.kind == aura::diag::ErrorKind::UnboundVariable)
                 out.fix_name = suggested_name(d.suggestion);

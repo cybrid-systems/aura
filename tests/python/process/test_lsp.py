@@ -443,6 +443,23 @@ CASES = (
         "test_arity_mismatch_in_a_nested_call_reports_the_call_site",
         "lsp_diagnostics.LspDiagnostics5362.test_arity_mismatch_in_a_nested_call_reports_the_call_site",
     ),
+    # #5364: readable UnboundVariable message, JSON boolean typeDiagnostics,
+    # and the http-post decision (a deferred std/net primitive — reported).
+    (
+        5364,
+        "test_unbound_message_is_readable_and_the_filter_still_keys_on_the_name",
+        "lsp_diagnostics.LspDiagnostics5364.test_unbound_message_is_readable_and_the_filter_still_keys_on_the_name",
+    ),
+    (
+        5364,
+        "test_type_diagnostics_accepts_json_booleans",
+        "lsp_diagnostics.LspDiagnostics5364.test_type_diagnostics_accepts_json_booleans",
+    ),
+    (
+        5364,
+        "test_http_post_without_std_net_is_unbound_on_every_face",
+        "lsp_diagnostics.LspDiagnostics5364.test_http_post_without_std_net_is_unbound_on_every_face",
+    ),
     # #5348: tabSize is a tab width; the body indent stays two columns.
     (
         5348,
