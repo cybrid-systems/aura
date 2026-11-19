@@ -5,25 +5,20 @@
 #+since:    0.2.7
 
 * Description :unfold:
-This module adds support for the [[https://github.com/cybrid-systems/aura][Aura language]] to Doom Emacs on top of
-~aura-lang~, the package in the same repository (~editors/emacs/aura-lang.el~).
-It gives you ~aura-mode~ (highlighting from the shared TextMate grammar,
-indentation, imenu), an inferior REPL, inline results for what you send to it,
-lookup, and LSP through either lsp-mode or eglot.
+Doom Emacs support for Aura on top of ~aura-lang~
+(~editors/emacs/aura-lang.el~): ~aura-mode~, an inferior REPL, and ~aura lsp~
+through lsp-mode or eglot.
 
-The mode itself, the REPL and the client registration belong to ~aura-lang~;
-this module only wires them into Doom.  See [[https://github.com/cybrid-systems/aura/blob/main/editors/emacs/README.md][editors/emacs/README.md]] for the
-package without Doom.
+Install, keys, configuration, and troubleshooting:
+[[https://github.com/cybrid-systems/aura/blob/main/docs/editor.md][docs/editor.md]].
 
 ** Maintainers
-This module ships with Aura; report issues at
-[[https://github.com/cybrid-systems/aura/issues][cybrid-systems/aura]].
+Report issues at [[https://github.com/cybrid-systems/aura/issues][cybrid-systems/aura]].
 
 ** Module flags
 - +lsp ::
-  Start the language server (~aura lsp~) in every Aura buffer, and add a
-  ~lsp!~ hook.  Which client runs is decided by [[module::tools lsp]]: plain
-  lsp-mode, or eglot with ~+eglot~.  One flag covers both.
+  Start ~aura lsp~ in Aura buffers. The client is [[module::tools lsp]]:
+  lsp-mode, or eglot with ~+eglot~.
 
 ** Packages
 - [[package:aura-lang]]
@@ -32,119 +27,10 @@ This module ships with Aura; report issues at
 /No hacks documented for this module./
 
 * Installation
-This module is not in Doom's module repository.  Put it in your ~$DOOMDIR~:
+This module is not in Doom's module repository. Symlink or copy this
+directory to ~$DOOMDIR/modules/lang/aura~ (both work, #5353). In ~init.el~
+enable ~(aura +lsp)~ and ~:tools lsp~ (optional ~+eglot~), then ~doom sync~.
 
-#+begin_src sh
-git clone https://github.com/cybrid-systems/aura /tmp/aura
-mkdir -p ~/.config/doom/modules/lang
-cp -r /tmp/aura/editors/emacs/doom/lang/aura ~/.config/doom/modules/lang/aura
-# or: ln -s /tmp/aura/editors/emacs/doom/lang/aura ~/.config/doom/modules/lang/aura
-#+end_src
-
-Enable it in ~init.el~:
-
-#+begin_src emacs-lisp
-(doom! :lang
-       (aura +lsp))
-#+end_src
-
-…then ~doom sync~ (which also builds ~aura-lang~ from the recipe in
-~packages.el~).
-
-A directory copy and a symlink both work.  Doom's module autoload scan
-(~doom-module-from-path~) compares ~file-truename~s, so a symlink whose
-target is outside the modules tree is omitted from the generated loaddefs
-and ~;;;###autoload~ in ~autoload/aura.el~ is not installed.  ~config.el~
-and ~doctor.el~ load that file themselves; ~+aura-formatter-state~ does not
-depend on the scan.
-
-Install the Aura binary as well; ~install.sh~ links it to ~~/.local/bin/aura~:
-
-#+begin_src sh
-curl -fsSL https://raw.githubusercontent.com/cybrid-systems/aura/main/install.sh | sh
-#+end_src
-
-** PATH
-Doom snapshots your environment with ~doom env~.  If you installed Aura after
-the last snapshot, Emacs will not see it: run ~doom env~, then restart Emacs.
-~doom doctor~ says so when the binary is missing.
-
-** LSP
-+lsp needs [[module::tools lsp]] and nothing else: ~aura lsp~ speaks stdio
-LSP, and ~aura-lang~ registers a client for lsp-mode and for eglot.  With
-~+eglot~ the server is started by eglot; without it, by lsp-mode.  The server
-publishes diagnostics and goto-definition (see ~docs/editor.md~).
-
-** Formatter
-Save-time formatting goes through [[module::editor format]] (apheleia) and
-~aura --fmt~, but only when the binary's ~--fmt~ keeps comments: #5263 made it
-a comment-preserving reindent, and that fix is in 0.2.7 and later.  Older
-binaries deleted every comment.  The module therefore registers the formatter
-only for a release ~>= 0.2.7~.  A nightly (~aura nightly (cf7353373)~) or a
-source-tree build (~aura dev (<sha>)~) reports a commit instead of a version,
-so it is trusted only when you set ~+aura-trust-nightly-formatter~.
-
-* Usage
-** REPL
-
-| key        | command                        |
-|------------+--------------------------------|
-| ~SPC m '~  | open (or switch to) the REPL   |
-| ~SPC m s d~ | send the definition at point  |
-| ~SPC m s r~ | send the region               |
-| ~SPC m s b~ | send the buffer               |
-| ~SPC m r~  | ~:reload~ the visited file     |
-
-With [[module::tools eval]] ~+overlay~ the answer appears at the end of the
-line; errors (the REPL's ~error:~ / ~- : unknown = ...~ lines) are shown in the
-error face.  Without ~+overlay~ it goes to the echo area.
-
-** worldline
-
-| key        | REPL command                    |
-|------------+---------------------------------|
-| ~SPC m w w~ | ~:worldline~ (history, totals) |
-| ~SPC m w s~ | ~:snapshot [LABEL]~            |
-| ~SPC m w r~ | ~:restore ID~                  |
-| ~SPC m w k~ | ~:ws~ (tracked definitions)    |
-
-** Lookup
-
-| key        | command                                            |
-|------------+----------------------------------------------------|
-| ~K~        | documentation: LSP hover, else ~:doc~              |
-| ~SPC m g d~ | definition: LSP (xref), else imenu; primitive: stop |
-| ~SPC m h~  | documentation                                      |
-
-With an LSP client on the buffer, ~K~ shows the server's hover (eglot goes
-through ~eglot-hover-eldoc-function~; lsp-mode keeps its own describe
-buffer).  Without one it asks the REPL's ~:doc~ and shows the primitive's
-own text.  A primitive has no source definition, so ~g d~ reports that
-instead of jumping to an unrelated use; a real definition still jumps
-through xref or imenu.
-
-* Configuration
-#+begin_src emacs-lisp
-;; Point at a binary outside PATH (otherwise PATH, ~/.local/bin/aura and
-;; ~/.aura/current/bin/aura are tried in that order).
-(setq aura-lang-executable "/opt/aura/bin/aura")
-
-;; Trust a nightly or source-tree build that you know contains #5263.
-;; See the Formatter section.
-(setq +aura-trust-nightly-formatter t)
-
-;; Seconds to wait for one REPL answer.
-(setq +aura-repl-timeout 10.0)
-#+end_src
-
-* Troubleshooting
-- *"Aura executable not found"* :: the binary is not on the PATH that Emacs
-  sees.  Run ~doom env~ after installing Aura, or set ~aura-lang-executable~.
-- *No diagnostics, no goto-definition* :: check ~(modulep! :tools lsp)~ in
-  ~doom doctor~; ~+lsp~ without that module does nothing.  ~:lsp~ in the
-  modeline should name ~aura-lsp~ once a buffer is open.
-- *Saving does not format* :: expected on 0.2.6 and on nightlies; ~doom
-  doctor~ prints which binary it found and why no formatter was registered.
-  Format deliberately with ~SPC c f~.
-- *REPL answers nothing* :: ~aura repl~ needs a PTY; the module starts it with
-  one.  If a send times out, the REPL is busy — open ~*aura*~ and look.
+The recipe shipped in this module's ~packages.el~, and the key and
+configuration tables, are in
+[[https://github.com/cybrid-systems/aura/blob/main/docs/editor.md][docs/editor.md]].

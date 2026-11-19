@@ -1,205 +1,156 @@
 # Editor support and the REPL
 
-## `aura repl` — hot reload without regenerating data
+Doom Emacs is the supported editor. The module in
+`editors/emacs/doom/lang/aura/` starts `aura lsp` and `aura repl`.
 
-```
-aura repl backtest.aura        # REPL with backtest.aura already :load'ed (std prelude loaded)
+## Prerequisites
+
+- `aura` on `PATH`: the nightly (`install.sh` links `~/.local/bin/aura`) or a
+  binary built from this tree.
+- Emacs 29.1 or newer.
+- Doom Emacs.
+
+Doom snapshots `PATH` with `doom env`. After installing Aura, run `doom env`
+and restart Emacs.
+
+## Install
+
+Symlink or copy the module into Doom. Both layouts work (#5353).
+
+```sh
+mkdir -p "${DOOMDIR:-$HOME/.config/doom}/modules/lang"
+ln -s /path/to/aura/editors/emacs/doom/lang/aura \
+      "${DOOMDIR:-$HOME/.config/doom}/modules/lang/aura"
+# or: cp -a /path/to/aura/editors/emacs/doom/lang/aura \
+#           "${DOOMDIR:-$HOME/.config/doom}/modules/lang/aura"
 ```
 
-| command | effect |
+The module ships this recipe in its own `packages.el`. Doom loads that file
+with the module:
+
+```elisp
+(package! aura-lang
+  :recipe (:host github
+           :repo "cybrid-systems/aura"
+           :files ("editors/emacs/*.el")))
+```
+
+In `init.el`, inside the existing `doom!` form:
+
+```elisp
+:tools
+(lsp)                 ; eglot: (lsp +eglot)
+:lang
+(aura +lsp)
+```
+
+`+lsp` adds `lsp!` to Aura buffers. `:tools lsp` chooses the client: lsp-mode,
+or eglot with `+eglot`. `+lsp` with no `:tools lsp` leaves `lsp!` undefined;
+`doom doctor` reports that.
+
+```sh
+doom sync
+```
+
+## Keys
+
+These are Doom's evil bindings (`:editor evil`). LSP keys need `:tools lsp`
+and `(aura +lsp)`. `SPC c f` needs `:editor format`. `SPC c j` is a workspace
+symbol with lsp-mode when ivy, helm, or vertico is enabled, and with
+`(lsp +eglot)` when vertico is enabled (`consult-eglot-symbols`). `(lsp
++eglot)` without vertico binds `SPC c j` to `eglot-find-declaration`; this
+server has no declaration provider, so that binding has no Aura target.
+
+| key | action |
 |---|---|
-| `:load FILE` | evaluate every form of FILE and remember each `define` |
-| `:reload [FILE]` | re-read FILE (default: the last one). Procedures whose text changed are swapped in place with `mutate:rebind`; changed value defines are re-evaluated; new defines are added; **unchanged defines and top-level expressions are not re-run**, so data such as generated prices stays bound |
-| `:ws` | tracked definitions: name, kind, `file:line` (including the defines of files the loaded file `require`s) |
-| `:worldline` / `:history` | this session's `:load` / `:reload` / `:snapshot` / `:restore` events, the `mutation-log:summary` totals, and the snapshots |
-| `:snapshot [LABEL]` | remember the text of every tracked define; prints the snapshot id |
-| `:restore ID` | put every define that changed since snapshot ID back (same rebind / re-evaluate path as `:reload`); defines added later stay |
-| `:help` | list the commands |
-
-Whitespace and comment changes do not count as a change. A define that came in
-through `(require …)` is not a node of the live workspace AST, so `mutate:rebind`
-cannot target it; `:reload` then re-evaluates just that define and says so
-(`redefined in place: [...]`). Other bindings are still kept. A sandbox denial
-is reported as an error, not worked around. `aura repl` also works
-on a pipe (one response line per input line), which is what editor/agent
-drivers use.
-
-### `mutate:rebind` when the name is not in the workspace
-
-`(mutate :rebind name code [summary])` replaces the value of a live top-level
-define. If the workspace has no define with that name, the call still returns
-`#t`: it parses `code`, adds a new top-level define, and links that define onto
-the workspace root (the same success value as a replacement). The new define is
-part of the live AST, so a later `ast:snapshot` / `ast:restore` keeps it and
-`eval-current` runs it. This is the add path (issue #165), distinct from
-`no-workspace`: defines that arrived only from a file, `-e`, or `--load` are
-not in the live AST, and rebind reports `no-workspace` until they are installed
-with `set-code` and `eval-current`. Over `--serve` that loop is
-`(set-code "…")` then `(eval-current)`, and it needs `--preset dev` (mutate).
-The session uses the same walker face as a file run unless
-`AURA_PIPELINE_STRICT` pins Forbidden or force-soa.
-
-Typical loop with the evolve-strategy kit: `KIT_STEPS=1 aura repl main.aura`
-(runs one step; `train` / `val` prices stay bound), edit a function in
-`backtest.aura`, `:reload backtest.aura`, then `(evolve! 1 2 train val)` runs
-another step without regenerating the prices.
-
-## `aura lsp` — diagnostics and goto-definition
-
-`aura lsp` speaks the Language Server Protocol over stdio:
-
-- **Diagnostics** on open, change and save. The file is type-checked in
-  process (the same checker as `aura --typecheck`) together with every file
-  it `(require …)`s, so names defined in required modules resolve, and an
-  error inside a required module is reported on that module with its own
-  `line:column`. Each diagnostic is the structured one the CLI and `--serve`
-  JSON faces emit: `code` is the stable kind ident (`UnboundVariable`,
-  `ArityMismatch`, `ParseError`, `TypeError`, ...), `message` is the
-  producer's text with no kind prefix and no folded-in hint, and severity
-  follows the kind (error, warning, information). The did-you-mean hint
-  travels in `data.hint` / `data.suggestion`, so
-  `textDocument/codeAction` offers a `quickfix` that replaces the name in a
-  `WorkspaceEdit` the client applies; the server never calls `mutate:*`.
-  A diagnostic inside a required file lists the `(require …)` site in
-  `relatedInformation`, as do the producer's notes. Example: writing `memq`
-  (not provided; use `member`) underlines it with code `UnboundVariable`,
-  message `memq`, and a quickfix to `member`.
-- **Type diagnostics** are warnings by default. `(define (g y) (+ y "s"))`
-  reports `TypeError` with severity Warning and the same message
-  `--typecheck` prints. Set `typeDiagnostics` in `initializationOptions` or
-  in `workspace/didChangeConfiguration` settings to `"off"` to stop
-  publishing them, or `"error"` to raise their severity; a
-  `{"aura": {...}}` wrapper is accepted too.
-- **Goto-definition** for top-level `define`s across `(require "…")`, resolved
-  like the runtime: relative to the requiring file, then the project root
-  (the directory with `aura.toml`), with or without `.aura`.
-- **References and rename** (#5260). `textDocument/references` answers the
-  declaration and every use that resolves to the same binding, with or without
-  `includeDeclaration`, across `(require "…")` (project root,
-  `AURA_PATH`, `std/`). `textDocument/prepareRename` and
-  `textDocument/rename` answer from the same index; the rename result is a
-  `WorkspaceEdit` (one `TextEdit` per file) that the editor applies.
-  The server never writes a file and never calls a `mutate:*` primitive:
-  `refactor:*` / `mutate:rename-symbol` are the live-workspace
-  surface (#5252), and a rename here is text only. Text in a comment or a
-  string literal is not a reference, and a `let`/lambda binding that
-  shadows a top-level name is a different symbol. A primitive, a `std/`
-  name, a name with no definition, an illegal identifier, and a new name
-  already bound in a file the rename edits are all refused with a reason.
-- **Highlighting** comes from the shared TextMate grammar in
-  `editors/grammar/aura.tmLanguage.json`. Any editor that speaks LSP can
-  run `aura lsp` over stdio; no editor-specific extension is maintained.
-- **Nesting.** A JSON-RPC message nested deeper than 64 is answered with
-  a parse error (`nesting too deep`, code -32700) and the server keeps
-  reading. The same bound as `aura evo log`.
-
-### Neovim (0.10+)
-
-```lua
-vim.filetype.add({ extension = { aura = "aura" } })
-vim.api.nvim_create_autocmd("FileType", {
-  pattern = "aura",
-  callback = function(ev)
-    vim.lsp.start({
-      name = "aura",
-      cmd = { "aura", "lsp" },
-      root_dir = vim.fs.root(ev.buf, { "aura.toml", ".git" }),
-    })
-  end,
-})
-```
-
-`gd` / `vim.lsp.buf.definition()` jumps across requires; diagnostics show on
-`:w`.
-
-### Emacs
-
-`editors/emacs/` holds the `aura-lang` package: `aura-mode` (derived
-from `lisp-data-mode`), an `inferior-aura` comint REPL, and registration
-with both lsp-mode and eglot.  It needs Emacs 29.1+ and no Doom.  Install
-it from a checkout with `use-package :load-path`, or with `package-vc-install`
-and `:lisp-dir "editors/emacs"`.  See `editors/emacs/README.md` for the
-three install recipes, the binary lookup order, and the REPL commands.
-
-### Doom Emacs
-
-`editors/emacs/doom/lang/aura/` is a Doom module built on the same package.
-Copy or symlink it to `$DOOMDIR/modules/lang/aura/`, add `(aura +lsp)` to the
-`:lang` group in `init.el`, then run `doom sync`.  A copy and a symlink both
-work.  Doom builds `60-doom-module-loaddefs.init.el` by scanning module
-directories, and `doom-module-from-path` accepts a directory only when
-`file-in-directory-p` says it is inside the modules tree.  That check uses
-`file-truename`, so a symlink whose target lives outside `$DOOMDIR/modules`
-is left out of the loaddefs and `;;;###autoload` in `autoload/aura.el` never
-runs.  The module loads that file from `config.el` and from `doctor.el`, so
-`+aura-formatter-state` is defined either way:
-
-    (doom! :lang
-           (aura +lsp))
-
-`packages.el` pins `aura-lang` from this repository
-(`:files ("editors/emacs/*.el")`), so the Elisp client and the module come
-from one tree; keep both on the same release tag.  `+lsp` adds `lsp!` to
-`aura-mode-local-vars-hook`, and `:tools lsp` decides whether that starts
-lsp-mode or eglot (`+eglot`), as for the other `:lang` modules.
-
-Keys, on the localleader of `aura-mode`:
-
-| key | command |
-|---|---|
-| `SPC m '` | open or switch to the REPL (`aura repl`) |
+| `g d`, `SPC m g d` | definition. A primitive has no source definition; lookup stops with an error |
+| `g D`, `SPC c D` | references |
+| `K`, `SPC m h` | documentation: LSP hover, otherwise the REPL `:doc` |
+| `SPC c r` | rename (`WorkspaceEdit`; the server does not write the file) |
+| `SPC c f` | format the buffer or region with `aura --fmt`, once the formatter is registered |
+| `SPC c a` | code action (quickfix for a did-you-mean hint) |
+| `SPC c j` | workspace symbol (`consult-lsp-symbols`, `lsp-ivy-workspace-symbol`, `helm-lsp-workspace-symbol`, or `consult-eglot-symbols`) |
+| `SPC s i` | imenu |
+| `] e` / `[ e` | next / previous diagnostic |
+| `SPC c x` | list diagnostics |
+| `SPC m '` | open or switch to the REPL |
 | `SPC m s d` / `s r` / `s b` | send the definition at point, the region, the buffer |
-| `SPC m w w` / `w s` / `w r` | `:worldline` / `:snapshot` / `:restore` |
-| `SPC m w k` | `:ws` (tracked definitions) |
+| `g r` / `g R` | send the region / the buffer and show the answer (`:tools eval`) |
 | `SPC m r` | `:reload` the visited file |
-| `SPC m g d`, `K` | definition (LSP, else imenu), documentation |
+| `SPC m w w` / `w s` / `w r` / `w k` | `:worldline` / `:snapshot` / `:restore` / `:ws` |
 
-With `(eval +overlay)` the answer appears at the end of the line; the REPL's
-error lines (`- : unknown = ...`) use the error face.
+Rename refuses a primitive, a `std/` name, a name with no definition, an
+illegal identifier, and a new name already bound in a file the edit touches.
+With `(eval +overlay)` the REPL answer is shown at the end of the line. An
+error line `- : unknown = ...` uses the error face.
 
-Save-time formatting is gated on the binary:
+## Configuration
 
-- `aura --fmt` kept comments only from #5263 wave 2 (commit `c04a44c3e`),
-  whose first release is 0.2.7.  Before that it deleted every comment and
-  still exited 0.
-- The module registers `+aura-fmt` only when `aura --version` reports a
-  release of 0.2.7 or later.  A nightly (`aura nightly (cf7353373)`) or a
-  source-tree build (`aura dev (<sha>)`) reports a commit, not a version,
-  so it is not trusted unless `+aura-trust-nightly-formatter` is set.
-- `doom doctor` prints the version it found and why no formatter was
-  registered; when the binary is missing from Emacs's PATH it points at
-  `doom env`.
+| variable | default | meaning |
+|---|---|---|
+| `aura-lang-executable` | `nil` | binary. `nil` searches `PATH`, then `~/.local/bin/aura`, then `~/.aura/current/bin/aura` |
+| `aura-lang-path` | `nil` | extra library roots for child processes. An existing `AURA_PATH` is left as it is |
+| `aura-lang-lsp-args` | `("lsp")` | arguments that start the language server |
+| `aura-lang-repl-args` | `("repl")` | arguments that start the REPL |
+| `aura-lang-repl-buffer` | `"*aura*"` | REPL buffer name |
+| `aura-lang-grammar-file` | `nil` | TextMate grammar. `nil` looks beside the library for `editors/grammar/aura.tmLanguage.json`, then the keyword lists in `aura-lang.el` |
+| `+aura-trust-nightly-formatter` | `nil` | register `aura --fmt` for a nightly or `aura dev` build |
+| `+aura-repl-timeout` | `10.0` | seconds to wait for one REPL answer |
+| `+aura-result-duration` | `8` | seconds an error overlay stays (`nil` or `0` keeps it). Used with `:tools eval` `+overlay` |
 
-The module's README.org covers installation and troubleshooting.  Its ERT
-tests run under plain Emacs (from `editors/emacs`):
+```elisp
+(setq aura-lang-executable "/opt/aura/bin/aura")
+(setq +aura-trust-nightly-formatter t)
+(setq +aura-repl-timeout 10.0)
+```
 
-    emacs -Q --batch -L . -l doom/test/aura-doom-test.el -f ert-run-tests-batch-and-exit
+The module registers `aura --fmt` when `aura --version` is a release of 0.2.7
+or later, or when `+aura-trust-nightly-formatter` is non-nil. A nightly
+(`aura nightly (<sha>)`) and a source-tree build (`aura dev (<sha>)`) report
+a commit. `doom doctor` prints the binary it found and why no formatter was
+registered. `(format +onsave)` formats on save through that same gate;
+`SPC c f` does too.
 
-### Limits
+`typeDiagnostics` is read from LSP `initializationOptions` and from
+`workspace/didChangeConfiguration`. A `{"aura": {...}}` wrapper is accepted.
+`"warning"` is the default (also `warn`, `true`, `on`); `"error"` raises the
+severity; `"off"` stops publishing type diagnostics (also `none`, `false`,
+`disabled`).
 
-- Diagnostics are static: parse errors, names that are unbound at runtime
-  (not defined in the file or its requires, not a primitive or std prelude
-  name), arity mismatches the runtime would reject, and the type checker's own
-  type diagnostics as warnings (`typeDiagnostics`, above). Every diagnostic
-  the checker reports for a file is published, in source order, after
-  duplicates at the same position are dropped. A file is capped at 100;
-  the earliest errors are kept first, then warnings and notes, so a type
-  warning cannot hide a later error or its quickfix. Runtime-only errors
-  still need a run. The code action covers a did-you-mean suggestion on
-  each unbound name; extract/inline and other code actions are out of scope.
-- Definitions are top-level `define` / `define-syntax` / `define-record-type`;
-  local `let` bindings are not indexed.
-- Completion (#5261) is a flat prefix list: primitives with their registry
-  description, the document's and its requires' top-level defines, the
-  bindings visible at the cursor, and `require` specs (std/ modules, the
-  project root, AURA_PATH) with the path each one resolves to.
-- Hover and signature help read the same primitive registry as the REPL's
-  `:doc`; hover never shows a type until #5250 lands.
-- References and rename (#5260) are per-name, not per-word: an unresolved atom
-  is a reference only in a file whose require closure contains the declaring
-  file, so text next to a same-spelled name that was never required stays out.
-  Rename refuses a new name that is bound anywhere in a file it would edit
-  (the conservative shadow check), refuses primitives, `std/` names, an
-  illegal identifier and a name with no definition, and it produces text edits
-  only: files change when the client applies the `WorkspaceEdit`. Nothing is
-  written by the server and no `mutate:*` path runs.
+```elisp
+;; lsp-mode
+(after! lsp-mode
+  (lsp-register-custom-settings
+   '(("aura.typeDiagnostics" "off"))))
+
+;; (lsp +eglot)
+(setq-default eglot-workspace-configuration
+              '(:aura (:typeDiagnostics "off")))
+```
+
+`initializationOptions` also accepts `tabSize` (integer 1–8, default 2, the
+column width of a tab) and `insertSpaces` (default true). Body indent stays
+two columns. A formatting request that carries its own options uses those.
+
+## Troubleshooting
+
+- `doom doctor` reports a missing binary, the formatter gate, and `+lsp`
+  without `:tools lsp`.
+- "Aura executable not found": Emacs does not see the binary. Run `doom env`
+  after installing Aura, or set `aura-lang-executable`, then restart Emacs.
+- No diagnostics: `(aura +lsp)` and `:tools lsp` are both on, then
+  `doom sync`. The modeline names `aura-lsp` once a buffer is open.
+- Saving does not format: the formatter gate has not passed. `doom doctor`
+  prints the reason. `SPC c f` uses the same gate.
+- LSP log and restart:
+  - lsp-mode: `(setq lsp-log-io t)` before the server starts, then the
+    `*lsp-log*` buffer. Restart with `M-x lsp-workspace-restart`
+    (`SPC c l w r`).
+  - eglot: Doom sets `eglot-events-buffer-config` to size 0.
+    `M-x doom/toggle-debug-mode` turns the log back on, then
+    `M-x eglot-events-buffer`. Restart with `M-x eglot-reconnect`.
+
+## Other editors
+
+`aura lsp` speaks standard LSP over stdio. The TextMate grammar is
+`editors/grammar/aura.tmLanguage.json`.
