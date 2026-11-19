@@ -393,5 +393,48 @@ Both clients must surface memq, not only the earlier type warning."
         ;; underline part of the string instead of oops.
         (should (equal (cdr diagnostic) "oops"))))))
 
+(defun aura-lang-lsp-test--diagnostic-severity (regexp)
+  "Return the lsp-mode severity of the first diagnostic matching REGEXP."
+  (when-let* ((workspace (car (lsp-workspaces)))
+              (file (buffer-file-name)))
+    (let ((table (lsp-diagnostics workspace))
+          (uri (lsp--path-to-uri file)))
+      (cl-loop for key being the hash-keys of table using (hash-value items)
+               when (or (equal key file) (equal key uri))
+               thereis (cl-loop for item in (cond ((vectorp items)
+                                                   (append items nil))
+                                                  ((listp items) items)
+                                                  (t (list items)))
+                                when (string-match-p regexp (gethash "message" item))
+                                return (gethash "severity" item))))))
+
+(ert-deftest aura-lang-lsp-custom-settings-are-sent ()
+  "lsp-mode sends the aura section, so aura.typeDiagnostics works (#5358).
+The client used to register no :initialized-fn and no
+:initialization-options, so values from lsp-register-custom-settings
+never reached the server."
+  (skip-unless (eq (aura-lang-lsp-test--client) 'lsp-mode))
+  (aura-lang-lsp-test--ready)
+  (require 'lsp-mode)
+  (unwind-protect
+      (progn
+        (lsp-register-custom-settings '(("aura.typeDiagnostics" "off")))
+        (aura-lang-lsp-test--with-project
+            '(("main.aura" .
+               "(define (g y) (+ y \"s\"))\n(define (h x) (memq x (list 1 2)))\n"))
+            nil
+          (lambda ()
+            (should (aura-lang-lsp-test--wait-diagnostic "memq"))
+            (should-not (aura-lang-lsp-test--wait-diagnostic "expected Int" 2))
+            ;; Promote the same key: didChangeConfiguration must reanalyze.
+            (lsp-register-custom-settings '(("aura.typeDiagnostics" "error")))
+            (lsp--set-configuration (lsp-configuration-section "aura"))
+            (should (aura-lang-lsp-test--wait-diagnostic "expected Int"))
+            (should (equal 1
+                           (aura-lang-lsp-test--diagnostic-severity
+                            "expected Int"))))))
+    ;; Leave the default registered for the tests that follow.
+    (lsp-register-custom-settings '(("aura.typeDiagnostics" "warning")))))
+
 (provide 'aura-lang-lsp-test)
 ;;; aura-lang-lsp-test.el ends here

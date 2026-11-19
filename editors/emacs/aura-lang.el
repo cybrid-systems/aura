@@ -473,6 +473,9 @@ release and :version \"0.2.6\"; nightlies such as
 (declare-function lsp-register-client "lsp-mode" (client))
 (declare-function make-lsp-client "lsp-mode" (&rest args))
 (declare-function lsp-stdio-connection "lsp-mode" (command &optional test-command))
+(declare-function lsp--set-configuration "lsp-mode" (settings))
+(declare-function lsp-configuration-section "lsp-mode" (section))
+(declare-function with-lsp-workspace "lsp-mode" (workspace &rest body))
 (defvar lsp-language-id-configuration)
 
 (with-eval-after-load 'lsp-mode
@@ -482,7 +485,16 @@ release and :version \"0.2.6\"; nightlies such as
     :new-connection (lsp-stdio-connection #'aura-lang-lsp-command)
     :major-modes '(aura-mode)
     :language-id "aura"
-    :server-id 'aura-lsp)))
+    :server-id 'aura-lsp
+    ;; #5358: lsp-mode sends workspace/didChangeConfiguration only when a
+    ;; client asks it to, so the aura.* values registered through
+    ;; `lsp-register-custom-settings' never reached the server.  Sending the
+    ;; section once the workspace is initialized makes those values (and a
+    ;; later change to them) take effect.
+    :initialized-fn
+    (lambda (workspace)
+      (with-lsp-workspace workspace
+        (lsp--set-configuration (lsp-configuration-section "aura")))))))
 
 (defvar eglot-server-programs)
 
