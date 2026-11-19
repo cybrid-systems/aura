@@ -190,6 +190,20 @@ struct DocIndex {
         return out;
     }
 
+    // Reads of a file-wide name that this document does not declare (#5360).
+    // The reader leaves a cross-file reference unresolved (binding -1), and a
+    // shadowing let / lambda binding is resolved to its own binding, so it is
+    // not one of them.
+    std::vector<std::pair<Span, int>> external_highlights(std::string_view name) const {
+        std::vector<std::pair<Span, int>> out;
+        for (const auto& o : occs) {
+            if (o.binding >= 0 || nodes[o.node].text != name)
+                continue;
+            out.push_back({nodes[o.node].span, 2}); // Read
+        }
+        return out;
+    }
+
     // The chain of nodes containing off, outermost first.
     std::vector<int> chain_at(std::size_t off) const {
         std::vector<int> chain;

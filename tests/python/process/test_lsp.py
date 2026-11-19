@@ -472,6 +472,18 @@ CASES = (
         "test_symbol_queries_scale_with_the_file",
         "lsp_symbols.LspSymbols5259.test_symbol_queries_scale_with_the_file",
     ),
+    # #5360: a symbol declared by a required file — signatureHelp, hover range
+    # and documentHighlight look through the require closure.
+    (
+        5360,
+        "test_signature_help_and_hover_range_follow_a_required_define",
+        "lsp_semantic.LspSemantic5261.test_signature_help_and_hover_range_follow_a_required_define",
+    ),
+    (
+        5360,
+        "test_highlight_collects_cross_file_uses_in_this_document",
+        "lsp_symbols.LspSymbols5259.test_highlight_collects_cross_file_uses_in_this_document",
+    ),
 )
 
 

@@ -293,8 +293,21 @@ struct Server {
         const std::size_t p =
             std::min(text.size(), byte_offset_at(text, li, codec, line, character));
         const DocIndex& ix = store.index_of(key);
+        std::vector<std::pair<Span, int>> hits = ix.highlights(p);
+        if (hits.empty()) {
+            // #5360: a define of a required file is an unresolved atom here
+            // (binding -1), so this document's own uses are found through the
+            // same require-closure resolution references and rename use.
+            // Only resolve() is asked for, and it walks this document's
+            // require closure: the workspace list (the project scan sites()
+            // needs) stays empty.
+            const RenameService svc{store, prims, {}};
+            const RefTarget t = svc.resolve(key, p);
+            if (t.ok && t.key != key)
+                hits = ix.external_highlights(t.name);
+        }
         std::string arr;
-        for (const auto& [span, kind] : ix.highlights(p)) {
+        for (const auto& [span, kind] : hits) {
             if (!arr.empty())
                 arr += ',';
             arr +=

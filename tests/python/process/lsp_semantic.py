@@ -214,6 +214,63 @@ class LspSemantic5261(unittest.TestCase):
             finally:
                 c.close()
 
+    def test_signature_help_and_hover_range_follow_a_required_define(self) -> None:
+        """#5360: a callee declared by a required file is a real signature.
+
+        The reader leaves a cross-file reference unresolved (binding -1), so
+        signatureHelp used to stop at this document and answer null.  The hover
+        text still comes from the declaring file; the range is the token under
+        the cursor in the buffer that asked, not the definition's name in its
+        own file.
+        """
+        text_a = "(define (pa q) (car q))\n"
+        text_b = (
+            '(require "lib/a")\n'
+            "(define (f x)\n"
+            "  (let ((y (pa (pa x))))\n"
+            "    (pa y)))\n"
+            "(define (k r) (let ((z (add r (pa r) r))) z))\n"
+            "(define (add a b c) (+ a b c))\n"
+        )
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "aura.toml").write_text("")
+            (root / "lib").mkdir()
+            (root / "lib" / "a.aura").write_text(text_a)
+            path = root / "lib" / "b.aura"
+            path.write_text(text_b)
+            uri = path.as_uri()
+            c = Client()
+            try:
+                c.initialize(root=root.as_uri())
+                c.did_open(uri, text_b)
+                # (pa |y): pa is defined in lib/a.aura, one require away.
+                help_pa = signature_help(c, uri, 3, 8)
+                self.assertIsInstance(help_pa, dict, help_pa)
+                sig = help_pa["signatures"][0]
+                self.assertEqual(sig["label"], "(pa q)")
+                self.assertEqual([p["label"] for p in sig["parameters"]], ["q"])
+                self.assertEqual(help_pa["activeParameter"], 0)
+                # (add |r …) is defined in this file: unchanged.
+                help_add = signature_help(c, uri, 4, 28)
+                self.assertEqual(help_add["signatures"][0]["label"], "(add a b c)")
+                self.assertEqual(help_add["activeParameter"], 0)
+                # hover: contents from a.aura, range from this buffer's token.
+                got = hover(c, uri, 3, 5)
+                self.assertIn("(pa q)", contents(got))
+                self.assertEqual(
+                    got["range"],
+                    {"start": {"line": 3, "character": 5}, "end": {"line": 3, "character": 7}},
+                )
+                # A cursor between the two pa calls still names one token.
+                mid = hover(c, uri, 2, 16)
+                self.assertEqual(
+                    mid["range"],
+                    {"start": {"line": 2, "character": 16}, "end": {"line": 2, "character": 18}},
+                )
+            finally:
+                c.close()
+
     def test_capabilities_advertise_hover_signature_and_completion(self) -> None:
         c = Client()
         try:
