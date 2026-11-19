@@ -38,10 +38,14 @@ module;
 #include <vector>
 
 #include "core/runtime_config.hh"
+
 module aura.compiler.service;
 
 import std;
 import aura.compiler.ast_walkers;
+
+extern "C" int aura_fiber_body_active() noexcept;
+extern "C" int aura_fiber_bodies_running_other() noexcept;
 
 namespace aura::compiler {
 
@@ -959,11 +963,24 @@ void CompilerService::mark_all_defines_dirty() {
         // continuation of this index. A workspace replace / ast:restore is
         // exactly the case where the previous publication must NOT resurrect
         // (#4349), so drop it with the index it belongs to.
-        retired_define_closure_owner_.clear();
-        retired_define_closure_order_.clear();
+        // Issue #4715 residual: keep the retirement history while a fiber
+        // body is live. A body that resolved a define just before the
+        // replace still dispatches that id; clearing the history turned
+        // that into "invalid closure reference". The history only names
+        // the define, and dispatch runs the LIVE publication (#4712), so
+        // keeping it does not resurrect a rolled-back body - the #4349
+        // rule is enforced by resolving to the binding/cell that exists
+        // now, not by erasing the name. A quiescent replace still clears,
+        // so a workload with no running body keeps the old exactness.
+        if (aura_fiber_body_active() == 0 && aura_fiber_bodies_running_other() == 0) {
+            retired_define_closure_owner_.clear();
+            retired_define_closure_order_.clear();
+        }
         // Issue #4753: the dropped tree-walker publication record belongs to
-        // the same replaced workspace.
-        {
+        // the same replaced workspace. Kept under the same live-body rule as
+        // the IR history above: a running body may still hold a tw id and
+        // needs it to resolve to the define's current publication.
+        if (aura_fiber_body_active() == 0 && aura_fiber_bodies_running_other() == 0) {
             std::scoped_lock<std::mutex> tw_lock(retired_tw_closure_mtx_);
             retired_tw_closure_owner_.clear();
             retired_tw_closure_order_.clear();

@@ -156,6 +156,14 @@ export struct IRContext {
     Evaluator* evaluator = nullptr;
     // Issue #684: optional SoA instruction_dirty_ probe (block, instr_idx).
     std::function<bool(std::uint32_t, std::size_t)> is_instruction_dirty_fn;
+    // Issue #4715 residual: a Call whose callee is a closure id THIS
+    // interpreter does not own (another define's publication, or a runtime
+    // mint of a replaced interpreter) has no row in runtime_closures_, and
+    // apply_closure cannot resolve IR-namespace ids. The service owns that
+    // cross-binding resolution (#4450 / #4712 / #4753); when wired, the
+    // Call arm hands the id over instead of failing the body.
+    std::function<std::optional<types::EvalValue>(std::uint64_t, std::span<const types::EvalValue>)>
+        dispatch_closure_fn;
 
     // References must be bound at construction. The caller passes
     // the primitives reference; type_registry and metrics are

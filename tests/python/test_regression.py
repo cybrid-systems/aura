@@ -5715,6 +5715,78 @@ def test_fiber_sibling_dispatch_across_rebind_4715_regression():
     )
 
 
+def test_fiber_superseded_generation_4715():
+    """Issue #4715 residual: a body keeps dispatching across a re-lower.
+
+    Eight fibers run one workspace define in a named-let loop while the
+    parent replaces the workspace four times. Two replacements passed;
+    four failed 2/3..4/5 before the fix. The live trace showed the dead
+    id was `pure`'s DEFINE publication closure: a body still running the
+    pre-replace generation called it after the binding was replaced.
+    Two holes: the IR interpreter's Call never asked the service to
+    resolve a foreign id, and mark_all_defines_dirty cleared the
+    retired-id history on every replace (while bodies were live), so
+    even the service could not map the id to the current publication.
+    Fix: IRContext::dispatch_closure_fn routes the id to
+    dispatch_ir_define_closure, and a replace keeps the bounded
+    retired history while a fiber body is live (quiescent replaces
+    still clear it, so #4349 stays satisfied).
+    """
+    body = (
+        "(define spin 50000)\n"
+        "(define (pure x) (+ x 1))\n"
+        "(define (hot x) (+ x 1))\n"
+        "(define (spin-sum)\n"
+        "  (let ((i 0) (a 0))\n"
+        "    (while (< i spin)\n"
+        "      (set! a (+ a (pure i)))\n"
+        "      (set! i (+ i 1)))\n"
+        "    a))\n"
+    )
+    lines = [
+        "(define spin 50000)",
+        f'(set-code "{body}")',
+        "(eval-current)",
+        "(define fs (list",
+    ]
+    lines += ["  (fiber:spawn (lambda () (spin-sum)))"] * 8
+    lines += [
+        "))",
+        "(define k 0)",
+        f'(while (< k 4) (set-code "{body}") (eval-current) (set! k (+ k 1)))',
+        "(define sum 0) (define rest fs)",
+        "(while (pair? rest) (set! sum (+ sum (fiber:join (car rest)))) (set! rest (cdr rest)))",
+        "(display sum) (newline)",
+    ]
+    program = chr(10).join(lines) + chr(10)
+    with open("/tmp/aura-4715-superseded.aura", "w", encoding="utf-8") as fh:
+        fh.write(program)
+    env = os.environ.copy()
+    env["AURA_PIPELINE_STRICT"] = "0"
+    env["AURA_SANDBOX"] = "off"
+    env.pop("AURA_SOFT", None)
+    env.pop("AURA_FORCE_IR", None)
+    for attempt in range(3):
+        r = subprocess.run(
+            [AURA, "/tmp/aura-4715-superseded.aura"],
+            capture_output=True,
+            text=True,
+            timeout=180,
+            env=env,
+            cwd=str(REPO),
+        )
+        err = r.stderr or ""
+        out = r.stdout or ""
+        assert r.returncode == 0, f"#4715 superseded run {attempt}: rc={r.returncode} err={err[-400:]!r}"
+        assert "invalid closure" not in err, (
+            f"#4715 superseded run {attempt}: a running body lost its generation: {err[-400:]!r}"
+        )
+        assert out.strip().splitlines() == ["10000200000"], (
+            f"#4715 superseded run {attempt}: expected the eight fiber sums, got {out[-200:]!r}"
+        )
+    print("  OK test_fiber_superseded_generation_4715 (cross-rebind dispatch stays live)")
+
+
 def _run_aura_4715(program, *, runs=1, timeout=180):
     """Issue #4715: run an overlay program on the CLI thread backend."""
     env = os.environ.copy()
@@ -5998,6 +6070,7 @@ for tf in [
     test_fiber_parallel_hash_set_env_4730,
     test_fiber_sibling_define_dispatch_4712,
     test_fiber_sibling_dispatch_across_rebind_4715_regression,
+    test_fiber_superseded_generation_4715,
     test_serve_async_two_fiber_yield_reclaim_4706,
     test_orch_multi_agent_scope_join_4853,
     test_fiber_gc_root_registry_4713,
