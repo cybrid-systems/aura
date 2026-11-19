@@ -568,5 +568,70 @@ process on a PTY, the way the module does."
           (delete-process process))
         (kill-buffer buffer)))))
 
+;;; #5361: the first answer and compile-time errors
+
+(defun aura-doom-test--kill-repl ()
+  "Stop the REPL process and kill its buffer, if any."
+  (when-let* ((buffer (get-buffer aura-lang-repl-buffer)))
+    (when-let* ((process (get-buffer-process buffer)))
+      (set-process-query-on-exit-flag process nil)
+      (delete-process process))
+    (let ((kill-buffer-query-functions nil))
+      (kill-buffer buffer))))
+
+(ert-deftest aura-doom-repl-compile-error-classification ()
+  "A form-prefixed compile error is an error; a value is not (#5361)."
+  (aura-doom-test--with-binary "aura 0.2.7"
+    (aura-doom-test--load-config)
+    (should (+aura--error-output-p
+             "(undefined-x): error: 1:2: unbound variable: undefined-x"))
+    (should (+aura--error-output-p "- : unknown = car: not a pair"))
+    (should-not (+aura--error-output-p "- : Int = 3"))))
+
+(ert-deftest aura-doom-repl-first-answer-has-no-banner ()
+  "The first answer carries only the reply, not the startup banner (#5361)."
+  (skip-unless (executable-find "aura"))
+  (let ((aura-lang-executable (executable-find "aura")))
+    (aura-doom-test--load-config)
+    (unwind-protect
+        (let ((answer (+aura--send "(car 1)")))
+          (should answer)
+          (should-not (string-match-p "repl preset" answer))
+          (should-not (string-match-p "AI-native Lisp" answer))
+          (should (string-match-p "car: not a pair" answer)))
+      (aura-doom-test--kill-repl))))
+
+(ert-deftest aura-doom-repl-unbound-form-is-an-error ()
+  "A compile-time unbound-variable error is classified as an error (#5361)."
+  (skip-unless (executable-find "aura"))
+  (let ((aura-lang-executable (executable-find "aura")))
+    (aura-doom-test--load-config)
+    (unwind-protect
+        (let ((answer (+aura--send "(undefined-x)")))
+          (should answer)
+          (should (string-match-p "unbound variable" answer))
+          (should (+aura--error-output-p answer)))
+      (aura-doom-test--kill-repl))))
+
+(ert-deftest aura-doom-clean-output-drops-startup-banner ()
+  "An answer that begins with the REPL banner keeps only the reply (#5361).
+This is the shape the first send produced when the banner was flushed
+after the process mark was recorded."
+  (aura-doom-test--with-binary "aura 0.2.7"
+    (aura-doom-test--load-config)
+    (let ((raw (concat "aura: repl preset=dev soft auto-grant: mutate,read
+"
+                       "aura nightly — an AI-native Lisp
+"
+                       "  (quit) to exit, Ctrl+D for EOF, :help for REPL commands
+"
+                       "- : unknown = car: not a pair
+")))
+      (let ((answer (+aura--clean-output raw "(car 1)")))
+        (should answer)
+        (should-not (string-match-p "repl preset" answer))
+        (should-not (string-match-p "AI-native Lisp" answer))
+        (should (string-match-p "car: not a pair" answer))))))
+
 (provide 'aura-doom-test)
 ;;; aura-doom-test.el ends here

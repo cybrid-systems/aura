@@ -511,12 +511,14 @@ INTERACTIVE is ignored; eglot passes it when prompting."
 
 (defvar aura-lang-repl-font-lock-keywords
   '(("^- : unknown = .*$" 0 'error t)
-    ("^error: .*$" 0 'error t)
+    ("^\\(?:([^()\n]*): \\)?error: .*$" 0 'error t)
     ("^:restore .*no such snapshot.*$" 0 'error t))
   "Output patterns the REPL should show as errors.
 The REPL currently reports primitive errors as a value of the form
 \"- : unknown = ...\"; #5234/#5241 will make the result structured
-and this can go away.")
+and this can go away.  A compile-time error names the form it came from,
+as in \"(undefined-x): error: 1:2: unbound variable: ...\", so the
+error: pattern matches that prefix too (#5361).")
 
 (defun aura-lang--repl-buffer ()
   "Return a live REPL buffer, starting one if needed."
