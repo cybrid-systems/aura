@@ -8,9 +8,11 @@
 #include <unistd.h>
 
 #include <cstdio>
+#include <cstdlib>
 #include <exception>
 #include <functional>
 #include <print>
+#include <string>
 
 import std;
 
@@ -33,6 +35,18 @@ static void aura_terminate_trace() {
     void* frames[64];
     const int n = ::backtrace(frames, 64);
     ::backtrace_symbols_fd(frames, n, 2);
+    // The CI runner keeps only the last few stderr lines, so put a single
+    // line with every frame LAST: that is the copy that reaches the log.
+    if (char** syms = ::backtrace_symbols(frames, n)) {
+        std::string summary = "[terminate-summary] frames=";
+        for (int i = 0; i < n; ++i) {
+            if (i)
+                summary += " | ";
+            summary += syms[i] ? syms[i] : "?";
+        }
+        std::fprintf(stderr, "%s\n", summary.c_str());
+        std::free(syms);
+    }
     std::abort();
 }
 
