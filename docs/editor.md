@@ -81,9 +81,10 @@ server has no declaration provider, so that binding has no Aura target.
 | `SPC m r` | `:reload` the visited file |
 | `SPC m w w` / `w s` / `w r` / `w k` | `:worldline` / `:snapshot` / `:restore` / `:ws` |
 
-On a primitive such as `car`, `g d` does not stop. `+lookup--run-handlers`
-treats the module's `user-error` as a failed handler and continues; the
-project search then jumps to another use of the name.
+On a primitive such as `car`, `g d` ends the lookup with a message and
+point stays put. The handler asks the LSP server's own primitive registry
+(or, with no server, the REPL) and returns instead of signalling, so Doom's
+project-search fallback never jumps to an unrelated use of the name (#5357).
 
 Rename refuses a primitive, a `std/` name, a name with no definition, an
 illegal identifier, and a new name already bound in a file the edit touches.

@@ -324,8 +324,26 @@ OUTPUT nil means no executable at all."
                 (should described)))
           (setq lsp-mode old-lsp-mode))))))
 
+(defun aura-doom-test--lookup-chain (handlers identifier &optional fallback)
+  "Run HANDLERS with IDENTIFIER the way Doom's `+lookup--run-handlers' does.
+A handler that signals counts as 'failed and the chain continues; a
+non-nil value ends the chain.  When every handler fails, FALLBACK runs:
+that is the trailing t handler (project search / dumb-jump) in Doom's
+aura buffer handler list (#5357)."
+  (catch 'handled
+    (dolist (handler handlers)
+      (let ((result (condition-case nil
+                        (funcall handler identifier)
+                      (error 'failed))))
+        (when (and result (not (eq result 'failed)))
+          (throw 'handled result))))
+    (when fallback (funcall fallback))))
+
 (ert-deftest aura-doom-lookup-definition-primitive ()
-  "g d on a primitive stops with a message; point stays put."
+  "g d on a primitive ends the chain: no jump, no REPL (#5357).
+Doom's `+lookup--run-handlers' records any error as a failed handler and
+continues, so the module must return non-nil (not signal) to stop the
+project-search fallback from jumping to an unrelated use of the name."
   (aura-doom-test--with-binary "aura 0.2.7"
     (aura-doom-test--load-config)
     (with-temp-buffer
@@ -333,7 +351,9 @@ OUTPUT nil means no executable at all."
       (goto-char (point-min))
       (search-forward "car")
       (let ((point-before (point))
-            (doc-answer nil))
+            (fallback nil)
+            (sends 0)
+            (messages nil))
         (cl-letf (((symbol-function 'xref-find-definitions)
                    (lambda (&rest _) (error "no definition")))
                   ((symbol-function 'imenu--make-index-alist)
@@ -341,12 +361,116 @@ OUTPUT nil means no executable at all."
                   ((symbol-function 'imenu)
                    (lambda (&rest _) (error "imenu must not run for a primitive")))
                   ((symbol-function '+aura--send)
-                   (lambda (text) (setq doc-answer text) "car/1 (value x) -> y")))
-          (let ((err (should-error (+aura-lookup-definition "car")
-                                   :type 'user-error)))
-            (should (string-match-p "primitive" (error-message-string err))))
-          (should (equal doc-answer ":doc car"))
-          (should (= (point) point-before)))))))
+                   (lambda (&rest _) (setq sends (1+ sends)) "car/1 (value x) -> y"))
+                  ((symbol-function 'message)
+                   (lambda (format-string &rest args)
+                     (push (apply #'format-message format-string args) messages))))
+          ;; Without a client the REPL is the only registry, so asking it is
+          ;; allowed; what must not happen is the fallback jump.
+          (should (aura-doom-test--lookup-chain
+                   (list '+aura-lookup-definition) "car"
+                   (lambda () (setq fallback t))))
+          (should-not fallback)
+          (should (= sends 1))
+          (should (= (point) point-before))
+          (should (seq-some (lambda (text) (string-match-p "primitive" text))
+                            messages)))))))
+
+(ert-deftest aura-doom-lookup-definition-primitive-eglot ()
+  "Under eglot, g d on a primitive stops without starting the REPL (#5357)."
+  (skip-unless (require 'eglot nil t))
+  (aura-doom-test--with-binary "aura 0.2.7"
+    (aura-doom-test--load-config)
+    (with-temp-buffer
+      (insert "(define (piece-x q) (car q))")
+      (goto-char (point-min))
+      (search-forward "car")
+      (let ((point-before (point))
+            (fallback nil)
+            (sends 0)
+            (messages nil)
+            (old-lsp-mode (and (boundp 'lsp-mode) lsp-mode)))
+        (unwind-protect
+            (progn
+              (setq lsp-mode nil)
+              (cl-letf (((symbol-function 'xref-find-definitions)
+                         (lambda (&rest _) (error "no definition")))
+                        ((symbol-function 'imenu--make-index-alist)
+                         (lambda (&rest _) nil))
+                        ((symbol-function 'imenu)
+                         (lambda (&rest _) (error "imenu must not run for a primitive")))
+                        ((symbol-function '+aura--send)
+                         (lambda (&rest _) (setq sends (1+ sends)) "car/1 (value x) -> y"))
+                        ((symbol-function 'message)
+                         (lambda (format-string &rest args)
+                           (push (apply #'format-message format-string args)
+                                 messages)))
+                        ((symbol-function 'eglot-managed-p)
+                         (lambda (&optional _) t))
+                        ((symbol-function 'eglot-hover-eldoc-function)
+                         (lambda (callback &rest _)
+                           (funcall callback "car/1 (value x) -> y"))))
+                (should (aura-doom-test--lookup-chain
+                         (list '+aura-lookup-definition) "car"
+                         (lambda () (setq fallback t))))
+                (should-not fallback)
+                (should (zerop sends))
+                (should (= (point) point-before))
+                (should (seq-some (lambda (text) (string-match-p "primitive" text))
+                                  messages))))
+          (setq lsp-mode old-lsp-mode))))))
+
+(ert-deftest aura-doom-lookup-definition-primitive-lsp-mode ()
+  "Under lsp-mode, the client's handler chain stops on a primitive (#5357).
+The lsp-mode chain is (+lsp-lookup-definition-handler
++aura-lookup-definition t); the server's hover is what decides, so no
+REPL process is started."
+  (aura-doom-test--with-binary "aura 0.2.7"
+    (aura-doom-test--load-config)
+    (with-temp-buffer
+      (insert "(define (piece-x q) (car q))")
+      (goto-char (point-min))
+      (search-forward "car")
+      (let ((point-before (point))
+            (fallback nil)
+            (sends 0)
+            (messages nil)
+            (hover (make-hash-table :test 'equal))
+            (contents (make-hash-table :test 'equal))
+            (old-lsp-mode (and (boundp 'lsp-mode) lsp-mode)))
+        (puthash "value" "car/1 (value x) -> y" contents)
+        (puthash "contents" contents hover)
+        (unwind-protect
+            (progn
+              ;; bound-and-true-p reads the global value.
+              (setq lsp-mode t)
+              (cl-letf (((symbol-function 'xref-find-definitions)
+                         (lambda (&rest _) (error "no definition")))
+                        ((symbol-function 'imenu--make-index-alist)
+                         (lambda (&rest _) nil))
+                        ((symbol-function 'imenu)
+                         (lambda (&rest _) (error "imenu must not run for a primitive")))
+                        ((symbol-function '+aura--send)
+                         (lambda (&rest _) (setq sends (1+ sends)) "car/1 (value x) -> y"))
+                        ((symbol-function 'message)
+                         (lambda (format-string &rest args)
+                           (push (apply #'format-message format-string args)
+                                 messages)))
+                        ((symbol-function 'eglot-managed-p)
+                         (lambda (&optional _) nil))
+                        ((symbol-function 'lsp-request)
+                         (lambda (&rest _) hover))
+                        ((symbol-function 'lsp--text-document-position-params)
+                         (lambda (&rest _) nil)))
+                (should (aura-doom-test--lookup-chain
+                         (list '+aura-lookup-definition) "car"
+                         (lambda () (setq fallback t))))
+                (should-not fallback)
+                (should (zerop sends))
+                (should (= (point) point-before))
+                (should (seq-some (lambda (text) (string-match-p "primitive" text))
+                                  messages))))
+          (setq lsp-mode old-lsp-mode))))))
 
 (ert-deftest aura-doom-lookup-definition-defined ()
   "g d on a defined name still jumps through xref."
