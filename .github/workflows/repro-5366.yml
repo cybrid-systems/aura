@@ -36,6 +36,14 @@ jobs:
         command -v mold >/dev/null 2>&1 || (apt-get update -qq && apt-get install -y -qq mold)
         command -v ld.lld >/dev/null 2>&1 || (apt-get update -qq && apt-get install -y -qq lld)
 
+    - name: Build aura
+      env:
+        AURA_BUILD_TARGETS: aura
+        AURA_DEBUG_LEVEL: "1"
+      run: |
+        set -euo pipefail
+        python3 build.py build
+
     - name: Build shard 1/4
       env:
         AURA_ISSUES_TIER: full
