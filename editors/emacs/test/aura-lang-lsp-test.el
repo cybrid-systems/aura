@@ -261,11 +261,13 @@ down and the project removed afterwards."
   (aura-lang-lsp-test--with-project
       '(("main.aura" . "(define (f x)\n  (memq x 1))\n")) nil
     (lambda ()
-      ;; #5262 sends the bare name as the message and moves the hint into
-      ;; data, so the old "unbound variable: X" prefix is gone.
+      ;; #5364: the message carries the CLI wording, so lsp-mode and
+      ;; flycheck (which show only the message) stay readable.  The text
+      ;; under the diagnostic is still the bare symbol.
       (let ((diagnostic (aura-lang-lsp-test--wait-diagnostic "memq$")))
         (should diagnostic)
-        (should (equal (cdr diagnostic) "memq"))))))
+        (should (equal (cdr diagnostic) "memq"))
+        (should (string-match-p "unbound variable: memq" (car diagnostic)))))))
 
 (ert-deftest aura-lang-lsp-type-warning-does-not-mask-unbound ()
   "A type warning does not hide a later unbound name (#5346).
@@ -278,6 +280,7 @@ Both clients must surface memq, not only the earlier type warning."
             (warning (aura-lang-lsp-test--wait-diagnostic "expected Int")))
         (should unbound)
         (should (equal (cdr unbound) "memq"))
+        (should (string-match-p "unbound variable: memq" (car unbound)))
         (should warning)))))
 
 (ert-deftest aura-lang-lsp-diagnostics-unsaved-edit ()

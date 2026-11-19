@@ -118,12 +118,14 @@ a commit. `doom doctor` prints the binary it found and why no formatter was
 registered. `(format +onsave)` formats on save through that same gate;
 `SPC c f` does too.
 
-`typeDiagnostics` is a string, read from LSP `initializationOptions` or from
-`workspace/didChangeConfiguration`. A `{"aura": {...}}` wrapper is accepted.
-`"warning"` is the default (also `warn`, `true`, `on`); `"error"` raises the
-severity; `"off"` stops publishing type diagnostics (also `none`, `false`,
-`disabled`). A JSON boolean `false` is ignored. The string `"false"` is
-accepted.
+`typeDiagnostics` is a string or a JSON boolean, read from LSP
+`initializationOptions` or from `workspace/didChangeConfiguration`. A
+`{"aura": {...}}` wrapper is accepted. `"warning"` is the default (also
+`warn`, `true`, `on`); `"error"` raises the severity; `"off"` stops
+publishing type diagnostics (also `none`, `false`, `disabled`). A JSON
+boolean is accepted too: `false` is off and `true` is the default warning
+mode, which is what elisp's `:json-false` (or a `nil` that serialises to
+`false`) sends (#5364).
 
 The aura lsp-mode client sends the `aura` section once the workspace is
 initialized, so `lsp-register-custom-settings` works as usual; eglot sends
@@ -151,6 +153,10 @@ two columns. A formatting request that carries its own options uses those.
 - "Aura executable not found": Emacs does not see the binary. `doom doctor`
   still says to run `doom env`; that command exits 1. Run `doom sync --env`,
   or set `aura-lang-executable`, then restart Emacs.
+- An `UnboundVariable` for `http-post` (or `git-status`, `c-view`, …) is
+  real: those are host primitives that only arrive with `(require "std/net")`
+  / `"std/git"` / `"std/ffi"`. The runtime fails the same way without the
+  require, so add the require or accept the diagnostic.
 - No diagnostics: `(aura +lsp)` and `:tools lsp` are both on, then
   `doom sync --env`. Once a buffer is open, lsp-mode's lighter is
   `aura-lsp:PID` and eglot shows the project name.
