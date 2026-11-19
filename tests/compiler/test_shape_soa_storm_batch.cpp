@@ -27,7 +27,7 @@ static void aura_terminate_trace() {
     // prints the last stdout lines starting with FAIL: on a red member. So
     // the useful copy goes to a single FAIL: line on stdout, and the rest
     // to stderr for a local run.
-    std::string what = "?", names[8];
+    std::string what = "?", names[16];
     if (auto e = std::current_exception()) {
         try {
             std::rethrow_exception(e);
@@ -40,7 +40,7 @@ static void aura_terminate_trace() {
     void* frames[64];
     const int n = ::backtrace(frames, 64);
     if (char** syms = ::backtrace_symbols(frames, n)) {
-        for (int i = 0; i < n && i < 8; ++i) {
+        for (int i = 0; i < n && i < 16; ++i) {
             std::string name = syms[i] ? syms[i] : "?";
             const auto lp = name.rfind('(');
             const auto plus = name.rfind('+');
@@ -68,8 +68,18 @@ static void aura_terminate_trace() {
             fail += " |" + std::to_string(i) + "=" + names[i];
     std::printf("%s\n", fail.c_str());
     std::fflush(stdout);
+    // The issue-farm runner keeps only the last 2000 chars of stderr and
+    // drops stdout entirely for a crashed bundle, so the frames that matter
+    // must ride stderr — one frame per line, newest first (#5366).
     std::fprintf(stderr, "[terminate] tid=%zu what=%s\n",
                  std::hash<std::thread::id>{}(std::this_thread::get_id()), what.c_str());
+    std::fflush(stderr);
+    for (int i = 0; i < 16; ++i) {
+        if (names[i].empty())
+            break;
+        std::fprintf(stderr, "[frame] %d=%s\n", i, names[i].c_str());
+    }
+    std::fflush(stderr);
     std::abort();
 }
 
@@ -97,6 +107,8 @@ int main() {
     std::println("=== test_shape_soa_storm_batch (14 members) ===");
 
     std::println("\n──── test_dirty_aware_shape_linear_passes ────");
+    std::fprintf(stderr, "[member] %s\n", "test_dirty_aware_shape_linear_passes");
+    std::fflush(stderr);
     g_passed = 0;
     g_failed = 0;
     if (run_test_dirty_aware_shape_linear_passes() != 0 || g_failed != 0) {
@@ -109,6 +121,8 @@ int main() {
     }
 
     std::println("\n──── test_hot_pass_dirty_soa ────");
+    std::fprintf(stderr, "[member] %s\n", "test_hot_pass_dirty_soa");
+    std::fflush(stderr);
     g_passed = 0;
     g_failed = 0;
     if (run_test_hot_pass_dirty_soa() != 0 || g_failed != 0) {
@@ -120,6 +134,8 @@ int main() {
     }
 
     std::println("\n──── test_shape_compact_storm_isolation ────");
+    std::fprintf(stderr, "[member] %s\n", "test_shape_compact_storm_isolation");
+    std::fflush(stderr);
     g_passed = 0;
     g_failed = 0;
     if (run_test_shape_compact_storm_isolation() != 0 || g_failed != 0) {
@@ -131,6 +147,8 @@ int main() {
     }
 
     std::println("\n──── test_shape_high_mutation_storm ────");
+    std::fprintf(stderr, "[member] %s\n", "test_shape_high_mutation_storm");
+    std::fflush(stderr);
     g_passed = 0;
     g_failed = 0;
     if (run_test_shape_high_mutation_storm() != 0 || g_failed != 0) {
@@ -142,6 +160,8 @@ int main() {
     }
 
     std::println("\n──── test_shape_storm_adaptive ────");
+    std::fprintf(stderr, "[member] %s\n", "test_shape_storm_adaptive");
+    std::fflush(stderr);
     g_passed = 0;
     g_failed = 0;
     if (run_test_shape_storm_adaptive() != 0 || g_failed != 0) {
@@ -153,6 +173,8 @@ int main() {
     }
 
     std::println("\n──── test_soa_ban_residual_aos_bridge ────");
+    std::fprintf(stderr, "[member] %s\n", "test_soa_ban_residual_aos_bridge");
+    std::fflush(stderr);
     g_passed = 0;
     g_failed = 0;
     if (run_test_soa_ban_residual_aos_bridge() != 0 || g_failed != 0) {
@@ -164,6 +186,8 @@ int main() {
     }
 
     std::println("\n──── test_soa_dirty_aware_pipeline ────");
+    std::fprintf(stderr, "[member] %s\n", "test_soa_dirty_aware_pipeline");
+    std::fflush(stderr);
     g_passed = 0;
     g_failed = 0;
     if (run_test_soa_dirty_aware_pipeline() != 0 || g_failed != 0) {
@@ -175,6 +199,8 @@ int main() {
     }
 
     std::println("\n──── test_soa_generation_fence ────");
+    std::fprintf(stderr, "[member] %s\n", "test_soa_generation_fence");
+    std::fflush(stderr);
     g_passed = 0;
     g_failed = 0;
     if (run_test_soa_generation_fence() != 0 || g_failed != 0) {
@@ -186,6 +212,8 @@ int main() {
     }
 
     std::println("\n──── test_soa_partial_desync_gate ────");
+    std::fprintf(stderr, "[member] %s\n", "test_soa_partial_desync_gate");
+    std::fflush(stderr);
     g_passed = 0;
     g_failed = 0;
     if (run_test_soa_partial_desync_gate() != 0 || g_failed != 0) {
@@ -197,6 +225,8 @@ int main() {
     }
 
     std::println("\n──── test_soa_residual_production_smoke ────");
+    std::fprintf(stderr, "[member] %s\n", "test_soa_residual_production_smoke");
+    std::fflush(stderr);
     g_passed = 0;
     g_failed = 0;
     if (run_test_soa_residual_production_smoke() != 0 || g_failed != 0) {
@@ -208,6 +238,8 @@ int main() {
     }
 
     std::println("\n──── test_soa_single_entry_dirty_sync ────");
+    std::fprintf(stderr, "[member] %s\n", "test_soa_single_entry_dirty_sync");
+    std::fflush(stderr);
     g_passed = 0;
     g_failed = 0;
     if (run_test_soa_single_entry_dirty_sync() != 0 || g_failed != 0) {
@@ -219,6 +251,8 @@ int main() {
     }
 
     std::println("\n──── test_storm_isolation ────");
+    std::fprintf(stderr, "[member] %s\n", "test_storm_isolation");
+    std::fflush(stderr);
     g_passed = 0;
     g_failed = 0;
     if (run_test_storm_isolation() != 0 || g_failed != 0) {
@@ -230,6 +264,8 @@ int main() {
     }
 
     std::println("\n──── test_hot_children_columnar ────");
+    std::fprintf(stderr, "[member] %s\n", "test_hot_children_columnar");
+    std::fflush(stderr);
     g_passed = 0;
     g_failed = 0;
     if (run_test_hot_children_columnar() != 0 || g_failed != 0) {
@@ -241,6 +277,8 @@ int main() {
     }
 
     std::println("\n──── test_validate_post_restore_soa ────");
+    std::fprintf(stderr, "[member] %s\n", "test_validate_post_restore_soa");
+    std::fflush(stderr);
     g_passed = 0;
     g_failed = 0;
     if (run_test_validate_post_restore_soa() != 0 || g_failed != 0) {
