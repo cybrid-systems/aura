@@ -37,11 +37,10 @@ static void aura_terminate_trace() {
     void* frames[64];
     const int n = ::backtrace(frames, 64);
     ::backtrace_symbols_fd(frames, n, 2);
-    // The CI runner keeps only the tail of stderr and cuts long lines, so
-    // the LAST line must be short: the innermost few frames, function name
-    // only (demangled, arguments stripped, tail-truncated).
+    // The runner keeps the tail of stderr and cuts long lines: print the
+    // innermost frames LAST, function name only, each short.
     if (char** syms = ::backtrace_symbols(frames, n)) {
-        std::string summary = "[ts]";
+        std::string names[6];
         for (int i = 0; i < n && i < 6; ++i) {
             std::string name = syms[i] ? syms[i] : "?";
             const auto lp = name.rfind('(');
@@ -58,11 +57,16 @@ static void aura_terminate_trace() {
             }
             if (const auto args = name.find('('); args != std::string::npos)
                 name.resize(args);
-            if (name.size() > 46)
-                name = name.substr(name.size() - 46);
-            summary += "|" + std::to_string(i) + "=" + name;
+            if (name.size() > 42)
+                name = name.substr(name.size() - 42);
+            names[i] = name;
         }
-        std::fprintf(stderr, "%s\n", summary.c_str());
+        for (const int base : {3, 0}) {
+            std::string line = base == 3 ? "[ts-out]" : "[ts-in]";
+            for (int i = base; i < base + 3 && i < 6; ++i)
+                line += "|" + std::to_string(i) + "=" + names[i];
+            std::fprintf(stderr, "%s\n", line.c_str());
+        }
         std::free(syms);
     }
     std::abort();
