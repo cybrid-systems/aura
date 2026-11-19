@@ -643,3 +643,39 @@ class LspDiagnostics5262(unittest.TestCase):
         self.assertEqual(starts[0][0], 2)
         self.assertEqual(starts[-1][0], 101)
         self.assertNotIn("TypeError", [dx["code"] for dx in diags])
+
+
+# #5362: the runtime and the JSON face report the call site for a wrong
+# argument count; the LSP published nothing because the static diagnostic
+# carried no location (an Int literal argument clobbered the checker's
+# scratch location with {0, 0}, and the server drops line 0).
+ARITY_NESTED = "(define (two a b) (+ a b))\n(display (two 1))\n"
+
+
+class LspDiagnostics5362(unittest.TestCase):
+    def test_arity_mismatch_in_a_nested_call_reports_the_call_site(self) -> None:
+        diags, pulled, _actions, d, _uri = drive(ARITY_NESTED)
+        self.assertEqual(pulled, diags)
+        self.assertEqual([dx["code"] for dx in diags], ["ArityMismatch"], diags)
+        arity = diags[0]
+        self.assertEqual(arity["severity"], 1, arity)
+        self.assertIn("call 'two'", arity["message"])
+        self.assertIn("expected 2 arguments, got 1", arity["message"])
+        # (two 1) is the second line; the range covers the callee, which is
+        # where the runtime face points (2:11 there, 0-based here).
+        self.assertEqual(arity["range"]["start"]["line"], 1, arity)
+        self.assertIn(arity["range"]["start"]["character"], (9, 10), arity)
+        self.assertEqual(covered(ARITY_NESTED, arity), "two")
+
+        # Same point as the runtime JSON face.
+        obj = last_json(run_aura(["--error-format=json", "a.aura"], d).stderr)
+        self.assertEqual(obj["code"], "ArityMismatch")
+        self.assertEqual(obj["span"]["start"]["line"] - 1, arity["range"]["start"]["line"])
+        self.assertEqual(obj["span"]["start"]["column"] - 1, arity["range"]["start"]["character"])
+
+        # The root cause was in the type checker, so --typecheck names the
+        # point too (it used to print the message with no file:line:col).
+        tc = run_aura(["--typecheck", "a.aura"], d)
+        self.assertNotEqual(tc.returncode, 0)
+        self.assertIn("2:11: arity mismatch: call 'two': expected 2 arguments, got 1", tc.stdout)
+        self.assertEqual(typecheck_keys(tc.stdout), [("ArityMismatch", 1, 10)], tc.stdout)
