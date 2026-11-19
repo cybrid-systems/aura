@@ -170,8 +170,15 @@ Batch Emacs never becomes idle, so both clients' idle timers stay
 armed; this calls the same sender the timer calls."
   (pcase (aura-lang-lsp-test--client)
     ;; #5359: a pull client has no push to wait for, so start the
-    ;; diagnostics backend the way the idle loop would.
-    ('eglot (eglot--signal-textDocument/didChange) (flymake-start))
+    ;; diagnostics backend the way the idle loop would. A push-only client
+    ;; (eglot before pull support) must be left alone: its flymake set
+    ;; arrives from the server's push, and an extra backend run there
+    ;; swallows the report.
+    ('eglot
+     (eglot--signal-textDocument/didChange)
+     (when (and (fboundp 'eglot-server-capable)
+                (eglot-server-capable :diagnosticProvider))
+       (flymake-start)))
     ('lsp-mode (lsp--flush-delayed-changes))))
 
 (defun aura-lang-lsp-test--formatting-capability ()
