@@ -36,9 +36,15 @@ struct Server {
     bool initialized = false;
     // #5359: the client declared textDocument/diagnostic in its initialize
     // capabilities, so it pulls. It gets exactly one channel: the pull
-    // answer. A client without the capability (lsp-mode, flycheck) keeps
-    // the push it has always used.
+    // answer. A client without the capability keeps the push it has always
+    // used.
     bool client_pulls_diagnostics = false;
+    // ...but only eglot reports the pushed set and the pulled set to flymake
+    // without deduplicating (eglot--flymake-report-push+pulled). lsp-mode
+    // declares the same capability and still needs the push: its full-sync
+    // path sends didChange without a follow-up pull, so suppressing the push
+    // for every pull-capable client freezes its diagnostics after an edit.
+    bool client_double_reports = false;
 
     Server() { debounce_ms = read_debounce_ms(); }
 
@@ -168,7 +174,7 @@ struct Server {
         // so every diagnostic showed up twice. A pull-capable client is
         // served by textDocument/diagnostic only (analyze_and_publish still
         // stores the run for it). The push stays for everyone else.
-        if (client_pulls_diagnostics)
+        if (client_double_reports)
             return;
         auto& previous = published_for[main_key];
         std::unordered_set<std::string> current;
@@ -223,7 +229,7 @@ struct Server {
         pending.erase(key);
         last.erase(key);
         published_for.erase(key);
-        if (client_pulls_diagnostics)
+        if (client_double_reports)
             return; // #5359: nothing was pushed, so there is nothing to clear
         send(std::format(
             R"({{"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{{"uri":{},"diagnostics":[]}}}})",
@@ -860,6 +866,19 @@ struct Server {
             td && td->t == Json::T::Obj) {
             const Json* pull = td->get("diagnostic");
             client_pulls_diagnostics = pull && pull->t == Json::T::Obj;
+        }
+        // #5359: only eglot double-reports; see client_double_reports.
+        client_double_reports = false;
+        if (client_pulls_diagnostics) {
+            const Json* info = params.get("clientInfo");
+            const Json* name = info && info->t == Json::T::Obj ? info->get("name") : nullptr;
+            if (name && name->t == Json::T::Str) {
+                std::string lower;
+                lower.reserve(name->s.size());
+                for (const char c : name->s)
+                    lower += (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : c;
+                client_double_reports = lower.find("eglot") != std::string::npos;
+            }
         }
 
         // #5263: the client's default FormattingOptions. A formatting request

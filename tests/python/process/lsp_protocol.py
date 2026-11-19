@@ -132,10 +132,17 @@ class Client:
         return self.p.returncode, err
 
     # ── protocol sugar ────────────────────────────────────────
-    def initialize(self, caps: dict | None = None, root: str | None = None) -> dict:
+    def initialize(
+        self,
+        caps: dict | None = None,
+        root: str | None = None,
+        client_info: dict | None = None,
+    ) -> dict:
         params: dict = {"capabilities": caps or {}}
         if root:
             params["rootUri"] = root
+        if client_info:
+            params["clientInfo"] = client_info
         self.send({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": params})
         for f in self.pump(2.0):
             if f.get("id") == 1:
@@ -233,10 +240,11 @@ class LspProtocol5359(unittest.TestCase):
             path.write_text(text)
             uri = path.as_uri()
 
-            # eglot: declares the pull capability. One delivery, not two.
+            # eglot: declares the pull capability and identifies itself.
+            # One delivery, not two.
             c = Client()
             try:
-                caps = c.initialize(PULL_CAPS)
+                caps = c.initialize(PULL_CAPS, client_info={"name": "Eglot"})
                 self.assertIn("diagnosticProvider", caps["capabilities"])
                 c.did_open(uri, text)
                 frames = c.pump(2.0)
@@ -267,6 +275,27 @@ class LspProtocol5359(unittest.TestCase):
             finally:
                 c.close()
 
+            # lsp-mode 10.0.0 declares the pull capability too, but its
+            # full-sync path never pulls after an edit, so it must keep the
+            # push: suppressing it froze diagnostics after the first change.
+            c = Client()
+            try:
+                c.initialize(PULL_CAPS, client_info={"name": "emacs"})
+                c.did_open(uri, text)
+                frames = c.pump(2.0)
+                self.assertEqual(starts(last_publication(frames, uri)), [(0, 9)])
+                self.assertEqual(len(publications(frames)), 1, frames)
+                c.clear()
+                c.did_change(uri, "(define ok 1)\n(display oops)\n")
+                frames = c.pump(1.5)
+                self.assertEqual(
+                    [p["diagnostics"][0]["range"]["start"]["line"] for p in publications(frames)],
+                    [1],
+                    "a pull-capable client that does not pull after a change keeps the push",
+                )
+            finally:
+                c.close()
+
     def test_diagnostic_capability_must_be_an_object(self) -> None:
         # The capability is an object in the spec; a null/absent value is a
         # client that does not pull, and must keep the push.
@@ -277,7 +306,7 @@ class LspProtocol5359(unittest.TestCase):
             uri = path.as_uri()
             c = Client()
             try:
-                c.initialize({"textDocument": {"diagnostic": None}})
+                c.initialize({"textDocument": {"diagnostic": None}}, client_info={"name": "Eglot"})
                 c.did_open(uri, text)
                 self.assertEqual(starts(last_publication(c.pump(2.0), uri)), [(0, 9)])
             finally:
