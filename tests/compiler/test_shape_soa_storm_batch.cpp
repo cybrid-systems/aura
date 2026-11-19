@@ -23,25 +23,24 @@ import std;
 // 无法定位。这个 handler 只在 abort 时多打一段：tid、异常文本和
 // backtrace（PIE 下是 二进制(+0x…) 形式，可用 addr2line 映射）。
 static void aura_terminate_trace() {
-    std::fprintf(stderr, "[terminate] tid=%zu\n",
-                 std::hash<std::thread::id>{}(std::this_thread::get_id()));
+    // The runner keeps the tail of stderr (and cuts long lines), and it
+    // prints the last stdout lines starting with FAIL: on a red member. So
+    // the useful copy goes to a single FAIL: line on stdout, and the rest
+    // to stderr for a local run.
+    std::string what = "?", names[8];
     if (auto e = std::current_exception()) {
         try {
             std::rethrow_exception(e);
         } catch (const std::exception& ex) {
-            std::fprintf(stderr, "[terminate] what=%s\n", ex.what());
+            what = ex.what();
         } catch (...) {
-            std::fprintf(stderr, "[terminate] non-std exception\n");
+            what = "non-std exception";
         }
     }
     void* frames[64];
     const int n = ::backtrace(frames, 64);
-    ::backtrace_symbols_fd(frames, n, 2);
-    // The runner keeps the tail of stderr and cuts long lines: print the
-    // innermost frames LAST, function name only, each short.
     if (char** syms = ::backtrace_symbols(frames, n)) {
-        std::string names[6];
-        for (int i = 0; i < n && i < 6; ++i) {
+        for (int i = 0; i < n && i < 8; ++i) {
             std::string name = syms[i] ? syms[i] : "?";
             const auto lp = name.rfind('(');
             const auto plus = name.rfind('+');
@@ -57,18 +56,20 @@ static void aura_terminate_trace() {
             }
             if (const auto args = name.find('('); args != std::string::npos)
                 name.resize(args);
-            if (name.size() > 42)
-                name = name.substr(name.size() - 42);
+            if (name.size() > 36)
+                name = name.substr(name.size() - 36);
             names[i] = name;
-        }
-        for (const int base : {3, 0}) {
-            std::string line = base == 3 ? "[ts-out]" : "[ts-in]";
-            for (int i = base; i < base + 3 && i < 6; ++i)
-                line += "|" + std::to_string(i) + "=" + names[i];
-            std::fprintf(stderr, "%s\n", line.c_str());
         }
         std::free(syms);
     }
+    std::string fail = "FAIL: [terminate] what=" + what;
+    for (int i = 0; i < 8; ++i)
+        if (!names[i].empty())
+            fail += " |" + std::to_string(i) + "=" + names[i];
+    std::printf("%s\n", fail.c_str());
+    std::fflush(stdout);
+    std::fprintf(stderr, "[terminate] tid=%zu what=%s\n",
+                 std::hash<std::thread::id>{}(std::this_thread::get_id()), what.c_str());
     std::abort();
 }
 
