@@ -285,23 +285,28 @@ so `g d' can decide without starting a REPL (#5357)."
     ('lsp-mode
      (when (and (fboundp 'lsp-request)
                 (fboundp 'lsp--text-document-position-params))
+       ;; #5368: Doom's :tools lsp builds and runs lsp-mode with
+       ;; LSP_USE_PLISTS=1, so `lsp-request' answers plists there, not hash
+       ;; tables.  `lsp-get' is lsp-mode's own mode-aware accessor; a
+       ;; MarkupContent[] reply arrives as a vector (or list) of parts.
        (let* ((result (ignore-errors
                         (lsp-request
                          "textDocument/hover"
                          (lsp--text-document-position-params))))
-              (contents (and (hash-table-p result)
-                             (gethash "contents" result)))
+              (contents (and result (lsp-get result :contents)))
               (text (cond ((stringp contents) contents)
-                          ((hash-table-p contents)
-                           (gethash "value" contents))
-                          ((and (listp contents) contents)
+                          ((or (hash-table-p contents)
+                               (and (listp contents) (keywordp (car contents))))
+                           (lsp-get contents :value))
+                          ((or (vectorp contents) (listp contents))
                            (mapconcat
                             (lambda (part)
                               (cond ((stringp part) part)
-                                    ((hash-table-p part)
-                                     (or (gethash "value" part) ""))
+                                    ((or (hash-table-p part)
+                                         (and (listp part) (keywordp (car part))))
+                                     (or (lsp-get part :value) ""))
                                     (t "")))
-                            contents "\n")))))
+                            (append contents nil) "\n")))))
          (and (stringp text)
               (not (string-empty-p (string-trim text)))
               text))))))
