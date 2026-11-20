@@ -17,13 +17,12 @@
 
 - 反压是 loan / release 加每会话未读代次上限，不是带宽时延积窗口。`Reserve` 借一个暂存槽：成功回 `Credit`（含映像内偏移与长度），loan 用尽回 `EAGAIN`，暂存窗口用尽回 `ENOSPC`；两者都是硬错误，不覆盖未读数据、不在线扩容。
 - 每个会话固定一个暂存窗口（当前 64 KiB，受映像已提交区之后的剩余空间约束）；提交后也不扩容。
+- 频道写入按频道各记一个 loan 账本（默认 8 个）；一个频道用尽只拒绝该频道，别的频道仍可 `Reserve`。能力里的 `loans` 配额按频道收紧；`Publish` 归还，断开时每个频道未归还的 loan 全部收回。
 - 套接字一断（EOF、进程退出、keepalive 失败），会话结束：协调者收回未提交 loan，把未 KEEP 的试改按 `ROLLBACK` 处理，并停止接受该会话的提交。即使映射还在，也不得只凭共享内存继续信任对端；对端必须先停止解引用再 `munmap`。
 
 ## 当前覆盖
 
-已实现：控制帧、握手与拒绝原因、memfd 封印与对端检查、eventfd 门铃、loan 计数与 `EAGAIN`/`ENOSPC`、断开回收。
-
-尚未实现（属于 #5124-#5127）：能力授予/撤销与 grant 派生、worldline 的 trial/keep/rollback 语义、订阅频道与 `Subscribe`/`CatchUp` 路由、`std/bus` 公共面。跨主机不在 v0.3.0。
+已实现：控制帧、握手与拒绝原因、memfd 封印与对端检查、eventfd 门铃、loan 计数与 `EAGAIN`/`ENOSPC`、断开回收、能力与 grant 树、worldline 的 trial/keep/rollback、约束门、订阅频道与 `Subscribe`/`CatchUp` 路由、`std/bus` 公共面。跨主机不在 v0.3.0。
 
 ## 能力
 
@@ -53,6 +52,16 @@
 - `Reserve`/`Publish` 对 channel 1..4 直接操作该节尾部的预留容量；Publish 成功后回新的 generation/count，并把该次发布写进审计。
 - 对端只有在拿到 `publish` 或 `trial` 时才以可写方式映射映像；只读会话仍是 `PROT_READ`。
 
+### 活跃生产者（#5122）
+
+三条投影直接从活工作区取记录，不再由调用方构造：
+
+- `(bus:project-cct session)` → `(ok count)`：遍历当前工作区 FlatAST 的 `Call` 节点，`parent` 指向最近的包含它的 `Call`，`mid` 取被调符号 SymId 的低 62 位，`node` 对齐到最近的包含 `Define`（没有 define 时用调用节点本身），`samples=1`，`flags` 最低位标记这是静态调用点投影（还没有采样器）。
+- `(bus:project-patches session)` → `(ok generation total next-mutation skipped)`：把游标之后每条带回滚数据的已提交变更写成补丁记录；`node`/`field_offset`/`new_value` 来自变更日志，`worldline` 是当时生效的 rebind 槽位。第 63 位置位或节点越界的记录跳过并计入 `skipped`。
+- `(bus:project-worldlines session)` → `(ok generation total next-mutation)`：按变更顺序为每个 rebind 写一条 worldline，`id` 是真实 mutation id，`parent` 是父 mutation 的槽位，状态为 kept/rolled，补丁区间取该槽位已发布的补丁范围。
+
+槽位按 mutation log 顺序分配，因此 `PatchRecord.worldline` 与 worldline 表下标一致，读者可以由槽位反查 `WorldlineRecord.id`。先投影补丁再投影 worldline，worldline 记录里才有补丁区间；反过来则区间为 0。`bus:project-nodes` 现在优先投影 `workspace_flat`（`set-code`/`eval-current` 建立的持久工作区），没有时才退回当前求值的 AST。
+
 ## 约束与审计
 
 - 协调者持有 `ConstraintStore`：一组可执行规则加版本号。安装新集或回滚都要求 `constraint-write`，并分别记 `ConstraintChange` / `ConstraintRollback` 审计。
@@ -68,6 +77,7 @@
 - `(bus:subscribe session channel)` → `(ok generation count offset length snapshot)`
 - `(bus:query session channel since-generation since-count)` → `(ok generation count snapshot rows)`，rows 是解码后的记录列表。
 - `(bus:publish session key value)` → `(ok generation count)`；另有 `bus:publish-cct` / `bus:publish-patch` / `bus:publish-worldline` 把其余三种记录投影进对应频道（parent/worldline 用 -1 表示无）。
+- `(bus:project-nodes session)` / `(bus:project-cct session)` / `(bus:project-patches session)` / `(bus:project-worldlines session)` 从活工作区直接投影四类记录（见「活跃生产者」）。
 - `(bus:trial session channel)` → `(ok worldline)`；`(bus:keep session worldline node value)` 跑当前约束；`(bus:rollback session worldline)`。
 - `(bus:grant session bits channels loans expires worldline)` → `(ok token)`，只能衰减；`(bus:revoke session token)`。
 - `(bus:audit session worldline)` → `(ok count truncated events)`，事件含 kind/worldline/result/constraint-version/reason。

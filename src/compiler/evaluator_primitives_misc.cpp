@@ -69,6 +69,21 @@ namespace {
 
     struct BusSessionState {
         aura::bus::Attach att;
+        // The workspace AST this session projects. Kept because a file-mode
+        // eval clears current_flat between top-level forms.
+        aura::ast::FlatAST* flat = nullptr;
+        // Live-producer cursors (#5122): the last mutation id already
+        // projected into each channel. Worldline slots are assigned in
+        // mutation-log order so a patch can name the rebind that owns it.
+        std::uint64_t patches_cursor = 0;
+        std::uint64_t worldlines_cursor = 0;
+        std::uint64_t next_wl_slot = 0;
+        std::uint64_t patches_published = 0;
+        std::uint64_t worldlines_published = 0;
+        std::vector<std::uint64_t> rebind_mids;
+        std::unordered_map<std::uint64_t, std::uint64_t> wl_slot_by_mid;
+        std::unordered_map<std::uint64_t, std::pair<std::uint64_t, std::uint64_t>>
+            patch_range_by_slot;
     };
 
     std::mutex g_bus_mutex;
@@ -122,11 +137,81 @@ namespace {
         return true;
     }
 
+    // Read one integer element of a built reply list (0 = status string).
+    bool bus_reply_int(Evaluator& ev, EvalValue list, int index, std::int64_t* out) {
+        EvalValue cur = list;
+        for (int i = 0; i <= index; ++i) {
+            if (!is_pair(cur))
+                return false;
+            const auto idx = as_pair_idx(cur);
+            const auto pairs = ev.pairs();
+            if (idx >= pairs.size())
+                return false;
+            if (i == index)
+                return bus_int(pairs[idx].car, out);
+            cur = pairs[idx].cdr;
+        }
+        return false;
+    }
+
+    // ── Live producers (#5122) ────────────────────────────────
+    // A rebind is the identity a patch or worldline record belongs to.
+    // The mutation log is append-only and its ids are increasing, so a
+    // single forward scan assigns worldline slots deterministically.
+    bool is_rebind_record(const aura::ast::MutationRecord& rec) {
+        return rec.operator_name.find("rebind") != std::string::npos;
+    }
+
+    void note_rebinds_through(BusSessionState& state,
+                              std::span<const aura::ast::MutationRecord> log,
+                              std::uint64_t through_mid) {
+        for (const auto& rec : log) {
+            if (rec.mutation_id > through_mid)
+                break;
+            if (!is_rebind_record(rec))
+                continue;
+            if (state.wl_slot_by_mid.contains(rec.mutation_id))
+                continue;
+            state.wl_slot_by_mid.emplace(rec.mutation_id, state.next_wl_slot++);
+            state.rebind_mids.push_back(rec.mutation_id);
+        }
+    }
+
+    // The rebind in force at `mid` (the latest rebind at or before it).
+    std::uint64_t worldline_slot_for(BusSessionState& state,
+                                     std::span<const aura::ast::MutationRecord> log,
+                                     std::uint64_t mid) {
+        note_rebinds_through(state, log, mid);
+        const auto it = std::upper_bound(state.rebind_mids.begin(), state.rebind_mids.end(), mid);
+        if (it == state.rebind_mids.begin())
+            return aura::bus::kImageNoIndex;
+        return state.wl_slot_by_mid.at(*std::prev(it));
+    }
+
+    // Patch ranges are section-relative, the image directory is absolute.
+    std::uint64_t section_relative(const aura::bus::Attach& att, aura::bus::SectionKind kind,
+                                   std::uint64_t absolute) {
+        aura::bus::SectionEntry e{};
+        if (!aura::bus::find_section(att.view(), kind, &e))
+            return absolute;
+        return absolute >= e.offset ? absolute - e.offset : absolute;
+    }
+
+    aura::ast::FlatAST* active_workspace(Evaluator& ev, BusSessionState& state) {
+        auto* flat = ev.workspace_flat();
+        if (flat == nullptr)
+            flat = ev.current_flat();
+        if (flat != nullptr)
+            state.flat = flat;
+        return flat != nullptr ? flat : state.flat;
+    }
+
 } // namespace
 
 
 EvalValue bus_publish_record(Evaluator& ev, BusSessionState& state, int channel, const void* record,
-                             std::size_t bytes) {
+                             std::size_t bytes, std::uint64_t* first_offset = nullptr,
+                             bool* published = nullptr) {
     auto& att = state.att;
     aura::bus::LoanBody loan{};
     loan.channel = static_cast<std::uint64_t>(channel);
@@ -146,6 +231,8 @@ EvalValue bus_publish_record(Evaluator& ev, BusSessionState& state, int channel,
     }
     aura::bus::LoanBody granted{};
     std::memcpy(&granted, body.data(), std::min(sizeof(granted), body.size()));
+    if (first_offset != nullptr)
+        *first_offset = granted.offset;
     std::memcpy(static_cast<std::byte*>(att.base) + granted.offset, record, bytes);
     aura::bus::LoanBody pub = granted;
     pub.channel = static_cast<std::uint64_t>(channel);
@@ -162,6 +249,8 @@ EvalValue bus_publish_record(Evaluator& ev, BusSessionState& state, int channel,
     }
     aura::bus::ChannelBody cb{};
     std::memcpy(&cb, body.data(), std::min(sizeof(cb), body.size()));
+    if (published != nullptr)
+        *published = true;
     return bus_list(ev, {bus_string(ev, "ok"), make_int(static_cast<std::int64_t>(cb.generation)),
                          make_int(static_cast<std::int64_t>(cb.count))});
 }
@@ -631,9 +720,7 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
 
 
             if (op == "project-nodes") {
-                auto* flat = ev.current_flat();
-                if (flat == nullptr)
-                    flat = ev.workspace_flat();
+                auto* flat = active_workspace(ev, *state);
                 if (flat == nullptr)
                     return bus_error(ev, "unavailable", "no active workspace AST");
                 const std::size_t count = std::min<std::size_t>(flat->size(), 4096);
@@ -661,6 +748,234 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                 }
                 return bus_publish_record(ev, *state, 5, records.data(),
                                           records.size() * sizeof(aura::bus::NodeRecord));
+            }
+
+            // Live patch producer: every committed mutation that carries
+            // rollback data is a real patch of the live AST. The worldline
+            // slot names the rebind in force when it happened, so a reader
+            // can join patches to worldline ids without guessing.
+            if (op == "project-patches") {
+                auto* flat = active_workspace(ev, *state);
+                if (flat == nullptr)
+                    return bus_error(ev, "unavailable", "no active workspace AST");
+                const auto log = flat->mutation_log_view();
+                constexpr std::size_t kMax = 1024;
+                std::vector<aura::bus::PatchRecord> records;
+                records.reserve(std::min<std::size_t>(log.size(), kMax));
+                std::vector<std::uint64_t> slots;
+                std::uint64_t cursor = state->patches_cursor;
+                std::uint64_t skipped = 0;
+                for (const auto& rec : log) {
+                    if (rec.mutation_id <= state->patches_cursor)
+                        continue;
+                    if (!rec.has_rollback_data || rec.target_node == aura::ast::NULL_NODE) {
+                        cursor = rec.mutation_id;
+                        continue;
+                    }
+                    if ((rec.new_value >> 63) != 0 || rec.target_node >= 4096) {
+                        ++skipped;
+                        cursor = rec.mutation_id;
+                        continue;
+                    }
+                    if (records.size() >= kMax)
+                        break;
+                    aura::bus::PatchRecord p{};
+                    p.node = static_cast<std::uint64_t>(rec.target_node);
+                    p.field_offset = rec.field_offset;
+                    p.new_value = rec.new_value;
+                    p.worldline = worldline_slot_for(*state, log, rec.mutation_id);
+                    records.push_back(p);
+                    slots.push_back(p.worldline);
+                    cursor = rec.mutation_id;
+                }
+                if (records.empty()) {
+                    state->patches_cursor = cursor;
+                    return bus_list(ev,
+                                    {bus_string(ev, "ok"), make_int(0),
+                                     make_int(static_cast<std::int64_t>(state->patches_published)),
+                                     make_int(static_cast<std::int64_t>(cursor)),
+                                     make_int(static_cast<std::int64_t>(skipped))});
+                }
+                std::uint64_t first = 0;
+                bool published = false;
+                EvalValue reply = bus_publish_record(
+                    ev, *state, 3, records.data(), records.size() * sizeof(aura::bus::PatchRecord),
+                    &first, &published);
+                if (!published)
+                    return reply;
+                // Extend the per-worldline range; the records in one batch
+                // are contiguous, so the section-relative span is exact.
+                for (std::size_t i = 0; i < records.size(); ++i) {
+                    if (slots[i] == aura::bus::kImageNoIndex)
+                        continue;
+                    const std::uint64_t rel =
+                        section_relative(state->att, aura::bus::SectionKind::Patches,
+                                         first + i * sizeof(aura::bus::PatchRecord));
+                    auto& range = state->patch_range_by_slot[slots[i]];
+                    if (range.second == 0)
+                        range = {rel, sizeof(aura::bus::PatchRecord)};
+                    else {
+                        const std::uint64_t end = std::max(range.first + range.second,
+                                                           rel + sizeof(aura::bus::PatchRecord));
+                        range.first = std::min(range.first, rel);
+                        range.second = end - range.first;
+                    }
+                }
+                state->patches_cursor = cursor;
+                state->patches_published += records.size();
+                // (ok generation count next-cursor skipped)
+                std::int64_t generation = 0;
+                (void)bus_reply_int(ev, reply, 1, &generation);
+                return bus_list(ev, {bus_string(ev, "ok"), make_int(generation),
+                                     make_int(static_cast<std::int64_t>(state->patches_published)),
+                                     make_int(static_cast<std::int64_t>(cursor)),
+                                     make_int(static_cast<std::int64_t>(skipped))});
+            }
+
+            // Live worldline producer: one record per committed rebind, in
+            // mutation order. id is the real mutation id, parent is the
+            // parent mutation's worldline slot, and the patch range is the
+            // span project-patches already wrote for that slot.
+            if (op == "project-worldlines") {
+                auto* flat = active_workspace(ev, *state);
+                if (flat == nullptr)
+                    return bus_error(ev, "unavailable", "no active workspace AST");
+                const auto log = flat->mutation_log_view();
+                constexpr std::size_t kMax = 1024;
+                std::vector<aura::bus::WorldlineRecord> records;
+                records.reserve(std::min<std::size_t>(log.size(), kMax));
+                std::uint64_t cursor = state->worldlines_cursor;
+                for (const auto& rec : log) {
+                    if (rec.mutation_id <= state->worldlines_cursor)
+                        continue;
+                    if (!is_rebind_record(rec))
+                        continue;
+                    if (records.size() >= kMax)
+                        break;
+                    note_rebinds_through(*state, log, rec.mutation_id);
+                    const std::uint64_t slot = state->wl_slot_by_mid.at(rec.mutation_id);
+                    if (slot != state->worldlines_published + records.size())
+                        return bus_error(ev, "validation-failed",
+                                         "worldline slots published out of order");
+                    aura::bus::WorldlineRecord w{};
+                    w.id = rec.mutation_id;
+                    w.parent = aura::bus::kImageNoParent;
+                    if (rec.parent_mutation_id != 0) {
+                        const auto pit = state->wl_slot_by_mid.find(rec.parent_mutation_id);
+                        if (pit != state->wl_slot_by_mid.end() && pit->second < slot)
+                            w.parent = pit->second;
+                    }
+                    w.state = rec.status == aura::ast::MutationStatus::Committed
+                                  ? static_cast<std::uint8_t>(aura::bus::WorldlineState::Kept)
+                                  : static_cast<std::uint8_t>(aura::bus::WorldlineState::Rolled);
+                    w.constraint_result =
+                        static_cast<std::uint8_t>(aura::bus::ConstraintResult::None);
+                    w.metrics_off = aura::bus::kImageNoIndex;
+                    const auto rit = state->patch_range_by_slot.find(slot);
+                    if (rit != state->patch_range_by_slot.end()) {
+                        w.patch_off = rit->second.first;
+                        w.patch_len = rit->second.second;
+                        w.patch_count = static_cast<std::uint32_t>(rit->second.second /
+                                                                   sizeof(aura::bus::PatchRecord));
+                    }
+                    records.push_back(w);
+                    cursor = rec.mutation_id;
+                }
+                if (records.empty()) {
+                    state->worldlines_cursor = cursor;
+                    return bus_list(
+                        ev, {bus_string(ev, "ok"), make_int(0),
+                             make_int(static_cast<std::int64_t>(state->worldlines_published)),
+                             make_int(static_cast<std::int64_t>(cursor))});
+                }
+                bool published = false;
+                EvalValue reply = bus_publish_record(
+                    ev, *state, 4, records.data(),
+                    records.size() * sizeof(aura::bus::WorldlineRecord), nullptr, &published);
+                if (!published)
+                    return reply;
+                state->worldlines_cursor = cursor;
+                state->worldlines_published += records.size();
+                // (ok generation count next-cursor)
+                std::int64_t generation = 0;
+                (void)bus_reply_int(ev, reply, 1, &generation);
+                return bus_list(ev,
+                                {bus_string(ev, "ok"), make_int(generation),
+                                 make_int(static_cast<std::int64_t>(state->worldlines_published)),
+                                 make_int(static_cast<std::int64_t>(cursor))});
+            }
+
+            // Live CCT producer: project the call-site tree of the live
+            // FlatAST. One record per Call node, parent = the enclosing
+            // Call node, mid = the callee symbol; samples=1 marks one
+            // static occurrence (no sampler is attached yet).
+            if (op == "project-cct") {
+                auto* flat = active_workspace(ev, *state);
+                if (flat == nullptr)
+                    return bus_error(ev, "unavailable", "no active workspace AST");
+                const std::size_t count = std::min<std::size_t>(flat->size(), 4096);
+                if (count == 0)
+                    return bus_list(ev, {bus_string(ev, "ok"), make_int(0), make_int(0)});
+                std::vector<std::uint32_t> parent(count, aura::ast::NULL_NODE);
+                for (std::size_t i = 0; i < count; ++i) {
+                    const auto view = flat->get(static_cast<aura::ast::NodeId>(i));
+                    for (const auto child : view.children)
+                        if (child < count)
+                            parent[child] = static_cast<std::uint32_t>(i);
+                }
+                constexpr std::uint64_t kMidMask = (1ull << 62) - 1;
+                std::vector<aura::bus::CctRecord> records;
+                std::vector<std::int64_t> cct_index(count, -1);
+                for (std::size_t i = 0; i < count; ++i) {
+                    const auto view = flat->get(static_cast<aura::ast::NodeId>(i));
+                    if (view.tag != aura::ast::NodeTag::Call)
+                        continue;
+                    aura::bus::CctRecord c{};
+                    c.parent = aura::bus::kImageNoParent;
+                    std::uint64_t owner_define = aura::bus::kImageNoIndex;
+                    std::uint32_t at = parent[i];
+                    for (int steps = 0; steps < 64 && at != aura::ast::NULL_NODE && at < i;
+                         ++steps) {
+                        const auto ancestor = flat->get(static_cast<aura::ast::NodeId>(at));
+                        if (owner_define == aura::bus::kImageNoIndex &&
+                            ancestor.tag == aura::ast::NodeTag::Define)
+                            owner_define = static_cast<std::uint64_t>(at);
+                        if (cct_index[at] >= 0 && c.parent == aura::bus::kImageNoParent) {
+                            c.parent = static_cast<std::uint64_t>(cct_index[at]);
+                        }
+                        at = parent[at];
+                    }
+                    std::uint64_t mid = 0;
+                    if (!view.children.empty()) {
+                        const auto callee = flat->get(view.children[0]);
+                        if (callee.sym_id != aura::ast::INVALID_SYM)
+                            mid = static_cast<std::uint64_t>(callee.sym_id);
+                    }
+                    c.mid_lo = mid & kMidMask;
+                    // Align the record to the enclosing define so a rebind
+                    // is the same node identity here, in PATCHES and in the
+                    // worldline's patch range.
+                    c.node = owner_define != aura::bus::kImageNoIndex
+                                 ? owner_define
+                                 : static_cast<std::uint64_t>(i);
+                    c.samples = 1;
+                    c.self_ns = 0;
+                    c.flags = 1; // static call-site projection
+                    cct_index[i] = static_cast<std::int64_t>(records.size());
+                    records.push_back(c);
+                    if (records.size() >= 1024)
+                        break;
+                }
+                if (records.empty())
+                    return bus_list(ev, {bus_string(ev, "ok"), make_int(0), make_int(0)});
+                bool published = false;
+                EvalValue reply = bus_publish_record(ev, *state, 2, records.data(),
+                                                     records.size() * sizeof(aura::bus::CctRecord),
+                                                     nullptr, &published);
+                if (!published)
+                    return reply;
+                return bus_list(ev, {bus_string(ev, "ok"),
+                                     make_int(static_cast<std::int64_t>(records.size()))});
             }
 
             return bus_error(ev, "unsupported", "unknown bus-call op");

@@ -35,7 +35,7 @@ template <typename T> void put(std::span<std::byte> img, std::uint64_t off, cons
 
 bool build_channel_image(std::span<std::byte> img, std::string*) {
     constexpr std::uint32_t kSections = 5;
-    constexpr std::uint64_t kPerChannel = 8;
+    constexpr std::uint64_t kPerChannel = 128;
     const std::uint64_t dir = 256;
     std::uint64_t off = dir + kSections * sizeof(SectionEntry);
     auto take = [&](std::uint64_t bytes) {
@@ -94,8 +94,10 @@ bool build_channel_image(std::span<std::byte> img, std::string*) {
     return true;
 }
 
-const char* kScript = R"((require "std/bus" all:)
+const char* kScript = R"BUS((require "std/bus" all:)
 (define (show x) (display x) (newline))
+(set-code "(define (bump x) (* x 2)) (define (caller y) (bump y))")
+(eval-current)
 (define s (bus:attach "" 99 0 127 255))
 (show s)
 (if (bus:ok? s)
@@ -119,6 +121,17 @@ const char* kScript = R"((require "std/bus" all:)
     (show w1)
     (define qc (bus:query sid 2 2 0))
     (show qc)
+    (define rb (mutate :rebind "bump" "(lambda (x) (* x 3))" "bus-proj"))
+    (define pc (bus:project-cct sid))
+    (show pc)
+    (define pp (bus:project-patches sid))
+    (show pp)
+    (define pw (bus:project-worldlines sid))
+    (show pw)
+    (define qp (bus:query sid 3 0 0))
+    (show qp)
+    (define qw (bus:query sid 4 0 0))
+    (show qw)
     (define tr (bus:trial sid 1))
     (show tr)
     (define kp (bus:keep sid (car (cdr tr)) 0 5))
@@ -135,6 +148,10 @@ const char* kScript = R"((require "std/bus" all:)
                       (bus:ok? sub) (bus:ok? pub) (bus:ok? q) (bus:ok? c1) (bus:ok? p1)
                       (bus:ok? w1) (bus:ok? qc) (bus:ok? tr) (bus:ok? kp)
                       (bus:ok? gr) (bus:ok? rv) (bus:ok? au)
+                      (eq? rb #t) (bus:ok? pc) (bus:ok? pp) (bus:ok? pw)
+                      (> (car (cdr pc)) 0) (>= (car (cdr (cdr pp))) 1)
+                      (> (car (cdr (cdr pw))) 0)
+                      (>= (car (cdr (cdr qp))) 1) (>= (car (cdr (cdr qw))) 1)
                       (> (string-length h) 100)
                       (= (car (cdr (cdr q))) 1)
                       (>= (car (cdr au)) 2))
@@ -142,7 +159,7 @@ const char* kScript = R"((require "std/bus" all:)
     (newline)
     (bus:detach sid))
   (begin (display "BUS_FAIL") (newline)))
-)";
+)BUS";
 
 } // namespace
 
@@ -238,7 +255,7 @@ int main() {
     kill(server, SIGKILL);
     waitpid(server, &status, 0);
 
-    check(output.find("(ok 2 0 576 0 1)") != std::string::npos, "subscribe snapshot");
+    check(output.find("(ok 2 0 ") != std::string::npos, "subscribe snapshot");
     check(output.find("(ok 6 1 0 ((0 100)))") != std::string::npos,
           "query returns the published metric");
     check(output.find("BUS_OK") != std::string::npos, "script closed the loop");

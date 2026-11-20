@@ -32,6 +32,9 @@ bool build_empty_image(std::span<std::byte> img, std::string*) {
     if (img.size() < kImageHeaderSize)
         return false;
     std::memset(img.data(), 0, img.size());
+    constexpr std::uint64_t kDir = kImageHeaderSize;
+    constexpr std::uint64_t kMetricsOff = kDir + sizeof(SectionEntry);
+    constexpr std::uint64_t kMetricsSlots = 8;
     ImageHeader h{};
     std::memcpy(h.magic, kImageMagic, sizeof(h.magic));
     h.abi_major = kImageAbiMajor;
@@ -43,11 +46,21 @@ bool build_empty_image(std::span<std::byte> img, std::string*) {
     std::memcpy(h.schema_id, &id.a, 8);
     std::memcpy(h.schema_id + 8, &id.b, 8);
     h.layout_version = 1;
-    h.committed_bytes = kImageHeaderSize;
+    h.committed_bytes = kMetricsOff + kMetricsSlots * sizeof(MetricRecord);
     h.committed_gen = 2;
-    h.section_dir_off = kImageHeaderSize;
-    h.section_count = 0;
+    h.section_dir_off = kDir;
+    h.section_count = 1;
     std::memcpy(img.data(), &h, sizeof(h));
+    SectionEntry e{};
+    e.kind = static_cast<std::uint32_t>(SectionKind::Metrics);
+    e.version = 1;
+    e.offset = kMetricsOff;
+    e.element_size = sizeof(MetricRecord);
+    e.capacity = kMetricsSlots * sizeof(MetricRecord);
+    e.generation = 2;
+    e.fingerprint = section_layout_fingerprint(SectionKind::Metrics);
+    e.digest = 14695981039346656037ull;
+    std::memcpy(img.data() + kDir, &e, sizeof(e));
     return true;
 }
 
@@ -82,8 +95,9 @@ bool send_loan(int fd, FrameType type, std::uint64_t session) {
         _exit(22);
     if (!server.wait_disconnect(&err))
         _exit(23);
-    const std::uint64_t reclaimed = server.loans().reclaimed_total();
-    const std::uint64_t outstanding = server.loans().outstanding();
+    const auto& metrics_loans = server.channel_loans(Channel::Metrics);
+    const std::uint64_t reclaimed = metrics_loans.reclaimed_total();
+    const std::uint64_t outstanding = metrics_loans.outstanding();
     std::uint64_t out[5] = {reclaimed, outstanding, server.audit().count(AuditKind::Rollback),
                             server.audit().count(AuditKind::Disconnect),
                             server.audit().count(AuditKind::Keep)};
@@ -157,7 +171,7 @@ int main() {
             const auto vc = validate_image(att.view());
             check(vc.ok(), "attached image validates");
             const ImageHeader h = load_header(att.view());
-            check(h.section_count == 0, "empty image has no sections");
+            check(h.section_count == 1, "image has the metrics section");
 
             // Doorbell is a real eventfd.
             const std::uint64_t one = 1;
@@ -166,7 +180,8 @@ int main() {
             // 8 reserves fit and are granted; the 9th is a hard error.
             FrameHeader reply{};
             std::vector<std::byte> body(kBusMaxControlFrame);
-            std::uint64_t next_offset = 0;
+            std::uint64_t first_offset = 0;
+            bool have_offset = false;
             for (int i = 0; i < 8; ++i) {
                 check(send_loan(att.sock, FrameType::Reserve, att.session), "send Reserve");
                 check(recv_frame(att.sock, &reply, body, &err), "loan grant reply");
@@ -174,8 +189,13 @@ int main() {
                 LoanBody granted{};
                 if (reply.len >= sizeof(granted)) {
                     std::memcpy(&granted, body.data(), sizeof(granted));
-                    check(granted.offset == next_offset, "staging offset advances");
-                    next_offset += granted.length;
+                    if (!have_offset) {
+                        first_offset = granted.offset;
+                        have_offset = true;
+                        check(first_offset >= sizeof(ImageHeader) + sizeof(SectionEntry),
+                              "channel tail starts after the directory");
+                    }
+                    check(granted.offset == first_offset, "channel tail offset is stable");
                 }
             }
             check(send_loan(att.sock, FrameType::Reserve, att.session), "send 9th Reserve");

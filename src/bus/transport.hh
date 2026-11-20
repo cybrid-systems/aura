@@ -10,9 +10,11 @@
 #define AURA_BUS_TRANSPORT_HH
 
 #include "bus/capability.hh"
+#include "bus/channel.hh"
 #include "bus/constraint.hh"
 #include "bus/image.hh"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -215,11 +217,12 @@ struct Attach {
 // returns every outstanding loan on disconnect.
 class LoanLedger {
 public:
-    explicit LoanLedger(std::uint32_t cap = kBusMaxLoans)
+    LoanLedger(std::uint32_t cap = kBusMaxLoans)
         : cap_(cap) {}
     bool reserve();
     void release();
     std::uint64_t reclaim();
+    void set_cap(std::uint32_t cap) { cap_ = cap; }
     [[nodiscard]] std::uint32_t outstanding() const { return outstanding_; }
     [[nodiscard]] std::uint64_t reclaimed_total() const { return reclaimed_; }
 
@@ -259,6 +262,10 @@ public:
     bool wait_disconnect(TransportError* error);
 
     [[nodiscard]] const LoanLedger& loans() const { return loans_; }
+    // Per-channel loan ledgers: one channel cannot starve another (#5125).
+    [[nodiscard]] const LoanLedger& channel_loans(Channel channel) const {
+        return channel_loans_[static_cast<std::size_t>(channel)];
+    }
     [[nodiscard]] const std::string& path() const { return path_; }
     [[nodiscard]] const AuditLog& audit() const { return audit_; }
     [[nodiscard]] const WorldlineLedger& worldlines() const { return worldlines_; }
@@ -276,6 +283,7 @@ private:
     int conn_fd_ = -1;
     std::uint64_t session_ = 0;
     LoanLedger loans_{};
+    std::array<LoanLedger, 6> channel_loans_{};
     std::uint64_t staging_capacity_ = 0;
     std::uint64_t staging_used_ = 0;
     WorkspacePolicy policy_{};

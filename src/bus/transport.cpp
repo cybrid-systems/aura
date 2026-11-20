@@ -432,6 +432,12 @@ bool Server::accept_one(const BuildFn& build, Attach* out, TransportError* error
         return reject(RejectReason::Permission, "no capability allowed for this role", EACCES);
     }
     session_caps_ = granted;
+    if (granted.max_loans > 0) {
+        const auto cap =
+            static_cast<std::uint32_t>(std::min<std::uint64_t>(granted.max_loans, kBusMaxLoans));
+        for (auto& ledger : channel_loans_)
+            ledger.set_cap(cap);
+    }
     root_token_ = caps_table_.issue_root(granted);
     audit_.add(AuditKind::Attach, root_token_, 0, hello.pid);
 
@@ -555,6 +561,8 @@ bool Server::wait_disconnect(TransportError* error) {
             audit_.add(AuditKind::Rollback, root_token_, id);
         audit_.add(AuditKind::Disconnect, root_token_);
         loans_.reclaim();
+        for (auto& ledger : channel_loans_)
+            ledger.reclaim();
         staging_used_ = 0;
         ::close(conn_fd_);
         conn_fd_ = -1;
@@ -672,10 +680,16 @@ bool Server::wait_disconnect(TransportError* error) {
                 if (channel_from(loan.channel, &channel) && image_base_ != nullptr) {
                     if (!require(kCapPublish, loan.channel, 0))
                         break;
+                    auto& ledger = channel_loans_[static_cast<std::size_t>(channel)];
+                    if (!ledger.reserve()) {
+                        deny(EAGAIN, "channel loan quota exhausted");
+                        break;
+                    }
                     std::uint64_t offset = 0;
                     std::string why;
                     if (!channel_reserve({image_base_, image_size_}, channel, loan.length, &offset,
                                          &why)) {
+                        ledger.release();
                         deny(ENOSPC, why);
                         break;
                     }
@@ -716,6 +730,7 @@ bool Server::wait_disconnect(TransportError* error) {
                         deny(EINVAL, why);
                         break;
                     }
+                    channel_loans_[static_cast<std::size_t>(channel)].release();
                     ChannelView view{};
                     channel_view({image_base_, image_size_}, channel, &view);
                     ChannelBody reply{loan.channel, gen, view.count, view.offset, view.length, 0};
@@ -735,9 +750,15 @@ bool Server::wait_disconnect(TransportError* error) {
                 reply_loan(loan);
                 break;
             }
-            case FrameType::Credit:
-                loans_.release();
+            case FrameType::Credit: {
+                const LoanBody loan = loan_from();
+                Channel channel{};
+                if (channel_from(loan.channel, &channel) && image_base_ != nullptr)
+                    channel_loans_[static_cast<std::size_t>(channel)].release();
+                else
+                    loans_.release();
                 break;
+            }
             case FrameType::Trial: {
                 const LoanBody loan = loan_from();
                 if (!require(kCapTrial, loan.channel, 0))

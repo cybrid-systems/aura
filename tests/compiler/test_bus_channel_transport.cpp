@@ -274,6 +274,23 @@ int main() {
         check(code == ENOSPC, "capacity reports ENOSPC");
     }
 
+    // Per-channel loan ledgers (#5125): eight outstanding loans on CCT
+    // exhaust that channel only; metrics/patches still grant.
+    for (int i = 0; i < 8; ++i)
+        reserve(2, sizeof(CctRecord), &offset);
+    {
+        LoanBody body{};
+        body.channel = 2;
+        body.length = sizeof(CctRecord);
+        check(send_frame(att.sock, FrameType::Reserve, att.session,
+                         {reinterpret_cast<const std::byte*>(&body), sizeof(body)}),
+              "Reserve over the CCT loan quota");
+        int code = 0;
+        check(read_error(att.sock, &code, &err), "loan quota error");
+        check(code == EAGAIN, "CCT loan quota reports EAGAIN");
+    }
+    reserve(3, sizeof(PatchRecord), &offset);
+
     att.close_all();
     std::uint64_t server_publishes = 0;
     check(::read(result[0], &server_publishes, sizeof(server_publishes)) ==
