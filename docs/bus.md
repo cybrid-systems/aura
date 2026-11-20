@@ -69,6 +69,10 @@
 - `(bus:query session channel since-generation since-count)` → `(ok generation count snapshot rows)`，rows 是解码后的记录列表。
 - `(bus:publish session key value)` → `(ok generation count)`
 - `(bus:trial session channel)` → `(ok worldline)`；`(bus:keep session worldline node value)` 跑当前约束；`(bus:rollback session worldline)`。
+- `(bus:grant session bits channels loans expires worldline)` → `(ok token)`，只能衰减；`(bus:revoke session token)`。
+- `(bus:audit session worldline)` → `(ok count truncated events)`，事件含 kind/worldline/result/constraint-version/reason。
+- `(bus:grant session bits channels loans expires worldline)` → `(ok token)`，只能衰减；`(bus:revoke session token)`。
+- `(bus:audit session worldline)` → `(ok count truncated events)`，事件含 kind/worldline/result/constraint-version/reason。
 - 失败是 `(error code message)`，不是 `#f`；`bus:ok?` / `bus:code` / `bus:message` 读取。错误码含 `schema-mismatch`、`seals-missing`、`loan-exhausted`、`image-full`、`validation-failed`、`permission`、`unregistered-id`、`transport-failed`。
 
-尚未覆盖：`bus:grant`、`bus:audit`（审计仍在进程内）。
+尚未覆盖：`help` / `(api-reference)` 的面向 agent 说明；审计仍是进程内日志（还没写进映像审计节）。
