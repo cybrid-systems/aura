@@ -1480,6 +1480,23 @@ void RegSplitParts::register_api_reference_primitive(PrimRegistrar add, Evaluato
         }
         out += "\nStandard library: (require std/name) loads with prefix (std/name:func-name)\n";
         out += "Or (require std/name all:) for bare names\n";
+        out += "\nTool bus (require \"std/bus\" all:):\n";
+        out += "  (bus:attach path workspace role caps channels) -> (ok session size caps)\n";
+        out += "  (bus:detach session)\n";
+        out += "  (bus:subscribe session channel) / (bus:query session channel since-gen "
+               "since-count)\n";
+        out += "  (bus:publish session key value) / bus:publish-cct / bus:publish-patch / "
+               "bus:publish-worldline\n";
+        out += "  (bus:trial session channel) / (bus:keep session worldline node value) / "
+               "(bus:rollback session worldline)\n";
+        out += "  (bus:grant session bits channels loans expires worldline) / (bus:revoke session "
+               "token)\n";
+        out += "  (bus:audit session worldline) / (bus:help)\n";
+        out += "  needs: read for subscribe/query/audit; publish for publish*; "
+               "trial/keep/rollback; grant; constraint-write for constraint changes\n";
+        out +=
+            "  failures: (error code message); codes: schema-mismatch seals-missing loan-exhausted "
+            "image-full validation-failed permission unregistered-id transport-failed\n";
         out += "Try it: (require std/list all:) then (sort (list 3 1 2))\n";
         out += "Metrics facade: (engine:metrics) / (require \"std/engine-metrics\" all:)\n";
         const auto id = static_cast<std::uint64_t>(ev.push_string_heap(std::move(out)));

@@ -124,6 +124,48 @@ namespace {
 
 } // namespace
 
+
+EvalValue bus_publish_record(Evaluator& ev, BusSessionState& state, int channel, const void* record,
+                             std::size_t bytes) {
+    auto& att = state.att;
+    aura::bus::LoanBody loan{};
+    loan.channel = static_cast<std::uint64_t>(channel);
+    loan.length = bytes;
+    if (!aura::bus::send_frame(att.sock, aura::bus::FrameType::Reserve, att.session,
+                               {reinterpret_cast<const std::byte*>(&loan), sizeof(loan)}))
+        return bus_error(ev, "transport-failed", "reserve send failed");
+    aura::bus::FrameHeader hdr{};
+    std::vector<std::byte> body(aura::bus::kBusMaxControlFrame);
+    aura::bus::TransportError err;
+    if (!aura::bus::recv_frame(att.sock, &hdr, body, &err))
+        return bus_error(ev, "transport-failed", "reserve reply lost");
+    if (hdr.type == static_cast<std::uint16_t>(aura::bus::FrameType::Error)) {
+        aura::bus::ErrorBody eb{};
+        std::memcpy(&eb, body.data(), std::min(sizeof(eb), body.size()));
+        return bus_error(ev, eb.code == ENOSPC ? "image-full" : "loan-exhausted", eb.message);
+    }
+    aura::bus::LoanBody granted{};
+    std::memcpy(&granted, body.data(), std::min(sizeof(granted), body.size()));
+    std::memcpy(static_cast<std::byte*>(att.base) + granted.offset, record, bytes);
+    aura::bus::LoanBody pub = granted;
+    pub.channel = static_cast<std::uint64_t>(channel);
+    pub.length = bytes;
+    if (!aura::bus::send_frame(att.sock, aura::bus::FrameType::Publish, att.session,
+                               {reinterpret_cast<const std::byte*>(&pub), sizeof(pub)}))
+        return bus_error(ev, "transport-failed", "publish send failed");
+    if (!aura::bus::recv_frame(att.sock, &hdr, body, &err))
+        return bus_error(ev, "transport-failed", "publish reply lost");
+    if (hdr.type == static_cast<std::uint16_t>(aura::bus::FrameType::Error)) {
+        aura::bus::ErrorBody eb{};
+        std::memcpy(&eb, body.data(), std::min(sizeof(eb), body.size()));
+        return bus_error(ev, "validation-failed", eb.message);
+    }
+    aura::bus::ChannelBody cb{};
+    std::memcpy(&cb, body.data(), std::min(sizeof(cb), body.size()));
+    return bus_list(ev, {bus_string(ev, "ok"), make_int(static_cast<std::int64_t>(cb.generation)),
+                         make_int(static_cast<std::int64_t>(cb.count))});
+}
+
 void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
     using aura::compiler::pure_general;
     using aura::compiler::register_prim;
@@ -539,6 +581,52 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                 return bus_list(ev, {bus_string(ev, "ok"),
                                      make_int(static_cast<std::int64_t>(ar.count)),
                                      make_int(static_cast<std::int64_t>(ar.truncated)), listed});
+            }
+
+
+            if (op == "publish-cct" || op == "publish-patch" || op == "publish-worldline") {
+                if (op == "publish-cct") {
+                    std::int64_t parent = 0, mid = 0, node = 0, samples = 0, self_ns = 0;
+                    if (a.size() < 7 || !bus_int(a[2], &parent) || !bus_int(a[3], &mid) ||
+                        !bus_int(a[4], &node) || !bus_int(a[5], &samples) ||
+                        !bus_int(a[6], &self_ns))
+                        return bus_error(ev, "validation-failed", "publish-cct arguments");
+                    aura::bus::CctRecord rec{};
+                    rec.parent = static_cast<std::uint64_t>(parent);
+                    rec.mid_lo = static_cast<std::uint64_t>(mid);
+                    rec.node = static_cast<std::uint64_t>(node);
+                    rec.samples = static_cast<std::uint64_t>(samples);
+                    rec.self_ns = static_cast<std::uint64_t>(self_ns);
+                    return bus_publish_record(ev, *state, 2, &rec, sizeof(rec));
+                }
+                if (op == "publish-patch") {
+                    std::int64_t node = 0, field = 0, value = 0, worldline = 0, generation = 0;
+                    if (a.size() < 7 || !bus_int(a[2], &node) || !bus_int(a[3], &field) ||
+                        !bus_int(a[4], &value) || !bus_int(a[5], &worldline) ||
+                        !bus_int(a[6], &generation))
+                        return bus_error(ev, "validation-failed", "publish-patch arguments");
+                    aura::bus::PatchRecord rec{};
+                    rec.node = static_cast<std::uint64_t>(node);
+                    rec.field_offset = static_cast<std::uint32_t>(field);
+                    rec.new_value = static_cast<std::uint64_t>(value);
+                    rec.worldline = static_cast<std::uint64_t>(worldline);
+                    rec.generation = static_cast<std::uint64_t>(generation);
+                    return bus_publish_record(ev, *state, 3, &rec, sizeof(rec));
+                }
+                std::int64_t id = 0, parent = 0, state_v = 0, constraint = 0, patch_off = 0,
+                             patch_len = 0;
+                if (a.size() < 8 || !bus_int(a[2], &id) || !bus_int(a[3], &parent) ||
+                    !bus_int(a[4], &state_v) || !bus_int(a[5], &constraint) ||
+                    !bus_int(a[6], &patch_off) || !bus_int(a[7], &patch_len))
+                    return bus_error(ev, "validation-failed", "publish-worldline arguments");
+                aura::bus::WorldlineRecord rec{};
+                rec.id = static_cast<std::uint64_t>(id);
+                rec.parent = static_cast<std::uint64_t>(parent);
+                rec.state = static_cast<std::uint8_t>(state_v);
+                rec.constraint_result = static_cast<std::uint8_t>(constraint);
+                rec.patch_off = static_cast<std::uint64_t>(patch_off);
+                rec.patch_len = static_cast<std::uint64_t>(patch_len);
+                return bus_publish_record(ev, *state, 4, &rec, sizeof(rec));
             }
 
             return bus_error(ev, "unsupported", "unknown bus-call op");

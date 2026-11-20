@@ -99,6 +99,14 @@ const char* kScript = R"((require "std/bus" all:)
     (show pub)
     (define q (bus:query sid 1 2 0))
     (show q)
+    (define c1 (bus:publish-cct sid -1 9 0 1 10))
+    (show c1)
+    (define p1 (bus:publish-patch sid 0 8 5 1 4))
+    (show p1)
+    (define w1 (bus:publish-worldline sid 1 -1 1 1 0 40))
+    (show w1)
+    (define qc (bus:query sid 2 2 0))
+    (show qc)
     (define tr (bus:trial sid 1))
     (show tr)
     (define kp (bus:keep sid (car (cdr tr)) 0 5))
@@ -111,7 +119,8 @@ const char* kScript = R"((require "std/bus" all:)
     (show au)
     (define h (bus:help))
     (show (string-length h))
-    (display (if (and (bus:ok? sub) (bus:ok? pub) (bus:ok? q) (bus:ok? tr) (bus:ok? kp)
+    (display (if (and (bus:ok? sub) (bus:ok? pub) (bus:ok? q) (bus:ok? c1) (bus:ok? p1)
+                      (bus:ok? w1) (bus:ok? qc) (bus:ok? tr) (bus:ok? kp)
                       (bus:ok? gr) (bus:ok? rv) (bus:ok? au)
                       (> (string-length h) 100)
                       (= (car (cdr q)) 4)
@@ -155,6 +164,18 @@ int main() {
         WorkspacePolicy policy;
         policy.allow(0, Capability{kCapAll, 0xFF, 99, 0, 0, 0});
         s.set_policy(policy);
+        ConstraintSet set;
+        set.rules.push_back({"allow-small", [](const ConstraintContext& ctx, std::string* why) {
+                                 if (ctx.new_value > 100) {
+                                     if (why)
+                                         *why = "new value exceeds 100";
+                                     return false;
+                                 }
+                                 return true;
+                             }});
+        std::string cwhy;
+        if (!s.install_constraints(set, &cwhy))
+            _exit(25);
         const char r = 'R';
         if (::write(ready[1], &r, 1) != 1)
             _exit(21);

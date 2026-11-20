@@ -8,6 +8,7 @@
 ; Failures are records, not #f: (list "error" CODE MESSAGE).
 
 (export bus:attach bus:detach bus:subscribe bus:publish bus:query
+        bus:publish-cct bus:publish-patch bus:publish-worldline
         bus:trial bus:keep bus:rollback bus:grant bus:revoke bus:audit
         bus:status bus:code bus:message bus:ok? bus:help
         bus:attach? bus:error? bus:record?)
@@ -32,6 +33,16 @@
 ; (bus:publish session key value) -> (ok generation count)
 (define (bus:publish session key value)
   (bus-call "publish-metric" session key value))
+
+; Record projections for the other channels.
+(define (bus:publish-cct session parent mid node samples self-ns)
+  (bus-call "publish-cct" session parent mid node samples self-ns))
+
+(define (bus:publish-patch session node field value worldline generation)
+  (bus-call "publish-patch" session node field value worldline generation))
+
+(define (bus:publish-worldline session id parent state constraint patch-off patch-len)
+  (bus-call "publish-worldline" session id parent state constraint patch-off patch-len))
 
 ; (bus:trial session channel) -> (ok worldline)
 (define (bus:trial session channel)
