@@ -9,7 +9,7 @@
 
 (export bus:attach bus:detach bus:subscribe bus:publish bus:query
         bus:trial bus:keep bus:rollback bus:grant bus:revoke bus:audit
-        bus:status bus:code bus:message bus:ok?
+        bus:status bus:code bus:message bus:ok? bus:help
         bus:attach? bus:error? bus:record?)
 
 ; (bus:attach path workspace role caps channels)
@@ -54,6 +54,21 @@
 ; (bus:audit session worldline) -> (ok count truncated events)
 (define (bus:audit session worldline)
   (bus-call "audit" session worldline))
+
+; Agent-facing help: verbs, capabilities and failure codes.
+(define (bus:help)
+  (string-append
+    "std/bus (v0.3.0) — local tool bus\n"
+    "attach: (bus:attach path workspace role caps channels) -> (ok session size caps)\n"
+    "detach: (bus:detach session)\n"
+    "subscribe: (bus:subscribe session channel) -> (ok generation count offset length snapshot)\n"
+    "publish: (bus:publish session key value) -> (ok generation count); needs publish\n"
+    "query: (bus:query session channel since-generation since-count) -> (ok generation count snapshot rows)\n"
+    "trial: (bus:trial session channel) -> (ok worldline); needs trial\n"
+    "keep/rollback: (bus:keep session worldline node value) / (bus:rollback session worldline); needs keep/rollback and the current constraints pass\n"
+    "grant/revoke: (bus:grant session bits channels loans expires worldline) -> (ok token); (bus:revoke session token); needs grant\n"
+    "audit: (bus:audit session worldline) -> (ok count truncated events); needs read\n"
+    "failures: (error code message); codes: schema-mismatch, seals-missing, loan-exhausted, image-full, validation-failed, permission, unregistered-id, transport-failed\n"))
 
 (define (bus:status record) (car record))
 (define (bus:ok? record) (string=? (car record) "ok"))

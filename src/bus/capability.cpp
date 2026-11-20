@@ -113,7 +113,7 @@ CapabilityTable::CapabilityTable() {
 
 std::uint64_t CapabilityTable::issue_root(const Capability& caps) {
     GrantRecord rec{};
-    rec.token = next_token_++ * 0x9e3779b97f4a7c15ull ^ secret_;
+    rec.token = (next_token_++ * 0x9e3779b97f4a7c15ull ^ secret_) & ((1ull << 48) - 1);
     if (rec.token == 0)
         rec.token = 1;
     rec.caps = caps;
@@ -137,7 +137,7 @@ std::optional<std::uint64_t> CapabilityTable::derive(std::uint64_t parent, const
     if (!attenuates(parent_caps, child, why))
         return std::nullopt;
     GrantRecord rec{};
-    rec.token = next_token_++ * 0x9e3779b97f4a7c15ull ^ secret_;
+    rec.token = (next_token_++ * 0x9e3779b97f4a7c15ull ^ secret_) & ((1ull << 48) - 1);
     if (rec.token == 0)
         rec.token = 1;
     rec.parent = parent;
