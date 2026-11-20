@@ -165,6 +165,16 @@ ImageCheck validate_image(std::span<const std::byte> image);
 // FNV-1a 64 over the committed prefix, for golden comparisons.
 std::uint64_t committed_digest(std::span<const std::byte> image);
 
+// Coordinator-side audit append (#5122/#5126). The audit section is
+// append-only: the record lands in the reserved tail, the section and the
+// header advance to the next even committed generation, and the section
+// digest is recomputed. Returns false when there is no audit section, no
+// room, or the sequence does not increase.
+bool audit_append(std::span<std::byte> image, AuditRecord* record, std::string* why);
+
+// Committed audit-record count (0 when the builder reserved no section).
+std::uint64_t audit_count(std::span<const std::byte> image);
+
 } // namespace aura::bus
 
 #endif

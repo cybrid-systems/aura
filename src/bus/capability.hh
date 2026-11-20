@@ -11,6 +11,7 @@
 #define AURA_BUS_CAPABILITY_HH
 
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 #include <vector>
@@ -138,6 +139,11 @@ struct AuditEvent {
 
 class AuditLog {
 public:
+    // Every event is also handed to this sink (the coordinator mirrors the
+    // log into the image audit section; #5122/#5126).
+    using Sink = std::function<void(const AuditEvent&)>;
+    void set_sink(Sink sink) { sink_ = std::move(sink); }
+
     void add(AuditKind kind, std::uint64_t token, std::uint64_t worldline = 0,
              std::uint64_t detail = 0);
     void add_constraint(AuditKind kind, std::uint64_t token, std::uint64_t worldline,
@@ -148,6 +154,7 @@ public:
 
 private:
     std::vector<AuditEvent> events_;
+    Sink sink_;
 };
 
 // Workspace allow policy. A role is only a hint; the coordinator grants

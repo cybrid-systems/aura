@@ -276,6 +276,12 @@ public:
     [[nodiscard]] const ConstraintStore& constraints() const { return constraints_; }
 
 private:
+    // Mirror one audit event into the in-process log and the image audit
+    // section (when the builder reserved one).
+    void record_audit(AuditKind kind, std::uint64_t token, std::uint64_t worldline = 0,
+                      std::uint64_t detail = 0);
+    void mirror_audit(const AuditEvent& event);
+
     std::string path_;
     std::size_t image_bytes_ = kBusDefaultImageBytes;
     std::uint64_t workspace_id_ = 0;
@@ -290,6 +296,7 @@ private:
     SandboxPreset preset_ = SandboxPreset::Dev;
     CapabilityTable caps_table_{};
     AuditLog audit_{};
+    std::uint64_t audit_seq_ = 0;
     WorldlineLedger worldlines_{};
     Capability session_caps_{};
     std::uint64_t root_token_ = 0;

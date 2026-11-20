@@ -318,6 +318,7 @@ Server::~Server() {
 
 bool Server::listen_at(const std::string& path, std::size_t image_bytes, std::uint64_t workspace_id,
                        TransportError* error) {
+    audit_.set_sink([this](const AuditEvent& event) { mirror_audit(event); });
     path_ = path;
     image_bytes_ = image_bytes;
     workspace_id_ = workspace_id;
@@ -428,7 +429,7 @@ bool Server::accept_one(const BuildFn& build, Attach* out, TransportError* error
     Capability granted = policy_.resolve(hello.role, requested, workspace_id_, &policy_denied);
     granted = clamp_preset(granted, preset_);
     if (hello.caps != 0 && granted.bits == 0) {
-        audit_.add(AuditKind::Denied, 0, 0, hello.role);
+        record_audit(AuditKind::Denied, 0, 0, hello.role);
         return reject(RejectReason::Permission, "no capability allowed for this role", EACCES);
     }
     session_caps_ = granted;
@@ -439,7 +440,6 @@ bool Server::accept_one(const BuildFn& build, Attach* out, TransportError* error
             ledger.set_cap(cap);
     }
     root_token_ = caps_table_.issue_root(granted);
-    audit_.add(AuditKind::Attach, root_token_, 0, hello.pid);
 
     const std::size_t bytes = hello.image_bytes == 0
                                   ? image_bytes_
@@ -525,8 +525,32 @@ bool Server::accept_one(const BuildFn& build, Attach* out, TransportError* error
     staging_used_ = 0;
     image_base_ = static_cast<std::byte*>(base);
     image_size_ = bytes;
+    record_audit(AuditKind::Attach, root_token_, 0, hello.pid);
     // The server keeps conn_fd_ to observe disconnect; Attach::sock stays -1.
     return true;
+}
+
+void Server::record_audit(AuditKind kind, std::uint64_t token, std::uint64_t worldline,
+                          std::uint64_t detail) {
+    audit_.add(kind, token, worldline, detail);
+}
+
+void Server::mirror_audit(const AuditEvent& event) {
+    if (image_base_ == nullptr)
+        return;
+    AuditRecord rec{};
+    rec.seq = ++audit_seq_;
+    rec.kind = static_cast<std::uint16_t>(event.kind);
+    rec.actor = static_cast<std::uint32_t>(event.token);
+    rec.target = event.worldline;
+    rec.value = event.detail != 0 ? event.detail : event.result;
+    std::string why;
+    if (!audit_append({image_base_, image_size_}, &rec, &why)) {
+        // The in-process log stays authoritative for the control-plane
+        // reply; a full/missing image section is a builder choice.
+        (void)why;
+        --audit_seq_;
+    }
 }
 
 bool Server::install_constraints(ConstraintSet set, std::string* why) {
@@ -547,7 +571,7 @@ bool Server::wait_disconnect(TransportError* error) {
         std::memcpy(eb.message, why.data(), n);
         send_frame(conn_fd_, FrameType::Error, session_,
                    {reinterpret_cast<const std::byte*>(&eb), sizeof(eb)});
-        audit_.add(AuditKind::Denied, root_token_);
+        record_audit(AuditKind::Denied, root_token_);
     };
     const auto require = [&](std::uint64_t bit, std::uint64_t channel, std::uint64_t worldline) {
         std::string why;
@@ -558,8 +582,8 @@ bool Server::wait_disconnect(TransportError* error) {
     };
     const auto finish = [&]() {
         for (std::uint64_t id : worldlines_.end_session(root_token_))
-            audit_.add(AuditKind::Rollback, root_token_, id);
-        audit_.add(AuditKind::Disconnect, root_token_);
+            record_audit(AuditKind::Rollback, root_token_, id);
+        record_audit(AuditKind::Disconnect, root_token_);
         loans_.reclaim();
         for (auto& ledger : channel_loans_)
             ledger.reclaim();
@@ -737,7 +761,7 @@ bool Server::wait_disconnect(TransportError* error) {
                     send_frame(conn_fd_, FrameType::Credit, session_,
                                {reinterpret_cast<const std::byte*>(&reply), sizeof(reply)});
                     generation_ = gen;
-                    audit_.add(AuditKind::Publish, root_token_, 0, loan.length);
+                    record_audit(AuditKind::Publish, root_token_, 0, loan.length);
                     break;
                 }
                 if (!require(kCapPublish, loan.channel, loan.worldline))
@@ -764,7 +788,7 @@ bool Server::wait_disconnect(TransportError* error) {
                 if (!require(kCapTrial, loan.channel, 0))
                     break;
                 const std::uint64_t id = worldlines_.open_trial(root_token_, workspace_id_);
-                audit_.add(AuditKind::Trial, root_token_, id);
+                record_audit(AuditKind::Trial, root_token_, id);
                 LoanBody granted = loan;
                 granted.worldline = id;
                 granted.generation = generation_;
@@ -793,8 +817,8 @@ bool Server::wait_disconnect(TransportError* error) {
                     deny(EPERM, why);
                     break;
                 }
-                audit_.add(keep ? AuditKind::Keep : AuditKind::Rollback, root_token_,
-                           loan.worldline);
+                record_audit(keep ? AuditKind::Keep : AuditKind::Rollback, root_token_,
+                             loan.worldline);
                 reply_loan(loan);
                 break;
             }
@@ -818,7 +842,7 @@ bool Server::wait_disconnect(TransportError* error) {
                 reply.token = *token;
                 send_frame(conn_fd_, FrameType::Credit, session_,
                            {reinterpret_cast<const std::byte*>(&reply), sizeof(reply)});
-                audit_.add(AuditKind::Grant, root_token_, 0, *token);
+                record_audit(AuditKind::Grant, root_token_, 0, *token);
                 break;
             }
             case FrameType::Revoke: {
@@ -830,7 +854,7 @@ bool Server::wait_disconnect(TransportError* error) {
                     deny(ENOENT, "unknown grant token");
                     break;
                 }
-                audit_.add(AuditKind::Revoke, root_token_, 0, revoked);
+                record_audit(AuditKind::Revoke, root_token_, 0, revoked);
                 reply_loan(loan);
                 break;
             }

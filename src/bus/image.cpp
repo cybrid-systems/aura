@@ -11,6 +11,7 @@
 #include "bus/image_schema.hh"
 
 #include <array>
+#include <atomic>
 
 namespace aura::bus {
 namespace {
@@ -345,6 +346,60 @@ std::uint64_t committed_digest(std::span<const std::byte> image) {
         hash *= 1099511628211ull;
     }
     return hash;
+}
+
+std::uint64_t audit_count(std::span<const std::byte> image) {
+    SectionEntry e{};
+    if (!find_section(image, SectionKind::Audit, &e))
+        return 0;
+    return e.count;
+}
+
+bool audit_append(std::span<std::byte> image, AuditRecord* record, std::string* why) {
+    const auto fail = [&](const char* text) {
+        if (why)
+            *why = text;
+        return false;
+    };
+    if (record == nullptr)
+        return fail("null audit record");
+    SectionEntry e{};
+    if (!find_section(image, SectionKind::Audit, &e))
+        return fail("audit section is missing");
+    if (e.element_size != sizeof(AuditRecord))
+        return fail("audit element size mismatch");
+    if (e.length > e.capacity || sizeof(AuditRecord) > e.capacity - e.length)
+        return fail("audit section is full");
+    if (e.count > 0) {
+        const AuditRecord last =
+            load_at<AuditRecord>(image, e.offset + (e.count - 1) * e.element_size);
+        if (record->seq <= last.seq)
+            return fail("audit sequence does not increase");
+    }
+    ImageHeader h = load_header(image);
+    const std::uint64_t next_gen = h.committed_gen + 2;
+    record->generation = next_gen;
+    std::memcpy(image.data() + e.offset + e.length, record, sizeof(*record));
+    e.length += sizeof(*record);
+    e.count += 1;
+    e.generation = next_gen;
+    e.digest = fnv_section(image, e.offset, e.length);
+    std::uint64_t at = 0;
+    const ImageHeader dh = load_header(image);
+    for (std::uint32_t i = 0; i < dh.section_count; ++i) {
+        const SectionEntry cand = load_section_entry(image, i);
+        if (cand.kind == static_cast<std::uint32_t>(SectionKind::Audit)) {
+            at = dh.section_dir_off + static_cast<std::uint64_t>(i) * sizeof(SectionEntry);
+            break;
+        }
+    }
+    if (at == 0)
+        return fail("audit directory entry vanished");
+    std::memcpy(image.data() + at, &e, sizeof(e));
+    std::atomic_thread_fence(std::memory_order_release);
+    h.committed_gen = next_gen;
+    std::memcpy(image.data(), &h, sizeof(h));
+    return true;
 }
 
 } // namespace aura::bus

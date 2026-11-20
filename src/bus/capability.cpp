@@ -304,6 +304,8 @@ std::vector<std::uint64_t> WorldlineLedger::end_session(std::uint64_t owner) {
 void AuditLog::add(AuditKind kind, std::uint64_t token, std::uint64_t worldline,
                    std::uint64_t detail) {
     events_.push_back({kind, token, worldline, detail, 0, 0, {}});
+    if (sink_)
+        sink_(events_.back());
 }
 
 void AuditLog::add_constraint(AuditKind kind, std::uint64_t token, std::uint64_t worldline,
@@ -316,6 +318,8 @@ void AuditLog::add_constraint(AuditKind kind, std::uint64_t token, std::uint64_t
     event.constraint_version = version;
     event.reason = std::move(reason);
     events_.push_back(std::move(event));
+    if (sink_)
+        sink_(events_.back());
 }
 
 std::vector<AuditEvent> AuditLog::for_worldline(std::uint64_t worldline) const {

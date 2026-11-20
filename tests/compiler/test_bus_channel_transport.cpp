@@ -36,8 +36,9 @@ template <typename T> T get(std::span<const std::byte> img, std::uint64_t off) {
 }
 
 bool build_channel_image(std::span<std::byte> img, std::string*) {
-    constexpr std::uint32_t kSections = 4;
+    constexpr std::uint32_t kSections = 5;
     constexpr std::uint64_t kPerChannel = 8;
+    constexpr std::uint64_t kAuditSlots = 64;
     const std::uint64_t dir = 256;
     std::uint64_t off = dir + kSections * sizeof(SectionEntry);
     auto take = [&](std::uint64_t bytes) {
@@ -49,6 +50,7 @@ bool build_channel_image(std::span<std::byte> img, std::string*) {
     const std::uint64_t cct = take(kPerChannel * sizeof(CctRecord));
     const std::uint64_t patches = take(kPerChannel * sizeof(PatchRecord));
     const std::uint64_t worldlines = take(kPerChannel * sizeof(WorldlineRecord));
+    const std::uint64_t audit = take(kAuditSlots * sizeof(AuditRecord));
     const std::uint64_t committed = (off + 7) & ~7ull;
     std::memset(img.data(), 0, img.size());
 
@@ -85,6 +87,12 @@ bool build_channel_image(std::span<std::byte> img, std::string*) {
     entry(1, SectionKind::Cct, cct, sizeof(CctRecord));
     entry(2, SectionKind::Patches, patches, sizeof(PatchRecord));
     entry(3, SectionKind::Worldlines, worldlines, sizeof(WorldlineRecord));
+    entry(4, SectionKind::Audit, audit, sizeof(AuditRecord));
+    {
+        SectionEntry ae = get<SectionEntry>(img, dir + 4 * sizeof(SectionEntry));
+        ae.capacity = kAuditSlots * sizeof(AuditRecord);
+        put(img, dir + 4 * sizeof(SectionEntry), ae);
+    }
     return true;
 }
 
@@ -210,7 +218,8 @@ int main() {
     m.value = 100;
     put(base, offset, m);
     publish(1, offset, sizeof(m), &view);
-    check(view.generation == 4 && view.count == 1, "metric committed at generation 4");
+    // Attach's image-audit append already advanced committed_gen 2 -> 4.
+    check(view.generation == 6 && view.count == 1, "metric committed at generation 6");
 
     // Catch up from the old cursor: one record, not a snapshot.
     CatchUpBody cu{};
@@ -290,6 +299,15 @@ int main() {
         check(code == EAGAIN, "CCT loan quota reports EAGAIN");
     }
     reserve(3, sizeof(PatchRecord), &offset);
+
+    // Audit is mirrored into the image audit section (#5122/#5126): the
+    // coordinator appends only in even committed generations, and the
+    // section digest keeps the whole image valid.
+    check(audit_count(base) >= 8, "audit mirrored into the image");
+    {
+        const ImageCheck vc = validate_image(base);
+        check(vc.ok(), "image validates after audit appends");
+    }
 
     att.close_all();
     std::uint64_t server_publishes = 0;
