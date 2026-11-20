@@ -1,0 +1,57 @@
+; std/bus — local tool bus surface (v0.3.0, Issue #5127)
+;
+; Kernel keeps only what Aura cannot do: create/map the shared image,
+; attach across processes, capability checks and the atomic publish
+; generation. One primitive (bus-call) carries those verbs; this module
+; is the stable public surface and the place for status/record helpers.
+;
+; Failures are records, not #f: (list "error" CODE MESSAGE).
+
+(export bus:attach bus:detach bus:subscribe bus:publish bus:query
+        bus:trial bus:keep bus:rollback
+        bus:status bus:code bus:message bus:ok?
+        bus:attach? bus:error? bus:record?)
+
+; (bus:attach path workspace role caps channels)
+; path may be "" to use $XDG_RUNTIME_DIR/aura/bus/<workspace>.sock.
+(define (bus:attach path workspace role caps channels)
+  (bus-call "attach" path workspace role caps channels))
+
+(define (bus:detach session)
+  (bus-call "detach" session))
+
+; (bus:subscribe session channel) -> (ok generation count offset length snapshot)
+(define (bus:subscribe session channel)
+  (bus-call "subscribe" session channel))
+
+; (bus:query session channel since-generation since-count)
+; -> (ok generation count snapshot rows)
+(define (bus:query session channel since-generation since-count)
+  (bus-call "query" session channel since-generation since-count))
+
+; (bus:publish session key value) -> (ok generation count)
+(define (bus:publish session key value)
+  (bus-call "publish-metric" session key value))
+
+; (bus:trial session channel) -> (ok worldline)
+(define (bus:trial session channel)
+  (bus-call "trial" session channel))
+
+; (bus:keep session worldline node value) runs the current constraints.
+(define (bus:keep session worldline node value)
+  (bus-call "keep" session worldline node value))
+
+(define (bus:rollback session worldline)
+  (bus-call "rollback" session worldline))
+
+(define (bus:status record) (car record))
+(define (bus:ok? record) (string=? (car record) "ok"))
+(define (bus:error? record) (string=? (car record) "error"))
+(define (bus:attach? record) (bus:ok? record))
+(define (bus:record? value) (pair? value))
+(define (bus:code record)
+  (if (and (pair? record) (pair? (cdr record))) (car (cdr record)) #f))
+(define (bus:message record)
+  (if (and (pair? record) (pair? (cdr record)) (pair? (cddr record)))
+      (car (cddr record))
+      #f))

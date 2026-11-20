@@ -58,3 +58,17 @@
 - 协调者持有 `ConstraintStore`：一组可执行规则加版本号。安装新集或回滚都要求 `constraint-write`，并分别记 `ConstraintChange` / `ConstraintRollback` 审计。
 - 每次 `KEEP` 先跑当前约束集。失败回 `EPERM`，消息带规则名和原因；worldline 保持 pending，活工作区不变，断开时按 rollback 处理。控制面没有「关闭约束再 keep」的消息，本地 `AURA_SANDBOX=off` 也不影响已附着会话。
 - 审计事件带约束版本、结果和原因，可按 worldline 过滤；自动轮次和人工试跑写同一份日志。
+
+## std/bus 公共面
+
+`std/bus` 只包一个内核桥 `bus-call`（建立共享映像、跨进程附着、能力检查和原子发布代次是 Aura 写不出来的）。Aura 侧动词：
+
+- `(bus:attach path workspace role caps channels)`，path 空串用默认工作区路径；返回 `(ok session size caps)`。
+- `(bus:detach session)`
+- `(bus:subscribe session channel)` → `(ok generation count offset length snapshot)`
+- `(bus:query session channel since-generation since-count)` → `(ok generation count snapshot rows)`，rows 是解码后的记录列表。
+- `(bus:publish session key value)` → `(ok generation count)`
+- `(bus:trial session channel)` → `(ok worldline)`；`(bus:keep session worldline node value)` 跑当前约束；`(bus:rollback session worldline)`。
+- 失败是 `(error code message)`，不是 `#f`；`bus:ok?` / `bus:code` / `bus:message` 读取。错误码含 `schema-mismatch`、`seals-missing`、`loan-exhausted`、`image-full`、`validation-failed`、`permission`、`unregistered-id`、`transport-failed`。
+
+尚未覆盖：`bus:grant`、`bus:audit`（审计仍在进程内）。
