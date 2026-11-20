@@ -1,0 +1,337 @@
+// ──────────────────────────────────────────────────────────────
+//  image.cpp — bus image validation (#5122)
+//
+//  The mapping is untrusted: magic, endianness, header length, sealed
+//  size, schema id, section bounds/alignment, element sizes, the
+//  bit-63 immediate rule and every cross-section index are checked
+//  here. No allocation, no serialization.
+// ──────────────────────────────────────────────────────────────
+#include "bus/image.hh"
+
+#include "bus/image_schema.hh"
+
+#include <array>
+
+namespace aura::bus {
+namespace {
+
+    constexpr bool in_bounds(std::uint64_t off, std::uint64_t len, std::uint64_t total) {
+        return off <= total && len <= total - off;
+    }
+
+    constexpr bool even(std::uint64_t v) {
+        return (v & 1u) == 0;
+    }
+
+    std::uint64_t fnv_section(std::span<const std::byte> image, std::uint64_t off,
+                              std::uint64_t len) {
+        std::uint64_t hash = 14695981039346656037ull;
+        for (std::uint64_t i = 0; i < len; ++i) {
+            hash ^= static_cast<std::uint64_t>(static_cast<unsigned char>(image[off + i]));
+            hash *= 1099511628211ull;
+        }
+        return hash;
+    }
+
+    template <typename T> T load_at(std::span<const std::byte> image, std::uint64_t off) {
+        T v{};
+        if (in_bounds(off, sizeof(T), image.size()))
+            std::memcpy(&v, image.data() + off, sizeof(T));
+        return v;
+    }
+
+    struct SectionView {
+        bool present = false;
+        SectionEntry entry{};
+        std::uint64_t count = 0;
+    };
+
+    SectionView view_section(std::span<const std::byte> image, const ImageHeader& h,
+                             SectionKind kind) {
+        SectionView v{};
+        for (std::uint32_t i = 0; i < h.section_count; ++i) {
+            const SectionEntry e = load_section_entry(image, i);
+            if (e.kind == static_cast<std::uint32_t>(kind)) {
+                v.present = true;
+                v.entry = e;
+                v.count = e.count;
+                return v;
+            }
+        }
+        return v;
+    }
+
+    const std::byte* section_base(std::span<const std::byte> image, const SectionEntry& e) {
+        return image.data() + e.offset;
+    }
+
+    // Parent indexes must point strictly backwards, so a cycle is
+    // structurally impossible and the walk is bounded by the record count.
+    template <typename ParentFn>
+    bool backwards_parents(std::uint64_t count, ParentFn parent_of, std::uint64_t sentinel) {
+        for (std::uint64_t i = 0; i < count; ++i) {
+            const std::uint64_t p = parent_of(i);
+            if (p == sentinel)
+                continue;
+            if (p >= i)
+                return false;
+        }
+        return true;
+    }
+
+} // namespace
+
+ImageCheck validate_image(std::span<const std::byte> image) {
+    if (image.size() < kImageHeaderSize)
+        return {ImageStatus::Truncated, "image is smaller than the 256-byte header"};
+    const ImageHeader h = load_header(image);
+
+    if (std::memcmp(h.magic, kImageMagic, sizeof(h.magic)) != 0)
+        return {ImageStatus::BadMagic, "magic is not AURAIMG"};
+    if (h.endianness != kImageEndianMarker)
+        return {ImageStatus::BadEndian, "byte-order marker is not little-endian"};
+    if (h.header_len != kImageHeaderSize)
+        return {ImageStatus::BadHeader, "header length is not 256"};
+    if (h.abi_major != kImageAbiMajor)
+        return {ImageStatus::BadAbi, "unsupported ABI major"};
+    if (h.image_size != image.size())
+        return {ImageStatus::BadSize, "sealed image size does not match the mapping"};
+    const SchemaId expected_header = header_schema_id();
+    std::array<std::uint8_t, 16> expected_bytes{};
+    std::memcpy(expected_bytes.data(), &expected_header.a, 8);
+    std::memcpy(expected_bytes.data() + 8, &expected_header.b, 8);
+    if (std::memcmp(h.schema_id, expected_bytes.data(), expected_bytes.size()) != 0)
+        return {ImageStatus::BadSchema, "schema id does not match this reader"};
+    if (!even(h.committed_gen))
+        return {ImageStatus::BadGeneration, "committed generation is not stable (odd)"};
+    if (h.committed_bytes < kImageHeaderSize || h.committed_bytes > image.size() ||
+        h.committed_bytes % 8 != 0)
+        return {ImageStatus::BadGeneration, "committed bytes outside the sealed image"};
+    if (h.section_count > 64)
+        return {ImageStatus::BadDirectory, "too many section entries"};
+    if (h.section_dir_off < kImageHeaderSize || h.section_dir_off % 8 != 0 ||
+        !in_bounds(h.section_dir_off,
+                   static_cast<std::uint64_t>(h.section_count) * sizeof(SectionEntry),
+                   h.committed_bytes))
+        return {ImageStatus::BadDirectory, "section directory outside the committed prefix"};
+
+    // ── Directory pass ───────────────────────────────────────────
+    bool seen[static_cast<std::size_t>(SectionKind::Staging) + 1] = {};
+    std::uint64_t total_records = 0;
+    for (std::uint32_t i = 0; i < h.section_count; ++i) {
+        const SectionEntry e = load_section_entry(image, i);
+        if (e.offset < kImageHeaderSize || e.offset % 8 != 0)
+            return {ImageStatus::BadAlignment, "section offset is not 8-aligned past the header"};
+        if (!in_bounds(e.offset, e.length, h.committed_bytes))
+            return {ImageStatus::BadBounds, "section lies outside the committed prefix"};
+        if (e.element_size == 0)
+            return {ImageStatus::BadElementSize, "section element size is zero"};
+        if (e.kind > static_cast<std::uint32_t>(SectionKind::Staging)) {
+            // Unknown section kind: ignored by this version, but still
+            // bounds-checked above.
+            continue;
+        }
+        const auto kind = static_cast<SectionKind>(e.kind);
+        const auto slot = static_cast<std::size_t>(kind);
+        if (seen[slot])
+            return {ImageStatus::BadDuplicateSection, "duplicate section kind"};
+        seen[slot] = true;
+        if (e.version > 1)
+            return {ImageStatus::BadSection, "unsupported section version"};
+        const std::uint64_t expected_size = expected_element_size(kind);
+        if (e.element_size < expected_size)
+            return {ImageStatus::BadElementSize, "section element size is narrower than v1"};
+        if (is_record_section(kind)) {
+            if (e.length % e.element_size != 0 || e.count != e.length / e.element_size)
+                return {ImageStatus::BadElementSize,
+                        "record section count does not match its length"};
+            if (e.count > kImageMaxRecords)
+                return {ImageStatus::BadVisitLimit, "record section exceeds the visit cap"};
+            total_records += e.count;
+        }
+        if (kind == SectionKind::StringTable) {
+            if (static_cast<std::uint64_t>(e.count) * sizeof(StringTableEntry) > e.length)
+                return {ImageStatus::BadElementSize, "string-table entries exceed the section"};
+            if (e.count > kImageMaxRecords)
+                return {ImageStatus::BadVisitLimit, "string table exceeds the visit cap"};
+        }
+        if (kind == SectionKind::Constraints && e.length < sizeof(ConstraintSetHeader))
+            return {ImageStatus::BadSection, "constraints section is shorter than its header"};
+        if (kind != SectionKind::Staging && e.fingerprint != section_layout_fingerprint(kind))
+            return {ImageStatus::BadFingerprint, "section layout fingerprint mismatch"};
+    }
+    if (total_records > kImageMaxTotalRecords)
+        return {ImageStatus::BadVisitLimit, "image exceeds the total record cap"};
+
+    const SectionView strings = view_section(image, h, SectionKind::StringTable);
+    const SectionView symbols = view_section(image, h, SectionKind::SymbolTable);
+    const SectionView nodes = view_section(image, h, SectionKind::Nodes);
+    const SectionView patches = view_section(image, h, SectionKind::Patches);
+    const SectionView metrics = view_section(image, h, SectionKind::Metrics);
+    const SectionView cct = view_section(image, h, SectionKind::Cct);
+    const SectionView worldlines = view_section(image, h, SectionKind::Worldlines);
+
+    // ── String table: entries index UTF-8 bytes inside the section ──
+    if (strings.present) {
+        const auto* base = section_base(image, strings.entry);
+        const std::uint64_t entries_bytes = strings.count * sizeof(StringTableEntry);
+        for (std::uint64_t i = 0; i < strings.count; ++i) {
+            const StringTableEntry s = load_at<StringTableEntry>(
+                image, strings.entry.offset + i * strings.entry.element_size);
+            if (s.off % 8 != 0 || s.off < entries_bytes ||
+                !in_bounds(s.off, s.len, strings.entry.length))
+                return {ImageStatus::BadBounds, "string-table entry outside the section"};
+            (void)base;
+        }
+    }
+
+    // ── Symbol table: names point into the string table ──────────
+    if (symbols.present) {
+        if (!strings.present)
+            return {ImageStatus::BadIndex, "symbol table without a string table"};
+        for (std::uint64_t i = 0; i < symbols.count; ++i) {
+            const SymbolEntry s =
+                load_at<SymbolEntry>(image, symbols.entry.offset + i * symbols.entry.element_size);
+            if (!in_bounds(s.name_off, s.name_len, strings.entry.length))
+                return {ImageStatus::BadIndex, "symbol name outside the string table"};
+        }
+    }
+
+    // ── Nodes: index edges only ─────────────────────────────────
+    if (nodes.present) {
+        for (std::uint64_t i = 0; i < nodes.count; ++i) {
+            const NodeRecord n =
+                load_at<NodeRecord>(image, nodes.entry.offset + i * nodes.entry.element_size);
+            const auto bad_edge = [&](std::uint64_t v) {
+                return v != kImageNoIndex && v >= nodes.count;
+            };
+            if (bad_edge(n.parent) || bad_edge(n.first_child) || bad_edge(n.next_sibling))
+                return {ImageStatus::BadIndex, "node edge outside the node section"};
+            if (n.sym != kImageNoIndex && (!symbols.present || n.sym >= symbols.count))
+                return {ImageStatus::BadIndex, "node symbol outside the symbol table"};
+        }
+    }
+
+    // ── Patches: immediate bit 63 clear, indexes in range ───────
+    if (patches.present) {
+        for (std::uint64_t i = 0; i < patches.count; ++i) {
+            const PatchRecord p =
+                load_at<PatchRecord>(image, patches.entry.offset + i * patches.entry.element_size);
+            if ((p.new_value >> 63) != 0)
+                return {ImageStatus::BadImmediate, "patch value carries bit 63"};
+            if (p.node != kImageNoIndex && (!nodes.present || p.node >= nodes.count))
+                return {ImageStatus::BadIndex, "patch node outside the node section"};
+            if (p.worldline != kImageNoIndex &&
+                (!worldlines.present || p.worldline >= worldlines.count))
+                return {ImageStatus::BadIndex, "patch worldline outside the worldline table"};
+        }
+    }
+
+    // ── Metrics: immediate bit 63 clear, key in the symbol table ─
+    if (metrics.present) {
+        for (std::uint64_t i = 0; i < metrics.count; ++i) {
+            const MetricRecord m =
+                load_at<MetricRecord>(image, metrics.entry.offset + i * metrics.entry.element_size);
+            if ((m.value >> 63) != 0)
+                return {ImageStatus::BadImmediate, "metric value carries bit 63"};
+            if (m.key_sym != kImageNoIndex && (!symbols.present || m.key_sym >= symbols.count))
+                return {ImageStatus::BadIndex, "metric key outside the symbol table"};
+        }
+    }
+
+    // ── CCT: mid low 62 bits, backward parents (acyclic, bounded) ─
+    if (cct.present) {
+        for (std::uint64_t i = 0; i < cct.count; ++i) {
+            const CctRecord c =
+                load_at<CctRecord>(image, cct.entry.offset + i * cct.entry.element_size);
+            if ((c.mid_lo >> 62) != 0)
+                return {ImageStatus::BadImmediate, "CCT mid carries bits above the low 62"};
+            if (c.node != kImageNoIndex && (!nodes.present || c.node >= nodes.count))
+                return {ImageStatus::BadIndex, "CCT node outside the node section"};
+        }
+        const auto parent = [&](std::uint64_t i) {
+            return load_at<CctRecord>(image, cct.entry.offset + i * cct.entry.element_size).parent;
+        };
+        if (!backwards_parents(cct.count, parent, kImageNoParent))
+            return {ImageStatus::BadCycle, "CCT parent does not point backwards"};
+    }
+
+    // ── Worldlines: backward parents, state domain, patch range ──
+    if (worldlines.present) {
+        for (std::uint64_t i = 0; i < worldlines.count; ++i) {
+            const WorldlineRecord w = load_at<WorldlineRecord>(
+                image, worldlines.entry.offset + i * worldlines.entry.element_size);
+            if (w.state > static_cast<std::uint8_t>(WorldlineState::Rejected))
+                return {ImageStatus::BadSection, "worldline state outside the domain"};
+            if (w.constraint_result > static_cast<std::uint8_t>(ConstraintResult::Fail))
+                return {ImageStatus::BadSection, "worldline constraint result outside the domain"};
+            if (w.patch_len != 0) {
+                if (!patches.present || !in_bounds(w.patch_off, w.patch_len, patches.entry.length))
+                    return {ImageStatus::BadBounds,
+                            "worldline patch range outside the patch section"};
+            }
+            if (w.metrics_off != kImageNoIndex &&
+                (!metrics.present || w.metrics_off > metrics.entry.length))
+                return {ImageStatus::BadIndex,
+                        "worldline metric offset outside the metric section"};
+        }
+        const auto parent = [&](std::uint64_t i) {
+            return load_at<WorldlineRecord>(image, worldlines.entry.offset +
+                                                       i * worldlines.entry.element_size)
+                .parent;
+        };
+        if (!backwards_parents(worldlines.count, parent, kImageNoParent))
+            return {ImageStatus::BadCycle, "worldline parent does not point backwards"};
+    }
+
+    // ── Audit: append-only sequence, committed generations only ──
+    const SectionView audit = view_section(image, h, SectionKind::Audit);
+    if (audit.present) {
+        std::uint64_t prev = 0;
+        for (std::uint64_t i = 0; i < audit.count; ++i) {
+            const AuditRecord a =
+                load_at<AuditRecord>(image, audit.entry.offset + i * audit.entry.element_size);
+            if (i > 0 && a.seq <= prev)
+                return {ImageStatus::BadSection, "audit sequence is not increasing"};
+            if (!even(a.generation))
+                return {ImageStatus::BadGeneration, "audit entry records an unstable generation"};
+            prev = a.seq;
+        }
+    }
+
+    // ── Constraints: header plus an inline executable object ─────
+    const SectionView constraints = view_section(image, h, SectionKind::Constraints);
+    if (constraints.present) {
+        const ConstraintSetHeader cs =
+            load_at<ConstraintSetHeader>(image, constraints.entry.offset);
+        if (!in_bounds(cs.object_off, cs.object_len, constraints.entry.length) ||
+            cs.object_off < sizeof(ConstraintSetHeader))
+            return {ImageStatus::BadBounds, "constraint object outside the section"};
+    }
+
+    // Committed section bytes are immutable in that generation.
+    for (std::uint32_t i = 0; i < h.section_count; ++i) {
+        const SectionEntry e = load_section_entry(image, i);
+        if (e.kind > static_cast<std::uint32_t>(SectionKind::Staging))
+            continue;
+        if (static_cast<SectionKind>(e.kind) == SectionKind::Staging)
+            continue;
+        if (fnv_section(image, e.offset, e.length) != e.digest)
+            return {ImageStatus::BadDigest, "committed section bytes changed in place"};
+    }
+
+    return {ImageStatus::Ok, ""};
+}
+
+std::uint64_t committed_digest(std::span<const std::byte> image) {
+    const ImageHeader h = load_header(image);
+    const std::uint64_t end = h.committed_bytes <= image.size() ? h.committed_bytes : image.size();
+    std::uint64_t hash = 14695981039346656037ull;
+    for (std::uint64_t i = 0; i < end; ++i) {
+        hash ^= static_cast<std::uint64_t>(static_cast<unsigned char>(image[i]));
+        hash *= 1099511628211ull;
+    }
+    return hash;
+}
+
+} // namespace aura::bus
