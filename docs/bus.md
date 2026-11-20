@@ -56,7 +56,7 @@
 
 三条投影直接从活工作区取记录，不再由调用方构造：
 
-- `(bus:project-cct session)` → `(ok count)`：遍历当前工作区 FlatAST 的 `Call` 节点，`parent` 指向最近的包含它的 `Call`，`mid` 取被调符号 SymId 的低 62 位，`node` 对齐到最近的包含 `Define`（没有 define 时用调用节点本身），`samples=1`，`flags` 最低位标记这是静态调用点投影（还没有采样器）。
+- `(bus:project-cct session)` → `(ok count live)`：默认遍历当前工作区 FlatAST 的 `Call` 节点做静态调用点投影（`samples=1`，`flags` 最低位标记静态）；设置 `AURA_BUS_CCT=1` 后改为发布线程内的真实调用上下文树：tree-walker 的 `apply_closure` 与 IR 的 `call_closure` 都记录，每个上下文按 (父上下文, 被调身份) 建节点，累加 samples 和独占 self-ns，`parent` 是批内父下标，`live=1`。快照每会话只发布一次，重复调用返回同一 count。Recorder 是 thread-local，多 fiber 生产者按 fiber 投影。
 - `(bus:project-patches session)` → `(ok generation total next-mutation skipped)`：把游标之后每条带回滚数据的已提交变更写成补丁记录；`node`/`field_offset`/`new_value` 来自变更日志，`worldline` 是当时生效的 rebind 槽位。第 63 位置位或节点越界的记录跳过并计入 `skipped`。
 - `(bus:project-worldlines session)` → `(ok generation total next-mutation)`：按变更顺序为每个 rebind 写一条 worldline，`id` 是真实 mutation id，`parent` 是父 mutation 的槽位，状态为 kept/rolled，补丁区间取该槽位已发布的补丁范围。
 

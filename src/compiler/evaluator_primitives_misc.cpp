@@ -17,6 +17,7 @@ module;
 
 #include "bus/transport.hh"
 #include "bus/query.hh"
+#include "compiler/cct_probe.hh"
 
 module aura.compiler.evaluator;
 
@@ -81,6 +82,7 @@ namespace {
         std::uint64_t next_wl_slot = 0;
         std::uint64_t patches_published = 0;
         std::uint64_t worldlines_published = 0;
+        bool cct_published = false;
         std::vector<std::uint64_t> rebind_mids;
         std::unordered_map<std::uint64_t, std::uint64_t> wl_slot_by_mid;
         std::unordered_map<std::uint64_t, std::pair<std::uint64_t, std::uint64_t>>
@@ -914,6 +916,43 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                 auto* flat = active_workspace(ev, *state);
                 if (flat == nullptr)
                     return bus_error(ev, "unavailable", "no active workspace AST");
+                // Live samples win over the static call-site fallback. The
+                // recorder is thread-local, so a multi-fiber producer
+                // publishes per fiber; a snapshot is published once and
+                // re-requested calls report the same count.
+                const auto& recorded = aura::cct::recorder();
+                if (recorded.count > 0) {
+                    if (state->cct_published)
+                        return bus_list(ev, {bus_string(ev, "ok"),
+                                             make_int(static_cast<std::int64_t>(recorded.count)),
+                                             make_int(1)});
+                    constexpr std::uint64_t kMidMask = (1ull << 62) - 1;
+                    std::vector<aura::bus::CctRecord> live;
+                    live.reserve(recorded.count);
+                    for (std::uint32_t i = 0; i < recorded.count; ++i) {
+                        const auto& n = recorded.nodes[i];
+                        aura::bus::CctRecord c{};
+                        c.parent = n.parent == aura::cct::kNoParent
+                                       ? aura::bus::kImageNoParent
+                                       : static_cast<std::uint64_t>(n.parent);
+                        c.mid_lo = n.mid & kMidMask;
+                        c.node = aura::bus::kImageNoIndex; // mid carries the body id
+                        c.samples = n.samples;
+                        c.self_ns = n.self_ns;
+                        c.flags = 0; // live sample, not a static call site
+                        live.push_back(c);
+                    }
+                    bool published = false;
+                    EvalValue reply = bus_publish_record(ev, *state, 2, live.data(),
+                                                         live.size() * sizeof(aura::bus::CctRecord),
+                                                         nullptr, &published);
+                    if (!published)
+                        return reply;
+                    state->cct_published = true;
+                    return bus_list(ev, {bus_string(ev, "ok"),
+                                         make_int(static_cast<std::int64_t>(live.size())),
+                                         make_int(1)});
+                }
                 const std::size_t count = std::min<std::size_t>(flat->size(), 4096);
                 if (count == 0)
                     return bus_list(ev, {bus_string(ev, "ok"), make_int(0), make_int(0)});
@@ -975,8 +1014,9 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                                                      nullptr, &published);
                 if (!published)
                     return reply;
-                return bus_list(ev, {bus_string(ev, "ok"),
-                                     make_int(static_cast<std::int64_t>(records.size()))});
+                return bus_list(ev,
+                                {bus_string(ev, "ok"),
+                                 make_int(static_cast<std::int64_t>(records.size())), make_int(0)});
             }
 
             // Agent query face (#5125): reader-side aggregations over the

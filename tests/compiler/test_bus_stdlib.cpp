@@ -98,6 +98,7 @@ const char* kScript = R"BUS((require "std/bus" all:)
 (define (show x) (display x) (newline))
 (set-code "(define (bump x) (* x 2)) (define (caller y) (bump y))")
 (eval-current)
+(caller 1) (caller 1) (caller 1) (caller 1) (caller 1)
 (define s (bus:attach "" 99 0 127 255))
 (show s)
 (if (bus:ok? s)
@@ -151,7 +152,8 @@ const char* kScript = R"BUS((require "std/bus" all:)
                       (bus:ok? w1) (bus:ok? qc) (bus:ok? tr) (bus:ok? kp)
                       (bus:ok? gr) (bus:ok? rv) (bus:ok? au)
                       (eq? rb #t) (bus:ok? pc) (bus:ok? pp) (bus:ok? pw)
-                      (> (car (cdr pc)) 0) (bus:ok? hs) (> (car (cdr hs)) 0)
+                      (> (car (cdr pc)) 0) (= (car (cdr (cdr pc))) 1)
+                      (bus:ok? hs) (> (car (cdr hs)) 0)
                       (>= (car (cdr (cdr pp))) 1)
                       (> (car (cdr (cdr pw))) 0)
                       (>= (car (cdr (cdr qp))) 1) (>= (car (cdr (cdr qw))) 1)
@@ -241,6 +243,7 @@ int main() {
         dup2(out[1], STDERR_FILENO);
         ::close(out[1]);
         setenv("AURA_SANDBOX", "off", 1);
+        setenv("AURA_BUS_CCT", "1", 1);
         execl(aura_path.c_str(), "aura", script_path.c_str(), static_cast<char*>(nullptr));
         _exit(24);
     }

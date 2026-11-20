@@ -28,6 +28,7 @@ module;
 #include "compiler/user_arity.hh"             // Issue #4467: call-site procedure arity
 #include "compiler/type_feedback.h"           // Issue #4568: tree-walker lattices
 #include "compiler/env_frame_arena.hh"        // Issue #5057: catchable arena exhaustion
+#include "compiler/cct_probe.hh"              // Issue #5122: live calling-context samples
 #include "compiler/ir_inflight_roots.hh"      // Issue #4617: IR in-flight roots for the TW sweep
 #include "codec_inflight_roots.hh"            // Issue #5294: defer marks during a codec decode
 #include "core/ownership.hh"                  // #4936 immortal<T>
@@ -2307,6 +2308,14 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
             }
         }
     }
+    // Issue #5122: bracket the call with the live CCT probe. No-op unless
+    // AURA_BUS_CCT=1; the callee identity is its body node (or name hash
+    // for an IR-only closure).
+    const std::uint64_t cct_mid = !cl_found ? 0
+                                            : (cl_copy.body_id != aura::ast::NULL_NODE
+                                                   ? static_cast<std::uint64_t>(cl_copy.body_id)
+                                                   : aura::cct::mix_name(cl_copy.name));
+    aura::cct::Scope cct_scope(cct_mid, cl_found ? cl_copy.body_id : 0);
     // Issue #3210: cl_copy.flat / cl_copy.pool are stack copies — closures_
     // is unordered_map so &cl.flat is not a lasting void** slot. Note as
     // observe-only canaries for the apply window so concurrent Moving

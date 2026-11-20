@@ -17,6 +17,7 @@ module;
 #include <variant>
 #include <vector>
 #include "core/fiber_context.hh" // Issue #4716: fiber-local execution context
+#include "compiler/cct_probe.hh" // Issue #5122: live calling-context samples
 #include "runtime_shared.h"
 #include "core/diag_print.hh" // #4936 eprintln_nothrow
 #include "aura_jit_bridge.h"  // #2129: aura_get_aot_live_linear_state_fingerprint
@@ -1189,6 +1190,10 @@ EvalResult IRInterpreter::call_closure(std::uint64_t closure_id, std::span<const
         context_.metrics->closure_calls_total.fetch_add(1, std::memory_order_relaxed);
         context_.metrics->closure_ir_calls.fetch_add(1, std::memory_order_relaxed);
     }
+
+    // Issue #5122: record the IR call context for the live CCT. No-op
+    // unless AURA_BUS_CCT=1; the callee identity is its IR function name.
+    aura::cct::Scope cct_scope(aura::cct::mix_name(callee_func.name), callee_func.id);
 
     // Reentrant: orch:parallel applies a lambda this same interpreter
     // minted while run_function still holds the outer frame. clear()
