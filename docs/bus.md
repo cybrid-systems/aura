@@ -75,6 +75,34 @@
 - 协调者同时把每个事件追加进映像的审计节（若构建方预留了该节）：只追加、序号递增、只写下一个偶数代次，并重算节摘要；节满或没预留时控制面日志仍然完整，映像写入跳过。`AuditRecord` 只装 kind/actor/target/value，约束原因和版本仍从控制面查询读取。
 - 当前约束集同时写进映像的约束节：`ConstraintSetHeader` 带版本号，对象区是每条规则的 `(name, EDSL source)` 序列。附着时和每次 `install_constraints` 后刷新，`(bus:constraints session)` 读回 `(ok version count rows)`，每行 `(name source)`；执行仍用协调者持有的编译后谓词，源文本供其它工具核对与复现。
 
+## 协调者宿主(#5128)
+
+#5121 的进程模型:协调者就是拥有活工作区的那个 Aura 进程,不另起守护进程。
+`std/bus` 的宿主面把它接上:
+
+- `(bus:host workspace [image-bytes] [path])` → `(ok path workspace)`。在本进程
+  启动协调者:监听默认套接字(或指定路径),按交付的映像 schema 建初始映像
+  (五条记录频道 + 约束节),后台线程服务对端。按工作区幂等;重复调用返回同一
+  路径。映像默认 256 MiB,可指定更小。
+- `(bus:unhost workspace)` 停止服务、收回线程、unlink 套接字;
+  `(bus:host? workspace)` → `(ok 0|1)`。
+- 角色约定:`1` perf、`2` harness、`3` maintainer、`0` 通用。宿主策略允许这四个
+  角色请求能力子集;未知角色拒绝。沙箱预设取自 `AURA_SANDBOX`(ci 去
+  constraint-write,prod 再去 grant),附着时裁剪。
+- 内置可安装约束名(注册表,默认不安装——约束由专家下发,不内置生效):
+  `allow-small`(new-value ≤ 100,#5127 测试契约)与 `value-fits-immediate`
+  (第 63 位为 0 的映像立即数不变量)。持 constraint-write 的对端用
+  `bus:install-constraint` 安装注册名;未注册名拒绝。
+- **当前为单对端顺序服务**:accept → 服务到断开 → 再 accept。断开回收(未 KEEP
+  试改回滚、loan 收回)是交付语义。三工具同时附着的多对端服务是跟进项;
+  服务循环、能力、loan、约束与审计不变,只扩每对端状态。
+- 宿主进程自己也可以 `bus:attach` 成为对端(同进程经套接字,统一路径)。
+
+测试:`test_bus_host`(#5128)——两个真实 aura 进程,只用 std/bus:宿主脚本
+`bus:host` 后服务,对端脚本附着/发布/查询/trial/约束下 KEEP 与拒绝/ROLLBACK/
+读同一份审计;另覆盖无宿主附着的 transport-failed、同进程宿主+附着、幂等与
+unhost 后套接字清理。
+
 ## std/bus 公共面
 
 `std/bus` 只包一个内核桥 `bus-call`（建立共享映像、跨进程附着、能力检查和原子发布代次是 Aura 写不出来的）。Aura 侧动词：

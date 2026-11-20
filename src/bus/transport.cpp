@@ -316,6 +316,15 @@ Server::~Server() {
         ::unlink(path_.c_str());
 }
 
+void Server::stop() {
+    // Shutdown, not close: the serving thread may be blocked in accept
+    // or recv on these fds and must observe the error before closing.
+    if (listen_fd_ >= 0)
+        ::shutdown(listen_fd_, SHUT_RDWR);
+    if (conn_fd_ >= 0)
+        ::shutdown(conn_fd_, SHUT_RDWR);
+}
+
 bool Server::listen_at(const std::string& path, std::size_t image_bytes, std::uint64_t workspace_id,
                        TransportError* error) {
     audit_.set_sink([this](const AuditEvent& event) { mirror_audit(event); });

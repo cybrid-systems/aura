@@ -16,6 +16,7 @@ module;
 #include <unordered_map>
 
 #include "bus/transport.hh"
+#include "bus/host.hh"
 #include "bus/query.hh"
 #include "compiler/cct_probe.hh"
 
@@ -122,7 +123,11 @@ namespace {
             case ENOSPC:
                 return "image-full";
             case ENOENT:
-                return "unregistered-id";
+                // #5128: on attach, ENOENT is "no bus at this path" (the
+                // socket does not exist) — a transport/discovery failure,
+                // not an unknown session id. Session lookups report
+                // unregistered-id directly, not through this mapping.
+                return "transport-failed";
             case EINVAL:
                 return "validation-failed";
             case EPROTO:
@@ -360,6 +365,57 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                 if (g_bus_sessions.erase(sid) == 0)
                     return bus_error(ev, "unregistered-id", "unknown session");
                 return bus_list(ev, {bus_string(ev, "ok")});
+            }
+
+            // Issue #5128: the workspace owner hosts the bus (#5121's
+            // process model). host is idempotent per workspace; the
+            // serving thread is the delivered single-peer loop.
+            if (op == "host") {
+                std::int64_t ws = 0, bytes = 0;
+                if (a.size() < 2 || !bus_int(a[1], &ws))
+                    return bus_error(ev, "validation-failed", "host needs a workspace id");
+                if (a.size() >= 3 && !bus_int(a[2], &bytes))
+                    return bus_error(ev, "validation-failed", "host image bytes must be an integer");
+                std::string path;
+                if (a.size() >= 4) {
+                    if (!is_string(a[3]))
+                        return bus_error(ev, "validation-failed", "host path must be a string");
+                    path = ev.string_at_or(as_string_idx(a[3]));
+                }
+                aura::bus::HostOptions opts;
+                opts.workspace = static_cast<std::uint64_t>(ws);
+                opts.image_bytes = bytes > 0 ? static_cast<std::size_t>(bytes) : 0;
+                opts.path = path;
+                if (const char* sb = ::getenv("AURA_SANDBOX")) {
+                    const std::string preset = sb;
+                    if (preset == "ci")
+                        opts.preset = aura::bus::SandboxPreset::Ci;
+                    else if (preset == "prod")
+                        opts.preset = aura::bus::SandboxPreset::Prod;
+                }
+                std::string out_path, why;
+                if (!aura::bus::host_start(opts, &out_path, &why))
+                    return bus_error(ev, "transport-failed", why);
+                return bus_list(ev, {bus_string(ev, "ok"), bus_string(ev, out_path),
+                                     make_int(ws)});
+            }
+
+            if (op == "unhost") {
+                std::int64_t ws = 0;
+                if (a.size() < 2 || !bus_int(a[1], &ws))
+                    return bus_error(ev, "validation-failed", "unhost needs a workspace id");
+                std::string why;
+                if (!aura::bus::host_stop(static_cast<std::uint64_t>(ws), &why))
+                    return bus_error(ev, "unregistered-id", why);
+                return bus_list(ev, {bus_string(ev, "ok")});
+            }
+
+            if (op == "host?") {
+                std::int64_t ws = 0;
+                if (a.size() < 2 || !bus_int(a[1], &ws))
+                    return bus_error(ev, "validation-failed", "host? needs a workspace id");
+                return bus_list(ev, {bus_string(ev, "ok"),
+                                     make_int(aura::bus::host_active(static_cast<std::uint64_t>(ws)) ? 1 : 0)});
             }
 
             BusSessionState* state = session(1);

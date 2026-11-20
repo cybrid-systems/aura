@@ -273,6 +273,10 @@ public:
     // loan, Credit releases one. Returns true when the peer disconnected.
     bool wait_disconnect(TransportError* error);
 
+    // Issue #5128: unblock accept_one / wait_disconnect so a host thread
+    // can stop. Shutdown only; the serving thread still closes the fds.
+    void stop();
+
     [[nodiscard]] const LoanLedger& loans() const { return loans_; }
     // Per-channel loan ledgers: one channel cannot starve another (#5125).
     [[nodiscard]] const LoanLedger& channel_loans(Channel channel) const {

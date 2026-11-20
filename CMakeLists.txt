@@ -1871,7 +1871,7 @@ add_test(NAME test_error_kind_names_wire_verification COMMAND ./test_error_kind_
 # image_schema.cpp (non-import-std); the validator and test are meta-free.
 add_library(aura-bus STATIC src/bus/image.cpp src/bus/image_schema.cpp src/bus/transport.cpp
                                  src/bus/capability.cpp src/bus/channel.cpp src/bus/constraint.cpp
-                                 src/bus/query.cpp)
+                                 src/bus/query.cpp src/bus/host.cpp)
 target_include_directories(aura-bus PUBLIC ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(aura PRIVATE aura-bus)
 # Issue #5127/#5122: evaluator_primitives_misc.cpp's bus-call bridge
@@ -1949,6 +1949,15 @@ target_compile_features(test_bus_stdlib PUBLIC cxx_std_26)
 target_link_libraries(test_bus_stdlib PRIVATE aura-bus)
 aura_strict_test_warnings(tests/compiler/test_bus_stdlib.cpp)
 add_test(NAME test_bus_stdlib_5127 COMMAND ./test_bus_stdlib)
+
+# Issue #5128: the workspace owner hosts the bus from Aura (bus:host);
+# two real aura processes, std/bus only — no C++ coordinator harness.
+add_executable(test_bus_host tests/compiler/test_bus_host.cpp)
+target_include_directories(test_bus_host PRIVATE src)
+target_compile_features(test_bus_host PUBLIC cxx_std_26)
+target_link_libraries(test_bus_host PRIVATE aura-bus)
+aura_strict_test_warnings(tests/compiler/test_bus_host.cpp)
+add_test(NAME test_bus_host_5128 COMMAND ./test_bus_host)
 # Issue #268 / #178: NodeView roundtrip (split TU). Full AC needs -freflection
 # on the reflect TU only — import std / aura.core.ast must not mix with <meta>
 # (g++ 16.1.0; hard errors, not silent ICE). Bridge: test_issue_178_bridge.h
