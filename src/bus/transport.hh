@@ -135,6 +135,8 @@ struct CatchUpBody {
 
 struct AuditQueryBody {
     std::uint64_t worldline = 0; // 0 = all events
+    std::uint64_t actor = 0;     // 0 = all tokens
+    std::uint64_t since_seq = 0; // 1-based event sequence; 0 = from the start
     std::uint64_t reserved = 0;
 };
 
@@ -144,6 +146,8 @@ struct AuditWire {
     std::uint64_t worldline = 0;
     std::uint64_t result = 0;
     std::uint64_t version = 0;
+    std::uint64_t timestamp_ms = 0;
+    std::uint64_t seq = 0; // 1-based position in the coordinator log
     char reason[64] = {};
 };
 
@@ -175,8 +179,8 @@ static_assert(sizeof(HelloBody) == 80);
 static_assert(sizeof(HelloOkBody) == 64);
 static_assert(sizeof(ErrorBody) == 64);
 static_assert(sizeof(HelloRejectBody) == 64);
-static_assert(sizeof(AuditQueryBody) == 16);
-static_assert(sizeof(AuditWire) == 104);
+static_assert(sizeof(AuditQueryBody) == 32);
+static_assert(sizeof(AuditWire) == 120);
 static_assert(sizeof(AuditReply) == 16);
 static_assert(sizeof(ChannelBody) == 48);
 static_assert(sizeof(CatchUpBody) == 32);

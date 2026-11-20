@@ -4,10 +4,17 @@
 #include "bus/capability.hh"
 
 #include <algorithm>
+#include <chrono>
 #include <random>
 
 namespace aura::bus {
 namespace {
+
+    std::uint64_t audit_now_ms() {
+        using namespace std::chrono;
+        return static_cast<std::uint64_t>(
+            duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count());
+    }
 
     bool subset_bits(std::uint64_t child, std::uint64_t parent) {
         return (child & ~parent) == 0;
@@ -303,7 +310,13 @@ std::vector<std::uint64_t> WorldlineLedger::end_session(std::uint64_t owner) {
 
 void AuditLog::add(AuditKind kind, std::uint64_t token, std::uint64_t worldline,
                    std::uint64_t detail) {
-    events_.push_back({kind, token, worldline, detail, 0, 0, {}});
+    AuditEvent event{};
+    event.kind = kind;
+    event.token = token;
+    event.worldline = worldline;
+    event.detail = detail;
+    event.timestamp_ms = audit_now_ms();
+    events_.push_back(std::move(event));
     if (sink_)
         sink_(events_.back());
 }
@@ -316,6 +329,7 @@ void AuditLog::add_constraint(AuditKind kind, std::uint64_t token, std::uint64_t
     event.worldline = worldline;
     event.result = result;
     event.constraint_version = version;
+    event.timestamp_ms = audit_now_ms();
     event.reason = std::move(reason);
     events_.push_back(std::move(event));
     if (sink_)

@@ -218,8 +218,9 @@ int main() {
     m.value = 100;
     put(base, offset, m);
     publish(1, offset, sizeof(m), &view);
-    // Attach's image-audit append already advanced committed_gen 2 -> 4.
-    check(view.generation == 6 && view.count == 1, "metric committed at generation 6");
+    // Attach + Subscribe audit appends advanced committed_gen 2 -> 4 -> 6
+    // before the first publish (this image has no constraints section).
+    check(view.generation == 8 && view.count == 1, "metric committed at generation 8");
 
     // Catch up from the old cursor: one record, not a snapshot.
     CatchUpBody cu{};

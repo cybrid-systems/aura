@@ -631,11 +631,17 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
             }
 
             if (op == "audit") {
-                std::int64_t worldline = 0;
+                std::int64_t worldline = 0, actor = 0, since_seq = 0;
                 if (a.size() >= 3 && !bus_int(a[2], &worldline))
                     return bus_error(ev, "validation-failed", "audit worldline must be an integer");
+                if (a.size() >= 4 && !bus_int(a[3], &actor))
+                    return bus_error(ev, "validation-failed", "audit actor must be an integer");
+                if (a.size() >= 5 && !bus_int(a[4], &since_seq))
+                    return bus_error(ev, "validation-failed", "audit since-seq must be an integer");
                 aura::bus::AuditQueryBody req{};
                 req.worldline = static_cast<std::uint64_t>(worldline);
+                req.actor = static_cast<std::uint64_t>(actor);
+                req.since_seq = static_cast<std::uint64_t>(since_seq);
                 if (!aura::bus::send_frame(att.sock, aura::bus::FrameType::AuditQuery, att.session,
                                            {reinterpret_cast<const std::byte*>(&req), sizeof(req)}))
                     return bus_error(ev, "transport-failed", "audit send failed");
@@ -661,9 +667,12 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                     std::memcpy(&w, body.data() + at, sizeof(w));
                     rows.push_back(bus_list(
                         ev, {make_int(static_cast<std::int64_t>(w.kind)),
+                             make_int(static_cast<std::int64_t>(w.token)),
                              make_int(static_cast<std::int64_t>(w.worldline)),
                              make_int(static_cast<std::int64_t>(w.result)),
                              make_int(static_cast<std::int64_t>(w.version)),
+                             make_int(static_cast<std::int64_t>(w.timestamp_ms)),
+                             make_int(static_cast<std::int64_t>(w.seq)),
                              bus_string(
                                  ev, std::string(w.reason, strnlen(w.reason, sizeof(w.reason))))}));
                 }

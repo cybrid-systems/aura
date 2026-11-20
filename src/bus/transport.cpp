@@ -662,6 +662,8 @@ bool Server::wait_disconnect(TransportError* error) {
                                       view.offset,  view.length,     1};
                     send_frame(conn_fd_, FrameType::Credit, session_,
                                {reinterpret_cast<const std::byte*>(&reply), sizeof(reply)});
+                    if (header.type == static_cast<std::uint16_t>(FrameType::Subscribe))
+                        record_audit(AuditKind::Subscribe, root_token_, 0, loan.channel);
                     break;
                 }
                 if (require(kCapRead, loan.channel, 0))
@@ -675,11 +677,24 @@ bool Server::wait_disconnect(TransportError* error) {
                 std::memcpy(&request, body.data(), sizeof(request));
                 if (!require(kCapRead, 0, 0))
                     break;
-                std::vector<AuditEvent> events;
-                if (request.worldline == 0)
-                    events = audit_.events();
-                else
-                    events = audit_.for_worldline(request.worldline);
+                struct Selected {
+                    std::uint64_t seq = 0;
+                    const AuditEvent* event = nullptr;
+                };
+                std::vector<Selected> events;
+                const auto& all = audit_.events();
+                events.reserve(all.size());
+                for (std::size_t i = 0; i < all.size(); ++i) {
+                    const std::uint64_t seq = static_cast<std::uint64_t>(i) + 1;
+                    const AuditEvent& e = all[i];
+                    if (request.since_seq != 0 && seq < request.since_seq)
+                        continue;
+                    if (request.worldline != 0 && e.worldline != request.worldline)
+                        continue;
+                    if (request.actor != 0 && e.token != request.actor)
+                        continue;
+                    events.push_back({seq, &e});
+                }
                 constexpr std::size_t kMaxEvents = 20;
                 const std::size_t count = std::min(events.size(), kMaxEvents);
                 std::vector<std::byte> out(sizeof(AuditReply) + count * sizeof(AuditWire));
@@ -689,14 +704,16 @@ bool Server::wait_disconnect(TransportError* error) {
                 std::memcpy(out.data(), &reply, sizeof(reply));
                 for (std::size_t i = 0; i < count; ++i) {
                     AuditWire wire{};
-                    wire.kind = static_cast<std::uint64_t>(events[i].kind);
-                    wire.token = events[i].token;
-                    wire.worldline = events[i].worldline;
-                    wire.result = events[i].result;
-                    wire.version = events[i].constraint_version;
-                    const std::size_t n =
-                        std::min(events[i].reason.size(), sizeof(wire.reason) - 1);
-                    std::memcpy(wire.reason, events[i].reason.data(), n);
+                    const AuditEvent& e = *events[i].event;
+                    wire.kind = static_cast<std::uint64_t>(e.kind);
+                    wire.token = e.token;
+                    wire.worldline = e.worldline;
+                    wire.result = e.result;
+                    wire.version = e.constraint_version;
+                    wire.timestamp_ms = e.timestamp_ms;
+                    wire.seq = events[i].seq;
+                    const std::size_t n = std::min(e.reason.size(), sizeof(wire.reason) - 1);
+                    std::memcpy(wire.reason, e.reason.data(), n);
                     std::memcpy(out.data() + sizeof(reply) + i * sizeof(AuditWire), &wire,
                                 sizeof(wire));
                 }

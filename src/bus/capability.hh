@@ -134,6 +134,7 @@ struct AuditEvent {
     std::uint64_t detail = 0;
     std::uint64_t result = 0;
     std::uint64_t constraint_version = 0;
+    std::uint64_t timestamp_ms = 0;
     std::string reason;
 };
 

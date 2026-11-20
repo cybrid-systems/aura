@@ -13,6 +13,7 @@
         bus:hotspots bus:diff-worldlines
         bus:constraints
         bus:install-constraint bus:rollback-constraints
+        bus:audit-filter
         bus:trial bus:keep bus:rollback bus:grant bus:revoke bus:audit
         bus:status bus:code bus:message bus:ok? bus:help
         bus:attach? bus:error? bus:record?)
@@ -111,6 +112,11 @@
 ; (bus:audit session worldline) -> (ok count truncated events)
 (define (bus:audit session worldline)
   (bus-call "audit" session worldline))
+
+; (bus:audit-filter session worldline actor since-seq) filters the same log;
+; 0 means "all" for worldline/actor, 1 starts at the first event.
+(define (bus:audit-filter session worldline actor since-seq)
+  (bus-call "audit" session worldline actor since-seq))
 
 ; Agent-facing help: verbs, capabilities and failure codes.
 (define (bus:help)

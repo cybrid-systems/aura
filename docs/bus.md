@@ -71,7 +71,7 @@
 - 协调者持有 `ConstraintStore`：一组可执行规则加版本号。安装新集或回滚都要求 `constraint-write`，并分别记 `ConstraintChange` / `ConstraintRollback` 审计。
 - 工作区允许策略现在是同一份版本化集合的一部分（规则-only 安装保留当前策略；带策略的安装原子替换两者，回滚一起恢复）。`(bus:install-constraint session name source)` 在 `constraint-write` 下把规则源下发给协调者；协调者只接受已注册的 `name`（注册表把名字绑定到编译后谓词），未注册直接拒绝，不会静默放行。`(bus:rollback-constraints session)` 回到上一版本。两者都写 `ConstraintChange` / `ConstraintRollback` 审计并刷新映像约束节。
 - 每次 `KEEP` 先跑当前约束集。失败回 `EPERM`，消息带规则名和原因；worldline 保持 pending，活工作区不变，断开时按 rollback 处理。控制面没有「关闭约束再 keep」的消息，本地 `AURA_SANDBOX=off` 也不影响已附着会话。
-- 审计事件带约束版本、结果和原因，可按 worldline 过滤；自动轮次和人工试跑写同一份日志。
+- 审计事件带约束版本、结果、原因、时间戳和发起 token；订阅、发布、trial、约束结果、KEEP/ROLLBACK、grant/revoke、断开都记录。可按 worldline / actor / since-seq 过滤（`bus:audit`、`bus:audit-filter`），自动轮次和人工试跑写同一份日志。
 - 协调者同时把每个事件追加进映像的审计节（若构建方预留了该节）：只追加、序号递增、只写下一个偶数代次，并重算节摘要；节满或没预留时控制面日志仍然完整，映像写入跳过。`AuditRecord` 只装 kind/actor/target/value，约束原因和版本仍从控制面查询读取。
 - 当前约束集同时写进映像的约束节：`ConstraintSetHeader` 带版本号，对象区是每条规则的 `(name, EDSL source)` 序列。附着时和每次 `install_constraints` 后刷新，`(bus:constraints session)` 读回 `(ok version count rows)`，每行 `(name source)`；执行仍用协调者持有的编译后谓词，源文本供其它工具核对与复现。
 
@@ -87,9 +87,9 @@
 - `(bus:project-nodes session)` / `(bus:project-cct session)` / `(bus:project-patches session)` / `(bus:project-worldlines session)` 从活工作区直接投影四类记录（见「活跃生产者」）。
 - `(bus:trial session channel)` → `(ok worldline)`；`(bus:keep session worldline node value)` 跑当前约束；`(bus:rollback session worldline)`。
 - `(bus:grant session bits channels loans expires worldline)` → `(ok token)`，只能衰减；`(bus:revoke session token)`。
-- `(bus:audit session worldline)` → `(ok count truncated events)`，事件含 kind/worldline/result/constraint-version/reason。
+- `(bus:audit session worldline)` → `(ok count truncated events)`；行是 `(kind token worldline result version timestamp-ms seq reason)`。`(bus:audit-filter session worldline actor since-seq)` 同一份日志按发起者和序号过滤，0 表示不过滤。
 - `(bus:grant session bits channels loans expires worldline)` → `(ok token)`，只能衰减；`(bus:revoke session token)`。
-- `(bus:audit session worldline)` → `(ok count truncated events)`，事件含 kind/worldline/result/constraint-version/reason。
+- `(bus:audit session worldline)` → `(ok count truncated events)`；行是 `(kind token worldline result version timestamp-ms seq reason)`。`(bus:audit-filter session worldline actor since-seq)` 同一份日志按发起者和序号过滤，0 表示不过滤。
 - 失败是 `(error code message)`，不是 `#f`；`bus:ok?` / `bus:code` / `bus:message` 读取。错误码含 `schema-mismatch`、`seals-missing`、`loan-exhausted`、`image-full`、`validation-failed`、`permission`、`unregistered-id`、`transport-failed`。
 
 `(api-reference)` 现在也列出这些动词、所需能力和失败码。审计有两个面：控制面日志（带原因，供 `bus:audit`）和映像审计节（只追加，供映射方直接遍历）。
