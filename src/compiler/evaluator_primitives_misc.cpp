@@ -16,6 +16,7 @@ module;
 #include <unordered_map>
 
 #include "bus/transport.hh"
+#include "bus/query.hh"
 
 module aura.compiler.evaluator;
 
@@ -976,6 +977,59 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                     return reply;
                 return bus_list(ev, {bus_string(ev, "ok"),
                                      make_int(static_cast<std::int64_t>(records.size()))});
+            }
+
+            // Agent query face (#5125): reader-side aggregations over the
+            // mapped image. No control frame and no extra copy of the CCT.
+            if (op == "hotspots") {
+                std::int64_t top = 0;
+                if (a.size() < 3 || !bus_int(a[2], &top) || top < 0)
+                    return bus_error(ev, "validation-failed", "hotspots needs a top count");
+                if ((state->att.caps & aura::bus::kCapRead) == 0)
+                    return bus_error(ev, "permission", "missing capability: read");
+                std::vector<aura::bus::Hotspot> hotspots;
+                std::string why;
+                if (!aura::bus::cct_hotspots(state->att.view(), static_cast<std::size_t>(top),
+                                             &hotspots, &why))
+                    return bus_error(ev, "unavailable", why);
+                EvalValue rows = make_void();
+                for (auto it = hotspots.rbegin(); it != hotspots.rend(); ++it) {
+                    const EvalValue row =
+                        bus_list(ev, {make_int(static_cast<std::int64_t>(it->mid)),
+                                      make_int(static_cast<std::int64_t>(it->samples)),
+                                      make_int(static_cast<std::int64_t>(it->self_ns)),
+                                      make_int(static_cast<std::int64_t>(it->node))});
+                    rows = make_pair(static_cast<std::uint64_t>(ev.push_pair(row, rows)));
+                }
+                return bus_list(ev, {bus_string(ev, "ok"),
+                                     make_int(static_cast<std::int64_t>(hotspots.size())), rows});
+            }
+
+            if (op == "worldline-diff") {
+                std::int64_t id_a = 0, id_b = 0;
+                if (a.size() < 4 || !bus_int(a[2], &id_a) || !bus_int(a[3], &id_b))
+                    return bus_error(ev, "validation-failed",
+                                     "worldline-diff needs two worldline ids");
+                if ((state->att.caps & aura::bus::kCapRead) == 0)
+                    return bus_error(ev, "permission", "missing capability: read");
+                aura::bus::WorldlineDiff diff;
+                std::string why;
+                if (!aura::bus::worldline_diff(state->att.view(), static_cast<std::uint64_t>(id_a),
+                                               static_cast<std::uint64_t>(id_b), &diff, &why))
+                    return bus_error(ev, "validation-failed", why);
+                EvalValue rows = make_void();
+                for (auto it = diff.rows.rbegin(); it != diff.rows.rend(); ++it) {
+                    const EvalValue row =
+                        bus_list(ev, {make_int(static_cast<std::int64_t>(it->node)),
+                                      make_int(it->in_a ? 1 : 0), make_int(it->in_b ? 1 : 0),
+                                      make_int(static_cast<std::int64_t>(it->field_a)),
+                                      make_int(static_cast<std::int64_t>(it->field_b)),
+                                      make_int(static_cast<std::int64_t>(it->value_a)),
+                                      make_int(static_cast<std::int64_t>(it->value_b))});
+                    rows = make_pair(static_cast<std::uint64_t>(ev.push_pair(row, rows)));
+                }
+                return bus_list(ev, {bus_string(ev, "ok"), make_int(diff.state_a),
+                                     make_int(diff.state_b), rows});
             }
 
             return bus_error(ev, "unsupported", "unknown bus-call op");

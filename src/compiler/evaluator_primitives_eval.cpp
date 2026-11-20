@@ -1492,6 +1492,8 @@ void RegSplitParts::register_api_reference_primitive(PrimRegistrar add, Evaluato
         out += "  (bus:project-cct session) / (bus:project-patches session) / "
                "(bus:project-worldlines session) project live call sites, mutation patches "
                "and rebind worldlines\n";
+        out += "  (bus:hotspots session top) aggregates the CCT by mid; "
+               "(bus:diff-worldlines session id-a id-b) diffs two worldlines' patches\n";
         out += "  (bus:trial session channel) / (bus:keep session worldline node value) / "
                "(bus:rollback session worldline)\n";
         out += "  (bus:grant session bits channels loans expires worldline) / (bus:revoke session "

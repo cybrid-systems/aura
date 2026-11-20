@@ -10,6 +10,7 @@
 (export bus:attach bus:detach bus:subscribe bus:publish bus:query
         bus:publish-cct bus:publish-patch bus:publish-worldline bus:project-nodes
         bus:project-cct bus:project-patches bus:project-worldlines
+        bus:hotspots bus:diff-worldlines
         bus:trial bus:keep bus:rollback bus:grant bus:revoke bus:audit
         bus:status bus:code bus:message bus:ok? bus:help
         bus:attach? bus:error? bus:record?)
@@ -54,6 +55,16 @@
 (define (bus:project-worldlines session)
   (bus-call "project-worldlines" session))
 
+; Agent query face: aggregate the CCT by mid and diff two worldlines.
+; (bus:hotspots session top) -> (ok count rows); rows = (mid samples self-ns node)
+; (bus:diff-worldlines session id-a id-b) -> (ok state-a state-b rows);
+; rows = (node in-a in-b field-a field-b value-a value-b)
+(define (bus:hotspots session top)
+  (bus-call "hotspots" session top))
+
+(define (bus:diff-worldlines session id-a id-b)
+  (bus-call "worldline-diff" session id-a id-b))
+
 (define (bus:publish-cct session parent mid node samples self-ns)
   (bus-call "publish-cct" session parent mid node samples self-ns))
 
@@ -94,6 +105,7 @@
     "subscribe: (bus:subscribe session channel) -> (ok generation count offset length snapshot)\n"
     "publish: (bus:publish session key value) -> (ok generation count); needs publish\n"
     "project: (bus:project-nodes session) / (bus:project-cct session) / (bus:project-patches session) / (bus:project-worldlines session) project live workspace state; needs publish\n"
+    "query: (bus:hotspots session top) -> (ok count rows); (bus:diff-worldlines session id-a id-b) -> (ok state-a state-b rows); needs read\n"
     "query: (bus:query session channel since-generation since-count) -> (ok generation count snapshot rows)\n"
     "trial: (bus:trial session channel) -> (ok worldline); needs trial\n"
     "keep/rollback: (bus:keep session worldline node value) / (bus:rollback session worldline); needs keep/rollback and the current constraints pass\n"

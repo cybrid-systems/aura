@@ -64,6 +64,8 @@
 
 黄金夹具在 `tests/fixtures/bus/golden.img`（2272 字节，`test_bus_golden` 逐字节比对）：五条频道节加审计节，两个进程通过同一 memfd 映射读出相同的 `committed_digest`；故意改已提交字节会校验失败，审计尾仍可追加。改布局后跑 `AURA_BUS_WRITE_GOLDEN=1 ./test_bus_golden` 重新生成并审阅二进制差异。
 
+查询面（需要 `read`）：`(bus:hotspots session top)` 在客户端聚合 CCT，按 `mid` 汇总 samples/self-ns 后降序取前 N；`(bus:diff-worldlines session id-a id-b)` 按真实 worldline id 取两条记录，比较状态、约束结果、指标偏移和补丁区间，返回两侧不一致的节点行 `(node in-a in-b field-a field-b value-a value-b)`。两者都直接读已映射的映像，不发控制帧。
+
 ## 约束与审计
 
 - 协调者持有 `ConstraintStore`：一组可执行规则加版本号。安装新集或回滚都要求 `constraint-write`，并分别记 `ConstraintChange` / `ConstraintRollback` 审计。

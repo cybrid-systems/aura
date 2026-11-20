@@ -12,6 +12,7 @@
 #include "bus/image.hh"
 #include "bus/image_schema.hh"
 #include "bus/capability.hh"
+#include "bus/query.hh"
 
 #include <cstdio>
 #include <cstdlib>
@@ -106,9 +107,9 @@ std::vector<std::byte> build_golden() {
 
     std::vector<PatchRecord> patches(4);
     for (std::size_t i = 0; i < patches.size(); ++i) {
-        patches[i].node = kImageNoIndex;
+        patches[i].node = i == 0 ? 0 : (i <= 2 ? 1 : 2);
         patches[i].field_offset = static_cast<std::uint32_t>(i + 1);
-        patches[i].new_value = 1000 + i;
+        patches[i].new_value = i < 2 ? 1000 + i : 2000 + i;
         patches[i].worldline = kImageNoIndex;
         patches[i].generation = 2;
     }
@@ -120,6 +121,15 @@ std::vector<std::byte> build_golden() {
         worldlines[i].state = static_cast<std::uint8_t>(WorldlineState::Kept);
         worldlines[i].constraint_result = static_cast<std::uint8_t>(ConstraintResult::Pass);
         worldlines[i].metrics_off = kImageNoIndex;
+        if (i == 0) {
+            worldlines[i].patch_off = 0;
+            worldlines[i].patch_len = 2 * sizeof(PatchRecord);
+            worldlines[i].patch_count = 2;
+        } else if (i == 1) {
+            worldlines[i].patch_off = 2 * sizeof(PatchRecord);
+            worldlines[i].patch_len = 2 * sizeof(PatchRecord);
+            worldlines[i].patch_count = 2;
+        }
     }
 
     std::vector<AuditRecord> audit(8);
@@ -279,6 +289,36 @@ int main() {
         check(section_digest(view, SectionKind::Patches) != 0, "patch traversal");
         check(section_digest(view, SectionKind::Worldlines) != 0, "worldline traversal");
         check(audit_count(view) == 8, "audit count in the fixture");
+
+        // Agent query face: CCT hotspots aggregate by mid, descending.
+        {
+            std::vector<Hotspot> hot;
+            std::string why;
+            check(cct_hotspots(view, 2, &hot, &why), "hotspots query");
+            check(hot.size() == 2, "hotspots top-2");
+            if (hot.size() == 2) {
+                check(hot[0].mid == 0x1103 && hot[0].self_ns == 40, "hottest mid first");
+                check(hot[1].mid == 0x1102 && hot[1].self_ns == 30, "second hottest mid");
+            }
+        }
+
+        // Worldline diff: node 1 differs, nodes 0/2 are one-sided.
+        {
+            WorldlineDiff diff;
+            std::string why;
+            check(worldline_diff(view, 1, 2, &diff, &why), "worldline diff");
+            check(diff.state_a == static_cast<std::uint8_t>(WorldlineState::Kept), "a kept");
+            check(diff.rows.size() == 3, "three differing patch nodes");
+            if (diff.rows.size() == 3) {
+                check(diff.rows[0].node == 0 && diff.rows[0].in_a && !diff.rows[0].in_b,
+                      "node 0 only in a");
+                check(diff.rows[1].node == 1 && diff.rows[1].in_a && diff.rows[1].in_b &&
+                          diff.rows[1].value_a != diff.rows[1].value_b,
+                      "node 1 value differs");
+                check(diff.rows[2].node == 2 && !diff.rows[2].in_a && diff.rows[2].in_b,
+                      "node 2 only in b");
+            }
+        }
 
         // A second process reads the same mapping and agrees.
         int pipefd[2];

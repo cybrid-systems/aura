@@ -1870,7 +1870,8 @@ add_test(NAME test_error_kind_names_wire_verification COMMAND ./test_error_kind_
 # validation and the golden two-process traversal. P2996 lives in
 # image_schema.cpp (non-import-std); the validator and test are meta-free.
 add_library(aura-bus STATIC src/bus/image.cpp src/bus/image_schema.cpp src/bus/transport.cpp
-                                 src/bus/capability.cpp src/bus/channel.cpp src/bus/constraint.cpp)
+                                 src/bus/capability.cpp src/bus/channel.cpp src/bus/constraint.cpp
+                                 src/bus/query.cpp)
 target_include_directories(aura-bus PUBLIC ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(aura PRIVATE aura-bus)
 # Issue #5127/#5122: evaluator_primitives_misc.cpp's bus-call bridge
