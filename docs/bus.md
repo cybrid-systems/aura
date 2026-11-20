@@ -45,3 +45,10 @@
 - `worldlines`：状态、约束结果、指标偏移、补丁区间、目标指标。
 
 协调者在节尾的预留容量里追加记录，提交时更新该节 length/count/digest/generation，并把映像头 committed_gen 推进到下一个偶数代次。订阅者只在稳定代次上读；游标记录上次的 generation/count，下一次只取新增记录。游标落后到已重建（count 变小）或超前时返回完整快照，绝不静默错位。容量用尽是硬错误，不扩容。
+
+控制面接线：
+
+- `Subscribe` 的 channel 1..4 分别对应指标、CCT、补丁、worldline；回 `ChannelBody`（generation、count、offset、length、snapshot=1）。
+- `CatchUp` 带上次 generation/count；协调者只返回新增记录范围，落后到重建时返回完整快照（snapshot=1）。
+- `Reserve`/`Publish` 对 channel 1..4 直接操作该节尾部的预留容量；Publish 成功后回新的 generation/count，并把该次发布写进审计。
+- 对端只有在拿到 `publish` 或 `trial` 时才以可写方式映射映像；只读会话仍是 `PROT_READ`。
