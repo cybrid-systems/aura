@@ -9,6 +9,7 @@
 #ifndef AURA_BUS_TRANSPORT_HH
 #define AURA_BUS_TRANSPORT_HH
 
+#include "bus/capability.hh"
 #include "bus/image.hh"
 
 #include <cstddef>
@@ -25,12 +26,6 @@ inline constexpr std::uint32_t kBusAbiMinor = 0;
 inline constexpr std::size_t kBusDefaultImageBytes = 256u << 20;
 inline constexpr std::size_t kBusMaxControlFrame = 4096;
 inline constexpr std::uint32_t kBusMaxLoans = 8;
-inline constexpr std::uint64_t kCapRead = 1ull << 0;
-inline constexpr std::uint64_t kCapPublish = 1ull << 1;
-inline constexpr std::uint64_t kCapTrial = 1ull << 2;
-inline constexpr std::uint64_t kCapKeep = 1ull << 3;
-inline constexpr std::uint64_t kCapAudit = 1ull << 4;
-inline constexpr std::uint64_t kCapAll = kCapRead | kCapPublish | kCapTrial | kCapKeep | kCapAudit;
 
 enum class FrameType : std::uint16_t {
     Hello = 1,
@@ -79,6 +74,8 @@ struct HelloBody {
     std::uint32_t pid = 0;
     std::uint32_t role = 0;
     std::uint64_t caps = 0;
+    std::uint64_t channels = 0;
+    std::uint64_t max_loans = 0;
     std::uint64_t workspace_id = 0;
     std::uint32_t image_bytes = 0;
     std::uint32_t reserved = 0;
@@ -90,6 +87,14 @@ struct HelloOkBody {
     std::uint64_t image_size = 0;
     std::uint8_t schema_id[16] = {};
     std::uint64_t committed_bytes = 0;
+    std::uint64_t channels = 0;
+    std::uint64_t max_loans = 0;
+};
+
+struct ErrorBody {
+    std::uint32_t code = 0;
+    std::uint32_t reserved = 0;
+    char message[56] = {};
 };
 
 struct HelloRejectBody {
@@ -100,6 +105,15 @@ struct HelloRejectBody {
 
 // Reserve / Publish / Credit body: channel, image offset and length,
 // generation and worldline. No payload bytes.
+struct GrantBody {
+    std::uint64_t parent = 0; // 0 = derive from this session's root grant
+    Capability caps{};
+};
+
+struct GrantReply {
+    std::uint64_t token = 0;
+};
+
 struct LoanBody {
     std::uint64_t channel = 0;
     std::uint64_t offset = 0;
@@ -109,9 +123,12 @@ struct LoanBody {
 };
 
 static_assert(sizeof(FrameHeader) == 16);
-static_assert(sizeof(HelloBody) == 64);
-static_assert(sizeof(HelloOkBody) == 48);
+static_assert(sizeof(HelloBody) == 80);
+static_assert(sizeof(HelloOkBody) == 64);
+static_assert(sizeof(ErrorBody) == 64);
 static_assert(sizeof(HelloRejectBody) == 64);
+static_assert(sizeof(GrantBody) == 56);
+static_assert(sizeof(GrantReply) == 8);
 static_assert(sizeof(LoanBody) == 40);
 
 struct TransportError {
@@ -183,6 +200,12 @@ public:
 
     bool listen_at(const std::string& path, std::size_t image_bytes, std::uint64_t workspace_id,
                    TransportError* error);
+    // Workspace allow policy and sandbox preset applied at attach. With
+    // no policy every role is denied.
+    void set_policy(const WorkspacePolicy& policy, SandboxPreset preset = SandboxPreset::Dev) {
+        policy_ = policy;
+        preset_ = preset;
+    }
     // build() fills the mapped image before sealing. It must leave a
     // valid header/committed prefix at the committed bytes it reports.
     using BuildFn = std::function<bool(std::span<std::byte>, std::string*)>;
@@ -194,6 +217,9 @@ public:
 
     [[nodiscard]] const LoanLedger& loans() const { return loans_; }
     [[nodiscard]] const std::string& path() const { return path_; }
+    [[nodiscard]] const AuditLog& audit() const { return audit_; }
+    [[nodiscard]] const WorldlineLedger& worldlines() const { return worldlines_; }
+    [[nodiscard]] Capability session_capability() const { return session_caps_; }
 
 private:
     std::string path_;
@@ -205,6 +231,14 @@ private:
     LoanLedger loans_{};
     std::uint64_t staging_capacity_ = 0;
     std::uint64_t staging_used_ = 0;
+    WorkspacePolicy policy_{};
+    SandboxPreset preset_ = SandboxPreset::Dev;
+    CapabilityTable caps_table_{};
+    AuditLog audit_{};
+    WorldlineLedger worldlines_{};
+    Capability session_caps_{};
+    std::uint64_t root_token_ = 0;
+    std::uint64_t generation_ = 2;
 };
 
 // Peer side: connect and complete the handshake.

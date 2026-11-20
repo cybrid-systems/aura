@@ -410,6 +410,23 @@ bool Server::accept_one(const BuildFn& build, Attach* out, TransportError* error
         return reject(RejectReason::Schema, "schema id mismatch", EPROTO);
     if (hello.workspace_id != workspace_id_)
         return reject(RejectReason::Workspace, "workspace id mismatch", EPROTO);
+
+    Capability requested{};
+    requested.bits = hello.caps;
+    requested.channels = hello.channels;
+    requested.max_loans = hello.max_loans;
+    requested.workspace = workspace_id_;
+    bool policy_denied = false;
+    Capability granted = policy_.resolve(hello.role, requested, workspace_id_, &policy_denied);
+    granted = clamp_preset(granted, preset_);
+    if (hello.caps != 0 && granted.bits == 0) {
+        audit_.add(AuditKind::Denied, 0, 0, hello.role);
+        return reject(RejectReason::Permission, "no capability allowed for this role", EACCES);
+    }
+    session_caps_ = granted;
+    root_token_ = caps_table_.issue_root(granted);
+    audit_.add(AuditKind::Attach, root_token_, 0, hello.pid);
+
     const std::size_t bytes = hello.image_bytes == 0
                                   ? image_bytes_
                                   : std::min<std::size_t>(hello.image_bytes, image_bytes_);
@@ -444,6 +461,7 @@ bool Server::accept_one(const BuildFn& build, Attach* out, TransportError* error
         return false;
     }
     const ImageHeader ih = load_header({static_cast<const std::byte*>(base), bytes});
+    generation_ = ih.committed_gen;
 
     const int event_fd = ::eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
     if (event_fd < 0) {
@@ -457,7 +475,9 @@ bool Server::accept_one(const BuildFn& build, Attach* out, TransportError* error
     session_ = (static_cast<std::uint64_t>(::getpid()) << 32) ^ ++g_session_counter;
     HelloOkBody ok{};
     ok.session = session_;
-    ok.caps = hello.caps & kCapAll;
+    ok.caps = granted.bits;
+    ok.channels = granted.channels;
+    ok.max_loans = granted.max_loans;
     ok.image_size = bytes;
     std::memcpy(ok.schema_id, expected, sizeof(expected));
     ok.committed_bytes = ih.committed_bytes;
@@ -494,50 +514,163 @@ bool Server::accept_one(const BuildFn& build, Attach* out, TransportError* error
 }
 
 bool Server::wait_disconnect(TransportError* error) {
-    if (conn_fd_ < 0)
-        return true;
     FrameHeader header{};
     std::vector<std::byte> body(kBusMaxControlFrame);
-    while (true) {
-        if (!recv_frame(conn_fd_, &header, body, error)) {
-            loans_.reclaim();
-            ::close(conn_fd_);
-            conn_fd_ = -1;
+    const auto deny = [&](int code, const std::string& why) {
+        ErrorBody eb{};
+        eb.code = static_cast<std::uint32_t>(code);
+        const std::size_t n = std::min(why.size(), sizeof(eb.message) - 1);
+        std::memcpy(eb.message, why.data(), n);
+        send_frame(conn_fd_, FrameType::Error, session_,
+                   {reinterpret_cast<const std::byte*>(&eb), sizeof(eb)});
+        audit_.add(AuditKind::Denied, root_token_);
+    };
+    const auto require = [&](std::uint64_t bit, std::uint64_t channel, std::uint64_t worldline) {
+        std::string why;
+        if (allows(session_caps_, bit, channel, generation_, worldline, &why))
             return true;
-        }
-        switch (static_cast<FrameType>(header.type)) {
-            case FrameType::Reserve: {
-                if (header.len < sizeof(LoanBody))
-                    break;
-                LoanBody loan{};
+        deny(EPERM, why);
+        return false;
+    };
+    const auto finish = [&]() {
+        for (std::uint64_t id : worldlines_.end_session(root_token_))
+            audit_.add(AuditKind::Rollback, root_token_, id);
+        audit_.add(AuditKind::Disconnect, root_token_);
+        loans_.reclaim();
+        staging_used_ = 0;
+        ::close(conn_fd_);
+        conn_fd_ = -1;
+        return true;
+    };
+
+    while (true) {
+        if (!recv_frame(conn_fd_, &header, body, error))
+            return finish();
+
+        const auto loan_from = [&]() {
+            LoanBody loan{};
+            if (header.len >= sizeof(loan))
                 std::memcpy(&loan, body.data(), sizeof(loan));
-                const auto fail = [&](int code) {
-                    send_frame(conn_fd_, FrameType::Error, session_,
-                               {reinterpret_cast<const std::byte*>(&code), sizeof(code)});
-                };
+            return loan;
+        };
+        const auto reply_loan = [&](const LoanBody& loan) {
+            send_frame(conn_fd_, FrameType::Credit, session_,
+                       {reinterpret_cast<const std::byte*>(&loan), sizeof(loan)});
+        };
+
+        switch (static_cast<FrameType>(header.type)) {
+            case FrameType::Subscribe:
+            case FrameType::Unsubscribe:
+            case FrameType::CatchUp:
+            case FrameType::Query:
+            case FrameType::AuditQuery: {
+                const LoanBody loan = loan_from();
+                if (require(kCapRead, loan.channel, 0))
+                    reply_loan(loan); // routing is #5125; the read grant is checked now
+                break;
+            }
+            case FrameType::Reserve: {
+                const LoanBody loan = loan_from();
+                if (!require(kCapPublish, loan.channel, 0))
+                    break;
                 if (!loans_.reserve()) {
-                    fail(EAGAIN);
+                    deny(EAGAIN, "loan quota exhausted");
                     break;
                 }
                 if (loan.length == 0 || loan.length > staging_capacity_ - staging_used_) {
                     loans_.release();
-                    fail(ENOSPC);
+                    deny(ENOSPC, "staging window exhausted");
                     break;
                 }
-                loan.offset = staging_used_;
+                LoanBody granted = loan;
+                granted.offset = staging_used_;
+                granted.generation = generation_;
                 staging_used_ += loan.length;
-                send_frame(conn_fd_, FrameType::Credit, session_,
-                           {reinterpret_cast<const std::byte*>(&loan), sizeof(loan)});
+                reply_loan(granted);
+                break;
+            }
+            case FrameType::Publish: {
+                const LoanBody loan = loan_from();
+                if (!require(kCapPublish, loan.channel, loan.worldline))
+                    break;
+                if (loan.length == 0 || loan.offset > staging_capacity_ ||
+                    loan.length > staging_capacity_ - loan.offset) {
+                    deny(EINVAL, "publish range outside the staging window");
+                    break;
+                }
+                reply_loan(loan);
                 break;
             }
             case FrameType::Credit:
                 loans_.release();
                 break;
+            case FrameType::Trial: {
+                const LoanBody loan = loan_from();
+                if (!require(kCapTrial, loan.channel, 0))
+                    break;
+                const std::uint64_t id = worldlines_.open_trial(root_token_, workspace_id_);
+                audit_.add(AuditKind::Trial, root_token_, id);
+                LoanBody granted = loan;
+                granted.worldline = id;
+                granted.generation = generation_;
+                reply_loan(granted);
+                break;
+            }
+            case FrameType::Keep:
+            case FrameType::Rollback: {
+                const LoanBody loan = loan_from();
+                const bool keep = header.type == static_cast<std::uint16_t>(FrameType::Keep);
+                if (!require(keep ? kCapKeep : kCapRollback, loan.channel, loan.worldline))
+                    break;
+                std::string why;
+                const bool ok =
+                    keep ? worldlines_.keep(loan.worldline, root_token_, session_caps_, &why)
+                         : worldlines_.rollback(loan.worldline, root_token_, session_caps_, &why);
+                if (!ok) {
+                    deny(EPERM, why);
+                    break;
+                }
+                audit_.add(keep ? AuditKind::Keep : AuditKind::Rollback, root_token_,
+                           loan.worldline);
+                reply_loan(loan);
+                break;
+            }
+            case FrameType::Grant: {
+                if (header.len < sizeof(GrantBody))
+                    break;
+                GrantBody request{};
+                std::memcpy(&request, body.data(), sizeof(request));
+                if (!require(kCapGrant, 0, 0))
+                    break;
+                const std::uint64_t parent = request.parent == 0 ? root_token_ : request.parent;
+                std::string why;
+                const auto token = caps_table_.derive(parent, request.caps, &why);
+                if (!token) {
+                    deny(EPERM, why);
+                    break;
+                }
+                GrantReply reply{};
+                reply.token = *token;
+                send_frame(conn_fd_, FrameType::Credit, session_,
+                           {reinterpret_cast<const std::byte*>(&reply), sizeof(reply)});
+                audit_.add(AuditKind::Grant, root_token_, 0, *token);
+                break;
+            }
+            case FrameType::Revoke: {
+                const LoanBody loan = loan_from();
+                if (!require(kCapGrant, 0, 0))
+                    break;
+                const std::size_t revoked = caps_table_.revoke(loan.channel);
+                if (revoked == 0) {
+                    deny(ENOENT, "unknown grant token");
+                    break;
+                }
+                audit_.add(AuditKind::Revoke, root_token_, 0, revoked);
+                reply_loan(loan);
+                break;
+            }
             case FrameType::Disconnect:
-                loans_.reclaim();
-                ::close(conn_fd_);
-                conn_fd_ = -1;
-                return true;
+                return finish();
             default:
                 break;
         }
@@ -577,6 +710,8 @@ bool Client::connect_to(const std::string& path, std::uint64_t workspace_id, std
     hello.pid = static_cast<std::uint32_t>(::getpid());
     hello.role = role;
     hello.caps = caps & kCapAll;
+    hello.channels = ~0ull;
+    hello.max_loans = 0;
     hello.workspace_id = workspace_id;
     hello.image_bytes = 0;
     if (!send_frame(fd, FrameType::Hello, 0,

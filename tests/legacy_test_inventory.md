@@ -18,8 +18,8 @@ This file is not the decision tree for a new test. Ask `python3 tests/run.py hom
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 927 | Preferred destination suites |
-| **Total scanned** | **927** | |
+| `tests/core/test_*.cpp` | 928 | Preferred destination suites |
+| **Total scanned** | **928** | |
 
 ### Related artifacts
 
@@ -38,7 +38,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 96 | 96 | P0 — well-contained, batch drivers already exist |
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 283 | 283 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 112 | 112 | P1 — domain suite already collapses many obs gates |
-| `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 31 | 31 | P1 — small, already partially batched |
+| `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 32 | 32 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 62 | 62 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 88 | 88 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 56 | 56 | P2 — small-medium; soa_batch precedent |
@@ -288,6 +288,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/serve/test_boundary_yield_steal_metrics.cpp`
 - `tests/compiler/test_bugfix.cpp`
 - `tests/compiler/test_build_kv_hash_batch.cpp`
+- `tests/compiler/test_bus_capability.cpp`
 - `tests/compiler/test_bus_image.cpp`
 - `tests/compiler/test_bus_transport.cpp`
 - `tests/compiler/test_cache_entry_version_stamp.cpp`
@@ -1667,14 +1668,15 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_workspace_swap_guard.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_workspace_swap_guard.cpp — Issue #1717: synthesize:optimize swap-guard test.
 - `tests/serve/test_yield_while_mutation_held.cpp` (—) [domain_suite, theme_serve] — AC1: Under live outermost Guard, yield() / yield(reason) do not
 
-### `linear_ownership` — Linear ownership / borrow / consume (31)
+### `linear_ownership` — Linear ownership / borrow / consume (32)
 
 **Target:** tests/compiler/test_linear_ownership_batch.cpp (R1 src/-aligned)
 
 **Priority:** P1 — small, already partially batched
 
-#### domain/ (31)
+#### domain/ (32)
 
+- `tests/compiler/test_bus_capability.cpp` (—) [domain_suite, theme_compiler] — Issue #5124: capability bits, attenuation, grant tree, workspace
 - `tests/core/test_capability_single_use_consume.cpp` (—) [large, domain_suite, theme_core] — tests/core/test_capability_single_use_consume.cpp
 - `tests/compiler/test_commit_readiness_score.cpp` (—) [large, domain_suite, theme_compiler] — AC1: Clean SOLVED + linear + blame + !trunc → bp=10000, ok, allow
 - `tests/compiler/test_compiler_service_ownership.cpp` (—) [small, domain_suite, theme_compiler] — Issue #1835/#1837/#1839 (#1978 renamed): issue# moved from filename to header.
