@@ -1,7 +1,7 @@
 # Legacy test inventory
 
 **Issue:** [#1957](https://github.com/cybrid-systems/aura/issues/1957)
-**Generated:** 2026-11-20 by `scripts/tools/inventory_legacy_tests.py`
+**Generated:** 2026-11-21 by `scripts/tools/inventory_legacy_tests.py`
 **Status:** generated inventory, not the how-to-add-a-test policy. Policy is tests/HOMES.md. Re-run this script after consolidations.
 
 ## Purpose
@@ -18,8 +18,8 @@ This file is not the decision tree for a new test. Ask `python3 tests/run.py hom
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 933 | Preferred destination suites |
-| **Total scanned** | **933** | |
+| `tests/core/test_*.cpp` | 935 | Preferred destination suites |
+| **Total scanned** | **935** | |
 
 ### Related artifacts
 
@@ -37,8 +37,8 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 96 | 96 | P0 — well-contained, batch drivers already exist |
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 283 | 283 | P0 — high volume; strong domain suite foothold |
-| `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 112 | 112 | P1 — domain suite already collapses many obs gates |
-| `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 32 | 32 | P1 — small, already partially batched |
+| `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 113 | 113 | P1 — domain suite already collapses many obs gates |
+| `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 33 | 33 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 62 | 62 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 89 | 89 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 56 | 56 | P2 — small-medium; soa_batch precedent |
@@ -293,6 +293,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_bus_channels.cpp`
 - `tests/compiler/test_bus_constraints.cpp`
 - `tests/compiler/test_bus_golden.cpp`
+- `tests/compiler/test_bus_host.cpp`
 - `tests/compiler/test_bus_image.cpp`
 - `tests/compiler/test_bus_stdlib.cpp`
 - `tests/compiler/test_bus_transport.cpp`
@@ -421,6 +422,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_dirty_propagation_cost_closed_loop.cpp`
 - `tests/compiler/test_dirty_reason_verification_propagation.cpp`
 - `tests/compiler/test_dispatch_required_effects.cpp`
+- `tests/compiler/test_display_cache_5373.cpp`
 - `tests/compiler/test_display_list_spine_tenant.cpp`
 - `tests/compiler/test_dotted_rest_builtin_rename.cpp`
 - `tests/compiler/test_dual_path_desync_hard_fail.cpp`
@@ -1552,13 +1554,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_workspace_rollback_latest.cpp` (—) [domain_suite, theme_compiler] — AC1: source has no second all_mutations() ID walk inside rollback-latest
 - `tests/core/test_workspace_state_lock.cpp` (—) [domain_suite, theme_core] — tests/core/test_workspace_state_lock.cpp — Issue #1994 (F-004), retargeted
 
-### `fiber_orch` — Fiber / orchestration / steal / Guard (112)
+### `fiber_orch` — Fiber / orchestration / steal / Guard (113)
 
 **Target:** tests/core/test_fiber_resume_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P1 — domain suite already collapses many obs gates
 
-#### domain/ (112)
+#### domain/ (113)
 
 - `tests/orch/test_agent_apply_mutex.cpp` (—) [large, domain_suite, theme_orch] — AC1: No process-static mutex on orch spawn apply path (grep clean).
 - `tests/orch/test_agent_failure_policy.cpp` (—) [large, domain_suite, theme_orch] — AC1: AgentFailurePolicy available under aura::orch; StallPolicy
@@ -1575,6 +1577,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_compile_primitive_guard.cpp` (—) [domain_suite, theme_compiler] — Issue #1896 (#1978 renamed): issue# moved from filename to header.
 - `tests/serve/test_concurrent.cpp` (—) [large, domain_suite, theme_serve] — test_concurrent.cpp — Concurrency model unit tests
 - `tests/compiler/test_concurrent_clone_steal_abort_visibility.cpp` (—) [domain_suite, theme_compiler] — Fix contract (AC1–AC9 below):
+- `tests/compiler/test_display_cache_5373.cpp` (#5373) [small, domain_suite, theme_compiler] — Issue #5373: a stale short-circuit (and/or) name-cache row whose
 - `tests/compiler/test_dotted_rest_builtin_rename.cpp` (—) [domain_suite, theme_compiler] — AC1: Lambda fallback cites #2805; hygiene_builtins guard + metric
 - `tests/compiler/test_edsl_concurrent_fiber_boundary_task1.cpp` (—) [domain_suite, theme_compiler] — test_edsl_concurrent_fiber_boundary_task1.cpp —
 - `tests/compiler/test_edsl_concurrent_query_mutate.cpp` (—) [domain_suite, theme_compiler] — test_edsl_concurrent_query_mutate.cpp — Issue #332
@@ -1673,15 +1676,16 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_workspace_swap_guard.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_workspace_swap_guard.cpp — Issue #1717: synthesize:optimize swap-guard test.
 - `tests/serve/test_yield_while_mutation_held.cpp` (—) [domain_suite, theme_serve] — AC1: Under live outermost Guard, yield() / yield(reason) do not
 
-### `linear_ownership` — Linear ownership / borrow / consume (32)
+### `linear_ownership` — Linear ownership / borrow / consume (33)
 
 **Target:** tests/compiler/test_linear_ownership_batch.cpp (R1 src/-aligned)
 
 **Priority:** P1 — small, already partially batched
 
-#### domain/ (32)
+#### domain/ (33)
 
 - `tests/compiler/test_bus_capability.cpp` (—) [domain_suite, theme_compiler] — Issue #5124: capability bits, attenuation, grant tree, workspace
+- `tests/compiler/test_bus_host.cpp` (—) [domain_suite, theme_compiler] — Issue #5128: the workspace owner hosts the bus from Aura. Two real
 - `tests/core/test_capability_single_use_consume.cpp` (—) [large, domain_suite, theme_core] — tests/core/test_capability_single_use_consume.cpp
 - `tests/compiler/test_commit_readiness_score.cpp` (—) [large, domain_suite, theme_compiler] — AC1: Clean SOLVED + linear + blame + !trunc → bp=10000, ok, allow
 - `tests/compiler/test_compiler_service_ownership.cpp` (—) [small, domain_suite, theme_compiler] — Issue #1835/#1837/#1839 (#1978 renamed): issue# moved from filename to header.
