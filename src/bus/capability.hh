@@ -119,6 +119,8 @@ enum class AuditKind : std::uint16_t {
     Rollback = 6,
     Disconnect = 7,
     Denied = 8,
+    Publish = 9,
+    Subscribe = 10,
 };
 
 struct AuditEvent {

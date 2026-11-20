@@ -7,6 +7,7 @@
 // ──────────────────────────────────────────────────────────────
 #include "bus/transport.hh"
 
+#include "bus/channel.hh"
 #include "bus/image_schema.hh"
 
 #include <algorithm>
@@ -140,6 +141,13 @@ namespace {
         }
         if (static_cast<std::size_t>(n) != sizeof(FrameHeader))
             return false;
+        return true;
+    }
+
+    bool channel_from(std::uint64_t id, Channel* out) {
+        if (id < 1 || id > 4)
+            return false;
+        *out = static_cast<Channel>(id);
         return true;
     }
 
@@ -509,6 +517,8 @@ bool Server::accept_one(const BuildFn& build, Attach* out, TransportError* error
     staging_capacity_ = std::min<std::uint64_t>(
         64u << 10, ih.committed_bytes < bytes ? bytes - ih.committed_bytes : 0);
     staging_used_ = 0;
+    image_base_ = static_cast<std::byte*>(base);
+    image_size_ = bytes;
     // The server keeps conn_fd_ to observe disconnect; Attach::sock stays -1.
     return true;
 }
@@ -561,16 +571,78 @@ bool Server::wait_disconnect(TransportError* error) {
         switch (static_cast<FrameType>(header.type)) {
             case FrameType::Subscribe:
             case FrameType::Unsubscribe:
-            case FrameType::CatchUp:
             case FrameType::Query:
             case FrameType::AuditQuery: {
                 const LoanBody loan = loan_from();
+                Channel channel{};
+                if (channel_from(loan.channel, &channel) && image_base_ != nullptr) {
+                    if (!require(kCapRead, loan.channel, 0))
+                        break;
+                    ChannelView view{};
+                    if (!channel_view({image_base_, image_size_}, channel, &view)) {
+                        deny(EINVAL, "channel section is missing");
+                        break;
+                    }
+                    ChannelBody reply{loan.channel, view.generation, view.count,
+                                      view.offset,  view.length,     1};
+                    send_frame(conn_fd_, FrameType::Credit, session_,
+                               {reinterpret_cast<const std::byte*>(&reply), sizeof(reply)});
+                    break;
+                }
                 if (require(kCapRead, loan.channel, 0))
-                    reply_loan(loan); // routing is #5125; the read grant is checked now
+                    reply_loan(loan);
+                break;
+            }
+            case FrameType::CatchUp: {
+                if (header.len < sizeof(CatchUpBody) || image_base_ == nullptr)
+                    break;
+                CatchUpBody request{};
+                std::memcpy(&request, body.data(), sizeof(request));
+                Channel channel{};
+                if (!channel_from(request.channel, &channel)) {
+                    deny(EINVAL, "unknown channel");
+                    break;
+                }
+                if (!require(kCapRead, request.channel, 0))
+                    break;
+                ChannelView view{};
+                if (!channel_view({image_base_, image_size_}, channel, &view)) {
+                    deny(EINVAL, "channel section is missing");
+                    break;
+                }
+                const bool snapshot = request.generation == 0 ||
+                                      request.generation > view.generation ||
+                                      request.count > view.count;
+                const std::uint64_t from = snapshot ? 0 : request.count;
+                ChannelBody reply{request.channel,
+                                  view.generation,
+                                  view.count,
+                                  view.offset + from * view.element_size,
+                                  (view.count - from) * view.element_size,
+                                  static_cast<std::uint64_t>(snapshot ? 1 : 0)};
+                send_frame(conn_fd_, FrameType::Credit, session_,
+                           {reinterpret_cast<const std::byte*>(&reply), sizeof(reply)});
                 break;
             }
             case FrameType::Reserve: {
                 const LoanBody loan = loan_from();
+                Channel channel{};
+                if (channel_from(loan.channel, &channel) && image_base_ != nullptr) {
+                    if (!require(kCapPublish, loan.channel, 0))
+                        break;
+                    std::uint64_t offset = 0;
+                    std::string why;
+                    if (!channel_reserve({image_base_, image_size_}, channel, loan.length, &offset,
+                                         &why)) {
+                        deny(ENOSPC, why);
+                        break;
+                    }
+                    LoanBody granted = loan;
+                    granted.offset = offset;
+                    granted.generation = generation_;
+                    reply_loan(granted);
+                    break;
+                }
                 if (!require(kCapPublish, loan.channel, 0))
                     break;
                 if (!loans_.reserve()) {
@@ -591,6 +663,26 @@ bool Server::wait_disconnect(TransportError* error) {
             }
             case FrameType::Publish: {
                 const LoanBody loan = loan_from();
+                Channel channel{};
+                if (channel_from(loan.channel, &channel) && image_base_ != nullptr) {
+                    if (!require(kCapPublish, loan.channel, loan.worldline))
+                        break;
+                    std::uint64_t gen = 0;
+                    std::string why;
+                    if (!channel_commit({image_base_, image_size_}, channel, loan.offset,
+                                        loan.length, &gen, &why)) {
+                        deny(EINVAL, why);
+                        break;
+                    }
+                    ChannelView view{};
+                    channel_view({image_base_, image_size_}, channel, &view);
+                    ChannelBody reply{loan.channel, gen, view.count, view.offset, view.length, 0};
+                    send_frame(conn_fd_, FrameType::Credit, session_,
+                               {reinterpret_cast<const std::byte*>(&reply), sizeof(reply)});
+                    generation_ = gen;
+                    audit_.add(AuditKind::Publish, root_token_, 0, loan.length);
+                    break;
+                }
                 if (!require(kCapPublish, loan.channel, loan.worldline))
                     break;
                 if (loan.length == 0 || loan.offset > staging_capacity_ ||
@@ -773,7 +865,9 @@ bool Client::connect_to(const std::string& path, std::uint64_t workspace_id, std
             *error = {static_cast<int>(RejectReason::Seals), "image lacks shrink/grow seals"};
         return false;
     }
-    void* base = ::mmap(nullptr, ok.image_size, PROT_READ, MAP_SHARED, image_fd, 0);
+    const int prot =
+        (ok.caps & (kCapPublish | kCapTrial)) != 0 ? (PROT_READ | PROT_WRITE) : PROT_READ;
+    void* base = ::mmap(nullptr, ok.image_size, prot, MAP_SHARED, image_fd, 0);
     if (base == MAP_FAILED) {
         ::close(image_fd);
         ::close(event_fd);

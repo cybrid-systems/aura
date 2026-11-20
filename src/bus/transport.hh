@@ -14,6 +14,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <functional>
 #include <span>
 #include <string>
@@ -110,6 +111,22 @@ struct GrantBody {
     Capability caps{};
 };
 
+struct ChannelBody {
+    std::uint64_t channel = 0;
+    std::uint64_t generation = 0;
+    std::uint64_t count = 0;
+    std::uint64_t offset = 0;
+    std::uint64_t length = 0;
+    std::uint64_t snapshot = 0;
+};
+
+struct CatchUpBody {
+    std::uint64_t channel = 0;
+    std::uint64_t generation = 0; // last observed generation
+    std::uint64_t count = 0;      // last observed record count
+    std::uint64_t reserved = 0;
+};
+
 struct GrantReply {
     std::uint64_t token = 0;
 };
@@ -127,6 +144,8 @@ static_assert(sizeof(HelloBody) == 80);
 static_assert(sizeof(HelloOkBody) == 64);
 static_assert(sizeof(ErrorBody) == 64);
 static_assert(sizeof(HelloRejectBody) == 64);
+static_assert(sizeof(ChannelBody) == 48);
+static_assert(sizeof(CatchUpBody) == 32);
 static_assert(sizeof(GrantBody) == 56);
 static_assert(sizeof(GrantReply) == 8);
 static_assert(sizeof(LoanBody) == 40);
@@ -239,6 +258,8 @@ private:
     Capability session_caps_{};
     std::uint64_t root_token_ = 0;
     std::uint64_t generation_ = 2;
+    std::byte* image_base_ = nullptr;
+    std::size_t image_size_ = 0;
 };
 
 // Peer side: connect and complete the handshake.

@@ -1907,6 +1907,14 @@ target_compile_features(test_bus_channels PUBLIC cxx_std_26)
 target_link_libraries(test_bus_channels PRIVATE aura-bus)
 aura_strict_test_warnings(tests/compiler/test_bus_channels.cpp)
 add_test(NAME test_bus_channels_5125 COMMAND ./test_bus_channels)
+
+# Issue #5125: channel Subscribe/Reserve/Publish/CatchUp over the socket.
+add_executable(test_bus_channel_transport tests/compiler/test_bus_channel_transport.cpp)
+target_include_directories(test_bus_channel_transport PRIVATE src)
+target_compile_features(test_bus_channel_transport PUBLIC cxx_std_26)
+target_link_libraries(test_bus_channel_transport PRIVATE aura-bus)
+aura_strict_test_warnings(tests/compiler/test_bus_channel_transport.cpp)
+add_test(NAME test_bus_channel_transport_5125 COMMAND ./test_bus_channel_transport)
 # Issue #268 / #178: NodeView roundtrip (split TU). Full AC needs -freflection
 # on the reflect TU only — import std / aura.core.ast must not mix with <meta>
 # (g++ 16.1.0; hard errors, not silent ICE). Bridge: test_issue_178_bridge.h
