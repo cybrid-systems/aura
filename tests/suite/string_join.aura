@@ -134,6 +134,25 @@
 (test-case "downcase" (hash)
   (check= "hello" (string-downcase "HELLO")))
 
+; Issue #5369: the native prims keep the old ASCII-only bodies exactly.
+; a-z <-> A-Z; '@' (64), '[' (91), '`' (96), '{' (123), controls and
+; non-ASCII code points are unchanged.
+(test-case "upcase ASCII boundaries" (hash "issue" 5369)
+  (check= "" (string-upcase ""))
+  (check= "AAZZ" (string-upcase "aAzZ"))
+  (check= "A{@[`" (string-upcase "a{@[`"))
+  (check= "éÉ" (string-upcase "éÉ"))
+  (check= (list->string (list 1 65 127))
+          (string-upcase (list->string (list 1 97 127)))))
+
+(test-case "downcase ASCII boundaries" (hash "issue" 5369)
+  (check= "" (string-downcase ""))
+  (check= "aazz" (string-downcase "AaZz"))
+  (check= "z{@[`" (string-downcase "Z{@[`"))
+  (check= "éÉ" (string-downcase "éÉ"))
+  (check= (list->string (list 1 97 127))
+          (string-downcase (list->string (list 1 65 127)))))
+
 (test-case "contains" (hash)
   (check (string-contains? "hello" "ell")))
 

@@ -100,7 +100,13 @@ def main() -> int:
         must_not("(define (iter i current result)", "AC1 string-split", split)
         must_not("(iter (+ i 1)", "AC1 string-split", split)
     if not words:
-        fails.append("AC1: could not extract string-split-words define")
+        # Issue #5369: string-split-words is the native word scan now; the
+        # O(1)-stack walk lives in evaluator_primitives_pair.cpp, and the
+        # std module documents the primitive instead of redefining it.
+        prim = _read("src/compiler/evaluator_primitives_pair.cpp")
+        must('"string-split-words"', "AC1 string-split-words native", prim)
+        must("#5369", "AC1 string-split-words native", src)
+        must("native primitive", "AC1 string-split-words native", src)
     else:
         must("while", "AC1 string-split-words", words)
         must_not("(define (iter i current result)", "AC1 string-split-words", words)
