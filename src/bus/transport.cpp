@@ -525,6 +525,7 @@ bool Server::accept_one(const BuildFn& build, Attach* out, TransportError* error
     staging_used_ = 0;
     image_base_ = static_cast<std::byte*>(base);
     image_size_ = bytes;
+    write_constraints_image();
     record_audit(AuditKind::Attach, root_token_, 0, hello.pid);
     // The server keeps conn_fd_ to observe disconnect; Attach::sock stays -1.
     return true;
@@ -558,7 +559,28 @@ bool Server::install_constraints(ConstraintSet set, std::string* why) {
     coordinator.bits = kCapConstraintWrite;
     coordinator.channels = ~0ull;
     coordinator.workspace = workspace_id_;
-    return constraints_.install(std::move(set), coordinator, &audit_, 0, why);
+    const bool ok = constraints_.install(std::move(set), coordinator, &audit_, 0, why);
+    if (ok)
+        write_constraints_image();
+    return ok;
+}
+
+void Server::write_constraints_image() {
+    if (image_base_ == nullptr)
+        return;
+    std::string blob;
+    const auto put_u32 = [&blob](std::uint32_t v) {
+        blob.append(reinterpret_cast<const char*>(&v), sizeof(v));
+    };
+    for (const auto& rule : constraints_.current().rules) {
+        put_u32(static_cast<std::uint32_t>(rule.name.size()));
+        put_u32(static_cast<std::uint32_t>(rule.source.size()));
+        blob += rule.name;
+        blob += rule.source;
+    }
+    std::string why;
+    (void)constraint_write({image_base_, image_size_}, constraints_.version(),
+                           {reinterpret_cast<const std::byte*>(blob.data()), blob.size()}, &why);
 }
 
 bool Server::wait_disconnect(TransportError* error) {

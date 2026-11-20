@@ -72,6 +72,7 @@
 - 每次 `KEEP` 先跑当前约束集。失败回 `EPERM`，消息带规则名和原因；worldline 保持 pending，活工作区不变，断开时按 rollback 处理。控制面没有「关闭约束再 keep」的消息，本地 `AURA_SANDBOX=off` 也不影响已附着会话。
 - 审计事件带约束版本、结果和原因，可按 worldline 过滤；自动轮次和人工试跑写同一份日志。
 - 协调者同时把每个事件追加进映像的审计节（若构建方预留了该节）：只追加、序号递增、只写下一个偶数代次，并重算节摘要；节满或没预留时控制面日志仍然完整，映像写入跳过。`AuditRecord` 只装 kind/actor/target/value，约束原因和版本仍从控制面查询读取。
+- 当前约束集同时写进映像的约束节：`ConstraintSetHeader` 带版本号，对象区是每条规则的 `(name, EDSL source)` 序列。附着时和每次 `install_constraints` 后刷新，`(bus:constraints session)` 读回 `(ok version count rows)`，每行 `(name source)`；执行仍用协调者持有的编译后谓词，源文本供其它工具核对与复现。
 
 ## std/bus 公共面
 

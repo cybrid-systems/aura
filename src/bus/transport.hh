@@ -281,6 +281,9 @@ private:
     void record_audit(AuditKind kind, std::uint64_t token, std::uint64_t worldline = 0,
                       std::uint64_t detail = 0);
     void mirror_audit(const AuditEvent& event);
+    // Serialize the current constraint set into the image constraints
+    // section (header + name/source blob). No-op without a mapping.
+    void write_constraints_image();
 
     std::string path_;
     std::size_t image_bytes_ = kBusDefaultImageBytes;

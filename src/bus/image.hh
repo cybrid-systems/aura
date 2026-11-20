@@ -175,6 +175,15 @@ bool audit_append(std::span<std::byte> image, AuditRecord* record, std::string* 
 // Committed audit-record count (0 when the builder reserved no section).
 std::uint64_t audit_count(std::span<const std::byte> image);
 
+// Versioned constraint object (#5126): the coordinator writes the current
+// set (header + opaque EDSL object blob) into the constraints section and
+// advances the committed generation. Readers get the version and the
+// blob; decoding the blob is the caller's format.
+bool constraint_write(std::span<std::byte> image, std::uint64_t version,
+                      std::span<const std::byte> blob, std::string* why);
+bool constraint_read(std::span<const std::byte> image, std::uint64_t* version,
+                     std::span<const std::byte>* blob);
+
 } // namespace aura::bus
 
 #endif

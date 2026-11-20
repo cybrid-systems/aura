@@ -29,6 +29,10 @@ using ConstraintPredicate = std::function<bool(const ConstraintContext&, std::st
 struct ConstraintRule {
     std::string name;
     ConstraintPredicate check;
+    // Optional Aura EDSL source for this rule. The coordinator keeps the
+    // compiled predicate for enforcement and stores the source in the
+    // image constraints section so other tools can read the rule (#5126).
+    std::string source;
 };
 
 struct ConstraintSet {
@@ -57,6 +61,7 @@ public:
 
     [[nodiscard]] std::uint64_t version() const { return current_.version; }
     [[nodiscard]] std::size_t rule_count() const { return current_.rules.size(); }
+    [[nodiscard]] const ConstraintSet& current() const { return current_; }
 
 private:
     ConstraintSet current_{};

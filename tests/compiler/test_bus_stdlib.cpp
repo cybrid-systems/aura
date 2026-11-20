@@ -33,8 +33,17 @@ template <typename T> void put(std::span<std::byte> img, std::uint64_t off, cons
     std::memcpy(img.data() + off, &v, sizeof(T));
 }
 
+std::uint64_t fnv_bytes(std::span<const std::byte> bytes) {
+    std::uint64_t h = 14695981039346656037ull;
+    for (const auto b : bytes) {
+        h ^= static_cast<std::uint64_t>(static_cast<unsigned char>(b));
+        h *= 1099511628211ull;
+    }
+    return h;
+}
+
 bool build_channel_image(std::span<std::byte> img, std::string*) {
-    constexpr std::uint32_t kSections = 5;
+    constexpr std::uint32_t kSections = 6;
     constexpr std::uint64_t kPerChannel = 128;
     const std::uint64_t dir = 256;
     std::uint64_t off = dir + kSections * sizeof(SectionEntry);
@@ -48,6 +57,7 @@ bool build_channel_image(std::span<std::byte> img, std::string*) {
     const std::uint64_t patches = take(kPerChannel * sizeof(PatchRecord));
     const std::uint64_t worldlines = take(kPerChannel * sizeof(WorldlineRecord));
     const std::uint64_t nodes = take(4096 * sizeof(NodeRecord));
+    const std::uint64_t constraints = take(1024);
     const std::uint64_t committed = (off + 7) & ~7ull;
     std::memset(img.data(), 0, img.size());
 
@@ -85,11 +95,25 @@ bool build_channel_image(std::span<std::byte> img, std::string*) {
     entry(2, SectionKind::Patches, patches, sizeof(PatchRecord));
     entry(3, SectionKind::Worldlines, worldlines, sizeof(WorldlineRecord));
     entry(4, SectionKind::Nodes, nodes, sizeof(NodeRecord));
+    entry(5, SectionKind::Constraints, constraints, sizeof(ConstraintSetHeader));
     {
         SectionEntry ne{};
         std::memcpy(&ne, img.data() + dir + 4 * sizeof(SectionEntry), sizeof(ne));
         ne.capacity = 4096 * sizeof(NodeRecord);
         std::memcpy(img.data() + dir + 4 * sizeof(SectionEntry), &ne, sizeof(ne));
+        SectionEntry ce{};
+        std::memcpy(&ce, img.data() + dir + 5 * sizeof(SectionEntry), sizeof(ce));
+        ce.capacity = 1024;
+        ConstraintSetHeader ch{};
+        ch.version = 1;
+        ch.object_off = sizeof(ConstraintSetHeader);
+        ch.object_len = 0;
+        ch.schema = 1;
+        put(img, constraints, ch);
+        ce.length = sizeof(ConstraintSetHeader);
+        ce.count = 0;
+        ce.digest = fnv_bytes({img.data() + constraints, sizeof(ConstraintSetHeader)});
+        std::memcpy(img.data() + dir + 5 * sizeof(SectionEntry), &ce, sizeof(ce));
     }
     return true;
 }
@@ -127,6 +151,8 @@ const char* kScript = R"BUS((require "std/bus" all:)
     (show pc)
     (define hs (bus:hotspots sid 2))
     (show hs)
+    (define cs (bus:constraints sid))
+    (show cs)
     (define pp (bus:project-patches sid))
     (show pp)
     (define pw (bus:project-worldlines sid))
@@ -154,6 +180,8 @@ const char* kScript = R"BUS((require "std/bus" all:)
                       (eq? rb #t) (bus:ok? pc) (bus:ok? pp) (bus:ok? pw)
                       (> (car (cdr pc)) 0) (= (car (cdr (cdr pc))) 1)
                       (bus:ok? hs) (> (car (cdr hs)) 0)
+                      (bus:ok? cs) (> (car (cdr cs)) 0)
+                      (>= (car (cdr (cdr cs))) 1)
                       (>= (car (cdr (cdr pp))) 1)
                       (> (car (cdr (cdr pw))) 0)
                       (>= (car (cdr (cdr qp))) 1) (>= (car (cdr (cdr qw))) 1)
@@ -199,14 +227,16 @@ int main() {
         policy.allow(0, Capability{kCapAll, 0xFF, 99, 0, 0, 0});
         s.set_policy(policy);
         ConstraintSet set;
-        set.rules.push_back({"allow-small", [](const ConstraintContext& ctx, std::string* why) {
+        set.rules.push_back({"allow-small",
+                             [](const ConstraintContext& ctx, std::string* why) {
                                  if (ctx.new_value > 100) {
                                      if (why)
                                          *why = "new value exceeds 100";
                                      return false;
                                  }
                                  return true;
-                             }});
+                             },
+                             "(lambda (ctx) (<= (ctx 'new-value) 100))"});
         std::string cwhy;
         if (!s.install_constraints(set, &cwhy))
             _exit(25);
@@ -262,7 +292,7 @@ int main() {
     waitpid(server, &status, 0);
 
     check(output.find("(ok 2 0 ") != std::string::npos, "subscribe snapshot");
-    check(output.find("(ok 6 1 0 ((0 100)))") != std::string::npos,
+    check(output.find("(ok 8 1 0 ((0 100)))") != std::string::npos,
           "query returns the published metric");
     check(output.find("BUS_OK") != std::string::npos, "script closed the loop");
     if (g_failed != 0)

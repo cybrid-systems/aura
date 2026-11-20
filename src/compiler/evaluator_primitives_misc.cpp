@@ -1021,6 +1021,46 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
 
             // Agent query face (#5125): reader-side aggregations over the
             // mapped image. No control frame and no extra copy of the CCT.
+            if (op == "constraints") {
+                if ((state->att.caps & aura::bus::kCapRead) == 0)
+                    return bus_error(ev, "permission", "missing capability: read");
+                std::uint64_t version = 0;
+                std::span<const std::byte> blob;
+                if (!aura::bus::constraint_read(state->att.view(), &version, &blob))
+                    return bus_error(ev, "unavailable", "constraints section is missing");
+                std::vector<std::pair<std::string, std::string>> rules;
+                std::size_t pos = 0;
+                auto read_u32 = [&](std::uint32_t* out) {
+                    if (pos + sizeof(std::uint32_t) > blob.size())
+                        return false;
+                    std::memcpy(out, blob.data() + pos, sizeof(*out));
+                    pos += sizeof(*out);
+                    return true;
+                };
+                while (pos < blob.size()) {
+                    std::uint32_t name_len = 0, source_len = 0;
+                    if (!read_u32(&name_len) || !read_u32(&source_len))
+                        break;
+                    if (name_len > blob.size() - pos || source_len > blob.size() - pos - name_len)
+                        break;
+                    std::string name(reinterpret_cast<const char*>(blob.data() + pos), name_len);
+                    pos += name_len;
+                    std::string source(reinterpret_cast<const char*>(blob.data() + pos),
+                                       source_len);
+                    pos += source_len;
+                    rules.emplace_back(std::move(name), std::move(source));
+                }
+                EvalValue rows = make_void();
+                for (auto it = rules.rbegin(); it != rules.rend(); ++it) {
+                    const EvalValue row =
+                        bus_list(ev, {bus_string(ev, it->first), bus_string(ev, it->second)});
+                    rows = make_pair(static_cast<std::uint64_t>(ev.push_pair(row, rows)));
+                }
+                return bus_list(ev,
+                                {bus_string(ev, "ok"), make_int(static_cast<std::int64_t>(version)),
+                                 make_int(static_cast<std::int64_t>(rules.size())), rows});
+            }
+
             if (op == "hotspots") {
                 std::int64_t top = 0;
                 if (a.size() < 3 || !bus_int(a[2], &top) || top < 0)

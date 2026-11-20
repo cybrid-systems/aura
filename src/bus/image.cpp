@@ -402,4 +402,66 @@ bool audit_append(std::span<std::byte> image, AuditRecord* record, std::string* 
     return true;
 }
 
+bool constraint_write(std::span<std::byte> image, std::uint64_t version,
+                      std::span<const std::byte> blob, std::string* why) {
+    const auto fail = [&](const char* text) {
+        if (why)
+            *why = text;
+        return false;
+    };
+    SectionEntry e{};
+    if (!find_section(image, SectionKind::Constraints, &e))
+        return fail("constraints section is missing");
+    if (e.length > e.capacity || blob.size() > e.capacity - sizeof(ConstraintSetHeader))
+        return fail("constraint object exceeds the reserved section");
+    std::uint64_t at = 0;
+    const ImageHeader dh = load_header(image);
+    for (std::uint32_t i = 0; i < dh.section_count; ++i) {
+        const SectionEntry cand = load_section_entry(image, i);
+        if (cand.kind == static_cast<std::uint32_t>(SectionKind::Constraints)) {
+            at = dh.section_dir_off + static_cast<std::uint64_t>(i) * sizeof(SectionEntry);
+            break;
+        }
+    }
+    if (at == 0)
+        return fail("constraints directory entry vanished");
+    ConstraintSetHeader ch{};
+    ch.version = version;
+    ch.object_off = sizeof(ConstraintSetHeader);
+    ch.object_len = blob.size();
+    ch.schema = 1;
+    std::memcpy(image.data() + e.offset, &ch, sizeof(ch));
+    if (!blob.empty())
+        std::memcpy(image.data() + e.offset + sizeof(ch), blob.data(), blob.size());
+    ImageHeader h = load_header(image);
+    const std::uint64_t next_gen = h.committed_gen + 2;
+    e.length = sizeof(ch) + blob.size();
+    e.count = 0;
+    e.generation = next_gen;
+    e.digest = fnv_section(image, e.offset, e.length);
+    std::memcpy(image.data() + at, &e, sizeof(e));
+    std::atomic_thread_fence(std::memory_order_release);
+    h.committed_gen = next_gen;
+    std::memcpy(image.data(), &h, sizeof(h));
+    return true;
+}
+
+bool constraint_read(std::span<const std::byte> image, std::uint64_t* version,
+                     std::span<const std::byte>* blob) {
+    SectionEntry e{};
+    if (!find_section(image, SectionKind::Constraints, &e) ||
+        e.length < sizeof(ConstraintSetHeader))
+        return false;
+    ConstraintSetHeader ch{};
+    std::memcpy(&ch, image.data() + e.offset, sizeof(ch));
+    if (ch.object_off < sizeof(ConstraintSetHeader) || ch.object_off > e.length ||
+        ch.object_len > e.length - ch.object_off)
+        return false;
+    if (version)
+        *version = ch.version;
+    if (blob)
+        *blob = {image.data() + e.offset + ch.object_off, static_cast<std::size_t>(ch.object_len)};
+    return true;
+}
+
 } // namespace aura::bus

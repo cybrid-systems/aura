@@ -42,8 +42,8 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 62 | 62 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 89 | 89 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 56 | 56 | P2 — small-medium; soa_batch precedent |
-| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 133 | 133 | P2 — often thin schema probes; collapse into obs matrix |
-| `uncategorized` | Uncategorized / mixed | 0 | 0 | 70 | 70 | P3 — review case-by-case |
+| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 132 | 132 | P2 — often thin schema probes; collapse into obs matrix |
+| `uncategorized` | Uncategorized / mixed | 0 | 0 | 71 | 71 | P3 — review case-by-case |
 
 ## Patterns, harness usage, coupling
 
@@ -1948,13 +1948,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_value_tag_hot_path.cpp` (—) [large, domain_suite, theme_compiler] — AC1: Pure is_* (is_fixnum_hot / is_int) match classify; single low2 path
 - `tests/compiler/test_workspace_delete_child.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_workspace_delete_child.cpp — Issue #1770: WorkspaceTree delete_child test.
 
-### `observability` — Observability / metrics / query:*-stats (133)
+### `observability` — Observability / metrics / query:*-stats (132)
 
 **Target:** tests/compiler/test_obs_schema_matrix.cpp + tests/compiler/obs_schema_cases.hpp
 
 **Priority:** P2 — often thin schema probes; collapse into obs matrix
 
-#### domain/ (133)
+#### domain/ (132)
 
 - `tests/compiler/test_adaptive_reverify_limit.cpp` (—) [domain_suite, theme_compiler] — Issue #2939 — dep-closure reverify (BFS over var_to_constraints_) to
 - `tests/compiler/test_adt_exhaustiveness_production_hard.cpp` (—) [domain_suite, theme_compiler] — test_adt_exhaustiveness_production_hard.cpp -- source-cite AC for Issue #3559
@@ -1969,7 +1969,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_blame_stamp_on_degrade.cpp` (—) [small, domain_suite, theme_compiler] — Issue #2064 — blame / provenance stamping on Dynamic degrade + CoercionMap
 - `tests/compiler/test_blame_tracking_typed_mutate.cpp` (—) [domain_suite, theme_compiler] — Issue #1617/#1924 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_bus_channel_transport.cpp` (—) [domain_suite, theme_compiler] — Issue #5125: channel Subscribe/Reserve/Publish/CatchUp over the socket.
-- `tests/compiler/test_bus_stdlib.cpp` (—) [domain_suite, theme_compiler] — Issue #5127: std/bus two-process attach/subscribe/publish/query.
 - `tests/compiler/test_cache_entry_version_stamp.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2033; CacheEntryVersionStamp + kRelowerBridgeEpoch
 - `tests/compiler/test_capability_effect_force.cpp` (—) [domain_suite, theme_compiler] — Issue #2072 — force check_and_record_effect on all side-effect primitives.
 - `tests/compiler/test_capture_audit_event_forced_enforcement_link.cpp` (—) [domain_suite, theme_compiler] — AC1: capture_audit_event_forced cites #2814; gap on unlinked Success
@@ -2090,13 +2089,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_verify_parse_shared_helper.cpp` (—) [domain_suite, theme_compiler] — Issue #1771 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_workspace_mtx_contention.cpp` (—) [domain_suite, theme_compiler] — AC1: Source cites #2523; residual strategy documented
 
-### `uncategorized` — Uncategorized / mixed (70)
+### `uncategorized` — Uncategorized / mixed (71)
 
 **Target:** manual triage before domain placement
 
 **Priority:** P3 — review case-by-case
 
-#### domain/ (70)
+#### domain/ (71)
 
 - `tests/core/test_address_bits_scratch.cpp` (—) [domain_suite, theme_core] — AC1: bit_cast round-trips a pointer and an integer address
 - `tests/compiler/test_and_or_error_value.cpp` (—) [domain_suite, theme_compiler] — (#4535 contract: only the UNCAUGHT face prints).
@@ -2109,6 +2108,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_bus_constraints.cpp` (—) [domain_suite, theme_compiler] — Issue #5126: constraint gate on KEEP, versioned sets, audit.
 - `tests/compiler/test_bus_golden.cpp` (—) [domain_suite, theme_compiler] — Issue #5122: committed golden bus image fixture.
 - `tests/compiler/test_bus_image.cpp` (—) [large, domain_suite, theme_compiler] — Issue #5122: relocatable bus image — golden two-process traversal and
+- `tests/compiler/test_bus_stdlib.cpp` (—) [domain_suite, theme_compiler] — Issue #5127: std/bus two-process attach/subscribe/publish/query.
 - `tests/compiler/test_bus_transport.cpp` (—) [domain_suite, theme_compiler] — Issue #5123: local bus transport — handshake, SCM_RIGHTS image, seals,
 - `tests/compiler/test_cascade_impact_batch.cpp` (—) [small, batch_driver, domain_suite, theme_compiler] — test_cascade_impact_batch.cpp — thematic multi-TU batch
 - `tests/compiler/test_chunk_io.cpp` (—) [domain_suite, theme_compiler] — AC1: append_fd matches a file larger than one chunk, including 0 and 0xFF
