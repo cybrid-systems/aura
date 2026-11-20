@@ -85,32 +85,10 @@
               (append parts (list ""))
               parts)))))))
 
-; Split by any whitespace (space, tab, newline) — O(1) stack (#2770).
-(define (string-split-words s)
-  (define (word-char? c)
-    (and (> c 32) (< c 127)))
-  (define n (string-length s))
-  (let ((i 0)
-        (start 0)
-        (in-word #f)
-        (result (list)))
-    (while (lambda () (< i n))
-      (lambda ()
-        (let ((c (string-ref s i)))
-          (if (word-char? c)
-            (begin
-              (if (not in-word)
-                (begin (set! start i) (set! in-word #t)))
-              (set! i (+ i 1)))
-            (begin
-              (if in-word
-                (begin
-                  (set! result (cons (substring s start i) result))
-                  (set! in-word #f)))
-              (set! i (+ i 1)))))))
-    (if in-word
-      (set! result (cons (substring s start n) result)))
-    (reverse result)))
+; Split into maximal runs of printable ASCII (33..126); every other code
+; point separates (#5369). Native primitive: the export resolves straight
+; to it, so do not redefine. Leading/trailing separators yield no empty
+; words, and a run of separators never emits an empty piece.
 
 ; Join list of strings with separator.
 ; #2770: `while` keeps the stack O(1) (the old recursive walk did not).
@@ -148,21 +126,10 @@
       (lambda () (set! hi (- hi 1))))
     (substring s lo hi)))
 
-; Convert to upper case (ASCII only)
-(define (string-upcase s)
-  (define (up c)
-    (if (and (>= c 97) (<= c 122))
-      (- c 32)
-      c))
-  (list->string (map up (string->list s))))
-
-; Convert to lower case (ASCII only)
-(define (string-downcase s)
-  (define (down c)
-    (if (and (>= c 65) (<= c 90))
-      (+ c 32)
-      c))
-  (list->string (map down (string->list s))))
+; ASCII-only case conversion (#5369): string-upcase and string-downcase
+; are native primitives — one pass over the UTF-8 bytes, and the exports
+; resolve straight to them, so do not redefine. Unicode simple folding is
+; not in this version.
 
 ;; ── New v2 functions ───────────────────────────────────────
 

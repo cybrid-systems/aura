@@ -2,11 +2,11 @@
 
 # Primitives (generated)
 
-**418** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
+**421** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
 Both registration channels are covered (Issue #5008): `register_prim` / `add(...)` in `src/**/*.cpp` **and** the evaluator ctor hot table in `src/compiler/evaluator_primitives_builtins.cpp` (`+ - * / = < > <= >= not and or eq?` live only there).
 Runtime canonical list: `(query :api-reference)` (includes `*deprecated*` section).
 Tiers (Issue #5008): one list, `docs/stdlib/primitive-tiers.json`; criterion + gate in [primitive-authoring-contract.md](../stdlib/primitive-authoring-contract.md).
-**kernel** 417 · **stdlib-candidate** 0 · **delete** 1
+**kernel** 420 · **stdlib-candidate** 0 · **delete** 1
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
 **Authoring (Issue #2915)**: prefer `register_prim` in `src/compiler/prim_registrar_scaffold.hh`; full contract [primitive-authoring-contract.md](../stdlib/primitive-authoring-contract.md) + [contributing.md](../contributing.md).
@@ -14,7 +14,7 @@ Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:me
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 17 primitives (4%)
-- **core**: 400 primitives (96%)
+- **core**: 403 primitives (96%)
 - **internal-observable**: 0 primitives (0%)
 - **convenience**: 1 primitives (0%)
 
@@ -58,7 +58,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `c-struct-set!` *[mutation-safety]* `kernel` — `src/compiler/ffi_primitives_impl.cpp`
 - `c-struct-size` *[mutation-safety]* `kernel` — `src/compiler/ffi_primitives_impl.cpp`
 
-## Core builtins (308)
+## Core builtins (311)
 
 - `%base64-decode` *[core]* `kernel` — `src/compiler/evaluator_primitives_char.cpp`
 - `%base64-encode` *[core]* `kernel` — `src/compiler/evaluator_primitives_char.cpp`
@@ -320,6 +320,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `string->number` *[core]* `kernel` — `src/compiler/evaluator_primitives_pair.cpp`
 - `string-append` *[core]* `kernel` — `src/compiler/evaluator_primitives_pair.cpp`
 - `string-copy` *[core]* `kernel` — `src/compiler/evaluator_primitives_pair.cpp`
+- `string-downcase` *[core]* `kernel` — `src/compiler/evaluator_primitives_pair.cpp`
 - `string-fill!` *[core]* `kernel` — `src/compiler/evaluator_primitives_pair.cpp`
 - `string-fnv1-32` *[core]* `kernel` — `src/compiler/evaluator_primitives_pair.cpp`
 - `string-hash` *[core]* `kernel` — `src/compiler/evaluator_primitives_pair.cpp`
@@ -327,6 +328,8 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `string-join` *[core]* `kernel` — `src/compiler/evaluator_primitives_pair.cpp`
 - `string-length` *[core]* `kernel` — `src/compiler/evaluator_primitives_pair.cpp`
 - `string-ref` *[core]* `kernel` — `src/compiler/evaluator_primitives_pair.cpp`
+- `string-split-words` *[core]* `kernel` — `src/compiler/evaluator_primitives_pair.cpp`
+- `string-upcase` *[core]* `kernel` — `src/compiler/evaluator_primitives_pair.cpp`
 - `string<=?` *[core]* `kernel` — `src/compiler/evaluator_primitives_pair.cpp`
 - `string<?` *[core]* `kernel` — `src/compiler/evaluator_primitives_pair.cpp`
 - `string=?` *[core]* `kernel` — `src/compiler/evaluator_primitives_pair.cpp`
@@ -532,7 +535,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `panic-safe-source` `kernel` — `src/compiler/evaluator_primitives_obs_eval.cpp`
 - `workspace-persist-info` `kernel` — `src/compiler/evaluator_primitives_persist.cpp`
 
-### Core builtins (must remain primitive) (400)
+### Core builtins (must remain primitive) (403)
 
 - `%base64-decode` `kernel` — `src/compiler/evaluator_primitives_char.cpp`
 - `%base64-encode` `kernel` — `src/compiler/evaluator_primitives_char.cpp`
@@ -874,6 +877,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `string->number` `kernel` — `src/compiler/evaluator_primitives_pair.cpp`
 - `string-append` `kernel` — `src/compiler/evaluator_primitives_pair.cpp`
 - `string-copy` `kernel` — `src/compiler/evaluator_primitives_pair.cpp`
+- `string-downcase` `kernel` — `src/compiler/evaluator_primitives_pair.cpp`
 - `string-fill!` `kernel` — `src/compiler/evaluator_primitives_pair.cpp`
 - `string-fnv1-32` `kernel` — `src/compiler/evaluator_primitives_pair.cpp`
 - `string-hash` `kernel` — `src/compiler/evaluator_primitives_pair.cpp`
@@ -881,6 +885,8 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `string-join` `kernel` — `src/compiler/evaluator_primitives_pair.cpp`
 - `string-length` `kernel` — `src/compiler/evaluator_primitives_pair.cpp`
 - `string-ref` `kernel` — `src/compiler/evaluator_primitives_pair.cpp`
+- `string-split-words` `kernel` — `src/compiler/evaluator_primitives_pair.cpp`
+- `string-upcase` `kernel` — `src/compiler/evaluator_primitives_pair.cpp`
 - `string<=?` `kernel` — `src/compiler/evaluator_primitives_pair.cpp`
 - `string<?` `kernel` — `src/compiler/evaluator_primitives_pair.cpp`
 - `string=?` `kernel` — `src/compiler/evaluator_primitives_pair.cpp`
@@ -943,7 +949,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 
 Criterion: a name stays **kernel** only when Aura code cannot implement it without losing atomicity or a host effect. **stdlib-candidate** names are pure value->value functions Aura can host; **delete** names duplicate another registered name. See [primitive-authoring-contract.md](../stdlib/primitive-authoring-contract.md).
 
-### kernel (417)
+### kernel (420)
 
 - `%base64-decode` *[K-HOSTLIB]* — `src/compiler/evaluator_primitives_char.cpp`
 - `%base64-encode` *[K-HOSTLIB]* — `src/compiler/evaluator_primitives_char.cpp`
@@ -1301,6 +1307,7 @@ Criterion: a name stays **kernel** only when Aura code cannot implement it witho
 - `string->number` *[K-PARSE]* — `src/compiler/evaluator_primitives_pair.cpp`
 - `string-append` *[K-VAL]* — `src/compiler/evaluator_primitives_pair.cpp`
 - `string-copy` *[K-STR-HEAP]* — `src/compiler/evaluator_primitives_pair.cpp`
+- `string-downcase` *[K-EXC-5369]* — `src/compiler/evaluator_primitives_pair.cpp`
 - `string-fill!` *[K-STR-HEAP]* — `src/compiler/evaluator_primitives_pair.cpp`
 - `string-fnv1-32` *[K-EXC-5339]* — `src/compiler/evaluator_primitives_pair.cpp`
 - `string-hash` *[K-STR]* — `src/compiler/evaluator_primitives_pair.cpp`
@@ -1308,6 +1315,8 @@ Criterion: a name stays **kernel** only when Aura code cannot implement it witho
 - `string-join` *[K-STR-HEAP]* — `src/compiler/evaluator_primitives_pair.cpp`
 - `string-length` *[K-VAL]* — `src/compiler/evaluator_primitives_pair.cpp`
 - `string-ref` *[K-VAL]* — `src/compiler/evaluator_primitives_pair.cpp`
+- `string-split-words` *[K-EXC-5369]* — `src/compiler/evaluator_primitives_pair.cpp`
+- `string-upcase` *[K-EXC-5369]* — `src/compiler/evaluator_primitives_pair.cpp`
 - `string<=?` *[K-STR-HEAP]* — `src/compiler/evaluator_primitives_pair.cpp`
 - `string<?` *[K-STR-HEAP]* — `src/compiler/evaluator_primitives_pair.cpp`
 - `string=?` *[K-STR-HEAP]* — `src/compiler/evaluator_primitives_pair.cpp`

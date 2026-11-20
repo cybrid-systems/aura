@@ -80,4 +80,48 @@
   (check= "key=value" (car parts))
   (check (< (run 500 (lambda () (string-split line ";"))) 100)))
 
+; Issue #5369: the native word scan must answer exactly what the
+; interpreted body did on every separator shape.
+(define (ref-split-words s)
+  (define (word-char? c) (and (> c 32) (< c 127)))
+  (define n (string-length s))
+  (let ((i 0)
+        (start 0)
+        (in-word #f)
+        (result (list)))
+    (while (lambda () (< i n))
+      (lambda ()
+        (let ((c (string-ref s i)))
+          (if (word-char? c)
+            (begin
+              (if (not in-word)
+                (begin (set! start i) (set! in-word #t)))
+              (set! i (+ i 1)))
+            (begin
+              (if in-word
+                (begin
+                  (set! result (cons (substring s start i) result))
+                  (set! in-word #f)))
+              (set! i (+ i 1)))))))
+    (if in-word
+      (set! result (cons (substring s start n) result)))
+    (reverse result)))
+
+(test-case "native split-words matches the interpreted body" (hash "issue" 5369)
+  (for-each
+    (lambda (s)
+      (check= (ref-split-words s) (string-split-words s)))
+    (list "hi  there\tworld"
+          "  hi  "
+          ""
+          "   "
+          "a b"
+          " a"
+          "a "
+          "héllo wörld"
+          "\n\r\t"
+          "x-y z_9 {|}~"
+          (list->string (list 1 97 127 98))
+          (string-repeat "w " 500))))
+
 (test-finish)

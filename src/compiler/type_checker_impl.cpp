@@ -4665,6 +4665,11 @@ void InferenceEngine::init_primitive_env_part0(TypeId Int, TypeId Bool, TypeId F
     // Issue #4614: native FNV-1a 64 string hash code.
     register_primitive("string-hash", {String}, Int);
     register_primitive("string-fnv1-32", {String}, Int);
+    // Issue #5369: native ASCII case conversion and the word scan replace
+    // the interpreted std/string bodies; same String domain, one result.
+    register_primitive("string-upcase", {String}, String);
+    register_primitive("string-downcase", {String}, String);
+    register_primitive("string-split-words", {String}, Dyn);
     register_primitive("string-ref", {String, Int}, Int);
     register_primitive("substring", {String, Int, Int}, String);
     register_primitive("string=?", {String, String}, Bool);

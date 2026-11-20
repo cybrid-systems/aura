@@ -1431,6 +1431,139 @@ void RegSplitParts::register_string_ops(PrimRegistrar add, Evaluator& ev,
         },
         pure_general(1, "(string) -> int",
                      "32-bit FNV-1 over the string's code points (std/evo-core ids)."));
+    // Issue #5369: native ASCII case conversion. std/string used to run an
+    // interpreted closure per character (map up (string->list s)); these two
+    // prims apply the same mapping (a-z <-> A-Z, every other byte unchanged)
+    // to the UTF-8 bytes in one pass. A multi-byte code point is >= 0x80 in
+    // every byte, so the ASCII-only contract is byte-exact.
+    register_prim(
+        add, ev, "string-upcase",
+        [&ev, &string_heap, &error_values](std::span<const EvalValue> a) {
+            if (a.empty() || !is_string(a[0]))
+                return make_primitive_error(string_heap, error_values,
+                                            "string-upcase: not a string",
+                                            ev.primitive_error_counter_ptr());
+            auto idx = as_string_idx(a[0]);
+            if (!ev.inrange_string_tenant_allows(idx, /*required_effects=*/0, "string-upcase")) {
+                return ev.make_typed_error(
+                    "string-upcase: cross-tenant string slot read denied (#4505)",
+                    aura::diag::ErrorKind::EffectDenied);
+            }
+            std::string out;
+            {
+                std::scoped_lock lock(ev.alloc_storage_lock_);
+                if (idx >= string_heap.size())
+                    return make_primitive_error(string_heap, error_values,
+                                                "string-upcase: corrupt slot",
+                                                ev.primitive_error_counter_ptr());
+                const std::string& s = string_heap[idx];
+                out.reserve(s.size());
+                for (unsigned char c : s) {
+                    if (c >= 'a' && c <= 'z')
+                        c = static_cast<unsigned char>(c - 32);
+                    out.push_back(static_cast<char>(c));
+                }
+            }
+            return make_string(static_cast<std::uint64_t>(ev.push_string_heap(std::move(out))));
+        },
+        pure_general(1, "(string) -> string", "ASCII upper case; other bytes unchanged."));
+    register_prim(
+        add, ev, "string-downcase",
+        [&ev, &string_heap, &error_values](std::span<const EvalValue> a) {
+            if (a.empty() || !is_string(a[0]))
+                return make_primitive_error(string_heap, error_values,
+                                            "string-downcase: not a string",
+                                            ev.primitive_error_counter_ptr());
+            auto idx = as_string_idx(a[0]);
+            if (!ev.inrange_string_tenant_allows(idx, /*required_effects=*/0, "string-downcase")) {
+                return ev.make_typed_error(
+                    "string-downcase: cross-tenant string slot read denied (#4505)",
+                    aura::diag::ErrorKind::EffectDenied);
+            }
+            std::string out;
+            {
+                std::scoped_lock lock(ev.alloc_storage_lock_);
+                if (idx >= string_heap.size())
+                    return make_primitive_error(string_heap, error_values,
+                                                "string-downcase: corrupt slot",
+                                                ev.primitive_error_counter_ptr());
+                const std::string& s = string_heap[idx];
+                out.reserve(s.size());
+                for (unsigned char c : s) {
+                    if (c >= 'A' && c <= 'Z')
+                        c = static_cast<unsigned char>(c + 32);
+                    out.push_back(static_cast<char>(c));
+                }
+            }
+            return make_string(static_cast<std::uint64_t>(ev.push_string_heap(std::move(out))));
+        },
+        pure_general(1, "(string) -> string", "ASCII lower case; other bytes unchanged."));
+    // Issue #5369: native word scan. The Aura body paid an interpreted loop
+    // step and two comparisons per character; a word is a maximal run of
+    // bytes in (32, 127). Byte-wise is code-point-exact: every byte of a
+    // non-ASCII code point is >= 0x80, so it never splits an ASCII run.
+    register_prim(
+        add, ev, "string-split-words",
+        [&ev, &pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
+            if (a.empty() || !is_string(a[0]))
+                return make_primitive_error(string_heap, error_values,
+                                            "string-split-words: not a string",
+                                            ev.primitive_error_counter_ptr());
+            auto idx = as_string_idx(a[0]);
+            if (!ev.inrange_string_tenant_allows(idx, /*required_effects=*/0,
+                                                 "string-split-words")) {
+                return ev.make_typed_error(
+                    "string-split-words: cross-tenant string slot read denied (#4505)",
+                    aura::diag::ErrorKind::EffectDenied);
+            }
+            std::vector<std::string> words;
+            {
+                std::scoped_lock lock(ev.alloc_storage_lock_);
+                if (idx >= string_heap.size())
+                    return make_primitive_error(string_heap, error_values,
+                                                "string-split-words: corrupt slot",
+                                                ev.primitive_error_counter_ptr());
+                const std::string& s = string_heap[idx];
+                const auto word_byte = [](unsigned char c) { return c > 32 && c < 127; };
+                std::size_t i = 0;
+                const std::size_t n = s.size();
+                while (i < n) {
+                    while (i < n && !word_byte(static_cast<unsigned char>(s[i])))
+                        ++i;
+                    if (i >= n)
+                        break;
+                    const std::size_t start = i;
+                    while (i < n && word_byte(static_cast<unsigned char>(s[i])))
+                        ++i;
+                    words.push_back(s.substr(start, i - start));
+                }
+            }
+            if (words.empty())
+                return make_void();
+            std::scoped_lock lock(ev.alloc_storage_lock_);
+            if (!ev.prim_heap_quota_allow(PrimHeapDim::Pairs, pairs.size() + words.size()))
+                return make_primitive_error(
+                    string_heap, error_values,
+                    std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Pairs)),
+                    ev.primitive_error_counter_ptr());
+            if (!ev.prim_heap_quota_allow(PrimHeapDim::Strings, string_heap.size() + words.size()))
+                return make_primitive_error(
+                    string_heap, error_values,
+                    std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Strings)),
+                    ev.primitive_error_counter_ptr());
+            EvalValue result = make_void();
+            for (auto it = words.rbegin(); it != words.rend(); ++it) {
+                auto sidx = string_heap.mint(std::move(*it));
+                auto pid = pairs.size();
+                pairs.push_back({make_string(sidx), result});
+                ev.note_inrange_pair_mint(pid);
+                result = make_pair(pid);
+            }
+            return result;
+        },
+        pure_general(1, "(string) -> list",
+                     "Split into runs of printable ASCII (33..126); every other "
+                     "code point separates."));
     register_prim(
         add, ev, "string-ref",
         [&ev, &string_heap, &error_values](std::span<const EvalValue> a) {
