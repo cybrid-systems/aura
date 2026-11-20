@@ -443,6 +443,104 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                     ev, {bus_string(ev, "ok"), make_int(static_cast<std::int64_t>(worldline))});
             }
 
+
+            if (op == "grant") {
+                std::int64_t bits = 0, channels = 0, loans = 0, expires = 0, worldline = 0;
+                if (a.size() < 7 || !bus_int(a[2], &bits) || !bus_int(a[3], &channels) ||
+                    !bus_int(a[4], &loans) || !bus_int(a[5], &expires) ||
+                    !bus_int(a[6], &worldline))
+                    return bus_error(ev, "validation-failed",
+                                     "grant needs bits, channels, loans, expires, worldline");
+                aura::bus::GrantBody request{};
+                request.caps.bits = static_cast<std::uint64_t>(bits);
+                request.caps.channels = static_cast<std::uint64_t>(channels);
+                request.caps.max_loans = static_cast<std::uint64_t>(loans);
+                request.caps.expires_gen = static_cast<std::uint64_t>(expires);
+                request.caps.worldline = static_cast<std::uint64_t>(worldline);
+                if (!aura::bus::send_frame(
+                        att.sock, aura::bus::FrameType::Grant, att.session,
+                        {reinterpret_cast<const std::byte*>(&request), sizeof(request)}))
+                    return bus_error(ev, "transport-failed", "grant send failed");
+                aura::bus::FrameHeader hdr{};
+                std::vector<std::byte> body(aura::bus::kBusMaxControlFrame);
+                if (!recv_reply(att.sock, &hdr, &body))
+                    return bus_error(ev, "transport-failed", "grant reply lost");
+                if (hdr.type == static_cast<std::uint16_t>(aura::bus::FrameType::Error)) {
+                    aura::bus::ErrorBody eb{};
+                    std::memcpy(&eb, body.data(), std::min(sizeof(eb), body.size()));
+                    return bus_error(ev, "permission", eb.message);
+                }
+                aura::bus::GrantReply reply{};
+                std::memcpy(&reply, body.data(), std::min(sizeof(reply), body.size()));
+                return bus_list(
+                    ev, {bus_string(ev, "ok"), make_int(static_cast<std::int64_t>(reply.token))});
+            }
+
+            if (op == "revoke") {
+                std::int64_t token = 0;
+                if (a.size() < 3 || !bus_int(a[2], &token))
+                    return bus_error(ev, "validation-failed", "revoke needs a token");
+                aura::bus::LoanBody loan{};
+                loan.channel = static_cast<std::uint64_t>(token);
+                if (!send_loan(att.sock, att.session, aura::bus::FrameType::Revoke, loan))
+                    return bus_error(ev, "transport-failed", "revoke send failed");
+                aura::bus::FrameHeader hdr{};
+                std::vector<std::byte> body(aura::bus::kBusMaxControlFrame);
+                if (!recv_reply(att.sock, &hdr, &body))
+                    return bus_error(ev, "transport-failed", "revoke reply lost");
+                if (hdr.type == static_cast<std::uint16_t>(aura::bus::FrameType::Error)) {
+                    aura::bus::ErrorBody eb{};
+                    std::memcpy(&eb, body.data(), std::min(sizeof(eb), body.size()));
+                    return bus_error(ev, "permission", eb.message);
+                }
+                return bus_list(ev, {bus_string(ev, "ok")});
+            }
+
+            if (op == "audit") {
+                std::int64_t worldline = 0;
+                if (a.size() >= 3 && !bus_int(a[2], &worldline))
+                    return bus_error(ev, "validation-failed", "audit worldline must be an integer");
+                aura::bus::AuditQueryBody req{};
+                req.worldline = static_cast<std::uint64_t>(worldline);
+                if (!aura::bus::send_frame(att.sock, aura::bus::FrameType::AuditQuery, att.session,
+                                           {reinterpret_cast<const std::byte*>(&req), sizeof(req)}))
+                    return bus_error(ev, "transport-failed", "audit send failed");
+                aura::bus::FrameHeader hdr{};
+                std::vector<std::byte> body(aura::bus::kBusMaxControlFrame);
+                if (!recv_reply(att.sock, &hdr, &body))
+                    return bus_error(ev, "transport-failed", "audit reply lost");
+                if (hdr.type == static_cast<std::uint16_t>(aura::bus::FrameType::Error)) {
+                    aura::bus::ErrorBody eb{};
+                    std::memcpy(&eb, body.data(), std::min(sizeof(eb), body.size()));
+                    return bus_error(ev, "permission", eb.message);
+                }
+                if (body.size() < sizeof(aura::bus::AuditReply))
+                    return bus_error(ev, "validation-failed", "malformed audit reply");
+                aura::bus::AuditReply ar{};
+                std::memcpy(&ar, body.data(), sizeof(ar));
+                std::vector<EvalValue> rows;
+                for (std::uint64_t i = 0; i < ar.count; ++i) {
+                    const std::size_t at = sizeof(ar) + i * sizeof(aura::bus::AuditWire);
+                    if (at + sizeof(aura::bus::AuditWire) > body.size())
+                        break;
+                    aura::bus::AuditWire w{};
+                    std::memcpy(&w, body.data() + at, sizeof(w));
+                    rows.push_back(bus_list(
+                        ev, {make_int(static_cast<std::int64_t>(w.kind)),
+                             make_int(static_cast<std::int64_t>(w.worldline)),
+                             make_int(static_cast<std::int64_t>(w.result)),
+                             make_int(static_cast<std::int64_t>(w.version)),
+                             bus_string(
+                                 ev, std::string(w.reason, strnlen(w.reason, sizeof(w.reason))))}));
+                }
+                EvalValue listed = make_void();
+                for (auto it = rows.rbegin(); it != rows.rend(); ++it)
+                    listed = make_pair(static_cast<std::uint64_t>(ev.push_pair(*it, listed)));
+                return bus_list(ev, {bus_string(ev, "ok"),
+                                     make_int(static_cast<std::int64_t>(ar.count)),
+                                     make_int(static_cast<std::int64_t>(ar.truncated)), listed});
+            }
+
             return bus_error(ev, "unsupported", "unknown bus-call op");
         },
         pure_general(255, "(string any...) -> list",

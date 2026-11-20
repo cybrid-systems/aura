@@ -8,7 +8,7 @@
 ; Failures are records, not #f: (list "error" CODE MESSAGE).
 
 (export bus:attach bus:detach bus:subscribe bus:publish bus:query
-        bus:trial bus:keep bus:rollback
+        bus:trial bus:keep bus:rollback bus:grant bus:revoke bus:audit
         bus:status bus:code bus:message bus:ok?
         bus:attach? bus:error? bus:record?)
 
@@ -43,6 +43,17 @@
 
 (define (bus:rollback session worldline)
   (bus-call "rollback" session worldline))
+
+; (bus:grant session bits channels loans expires worldline) -> (ok token)
+(define (bus:grant session bits channels loans expires worldline)
+  (bus-call "grant" session bits channels loans expires worldline))
+
+(define (bus:revoke session token)
+  (bus-call "revoke" session token))
+
+; (bus:audit session worldline) -> (ok count truncated events)
+(define (bus:audit session worldline)
+  (bus-call "audit" session worldline))
 
 (define (bus:status record) (car record))
 (define (bus:ok? record) (string=? (car record) "ok"))

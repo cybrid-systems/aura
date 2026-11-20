@@ -579,8 +579,7 @@ bool Server::wait_disconnect(TransportError* error) {
         switch (static_cast<FrameType>(header.type)) {
             case FrameType::Subscribe:
             case FrameType::Unsubscribe:
-            case FrameType::Query:
-            case FrameType::AuditQuery: {
+            case FrameType::Query: {
                 const LoanBody loan = loan_from();
                 Channel channel{};
                 if (channel_from(loan.channel, &channel) && image_base_ != nullptr) {
@@ -599,6 +598,41 @@ bool Server::wait_disconnect(TransportError* error) {
                 }
                 if (require(kCapRead, loan.channel, 0))
                     reply_loan(loan);
+                break;
+            }
+            case FrameType::AuditQuery: {
+                if (header.len < sizeof(AuditQueryBody))
+                    break;
+                AuditQueryBody request{};
+                std::memcpy(&request, body.data(), sizeof(request));
+                if (!require(kCapRead, 0, 0))
+                    break;
+                std::vector<AuditEvent> events;
+                if (request.worldline == 0)
+                    events = audit_.events();
+                else
+                    events = audit_.for_worldline(request.worldline);
+                constexpr std::size_t kMaxEvents = 20;
+                const std::size_t count = std::min(events.size(), kMaxEvents);
+                std::vector<std::byte> out(sizeof(AuditReply) + count * sizeof(AuditWire));
+                AuditReply reply{};
+                reply.count = count;
+                reply.truncated = events.size() > count ? 1 : 0;
+                std::memcpy(out.data(), &reply, sizeof(reply));
+                for (std::size_t i = 0; i < count; ++i) {
+                    AuditWire wire{};
+                    wire.kind = static_cast<std::uint64_t>(events[i].kind);
+                    wire.token = events[i].token;
+                    wire.worldline = events[i].worldline;
+                    wire.result = events[i].result;
+                    wire.version = events[i].constraint_version;
+                    const std::size_t n =
+                        std::min(events[i].reason.size(), sizeof(wire.reason) - 1);
+                    std::memcpy(wire.reason, events[i].reason.data(), n);
+                    std::memcpy(out.data() + sizeof(reply) + i * sizeof(AuditWire), &wire,
+                                sizeof(wire));
+                }
+                send_frame(conn_fd_, FrameType::Credit, session_, out);
                 break;
             }
             case FrameType::CatchUp: {
@@ -750,6 +784,8 @@ bool Server::wait_disconnect(TransportError* error) {
                 std::memcpy(&request, body.data(), sizeof(request));
                 if (!require(kCapGrant, 0, 0))
                     break;
+                if (request.caps.workspace == 0)
+                    request.caps.workspace = workspace_id_;
                 const std::uint64_t parent = request.parent == 0 ? root_token_ : request.parent;
                 std::string why;
                 const auto token = caps_table_.derive(parent, request.caps, &why);
