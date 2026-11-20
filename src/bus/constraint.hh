@@ -38,6 +38,9 @@ struct ConstraintRule {
 struct ConstraintSet {
     std::uint64_t version = 1;
     std::vector<ConstraintRule> rules;
+    // Workspace allow policy is part of the same versioned set; a rollback
+    // restores both the rules and the policy (#5126).
+    WorkspacePolicy policy{};
 };
 
 struct GateResult {
@@ -62,6 +65,8 @@ public:
     [[nodiscard]] std::uint64_t version() const { return current_.version; }
     [[nodiscard]] std::size_t rule_count() const { return current_.rules.size(); }
     [[nodiscard]] const ConstraintSet& current() const { return current_; }
+    [[nodiscard]] const WorkspacePolicy& policy() const { return current_.policy; }
+    void set_initial_policy(WorkspacePolicy policy) { current_.policy = std::move(policy); }
 
 private:
     ConstraintSet current_{};

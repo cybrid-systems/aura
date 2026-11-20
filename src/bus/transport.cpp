@@ -426,7 +426,8 @@ bool Server::accept_one(const BuildFn& build, Attach* out, TransportError* error
     requested.max_loans = hello.max_loans;
     requested.workspace = workspace_id_;
     bool policy_denied = false;
-    Capability granted = policy_.resolve(hello.role, requested, workspace_id_, &policy_denied);
+    Capability granted =
+        constraints_.policy().resolve(hello.role, requested, workspace_id_, &policy_denied);
     granted = clamp_preset(granted, preset_);
     if (hello.caps != 0 && granted.bits == 0) {
         record_audit(AuditKind::Denied, 0, 0, hello.role);
@@ -581,6 +582,19 @@ void Server::write_constraints_image() {
     std::string why;
     (void)constraint_write({image_base_, image_size_}, constraints_.version(),
                            {reinterpret_cast<const std::byte*>(blob.data()), blob.size()}, &why);
+}
+
+void Server::register_constraint_predicate(std::string name, ConstraintPredicate check) {
+    predicate_registry_[std::move(name)] = std::move(check);
+}
+
+bool Server::install_policy(const Capability& caps, WorkspacePolicy policy, std::string* why) {
+    ConstraintSet next = constraints_.current();
+    next.policy = std::move(policy);
+    if (!constraints_.install(std::move(next), caps, &audit_, 0, why))
+        return false;
+    write_constraints_image();
+    return true;
 }
 
 bool Server::wait_disconnect(TransportError* error) {
@@ -888,8 +902,55 @@ bool Server::wait_disconnect(TransportError* error) {
                     deny(EPERM, why);
                     break;
                 }
+                write_constraints_image();
                 const LoanBody empty{};
                 reply_loan(empty);
+                break;
+            }
+            case FrameType::ConstraintInstall: {
+                if (!require(kCapConstraintWrite, 0, 0))
+                    break;
+                ConstraintWire wire{};
+                if (header.len < sizeof(wire)) {
+                    deny(EINVAL, "constraint install body is too short");
+                    break;
+                }
+                std::memcpy(&wire, body.data(), sizeof(wire));
+                const std::uint64_t payload = header.len - sizeof(wire);
+                if (wire.name_len > payload || wire.source_len > payload - wire.name_len) {
+                    deny(EINVAL, "constraint install lengths are inconsistent");
+                    break;
+                }
+                const char* text = reinterpret_cast<const char*>(body.data() + sizeof(wire));
+                std::string name(text, wire.name_len);
+                std::string source(text + wire.name_len, wire.source_len);
+                const auto pred = predicate_registry_.find(name);
+                if (pred == predicate_registry_.end()) {
+                    deny(EPERM, "constraint source is not registered: " + name);
+                    break;
+                }
+                ConstraintSet next = constraints_.current();
+                bool replaced = false;
+                for (auto& rule : next.rules) {
+                    if (rule.name == name) {
+                        rule.check = pred->second;
+                        rule.source = source;
+                        replaced = true;
+                        break;
+                    }
+                }
+                if (!replaced)
+                    next.rules.push_back({name, pred->second, source});
+                std::string why;
+                if (!constraints_.install(std::move(next), session_caps_, &audit_, root_token_,
+                                          &why)) {
+                    deny(EPERM, why);
+                    break;
+                }
+                write_constraints_image();
+                LoanBody installed{};
+                installed.generation = constraints_.version();
+                reply_loan(installed);
                 break;
             }
             case FrameType::Disconnect:

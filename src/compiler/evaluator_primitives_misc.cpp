@@ -1061,6 +1061,59 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                                  make_int(static_cast<std::int64_t>(rules.size())), rows});
             }
 
+            if (op == "install-constraint") {
+                if (a.size() < 4 || !is_string(a[2]) || !is_string(a[3]))
+                    return bus_error(ev, "validation-failed",
+                                     "install-constraint needs name and source strings");
+                const std::string name = ev.string_at_or(as_string_idx(a[2]));
+                const std::string source = ev.string_at_or(as_string_idx(a[3]));
+                if (name.size() > 240 || source.size() > 2048)
+                    return bus_error(ev, "validation-failed", "constraint name/source too long");
+                aura::bus::ConstraintWire wire{};
+                wire.name_len = static_cast<std::uint32_t>(name.size());
+                wire.source_len = static_cast<std::uint32_t>(source.size());
+                std::vector<std::byte> body(sizeof(wire) + name.size() + source.size());
+                std::memcpy(body.data(), &wire, sizeof(wire));
+                std::memcpy(body.data() + sizeof(wire), name.data(), name.size());
+                std::memcpy(body.data() + sizeof(wire) + name.size(), source.data(), source.size());
+                if (!aura::bus::send_frame(att.sock, aura::bus::FrameType::ConstraintInstall,
+                                           att.session, body))
+                    return bus_error(ev, "transport-failed", "constraint install send failed");
+                aura::bus::FrameHeader hdr{};
+                std::vector<std::byte> reply(aura::bus::kBusMaxControlFrame);
+                if (!recv_reply(att.sock, &hdr, &reply))
+                    return bus_error(ev, "transport-failed", "constraint install reply lost");
+                if (hdr.type == static_cast<std::uint16_t>(aura::bus::FrameType::Error)) {
+                    aura::bus::ErrorBody eb{};
+                    std::memcpy(&eb, reply.data(), std::min(sizeof(eb), reply.size()));
+                    return bus_error(ev, eb.code == EPERM ? "permission" : "validation-failed",
+                                     eb.message);
+                }
+                aura::bus::LoanBody granted{};
+                std::memcpy(&granted, reply.data(), std::min(sizeof(granted), reply.size()));
+                return bus_list(ev, {bus_string(ev, "ok"),
+                                     make_int(static_cast<std::int64_t>(granted.generation))});
+            }
+
+            if (op == "rollback-constraints") {
+                aura::bus::LoanBody empty{};
+                if (!aura::bus::send_frame(
+                        att.sock, aura::bus::FrameType::ConstraintRollback, att.session,
+                        {reinterpret_cast<const std::byte*>(&empty), sizeof(empty)}))
+                    return bus_error(ev, "transport-failed", "constraint rollback send failed");
+                aura::bus::FrameHeader hdr{};
+                std::vector<std::byte> reply(aura::bus::kBusMaxControlFrame);
+                if (!recv_reply(att.sock, &hdr, &reply))
+                    return bus_error(ev, "transport-failed", "constraint rollback reply lost");
+                if (hdr.type == static_cast<std::uint16_t>(aura::bus::FrameType::Error)) {
+                    aura::bus::ErrorBody eb{};
+                    std::memcpy(&eb, reply.data(), std::min(sizeof(eb), reply.size()));
+                    return bus_error(ev, eb.code == EPERM ? "permission" : "validation-failed",
+                                     eb.message);
+                }
+                return bus_list(ev, {bus_string(ev, "ok")});
+            }
+
             if (op == "hotspots") {
                 std::int64_t top = 0;
                 if (a.size() < 3 || !bus_int(a[2], &top) || top < 0)

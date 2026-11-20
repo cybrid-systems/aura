@@ -22,6 +22,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 
 namespace aura::bus {
 
@@ -51,6 +52,7 @@ enum class FrameType : std::uint16_t {
     Error = 17,
     Disconnect = 18,
     ConstraintRollback = 19,
+    ConstraintInstall = 20,
 };
 
 enum class RejectReason : std::uint16_t {
@@ -162,6 +164,12 @@ struct LoanBody {
     std::uint64_t worldline = 0;
 };
 
+// ConstraintInstall body prefix: name/source bytes follow the two lengths.
+struct ConstraintWire {
+    std::uint32_t name_len = 0;
+    std::uint32_t source_len = 0;
+};
+
 static_assert(sizeof(FrameHeader) == 16);
 static_assert(sizeof(HelloBody) == 80);
 static_assert(sizeof(HelloOkBody) == 64);
@@ -249,7 +257,7 @@ public:
     // Workspace allow policy and sandbox preset applied at attach. With
     // no policy every role is denied.
     void set_policy(const WorkspacePolicy& policy, SandboxPreset preset = SandboxPreset::Dev) {
-        policy_ = policy;
+        constraints_.set_initial_policy(policy);
         preset_ = preset;
     }
     // build() fills the mapped image before sealing. It must leave a
@@ -273,6 +281,13 @@ public:
     // Coordinator-side constraint installation (not a wire frame: the
     // constraint object is executable and stays local).
     bool install_constraints(ConstraintSet set, std::string* why);
+    // EDSL source binding: register the compiled predicate for a rule name;
+    // sessions may install that source under constraint-write. Unknown names
+    // are rejected (never silently allow).
+    void register_constraint_predicate(std::string name, ConstraintPredicate check);
+    // Versioned policy change; requires constraint-write and audits a
+    // ConstraintChange, never a plain keep.
+    bool install_policy(const Capability& caps, WorkspacePolicy policy, std::string* why);
     [[nodiscard]] const ConstraintStore& constraints() const { return constraints_; }
 
 private:
@@ -295,7 +310,6 @@ private:
     std::array<LoanLedger, 6> channel_loans_{};
     std::uint64_t staging_capacity_ = 0;
     std::uint64_t staging_used_ = 0;
-    WorkspacePolicy policy_{};
     SandboxPreset preset_ = SandboxPreset::Dev;
     CapabilityTable caps_table_{};
     AuditLog audit_{};
@@ -305,6 +319,7 @@ private:
     std::uint64_t root_token_ = 0;
     std::uint64_t generation_ = 2;
     ConstraintStore constraints_{};
+    std::unordered_map<std::string, ConstraintPredicate> predicate_registry_;
     std::byte* image_base_ = nullptr;
     std::size_t image_size_ = 0;
 };

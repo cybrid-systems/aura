@@ -12,6 +12,7 @@
         bus:project-cct bus:project-patches bus:project-worldlines
         bus:hotspots bus:diff-worldlines
         bus:constraints
+        bus:install-constraint bus:rollback-constraints
         bus:trial bus:keep bus:rollback bus:grant bus:revoke bus:audit
         bus:status bus:code bus:message bus:ok? bus:help
         bus:attach? bus:error? bus:record?)
@@ -70,6 +71,15 @@
 ; Reads the coordinator's current set from the image constraints section.
 (define (bus:constraints session)
   (bus-call "constraints" session))
+
+; (bus:install-constraint session name source) -> (ok version); needs constraint-write.
+; The coordinator binds name -> compiled predicate; unknown names are rejected.
+(define (bus:install-constraint session name source)
+  (bus-call "install-constraint" session name source))
+
+; (bus:rollback-constraints session) -> (ok); needs constraint-write.
+(define (bus:rollback-constraints session)
+  (bus-call "rollback-constraints" session))
 
 (define (bus:publish-cct session parent mid node samples self-ns)
   (bus-call "publish-cct" session parent mid node samples self-ns))

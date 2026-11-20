@@ -164,6 +164,7 @@ public:
     void allow(std::uint32_t role, const Capability& max);
     Capability resolve(std::uint32_t role, const Capability& requested, std::uint64_t workspace,
                        bool* denied) const;
+    [[nodiscard]] bool empty() const { return entries_.empty(); }
 
 private:
     struct Entry {

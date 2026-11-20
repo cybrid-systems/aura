@@ -35,6 +35,10 @@ bool ConstraintStore::install(ConstraintSet set, const Capability& caps, AuditLo
             *why = "missing capability: constraint-write";
         return false;
     }
+    // A rule-only install keeps the current allow policy; a set carrying a
+    // policy replaces it atomically with the rules.
+    if (set.policy.empty())
+        set.policy = current_.policy;
     set.version = current_.version + 1;
     history_.push_back(current_);
     current_ = std::move(set);

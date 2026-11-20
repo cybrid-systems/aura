@@ -1496,6 +1496,8 @@ void RegSplitParts::register_api_reference_primitive(PrimRegistrar add, Evaluato
                "(bus:diff-worldlines session id-a id-b) diffs two worldlines' patches\n";
         out += "  (bus:constraints session) reads the versioned constraint set "
                "(name + EDSL source) from the image\n";
+        out += "  (bus:install-constraint session name source) / (bus:rollback-constraints "
+               "session) change the versioned set; needs constraint-write\n";
         out += "  (bus:trial session channel) / (bus:keep session worldline node value) / "
                "(bus:rollback session worldline)\n";
         out += "  (bus:grant session bits channels loans expires worldline) / (bus:revoke session "

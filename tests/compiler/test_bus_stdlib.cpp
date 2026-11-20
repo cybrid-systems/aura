@@ -171,6 +171,16 @@ const char* kScript = R"BUS((require "std/bus" all:)
     (show rv)
     (define au (bus:audit sid (car (cdr tr))))
     (show au)
+    (define ic (bus:install-constraint sid "allow-small" "(lambda (ctx) (<= (ctx 'new-value) 50))"))
+    (show ic)
+    (define cs2 (bus:constraints sid))
+    (show cs2)
+    (define badc (bus:install-constraint sid "unregistered" "(lambda (ctx) #t)"))
+    (show badc)
+    (define rbc (bus:rollback-constraints sid))
+    (show rbc)
+    (define cs3 (bus:constraints sid))
+    (show cs3)
     (define h (bus:help))
     (show (string-length h))
     (display (if (and (bus:ok? pn) (bus:ok? sn) (> (car (cdr sn)) 0)
@@ -182,6 +192,11 @@ const char* kScript = R"BUS((require "std/bus" all:)
                       (bus:ok? hs) (> (car (cdr hs)) 0)
                       (bus:ok? cs) (> (car (cdr cs)) 0)
                       (>= (car (cdr (cdr cs))) 1)
+                      (bus:ok? ic) (= (car (cdr ic)) 3)
+                      (bus:ok? cs2) (= (car (cdr cs2)) 3)
+                      (= (car (cdr (cdr cs2))) 1)
+                      (bus:error? badc)
+                      (bus:ok? rbc) (bus:ok? cs3) (= (car (cdr cs3)) 2)
                       (>= (car (cdr (cdr pp))) 1)
                       (> (car (cdr (cdr pw))) 0)
                       (>= (car (cdr (cdr qp))) 1) (>= (car (cdr (cdr qw))) 1)
@@ -237,6 +252,15 @@ int main() {
                                  return true;
                              },
                              "(lambda (ctx) (<= (ctx 'new-value) 100))"});
+        s.register_constraint_predicate("allow-small",
+                                        [](const ConstraintContext& ctx, std::string* why) {
+                                            if (ctx.new_value > 100) {
+                                                if (why)
+                                                    *why = "new value exceeds 100";
+                                                return false;
+                                            }
+                                            return true;
+                                        });
         std::string cwhy;
         if (!s.install_constraints(set, &cwhy))
             _exit(25);

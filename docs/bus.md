@@ -69,6 +69,7 @@
 ## 约束与审计
 
 - 协调者持有 `ConstraintStore`：一组可执行规则加版本号。安装新集或回滚都要求 `constraint-write`，并分别记 `ConstraintChange` / `ConstraintRollback` 审计。
+- 工作区允许策略现在是同一份版本化集合的一部分（规则-only 安装保留当前策略；带策略的安装原子替换两者，回滚一起恢复）。`(bus:install-constraint session name source)` 在 `constraint-write` 下把规则源下发给协调者；协调者只接受已注册的 `name`（注册表把名字绑定到编译后谓词），未注册直接拒绝，不会静默放行。`(bus:rollback-constraints session)` 回到上一版本。两者都写 `ConstraintChange` / `ConstraintRollback` 审计并刷新映像约束节。
 - 每次 `KEEP` 先跑当前约束集。失败回 `EPERM`，消息带规则名和原因；worldline 保持 pending，活工作区不变，断开时按 rollback 处理。控制面没有「关闭约束再 keep」的消息，本地 `AURA_SANDBOX=off` 也不影响已附着会话。
 - 审计事件带约束版本、结果和原因，可按 worldline 过滤；自动轮次和人工试跑写同一份日志。
 - 协调者同时把每个事件追加进映像的审计节（若构建方预留了该节）：只追加、序号递增、只写下一个偶数代次，并重算节摘要；节满或没预留时控制面日志仍然完整，映像写入跳过。`AuditRecord` 只装 kind/actor/target/value，约束原因和版本仍从控制面查询读取。
