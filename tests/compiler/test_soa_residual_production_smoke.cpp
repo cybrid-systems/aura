@@ -101,7 +101,15 @@ static void ac1_production_smoke_residual_zero() {
                       residual0));
 
     CompilerService cs;
-    run_production_soa_smoke(cs);
+    // Issue #5366: one pass stays on the tree walker. Repeating the same
+    // set-code / eval-current sequence on this service re-enters
+    // (eval-current) while the outer call still holds workspace_mtx_
+    // (Workspace depth 2, no MutationBoundary). That used to throw
+    // EDEADLK out of WorkspaceUniqueIfNeeded and abort the batch (rc=134)
+    // after every check in this member had passed. Four passes is past
+    // the re-entry (the third (f 10) eval).
+    for (int pass_5366 = 0; pass_5366 < 4; ++pass_5366)
+        run_production_soa_smoke(cs);
 
     const auto residual1 = g_residual_aos_bridge_total_atomic().load(std::memory_order_relaxed);
     if (residual1 != 0) {
