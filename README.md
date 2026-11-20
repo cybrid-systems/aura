@@ -1,40 +1,54 @@
 # Aura
 
-AI-native Lisp — 代码自己进化。
+AI-native Lisp — 代码自己进化：a running program proposes new source, a trial keeps or rolls it back, and the process does not restart.
 
-The API is not stable. These commands install the rolling nightly built from `main`.
+## Watch a world change while the game keeps running
 
-## Watch a running service retune itself
+The hero runs on autopilot. Spoken commands switch the world: Garden, Beijing, San Francisco, Space (the runner morphs), Lava Canyon, Aurora Ice.
 
-一个真实的 HTTP 服务在给注册名单去重。aura-perf 发现 `dedupe` 占了每个请求 98% 的时间；MiniMax 提出改法，先在隔离的子世界线里用真实请求试跑：第一版没通过，回滚；第二版输出一致且更快，直接热替换进正在跑的进程，不重启。
+![Lumen Run on autopilot. Spoken commands switch worlds, and the corner note shows each evo trial KEEP or ROLLBACK.](docs/assets/aura-runner-edsl.gif)
 
-A real HTTP service dedupes sign-up lists. [aura-perf](https://github.com/cybrid-systems/aura-perf) finds `dedupe` is 98% of each request. MiniMax proposes a fix, `evo:trial` replays real requests in a child worldline: the first proposal is rolled back, the second is kept with `mutate :rebind` — same process, no restart.
+Each world, morph, and phrase is one Aura form (the Biome EDSL), proposed live by a model or by an offline recipe.
+`evo:trial` scores that form before the game can take it.
+KEEP rebinds it into the running game. ROLLBACK leaves the current form in place. The corner note shows which.
+The decision is appended to the audit log. The process does not restart.
 
-![A live Aura service retuned by aura-perf and MiniMax: first proposal rolled back, second kept, request time 430 ms to 12 ms](docs/assets/live-tune.gif)
+The form, from [aura-runner](https://github.com/cybrid-systems/aura-runner) `lib/edsl.aura`:
 
-| Real run, Aura `53e2ae6f`, default sandbox | Before | After |
-|---|---:|---:|
-| Requests/s | 1.6 | 69.6 |
-| p50 | 462 ms | 14 ms |
-| Whole request (aura-perf) | 430 ms | 12 ms |
+```
+; (biome ID
+;   (label WORD)
+;   (sky ZR ZG ZB HR HG HB)
+;   (fog FR FG FB AMT)
+;   (body sun|moon|stars|aurora|none)
+;   (road R G B) (curb R G B) (ground R G B)
+;   (surface grass|stone|dust|sand|ice|cloud|lava|reef|plank)
+;   (light L) (mood M)
+;   (particles fireflies|stardust|snow|embers|rain|sparkles|none DENSITY)
+;   (props (KIND DENSITY SCALE) ...)
+;   (recipe garden|city|space|coast|mix))
+;
+; KIND is tree, tower, arch, crystal, rock, coral, or ring.
+; A proposal is kept only after evo:trial (edsl-gate).
+```
 
-894 requests, 0 failures, 0 restarts. Replay it with [asciinema](https://asciinema.org) from [`docs/assets/live-tune.cast`](docs/assets/live-tune.cast), or run it yourself: [`examples/live-tune`](examples/live-tune).
+[Lumen Run](https://github.com/cybrid-systems/aura-runner) (`aura-runner`). Quick start: `./run.sh`, then open the URL it prints.
 
 ## Install
 
-Linux, x86_64 or arm64:
+Linux, x86_64 or arm64. The API is not stable. This installs the rolling nightly built from `main`.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/cybrid-systems/aura/main/install.sh | sh
 ```
 
-Put `~/.local/bin` on `PATH`. Nightly is replaced on each push to `main`. To reproduce a run, pin `ghcr.io/cybrid-systems/aura:<sha9>` or the image digest. More detail: [docs/install.md](docs/install.md).
+Put `~/.local/bin` on `PATH`. To reproduce a run, pin `ghcr.io/cybrid-systems/aura:<sha9>` or the image digest.
 
 ```sh
 docker run --rm -v "$PWD:/w" -w /w ghcr.io/cybrid-systems/aura:nightly main.aura
 ```
 
-Supported hosts are Ubuntu 24.04, Debian 12, Rocky Linux 9, and openEuler 24.03 LTS SP4, each on x86_64 and arm64. macOS, Windows, and other Linux distributions are not supported.
+That image's entrypoint is `aura`, so the command runs `main.aura` in the current directory. Supported hosts: Ubuntu 24.04, Debian 12, Rocky Linux 9, and openEuler 24.03 LTS SP4, each on x86_64 and arm64. macOS, Windows, and other Linux distributions are not supported.
 
 ## Quick start
 
@@ -42,18 +56,24 @@ Supported hosts are Ubuntu 24.04, Debian 12, Rocky Linux 9, and openEuler 24.03 
 aura demo
 ```
 
-An offline version without a network or model: fixed candidates, KEEP or ROLLBACK, live source after each step.
+Offline, no model: four fixed candidates. Each step prints KEEP or ROLLBACK and the live source. It ends with `(guess) => 42`.
 
-The same program is a project you can edit:
+The same program as a project:
 
 ```sh
-aura new evolve demo   # the same program as a project
+aura new evolve demo
 cd demo
 aura run
 aura test
 ```
 
-`aura demo agent` shows the two-role version (a proposer and a checker).
-`aura new` (`app`, `evolve`, or `agent`) writes a template from this repository. The evolve-strategy kit is a separate project: [aura-starter-kits](https://github.com/cybrid-systems/aura-starter-kits).
+`aura demo agent` is the two-role version (a proposer and a checker). `aura new` also scaffolds `app`, `evolve-moo`, and `agent`.
 
-[Getting started](docs/getting-started.md) · [Editor support and the REPL](docs/editor.md)
+## Learn more
+
+- [Getting started](docs/getting-started.md)
+- [Install details](docs/install.md)
+- [Editor and the REPL](docs/editor.md)
+- [Evolution log](docs/evo.md)
+- [Starter kits](https://github.com/cybrid-systems/aura-starter-kits)
+- [HTTP live-tune example](examples/live-tune)
