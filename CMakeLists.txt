@@ -1873,6 +1873,13 @@ add_library(aura-bus STATIC src/bus/image.cpp src/bus/image_schema.cpp src/bus/t
                                  src/bus/capability.cpp src/bus/channel.cpp src/bus/constraint.cpp)
 target_include_directories(aura-bus PUBLIC ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(aura PRIVATE aura-bus)
+# Issue #5127/#5122: evaluator_primitives_misc.cpp's bus-call bridge
+# references aura-bus symbols. Every target that compiles the evaluator
+# sources must link the archive, or shared-lib dependents fail with
+# --no-allow-shlib-undefined (test_ir / aura_test_objects / issue farm).
+target_link_libraries(test_ir PRIVATE aura-bus)
+target_link_libraries(aura_test_objects PUBLIC aura-bus)
+target_link_libraries(test_gc_evaluator_integration PRIVATE aura-bus)
 target_compile_features(aura-bus PUBLIC cxx_std_26)
 target_compile_options(aura-bus PRIVATE ${AURA_REFLECTION_FLAG} -Wall -Wextra)
 target_link_libraries(aura-bus PRIVATE stdc++)
