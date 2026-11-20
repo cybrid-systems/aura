@@ -34,3 +34,14 @@
 - `keep` / `rollback` 只作用于本会话开的 trial，或能力显式 scoped 到的 worldline；`keep` 还要求该 trial 的 loan 尚未归还。
 - 会话结束：名下 pending trial 全部按 rollback 处理并写审计，未提交 loan 收回。
 - 沙箱预设：`dev` 不裁剪；`ci` 去掉 `constraint-write`；`prod` 再去掉 `grant`。能力不能跨工作区携带。
+
+## 增量频道
+
+四条频道各有自己的节、代次和容量：
+
+- `metrics`：键走符号表，值是合法立即数（第 63 位为 0）。
+- `cct`：父下标只许向后，mid 用低 62 位，node 指向节点节。
+- `patches`：字段偏移、新值、worldline、代次；旧值由补丁日志保留。
+- `worldlines`：状态、约束结果、指标偏移、补丁区间、目标指标。
+
+协调者在节尾的预留容量里追加记录，提交时更新该节 length/count/digest/generation，并把映像头 committed_gen 推进到下一个偶数代次。订阅者只在稳定代次上读；游标记录上次的 generation/count，下一次只取新增记录。游标落后到已重建（count 变小）或超前时返回完整快照，绝不静默错位。容量用尽是硬错误，不扩容。
