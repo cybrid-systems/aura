@@ -523,6 +523,14 @@ bool Server::accept_one(const BuildFn& build, Attach* out, TransportError* error
     return true;
 }
 
+bool Server::install_constraints(ConstraintSet set, std::string* why) {
+    Capability coordinator{};
+    coordinator.bits = kCapConstraintWrite;
+    coordinator.channels = ~0ull;
+    coordinator.workspace = workspace_id_;
+    return constraints_.install(std::move(set), coordinator, &audit_, 0, why);
+}
+
 bool Server::wait_disconnect(TransportError* error) {
     FrameHeader header{};
     std::vector<std::byte> body(kBusMaxControlFrame);
@@ -714,6 +722,14 @@ bool Server::wait_disconnect(TransportError* error) {
                 const bool keep = header.type == static_cast<std::uint16_t>(FrameType::Keep);
                 if (!require(keep ? kCapKeep : kCapRollback, loan.channel, loan.worldline))
                     break;
+                if (keep) {
+                    const GateResult gate = constraints_.check(
+                        {loan.worldline, loan.offset, loan.length}, &audit_, root_token_);
+                    if (!gate.pass) {
+                        deny(EPERM, "constraint: " + gate.reason);
+                        break;
+                    }
+                }
                 std::string why;
                 const bool ok =
                     keep ? worldlines_.keep(loan.worldline, root_token_, session_caps_, &why)
@@ -759,6 +775,18 @@ bool Server::wait_disconnect(TransportError* error) {
                 }
                 audit_.add(AuditKind::Revoke, root_token_, 0, revoked);
                 reply_loan(loan);
+                break;
+            }
+            case FrameType::ConstraintRollback: {
+                if (!require(kCapConstraintWrite, 0, 0))
+                    break;
+                std::string why;
+                if (!constraints_.rollback(session_caps_, &audit_, root_token_, &why)) {
+                    deny(EPERM, why);
+                    break;
+                }
+                const LoanBody empty{};
+                reply_loan(empty);
                 break;
             }
             case FrameType::Disconnect:
