@@ -10,6 +10,7 @@
 #define AURA_BUS_TRANSPORT_HH
 
 #include "bus/capability.hh"
+#include "bus/constraint.hh"
 #include "bus/image.hh"
 
 #include <cstddef>
@@ -47,6 +48,7 @@ enum class FrameType : std::uint16_t {
     AuditQuery = 16,
     Error = 17,
     Disconnect = 18,
+    ConstraintRollback = 19,
 };
 
 enum class RejectReason : std::uint16_t {
@@ -239,6 +241,10 @@ public:
     [[nodiscard]] const AuditLog& audit() const { return audit_; }
     [[nodiscard]] const WorldlineLedger& worldlines() const { return worldlines_; }
     [[nodiscard]] Capability session_capability() const { return session_caps_; }
+    // Coordinator-side constraint installation (not a wire frame: the
+    // constraint object is executable and stays local).
+    bool install_constraints(ConstraintSet set, std::string* why);
+    [[nodiscard]] const ConstraintStore& constraints() const { return constraints_; }
 
 private:
     std::string path_;
@@ -258,6 +264,7 @@ private:
     Capability session_caps_{};
     std::uint64_t root_token_ = 0;
     std::uint64_t generation_ = 2;
+    ConstraintStore constraints_{};
     std::byte* image_base_ = nullptr;
     std::size_t image_size_ = 0;
 };

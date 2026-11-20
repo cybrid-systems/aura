@@ -52,3 +52,9 @@
 - `CatchUp` 带上次 generation/count；协调者只返回新增记录范围，落后到重建时返回完整快照（snapshot=1）。
 - `Reserve`/`Publish` 对 channel 1..4 直接操作该节尾部的预留容量；Publish 成功后回新的 generation/count，并把该次发布写进审计。
 - 对端只有在拿到 `publish` 或 `trial` 时才以可写方式映射映像；只读会话仍是 `PROT_READ`。
+
+## 约束与审计
+
+- 协调者持有 `ConstraintStore`：一组可执行规则加版本号。安装新集或回滚都要求 `constraint-write`，并分别记 `ConstraintChange` / `ConstraintRollback` 审计。
+- 每次 `KEEP` 先跑当前约束集。失败回 `EPERM`，消息带规则名和原因；worldline 保持 pending，活工作区不变，断开时按 rollback 处理。控制面没有「关闭约束再 keep」的消息，本地 `AURA_SANDBOX=off` 也不影响已附着会话。
+- 审计事件带约束版本、结果和原因，可按 worldline 过滤；自动轮次和人工试跑写同一份日志。

@@ -121,6 +121,9 @@ enum class AuditKind : std::uint16_t {
     Denied = 8,
     Publish = 9,
     Subscribe = 10,
+    ConstraintResult = 11,
+    ConstraintChange = 12,
+    ConstraintRollback = 13,
 };
 
 struct AuditEvent {
@@ -128,14 +131,20 @@ struct AuditEvent {
     std::uint64_t token = 0;
     std::uint64_t worldline = 0;
     std::uint64_t detail = 0;
+    std::uint64_t result = 0;
+    std::uint64_t constraint_version = 0;
+    std::string reason;
 };
 
 class AuditLog {
 public:
     void add(AuditKind kind, std::uint64_t token, std::uint64_t worldline = 0,
              std::uint64_t detail = 0);
+    void add_constraint(AuditKind kind, std::uint64_t token, std::uint64_t worldline,
+                        std::uint64_t result, std::uint64_t version, std::string reason);
     const std::vector<AuditEvent>& events() const { return events_; }
     std::size_t count(AuditKind kind) const;
+    std::vector<AuditEvent> for_worldline(std::uint64_t worldline) const;
 
 private:
     std::vector<AuditEvent> events_;
