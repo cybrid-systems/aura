@@ -1865,6 +1865,21 @@ target_compile_options(test_error_kind_names_wire PRIVATE ${AURA_REFLECTION_FLAG
 target_compile_features(test_error_kind_names_wire PUBLIC cxx_std_26)
 target_link_libraries(test_error_kind_names_wire PRIVATE stdc++)
 add_test(NAME test_error_kind_names_wire_verification COMMAND ./test_error_kind_names_wire)
+
+# Issue #5122: bus image protocol — reflection schema ids, untrusted-input
+# validation and the golden two-process traversal. P2996 lives in
+# image_schema.cpp (non-import-std); the validator and test are meta-free.
+add_library(aura-bus STATIC src/bus/image.cpp src/bus/image_schema.cpp)
+target_include_directories(aura-bus PUBLIC ${CMAKE_SOURCE_DIR}/src)
+target_compile_features(aura-bus PUBLIC cxx_std_26)
+target_compile_options(aura-bus PRIVATE ${AURA_REFLECTION_FLAG} -Wall -Wextra)
+target_link_libraries(aura-bus PRIVATE stdc++)
+add_executable(test_bus_image tests/compiler/test_bus_image.cpp)
+target_include_directories(test_bus_image PRIVATE src)
+target_compile_features(test_bus_image PUBLIC cxx_std_26)
+target_link_libraries(test_bus_image PRIVATE aura-bus)
+aura_strict_test_warnings(tests/compiler/test_bus_image.cpp)
+add_test(NAME test_bus_image_5122 COMMAND ./test_bus_image)
 # Issue #268 / #178: NodeView roundtrip (split TU). Full AC needs -freflection
 # on the reflect TU only — import std / aura.core.ast must not mix with <meta>
 # (g++ 16.1.0; hard errors, not silent ICE). Bridge: test_issue_178_bridge.h

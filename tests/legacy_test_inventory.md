@@ -1,7 +1,7 @@
 # Legacy test inventory
 
 **Issue:** [#1957](https://github.com/cybrid-systems/aura/issues/1957)
-**Generated:** 2026-11-17 by `scripts/tools/inventory_legacy_tests.py`
+**Generated:** 2026-11-20 by `scripts/tools/inventory_legacy_tests.py`
 **Status:** generated inventory, not the how-to-add-a-test policy. Policy is tests/HOMES.md. Re-run this script after consolidations.
 
 ## Purpose
@@ -18,8 +18,8 @@ This file is not the decision tree for a new test. Ask `python3 tests/run.py hom
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 925 | Preferred destination suites |
-| **Total scanned** | **925** | |
+| `tests/core/test_*.cpp` | 926 | Preferred destination suites |
+| **Total scanned** | **926** | |
 
 ### Related artifacts
 
@@ -43,7 +43,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 88 | 88 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 56 | 56 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 131 | 131 | P2 — often thin schema probes; collapse into obs matrix |
-| `uncategorized` | Uncategorized / mixed | 0 | 0 | 66 | 66 | P3 — review case-by-case |
+| `uncategorized` | Uncategorized / mixed | 0 | 0 | 67 | 67 | P3 — review case-by-case |
 
 ## Patterns, harness usage, coupling
 
@@ -288,6 +288,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/serve/test_boundary_yield_steal_metrics.cpp`
 - `tests/compiler/test_bugfix.cpp`
 - `tests/compiler/test_build_kv_hash_batch.cpp`
+- `tests/compiler/test_bus_image.cpp`
 - `tests/compiler/test_cache_entry_version_stamp.cpp`
 - `tests/reflect/test_cache_header_magic_a2.cpp`
 - `tests/compiler/test_cache_stamp_restamp_contract.cpp`
@@ -2078,13 +2079,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_verify_parse_shared_helper.cpp` (—) [domain_suite, theme_compiler] — Issue #1771 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_workspace_mtx_contention.cpp` (—) [domain_suite, theme_compiler] — AC1: Source cites #2523; residual strategy documented
 
-### `uncategorized` — Uncategorized / mixed (66)
+### `uncategorized` — Uncategorized / mixed (67)
 
 **Target:** manual triage before domain placement
 
 **Priority:** P3 — review case-by-case
 
-#### domain/ (66)
+#### domain/ (67)
 
 - `tests/core/test_address_bits_scratch.cpp` (—) [domain_suite, theme_core] — AC1: bit_cast round-trips a pointer and an integer address
 - `tests/compiler/test_and_or_error_value.cpp` (—) [domain_suite, theme_compiler] — (#4535 contract: only the UNCAUGHT face prints).
@@ -2094,6 +2095,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_aura_eval_embed.cpp` (—) [domain_suite, theme_core] — aura_test_objects source, no module import, no aura --serve child.
 - `tests/compiler/test_aura_result_error_policy.cpp` (—) [domain_suite, theme_compiler] — test_aura_result_error_policy.cpp — Issues #807 + #808:
 - `tests/compiler/test_bugfix.cpp` (—) [domain_suite, theme_compiler] — Issue #957/#968/#982/#984 (#1978 renamed): issue# moved from filename to header.
+- `tests/compiler/test_bus_image.cpp` (—) [large, domain_suite, theme_compiler] — Issue #5122: relocatable bus image — golden two-process traversal and
 - `tests/compiler/test_cascade_impact_batch.cpp` (—) [small, batch_driver, domain_suite, theme_compiler] — test_cascade_impact_batch.cpp — thematic multi-TU batch
 - `tests/compiler/test_chunk_io.cpp` (—) [domain_suite, theme_compiler] — AC1: append_fd matches a file larger than one chunk, including 0 and 0xFF
 - `tests/compiler/test_closure_free.cpp` (—) [domain_suite, theme_compiler] — test_closure_free.cpp — Issue #1361: aura_free_closure + ID reuse
