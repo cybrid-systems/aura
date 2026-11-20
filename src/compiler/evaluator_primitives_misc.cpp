@@ -629,6 +629,40 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                 return bus_publish_record(ev, *state, 4, &rec, sizeof(rec));
             }
 
+
+            if (op == "project-nodes") {
+                auto* flat = ev.current_flat();
+                if (flat == nullptr)
+                    flat = ev.workspace_flat();
+                if (flat == nullptr)
+                    return bus_error(ev, "unavailable", "no active workspace AST");
+                const std::size_t count = std::min<std::size_t>(flat->size(), 4096);
+                if (count == 0)
+                    return bus_list(ev, {bus_string(ev, "ok"), make_int(0), make_int(0)});
+                std::vector<aura::bus::NodeRecord> records;
+                records.reserve(count);
+                for (std::size_t i = 0; i < count; ++i) {
+                    const auto view = flat->get(static_cast<aura::ast::NodeId>(i));
+                    aura::bus::NodeRecord rec{};
+                    rec.kind = static_cast<std::uint32_t>(view.tag);
+                    rec.slot = static_cast<std::uint64_t>(view.id);
+                    rec.parent = aura::bus::kImageNoIndex;
+                    rec.first_child = view.children.empty()
+                                          ? aura::bus::kImageNoIndex
+                                          : static_cast<std::uint64_t>(view.children[0]);
+                    rec.next_sibling = aura::bus::kImageNoIndex;
+                    rec.sym = view.sym_id == aura::ast::INVALID_SYM
+                                  ? aura::bus::kImageNoIndex
+                                  : static_cast<std::uint64_t>(view.sym_id);
+                    rec.src_line = view.line;
+                    rec.src_col = view.col;
+                    rec.src_file = 0;
+                    records.push_back(rec);
+                }
+                return bus_publish_record(ev, *state, 5, records.data(),
+                                          records.size() * sizeof(aura::bus::NodeRecord));
+            }
+
             return bus_error(ev, "unsupported", "unknown bus-call op");
         },
         pure_general(255, "(string any...) -> list",

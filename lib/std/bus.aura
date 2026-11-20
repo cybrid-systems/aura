@@ -8,7 +8,7 @@
 ; Failures are records, not #f: (list "error" CODE MESSAGE).
 
 (export bus:attach bus:detach bus:subscribe bus:publish bus:query
-        bus:publish-cct bus:publish-patch bus:publish-worldline
+        bus:publish-cct bus:publish-patch bus:publish-worldline bus:project-nodes
         bus:trial bus:keep bus:rollback bus:grant bus:revoke bus:audit
         bus:status bus:code bus:message bus:ok? bus:help
         bus:attach? bus:error? bus:record?)
@@ -35,6 +35,10 @@
   (bus-call "publish-metric" session key value))
 
 ; Record projections for the other channels.
+; Project the live workspace FlatAST nodes into the Nodes channel.
+(define (bus:project-nodes session)
+  (bus-call "project-nodes" session))
+
 (define (bus:publish-cct session parent mid node samples self-ns)
   (bus-call "publish-cct" session parent mid node samples self-ns))
 

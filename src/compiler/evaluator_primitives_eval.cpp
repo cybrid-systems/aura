@@ -1487,6 +1487,8 @@ void RegSplitParts::register_api_reference_primitive(PrimRegistrar add, Evaluato
                "since-count)\n";
         out += "  (bus:publish session key value) / bus:publish-cct / bus:publish-patch / "
                "bus:publish-worldline\n";
+        out += "  (bus:project-nodes session) projects the live workspace FlatAST into the "
+               "Nodes channel\n";
         out += "  (bus:trial session channel) / (bus:keep session worldline node value) / "
                "(bus:rollback session worldline)\n";
         out += "  (bus:grant session bits channels loans expires worldline) / (bus:revoke session "

@@ -34,7 +34,7 @@ template <typename T> void put(std::span<std::byte> img, std::uint64_t off, cons
 }
 
 bool build_channel_image(std::span<std::byte> img, std::string*) {
-    constexpr std::uint32_t kSections = 4;
+    constexpr std::uint32_t kSections = 5;
     constexpr std::uint64_t kPerChannel = 8;
     const std::uint64_t dir = 256;
     std::uint64_t off = dir + kSections * sizeof(SectionEntry);
@@ -47,6 +47,7 @@ bool build_channel_image(std::span<std::byte> img, std::string*) {
     const std::uint64_t cct = take(kPerChannel * sizeof(CctRecord));
     const std::uint64_t patches = take(kPerChannel * sizeof(PatchRecord));
     const std::uint64_t worldlines = take(kPerChannel * sizeof(WorldlineRecord));
+    const std::uint64_t nodes = take(4096 * sizeof(NodeRecord));
     const std::uint64_t committed = (off + 7) & ~7ull;
     std::memset(img.data(), 0, img.size());
 
@@ -83,6 +84,13 @@ bool build_channel_image(std::span<std::byte> img, std::string*) {
     entry(1, SectionKind::Cct, cct, sizeof(CctRecord));
     entry(2, SectionKind::Patches, patches, sizeof(PatchRecord));
     entry(3, SectionKind::Worldlines, worldlines, sizeof(WorldlineRecord));
+    entry(4, SectionKind::Nodes, nodes, sizeof(NodeRecord));
+    {
+        SectionEntry ne{};
+        std::memcpy(&ne, img.data() + dir + 4 * sizeof(SectionEntry), sizeof(ne));
+        ne.capacity = 4096 * sizeof(NodeRecord);
+        std::memcpy(img.data() + dir + 4 * sizeof(SectionEntry), &ne, sizeof(ne));
+    }
     return true;
 }
 
@@ -93,6 +101,10 @@ const char* kScript = R"((require "std/bus" all:)
 (if (bus:ok? s)
   (begin
     (define sid (car (cdr s)))
+    (define pn (bus:project-nodes sid))
+    (show pn)
+    (define sn (bus:subscribe sid 5))
+    (show sn)
     (define sub (bus:subscribe sid 1))
     (show sub)
     (define pub (bus:publish sid 0 100))
@@ -119,11 +131,11 @@ const char* kScript = R"((require "std/bus" all:)
     (show au)
     (define h (bus:help))
     (show (string-length h))
-    (display (if (and (bus:ok? sub) (bus:ok? pub) (bus:ok? q) (bus:ok? c1) (bus:ok? p1)
+    (display (if (and (bus:ok? pn) (bus:ok? sn) (> (car (cdr sn)) 0)
+                      (bus:ok? sub) (bus:ok? pub) (bus:ok? q) (bus:ok? c1) (bus:ok? p1)
                       (bus:ok? w1) (bus:ok? qc) (bus:ok? tr) (bus:ok? kp)
                       (bus:ok? gr) (bus:ok? rv) (bus:ok? au)
                       (> (string-length h) 100)
-                      (= (car (cdr q)) 4)
                       (= (car (cdr (cdr q))) 1)
                       (>= (car (cdr au)) 2))
                  "BUS_OK" "BUS_FAIL"))
@@ -159,7 +171,7 @@ int main() {
         Server s;
         TransportError err;
         const std::string path = default_socket_path(99);
-        if (!s.listen_at(path, 1u << 16, 99, &err))
+        if (!s.listen_at(path, 1u << 20, 99, &err))
             _exit(20);
         WorkspacePolicy policy;
         policy.allow(0, Capability{kCapAll, 0xFF, 99, 0, 0, 0});
@@ -226,8 +238,8 @@ int main() {
     kill(server, SIGKILL);
     waitpid(server, &status, 0);
 
-    check(output.find("(ok 2 0 512 0 1)") != std::string::npos, "subscribe snapshot");
-    check(output.find("(ok 4 1 0 ((0 100)))") != std::string::npos,
+    check(output.find("(ok 2 0 576 0 1)") != std::string::npos, "subscribe snapshot");
+    check(output.find("(ok 6 1 0 ((0 100)))") != std::string::npos,
           "query returns the published metric");
     check(output.find("BUS_OK") != std::string::npos, "script closed the loop");
     if (g_failed != 0)

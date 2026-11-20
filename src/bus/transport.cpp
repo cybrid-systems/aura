@@ -145,7 +145,7 @@ namespace {
     }
 
     bool channel_from(std::uint64_t id, Channel* out) {
-        if (id < 1 || id > 4)
+        if (id < 1 || id > 5)
             return false;
         *out = static_cast<Channel>(id);
         return true;

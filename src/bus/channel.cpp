@@ -86,6 +86,10 @@ namespace {
                         return fail("worldline parent does not point backwards");
                     break;
                 }
+                case Channel::Nodes:
+                    // Children/siblings may be committed in the same batch;
+                    // attach validates bounds, the producer bounds the batch.
+                    break;
             }
         }
         return true;
@@ -103,6 +107,8 @@ SectionKind section_for(Channel channel) {
             return SectionKind::Patches;
         case Channel::Worldlines:
             return SectionKind::Worldlines;
+        case Channel::Nodes:
+            return SectionKind::Nodes;
     }
     return SectionKind::Metrics;
 }

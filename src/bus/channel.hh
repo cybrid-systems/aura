@@ -22,6 +22,7 @@ enum class Channel : std::uint8_t {
     Cct = 2,
     Patches = 3,
     Worldlines = 4,
+    Nodes = 5,
 };
 
 SectionKind section_for(Channel channel);
