@@ -3096,8 +3096,12 @@ public:
 
     public:
         explicit WorkspaceFlatPin(Evaluator& ev) {
-            // Same-thread Guard only (TLS depth slot). See #2738.
-            const bool outer_exclusive = ev.any_active_mutation_boundary();
+            // Same-thread exclusive hold only. A Guard (TLS depth, #2738)
+            // or an outer (eval-current) unique pin (#5366) already owns
+            // workspace_mtx_; shared_lock on that non-recursive mutex throws
+            // EDEADLK. Adopt instead of re-locking.
+            const bool outer_exclusive =
+                ev.any_active_mutation_boundary() || Evaluator::eval_current_holds_shared_pin();
             if (!outer_exclusive) {
                 lock_ = std::shared_lock<std::shared_mutex>(ev.workspace_mtx_);
                 owns_shared_ = true;
@@ -3139,7 +3143,14 @@ public:
 
     public:
         explicit WorkspaceUniqueIfNeeded(Evaluator& ev) {
-            const bool outer_exclusive = ev.any_active_mutation_boundary();
+            // Guard exclusive (TLS depth, #2738) or an outer (eval-current)
+            // unique pin (#5366). eval-current holds workspace_mtx_ and
+            // records the pin, but it is not a MutationBoundary, so a nested
+            // eval-current (the workspace calls the primitive again) used to
+            // unique_lock the same non-recursive mutex and throw EDEADLK
+            // ("Resource deadlock avoided"). Adopt the outer exclusive hold.
+            const bool outer_exclusive =
+                ev.any_active_mutation_boundary() || Evaluator::eval_current_holds_shared_pin();
             if (!outer_exclusive) {
                 // Issue #4128: stamp the Workspace depth like the canonical
                 // lock_workspace_unique() path. Nested helpers probe
