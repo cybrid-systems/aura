@@ -4670,6 +4670,9 @@ void InferenceEngine::init_primitive_env_part0(TypeId Int, TypeId Bool, TypeId F
     register_primitive("string-upcase", {String}, String);
     register_primitive("string-downcase", {String}, String);
     register_primitive("string-split-words", {String}, Dyn);
+    // Issue #5127: the bus bridge is one variadic primitive; std/bus
+    // builds the public records in Aura.
+    register_primitive("bus-call", {String, Dyn}, Dyn, true);
     register_primitive("string-ref", {String, Int}, Int);
     register_primitive("substring", {String, Int, Int}, String);
     register_primitive("string=?", {String, String}, Bool);

@@ -18,8 +18,8 @@ This file is not the decision tree for a new test. Ask `python3 tests/run.py hom
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 931 | Preferred destination suites |
-| **Total scanned** | **931** | |
+| `tests/core/test_*.cpp` | 932 | Preferred destination suites |
+| **Total scanned** | **932** | |
 
 ### Related artifacts
 
@@ -42,7 +42,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 62 | 62 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 89 | 89 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 56 | 56 | P2 — small-medium; soa_batch precedent |
-| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 132 | 132 | P2 — often thin schema probes; collapse into obs matrix |
+| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 133 | 133 | P2 — often thin schema probes; collapse into obs matrix |
 | `uncategorized` | Uncategorized / mixed | 0 | 0 | 69 | 69 | P3 — review case-by-case |
 
 ## Patterns, harness usage, coupling
@@ -293,6 +293,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_bus_channels.cpp`
 - `tests/compiler/test_bus_constraints.cpp`
 - `tests/compiler/test_bus_image.cpp`
+- `tests/compiler/test_bus_stdlib.cpp`
 - `tests/compiler/test_bus_transport.cpp`
 - `tests/compiler/test_cache_entry_version_stamp.cpp`
 - `tests/reflect/test_cache_header_magic_a2.cpp`
@@ -1946,13 +1947,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_value_tag_hot_path.cpp` (—) [large, domain_suite, theme_compiler] — AC1: Pure is_* (is_fixnum_hot / is_int) match classify; single low2 path
 - `tests/compiler/test_workspace_delete_child.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_workspace_delete_child.cpp — Issue #1770: WorkspaceTree delete_child test.
 
-### `observability` — Observability / metrics / query:*-stats (132)
+### `observability` — Observability / metrics / query:*-stats (133)
 
 **Target:** tests/compiler/test_obs_schema_matrix.cpp + tests/compiler/obs_schema_cases.hpp
 
 **Priority:** P2 — often thin schema probes; collapse into obs matrix
 
-#### domain/ (132)
+#### domain/ (133)
 
 - `tests/compiler/test_adaptive_reverify_limit.cpp` (—) [domain_suite, theme_compiler] — Issue #2939 — dep-closure reverify (BFS over var_to_constraints_) to
 - `tests/compiler/test_adt_exhaustiveness_production_hard.cpp` (—) [domain_suite, theme_compiler] — test_adt_exhaustiveness_production_hard.cpp -- source-cite AC for Issue #3559
@@ -1967,6 +1968,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_blame_stamp_on_degrade.cpp` (—) [small, domain_suite, theme_compiler] — Issue #2064 — blame / provenance stamping on Dynamic degrade + CoercionMap
 - `tests/compiler/test_blame_tracking_typed_mutate.cpp` (—) [domain_suite, theme_compiler] — Issue #1617/#1924 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_bus_channel_transport.cpp` (—) [domain_suite, theme_compiler] — Issue #5125: channel Subscribe/Reserve/Publish/CatchUp over the socket.
+- `tests/compiler/test_bus_stdlib.cpp` (—) [domain_suite, theme_compiler] — Issue #5127: std/bus two-process attach/subscribe/publish/query.
 - `tests/compiler/test_cache_entry_version_stamp.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2033; CacheEntryVersionStamp + kRelowerBridgeEpoch
 - `tests/compiler/test_capability_effect_force.cpp` (—) [domain_suite, theme_compiler] — Issue #2072 — force check_and_record_effect on all side-effect primitives.
 - `tests/compiler/test_capture_audit_event_forced_enforcement_link.cpp` (—) [domain_suite, theme_compiler] — AC1: capture_audit_event_forced cites #2814; gap on unlinked Success

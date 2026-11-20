@@ -56,6 +56,7 @@
     "K-ERR": "the assertion helpers build the engine error value through push_error_cause; an Aura (error ...) raises a different value, so moving them would change what a failing test observes",
     "K-EXC-5339": "FNV-1 32 over code points is the candidate-id digest in std/evo-core (#5339). The Aura loop cost ~2.3 us per code point, so a 16k-genome candidate was 268 ms (target 200). The native walk keeps the exact offset/prime/per-code-point rule, so every stored id is unchanged; the primitive needs the string-heap read gate (K-STR-HEAP) and no removable registration was available in the same change.",
     "K-EXC-5369": "Native ASCII case conversion and the word scan behind std/string (#5369). The interpreted bodies paid a closure call (or a loop step plus two comparisons) per character: 24 tags x 100 docs cost ~40-53 ms, and a 300x880-char word split 1947 ms, while the native walk is 12-13 ms and 7 ms. Both need the string-heap read gate (K-STR-HEAP); no removable registration was available in the same change.",
+    "K-EXC-5127": "bus-call is the single kernel bridge for std/bus (#5127): attach/map the shared image, cross-process capability checks and the atomic publish generation cannot be expressed in Aura. std/bus builds the public records and status helpers on top of it.",
     "K-EXC-5313": "R7RS four-deep cxr (#5313). The cxr table already lists them as kernel primitives, and each step must run inrange_slot_tenant_allows (#4505) the way cadr/caddr do. The shorthand family does not fall through to the shared pair-slot face (#4111), so an Aura composition of car/cdr is a different reader. No registration was removable in the same change."
   },
   "kernel_exceptions": [
@@ -65,6 +66,7 @@
     "bitwise-ior",
     "bitwise-not",
     "bitwise-xor",
+    "bus-call",
     "c-alloc",
     "c-free",
     "c-func",
@@ -122,7 +124,7 @@
     "string-upcase"
   ],
   "counts": {
-    "kernel": 420,
+    "kernel": 421,
     "stdlib-candidate": 0,
     "delete": 1
   },
@@ -316,6 +318,10 @@
     "broadcast": {
       "tier": "kernel",
       "rule": "K-FIBER"
+    },
+    "bus-call": {
+      "tier": "kernel",
+      "rule": "K-EXC-5127"
     },
     "bytes->f64vector": {
       "tier": "kernel",

@@ -1872,6 +1872,7 @@ add_test(NAME test_error_kind_names_wire_verification COMMAND ./test_error_kind_
 add_library(aura-bus STATIC src/bus/image.cpp src/bus/image_schema.cpp src/bus/transport.cpp
                                  src/bus/capability.cpp src/bus/channel.cpp src/bus/constraint.cpp)
 target_include_directories(aura-bus PUBLIC ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(aura PRIVATE aura-bus)
 target_compile_features(aura-bus PUBLIC cxx_std_26)
 target_compile_options(aura-bus PRIVATE ${AURA_REFLECTION_FLAG} -Wall -Wextra)
 target_link_libraries(aura-bus PRIVATE stdc++)
@@ -1923,6 +1924,14 @@ target_compile_features(test_bus_constraints PUBLIC cxx_std_26)
 target_link_libraries(test_bus_constraints PRIVATE aura-bus)
 aura_strict_test_warnings(tests/compiler/test_bus_constraints.cpp)
 add_test(NAME test_bus_constraints_5126 COMMAND ./test_bus_constraints)
+
+# Issue #5127: std/bus surface, exercised by a real aura child process.
+add_executable(test_bus_stdlib tests/compiler/test_bus_stdlib.cpp)
+target_include_directories(test_bus_stdlib PRIVATE src)
+target_compile_features(test_bus_stdlib PUBLIC cxx_std_26)
+target_link_libraries(test_bus_stdlib PRIVATE aura-bus)
+aura_strict_test_warnings(tests/compiler/test_bus_stdlib.cpp)
+add_test(NAME test_bus_stdlib_5127 COMMAND ./test_bus_stdlib)
 # Issue #268 / #178: NodeView roundtrip (split TU). Full AC needs -freflection
 # on the reflect TU only — import std / aura.core.ast must not mix with <meta>
 # (g++ 16.1.0; hard errors, not silent ICE). Bridge: test_issue_178_bridge.h

@@ -2,7 +2,7 @@
 
 # Standard library index (generated)
 
-**111** modules in `lib/std/`. Load: `(require "std/name" all:)`.
+**112** modules in `lib/std/`. Load: `(require "std/name" all:)`.
 
 | Module | Exports | Description |
 |--------|---------|-------------|
@@ -19,6 +19,7 @@
 | `std/bench` | `all-tasks` `task-count` `run-rounds` `aggregate` `print-report` `run-one` `run-parallel` `bench:list-sort` … (+1) | — |
 | `std/bitwise` | `bitwise-not` `bitwise-and` `bitwise-ior` `bitwise-xor` `arithmetic-shift` `bit-count` `integer-length` `bitwise-if` … (+7) | lib/std/bitwise.aura — SRFI-151 bitwise operations (Issue #5003) |
 | `std/boids` | `boids:vec-add` `boids:vec-sub` `boids:vec-scale` `boids:vec-len` `boids:distance` `boids:separation` `boids:alignment` `boids:cohesion` … (+4) | lib/std/boids.aura — Issue #2879 Boids-style coordination (not physics sim) |
+| `std/bus` | `bus:attach` `bus:detach` `bus:subscribe` `bus:publish` `bus:query` `bus:trial` `bus:keep` `bus:rollback` … (+7) | std/bus — local tool bus surface (v0.3.0, Issue #5127) |
 | `std/bytevector` | `bytevector?` `bytevector` `make-bytevector` `bytevector-length` `bytevector-u8-ref` `bytevector-u8-set!` `bytevector-copy` `bytevector-copy!` … (+5) | lib/std/bytevector.aura — R7RS bytevectors + UTF-8 (Issue #5005) |
 | `std/capability` | — | std/capability.aura — Capability discovery surface (Issue #4276) |
 | `std/case-lambda` | `case-lambda` | lib/std/case-lambda.aura — R7RS (scheme case-lambda) (Issue #5005) |
@@ -124,7 +125,7 @@ Low-level capabilities are **not** stdlib modules; they are C++ `PrimRegistrar` 
 
 - `(require "std/primitives" all:)` → `primitives:help` / `primitives:list` / `primitives:discover`
 - `(require "std/INDEX" all:)` → `(stdlib:help "primitives")`
-- Full name catalog: [primitives.md](primitives.md) (421 scanned registrations)
+- Full name catalog: [primitives.md](primitives.md) (422 scanned registrations)
 - Registry map: [primitives-registry.md](primitives-registry.md)
 - Authoring scaffold (#2915): [primitive-authoring-contract.md](../stdlib/primitive-authoring-contract.md)
 
