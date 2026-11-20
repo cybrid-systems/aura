@@ -1,0 +1,20 @@
+(require "./memory" all:)
+(define mem
+  (perf:neg-remember
+    (perf:neg-remember '() "repeated-index-walk" "k-ref" "wrong-scale" "checksum")
+    "repeated-index-walk" "k-ref" "redundant-pass" "no-speedup"))
+(define again
+  (perf:neg-remember mem "repeated-index-walk" "k-ref" "wrong-scale" "checksum"))
+(define filt
+  (perf:filter-negative
+    (list (hash "id" "wrong-scale") (hash "id" "linear-scan") (hash "id" "redundant-pass"))
+    mem "repeated-index-walk" "k-ref"))
+(display (list (if (perf:neg-blocked? mem "repeated-index-walk" "k-ref" "wrong-scale") 1 0)
+               (if (perf:neg-blocked? mem "repeated-index-walk" "other" "wrong-scale") 1 0)
+               (if (perf:neg-blocked? mem "flat-hot" "k-ref" "wrong-scale") 1 0)
+               (length mem)
+               (length again)
+               (hash-ref (car (hash-ref filt "ok" '())) "id")
+               (length (hash-ref filt "skipped" '()))
+               (perf:neg-ideas mem "repeated-index-walk" "k-ref")))
+(newline)

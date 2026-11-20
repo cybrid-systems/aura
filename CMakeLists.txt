@@ -1958,6 +1958,13 @@ target_compile_features(test_bus_host PUBLIC cxx_std_26)
 target_link_libraries(test_bus_host PRIVATE aura-bus)
 aura_strict_test_warnings(tests/compiler/test_bus_host.cpp)
 add_test(NAME test_bus_host_5128 COMMAND ./test_bus_host)
+
+# Issue #5373: a stale short-circuit name-cache row must not hijack a
+# later form whose pool-local SymId collides; display output was dropped.
+add_executable(test_display_cache_5373 tests/compiler/test_display_cache_5373.cpp)
+target_compile_features(test_display_cache_5373 PUBLIC cxx_std_26)
+aura_strict_test_warnings(tests/compiler/test_display_cache_5373.cpp)
+add_test(NAME test_display_cache_5373 COMMAND ./test_display_cache_5373)
 # Issue #268 / #178: NodeView roundtrip (split TU). Full AC needs -freflection
 # on the reflect TU only — import std / aura.core.ast must not mix with <meta>
 # (g++ 16.1.0; hard errors, not silent ICE). Bridge: test_issue_178_bridge.h

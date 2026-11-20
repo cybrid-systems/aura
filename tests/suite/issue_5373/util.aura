@@ -1,0 +1,304 @@
+; Shared string, file, and number helpers for aura-perf.
+; Export before require (#2769).
+
+(export perf:tokens perf:parse-number perf:read-text perf:write-text
+        perf:join perf:take perf:member? perf:safe-id? perf:fmt-x
+        perf:nth perf:string-ref-ok? perf:char-at
+        perf:named-let-reentrant? perf:named-let-fault-text
+        perf:mutate-ops-present? perf:mutate-ops-fault-text
+        perf:verdict-speedup perf:extract-define)
+
+(require "std/string" all:)
+
+; Bounds check used by every parser walk. On Aura main a named let is not
+; reentrant (https://github.com/cybrid-systems/aura/issues/5116): the second
+; call keeps the first call's captured length and string-ref walks off the
+; token. Report that, instead of an index error at the string literal.
+; A real out-of-bounds on a reentrant build stays an index error.
+(define (perf:string-ref-ok? s i)
+  (and (string? s) (number? i) (>= i 0) (< i (string-length s))))
+
+; The detector itself is a named let. Plain recursion is unaffected and
+; would hide the regression. 0+1+2 = 3, 0+..+6 = 21, 0+1 = 1.
+(define (perf:sum-named n)
+  (let loop ((i 0) (acc 0))
+    (if (>= i n) acc (loop (+ i 1) (+ acc i)))))
+
+(define (perf:named-let-status)
+  (let ((a (perf:sum-named 3))
+        (b (perf:sum-named 7))
+        (c (perf:sum-named 2)))
+    (hash "ok" (and (= a 3) (= b 21) (= c 1))
+          "a" a "b" b "c" c)))
+
+; Measured once, at load, outside any other named let. A probe run from
+; inside a stale loop can itself come back clean, and the index error
+; would look like a parser bug again.
+(define perf-named-let-status (perf:named-let-status))
+
+(define (perf:named-let-reentrant?)
+  (eq? (hash-ref perf-named-let-status "ok" #f) #t))
+
+(define (perf:aura-build-text)
+  (let ((v (getenv "AURA_PERF_BUILD")))
+    (if (and (string? v) (> (string-length v) 0))
+        v
+        "unknown")))
+
+(define (perf:named-let-fault-text)
+  (let ((s perf-named-let-status))
+    (string-append
+      "Aura named-let is not reentrant on this build "
+      "(second call returned the first call's result). "
+      "aura build: " (perf:aura-build-text) ". "
+      "supported: Aura v0.2.0 (nightly cf7353373). "
+      "upstream: https://github.com/cybrid-systems/aura/issues/5116. "
+      "got (sum 3) (sum 7) (sum 2) = "
+      (number->string (hash-ref s "a" -1)) " "
+      (number->string (hash-ref s "b" -1)) " "
+      (number->string (hash-ref s "c" -1))
+      ", expected 3 21 1. "
+      "This is an Aura value-semantics regression, not an aura-perf parser bug.")))
+
+; The v0.2.1 primitive split: snapshot / restore moved under the mutate
+; verb and the ast: / workspace: / ws: prefixes are gone. A build without
+; them makes the autotune die with "unbound variable: ast:snapshot" the
+; first time a candidate is committed, so the probe names it here.
+(define (perf:mutate-ops-present?)
+  ;; The op answers with a snapshot id, or -1 when there is no live workspace
+  ;; (the probe runs before any set-code). What matters is that the call
+  ;; does not raise "unbound variable": that is a build without the op.
+  (let ((snap (try (mutate :snapshot "aura-perf-probe") (catch (e) #f))))
+    (number? snap)))
+
+(define (perf:mutate-ops-fault-text)
+  (string-append
+    "Aura on this build does not carry the mutate-verb snapshot op "
+    "(the v0.2.0 alias window is closed). "
+    "aura build: " (perf:aura-build-text) ". "
+    "supported: Aura v0.2.0 (nightly cf7353373) and later. "
+    "The autotune commits a candidate with (mutate :snapshot …); on a build "
+    "without that op it dies with 'unbound variable: ast:snapshot'. "
+    "upstream: https://github.com/cybrid-systems/aura/issues/5118. "
+    "This is an Aura surface change, not an aura-perf bug."))
+
+(define (perf:char-at s i)
+  (if (perf:string-ref-ok? s i)
+      (string-ref s i)
+      (if (perf:named-let-reentrant?)
+          (error (string-append "string-ref: index out of bounds i="
+                                (number->string (if (number? i) i -1))
+                                " len=" (number->string (if (string? s) (string-length s) -1))))
+          (error (string-append
+                   (perf:named-let-fault-text)
+                   " string-ref i=" (number->string (if (number? i) i -1))
+                   " len=" (number->string (if (string? s) (string-length s) -1)))))))
+
+(define (perf:tokens s)
+  (if (string? s) (string-split-words s) '()))
+
+(define (perf:strip-noise t)
+  (let ((n (string-length t)))
+    (let loop ((i 0) (acc ""))
+      (if (>= i n)
+          acc
+          (let ((c (perf:char-at t i)))
+            ; drop commas and a trailing percent sign
+            (if (or (= c 44) (= c 37))
+                (loop (+ i 1) acc)
+                (loop (+ i 1) (string-append acc (substring t i (+ i 1))))))))))
+
+(define (perf:parse-number t)
+  (if (not (string? t))
+      #f
+      (let ((s (perf:strip-noise t)))
+        (if (string=? s "")
+            #f
+            (let ((n (string->number s)))
+              (if (number? n) n #f))))))
+
+(define (perf:read-text path)
+  (let ((v (try (read-file path) (catch (e) #f))))
+    (if (string? v) v "")))
+
+(define (perf:write-text path text)
+  (write-file path (if (string? text) text "")))
+
+(define (perf:join xs sep)
+  (if (or (not (list? xs)) (null? xs))
+      ""
+      (let loop ((ys (cdr xs)) (acc (car xs)))
+        (if (null? ys)
+            acc
+            (loop (cdr ys) (string-append acc sep (car ys)))))))
+
+(define (perf:take xs k)
+  (let ((n (if (number? k) k 0)))
+    (let loop ((ys (if (list? xs) xs '())) (i 0) (acc '()))
+      (if (or (null? ys) (>= i n))
+          (reverse acc)
+          (loop (cdr ys) (+ i 1) (cons (car ys) acc))))))
+
+(define (perf:member? xs key)
+  (let loop ((ys (if (list? xs) xs '())))
+    (if (null? ys)
+        #f
+        (if (equal? (car ys) key)
+            #t
+            (loop (cdr ys))))))
+
+(define (perf:nth xs i)
+  (let loop ((ys xs) (n 0))
+    (cond ((null? ys) #f)
+          ((= n i) (car ys))
+          (else (loop (cdr ys) (+ n 1))))))
+
+; Identifiers we splice into generated Aura source.
+(define (perf:safe-id? s)
+  (if (not (string? s))
+      #f
+      (let ((n (string-length s)))
+        (if (= n 0)
+            #f
+            (let loop ((i 0))
+              (if (>= i n)
+                  #t
+                  (let ((c (perf:char-at s i)))
+                    (if (or (and (>= c 48) (<= c 57))
+                            (and (>= c 65) (<= c 90))
+                            (and (>= c 97) (<= c 122))
+                            (= c 45))
+                        (loop (+ i 1))
+                        #f))))))))
+
+; Integer ratio with two fractional digits, truncated toward zero.
+; 164 / 12 -> "13.66".
+(define (perf:fmt-x num den)
+  (if (or (not (number? num)) (not (number? den)) (<= den 0))
+      "na"
+      (let* ((q (quotient (* num 100) den))
+             (whole (quotient q 100))
+             (frac (modulo q 100))
+             (frac-s (number->string frac)))
+        (string-append (number->string whole) "."
+                       (if (< (string-length frac-s) 2) "0" "")
+                       frac-s))))
+
+; max(samples) - min(samples). Plain recursion: a named let here would
+; itself be wrong on the Aura main regression this line is meant to show.
+(define (perf:spread-walk ys lo hi)
+  (if (or (not (list? ys)) (null? ys))
+      (- hi lo)
+      (let ((v (car ys)))
+        (if (not (number? v))
+            #f
+            (perf:spread-walk (cdr ys)
+                              (if (< v lo) v lo)
+                              (if (> v hi) v hi))))))
+
+(define (perf:spread xs)
+  (if (or (not (list? xs)) (null? xs) (not (number? (car xs))))
+      #f
+      (perf:spread-walk (cdr xs) (car xs) (car xs))))
+
+(define (perf:sample-n xs)
+  (if (list? xs) (length xs) 0))
+
+; Medians behind the ratio, the sample count, and the max-min spread.
+; before-ms and after-ms are the medians the ratio was computed from.
+(define (perf:speedup-context before-ms after-ms before-samples after-samples)
+  (if (or (not (number? before-ms)) (not (number? after-ms))
+          (< before-ms 0) (< after-ms 0))
+      ""
+      (let ((bn (perf:sample-n before-samples))
+            (an (perf:sample-n after-samples))
+            (bs (perf:spread before-samples))
+            (as (perf:spread after-samples)))
+        (string-append
+          " (" (number->string before-ms) "ms->" (number->string after-ms) "ms"
+          (cond ((and (> bn 0) (= bn an))
+                 (string-append " n=" (number->string bn)))
+                ((and (> bn 0) (> an 0))
+                 (string-append " n=" (number->string bn) "/" (number->string an)))
+                ((> bn 0) (string-append " n=" (number->string bn)))
+                ((> an 0) (string-append " n=" (number->string an)))
+                (else ""))
+          (if (and (number? bs) (number? as))
+              (string-append " spread=" (number->string bs)
+                             "->" (number->string as) "ms")
+              "")
+          ")"))))
+
+; Source text of `(define name ...)` or `(define (name ...) ...)`.
+; The null candidate rebinds the target to this form, so the body is the
+; seed's, not a later mutation.
+(define (perf:starts-at? s i prefix)
+  (let ((m (string-length prefix))
+        (n (string-length s)))
+    (and (<= (+ i m) n)
+         (string=? (substring s i (+ i m)) prefix))))
+
+(define (perf:skip-ws s i)
+  (let ((n (string-length s)))
+    (let loop ((j i))
+      (if (>= j n)
+          j
+          (if (<= (perf:char-at s j) 32)
+              (loop (+ j 1))
+              j)))))
+
+(define (perf:name-boundary? s i name)
+  (let ((m (string-length name))
+        (n (string-length s)))
+    (and (perf:starts-at? s i name)
+         (or (>= (+ i m) n)
+             (let ((c (perf:char-at s (+ i m))))
+               (or (<= c 32) (= c 40) (= c 41)))))))
+
+(define (perf:define-at? s i name)
+  (if (not (perf:starts-at? s i "(define"))
+      #f
+      (let ((k (perf:skip-ws s (+ i 7))))
+        (if (and (< k (string-length s)) (= (perf:char-at s k) 40))
+            (perf:name-boundary? s (perf:skip-ws s (+ k 1)) name)
+            (perf:name-boundary? s k name)))))
+
+(define (perf:skip-string s i)
+  (let ((n (string-length s)))
+    (let loop ((j (+ i 1)))
+      (if (>= j n)
+          n
+          (let ((c (perf:char-at s j)))
+            (cond ((= c 92) (loop (+ j 2)))
+                  ((= c 34) (+ j 1))
+                  (else (loop (+ j 1)))))))))
+
+(define (perf:balanced-form s start)
+  (let ((n (string-length s)))
+    (let loop ((i start) (depth 0))
+      (if (>= i n)
+          ""
+          (let ((c (perf:char-at s i)))
+            (cond ((= c 34) (loop (perf:skip-string s i) depth))
+                  ((= c 40) (loop (+ i 1) (+ depth 1)))
+                  ((= c 41)
+                   (if (= depth 1)
+                       (substring s start (+ i 1))
+                       (loop (+ i 1) (- depth 1))))
+                  (else (loop (+ i 1) depth))))))))
+
+(define (perf:extract-define source name)
+  (if (or (not (string? source)) (not (string? name)) (string=? name ""))
+      ""
+      (let ((n (string-length source)))
+        (let loop ((i 0))
+          (if (>= i n)
+              ""
+              (if (perf:define-at? source i name)
+                  (perf:balanced-form source i)
+                  (loop (+ i 1))))))))
+
+(define (perf:verdict-speedup before-ms after-ms before-samples after-samples)
+  (string-append "speedup-x=" (perf:fmt-x before-ms after-ms)
+                 (perf:speedup-context before-ms after-ms
+                                       before-samples after-samples)))

@@ -1,0 +1,86 @@
+; Negative memory keyed by the hot node (the site) and the idea.
+; Dropping a candidate id is not enough: the same idea must not be
+; proposed again for the same hotspot, and may be proposed again when
+; the hotspot changes.
+;
+; The class is not part of the key. The class is a mining result and it
+; moves with the machine: the same target can be classified differently
+; on two runs, and a memory keyed by it would miss. The record keeps the
+; class it was made under, for the report.
+
+(export perf:neg-remember perf:neg-blocked? perf:neg-query
+        perf:neg-ideas perf:filter-negative
+        perf:memory-path perf:memory-load perf:memory-save)
+
+(require "./util" all:)
+
+; The memory of the runs before this one. A run that failed an idea on
+; a hotspot does not spend its budget on it again: the record carries
+; over, so the next run starts where the last one stopped.
+(define (perf:memory-path spec)
+  (let ((p (hash-ref spec "memory-path" "")))
+    (if (and (string? p) (> (string-length p) 0))
+        p
+        (string-append (hash-ref spec "out-dir" "out") "/memory.json"))))
+
+(define (perf:memory-load path)
+  (let ((text (perf:read-text path)))
+    (if (string=? text "")
+        '()
+        (let ((v (try (json-parse text) (catch (e) #f))))
+          (if (list? v) v '())))))
+
+(define (perf:memory-save path mem)
+  (perf:write-text path (json-encode (if (list? mem) mem '()))))
+
+(define (perf:neg-same? rec class hot idea)
+  (and (hash? rec)
+       (string=? (hash-ref rec "hot-node" "") hot)
+       (string=? (hash-ref rec "idea" "") idea)))
+
+(define (perf:neg-blocked? mem class hot idea)
+  (let loop ((xs (if (list? mem) mem '())))
+    (if (null? xs)
+        #f
+        (if (perf:neg-same? (car xs) class hot idea)
+            #t
+            (loop (cdr xs))))))
+
+(define (perf:neg-remember mem class hot idea reason)
+  (if (or (not (string? idea)) (string=? idea "")
+          (perf:neg-blocked? mem class hot idea))
+      (if (list? mem) mem '())
+      (cons (hash "class" class
+                  "hot-node" hot
+                  "idea" idea
+                  "reason" (if (string? reason) reason ""))
+            (if (list? mem) mem '()))))
+
+(define (perf:neg-query mem class hot)
+  (let loop ((xs (if (list? mem) mem '())) (acc '()))
+    (if (null? xs)
+        (reverse acc)
+        (let ((r (car xs)))
+          (loop (cdr xs)
+                (if (and (hash? r)
+                         (string=? (hash-ref r "hot-node" "") hot))
+                    (cons r acc)
+                    acc))))))
+
+(define (perf:neg-ideas mem class hot)
+  (let loop ((xs (perf:neg-query mem class hot)) (acc ""))
+    (if (null? xs)
+        acc
+        (loop (cdr xs)
+              (string-append acc
+                             (if (string=? acc "") "" ",")
+                             (hash-ref (car xs) "idea" ""))))))
+
+(define (perf:filter-negative cands mem class hot)
+  (let loop ((xs (if (list? cands) cands '())) (ok '()) (skipped '()))
+    (if (null? xs)
+        (hash "ok" (reverse ok) "skipped" (reverse skipped))
+        (let ((id (hash-ref (car xs) "id" "")))
+          (if (perf:neg-blocked? mem class hot id)
+              (loop (cdr xs) ok (cons (car xs) skipped))
+              (loop (cdr xs) (cons (car xs) ok) skipped))))))
