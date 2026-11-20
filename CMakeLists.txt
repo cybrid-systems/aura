@@ -1899,6 +1899,15 @@ target_link_libraries(test_bus_transport PRIVATE aura-bus)
 aura_strict_test_warnings(tests/compiler/test_bus_transport.cpp)
 add_test(NAME test_bus_transport_5123 COMMAND ./test_bus_transport)
 
+# Issue #5122: committed golden image fixture (byte-for-byte builder check,
+# two-process shared mapping, in-place immutability, audit-tail append).
+add_executable(test_bus_golden tests/compiler/test_bus_golden.cpp)
+target_include_directories(test_bus_golden PRIVATE src)
+target_compile_features(test_bus_golden PUBLIC cxx_std_26)
+target_link_libraries(test_bus_golden PRIVATE aura-bus)
+aura_strict_test_warnings(tests/compiler/test_bus_golden.cpp)
+add_test(NAME test_bus_golden_5122 COMMAND ./test_bus_golden)
+
 # Issue #5124: capability bits, attenuation, grant tree, workspace policy
 # and worldline ownership.
 add_executable(test_bus_capability tests/compiler/test_bus_capability.cpp)

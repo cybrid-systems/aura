@@ -62,6 +62,8 @@
 
 槽位按 mutation log 顺序分配，因此 `PatchRecord.worldline` 与 worldline 表下标一致，读者可以由槽位反查 `WorldlineRecord.id`。先投影补丁再投影 worldline，worldline 记录里才有补丁区间；反过来则区间为 0。`bus:project-nodes` 现在优先投影 `workspace_flat`（`set-code`/`eval-current` 建立的持久工作区），没有时才退回当前求值的 AST。
 
+黄金夹具在 `tests/fixtures/bus/golden.img`（2272 字节，`test_bus_golden` 逐字节比对）：五条频道节加审计节，两个进程通过同一 memfd 映射读出相同的 `committed_digest`；故意改已提交字节会校验失败，审计尾仍可追加。改布局后跑 `AURA_BUS_WRITE_GOLDEN=1 ./test_bus_golden` 重新生成并审阅二进制差异。
+
 ## 约束与审计
 
 - 协调者持有 `ConstraintStore`：一组可执行规则加版本号。安装新集或回滚都要求 `constraint-write`，并分别记 `ConstraintChange` / `ConstraintRollback` 审计。

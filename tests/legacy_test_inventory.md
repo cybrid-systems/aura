@@ -18,8 +18,8 @@ This file is not the decision tree for a new test. Ask `python3 tests/run.py hom
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 932 | Preferred destination suites |
-| **Total scanned** | **932** | |
+| `tests/core/test_*.cpp` | 933 | Preferred destination suites |
+| **Total scanned** | **933** | |
 
 ### Related artifacts
 
@@ -43,7 +43,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 89 | 89 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 56 | 56 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 133 | 133 | P2 — often thin schema probes; collapse into obs matrix |
-| `uncategorized` | Uncategorized / mixed | 0 | 0 | 69 | 69 | P3 — review case-by-case |
+| `uncategorized` | Uncategorized / mixed | 0 | 0 | 70 | 70 | P3 — review case-by-case |
 
 ## Patterns, harness usage, coupling
 
@@ -292,6 +292,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_bus_channel_transport.cpp`
 - `tests/compiler/test_bus_channels.cpp`
 - `tests/compiler/test_bus_constraints.cpp`
+- `tests/compiler/test_bus_golden.cpp`
 - `tests/compiler/test_bus_image.cpp`
 - `tests/compiler/test_bus_stdlib.cpp`
 - `tests/compiler/test_bus_transport.cpp`
@@ -2089,13 +2090,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_verify_parse_shared_helper.cpp` (—) [domain_suite, theme_compiler] — Issue #1771 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_workspace_mtx_contention.cpp` (—) [domain_suite, theme_compiler] — AC1: Source cites #2523; residual strategy documented
 
-### `uncategorized` — Uncategorized / mixed (69)
+### `uncategorized` — Uncategorized / mixed (70)
 
 **Target:** manual triage before domain placement
 
 **Priority:** P3 — review case-by-case
 
-#### domain/ (69)
+#### domain/ (70)
 
 - `tests/core/test_address_bits_scratch.cpp` (—) [domain_suite, theme_core] — AC1: bit_cast round-trips a pointer and an integer address
 - `tests/compiler/test_and_or_error_value.cpp` (—) [domain_suite, theme_compiler] — (#4535 contract: only the UNCAUGHT face prints).
@@ -2106,6 +2107,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_aura_result_error_policy.cpp` (—) [domain_suite, theme_compiler] — test_aura_result_error_policy.cpp — Issues #807 + #808:
 - `tests/compiler/test_bugfix.cpp` (—) [domain_suite, theme_compiler] — Issue #957/#968/#982/#984 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_bus_constraints.cpp` (—) [domain_suite, theme_compiler] — Issue #5126: constraint gate on KEEP, versioned sets, audit.
+- `tests/compiler/test_bus_golden.cpp` (—) [domain_suite, theme_compiler] — Issue #5122: committed golden bus image fixture.
 - `tests/compiler/test_bus_image.cpp` (—) [large, domain_suite, theme_compiler] — Issue #5122: relocatable bus image — golden two-process traversal and
 - `tests/compiler/test_bus_transport.cpp` (—) [domain_suite, theme_compiler] — Issue #5123: local bus transport — handshake, SCM_RIGHTS image, seals,
 - `tests/compiler/test_cascade_impact_batch.cpp` (—) [small, batch_driver, domain_suite, theme_compiler] — test_cascade_impact_batch.cpp — thematic multi-TU batch
