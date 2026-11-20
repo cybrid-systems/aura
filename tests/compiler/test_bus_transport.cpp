@@ -71,6 +71,9 @@ bool send_loan(int fd, FrameType type, std::uint64_t session) {
     TransportError err;
     if (!server.listen_at(path, 1u << 16, workspace, &err))
         _exit(20);
+    WorkspacePolicy policy;
+    policy.allow(/*role=*/0, Capability{kCapAll, 0xFF, workspace, 0, 0, 0});
+    server.set_policy(policy);
     const char ready = 'R';
     if (::write(ready_fd, &ready, 1) != 1)
         _exit(21);
@@ -81,7 +84,9 @@ bool send_loan(int fd, FrameType type, std::uint64_t session) {
         _exit(23);
     const std::uint64_t reclaimed = server.loans().reclaimed_total();
     const std::uint64_t outstanding = server.loans().outstanding();
-    std::uint64_t out[2] = {reclaimed, outstanding};
+    std::uint64_t out[5] = {reclaimed, outstanding, server.audit().count(AuditKind::Rollback),
+                            server.audit().count(AuditKind::Disconnect),
+                            server.audit().count(AuditKind::Keep)};
     if (::write(result_fd, out, sizeof(out)) != static_cast<ssize_t>(sizeof(out)))
         _exit(24);
     _exit(0);
@@ -202,6 +207,43 @@ int main() {
                 }
             }
 
+            // One kept trial and one pending trial: disconnect must roll
+            // the pending one back and keep the audit trail.
+            std::uint64_t kept_worldline = 0;
+            {
+                LoanBody trial{};
+                trial.channel = 1;
+                check(send_frame(att.sock, FrameType::Trial, att.session,
+                                 {reinterpret_cast<const std::byte*>(&trial), sizeof(trial)}),
+                      "open kept trial");
+                check(recv_frame(att.sock, &reply, body, &err), "kept trial reply");
+                check(reply.type == static_cast<std::uint16_t>(FrameType::Credit), "trial granted");
+                LoanBody granted{};
+                if (reply.len >= sizeof(granted)) {
+                    std::memcpy(&granted, body.data(), sizeof(granted));
+                    kept_worldline = granted.worldline;
+                }
+                check(kept_worldline != 0, "trial worldline id");
+                LoanBody keep{};
+                keep.channel = 1;
+                keep.worldline = kept_worldline;
+                check(send_frame(att.sock, FrameType::Keep, att.session,
+                                 {reinterpret_cast<const std::byte*>(&keep), sizeof(keep)}),
+                      "keep trial");
+                check(recv_frame(att.sock, &reply, body, &err), "keep reply");
+                check(reply.type == static_cast<std::uint16_t>(FrameType::Credit), "keep accepted");
+            }
+            {
+                LoanBody trial{};
+                trial.channel = 1;
+                check(send_frame(att.sock, FrameType::Trial, att.session,
+                                 {reinterpret_cast<const std::byte*>(&trial), sizeof(trial)}),
+                      "open pending trial");
+                check(recv_frame(att.sock, &reply, body, &err), "pending trial reply");
+                check(reply.type == static_cast<std::uint16_t>(FrameType::Credit),
+                      "pending trial granted");
+            }
+
             // Leave three uncommitted loans for the peer-death reclaim.
             for (int i = 0; i < 3; ++i) {
                 check(send_loan(att.sock, FrameType::Reserve, att.session), "send reclaim Reserve");
@@ -215,11 +257,14 @@ int main() {
             const int sock = att.sock;
             att.sock = -1;
             ::close(sock);
-            std::uint64_t out[2] = {0, 0};
+            std::uint64_t out[5] = {0, 0, 0, 0, 0};
             check(::read(result[0], out, sizeof(out)) == static_cast<ssize_t>(sizeof(out)),
                   "server reports reclaim");
             check(out[0] == 3, "all three uncommitted loans reclaimed");
             check(out[1] == 0, "no outstanding loan after reclaim");
+            check(out[2] == 1, "pending trial rolled back on disconnect");
+            check(out[3] == 1, "disconnect audited");
+            check(out[4] == 1, "keep audited");
         } else {
             std::printf("attach error: %s (%d)\n", err.message.c_str(), err.code);
         }
@@ -269,7 +314,79 @@ int main() {
         ::unlink(path.c_str());
     }
 
+    // ── Read-only session cannot publish, trial or keep ─────────
+    {
+        const std::string path = test_path("readonly");
+        int ready[2];
+        check(pipe(ready) == 0, "readonly pipe");
+        const pid_t pid = fork();
+        check(pid >= 0, "fork readonly server");
+        if (pid == 0) {
+            ::close(ready[0]);
+            Server server;
+            TransportError err;
+            if (!server.listen_at(path, 1u << 16, 55, &err))
+                _exit(40);
+            WorkspacePolicy policy;
+            policy.allow(/*role=*/1, Capability{kCapRead, 0xFF, 55, 0, 0, 0});
+            server.set_policy(policy);
+            const char r = 'R';
+            if (::write(ready[1], &r, 1) != 1)
+                _exit(41);
+            Attach peer;
+            if (!server.accept_one(build_empty_image, &peer, &err))
+                _exit(42);
+            if (!server.wait_disconnect(&err))
+                _exit(43);
+            _exit(server.audit().count(AuditKind::Denied) >= 3 ? 0 : 44);
+        }
+        ::close(ready[1]);
+        char r = 0;
+        check(::read(ready[0], &r, 1) == 1, "readonly server ready");
+        Attach att;
+        TransportError err;
+        Client client;
+        check(client.connect_to(path, 55, /*role=*/1, kCapAll, &att, &err), "read-only attach");
+        check(att.caps == kCapRead, "policy narrows to read");
+        FrameHeader reply{};
+        std::vector<std::byte> body(kBusMaxControlFrame);
+        check(send_loan(att.sock, FrameType::Reserve, att.session), "read-only Reserve");
+        check(recv_frame(att.sock, &reply, body, &err), "read-only Reserve reply");
+        check(reply.type == static_cast<std::uint16_t>(FrameType::Error), "Reserve denied");
+        if (reply.len >= sizeof(ErrorBody)) {
+            ErrorBody er{};
+            std::memcpy(&er, body.data(), sizeof(er));
+            check(er.code == EPERM, "Reserve EPERM");
+            check(std::string(er.message).find("publish") != std::string::npos,
+                  "Reserve names publish");
+        }
+        check(send_loan(att.sock, FrameType::Trial, att.session), "read-only Trial");
+        check(recv_frame(att.sock, &reply, body, &err), "read-only Trial reply");
+        check(reply.type == static_cast<std::uint16_t>(FrameType::Error), "Trial denied");
+        if (reply.len >= sizeof(ErrorBody)) {
+            ErrorBody er{};
+            std::memcpy(&er, body.data(), sizeof(er));
+            check(std::string(er.message).find("trial") != std::string::npos, "Trial names trial");
+        }
+        {
+            LoanBody keep{};
+            keep.channel = 1;
+            keep.worldline = 1;
+            check(send_frame(att.sock, FrameType::Keep, att.session,
+                             {reinterpret_cast<const std::byte*>(&keep), sizeof(keep)}),
+                  "read-only Keep");
+        }
+        check(recv_frame(att.sock, &reply, body, &err), "read-only Keep reply");
+        check(reply.type == static_cast<std::uint16_t>(FrameType::Error), "Keep denied");
+        att.close_all();
+        int status = 0;
+        waitpid(pid, &status, 0);
+        check(WIFEXITED(status) && WEXITSTATUS(status) == 0, "read-only server observed denials");
+        ::close(ready[0]);
+        ::unlink(path.c_str());
+    }
+
     if (g_failed == 0)
-        std::printf("OK: bus transport #5123\n");
+        std::printf("OK: bus transport #5124\n");
     return g_failed == 0 ? 0 : 1;
 }
