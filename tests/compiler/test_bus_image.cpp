@@ -192,6 +192,8 @@ Built build_image(std::span<std::byte> img, std::uint64_t node_tail_bytes = 0) {
         e.length = len;
         e.element_size = elem;
         e.count = count;
+        e.capacity = len;
+        e.generation = 2;
         e.fingerprint = aura::bus::section_layout_fingerprint(kind);
         put(img, dir_off + static_cast<std::uint64_t>(index) * sizeof(SectionEntry), e);
     };
@@ -663,6 +665,7 @@ int main() {
         unknown.offset = align8(b.audit_off + 2 * sizeof(AuditRecord));
         unknown.length = 8;
         unknown.element_size = 1;
+        unknown.capacity = 8;
         unknown.fingerprint = 0;
         const ImageHeader h = aura::bus::load_header(g);
         put(g,

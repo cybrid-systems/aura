@@ -76,8 +76,10 @@ struct SectionEntry {
     std::uint64_t length;
     std::uint32_t element_size;
     std::uint32_t count;       // records, or string-table entries
+    std::uint64_t capacity;    // reserved bytes; committed length <= capacity
     std::uint64_t fingerprint; // layout/schema fingerprint
     std::uint64_t digest;      // FNV-1a of the committed section bytes
+    std::uint64_t generation;  // last committed generation for this section
 };
 
 struct StringTableEntry {
@@ -184,7 +186,7 @@ static_assert(sizeof(ImageHeader) == kImageHeaderSize);
 static_assert(offsetof(ImageHeader, committed_gen) == 64);
 static_assert(offsetof(ImageHeader, bell) == 128);
 static_assert(offsetof(ImageHeader, section_dir_off) == 192);
-static_assert(sizeof(SectionEntry) == 48);
+static_assert(sizeof(SectionEntry) == 64);
 static_assert(sizeof(StringTableEntry) == 16);
 static_assert(sizeof(SymbolEntry) == 16);
 static_assert(sizeof(NodeRecord) == 64);

@@ -1870,7 +1870,7 @@ add_test(NAME test_error_kind_names_wire_verification COMMAND ./test_error_kind_
 # validation and the golden two-process traversal. P2996 lives in
 # image_schema.cpp (non-import-std); the validator and test are meta-free.
 add_library(aura-bus STATIC src/bus/image.cpp src/bus/image_schema.cpp src/bus/transport.cpp
-                                 src/bus/capability.cpp)
+                                 src/bus/capability.cpp src/bus/channel.cpp)
 target_include_directories(aura-bus PUBLIC ${CMAKE_SOURCE_DIR}/src)
 target_compile_features(aura-bus PUBLIC cxx_std_26)
 target_compile_options(aura-bus PRIVATE ${AURA_REFLECTION_FLAG} -Wall -Wextra)
@@ -1899,6 +1899,14 @@ target_compile_features(test_bus_capability PUBLIC cxx_std_26)
 target_link_libraries(test_bus_capability PRIVATE aura-bus)
 aura_strict_test_warnings(tests/compiler/test_bus_capability.cpp)
 add_test(NAME test_bus_capability_5124 COMMAND ./test_bus_capability)
+
+# Issue #5125: four incremental channels over a committed image.
+add_executable(test_bus_channels tests/compiler/test_bus_channels.cpp)
+target_include_directories(test_bus_channels PRIVATE src)
+target_compile_features(test_bus_channels PUBLIC cxx_std_26)
+target_link_libraries(test_bus_channels PRIVATE aura-bus)
+aura_strict_test_warnings(tests/compiler/test_bus_channels.cpp)
+add_test(NAME test_bus_channels_5125 COMMAND ./test_bus_channels)
 # Issue #268 / #178: NodeView roundtrip (split TU). Full AC needs -freflection
 # on the reflect TU only — import std / aura.core.ast must not mix with <meta>
 # (g++ 16.1.0; hard errors, not silent ICE). Bridge: test_issue_178_bridge.h

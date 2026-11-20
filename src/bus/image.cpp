@@ -122,8 +122,10 @@ ImageCheck validate_image(std::span<const std::byte> image) {
         const SectionEntry e = load_section_entry(image, i);
         if (e.offset < kImageHeaderSize || e.offset % 8 != 0)
             return {ImageStatus::BadAlignment, "section offset is not 8-aligned past the header"};
-        if (!in_bounds(e.offset, e.length, h.committed_bytes))
-            return {ImageStatus::BadBounds, "section lies outside the committed prefix"};
+        if (!in_bounds(e.offset, e.capacity, h.committed_bytes))
+            return {ImageStatus::BadBounds, "section capacity lies outside the committed prefix"};
+        if (e.length > e.capacity)
+            return {ImageStatus::BadBounds, "section length exceeds its capacity"};
         if (e.element_size == 0)
             return {ImageStatus::BadElementSize, "section element size is zero"};
         if (e.kind > static_cast<std::uint32_t>(SectionKind::Staging)) {
@@ -142,6 +144,8 @@ ImageCheck validate_image(std::span<const std::byte> image) {
         if (e.element_size < expected_size)
             return {ImageStatus::BadElementSize, "section element size is narrower than v1"};
         if (is_record_section(kind)) {
+            if (e.capacity % e.element_size != 0)
+                return {ImageStatus::BadElementSize, "record section capacity is not a multiple"};
             if (e.length % e.element_size != 0 || e.count != e.length / e.element_size)
                 return {ImageStatus::BadElementSize,
                         "record section count does not match its length"};
@@ -221,8 +225,13 @@ ImageCheck validate_image(std::span<const std::byte> image) {
                 return {ImageStatus::BadImmediate, "patch value carries bit 63"};
             if (p.node != kImageNoIndex && (!nodes.present || p.node >= nodes.count))
                 return {ImageStatus::BadIndex, "patch node outside the node section"};
-            if (p.worldline != kImageNoIndex &&
-                (!worldlines.present || p.worldline >= worldlines.count))
+            // A patch can be committed before the worldline record that
+            // refers to it; the id only has to fit the reserved table.
+            const std::uint64_t wl_slots =
+                worldlines.present && worldlines.entry.element_size
+                    ? worldlines.entry.capacity / worldlines.entry.element_size
+                    : 0;
+            if (p.worldline != kImageNoIndex && p.worldline >= wl_slots)
                 return {ImageStatus::BadIndex, "patch worldline outside the worldline table"};
         }
     }
@@ -266,7 +275,11 @@ ImageCheck validate_image(std::span<const std::byte> image) {
             if (w.constraint_result > static_cast<std::uint8_t>(ConstraintResult::Fail))
                 return {ImageStatus::BadSection, "worldline constraint result outside the domain"};
             if (w.patch_len != 0) {
-                if (!patches.present || !in_bounds(w.patch_off, w.patch_len, patches.entry.length))
+                // Patches and worldlines commit independently; the range
+                // must fit the reserved patch capacity, not only the
+                // currently committed length.
+                if (!patches.present ||
+                    !in_bounds(w.patch_off, w.patch_len, patches.entry.capacity))
                     return {ImageStatus::BadBounds,
                             "worldline patch range outside the patch section"};
             }
