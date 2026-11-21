@@ -129,6 +129,8 @@ inline constexpr StringId NULL_STRING_ID = static_cast<StringId>(~0ULL);
 #include <unordered_set> // Issue #2092: stable_id_set for remap
 #include <array>
 #include <vector>
+#include <algorithm> // std::min (float-pool release)
+#include <iterator>  // std::next (float free-list reverse erase)
 #include <cstring>
 #include <new>
 #include <atomic>
@@ -8070,11 +8072,73 @@ void aura_newline() {
 // Issue #1307 (P0): mutex — concurrent push_back + read was UB.
 static std::vector<double> g_float_pool;
 static std::mutex g_float_pool_mtx;
+// The float-pool face of the string/hash slot reclaim. A boxed float is an
+// index into this process-global pool; before this, every general-path float
+// op pushed a slot that was never reclaimed (only aura_reset_runtime cleared
+// it), so a long run's RSS grew linearly with total float ops. The reclaim
+// (file-mode / tree-walker) now marks the slots live values reference and
+// hands the dead ones back here, exactly as release_unreachable_string_slots
+// does for the evaluator string heap.
+//   g_float_tenants     — owning principal per slot (capability_tenant_id_ of
+//                         the Evaluator that minted it). Only a slot THIS
+//                         evaluator owns is released by its reclaim, so a
+//                         second serve session never loses a box it holds.
+//   g_float_on_freelist / g_float_free_list — released slots awaiting reuse.
+//   g_float_mint_serial — monotonic mint stamp; a slot minted after the mark
+//                         collected its roots is newborn and not judged.
+static std::vector<std::uint64_t> g_float_tenants;
+static std::vector<std::uint8_t> g_float_on_freelist;
+static std::vector<std::size_t> g_float_free_list;
+static std::vector<std::uint64_t> g_float_mint_serial;
+static std::uint64_t g_float_mint_serial_next = 0;
+
+// Owner / mint hooks declared in runtime_shared.h (strong defs in service.ixx,
+// weak stubs in aura_jit_prim_dispatch_stub.cpp / test_concurrent_stubs.cpp).
 
 std::int64_t aura_alloc_float(double d) {
-    std::scoped_lock lock(g_float_pool_mtx);
-    std::int64_t idx = static_cast<std::int64_t>(g_float_pool.size());
-    g_float_pool.push_back(d);
+    std::size_t idx;
+    {
+        std::scoped_lock lock(g_float_pool_mtx);
+        const std::uint64_t owner = aura_jit_float_owner_tenant();
+        bool reused = false;
+        // Reuse the most recently freed slot THIS owner minted. Scan from the
+        // back (LIFO keeps the working set hot) and skip foreign slots in
+        // place: a slot freed by session A must not be handed to session B
+        // (cross-tenant reuse would let B read A's box), but a foreign slot at
+        // the back must not starve A of its own deeper free slots either.
+        for (auto it = g_float_free_list.rbegin(); it != g_float_free_list.rend(); ++it) {
+            const std::size_t cand = *it;
+            if (cand >= g_float_pool.size())
+                continue;
+            if (cand < g_float_tenants.size() && g_float_tenants[cand] != owner)
+                continue; // foreign slot: leave it for its owner
+            if (cand < g_float_on_freelist.size())
+                g_float_on_freelist[cand] = 0;
+            g_float_pool[cand] = d;
+            idx = cand;
+            reused = true;
+            // erase the reverse-iterator's element (base() - 1).
+            g_float_free_list.erase(std::next(it).base());
+            break;
+        }
+        if (!reused) {
+            idx = g_float_pool.size();
+            g_float_pool.push_back(d);
+        }
+        if (g_float_tenants.size() <= idx)
+            g_float_tenants.resize(idx + 1, 0);
+        g_float_tenants[idx] = owner;
+        if (g_float_on_freelist.size() <= idx)
+            g_float_on_freelist.resize(idx + 1, 0);
+        g_float_on_freelist[idx] = 0;
+        const std::uint64_t serial = ++g_float_mint_serial_next;
+        if (g_float_mint_serial.size() <= idx)
+            g_float_mint_serial.resize(idx + 1, 0);
+        g_float_mint_serial[idx] = serial;
+    }
+    // Charge the reclaim window outside the pool lock: the hook takes the
+    // owner Evaluator's own locks, and the pool lock is leaf-level.
+    aura_jit_note_float_mint();
     return aura::compiler::types::make_float_raw_v2(static_cast<std::uint64_t>(idx));
 }
 
@@ -8088,12 +8152,68 @@ double aura_float_ref(std::int64_t val) {
     return 0.0;
 }
 
-// Issue #4570: JIT float-pool size (append-only, never reclaimed) so
+// Issue #4570: JIT float-pool size (the high-water mark) so
 // `aura --jit-session` ";;floatpool" and the L1 test can assert that a
 // float accumulator loop does not box per iteration.
 extern "C" std::uint64_t aura_jit_float_pool_size() {
     std::scoped_lock lock(g_float_pool_mtx);
     return static_cast<std::uint64_t>(g_float_pool.size());
+}
+
+// Mark-time snapshot of the free slots (1 = on the free list at the mark).
+// release_unmarked uses it to tell "already free" from "free and re-minted
+// since the mark" — the string heap's free_slot_snapshot, same contract.
+extern "C" void aura_float_pool_free_snapshot(std::vector<std::uint8_t>& out) {
+    std::scoped_lock lock(g_float_pool_mtx);
+    out = g_float_on_freelist;
+}
+
+// The pool high-water at the mark; slots at or past it are newborn.
+extern "C" std::uint64_t aura_float_pool_high_water() {
+    std::scoped_lock lock(g_float_pool_mtx);
+    return static_cast<std::uint64_t>(g_float_pool.size());
+}
+
+// The mint serial limit: slots minted after this are newborn (the mark could
+// not see their owning value yet). Read BEFORE collecting roots, same as the
+// hash mint serial handshake.
+extern "C" std::uint64_t aura_float_pool_mint_limit() {
+    std::scoped_lock lock(g_float_pool_mtx);
+    return g_float_mint_serial_next;
+}
+
+// Release the slots the reclaim found unreachable: seen[i] != 0 means slot i
+// is still referenced. Only slots THIS owner minted are released (a second
+// serve session's boxes are left alone). Slots already free, re-minted since
+// the mark, or newborn are skipped. Returns the live slot count (high-water
+// minus the free list) for the reclaim trigger basis.
+extern "C" std::uint64_t aura_float_pool_release_unmarked(
+    const std::vector<std::uint8_t>& seen,
+    const std::vector<std::uint8_t>& free_at_mark,
+    std::uint64_t mint_limit,
+    std::uint64_t owner_tenant) {
+    std::scoped_lock lock(g_float_pool_mtx);
+    const std::size_t n = std::min(seen.size(), g_float_pool.size());
+    for (std::size_t i = 0; i < n; ++i) {
+        if (seen[i])
+            continue; // still referenced
+        if (i < g_float_tenants.size() && g_float_tenants[i] != owner_tenant)
+            continue; // not this evaluator's box
+        if (i < free_at_mark.size() && free_at_mark[i])
+            continue; // already free (or re-minted since the mark)
+        if (i < g_float_on_freelist.size() && g_float_on_freelist[i])
+            continue; // already on the free list
+        if (i < g_float_mint_serial.size() && g_float_mint_serial[i] > mint_limit)
+            continue; // newborn: minted after the mark collected its roots
+        if (i < g_float_on_freelist.size())
+            g_float_on_freelist[i] = 1;
+        g_float_free_list.push_back(i);
+    }
+    const std::size_t live =
+        g_float_pool.size() > g_float_free_list.size()
+            ? g_float_pool.size() - g_float_free_list.size()
+            : 0;
+    return static_cast<std::uint64_t>(live);
 }
 
 // ── String pool ────────────────────────────────────────────
@@ -8340,6 +8460,11 @@ void aura_reset_runtime() {
     {
         std::scoped_lock lock(g_float_pool_mtx);
         g_float_pool.clear();
+        g_float_tenants.clear();
+        g_float_on_freelist.clear();
+        g_float_free_list.clear();
+        g_float_mint_serial.clear();
+        g_float_mint_serial_next = 0;
     }
     // Issue #137: free hash tables. The `hash` primitive
     // (evaluator_eval_flat.cpp) creates these via FlatHashTable::create

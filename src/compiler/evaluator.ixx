@@ -6152,6 +6152,14 @@ public:
     void reset_file_heap_allocs_since_reclaim() noexcept {
         file_heap_allocs_since_reclaim_.store(0, std::memory_order_relaxed);
     }
+    // Charge the file-heap reclaim window for a float box minted through the
+    // runtime's free aura_alloc_float (the tree-walker / JIT path). The pool
+    // is process-global, so the mint is attributed to the owner Evaluator via
+    // the aura_jit_note_float_mint hook; without this a float-only loop that
+    // defeats the #5302 raw-double fast path would never reach the trigger.
+    void note_runtime_float_mint() noexcept {
+        file_heap_allocs_since_reclaim_.fetch_add(1, std::memory_order_relaxed);
+    }
     // Issue #4816: an explicit (gc-heap) that stood down arms the next
     // periodic safepoint (IR stride poll / TW back-edge) instead of waiting
     // for a full allocation window.
@@ -9313,6 +9321,17 @@ private:
             vals.clear();
             bits.clear();
             hit.clear();
+        }
+        // The cached boxes are float-pool indices. The reclaim treats every
+        // cached box as a root so a slot is never released under the cache
+        // (the string intern's for_each_live, same contract).
+        template <class F> void for_each_live(F&& fn) const {
+            const std::shared_lock<std::shared_mutex> guard(mutex);
+            const auto n = std::min(vals.size(), hit.size());
+            for (std::size_t i = 0; i < n; ++i) {
+                if (hit[i])
+                    fn(vals[i]);
+            }
         }
 
     private:

@@ -61,6 +61,7 @@ using types::as_cell_id;
 using types::as_closure_id;
 using types::as_error_idx;
 using types::as_float;
+using types::as_float_idx;
 using types::as_hash_idx;
 using types::as_int;
 using types::as_opaque_idx;
@@ -1573,7 +1574,8 @@ static void file_reclaim_mark_value(
     const std::vector<std::vector<EvalValue>>& vector_heap,
     const std::pmr::vector<EvalValue>& cells, const std::vector<EvalValue>& error_values,
     std::vector<std::uint8_t>& seen_opaque, std::span<const std::uint32_t> opaque_gen,
-    std::vector<std::uint8_t>& seen_string, std::unordered_set<std::int64_t>& live_channel_ids) {
+    std::vector<std::uint8_t>& seen_string, std::vector<std::uint8_t>& seen_float,
+    std::unordered_set<std::int64_t>& live_channel_ids) {
     // Issue #4854: a tagged channel id is an owner of that channel slot.
     note_channel_id_4854(v, live_channel_ids);
     // Issue #4608: a string value is a slot index into string_heap_.
@@ -1583,6 +1585,16 @@ static void file_reclaim_mark_value(
         const auto idx = as_string_idx(v);
         if (idx < seen_string.size())
             seen_string[idx] = 1;
+        return;
+    }
+    // A boxed float is a slot index into the process-global float pool. Mark
+    // it so the reclaim can release the slots nothing references any more —
+    // the float-pool face of the string slot reclaim. A float is a leaf (no
+    // children to push).
+    if (is_float(v)) {
+        const auto idx = as_float_idx(v);
+        if (idx < seen_float.size())
+            seen_float[idx] = 1;
         return;
     }
     if (is_pair(v)) {
@@ -1849,6 +1861,9 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
             roots.push_back(entry.second);
         string_intern_by_sym_.for_each_live([&roots](const EvalValue& v) { roots.push_back(v); });
         keyword_intern_by_sym_.for_each_live([&roots](const EvalValue& v) { roots.push_back(v); });
+        // The float-literal intern holds boxed float-pool indices; root them
+        // here too (the file-mode mark releases float slots the same way).
+        float_intern_by_node_.for_each_live([&roots](const EvalValue& v) { roots.push_back(v); });
         if (last_eval_current_result_)
             roots.push_back(*last_eval_current_result_);
     }
@@ -1908,6 +1923,12 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
     std::size_t n_vecs = 0;
     std::size_t n_strings = 0;
     std::vector<std::uint8_t> free_at_mark;
+    // Float-pool mark snapshot: high-water bounds the release to slots that
+    // existed at the mark; the free-slot snapshot and mint limit tell the
+    // release which slots were already reusable / re-minted / newborn.
+    std::size_t n_floats = 0;
+    std::vector<std::uint8_t> float_free_at_mark;
+    std::uint64_t float_mint_limit = 0;
     {
         codec_inflight_roots::RegistryLock codec_registry;
         hash_mint_limit = hash_mint_serial_next_.load(std::memory_order_acquire);
@@ -1923,6 +1944,9 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
         // were already reusable (or re-minted since the mark).
         n_strings = string_heap_.size();
         free_at_mark = string_heap_.free_slot_snapshot();
+        n_floats = static_cast<std::size_t>(aura_float_pool_high_water());
+        aura_float_pool_free_snapshot(float_free_at_mark);
+        float_mint_limit = aura_float_pool_mint_limit();
         {
             std::scoped_lock lock(alloc_storage_lock_);
             n_pairs = pairs_.size();
@@ -1935,6 +1959,7 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
     std::vector<std::uint8_t> seen_ev_cell(cells_.size(), 0);
     std::vector<std::uint8_t> seen_err(error_values_.size(), 0);
     std::vector<std::uint8_t> seen_string(n_strings, 0);
+    std::vector<std::uint8_t> seen_float(n_floats, 0);
     std::unordered_set<std::uint64_t> seen_ir;
     std::unordered_set<std::uint64_t> live_tw;
 
@@ -2006,7 +2031,7 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
                     file_reclaim_mark_value(work[traced++], work, seen_pair, seen_vec, seen_hash,
                                             seen_ev_cell, seen_err, seen_ir, live_tw, view, pairs_,
                                             vector_heap_, cells_, error_values_, seen_opaque,
-                                            opaque_gen, seen_string, live_channel_ids);
+                                            opaque_gen, seen_string, seen_float, live_channel_ids);
                 }
             }
             std::vector<EnvId> more;
@@ -2121,6 +2146,13 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
     // evaluator did not mint is left alone.
     const auto live_hash_units =
         release_unreachable_hash_tables(seen_hash, hash_at_mark, hash_mint_limit);
+    // Release the float-pool slots the mark found unreachable. Only slots
+    // this Evaluator owns are freed (a second serve session's boxes stay).
+    // The dead slots go on the pool free list, so the next aura_alloc_float
+    // reuses a slot instead of growing the pool — a general-path float loop
+    // keeps a flat pool (and a flat RSS) instead of one slot per op.
+    const auto live_floats = aura_float_pool_release_unmarked(
+        seen_float, float_free_at_mark, float_mint_limit, capability_tenant_id_);
 
 
     {
@@ -2183,8 +2215,10 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
         const std::size_t dead_high_water =
             reclaim_dead_slots(n_pairs, live_pairs) + reclaim_dead_slots(n_vecs, live_vecs) +
             reclaim_dead_slots(n_strings, live_strings) +
+            reclaim_dead_slots(n_floats, static_cast<std::size_t>(live_floats)) +
             reclaim_dead_slots(seen_ev_cell.size(), live_cells_mark);
-        note_live_set_for_reclaim_trigger(live_pairs + live_vecs + live_strings + live_hash_units,
+        note_live_set_for_reclaim_trigger(live_pairs + live_vecs + live_strings + live_hash_units +
+                                              static_cast<std::size_t>(live_floats),
                                           mints_at_mark, dead_high_water);
     }
     // Issue #4597: finalize unreachable handles once, after every lock is
@@ -2313,6 +2347,10 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
     std::size_t n_errs = 0;
     std::size_t n_strings = 0;
     std::vector<std::uint8_t> free_at_mark;
+    // Float-pool mark snapshot (same contract as the file-mode reclaim).
+    std::size_t n_floats = 0;
+    std::vector<std::uint8_t> float_free_at_mark;
+    std::uint64_t float_mint_limit = 0;
     {
         std::scoped_lock lock(alloc_storage_lock_);
         n_cells = cells_.size();
@@ -2334,6 +2372,7 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
     std::vector<std::uint8_t> seen_ev_cell(n_cells, 0);
     std::vector<std::uint8_t> seen_err(n_errs, 0);
     std::vector<std::uint8_t> seen_string;
+    std::vector<std::uint8_t> seen_float;
     std::vector<std::uint8_t> live_frame(n_frames, 0);
     std::vector<std::uint8_t> frame_scanned(n_frames, 0);
     std::unordered_set<std::uint64_t> seen_ir;
@@ -2448,6 +2487,9 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
         }
         n_strings = string_heap_.size();
         free_at_mark = string_heap_.free_slot_snapshot();
+        n_floats = static_cast<std::size_t>(aura_float_pool_high_water());
+        aura_float_pool_free_snapshot(float_free_at_mark);
+        float_mint_limit = aura_float_pool_mint_limit();
         {
             std::scoped_lock lock(alloc_storage_lock_);
             n_pairs = pairs_.size();
@@ -2457,6 +2499,7 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
     seen_pair.assign(n_pairs, 0);
     seen_vec.assign(n_vecs, 0);
     seen_string.assign(n_strings, 0);
+    seen_float.assign(n_floats, 0);
     // Issue #4608: the intern caches hold string indices (symbol
     // names, quote literals, keywords). They are roots: a cached
     // index must never be released under the cache.
@@ -2466,6 +2509,11 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
             work.push_back(entry.second);
         string_intern_by_sym_.for_each_live([&work](const EvalValue& v) { work.push_back(v); });
         keyword_intern_by_sym_.for_each_live([&work](const EvalValue& v) { work.push_back(v); });
+        // The float-literal intern holds boxed float-pool indices (per node,
+        // bit-exact). Like the string intern, a cached box is a root: it must
+        // never be released under the cache, or the next literal eval serves
+        // a reused slot holding another value.
+        float_intern_by_node_.for_each_live([&work](const EvalValue& v) { work.push_back(v); });
         if (last_eval_current_result_)
             work.push_back(*last_eval_current_result_);
     }
@@ -2567,7 +2615,7 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
                 file_reclaim_mark_value(work[traced++], work, seen_pair, seen_vec, seen_hash,
                                         seen_ev_cell, seen_err, seen_ir, live_tw, view, pairs_,
                                         vector_heap_, cells_, error_values_, seen_opaque,
-                                        opaque_gen, seen_string, live_channel_ids);
+                                        opaque_gen, seen_string, seen_float, live_channel_ids);
             }
         }
         std::vector<EnvId> more;
@@ -2679,6 +2727,12 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
     // evaluator did not mint is left alone.
     const auto live_hash_units =
         release_unreachable_hash_tables(seen_hash, hash_at_mark, hash_mint_limit);
+    // Release the float-pool slots the mark found unreachable (this owner
+    // only). The dead slots go on the pool free list for aura_alloc_float to
+    // reuse, so a general-path float loop keeps a flat pool instead of one
+    // slot per op — the float-pool face of the string slot reclaim above.
+    const auto live_floats = aura_float_pool_release_unmarked(
+        seen_float, float_free_at_mark, float_mint_limit, capability_tenant_id_);
 
     {
         std::scoped_lock lock(alloc_storage_lock_);
@@ -2752,9 +2806,10 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
         // call). The tree-walker exit mark is the one a CLI fiber runs.
         const std::size_t dead_high_water =
             reclaim_dead_slots(n_pairs, live_pairs) + reclaim_dead_slots(n_vecs, live_vecs) +
-            reclaim_dead_slots(n_strings, live_strings) + reclaim_dead_slots(n_cells, live_cells);
+            reclaim_dead_slots(n_strings, live_strings) + reclaim_dead_slots(n_cells, live_cells) +
+            reclaim_dead_slots(n_floats, static_cast<std::size_t>(live_floats));
         note_live_set_for_reclaim_trigger(live_pairs + live_vecs + live_cells + live_strings +
-                                              live_hash_units,
+                                              live_hash_units + static_cast<std::size_t>(live_floats),
                                           mints_at_mark, dead_high_water);
     }
     tw_closure_allocs_.store(0, std::memory_order_relaxed);

@@ -223,6 +223,13 @@ extern "C" __attribute__((weak)) std::uint64_t aura_jit_owner_capability_tenant(
     return 0;
 }
 
+// Float-pool owner / mint hooks: light-link fallback (no service.ixx) →
+// tenant 0, no window charge. Strong defs in service.ixx.
+extern "C" __attribute__((weak)) std::uint64_t aura_jit_float_owner_tenant(void) noexcept {
+    return 0;
+}
+extern "C" __attribute__((weak)) void aura_jit_note_float_mint(void) noexcept {}
+
 // Issue #4567: aura_jit.cpp registers aura_check_shape_guard as a JIT
 // runtime symbol; the strong def lives in spec_jit_controller.cpp,
 // which the light-link targets do not compile — without this stub

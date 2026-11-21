@@ -882,6 +882,35 @@ extern "C" std::uint64_t aura_jit_owner_capability_tenant(void) noexcept {
     return owner->capability_tenant_id();
 }
 
+// Owner-Evaluator principal for a float-pool slot. Same wiring as
+// aura_jit_owner_capability_tenant, but falls back to the thread's
+// query-evaluator when the JIT prim ctx is not wired: a pure tree-walker
+// program (set-code + eval-current) never calls register_jit_primitives, so
+// g_jit_prim_owner stays null while the query-evaluator (set at CompilerService
+// ctor) still names the running Evaluator. The float reclaim releases only
+// slots this principal owns, so the stamp must be right even on that path.
+// Weak stub in aura_jit_prim_dispatch_stub.cpp / test_concurrent_stubs.cpp.
+extern "C" std::uint64_t aura_jit_float_owner_tenant(void) noexcept {
+    auto* prims = g_jit_prim_ctx.load(std::memory_order_acquire);
+    auto* owner = owner_evaluator(prims);
+    if (!owner)
+        owner = aura::compiler::Evaluator::get_query_evaluator();
+    if (!owner)
+        return 0;
+    return owner->capability_tenant_id();
+}
+
+// Charge the owner Evaluator's file-heap reclaim window for a runtime float
+// mint. Same owner resolution as aura_jit_float_owner_tenant. Weak stub no-op.
+extern "C" void aura_jit_note_float_mint(void) noexcept {
+    auto* prims = g_jit_prim_ctx.load(std::memory_order_acquire);
+    auto* owner = owner_evaluator(prims);
+    if (!owner)
+        owner = aura::compiler::Evaluator::get_query_evaluator();
+    if (owner)
+        owner->note_runtime_float_mint();
+}
+
 // Issue #4093: owner sandbox mode for the JIT cell/hash/pair tenant gate —
 // the same owner wiring as aura_jit_owner_require_effect. Unwired owner → 0
 // (production face off; Soft/Off zero-cost contract keeps the tenant arrays

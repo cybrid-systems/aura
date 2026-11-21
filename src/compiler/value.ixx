@@ -186,6 +186,14 @@ export inline double as_float(const EvalValue& v) {
     note_value_tag_hot_path();
     return aura_float_ref(v.val);
 }
+// The float-pool slot index a boxed float names. The reclaim marks it so a
+// slot no live value references can be released and reused (the float-pool
+// face of the string/hash slot reclaim). Mirrors as_string_idx.
+export inline std::uint64_t as_float_idx(const EvalValue& v) noexcept {
+    AURA_HOT_CONTRACT(is_float(v));
+    note_value_tag_hot_path();
+    return float_idx_raw_v2(v.val);
+}
 
 // Issue #181 Cycle 2: string encoding migrated to Option A.
 // make_string / is_string / as_string_idx now use the v2

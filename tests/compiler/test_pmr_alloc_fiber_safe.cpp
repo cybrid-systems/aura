@@ -25,6 +25,7 @@
 #include "compiler/fiber_alloc_arena.hh" // Issue #4714: fresh-heap control
 #include "compiler/observability_metrics.h"
 #include "compiler/prim_heap_quota.hh"
+#include "compiler/runtime_shared.h" // float-pool high-water (aura_jit_float_pool_size)
 
 #include <array>
 #include <atomic>
@@ -2127,6 +2128,81 @@ static void ac5292_fiber_dead_heap_window() {
     std::println("    5292: pairs={} trigger={} host-hash marks={}", pairs, trig, marks);
 }
 
+// ── The boxed-float pool reclaims unreachable boxes ──
+// Every general-path float op boxes a double into the process-global
+// g_float_pool. Before the fix the pool was append-only (only
+// aura_reset_runtime cleared it), so a loop that defeats the #5302
+// raw-double fast path grew the pool — and the RSS — by one slot per
+// float op, without bound. The reclaim now marks the live boxes and
+// releases the dead ones onto a free list aura_alloc_float reuses, the
+// float-pool face of the #4608 string-heap reclaim.
+static void ac_float_pool_reclaim() {
+    std::println("\n--- float pool: the reclaim recycles unreachable boxes ---");
+
+    // AC1: a general-path float loop keeps the pool high-water bounded.
+    // The `or` test and the helper call defeat the #5302 fast path, so
+    // each step boxes a fresh float; the cons charges the reclaim window
+    // so the mark fires and the dead boxes recycle. Pre-fix the pool grew
+    // by ~one slot per step (20k slots); post-fix it stays at the live set.
+    {
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        auto warm = cs.eval("(begin (define (bump x) (+ x 0.5))"
+                            " (define (run n) (let loop ((i 0) (s 0.0) (acc (list)))"
+                            "   (if (or (>= i n) #f) (length acc)"
+                            "       (loop (+ i 1) (bump s) (cons i acc)))))"
+                            " (run 20000))");
+        CHECK(warm.has_value(), "float AC1: warm-up eval");
+        const auto before = aura_jit_float_pool_size();
+        auto r = cs.eval("(run 20000)");
+        CHECK(r && is_int(*r) && as_int(*r) == 20000, "float AC1: general-path loop evals");
+        const auto grown = aura_jit_float_pool_size() - before;
+        CHECK(grown <= 2048,
+              "float AC1: the float pool stays flat across 20k dropped boxes (grew " +
+                  std::to_string(grown) + " slots, want <= 2048)");
+        std::println("    float AC1: 20k-step general-path loop pool grew {} slots", grown);
+    }
+
+    // AC2: the boxes that ARE reachable survive the reclaim — an env
+    // binding, a pair field, a vector element and a closure capture all
+    // keep their float value across a mint-and-drop loop. A released slot
+    // reused under a live reference would read another value.
+    {
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        auto r =
+            cs.eval("(begin"
+                    " (define (bump x) (+ x 0.5))"
+                    " (define (run n) (let loop ((i 0) (s 0.0) (acc (list)))"
+                    "   (if (or (>= i n) #f) (length acc)"
+                    "       (loop (+ i 1) (bump s) (cons i acc)))))"
+                    " (define a 1.5)"
+                    " (define p (cons 2.5 0))"
+                    " (define v (vector 3.5))"
+                    " (define f (lambda () 4.5))"
+                    " (run 20000)"
+                    " (+ (+ (+ (if (= a 1.5) 1 0) (if (= (car p) 2.5) 1 0))"
+                    "        (if (= (vector-ref v 0) 3.5) 1 0))"
+                    "       (if (= (f) 4.5) 1 0)))");
+        CHECK(r && is_int(*r), "float AC2: survival program evals");
+        CHECK(r && is_int(*r) && as_int(*r) == 4,
+              "float AC2: live floats survive the reclaim (env/pair/vector/closure), got " +
+                  (r && is_int(*r) ? std::to_string(as_int(*r)) : std::string("no result")) +
+                  " of 4");
+    }
+
+    // AC3: the source cite — the float pool is part of the mark and the
+    // release, and the free list lives in the runtime pool owner.
+    const auto gc = read_file("src/compiler/evaluator_gc.cpp");
+    CHECK(gc.find("seen_float") != std::string::npos,
+          "float AC3: the reclaim marks the float slots");
+    CHECK(gc.find("aura_float_pool_release_unmarked") != std::string::npos,
+          "float AC3: the reclaim releases the unreachable float slots");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    CHECK(rt.find("g_float_free_list") != std::string::npos,
+          "float AC3: the runtime pool owns the free list");
+}
+
 int run_test_pmr_alloc_fiber_safe() {
     // TEMPORARY local experiment (reverted before the commit): run only the
     // #4714 Row 2 block, which the full TSan run cannot reach past the
@@ -2161,6 +2237,7 @@ int run_test_pmr_alloc_fiber_safe() {
     ac4717_concurrent_mint_read();
     ac4714r2_production_mint_no_lock();
     ac5292_fiber_dead_heap_window();
+    ac_float_pool_reclaim();
     std::println("\n=== #2651/#2997: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

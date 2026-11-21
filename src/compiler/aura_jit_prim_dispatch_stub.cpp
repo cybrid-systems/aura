@@ -42,6 +42,13 @@ extern "C" __attribute__((weak)) std::uint64_t aura_jit_owner_capability_tenant(
     return 0;
 }
 
+// Float-pool owner / mint hooks: light-link fallback — no owner Evaluator →
+// unstamped slots (tenant 0) and no window charge. Strong defs in service.ixx.
+extern "C" __attribute__((weak)) std::uint64_t aura_jit_float_owner_tenant(void) noexcept {
+    return 0;
+}
+extern "C" __attribute__((weak)) void aura_jit_note_float_mint(void) noexcept {}
+
 // Issue #4093: light-link fallback — no owner Evaluator → production face
 // off (Soft-like zero-cost contract; the tenant gate never arms and the
 // tenant arrays stay unread).

@@ -186,6 +186,23 @@ extern "C" int aura_vector_mutate_operand_is_unpublished();
 // (same wiring class as the strong owner require_effect hook).
 extern "C" std::uint64_t aura_jit_owner_capability_tenant(void) noexcept;
 
+// ── Float-pool reclaim (the string/hash slot-reclaim face for boxed floats) ──
+// SSOT definitions in aura_jit_runtime.cpp. The per-Evaluator reclaim
+// (evaluator_gc.cpp) marks the slots live values reference, then releases the
+// dead ones this owner minted. Owner / mint hooks: strong defs in service.ixx,
+// weak stubs in aura_jit_prim_dispatch_stub.cpp / test_concurrent_stubs.cpp.
+extern "C" std::uint64_t aura_jit_float_owner_tenant(void) noexcept;
+extern "C" void aura_jit_note_float_mint(void) noexcept;
+extern "C" std::uint64_t aura_jit_float_pool_size();
+extern "C" void aura_float_pool_free_snapshot(std::vector<std::uint8_t>& out);
+extern "C" std::uint64_t aura_float_pool_high_water();
+extern "C" std::uint64_t aura_float_pool_mint_limit();
+extern "C" std::uint64_t aura_float_pool_release_unmarked(
+    const std::vector<std::uint8_t>& seen,
+    const std::vector<std::uint8_t>& free_at_mark,
+    std::uint64_t mint_limit,
+    std::uint64_t owner_tenant);
+
 // ── Flags ──
 extern bool g_use_arena;
 
