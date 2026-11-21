@@ -326,11 +326,13 @@ int main() {
         const std::string host_script = d + "/host2.aura";
         std::string hs = kHostScript;
         const std::string from = "777", to = "780";
-        for (std::size_t at = hs.find(from); at != std::string::npos; at = hs.find(from, at + to.size()))
+        for (std::size_t at = hs.find(from); at != std::string::npos;
+             at = hs.find(from, at + to.size()))
             hs.replace(at, from.size(), to);
         check(write_file(host_script, hs.c_str()), "write host2 script");
         check(write_file((d + "/perf.aura").c_str(), kPerfPeerScript), "write perf script");
-        check(write_file((d + "/harness.aura").c_str(), kHarnessPeerScript), "write harness script");
+        check(write_file((d + "/harness.aura").c_str(), kHarnessPeerScript),
+              "write harness script");
         check(write_file((d + "/maint.aura").c_str(), kMaintainerPeerScript), "write maint script");
         int host_out = -1, host_in = -1;
         const pid_t host = run_script(host_script, &host_out, &host_in);
