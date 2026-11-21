@@ -1011,7 +1011,8 @@ void Env::bind_symid_with_linear_state(aura::ast::SymId s, types::EvalValue v, s
 // under the Env single-writer contract documented on class Env
 // (evaluator.ixx). Concurrent bind vs lookup on the same Env is
 // unsupported; do not add env_mtx_ on this hot path.
-void Env::bind_with_linear_state(std::string_view n, types::EvalValue v, std::uint8_t state) {
+void Env::bind_with_linear_state(std::string_view n, types::EvalValue v, std::uint8_t state,
+                                 bool seal) {
     auto bind_guard = lock_bindings_exclusive(); // #4717 shared top env
     bindings_.emplace_back(std::string(n), std::move(v));
     if (!binding_index_.empty() || bindings_.size() > 8) {
@@ -1046,7 +1047,9 @@ void Env::bind_with_linear_state(std::string_view n, types::EvalValue v, std::ui
     if (owner_ != nullptr && this == &owner_->top_env())
         owner_->note_top_binding_changed();
     // Issue #5190: see bind_symid_with_linear_state.
-    if (owner_ != nullptr && owner_->env_is_workspace_root(this) && !bindings_.empty())
+    // Issue #5374: `seal` = false skips this per-bind walk; the batch
+    // caller seals the whole set in one walk (seal_workspace_values).
+    if (seal && owner_ != nullptr && owner_->env_is_workspace_root(this) && !bindings_.empty())
         owner_->note_workspace_binding(bindings_.back().second);
 }
 
@@ -1193,6 +1196,37 @@ aura::core::VoidResult Env::set_linear_ownership_state_by_name(std::string_view 
 // unsupported under the Env single-writer contract (#1861) —
 // do not add a per-Env mutex on this hot path. Sequential
 // bind_symid then lookup_by_symid is the supported model.
+// Issue #5374: local-only binding probe (no parent walk). The
+// require-inject path asks "is this name already bound HERE?" once per
+// injected name. The old site copied the whole binding vector per name
+// (O(n) copy) and then reverse-scanned the copy (O(n) scan) — O(n²) for
+// a module export set (1.5 s for 4 000 names). This probes the O(1)
+// name index; small envs (no index) keep the reverse scan.
+std::optional<types::EvalValue> Env::lookup_local_binding(std::string_view n) const {
+    // The pre (!n.empty()) is on the declaration in evaluator.ixx.
+    auto bind_guard = lock_bindings_shared(); // #4717 shared top env
+    if (!binding_index_.empty()) {
+        // Issue #4350: the index is authoritative — every writer of
+        // bindings_ (bind*, replace_string_bindings, unbind_local, the
+        // module export filter) keeps it in sync, so a miss means "not
+        // bound here". Env::lookup reads it the same way.
+        auto it = binding_index_.find(n);
+        if (it == binding_index_.end())
+            return std::nullopt;
+        const auto idx = it->second;
+        if (idx < bindings_.size() && bindings_[idx].first == n)
+            return bindings_[idx].second;
+        return std::nullopt;
+    }
+    // Small envs keep no index map (the per-call bind did not allocate a
+    // map node per parameter): a reverse scan is cheaper there.
+    for (auto it = bindings_.rbegin(); it != bindings_.rend(); ++it) {
+        if (it->first == n)
+            return it->second;
+    }
+    return std::nullopt;
+}
+
 std::optional<types::EvalValue> Env::lookup_by_symid(aura::ast::SymId s) const {
     if (!env_lookup_enter())
         return std::nullopt;

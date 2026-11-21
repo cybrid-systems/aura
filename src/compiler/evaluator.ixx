@@ -692,9 +692,16 @@ public:
     // when pool_ is set the SymId PRIMARY array stays in lockstep with
     // string bindings_ (capture via alloc_env_frame_from_env needs
     // bindings_symid_; set!/lookup need string or SymId after materialize).
-    void bind(std::string_view n, types::EvalValue v) {
+    // Issue #5374: `seal` = false publishes the binding WITHOUT the
+    // per-bind workspace seal (Issue #5190). The require-inject path
+    // binds a whole module export set at once; sealing every name
+    // separately walked the same captured env frame once per name
+    // (O(n²) per module load — 1.5 s for a 4 000-name export set).
+    // The caller seals the batch in ONE walk (seal_workspace_values),
+    // which marks exactly the same values.
+    void bind(std::string_view n, types::EvalValue v, bool seal = true) {
         // 0 == linear_rt::Untracked (namespace defined later in this module)
-        bind_with_linear_state(n, std::move(v), 0);
+        bind_with_linear_state(n, std::move(v), 0, seal);
     }
     // Issue #1482 restore: wholesale string-binding replace used by
     // materialize_call_env when rehydrating an EnvFrame that still
@@ -714,7 +721,16 @@ public:
     void bind_symid(aura::ast::SymId s, types::EvalValue v);
     // Issue #1539: bind with linear ownership state (defaults via bind_symid = Untracked).
     void bind_symid_with_linear_state(aura::ast::SymId s, types::EvalValue v, std::uint8_t state);
-    void bind_with_linear_state(std::string_view n, types::EvalValue v, std::uint8_t state);
+    // Issue #5374: `seal` = false skips the per-bind workspace seal (see
+    // bind() above). The batch caller seals once for the whole set.
+    void bind_with_linear_state(std::string_view n, types::EvalValue v, std::uint8_t state,
+                                bool seal = true);
+    // Issue #5374: local-only binding probe (no parent walk).
+    // Uses the O(1) name index when the env has one. The require-inject
+    // path used to COPY the whole binding vector per injected name and
+    // then reverse-scan it (O(n) per bind → O(n²) per module load).
+    [[nodiscard]] std::optional<types::EvalValue> lookup_local_binding(std::string_view n) const
+        pre(!n.empty());
     // Issue #2872: remove most-recent local binding for name (and dual SymId
     // mirror). Used to roll back a define that pre-bound a void cell then
     // failed on RHS (depth overflow / error) so the name is unbound — not a
@@ -7132,6 +7148,11 @@ public:
     // Issue #5190. Public so module load, Env::bind, and the hash/vector/pair
     // writers can publish a value that just became reachable from a workspace.
     void seal_workspace_value(const types::EvalValue& v);
+    // Issue #5374: seal a batch of published values in ONE walk. The
+    // per-value walk repeated the captured-env-frame walk for every name
+    // in the batch (O(n²) for a module export set); one walk over the
+    // whole batch marks the same values with a shared frontier.
+    void seal_workspace_values(std::span<const types::EvalValue> values);
     void seal_workspace_env(Env* env);
     void mark_workspace_cell(std::size_t ci);
     void note_workspace_binding(const types::EvalValue& v);

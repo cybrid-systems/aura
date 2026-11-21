@@ -612,6 +612,13 @@ Env* Evaluator::create_loaded_module_env(ast::ASTArena& mod_arena, ast::StringPo
 }
 
 types::EvalValue Evaluator::load_module_file(const std::string& path) {
+    // Issue #5374: phase timing for the module load. A top-level require
+    // is hoisted before the first user form, so an in-program clock
+    // (monotonic-ms) can never see it — the cost only shows up as "the
+    // process printed nothing for seconds". AURA_MOD_TIMING=1 prints one
+    // line per module with the phase split.
+    const bool mod_timing = ::aura::config::flag(::aura::config::Key::AURA_MOD_TIMING);
+    const auto mt_t0 = std::chrono::steady_clock::now();
     // Issue #5197: record this module's exports in a fresh set. The
     // parent's in-flight set is saved and restored on every return
     // (success, fail_module_load, cache hit, refuse). A fresh set is
@@ -746,6 +753,7 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
         erase_loading_module(resolved);
         return types::make_void();
     }
+    const auto mt_read = std::chrono::steady_clock::now();
 
     // 5. Parse
     if (!arena_) {
@@ -767,6 +775,7 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
         nullptr, "stack-cover-dies-at-return", alloc);
     flat_ptr = mod_arena.create_with_cover<aura::ast::FlatAST>(nullptr,
                                                                "stack-cover-dies-at-return", alloc);
+    // Issue #5374: phase timing (declared at function entry).
     auto pr = aura::parser::parse_to_flat(content, *flat_ptr, *pool_ptr);
     if (!pr.success || pr.root == aura::ast::NULL_NODE)
         return fail_module_parse(resolved, pr.error);
@@ -775,6 +784,7 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
     // file and quote its lines (not the entry file's same line number).
     aura::diag::bind_flat_to_source_file(flat_ptr,
                                          aura::diag::register_source_file(resolved, content));
+    const auto mt_parsed = std::chrono::steady_clock::now();
 
     // 6. Create isolated module env (child of top_ for primitive access)
     // Arena-allocate in the per-module arena so closures captured during
@@ -847,6 +857,7 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
     } base_dir_guard(*this, resolved);
 
     auto expanded = aura::compiler::macro_expand_all(*flat_ptr, *pool_ptr, flat_ptr->root);
+    const auto mt_expanded = std::chrono::steady_clock::now();
     // Issue #4078: do not eval a refused half-expand. fail_load (below)
     // drops the partial module; the reason string is the existing one.
     EvalResult result = std::unexpected(
@@ -858,6 +869,7 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
     } else {
         result = eval_flat(*flat_ptr, *pool_ptr, expanded, *mod_env);
     }
+    const auto mt_evaled = std::chrono::steady_clock::now();
 
     // Issue #2570: fail-closed module load — do NOT cache a half-evaluated
     // module. Mid-body unbound/error (e.g. letrec define phase) used to
@@ -895,6 +907,7 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
     // Hashes built while the body ran stay mutable until this point;
     // after it, in-place hash-set! needs Mutate.
     seal_workspace_env(mod_env);
+    const auto mt_sealed = std::chrono::steady_clock::now();
 
     // 10. Store module (pointer to arena-allocated env — persists for the
     // module's lifetime, freed by gc_module(resolved)).
@@ -927,8 +940,29 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
     if (module_loaded_cb_) {
         module_loaded_cb_(content, resolved);
     }
+    const auto mt_ir_cached = std::chrono::steady_clock::now();
 
     ingest_loaded_module_type_sigs(resolved, mod_env);
+
+    if (mod_timing) {
+        // Issue #5374: phase split for one module load. `read` covers the
+        // path resolve + file read + arena setup, `parse` the parse,
+        // `expand` the macro expansion, `eval` the module body (this is
+        // where a nested require injects its exports), `seal` the export
+        // filter + workspace seal, `ir` the CompilerService IR cache
+        // (it re-parses the module to lower its defines).
+        const auto us = [](auto a, auto b) {
+            return std::chrono::duration_cast<std::chrono::microseconds>(b - a).count();
+        };
+        const auto mt_done = std::chrono::steady_clock::now();
+        std::println(std::cerr,
+                     "[mod-timing] {} read={}us parse={}us expand={}us eval={}us seal={}us "
+                     "ir={}us publish={}us total={}us",
+                     resolved, us(mt_t0, mt_read), us(mt_read, mt_parsed),
+                     us(mt_parsed, mt_expanded), us(mt_expanded, mt_evaled),
+                     us(mt_evaled, mt_sealed), us(mt_sealed, mt_ir_cached),
+                     us(mt_ir_cached, mt_done), us(mt_t0, mt_done));
+    }
 
     erase_loading_module(resolved);
     return types::make_module(mod_idx);

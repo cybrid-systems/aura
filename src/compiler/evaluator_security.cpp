@@ -3744,13 +3744,28 @@ void Evaluator::seal_workspace_env(Env* env) {
         for (const auto& b : env->bindings_symid())
             vals.push_back(b.second);
     }
-    for (const auto& v : vals)
-        note_workspace_binding(v);
+    // Issue #5374: ONE walk for the whole binding set. The per-value walk
+    // repeated the captured-env-frame walk for every binding (a module
+    // export set of 4 000 names → 4 000 frame walks → O(n²)).
+    seal_workspace_values(vals);
 }
 
 void Evaluator::seal_workspace_value(const types::EvalValue& root) {
+    seal_workspace_values(std::span<const types::EvalValue>(&root, 1));
+}
+
+// Issue #5374: seal a batch of published values with a SHARED frontier.
+// The marks are per value (hash table / vector / pair / cell), so sealing
+// the batch in one walk marks exactly the same values as sealing them one
+// by one — but the captured-env-frame walk happens once per frame instead
+// of once per binding.
+void Evaluator::seal_workspace_values(std::span<const types::EvalValue> roots) {
+    if (roots.empty())
+        return;
     std::vector<types::EvalValue> work;
-    work.push_back(root);
+    work.reserve(roots.size());
+    for (const auto& r : roots)
+        work.push_back(r);
     std::vector<std::uint8_t> seen_pair;
     std::vector<std::uint8_t> seen_vec;
     std::vector<std::uint8_t> seen_cell;

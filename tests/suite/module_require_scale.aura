@@ -1,0 +1,104 @@
+; Issue #5374 — the require injection has to stay linear in the export count.
+;
+; The loader used to publish a required module's exports one name at a
+; time, and each name did two walks that grow with the size of the
+; target env: the overwrite check copied the whole binding vector before
+; it looked the name up, and the workspace seal walked the captured env
+; frame of the value it published. A module with N exports therefore cost
+; O(N²): the issue's lib/wish export set (4 000 names) spent ~1.5 s in
+; the injection alone, before the first line of the program ran.
+;
+; The probe below requires a generated module twice. The first require
+; loads it; every later require of the same path is an in-process cache
+; hit, so what is left is the injection — the part that has to be
+; linear. 500 exports against 2 000 exports: a quadratic injection grows
+; by ~16x, a linear one by ~4x.
+(require "std/test" all:)
+(require "std/io" all:)
+(require "std/string" all:)
+; std/process carries the host face: shell + get-environment-variables.
+(require "std/process" all:)
+(test-file "module_require_scale.aura")
+
+(define small-path "/tmp/aura5374_small.aura")
+(define big-path "/tmp/aura5374_big.aura")
+(define small-count 500)
+(define big-count 2000)
+
+; A module with n exports: (define (s0 x) (+ x 0)) … (define (sN-1 x) …).
+; The two modules use different name prefixes so the second require does
+; not overwrite the first one's exports (that would print a warning per
+; name and drown the report).
+(define (gen-module path prefix n)
+  (let ((out "")
+        (i 0))
+    (while (lambda () (< i n))
+      (lambda ()
+        (set! out (string-append out
+                                "(define (" prefix (number->string i) " x) (+ x "
+                                (number->string i) "))\n"))
+        (set! i (+ i 1))))
+    (write-file path out)))
+
+(gen-module small-path "s" small-count)
+(gen-module big-path "b" big-count)
+
+; The require path has to be a literal: the require form reads the module
+; name from the source, not from the value of a variable.
+(define (inject-small)
+  (let ((t0 (monotonic-ms)))
+    (require "/tmp/aura5374_small.aura" all:)
+    (- (monotonic-ms) t0)))
+
+(define (inject-big)
+  (let ((t0 (monotonic-ms)))
+    (require "/tmp/aura5374_big.aura" all:)
+    (- (monotonic-ms) t0)))
+
+; The first call loads the module (parse + eval + injection). The later
+; calls are cache hits: the injection only. The suite files run in
+; parallel waves, so one sample can absorb a scheduler pause; the best of
+; three absorbs it without hiding a quadratic growth.
+(define (best-of-3 f)
+  (let ((a (f)) (b (f)) (c (f)))
+    (min a (min b c))))
+
+(test-case "require injection is linear in the export count" (hash "issue" 5374)
+  (define small (best-of-3 inject-small))
+  (define big (best-of-3 inject-big))
+  ; 2 000 exports against 500: linear growth is ~4x, quadratic ~16x. The
+  ; 150 ms ceiling is the absolute guard for a host where the clock
+  ; resolution hides the small sample (a quadratic 2 000-name injection
+  ; takes ~0.5 s here, ~2 s on a slower host).
+  (check (<= big (* 8 (max 1 small))))
+  (check (<= big 150)))
+
+(test-case "every export of a scaled module is bound" (hash "issue" 5374)
+  (check (= (s0 1) 1))
+  (check (= (s499 1) 500))
+  (check (= (b0 1) 1))
+  (check (= (b1999 1) 2000)))
+
+; The phase report is what makes the cost of a top-level require
+; visible: the require is hoisted before the first user form, so an
+; in-program clock can never see it. AURA_MOD_TIMING=1 prints one line
+; per module with the phase split on stderr, so the probe runs the
+; runtime as a child and reads the report back.
+(test-case "the module load reports its phases" (hash "issue" 5374)
+  (define report-path "/tmp/aura5374_report.txt")
+  (define probe-path "/tmp/aura5374_probe.aura")
+  (write-file probe-path "(require \"/tmp/aura5374_small.aura\" all:)\n")
+  (define bin (aura-executable-path))
+  (shell (string-append "AURA_MOD_TIMING=1 " bin " --quiet " probe-path
+                        " 2> " report-path))
+  (define report (file-read report-path))
+  (check (>= (string-find report "[mod-timing]") 0))
+  (check (>= (string-find report "parse=") 0))
+  (check (>= (string-find report "eval=") 0))
+  (file-delete report-path)
+  (file-delete probe-path))
+
+(file-delete small-path)
+(file-delete big-path)
+
+(test-finish)

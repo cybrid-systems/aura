@@ -5,6 +5,7 @@
 module;
 
 #include "runtime_shared.h"
+#include "core/runtime_config.hh" // Issue #5374: AURA_MOD_TIMING knob
 
 module aura.compiler.evaluator;
 
@@ -115,14 +116,10 @@ void Evaluator::warn_import_overwrite(Env* env, const std::string& name,
     };
     std::optional<types::EvalValue> local;
     {
-        auto guard = env->lock_bindings_shared();
-        const auto binds = env->bindings();
-        for (auto it = binds.rbegin(); it != binds.rend(); ++it) {
-            if (it->first == name) {
-                local = it->second;
-                break;
-            }
-        }
+        // Issue #5374: O(1) local probe. The old site copied the whole
+        // binding vector per injected name and reverse-scanned the copy
+        // (O(n²) for a module export set).
+        local = env->lookup_local_binding(name);
     }
     auto& by_name = import_bind_origin_[env];
     const auto found = by_name.find(name);
@@ -306,24 +303,37 @@ void register_module_primitives(PrimRegistrar add, Evaluator& ev) {
                 return path;
             return name_it->second.module;
         };
+        // Issue #5374: the injection binds a whole export set at once.
+        // Sealing each name separately (Env::bind → note_workspace_binding)
+        // walked the same captured env frame once per name — O(n²) for a
+        // module export set (a 4 000-name set cost ~1.5 s). The set is
+        // bound with the per-bind seal off and the published values are
+        // sealed in ONE walk afterwards, which marks the same values.
+        std::vector<EvalValue> published;
+        published.reserve(loaded_env->bindings().size() * (prefix.empty() ? 1u : 2u));
         auto inject_one = [&](const std::string& name, const EvalValue& val) {
             // Issue #5198: warn when this require overwrites a name a
             // different module already installed here. The bind still
             // happens. The top_ mirror of a nested require is not a second
             // warning (the caller's require is the direct inject below).
             ev.warn_import_overwrite(inject, name, val, provider_for(name, val));
-            inject->bind(name, val);
+            inject->bind(name, val, /*seal=*/false);
             // Nested module load: also publish on top_ so top-level after
             // (require "m" all:) can still resolve shared std names if the
             // nested require was the first introduction (e.g. only m required
             // std/mutate). Skip double-bind when inject is already top_.
             if (inject != &ev.top_)
-                ev.top_.bind(name, val);
+                ev.top_.bind(name, val, /*seal=*/false);
+            published.push_back(val);
         };
+        const bool inj_timing = ::aura::config::flag(::aura::config::Key::AURA_MOD_TIMING);
+        const auto inj_t0 = std::chrono::steady_clock::now();
+        std::size_t inj_n = 0;
         if (prefix.empty()) {
             // No prefix: inject as-is (backward compat)
             for (auto& [name, val] : loaded_env->bindings()) {
                 inject_one(name, val);
+                ++inj_n;
             }
         } else {
             // Prefix injection: bind both prefix:name and bare name for each export
@@ -336,7 +346,18 @@ void register_module_primitives(PrimRegistrar add, Evaluator& ev) {
                 inject_one(prefixed, val);
                 // Also bind bare name (no prefix) so tree-walker can find it
                 inject_one(name, val);
+                ++inj_n;
             }
+        }
+        // One seal for the whole injected set (Issue #5374).
+        ev.seal_workspace_values(published);
+        if (inj_timing) {
+            // Issue #5374: the injection cost is the second half of a
+            // require's cost (the module load itself is the first half).
+            const auto inj_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                                    std::chrono::steady_clock::now() - inj_t0)
+                                    .count();
+            std::println(std::cerr, "[inj-timing] {} binds={} inject={}us", path, inj_n, inj_us);
         }
         return make_bool(true);
     });
