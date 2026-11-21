@@ -11091,8 +11091,8 @@ Evaluator::FlatStep Evaluator::eval_flat_on_and_or(EvalFlatCursor& cur,
                     // prelude below consults the same entry.
                     sc_known_not = true;
                 } else if (sc.kind == NameResEntry::Kind::ShortCircuit && sc.sym == callee.sym_id &&
-                           sc.top_gen == top_bind_gen_ &&
-                           sc.nchild >= 1 && sc.nchild <= sc.child.size()) {
+                           sc.top_gen == top_bind_gen_ && sc.nchild >= 1 &&
+                           sc.nchild <= sc.child.size()) {
                     bool sc_ok = true;
                     for (std::uint8_t sci = 0; sci < sc.nchild; ++sci) {
                         if (sc.child[sci] >= f->size()) {

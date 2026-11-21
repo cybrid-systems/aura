@@ -375,7 +375,8 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                 if (a.size() < 2 || !bus_int(a[1], &ws))
                     return bus_error(ev, "validation-failed", "host needs a workspace id");
                 if (a.size() >= 3 && !bus_int(a[2], &bytes))
-                    return bus_error(ev, "validation-failed", "host image bytes must be an integer");
+                    return bus_error(ev, "validation-failed",
+                                     "host image bytes must be an integer");
                 std::string path;
                 if (a.size() >= 4) {
                     if (!is_string(a[3]))
@@ -396,8 +397,7 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                 std::string out_path, why;
                 if (!aura::bus::host_start(opts, &out_path, &why))
                     return bus_error(ev, "transport-failed", why);
-                return bus_list(ev, {bus_string(ev, "ok"), bus_string(ev, out_path),
-                                     make_int(ws)});
+                return bus_list(ev, {bus_string(ev, "ok"), bus_string(ev, out_path), make_int(ws)});
             }
 
             if (op == "unhost") {
@@ -414,8 +414,9 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                 std::int64_t ws = 0;
                 if (a.size() < 2 || !bus_int(a[1], &ws))
                     return bus_error(ev, "validation-failed", "host? needs a workspace id");
-                return bus_list(ev, {bus_string(ev, "ok"),
-                                     make_int(aura::bus::host_active(static_cast<std::uint64_t>(ws)) ? 1 : 0)});
+                return bus_list(
+                    ev, {bus_string(ev, "ok"),
+                         make_int(aura::bus::host_active(static_cast<std::uint64_t>(ws)) ? 1 : 0)});
             }
 
             BusSessionState* state = session(1);

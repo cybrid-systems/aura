@@ -30,7 +30,7 @@ jobs:
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 90
     container:
-      image: ghcr.io/cybrid-systems/aura-ci:v0.1.1
+      image: ghcr.io/cybrid-systems/aura-ci:latest
     steps:
     - uses: actions/checkout@v7
 
@@ -57,7 +57,7 @@ jobs:
   chaos-steal-gc-nightly:
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/cybrid-systems/aura-ci:v0.1.1
+      image: ghcr.io/cybrid-systems/aura-ci:latest
     steps:
     - uses: actions/checkout@v7
 
@@ -88,7 +88,7 @@ jobs:
   production-concurrency:
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/cybrid-systems/aura-ci:v0.1.1
+      image: ghcr.io/cybrid-systems/aura-ci:latest
     steps:
     - uses: actions/checkout@v7
 
@@ -117,7 +117,7 @@ jobs:
   fuzz-extended:
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/cybrid-systems/aura-ci:v0.1.1
+      image: ghcr.io/cybrid-systems/aura-ci:latest
     steps:
     - uses: actions/checkout@v7
 
@@ -154,7 +154,7 @@ jobs:
   tsan-smoke:
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/cybrid-systems/aura-ci:v0.1.1
+      image: ghcr.io/cybrid-systems/aura-ci:latest
     steps:
     - uses: actions/checkout@v7
 
@@ -191,7 +191,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     container:
-      image: ghcr.io/cybrid-systems/aura-ci:v0.1.1
+      image: ghcr.io/cybrid-systems/aura-ci:latest
     steps:
     - uses: actions/checkout@v7
 
@@ -212,7 +212,7 @@ jobs:
   coverage:
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/cybrid-systems/aura-ci:v0.1.1
+      image: ghcr.io/cybrid-systems/aura-ci:latest
     steps:
     - uses: actions/checkout@v7
 

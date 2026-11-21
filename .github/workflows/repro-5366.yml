@@ -24,7 +24,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     container:
-      image: ghcr.io/cybrid-systems/aura-ci:v0.1.1
+      image: ghcr.io/cybrid-systems/aura-ci:latest
     steps:
     - uses: actions/checkout@v7
       with:
