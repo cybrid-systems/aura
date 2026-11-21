@@ -94,3 +94,15 @@ prints the same table with the value in effect for the process:
     aura config --json     # one JSON object per knob, including its doc
 
 Unset still means the built-in default: the table never makes a knob mandatory.
+
+`AURA_MOD_TIMING=1` prints the phase split of every module load (read,
+parse, expand, eval, seal, ir, publish) and of every require injection on
+stderr:
+
+    [mod-timing] /path/to/lib.aura read=30us parse=1318us expand=11us \
+        eval=5568us seal=176us ir=620us publish=288us total=8012us
+    [inj-timing] lib/a binds=4009 inject=2000us
+
+A top-level `require` is hoisted before the first form of the program, so
+an in-program clock (`monotonic-ms`) can never see its cost — the report
+is where that time shows up.

@@ -107,7 +107,6 @@ AURA_CONFIG_ENTRY(AURA_MAILBOX_DEFER_STARVATION_MS, "AURA_MAILBOX_DEFER_STARVATI
 AURA_CONFIG_ENTRY(AURA_MAILBOX_HOLD_DRAIN_BUDGET_US, "AURA_MAILBOX_HOLD_DRAIN_BUDGET_US", Duration, "", "Mailbox hold drain budget in microseconds.")
 AURA_CONFIG_ENTRY(AURA_MAILBOX_UNDER_BOUNDARY_WAIT_SLO_US, "AURA_MAILBOX_UNDER_BOUNDARY_WAIT_SLO_US", Duration, "", "Mailbox wait SLO under mutation boundary, in microseconds.")
 AURA_CONFIG_ENTRY(AURA_MID_FALLBACK_SLO_BP, "AURA_MID_FALLBACK_SLO_BP", Integer, "", "Mutation-boundary fallback SLO in basis points.")
-AURA_CONFIG_ENTRY(AURA_MOD_CACHE, "AURA_MOD_CACHE", Flag, "", "Enable the content-keyed module disk cache (parse + macro-expand reuse).")
 AURA_CONFIG_ENTRY(AURA_MOD_TIMING, "AURA_MOD_TIMING", Flag, "", "Print per-module require phase timings (parse/expand/eval/seal/ir) to stderr.")
 AURA_CONFIG_ENTRY(AURA_MOVING_PIN_CONTRACT, "AURA_MOVING_PIN_CONTRACT", Flag, "", "Enable the moving-pin contract.")
 AURA_CONFIG_ENTRY(AURA_MOVING_UNTRACKED, "AURA_MOVING_UNTRACKED", Flag, "", "Allow moving objects that are not tracked.")
