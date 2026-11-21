@@ -1687,7 +1687,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 #### domain/ (33)
 
 - `tests/compiler/test_bus_capability.cpp` (—) [domain_suite, theme_compiler] — Issue #5124: capability bits, attenuation, grant tree, workspace
-- `tests/compiler/test_bus_host.cpp` (—) [domain_suite, theme_compiler] — Issue #5128: the workspace owner hosts the bus from Aura. Two real
+- `tests/compiler/test_bus_host.cpp` (—) [large, domain_suite, theme_compiler] — Issue #5128: the workspace owner hosts the bus from Aura. Two real
 - `tests/core/test_capability_single_use_consume.cpp` (—) [large, domain_suite, theme_core] — tests/core/test_capability_single_use_consume.cpp
 - `tests/compiler/test_commit_readiness_score.cpp` (—) [large, domain_suite, theme_compiler] — AC1: Clean SOLVED + linear + blame + !trunc → bp=10000, ok, allow
 - `tests/compiler/test_compiler_service_ownership.cpp` (—) [small, domain_suite, theme_compiler] — Issue #1835/#1837/#1839 (#1978 renamed): issue# moved from filename to header.
