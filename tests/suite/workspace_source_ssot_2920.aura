@@ -52,4 +52,44 @@
   (eval-current)
   (check (= (kept5315) 8)))
 
+;; Issue #5388: the whole-workspace IR specialize pass dropped EVERY define
+;; when the workspace held more than 64 lambda defines (the 65th returned
+;; before any name was specialized). A 66-lambda workspace must keep the IR
+;; fast path, and the values must stay exact.
+(test-case "workspace over the old 64-define cap keeps the IR fast path" (hash "issue" 5388)
+  (define (lams5388 k)
+    (if (= k 0) ""
+        (string-append "(define w5388-f" (number->string k)
+                       " (lambda (x) (+ x " (number->string k) ")))\n"
+                       (lams5388 (- k 1)))))
+  (define probe5388
+    "(define (w5388-probe p i) (list-ref p i))\n")
+  (define (ir-delta5388 thunk)
+    (define before (hash-ref (stats:get "closure:stats") "ir-calls" 0))
+    (thunk)
+    (- (hash-ref (stats:get "closure:stats") "ir-calls" 0) before))
+  ; 66 lambda defines + the probe: over the old cap of 64.
+  (set-code (string-append (lams5388 66) probe5388))
+  (eval-current)
+  (check (= (w5388-f66 1.0) 67.0))
+  (check (= (w5388-probe (list 0.0 1.0 2.0) 1) 1.0))
+  (define d5388
+    (ir-delta5388
+      (lambda ()
+        (let loop ((i 0))
+          (if (>= i 2000) 0
+              (begin (w5388-probe (list 0.0 1.0) 1) (loop (+ i 1))))))))
+  (check (> d5388 0))
+  ; The cap is a cost bound, not a cliff: 200 lambdas still specialize.
+  (set-code (string-append (lams5388 200) probe5388))
+  (eval-current)
+  (check (= (w5388-f200 1.0) 201.0))
+  (define d5388-big
+    (ir-delta5388
+      (lambda ()
+        (let loop ((i 0))
+          (if (>= i 2000) 0
+              (begin (w5388-probe (list 0.0 1.0) 1) (loop (+ i 1))))))))
+  (check (> d5388-big 0)))
+
 (test-finish)

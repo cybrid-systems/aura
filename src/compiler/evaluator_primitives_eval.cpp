@@ -1714,8 +1714,8 @@ void RegSplitParts::register_eval_current_primitive(PrimRegistrar add, Evaluator
         // Issue #4598: a small dirty set binds only the roots. specialize
         // walks transitive called_by, so a caller of the direct caller
         // (chain2) does not keep an inlined body. Empty or large dirty
-        // sets keep the full specialize, which no-ops above
-        // kWorkspaceSpecializeCap. The body lives in the
+        // sets keep the full specialize, which no-ops above the
+        // workspace specialize cap (#5388). The body lives in the
         // RegSplitParts::eval_current_bind_dirty_lambdas part helper
         // (Issue #5032), an Evaluator friend, so the private workspace
         // fields stay reachable.

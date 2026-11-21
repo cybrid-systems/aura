@@ -203,6 +203,7 @@ AURA_CONFIG_ENTRY(AURA_VERBOSE_ENVFRAME, "AURA_VERBOSE_ENVFRAME", Flag, "", "Ver
 AURA_CONFIG_ENTRY(AURA_WAL_APPEND_FAIL_SLO, "AURA_WAL_APPEND_FAIL_SLO", Flag, "", "Enable the WAL append failure SLO.")
 AURA_CONFIG_ENTRY(AURA_WAL_APPEND_FAIL_SLO_BP, "AURA_WAL_APPEND_FAIL_SLO_BP", Integer, "", "WAL append failure SLO in basis points.")
 AURA_CONFIG_ENTRY(AURA_WORKSPACE_CONCURRENT_MUTATION_POLICY, "AURA_WORKSPACE_CONCURRENT_MUTATION_POLICY", Text, "", "Workspace concurrent mutation policy.")
+AURA_CONFIG_ENTRY(AURA_WORKSPACE_SPECIALIZE_CAP, "AURA_WORKSPACE_SPECIALIZE_CAP", Size, "512", "Whole-workspace IR specialize cap in lambda defines (#5388); 0 disables the full-workspace pass.")
 AURA_CONFIG_ENTRY(AURA_YIELD_HELD_ABORT, "AURA_YIELD_HELD_ABORT", Flag, "", "Abort when yielding while holding a lock.")
 AURA_CONFIG_ENTRY(AURA_FEEDBACK_BACK_EDGES, "AURA_FEEDBACK_BACK_EDGES", Size, "", "Type-feedback back-edge budget; unset uses the compiled default.")
 AURA_CONFIG_ENTRY(AURA_FEEDBACK_ENTRIES, "AURA_FEEDBACK_ENTRIES", Size, "", "Type-feedback entry budget; unset uses the compiled default.")

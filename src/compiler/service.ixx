@@ -6770,14 +6770,29 @@ public:
     // inlines the new body (the let-loop stays inside one interpreter).
     bool specialize_one_lambda_via_ir(const std::string& name);
 
-    // Issue #4357: focus empty = every workspace lambda (at most
-    // kWorkspaceSpecializeCap; a larger workspace stays on the tree walker).
+    // Issue #4357: focus empty = every workspace lambda (at most the
+    // specialize cap; a larger workspace stays on the tree walker).
     // Issue #4479: the cap was 8, so a 9th procedure define dropped every
     // workspace define (even unchanged, unrelated ones) off the IR fast path
-    // (~35x slower calls). 64 keeps ordinary workspaces specialized. A name = that define, then its
-    // direct callers, callee first so the caller lower copies the new body.
-    // Two passes when focusing the whole workspace so cross-calls see a
-    // filled cache. Production keeps its own hot-update path.
+    // (~35x slower calls). 64 kept ordinary workspaces specialized.
+    // Issue #5388: 64 still dropped REAL programs wholesale — a 65th lambda
+    // define returned before specializing ANY name, so every define (even
+    // the first 64) stayed on the tree walker. aura-runner's physics module
+    // (66 lambdas + 29 values) measured ir-calls=0. The cap is a cost bound
+    // on this two-pass O(n) lowering, not a correctness limit: each define
+    // still passes the per-define gates below. Default 512 covers real
+    // modules; AURA_WORKSPACE_SPECIALIZE_CAP overrides (0 disables the
+    // full-workspace pass, the pre-#5388 escape hatch). A name = that
+    // define, then its direct callers, callee first so the caller lower
+    // copies the new body. Two passes when focusing the whole workspace so
+    // cross-calls see a filled cache. Production keeps its own hot-update
+    // path.
+    static std::size_t workspace_specialize_cap_5388() noexcept {
+        const char* raw = ::aura::config::raw(::aura::config::Key::AURA_WORKSPACE_SPECIALIZE_CAP);
+        if (raw == nullptr || *raw == '\0')
+            return 512;
+        return ::aura::config::size(::aura::config::Key::AURA_WORKSPACE_SPECIALIZE_CAP);
+    }
     void specialize_workspace_lambdas_via_ir(const std::string& focus) {
         IrCacheGate ir_gate(ir_cache_gate_); // #4717 shared IR/closure cache
         if (aura::compiler::typed_audit::production_defaults_active())
@@ -6788,7 +6803,9 @@ public:
             return;
         std::vector<std::string> names;
         if (focus.empty()) {
-            constexpr std::size_t kWorkspaceSpecializeCap = 64;
+            const std::size_t cap = workspace_specialize_cap_5388();
+            if (cap == 0)
+                return;
             for (aura::ast::NodeId id = 0; id < ws_flat->size(); ++id) {
                 if (ws_flat->is_free_slot(id))
                     continue;
@@ -6808,10 +6825,10 @@ public:
                 names.push_back(std::move(n));
                 // Issue #4682 (B): over the cap the function returns below
                 // regardless (loop is side-effect free) — stop scanning.
-                if (names.size() > kWorkspaceSpecializeCap)
+                if (names.size() > cap)
                     return;
             }
-            if (names.empty() || names.size() > kWorkspaceSpecializeCap)
+            if (names.empty() || names.size() > cap)
                 return;
         } else {
             // Issue #4547: dep_graph_ also records module functions
