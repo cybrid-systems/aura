@@ -9,6 +9,7 @@
 #include "bus/host.hh"
 
 #include <atomic>
+#include <cerrno>
 #include <cstring>
 #include <map>
 #include <memory>
@@ -193,8 +194,18 @@ bool host_start(const HostOptions& opts, std::string* path_out, std::string* why
         TransportError serr;
         while (!raw->stopping.load()) {
             Attach peer;
-            if (!raw->server.accept_one(build_host_image, &peer, &serr))
-                break;
+            if (!raw->server.accept_one(build_host_image, &peer, &serr)) {
+                // Issue #5383: a rejected attach (unknown role, wrong
+                // workspace, schema/uid mismatch, malformed Hello, peer EOF
+                // mid-handshake) ends that CONNECTION, not the bus:
+                // accept_one closed it, keep serving. Only a stop request
+                // or a dead listener ends the loop.
+                if (raw->stopping.load())
+                    break;
+                if (serr.code == EBADF || serr.code == EINVAL || serr.code == ENOTSOCK)
+                    break; // listen_at never ran / stop() shut the listener down
+                continue;
+            }
             // Serve this peer until it disconnects; the delivered loop
             // rolls back its pending trials and reclaims its loans.
             raw->server.wait_disconnect(&serr);

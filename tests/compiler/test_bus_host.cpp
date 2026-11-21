@@ -9,10 +9,15 @@
 #include <cstring>
 #include <string>
 
+#include <algorithm>
+#include <cerrno>
 #include <fcntl.h>
 #include <signal.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
+#include <poll.h>
+#include <sys/socket.h>
+#include <sys/un.h>
 #include <unistd.h>
 
 #include "bus/transport.hh"
@@ -219,6 +224,34 @@ const char* kMaintainerPeerScript = R"AURA(
 (display "MAINT-DONE") (newline)
 )AURA";
 
+// Issue #5383: a rejected attach ends the CONNECTION, not the bus. Unknown
+// role and wrong workspace are refused; the next legal peer must still
+// attach, publish and detach. Before the fix the serve loop exited on the
+// first rejection and every later attach hung on the unanswered Hello.
+const char* kBadRoleScript = R"AURA(
+(require "std/bus" all:)
+(define s (bus:attach "" 781 9 127 255))
+(display (if (bus:error? s) "badrole-rejected" "badrole-FAIL")) (newline)
+(display "BADROLE-DONE") (newline)
+)AURA";
+
+const char* kWrongWsScript = R"AURA(
+(require "std/bus" all:)
+(define s (bus:attach "" 782 1 127 255))
+(display (if (bus:error? s) "wrongws-rejected" "wrongws-FAIL")) (newline)
+(display "WRONGWS-DONE") (newline)
+)AURA";
+
+const char* kGoodAfterRejectScript = R"AURA(
+(require "std/bus" all:)
+(define s (bus:attach "" 781 1 3 255))
+(display (if (bus:ok? s) "survive-attach-ok" "survive-attach-FAIL")) (newline)
+(define sid (car (cdr s)))
+(display (if (bus:ok? (bus:publish sid 7 7)) "survive-pub-ok" "survive-pub-FAIL")) (newline)
+(display (if (bus:ok? (bus:detach sid)) "survive-detach-ok" "survive-detach-FAIL")) (newline)
+(display "SURVIVE-DONE") (newline)
+)AURA";
+
 } // namespace
 
 int main() {
@@ -386,6 +419,100 @@ int main() {
         check(has(hout, "HOST-DONE"), "host2 finished");
         struct stat st{};
         check(::stat(sock.c_str(), &st) != 0, "socket unlinked after host2 unhost");
+    }
+
+    // 5. Issue #5383: rejected attaches must not stop the serve loop.
+    // badrole (unknown role) and wrongws (workspace mismatch) are refused;
+    // a legal peer after EACH rejection still attaches, publishes, detaches.
+    // A raw connect+close exercises the mid-handshake EOF path.
+    {
+        const std::string host_script = d + "/host3.aura";
+        std::string hs = kHostScript;
+        const std::string from = "777", to = "781";
+        for (std::size_t at = hs.find(from); at != std::string::npos;
+             at = hs.find(from, at + to.size()))
+            hs.replace(at, from.size(), to);
+        check(write_file(host_script, hs.c_str()), "write host3 script");
+        check(write_file((d + "/badrole.aura").c_str(), kBadRoleScript), "write badrole");
+        check(write_file((d + "/wrongws.aura").c_str(), kWrongWsScript), "write wrongws");
+        check(write_file((d + "/survive.aura").c_str(), kGoodAfterRejectScript), "write survive");
+        int host_out = -1, host_in = -1;
+        const pid_t host = run_script(host_script, &host_out, &host_in);
+        check(host > 0, "fork host3");
+        const std::string sock = default_socket_path(781);
+        bool ready = false;
+        for (int i = 0; i < 200 && !ready; ++i) {
+            struct stat st{};
+            ready = ::stat(sock.c_str(), &st) == 0;
+            if (!ready)
+                usleep(50000);
+        }
+        check(ready, "host3 socket appeared");
+        // Bounded peer run: before the fix a post-rejection attach hung
+        // forever; the alarm turns that hang into a failed check.
+        const auto run_peer_bounded = [&](const char* name) {
+            int out_fd = -1, in_fd = -1;
+            const pid_t pid = run_script(d + "/" + name, &out_fd, &in_fd);
+            check(pid > 0, "fork rejection-case peer");
+            ::close(in_fd);
+            std::string out;
+            char buf[512];
+            bool done = false;
+            for (int i = 0; i < 300 && !done; ++i) { // up to 15s
+                struct pollfd pfd{out_fd, POLLIN, 0};
+                const int pr = ::poll(&pfd, 1, 50);
+                if (pr > 0 && (pfd.revents & (POLLIN | POLLHUP))) {
+                    const ssize_t n = ::read(out_fd, buf, sizeof(buf));
+                    if (n > 0)
+                        out.append(buf, static_cast<std::size_t>(n));
+                    else
+                        done = true;
+                }
+            }
+            if (!done) {
+                ::kill(pid, SIGKILL);
+                out += "\nPEER-HUNG";
+            }
+            int status = 0;
+            waitpid(pid, &status, 0);
+            ::close(out_fd);
+            return out;
+        };
+        const std::string badrole = run_peer_bounded("badrole.aura");
+        check(has(badrole, "badrole-rejected"), "unknown role is rejected");
+        check(has(badrole, "BADROLE-DONE"), "rejected peer exits cleanly");
+        const std::string s1 = run_peer_bounded("survive.aura");
+        check(has(s1, "survive-attach-ok"), "legal peer attaches after badrole rejection");
+        check(has(s1, "survive-pub-ok"), "post-rejection peer publishes");
+        check(has(s1, "SURVIVE-DONE"), "post-rejection peer finished (no hang)");
+        const std::string wrongws = run_peer_bounded("wrongws.aura");
+        check(has(wrongws, "wrongws-rejected"), "wrong workspace is rejected");
+        const std::string s2 = run_peer_bounded("survive.aura");
+        check(has(s2, "survive-attach-ok"), "legal peer attaches after wrongws rejection");
+        check(has(s2, "SURVIVE-DONE"), "second post-rejection peer finished");
+        // Mid-handshake EOF: connect, send nothing, close. The host must
+        // survive and serve the next legal peer.
+        {
+            const int fd = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+            check(fd >= 0, "raw socket for EOF probe");
+            sockaddr_un addr{};
+            addr.sun_family = AF_UNIX;
+            std::memcpy(addr.sun_path, sock.c_str(),
+                        std::min(sock.size(), sizeof(addr.sun_path) - 1));
+            check(::connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0,
+                  "raw connect for EOF probe");
+            ::close(fd);
+        }
+        const std::string s3 = run_peer_bounded("survive.aura");
+        check(has(s3, "survive-attach-ok"), "legal peer attaches after mid-handshake EOF");
+        check(has(s3, "SURVIVE-DONE"), "post-EOF peer finished");
+        ::close(host_in);
+        const std::string hout = read_all(host_out);
+        int hstatus = 0;
+        waitpid(host, &hstatus, 0);
+        check(has(hout, "HOST-DONE"), "host3 finished after rejections");
+        struct stat st{};
+        check(::stat(sock.c_str(), &st) != 0, "socket unlinked after host3 unhost");
     }
 
     if (g_failed == 0)

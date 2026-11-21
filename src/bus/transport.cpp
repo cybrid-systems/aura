@@ -396,6 +396,20 @@ bool Server::accept_one(const BuildFn& build, Attach* out, TransportError* error
             *error = {errno, "accept failed"};
         return false;
     }
+    // Issue #5383: a rejected attach must close the connection; the serve
+    // loop keeps accepting. The guard releases on EVERY early return below
+    // (HelloReject sent or not); the success path disarms it because the
+    // server keeps conn_fd_ to observe the disconnect.
+    struct RejectClose {
+        int* fd;
+        bool armed = true;
+        ~RejectClose() {
+            if (armed && *fd >= 0) {
+                ::close(*fd);
+                *fd = -1;
+            }
+        }
+    } reject_close{&conn_fd_};
     ucred cred{};
     socklen_t cred_len = sizeof(cred);
     if (getsockopt(conn_fd_, SOL_SOCKET, SO_PEERCRED, &cred, &cred_len) != 0 ||
@@ -596,6 +610,7 @@ bool Server::accept_one(const BuildFn& build, Attach* out, TransportError* error
     write_constraints_image();
     record_audit(AuditKind::Attach, root_token_, 0, hello.pid);
     // The server keeps conn_fd_ to observe disconnect; Attach::sock stays -1.
+    reject_close.armed = false;
     return true;
 }
 
