@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """CI toolchain image pin.
 
-Active workflows that compile Aura use ghcr.io/cybrid-systems/aura-ci:v0.1.1
-(CMake 4.5.0). The runtime image published for users stays
-ghcr.io/cybrid-systems/aura. dev:v1.1.1 and dev:v1.0.5 are not active CI
+Active workflows that compile Aura use ghcr.io/cybrid-systems/aura-ci:latest
+(LLVM 23.1.6, GCC 16, CMake 4.5.0). The runtime image published for users
+stays ghcr.io/cybrid-systems/aura. dev:v1.1.1 and dev:v1.0.5 are not active CI
 images.
 """
 
@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[3]
 WORKFLOWS = ROOT / ".github" / "workflows"
 OLD = "ghcr.io/cybrid-systems/dev:v1.1.1"
 OLD_DEV = "ghcr.io/cybrid-systems/dev:v1.0.5"
-NEW = "ghcr.io/cybrid-systems/aura-ci:v0.1.1"
+NEW = "ghcr.io/cybrid-systems/aura-ci:latest"
 RUNTIME = "ghcr.io/cybrid-systems/aura:"
 
 # Jobs that compile Aura inside the toolchain container.

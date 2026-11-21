@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Issue #5201: CMake 4.5 / aura-ci:v0.1.1 baseline pin.
+"""Issue #5201: CMake 4.5 / aura-ci:latest (LLVM 23.1.6) baseline pin.
 
 Runs the unit test that asserts the toolchain image tag, the 4.5 minimum,
 the removal of the experimental "import std" gate, and Presets schema 13.
