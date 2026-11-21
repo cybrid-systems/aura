@@ -314,6 +314,13 @@ Server::~Server() {
         ::close(listen_fd_);
     if (!path_.empty())
         ::unlink(path_.c_str());
+    // The shared image lives as long as the host (#5128); unhost releases
+    // the mapping and the host's fd reference. Peers already detached keep
+    // their own dup'd fds until they close them.
+    if (image_base_ != nullptr)
+        ::munmap(image_base_, image_size_);
+    if (host_image_fd_ >= 0)
+        ::close(host_image_fd_);
 }
 
 void Server::stop() {
@@ -451,30 +458,63 @@ bool Server::accept_one(const BuildFn& build, Attach* out, TransportError* error
     }
     root_token_ = caps_table_.issue_root(granted);
 
-    const std::size_t bytes = hello.image_bytes == 0
-                                  ? image_bytes_
-                                  : std::min<std::size_t>(hello.image_bytes, image_bytes_);
-    if (bytes < kImageHeaderSize)
-        return reject(RejectReason::ImageSize, "image reservation too small", EINVAL);
-
-    const int image_fd = create_sealed_image(bytes, error);
-    if (image_fd < 0)
-        return false;
-    void* base = ::mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_SHARED, image_fd, 0);
-    if (base == MAP_FAILED) {
-        ::close(image_fd);
-        if (error)
-            *error = {errno, "mmap failed"};
-        return false;
-    }
-    std::memset(base, 0, bytes);
-    std::string why;
-    if (!build({static_cast<std::byte*>(base), bytes}, &why)) {
-        ::munmap(base, bytes);
-        ::close(image_fd);
-        if (error)
-            *error = {EINVAL, "image build failed: " + why};
-        return false;
+    // Issue #5128: one bus = one workspace = one live image. The image
+    // outlives peer sessions: the first attach creates and builds it,
+    // every later peer is handed the SAME memfd, so the next tool reads
+    // the previous tool's committed records instead of a fresh layout.
+    // Disconnect withdraws trials and loans, never committed evidence.
+    std::size_t bytes = image_size_;
+    int image_fd = -1;
+    // The peer's mapping: fresh on the first attach, a new mapping of the
+    // persistent image on every later one. The host's own mapping
+    // (image_base_) is never handed to an Attach — that would unmap it
+    // when the peer detaches.
+    void* base = nullptr;
+    const bool first_image = image_base_ == nullptr;
+    if (first_image) {
+        bytes = hello.image_bytes == 0 ? image_bytes_
+                                       : std::min<std::size_t>(hello.image_bytes, image_bytes_);
+        if (bytes < kImageHeaderSize)
+            return reject(RejectReason::ImageSize, "image reservation too small", EINVAL);
+        image_fd = create_sealed_image(bytes, error);
+        if (image_fd < 0)
+            return false;
+        base = ::mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_SHARED, image_fd, 0);
+        if (base == MAP_FAILED) {
+            ::close(image_fd);
+            if (error)
+                *error = {errno, "mmap failed"};
+            return false;
+        }
+        std::memset(base, 0, bytes);
+        std::string why;
+        if (!build({static_cast<std::byte*>(base), bytes}, &why)) {
+            ::munmap(base, bytes);
+            ::close(image_fd);
+            if (error)
+                *error = {EINVAL, "image build failed: " + why};
+            return false;
+        }
+    } else if (hello.image_bytes != 0 && hello.image_bytes < image_size_) {
+        // The sealed image cannot shrink; a smaller reservation is a hard
+        // error, never a silent resize.
+        return reject(RejectReason::ImageSize, "image already hosted at a larger size", EINVAL);
+    } else {
+        // The host keeps its own fd reference and mapping; the peer gets
+        // dup'd copies, so its detach cannot take the image down.
+        image_fd = ::dup(host_image_fd_);
+        if (image_fd < 0) {
+            if (error)
+                *error = {errno, "dup host image failed"};
+            return false;
+        }
+        base = ::mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_SHARED, image_fd, 0);
+        if (base == MAP_FAILED) {
+            ::close(image_fd);
+            if (error)
+                *error = {errno, "mmap host image failed"};
+            return false;
+        }
     }
     const ImageCheck check = validate_image({static_cast<const std::byte*>(base), bytes});
     if (!check.ok()) {
@@ -533,8 +573,26 @@ bool Server::accept_one(const BuildFn& build, Attach* out, TransportError* error
     staging_capacity_ = std::min<std::uint64_t>(
         64u << 10, ih.committed_bytes < bytes ? bytes - ih.committed_bytes : 0);
     staging_used_ = 0;
-    image_base_ = static_cast<std::byte*>(base);
-    image_size_ = bytes;
+    if (first_image) {
+        image_base_ = static_cast<std::byte*>(base);
+        image_size_ = bytes;
+        host_image_fd_ = ::dup(image_fd);
+        // The host's mapping must outlive the peer's Attach: give the
+        // peer its own mapping of the same memfd.
+        void* peer_base = ::mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_SHARED, image_fd, 0);
+        if (peer_base == MAP_FAILED) {
+            ::munmap(base, bytes);
+            image_base_ = nullptr;
+            ::close(host_image_fd_);
+            host_image_fd_ = -1;
+            ::close(image_fd);
+            ::close(event_fd);
+            if (error)
+                *error = {errno, "mmap peer image failed"};
+            return false;
+        }
+        out->base = peer_base;
+    }
     write_constraints_image();
     record_audit(AuditKind::Attach, root_token_, 0, hello.pid);
     // The server keeps conn_fd_ to observe disconnect; Attach::sock stays -1.
@@ -609,6 +667,39 @@ bool Server::install_policy(const Capability& caps, WorkspacePolicy policy, std:
 bool Server::wait_disconnect(TransportError* error) {
     FrameHeader header{};
     std::vector<std::byte> body(kBusMaxControlFrame);
+    // Issue #5128: the coordinator projects its trial ledger into the
+    // worldlines channel so subscribers (harness) see every trial and its
+    // verdict, not just a producer's own workspace projections. Records
+    // are appended in id order; a settled trial appends its final state.
+    std::uint64_t& projected_trials = projected_trials_;
+    const auto project_worldline = [&](std::uint64_t id, WorldlineState state,
+                                       ConstraintResult cr) {
+        if (image_base_ == nullptr)
+            return;
+        SectionEntry se{};
+        if (!find_section({image_base_, image_size_}, SectionKind::Worldlines, &se))
+            return;
+        ChannelView view{};
+        if (!channel_view({image_base_, image_size_}, Channel::Worldlines, &view))
+            return;
+        if (view.length + sizeof(WorldlineRecord) > se.capacity)
+            return; // capacity exhaustion stays a hard error on the publish
+                    // path; the control-plane ledger remains authoritative
+        WorldlineRecord w{};
+        w.id = id;
+        w.parent = kImageNoParent;
+        w.state = static_cast<std::uint8_t>(state);
+        w.constraint_result = static_cast<std::uint8_t>(cr);
+        w.metrics_off = kImageNoIndex;
+        std::memcpy(image_base_ + view.offset + view.length, &w, sizeof(w));
+        std::uint64_t gen = 0;
+        std::string why;
+        if (channel_commit({image_base_, image_size_}, Channel::Worldlines,
+                           view.offset + view.length, sizeof(w), &gen, &why)) {
+            projected_trials = id;
+            generation_ = gen;
+        }
+    };
     const auto deny = [&](int code, const std::string& why) {
         ErrorBody eb{};
         eb.code = static_cast<std::uint32_t>(code);
@@ -626,8 +717,10 @@ bool Server::wait_disconnect(TransportError* error) {
         return false;
     };
     const auto finish = [&]() {
-        for (std::uint64_t id : worldlines_.end_session(root_token_))
+        for (std::uint64_t id : worldlines_.end_session(root_token_)) {
             record_audit(AuditKind::Rollback, root_token_, id);
+            project_worldline(id, WorldlineState::Rolled, ConstraintResult::None);
+        }
         record_audit(AuditKind::Disconnect, root_token_);
         loans_.reclaim();
         for (auto& ledger : channel_loans_)
@@ -851,6 +944,7 @@ bool Server::wait_disconnect(TransportError* error) {
                     break;
                 const std::uint64_t id = worldlines_.open_trial(root_token_, workspace_id_);
                 record_audit(AuditKind::Trial, root_token_, id);
+                project_worldline(id, WorldlineState::Pending, ConstraintResult::None);
                 LoanBody granted = loan;
                 granted.worldline = id;
                 granted.generation = generation_;
@@ -881,6 +975,9 @@ bool Server::wait_disconnect(TransportError* error) {
                 }
                 record_audit(keep ? AuditKind::Keep : AuditKind::Rollback, root_token_,
                              loan.worldline);
+                project_worldline(loan.worldline,
+                                  keep ? WorldlineState::Kept : WorldlineState::Rolled,
+                                  keep ? ConstraintResult::Pass : ConstraintResult::None);
                 reply_loan(loan);
                 break;
             }

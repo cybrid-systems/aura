@@ -60,6 +60,8 @@ namespace {
                     const MetricRecord m = load_at<MetricRecord>(image, at);
                     if ((m.value >> 63) != 0)
                         return fail("metric value carries bit 63");
+                    if (m.key_sym != kImageNoIndex && (m.key_sym >> 63) != 0)
+                        return fail("metric key carries bit 63");
                     break;
                 }
                 case Channel::Cct: {
@@ -74,6 +76,18 @@ namespace {
                     const PatchRecord p = load_at<PatchRecord>(image, at);
                     if ((p.new_value >> 63) != 0)
                         return fail("patch value carries bit 63");
+                    // The index invariant validate_image enforces on attach:
+                    // reject at publish, never commit a record that would
+                    // fail the next peer's validation (#5128 persistent image).
+                    if (p.node != kImageNoIndex) {
+                        const std::uint64_t nat = find_entry_offset(image, SectionKind::Nodes);
+                        SectionEntry ne{};
+                        if (nat == kNoEntry)
+                            return fail("patch node outside the node section");
+                        std::memcpy(&ne, image.data() + nat, sizeof(ne));
+                        if (p.node >= ne.count)
+                            return fail("patch node outside the node section");
+                    }
                     break;
                 }
                 case Channel::Worldlines: {

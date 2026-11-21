@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Bus (#5128): the host image persists across peer sessions — one bus, one workspace, one live image. The first attach creates and seals it; every later peer is handed the same memfd, so the next tool reads the previous tool's committed CCT/metrics/patches/worldlines and the shared audit. Disconnect withdraws pending trials and loans, never committed evidence; unhost releases the mapping. Publish-time validation now enforces the attach invariants (patch node inside the node section, metric keys are legal immediates), `bus:project-nodes` emits batch-index edges with no symbol references, and the coordinator projects its trial ledger (pending + final verdict states) into the worldlines channel for subscribers. `test_bus_host` covers three sequential peers: perf publishes and installs a constraint, harness reads the same image and audit, maintainer's KEEP is gated by perf's constraint.
+
 ## 0.2.7
 
 Developer-experience release: `aura lsp` becomes a daily-usable language server, and Doom Emacs gets a one-line `:lang (aura +lsp)` integration. No new syntax. The API is still not stable.

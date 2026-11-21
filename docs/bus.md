@@ -97,11 +97,25 @@
   试改回滚、loan 收回)是交付语义。三工具同时附着的多对端服务是跟进项;
   服务循环、能力、loan、约束与审计不变,只扩每对端状态。
 - 宿主进程自己也可以 `bus:attach` 成为对端(同进程经套接字,统一路径)。
+- **映像跨会话持久**(#5128 完成线):一条总线一份映像。首个对端附着时创建并
+  封印映像,之后每个对端拿到同一个 memfd 的新映射——前一个工具提交的 CCT /
+  指标 / 补丁 / worldline 记录对下一个工具可见,断开只回收未 KEEP 试改与
+  loan,不回收已提交证据。宿主自留一份映射与 fd 引用,对端 detach 不会带走
+  映像;unhost 才释放。映像已存在时请求更小的映像尺寸是硬错误,不静默缩容。
+- **校验不变量在发布时执行**:补丁节点必须落在节点节内、指标键是合法立即数
+  (第 63 位为 0),发布即拒绝,绝不提交会让下一个对端附着校验失败的记录。
+  `bus:project-nodes` 的 parent/first_child/next_sibling 用批内下标,sym 在
+  无符号表时为 kImageNoIndex。
+- **trial 台账投影到 worldlines 频道**:协调者把每个 trial(状态 pending)及
+  其 KEEP/ROLLBACK/断开回滚的最终状态按追加方式写进 worldlines 节,订阅者
+  (harness)因此看得到每条试跑与裁决,而不只是生产者自己工作区的投影。
 
-测试:`test_bus_host`(#5128)——两个真实 aura 进程,只用 std/bus:宿主脚本
+测试:`test_bus_host`(#5128)——真实 aura 进程,只用 std/bus:宿主脚本
 `bus:host` 后服务,对端脚本附着/发布/查询/trial/约束下 KEEP 与拒绝/ROLLBACK/
 读同一份审计;另覆盖无宿主附着的 transport-failed、同进程宿主+附着、幂等与
-unhost 后套接字清理。
+unhost 后套接字清理,以及三对端顺序服务(perf 发布并装约束 → harness 读同一
+映像/审计 → maintainer 的 KEEP 被 perf 装的约束门控),含越界补丁节点在发布
+时被拒绝。
 
 ## std/bus 公共面
 

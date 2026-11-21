@@ -330,6 +330,11 @@ private:
     std::unordered_map<std::string, ConstraintPredicate> predicate_registry_;
     std::byte* image_base_ = nullptr;
     std::size_t image_size_ = 0;
+    // The host's own reference to the shared image fd (#5128): peers get
+    // dup'd copies; the mapping and the memfd outlive every session.
+    int host_image_fd_ = -1;
+    // Trial records already projected into the worldlines channel (#5128).
+    std::uint64_t projected_trials_ = 0;
 };
 
 // Peer side: connect and complete the handshake.

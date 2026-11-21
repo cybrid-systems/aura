@@ -797,19 +797,45 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                     return bus_list(ev, {bus_string(ev, "ok"), make_int(0), make_int(0)});
                 std::vector<aura::bus::NodeRecord> records;
                 records.reserve(count);
+                // Parent edges from the tree itself; the FlatAST id space
+                // is not the batch index space, and the image has no symbol
+                // table, so sym stays kImageNoIndex (validate_image checks
+                // both on the next peer's attach — #5128 persistent image).
+                std::vector<std::uint64_t> parent(count, aura::bus::kImageNoIndex);
+                for (std::size_t i = 0; i < count; ++i) {
+                    const auto view = flat->get(static_cast<aura::ast::NodeId>(i));
+                    for (const auto child : view.children)
+                        if (child < count)
+                            parent[child] = i;
+                }
                 for (std::size_t i = 0; i < count; ++i) {
                     const auto view = flat->get(static_cast<aura::ast::NodeId>(i));
                     aura::bus::NodeRecord rec{};
                     rec.kind = static_cast<std::uint32_t>(view.tag);
                     rec.slot = static_cast<std::uint64_t>(view.id);
-                    rec.parent = aura::bus::kImageNoIndex;
-                    rec.first_child = view.children.empty()
-                                          ? aura::bus::kImageNoIndex
-                                          : static_cast<std::uint64_t>(view.children[0]);
+                    rec.parent = parent[i];
+                    rec.first_child = aura::bus::kImageNoIndex;
+                    for (const auto child : view.children)
+                        if (child < count) {
+                            rec.first_child = child;
+                            break;
+                        }
                     rec.next_sibling = aura::bus::kImageNoIndex;
-                    rec.sym = view.sym_id == aura::ast::INVALID_SYM
-                                  ? aura::bus::kImageNoIndex
-                                  : static_cast<std::uint64_t>(view.sym_id);
+                    if (parent[i] != aura::bus::kImageNoIndex) {
+                        const auto pv = flat->get(static_cast<aura::ast::NodeId>(parent[i]));
+                        bool seen = false;
+                        for (const auto child : pv.children) {
+                            if (child >= count)
+                                continue;
+                            if (seen) {
+                                rec.next_sibling = child;
+                                break;
+                            }
+                            if (child == i)
+                                seen = true;
+                        }
+                    }
+                    rec.sym = aura::bus::kImageNoIndex;
                     rec.src_line = view.line;
                     rec.src_col = view.col;
                     rec.src_file = 0;

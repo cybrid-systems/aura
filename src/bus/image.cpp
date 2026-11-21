@@ -244,8 +244,11 @@ ImageCheck validate_image(std::span<const std::byte> image) {
                 load_at<MetricRecord>(image, metrics.entry.offset + i * metrics.entry.element_size);
             if ((m.value >> 63) != 0)
                 return {ImageStatus::BadImmediate, "metric value carries bit 63"};
-            if (m.key_sym != kImageNoIndex && (!symbols.present || m.key_sym >= symbols.count))
-                return {ImageStatus::BadIndex, "metric key outside the symbol table"};
+            // key_sym carries the publisher's integer key (the std/bus
+            // contract: keys are immediates, not symbol-table indexes);
+            // kImageNoIndex means "no key".
+            if (m.key_sym != kImageNoIndex && (m.key_sym >> 63) != 0)
+                return {ImageStatus::BadImmediate, "metric key carries bit 63"};
         }
     }
 
