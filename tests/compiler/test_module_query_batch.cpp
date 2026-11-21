@@ -43,6 +43,7 @@ static int isolate(const char* name, int (*fn)()) {
 }
 
 extern int run_test_module_export_display();
+extern int run_test_module_disk_cache();
 extern int run_test_module_load_tail_export();
 extern int run_test_module_partition_map();
 extern int run_test_module_rebind_residual();
@@ -61,12 +62,13 @@ int main() {
     using aura::test::g_passed;
     int members_failed = 0;
     int members_passed = 0;
-    std::println("=== test_module_query_batch (12 members) ===");
+    std::println("=== test_module_query_batch (13 members) ===");
     const struct {
         const char* name;
         int (*fn)();
     } members[] = {
         {"test_module_export_display", run_test_module_export_display},
+        {"test_module_disk_cache", run_test_module_disk_cache},
         {"test_module_load_tail_export", run_test_module_load_tail_export},
         {"test_module_partition_map", run_test_module_partition_map},
         {"test_module_rebind_residual", run_test_module_rebind_residual},

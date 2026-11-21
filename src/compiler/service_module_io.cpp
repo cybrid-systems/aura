@@ -18,6 +18,31 @@ void CompilerService::cache_module(const std::string& content, const std::string
     IrCacheGate ir_gate(ir_cache_gate_); // #4717 shared IR/closure cache
     // don't survive re-evaluation via cache_define.
 
+    // Issue #5374: the require path gets the same content-keyed disk cache
+    // compile_module already uses. A hit pre-populates ir_cache_ so the
+    // per-define lowering below is skipped; a miss writes the lowered
+    // bundles at the end. The tree-walker module eval in load_module_file
+    // still runs — the cache skips lowering, not evaluation.
+    const auto disk_path = module_cache_path(path, content);
+    aura::compiler::cache::MappedCache disk_cached;
+    if (!disk_path.empty())
+        disk_cached = aura::compiler::cache::open_cache(disk_path);
+    const bool disk_hit = disk_cached.valid() && disk_cached.has_ir();
+    std::unordered_set<std::string> disk_lowered;
+    if (disk_hit) {
+        for (const auto& func : disk_cached.ir_functions()) {
+            // Bundles are stored under the stable name "define#pos"; the
+            // ir_cache_ key is the bare define name.
+            const auto hash = func.name.rfind('#');
+            const std::string bare =
+                hash == std::string::npos ? func.name : func.name.substr(0, hash);
+            if (bare.empty() || ir_cache_.count(bare))
+                continue;
+            ir_cache_[bare].push_back(func);
+            ir_cache_strings_[bare] = disk_cached.ir_strings();
+            disk_lowered.insert(bare);
+        }
+    }
 
     // Arena-allocate flat/pool so pointers survive (bridge data references them)
     auto alloc = arena_.allocator();
@@ -248,11 +273,51 @@ void CompilerService::cache_module(const std::string& content, const std::string
         user_bindings_.insert(name);
         function_sources_[name] = content;
         module_functions_[path].push_back(name);
+        // Issue #5374: snapshot for the require-path disk cache (same
+        // pre-bind shape cache_define records for compile_module).
+        if (!disk_hit)
+            ir_disk_snapshots_[name] = ir_cache_[name];
 
         for (auto& cn : cache_hits)
             record_dependency(name, cn);
         if (is_redefine)
             invalidate_function(name);
+    }
+
+    // Issue #5374: write the require-path disk cache on a miss. Only the
+    // bundles lowered in THIS load are written; a hit never rewrites.
+    if (!disk_hit && !disk_path.empty() && ensure_cache_dir()) {
+        aura::ir::IRModule disk_mod;
+        for (auto& [fname, _] : finder) {
+            if (disk_lowered.count(fname))
+                continue; // came from disk, not lowered here
+            auto it = ir_disk_snapshots_.find(fname);
+            if (it == ir_disk_snapshots_.end())
+                continue;
+            auto sit = ir_cache_strings_.find(fname);
+            for (const auto& func : it->second) {
+                // Each bundle's ConstString operands index its OWN lowering
+                // pool. Re-intern every string into the shared disk pool and
+                // remap the operands — without this the written module fails
+                // validate_ir_module on read-back and the entry never hits.
+                auto remapped = func;
+                if (sit != ir_cache_strings_.end()) {
+                    const auto& strs = sit->second;
+                    for (auto& block : remapped.blocks) {
+                        for (auto& instr : block.instructions) {
+                            if (instr.opcode != aura::ir::IROpcode::ConstString ||
+                                instr.operands.size() < 2 || instr.operands[1] >= strs.size())
+                                continue;
+                            instr.operands[1] = disk_mod.add_string(strs[instr.operands[1]]);
+                        }
+                    }
+                }
+                disk_mod.functions.push_back(std::move(remapped));
+            }
+        }
+        if (!disk_mod.functions.empty())
+            aura::compiler::cache::write_cache(disk_path, flat, pool, flat.root, 0, &disk_mod,
+                                               nullptr);
     }
 }
 

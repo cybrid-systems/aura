@@ -106,3 +106,19 @@ stderr:
 A top-level `require` is hoisted before the first form of the program, so
 an in-program clock (`monotonic-ms`) can never see its cost — the report
 is where that time shows up.
+
+### Module disk cache (#5374)
+
+Every `require` lowers its module's function defines to IR and stores the
+bundles in a content-keyed disk cache:
+`$XDG_CACHE_HOME/aura/modules/<path>_<content-hash>_<build-sha>.abfc`
+(or `~/.cache/aura/modules/` when `XDG_CACHE_HOME` is unset). The next
+process that requires the same content reads the bundles back and skips
+the lowering; the module body itself is still evaluated (exports must be
+registered in the live environment). Changing the file's content — or
+running a different build — produces a different key, so a stale bundle
+is never loaded. The cache directory is created `0700` and cache files
+`0600`; a shared or foreign-owned directory is refused, not written.
+With both `XDG_CACHE_HOME` and `HOME` unset the cache is simply off.
+`AURA_MOD_TIMING=1` shows the effect as a smaller `ir=` phase on the
+second load.

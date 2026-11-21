@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Bus (#5128): the host image persists across peer sessions — one bus, one workspace, one live image. The first attach creates and seals it; every later peer is handed the same memfd, so the next tool reads the previous tool's committed CCT/metrics/patches/worldlines and the shared audit. Disconnect withdraws pending trials and loans, never committed evidence; unhost releases the mapping. Publish-time validation now enforces the attach invariants (patch node inside the node section, metric keys are legal immediates), `bus:project-nodes` emits batch-index edges with no symbol references, and the coordinator projects its trial ledger (pending + final verdict states) into the worldlines channel for subscribers. `test_bus_host` covers three sequential peers: perf publishes and installs a constraint, harness reads the same image and audit, maintainer's KEEP is gated by perf's constraint.
+- Module loading (#5374): the require path now uses the content-keyed disk IR cache that `compile_module` already had — `cache_module` reads `$XDG_CACHE_HOME/aura/modules/<path>_<hash>_<build-sha>.abfc` on a hit and skips per-define lowering, and writes the lowered bundles on a miss. Warm requires of the same content behave identically (string-literal pools included); a source or build change keys a new file. Regression: `test_module_disk_cache` in the module/query batch.
 
 ## 0.2.7
 

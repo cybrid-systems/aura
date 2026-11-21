@@ -4223,10 +4223,11 @@ if(TARGET all_test_issue_targets)
 endif()
 
 
-# Domain batch: Module load/rebind/export + query hygiene/index (12 members + driver). Stream A4.
+# Domain batch: Module load/rebind/export + query hygiene/index (13 members + driver). Stream A4.
 add_executable(test_module_query_batch
     tests/compiler/test_module_query_batch.cpp
     tests/compiler/test_module_export_display.cpp
+    tests/compiler/test_module_disk_cache.cpp
     tests/compiler/test_module_load_tail_export.cpp
     tests/compiler/test_module_partition_map.cpp
     tests/compiler/test_module_rebind_residual.cpp
