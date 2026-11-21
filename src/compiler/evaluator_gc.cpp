@@ -2809,7 +2809,8 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
             reclaim_dead_slots(n_strings, live_strings) + reclaim_dead_slots(n_cells, live_cells) +
             reclaim_dead_slots(n_floats, static_cast<std::size_t>(live_floats));
         note_live_set_for_reclaim_trigger(live_pairs + live_vecs + live_cells + live_strings +
-                                              live_hash_units + static_cast<std::size_t>(live_floats),
+                                              live_hash_units +
+                                              static_cast<std::size_t>(live_floats),
                                           mints_at_mark, dead_high_water);
     }
     tw_closure_allocs_.store(0, std::memory_order_relaxed);

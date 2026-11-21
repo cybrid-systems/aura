@@ -197,11 +197,10 @@ extern "C" std::uint64_t aura_jit_float_pool_size();
 extern "C" void aura_float_pool_free_snapshot(std::vector<std::uint8_t>& out);
 extern "C" std::uint64_t aura_float_pool_high_water();
 extern "C" std::uint64_t aura_float_pool_mint_limit();
-extern "C" std::uint64_t aura_float_pool_release_unmarked(
-    const std::vector<std::uint8_t>& seen,
-    const std::vector<std::uint8_t>& free_at_mark,
-    std::uint64_t mint_limit,
-    std::uint64_t owner_tenant);
+extern "C" std::uint64_t
+aura_float_pool_release_unmarked(const std::vector<std::uint8_t>& seen,
+                                 const std::vector<std::uint8_t>& free_at_mark,
+                                 std::uint64_t mint_limit, std::uint64_t owner_tenant);
 
 // ── Flags ──
 extern bool g_use_arena;

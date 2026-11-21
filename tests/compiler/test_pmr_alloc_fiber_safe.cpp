@@ -2170,20 +2170,19 @@ static void ac_float_pool_reclaim() {
     {
         CompilerService cs;
         auto& ev = cs.evaluator();
-        auto r =
-            cs.eval("(begin"
-                    " (define (bump x) (+ x 0.5))"
-                    " (define (run n) (let loop ((i 0) (s 0.0) (acc (list)))"
-                    "   (if (or (>= i n) #f) (length acc)"
-                    "       (loop (+ i 1) (bump s) (cons i acc)))))"
-                    " (define a 1.5)"
-                    " (define p (cons 2.5 0))"
-                    " (define v (vector 3.5))"
-                    " (define f (lambda () 4.5))"
-                    " (run 20000)"
-                    " (+ (+ (+ (if (= a 1.5) 1 0) (if (= (car p) 2.5) 1 0))"
-                    "        (if (= (vector-ref v 0) 3.5) 1 0))"
-                    "       (if (= (f) 4.5) 1 0)))");
+        auto r = cs.eval("(begin"
+                         " (define (bump x) (+ x 0.5))"
+                         " (define (run n) (let loop ((i 0) (s 0.0) (acc (list)))"
+                         "   (if (or (>= i n) #f) (length acc)"
+                         "       (loop (+ i 1) (bump s) (cons i acc)))))"
+                         " (define a 1.5)"
+                         " (define p (cons 2.5 0))"
+                         " (define v (vector 3.5))"
+                         " (define f (lambda () 4.5))"
+                         " (run 20000)"
+                         " (+ (+ (+ (if (= a 1.5) 1 0) (if (= (car p) 2.5) 1 0))"
+                         "        (if (= (vector-ref v 0) 3.5) 1 0))"
+                         "       (if (= (f) 4.5) 1 0)))");
         CHECK(r && is_int(*r), "float AC2: survival program evals");
         CHECK(r && is_int(*r) && as_int(*r) == 4,
               "float AC2: live floats survive the reclaim (env/pair/vector/closure), got " +

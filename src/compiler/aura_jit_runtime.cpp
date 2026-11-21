@@ -8187,11 +8187,10 @@ extern "C" std::uint64_t aura_float_pool_mint_limit() {
 // serve session's boxes are left alone). Slots already free, re-minted since
 // the mark, or newborn are skipped. Returns the live slot count (high-water
 // minus the free list) for the reclaim trigger basis.
-extern "C" std::uint64_t aura_float_pool_release_unmarked(
-    const std::vector<std::uint8_t>& seen,
-    const std::vector<std::uint8_t>& free_at_mark,
-    std::uint64_t mint_limit,
-    std::uint64_t owner_tenant) {
+extern "C" std::uint64_t
+aura_float_pool_release_unmarked(const std::vector<std::uint8_t>& seen,
+                                 const std::vector<std::uint8_t>& free_at_mark,
+                                 std::uint64_t mint_limit, std::uint64_t owner_tenant) {
     std::scoped_lock lock(g_float_pool_mtx);
     const std::size_t n = std::min(seen.size(), g_float_pool.size());
     for (std::size_t i = 0; i < n; ++i) {
@@ -8209,10 +8208,9 @@ extern "C" std::uint64_t aura_float_pool_release_unmarked(
             g_float_on_freelist[i] = 1;
         g_float_free_list.push_back(i);
     }
-    const std::size_t live =
-        g_float_pool.size() > g_float_free_list.size()
-            ? g_float_pool.size() - g_float_free_list.size()
-            : 0;
+    const std::size_t live = g_float_pool.size() > g_float_free_list.size()
+                                 ? g_float_pool.size() - g_float_free_list.size()
+                                 : 0;
     return static_cast<std::uint64_t>(live);
 }
 
