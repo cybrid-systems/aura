@@ -8086,17 +8086,19 @@ static std::mutex g_float_pool_mtx;
 //   g_float_on_freelist / g_float_free_list — released slots awaiting reuse.
 //   g_float_mint_serial — monotonic mint stamp; a slot minted after the mark
 //                         collected its roots is newborn and not judged.
-static std::vector<std::uint64_t> g_float_tenants;
-static std::vector<std::uint8_t> g_float_on_freelist;
-static std::vector<std::size_t> g_float_free_list;
-static std::vector<std::uint64_t> g_float_mint_serial;
-static std::uint64_t g_float_mint_serial_next = 0;
+namespace {
+    std::vector<std::uint64_t> g_float_tenants;
+    std::vector<std::uint8_t> g_float_on_freelist;
+    std::vector<std::size_t> g_float_free_list;
+    std::vector<std::uint64_t> g_float_mint_serial;
+    std::uint64_t g_float_mint_serial_next = 0;
+} // namespace
 
 // Owner / mint hooks declared in runtime_shared.h (strong defs in service.ixx,
 // weak stubs in aura_jit_prim_dispatch_stub.cpp / test_concurrent_stubs.cpp).
 
 std::int64_t aura_alloc_float(double d) {
-    std::size_t idx;
+    std::size_t idx = 0;
     {
         std::scoped_lock lock(g_float_pool_mtx);
         const std::uint64_t owner = aura_jit_float_owner_tenant();
@@ -8187,10 +8189,10 @@ extern "C" std::uint64_t aura_float_pool_mint_limit() {
 // serve session's boxes are left alone). Slots already free, re-minted since
 // the mark, or newborn are skipped. Returns the live slot count (high-water
 // minus the free list) for the reclaim trigger basis.
-extern "C" std::uint64_t
-aura_float_pool_release_unmarked(const std::vector<std::uint8_t>& seen,
-                                 const std::vector<std::uint8_t>& free_at_mark,
-                                 std::uint64_t mint_limit, std::uint64_t owner_tenant) {
+extern "C" std::uint64_t aura_float_pool_release_unmarked(
+    const std::vector<std::uint8_t>& seen, // NOLINT(bugprone-easily-swappable-parameters)
+    const std::vector<std::uint8_t>& free_at_mark, std::uint64_t mint_limit,
+    std::uint64_t owner_tenant) {
     std::scoped_lock lock(g_float_pool_mtx);
     const std::size_t n = std::min(seen.size(), g_float_pool.size());
     for (std::size_t i = 0; i < n; ++i) {
