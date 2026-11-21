@@ -43,12 +43,12 @@
 - `patches`：字段偏移、新值、worldline、代次；旧值由补丁日志保留。
 - `worldlines`：状态、约束结果、指标偏移、补丁区间、目标指标。
 
-协调者在节尾的预留容量里追加记录，提交时更新该节 length/count/digest/generation，并把映像头 committed_gen 推进到下一个偶数代次。订阅者只在稳定代次上读；游标记录上次的 generation/count，下一次只取新增记录。游标落后到已重建（count 变小）或超前时返回完整快照，绝不静默错位。容量用尽是硬错误，不扩容。
+协调者在节尾的预留容量里追加记录，提交时更新该节 length/count/digest/generation，并把映像头 committed_gen 推进到下一个偶数代次。订阅者只在稳定代次上读；游标记录上次的 generation/count，下一次只取新增记录。代次是映像全局的（审计/约束写入也推进），游标代次不超前于节代次且 count 不超量即按 count 切片；任一超前（可能已重建）返回完整快照，绝不静默错位。gen=0 且 count=0 读全量。容量用尽是硬错误，不扩容。
 
 控制面接线：
 
 - `Subscribe` 的 channel 1..4 分别对应指标、CCT、补丁、worldline；回 `ChannelBody`（generation、count、offset、length、snapshot=1）。
-- `CatchUp` 带上次 generation/count；协调者只返回新增记录范围，落后到重建时返回完整快照（snapshot=1）。
+- `CatchUp` 带上次 generation/count；协调者只返回新增记录范围，游标代次或 count 超前时返回完整快照（snapshot=1）。回复里 count 是本次范围的记录数，total 是频道已提交总数（下一次游标）。
 - `Reserve`/`Publish` 对 channel 1..4 直接操作该节尾部的预留容量；Publish 成功后回新的 generation/count，并把该次发布写进审计。
 - 对端只有在拿到 `publish` 或 `trial` 时才以可写方式映射映像；只读会话仍是 `PROT_READ`。
 
@@ -56,7 +56,7 @@
 
 三条投影直接从活工作区取记录，不再由调用方构造：
 
-- `(bus:project-cct session)` → `(ok count live)`：默认遍历当前工作区 FlatAST 的 `Call` 节点做静态调用点投影（`samples=1`，`flags` 最低位标记静态）；设置 `AURA_BUS_CCT=1` 后改为发布线程内的真实调用上下文树：tree-walker 的 `apply_closure` 与 IR 的 `call_closure` 都记录，每个上下文按 (父上下文, 被调身份) 建节点，累加 samples 和独占 self-ns，`parent` 是批内父下标，`live=1`。快照每会话只发布一次，重复调用返回同一 count。Recorder 是 thread-local，多 fiber 生产者按 fiber 投影。
+- `(bus:project-cct session)` → `(ok count live)`：默认遍历当前工作区 FlatAST 的 `Call` 节点做静态调用点投影（`samples=1`，`flags` 最低位标记静态）；设置 `AURA_BUS_CCT=1` 后改为发布线程内的真实调用上下文树：tree-walker 的 `apply_closure` 与 IR 的 `call_closure` 都记录，每个上下文按 (父上下文, 被调身份) 建节点，累加 samples 和独占 self-ns，`parent` 是批内父下标，`live=1`。快照每会话只发布一次（静态与 live 路径同契约，#5386），重复调用返回同一 count。Recorder 是 thread-local，多 fiber 生产者按 fiber 投影。
 - `(bus:project-patches session)` → `(ok generation total next-mutation skipped)`：把游标之后每条带回滚数据的已提交变更写成补丁记录；`node`/`field_offset`/`new_value` 来自变更日志，`worldline` 是当时生效的 rebind 槽位。第 63 位置位或节点越界的记录跳过并计入 `skipped`。
 - `(bus:project-worldlines session)` → `(ok generation total next-mutation)`：按变更顺序为每个 rebind 写一条 worldline，`id` 是真实 mutation id，`parent` 是父 mutation 的槽位，状态为 kept/rolled，补丁区间取该槽位已发布的补丁范围。
 
@@ -83,7 +83,8 @@
 - `(bus:host workspace [image-bytes] [path])` → `(ok path workspace)`。在本进程
   启动协调者:监听默认套接字(或指定路径),按交付的映像 schema 建初始映像
   (五条记录频道 + 约束节),后台线程服务对端。按工作区幂等;重复调用返回同一
-  路径。映像默认 256 MiB,可指定更小。
+  路径。映像默认 256 MiB，可指定更小。频道容量随映像尺寸分配：每频道保底
+  4096 条，超出保底的空间在五频道间均分（#5387）；用尽仍是硬错误。
 - `(bus:unhost workspace)` 停止服务、收回线程、unlink 套接字;
   `(bus:host? workspace)` → `(ok 0|1)`。
 - 角色约定:`1` perf、`2` harness、`3` maintainer、`0` 通用。宿主策略允许这四个

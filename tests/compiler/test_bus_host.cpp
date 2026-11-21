@@ -71,6 +71,9 @@ pid_t run_script(const std::string& script, int* out_fd, int* in_fd) {
         ::close(out[1]);
         ::close(in[0]);
         setenv("AURA_SANDBOX", "off", 1);
+        // The regress peer exercises the live CCT path (#5386); the
+        // recorder is opt-in and harmless for the other scripts.
+        setenv("AURA_BUS_CCT", "1", 1);
         const std::string exe = aura_binary();
         execl(exe.c_str(), "aura", script.c_str(), static_cast<char*>(nullptr));
         _exit(24);
@@ -250,6 +253,54 @@ const char* kGoodAfterRejectScript = R"AURA(
 (display (if (bus:ok? (bus:publish sid 7 7)) "survive-pub-ok" "survive-pub-FAIL")) (newline)
 (display (if (bus:ok? (bus:detach sid)) "survive-detach-ok" "survive-detach-FAIL")) (newline)
 (display "SURVIVE-DONE") (newline)
+)AURA";
+
+// Issues #5385/#5386/#5387, found by the downstream v0.3.0 acceptance:
+// incremental queries, repeat projections and image-sized capacity on a
+// REAL bus:host (the C++ harness builders use their own small layouts).
+const char* kRegressPeerScript = R"AURA(
+(require "std/bus" all:)
+(define (fib n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2)))))
+(set-code "(define (bump x) (* x 2)) (define (caller y) (bump y))")
+(eval-current)
+(fib 12)
+(define s (bus:attach "" 783 1 31 255))
+(display (if (bus:ok? s) "reg-attach-ok" "reg-attach-FAIL")) (newline)
+(define sid (car (cdr s)))
+(define pc (bus:project-cct sid))
+(define pc2 (bus:project-cct sid))
+(define qc (bus:query sid 2 0 0))
+(display (if (and (bus:ok? pc) (bus:ok? pc2)
+                  (= (car (cdr pc)) (car (cdr pc2)))
+                  (= (car (cdr (cdr qc))) (car (cdr pc))))
+             "reg-cct-once-ok" "reg-cct-once-FAIL")) (newline)
+(define q0 (bus:query sid 1 0 0))
+(define g0 (car (cdr q0)))
+(define c0 (car (cdr (cdr q0))))
+(bus:publish sid 1 100)
+(bus:publish sid 2 200)
+(define qi (bus:query sid 1 g0 c0))
+(display (if (and (bus:ok? qi)
+                  (= 0 (car (cdr (cdr (cdr qi)))))
+                  (= (+ c0 2) (car (cdr (cdr qi))))
+                  (equal? (list-ref qi 4) '((1 100) (2 200))))
+             "reg-incremental-ok" "reg-incremental-FAIL")) (newline)
+(define qs (bus:query sid 1 0 (+ c0 2)))
+(display (if (and (bus:ok? qs) (= 0 (car (cdr (cdr (cdr qs)))))
+                  (null? (list-ref qs 4)))
+             "reg-countonly-ok" "reg-countonly-FAIL")) (newline)
+(define qst (bus:query sid 1 999999 0))
+(display (if (and (bus:ok? qst) (= 1 (car (cdr (cdr (cdr qst))))))
+             "reg-ahead-snapshot-ok" "reg-ahead-snapshot-FAIL")) (newline)
+(define over 0)
+(let loop ((i 0))
+  (if (< i 4200)
+      (begin
+        (if (bus:ok? (bus:publish sid (+ 1000 i) i)) (set! over (+ over 1)))
+        (loop (+ i 1)))))
+(display (if (= over 4200) "reg-capacity-ok" "reg-capacity-FAIL")) (newline)
+(bus:detach sid)
+(display "REG-DONE") (newline)
 )AURA";
 
 } // namespace
@@ -513,6 +564,52 @@ int main() {
         check(has(hout, "HOST-DONE"), "host3 finished after rejections");
         struct stat st{};
         check(::stat(sock.c_str(), &st) != 0, "socket unlinked after host3 unhost");
+    }
+
+    // 6. Issues #5385/#5386/#5387 on a real bus:host: incremental query
+    // returns exactly the new records, no-cursor/stale cursors snapshot,
+    // a repeat CCT projection does not double the channel, and the
+    // default 256 MiB image holds more than 4096 metrics.
+    {
+        const std::string host_script = d + "/host4.aura";
+        std::string hs = kHostScript;
+        const std::string from = "777", to = "783";
+        for (std::size_t at = hs.find(from); at != std::string::npos;
+             at = hs.find(from, at + to.size()))
+            hs.replace(at, from.size(), to);
+        check(write_file(host_script, hs.c_str()), "write host4 script");
+        check(write_file((d + "/regress.aura").c_str(), kRegressPeerScript), "write regress peer");
+        int host_out = -1, host_in = -1;
+        const pid_t host = run_script(host_script, &host_out, &host_in);
+        check(host > 0, "fork host4");
+        const std::string sock = default_socket_path(783);
+        bool ready = false;
+        for (int i = 0; i < 200 && !ready; ++i) {
+            struct stat st{};
+            ready = ::stat(sock.c_str(), &st) == 0;
+            if (!ready)
+                usleep(50000);
+        }
+        check(ready, "host4 socket appeared");
+        int peer_out = -1, peer_in = -1;
+        const pid_t peer = run_script(d + "/regress.aura", &peer_out, &peer_in);
+        check(peer > 0, "fork regress peer");
+        ::close(peer_in);
+        const std::string pout = read_all(peer_out);
+        int pstatus = 0;
+        waitpid(peer, &pstatus, 0);
+        check(has(pout, "reg-attach-ok"), "regress peer attaches");
+        check(has(pout, "reg-cct-once-ok"), "repeat CCT projection publishes once (#5386)");
+        check(has(pout, "reg-incremental-ok"), "incremental query returns the new records (#5385)");
+        check(has(pout, "reg-ahead-snapshot-ok"), "ahead generation rebuilds (#5385)");
+        check(has(pout, "reg-countonly-ok"), "count-only cursor slices by count (#5385)");
+        check(has(pout, "reg-capacity-ok"), "default image holds >4096 metrics (#5387)");
+        check(has(pout, "REG-DONE"), "regress peer finished");
+        ::close(host_in);
+        const std::string hout = read_all(host_out);
+        int hstatus = 0;
+        waitpid(host, &hstatus, 0);
+        check(has(hout, "HOST-DONE"), "host4 finished");
     }
 
     if (g_failed == 0)

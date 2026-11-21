@@ -84,6 +84,9 @@ namespace {
         std::uint64_t patches_published = 0;
         std::uint64_t worldlines_published = 0;
         bool cct_published = false;
+        // #5386: the static projection is a once-per-session snapshot too.
+        std::uint64_t cct_static_count = 0;
+        bool cct_static_live = false;
         std::vector<std::uint64_t> rebind_mids;
         std::unordered_map<std::uint64_t, std::uint64_t> wl_slot_by_mid;
         std::unordered_map<std::uint64_t, std::pair<std::uint64_t, std::uint64_t>>
@@ -483,6 +486,8 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                 if (cb.offset > view.size() || cb.length > view.size() - cb.offset)
                     return bus_error(ev, "validation-failed", "query range outside the image");
                 std::vector<EvalValue> rows;
+                // #5385: cb.count is the reply range's record count; the
+                // element size comes from the range, not from the total.
                 const std::size_t elem =
                     cb.count == 0 ? 0 : static_cast<std::size_t>(cb.length / cb.count);
                 const std::byte* base = view.data() + cb.offset;
@@ -528,7 +533,7 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                     listed = make_pair(static_cast<std::uint64_t>(ev.push_pair(*it, listed)));
                 return bus_list(ev, {bus_string(ev, "ok"),
                                      make_int(static_cast<std::int64_t>(cb.generation)),
-                                     make_int(static_cast<std::int64_t>(cb.count)),
+                                     make_int(static_cast<std::int64_t>(cb.total)),
                                      make_int(static_cast<std::int64_t>(cb.snapshot)), listed});
             }
 
@@ -1016,7 +1021,9 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                 if (recorded.count > 0) {
                     if (state->cct_published)
                         return bus_list(ev, {bus_string(ev, "ok"),
-                                             make_int(static_cast<std::int64_t>(recorded.count)),
+                                             make_int(static_cast<std::int64_t>(
+                                                 state->cct_static_live ? state->cct_static_count
+                                                                        : recorded.count)),
                                              make_int(1)});
                     constexpr std::uint64_t kMidMask = (1ull << 62) - 1;
                     std::vector<aura::bus::CctRecord> live;
@@ -1041,10 +1048,20 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                     if (!published)
                         return reply;
                     state->cct_published = true;
+                    state->cct_static_count = live.size();
+                    state->cct_static_live = true;
                     return bus_list(ev, {bus_string(ev, "ok"),
                                          make_int(static_cast<std::int64_t>(live.size())),
                                          make_int(1)});
                 }
+                // #5386: same once-per-session contract as the live path —
+                // a repeat call reports the published count, never doubles
+                // the channel's records (and hotspot samples with them).
+                if (state->cct_published)
+                    return bus_list(ev,
+                                    {bus_string(ev, "ok"),
+                                     make_int(static_cast<std::int64_t>(state->cct_static_count)),
+                                     make_int(1)});
                 const std::size_t count = std::min<std::size_t>(flat->size(), 4096);
                 if (count == 0)
                     return bus_list(ev, {bus_string(ev, "ok"), make_int(0), make_int(0)});
@@ -1106,6 +1123,9 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                                                      nullptr, &published);
                 if (!published)
                     return reply;
+                state->cct_published = true;
+                state->cct_static_count = records.size();
+                state->cct_static_live = false;
                 return bus_list(ev,
                                 {bus_string(ev, "ok"),
                                  make_int(static_cast<std::int64_t>(records.size())), make_int(0)});

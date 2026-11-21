@@ -222,7 +222,8 @@ int main() {
     // before the first publish (this image has no constraints section).
     check(view.generation == 8 && view.count == 1, "metric committed at generation 8");
 
-    // Catch up from the old cursor: one record, not a snapshot.
+    // Catch up from the old cursor (empty channel at gen 2): one record,
+    // not a snapshot. count is the reply range; total is the cursor.
     CatchUpBody cu{};
     cu.channel = 1;
     cu.generation = 2;
@@ -231,9 +232,32 @@ int main() {
                      {reinterpret_cast<const std::byte*>(&cu), sizeof(cu)}),
           "CatchUp");
     check(read_channel_reply(att.sock, &view, &err), "CatchUp reply");
-    check(view.snapshot == 0 && view.count == 1 && view.length == sizeof(MetricRecord),
+    check(view.snapshot == 0 && view.count == 1 && view.total == 1 &&
+              view.length == sizeof(MetricRecord),
           "CatchUp returns only the new record");
     check(get<MetricRecord>(base, view.offset).value == 100, "client reads the new metric");
+
+    // #5385: gen 0 with a count is a count-only cursor — it slices by
+    // count; at the committed tail the range is empty, total stays 1.
+    cu.generation = 0;
+    cu.count = 1;
+    check(send_frame(att.sock, FrameType::CatchUp, att.session,
+                     {reinterpret_cast<const std::byte*>(&cu), sizeof(cu)}),
+          "CatchUp count-only cursor");
+    check(read_channel_reply(att.sock, &view, &err), "CatchUp count-only reply");
+    check(view.snapshot == 0 && view.count == 0 && view.total == 1 && view.length == 0,
+          "count-only cursor at the tail returns no records");
+
+    // #5385: a cursor AHEAD of the section generation rebuilds instead
+    // of slicing by count (silent misalignment before the fix).
+    cu.generation = 999;
+    cu.count = 0;
+    check(send_frame(att.sock, FrameType::CatchUp, att.session,
+                     {reinterpret_cast<const std::byte*>(&cu), sizeof(cu)}),
+          "CatchUp ahead generation");
+    check(read_channel_reply(att.sock, &view, &err), "CatchUp ahead reply");
+    check(view.snapshot == 1 && view.count == 1 && view.total == 1,
+          "ahead generation forces a snapshot");
 
     // Publish CCT, patch and worldline records.
     reserve(2, sizeof(CctRecord), &offset);
@@ -262,9 +286,36 @@ int main() {
     put(base, offset, w);
     publish(4, offset, sizeof(w), &view);
 
-    // Capacity: metrics has 8 slots, one used. Seven more fit, the
+    // Capacity: metrics has 8 slots, two used. Six more fit, the
     // ninth reservation is a hard ENOSPC.
-    for (int i = 0; i < 7; ++i) {
+
+    // #5385: an up-to-date cursor gets exactly the new records, with the
+    // total (not the range) as the next cursor.
+    {
+        const std::uint64_t gen_before = view.generation;
+        const std::uint64_t total_before = view.total;
+        reserve(1, sizeof(MetricRecord), &offset);
+        MetricRecord m2{};
+        m2.key_sym = kImageNoIndex;
+        m2.kind = 1;
+        m2.value = 150;
+        put(base, offset, m2);
+        publish(1, offset, sizeof(m2), &view);
+        CatchUpBody inc{};
+        inc.channel = 1;
+        inc.generation = gen_before;
+        inc.count = total_before;
+        check(send_frame(att.sock, FrameType::CatchUp, att.session,
+                         {reinterpret_cast<const std::byte*>(&inc), sizeof(inc)}),
+              "CatchUp incremental");
+        check(read_channel_reply(att.sock, &view, &err), "CatchUp incremental reply");
+        check(view.snapshot == 0 && view.count == 1 && view.total == total_before + 1 &&
+                  view.length == sizeof(MetricRecord),
+              "incremental range decodes one record, total advances");
+        check(get<MetricRecord>(base, view.offset).value == 150,
+              "incremental record is the new one");
+    }
+    for (int i = 0; i < 6; ++i) {
         reserve(1, sizeof(MetricRecord), &offset);
         MetricRecord fill{};
         fill.key_sym = kImageNoIndex;

@@ -445,6 +445,8 @@ bool Server::accept_one(const BuildFn& build, Attach* out, TransportError* error
     };
     if (hello.abi_major != kBusAbiMajor)
         return reject(RejectReason::Version, "ABI major mismatch", EPROTO);
+    if (hello.abi_minor < 1)
+        return reject(RejectReason::Version, "peer predates ChannelBody.total (#5385)", EPROTO);
     if (std::memcmp(hello.schema_id, expected, sizeof(expected)) != 0)
         return reject(RejectReason::Schema, "schema id mismatch", EPROTO);
     if (hello.workspace_id != workspace_id_)
@@ -776,7 +778,8 @@ bool Server::wait_disconnect(TransportError* error) {
                         break;
                     }
                     ChannelBody reply{loan.channel, view.generation, view.count,
-                                      view.offset,  view.length,     1};
+                                      view.offset,  view.length,     1,
+                                      view.count};
                     send_frame(conn_fd_, FrameType::Credit, session_,
                                {reinterpret_cast<const std::byte*>(&reply), sizeof(reply)});
                     if (header.type == static_cast<std::uint16_t>(FrameType::Subscribe))
@@ -854,16 +857,22 @@ bool Server::wait_disconnect(TransportError* error) {
                     deny(EINVAL, "channel section is missing");
                     break;
                 }
-                const bool snapshot = request.generation == 0 ||
+                // #5385: generations are image-global (audit and constraint
+                // writes advance them too), so a cursor is valid while its
+                // generation is at or below the section's and its count fits
+                // the append-only channel. Ahead of either — the cursor may
+                // predate a rebuild — forces a full snapshot, never a slice.
+                const bool snapshot = (request.generation == 0 && request.count == 0) ||
                                       request.generation > view.generation ||
                                       request.count > view.count;
                 const std::uint64_t from = snapshot ? 0 : request.count;
                 ChannelBody reply{request.channel,
                                   view.generation,
-                                  view.count,
+                                  view.count - from,
                                   view.offset + from * view.element_size,
                                   (view.count - from) * view.element_size,
-                                  static_cast<std::uint64_t>(snapshot ? 1 : 0)};
+                                  static_cast<std::uint64_t>(snapshot ? 1 : 0),
+                                  view.count};
                 send_frame(conn_fd_, FrameType::Credit, session_,
                            {reinterpret_cast<const std::byte*>(&reply), sizeof(reply)});
                 break;
@@ -927,7 +936,8 @@ bool Server::wait_disconnect(TransportError* error) {
                     channel_loans_[static_cast<std::size_t>(channel)].release();
                     ChannelView view{};
                     channel_view({image_base_, image_size_}, channel, &view);
-                    ChannelBody reply{loan.channel, gen, view.count, view.offset, view.length, 0};
+                    ChannelBody reply{loan.channel, gen, view.count, view.offset,
+                                      view.length,  0,   view.count};
                     send_frame(conn_fd_, FrameType::Credit, session_,
                                {reinterpret_cast<const std::byte*>(&reply), sizeof(reply)});
                     generation_ = gen;

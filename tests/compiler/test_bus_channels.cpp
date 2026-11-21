@@ -232,7 +232,7 @@ int main() {
                 if (::write(down[1], &out, sizeof(out)) != sizeof(out))
                     _exit(14);
             } else {
-                ChannelCursor mc{4, 1}; // generation 4, one metric already seen
+                ChannelCursor mc{10, 1}; // current generation, one metric already seen
                 std::span<const std::byte> recs;
                 bool snap = true;
                 if (!channel_read(view, Channel::Metrics, &mc, &recs, &snap, nullptr))
@@ -331,6 +331,22 @@ int main() {
     check(::read(down[0], &child_bytes, sizeof(child_bytes)) == sizeof(child_bytes),
           "child phase 2");
     check(child_bytes == 3 * sizeof(MetricRecord), "child receives only the new records");
+
+    // #5385: a cursor ahead of the section generation gets the full
+    // snapshot, never a count-sliced range; gen 0 count 0 reads everything.
+    {
+        ChannelCursor stale{999, 1};
+        std::span<const std::byte> recs;
+        bool snap = false;
+        check(channel_read(img, Channel::Metrics, &stale, &recs, &snap, nullptr), "ahead read");
+        check(snap && recs.size() == 4 * sizeof(MetricRecord), "ahead generation rebuilds");
+        ChannelCursor none;
+        check(channel_read(img, Channel::Metrics, &none, &recs, &snap, nullptr), "no-cursor read");
+        check(snap && recs.size() == 4 * sizeof(MetricRecord), "gen 0 count 0 is a full snapshot");
+        ChannelCursor ahead{10, 99};
+        check(channel_read(img, Channel::Metrics, &ahead, &recs, &snap, nullptr), "ahead read");
+        check(snap, "count ahead of the channel rebuilds");
+    }
 
     // Capacity: 8 metric slots total, 4 used; 4 fit, one more fails.
     for (int i = 0; i < 4; ++i)

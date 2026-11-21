@@ -229,8 +229,12 @@ bool channel_read(std::span<const std::byte> image, Channel channel, ChannelCurs
                 *why = "corrupt channel directory";
             return false;
         }
-        const bool rebuild =
-            cursor->generation == 0 || cursor->generation > e.generation || cursor->count > e.count;
+        // #5385: same rule as the CatchUp control path — generations are
+        // image-global, so a cursor at or below the section generation with
+        // a fitting count slices the append-only channel; ahead of either
+        // forces the full snapshot.
+        const bool rebuild = (cursor->generation == 0 && cursor->count == 0) ||
+                             cursor->generation > e.generation || cursor->count > e.count;
         const std::uint64_t from_count = rebuild ? 0 : cursor->count;
         const std::uint64_t from = e.offset + from_count * e.element_size;
         const std::uint64_t len = (e.count - from_count) * e.element_size;

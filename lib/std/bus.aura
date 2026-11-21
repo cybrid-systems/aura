@@ -50,7 +50,10 @@
   (bus-call "subscribe" session channel))
 
 ; (bus:query session channel since-generation since-count)
-; -> (ok generation count snapshot rows)
+; -> (ok generation count snapshot rows). count is the channel's TOTAL
+; record count (the next cursor); rows holds only the records after the
+; cursor. snapshot=1 (full rows) when the cursor generation or count is
+; ahead of the channel; (0,0) reads everything.
 (define (bus:query session channel since-generation since-count)
   (bus-call "query" session channel since-generation since-count))
 

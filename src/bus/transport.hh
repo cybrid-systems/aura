@@ -27,7 +27,7 @@
 namespace aura::bus {
 
 inline constexpr std::uint32_t kBusAbiMajor = 1;
-inline constexpr std::uint32_t kBusAbiMinor = 0;
+inline constexpr std::uint32_t kBusAbiMinor = 1;
 inline constexpr std::size_t kBusDefaultImageBytes = 256u << 20;
 inline constexpr std::size_t kBusMaxControlFrame = 4096;
 inline constexpr std::uint32_t kBusMaxLoans = 8;
@@ -117,6 +117,11 @@ struct GrantBody {
     Capability caps{};
 };
 
+// Subscribe / CatchUp / Publish reply. `count` is the number of records
+// in THIS reply's range (offset..offset+length); `total` is the channel's
+// committed record count — the cursor a reader passes back as since-count.
+// Added in ABI minor 1 (#5385): before, count carried the total and an
+// incremental range decoded to zero rows.
 struct ChannelBody {
     std::uint64_t channel = 0;
     std::uint64_t generation = 0;
@@ -124,6 +129,7 @@ struct ChannelBody {
     std::uint64_t offset = 0;
     std::uint64_t length = 0;
     std::uint64_t snapshot = 0;
+    std::uint64_t total = 0;
 };
 
 struct CatchUpBody {
@@ -182,7 +188,7 @@ static_assert(sizeof(HelloRejectBody) == 64);
 static_assert(sizeof(AuditQueryBody) == 32);
 static_assert(sizeof(AuditWire) == 120);
 static_assert(sizeof(AuditReply) == 16);
-static_assert(sizeof(ChannelBody) == 48);
+static_assert(sizeof(ChannelBody) == 56);
 static_assert(sizeof(CatchUpBody) == 32);
 static_assert(sizeof(GrantBody) == 56);
 static_assert(sizeof(GrantReply) == 8);

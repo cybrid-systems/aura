@@ -8,6 +8,7 @@
 
 #include "bus/host.hh"
 
+#include <algorithm>
 #include <atomic>
 #include <cerrno>
 #include <cstring>
@@ -41,20 +42,42 @@ namespace {
 
     bool build_host_image(std::span<std::byte> img, std::string* why) {
         constexpr std::uint32_t kSections = 6;
-        constexpr std::uint64_t kPerChannel = 4096;
+        constexpr std::uint64_t kMinPerChannel = 4096;
         constexpr std::uint64_t kConstraintBytes = 4096;
         const std::uint64_t dir = kImageHeaderSize;
+        const std::uint64_t elems[5] = {sizeof(MetricRecord), sizeof(CctRecord),
+                                        sizeof(PatchRecord), sizeof(WorldlineRecord),
+                                        sizeof(NodeRecord)};
+        // #5387: channel capacity scales with the delivered image instead
+        // of a fixed 4096 records. Each channel keeps at least 4096 slots;
+        // space beyond that floor is split evenly. Exhaustion stays a hard
+        // error — nothing grows after attach.
+        std::uint64_t per[5];
+        std::uint64_t floor_bytes = 0;
+        for (int i = 0; i < 5; ++i) {
+            per[i] = kMinPerChannel;
+            floor_bytes += kMinPerChannel * elems[i];
+        }
+        const std::uint64_t fixed = dir + kSections * sizeof(SectionEntry) + kConstraintBytes + 64;
+        if (img.size() > fixed + floor_bytes) {
+            const std::uint64_t extra = (img.size() - fixed - floor_bytes) / 5;
+            for (int i = 0; i < 5; ++i) {
+                const std::uint64_t add = std::min(
+                    extra / elems[i], static_cast<std::uint64_t>(kImageMaxRecords) - per[i]);
+                per[i] += add;
+            }
+        }
         std::uint64_t off = dir + kSections * sizeof(SectionEntry);
         auto take = [&](std::uint64_t bytes) {
             const std::uint64_t at = off;
             off = (off + bytes + 7) & ~7ull;
             return at;
         };
-        const std::uint64_t metrics = take(kPerChannel * sizeof(MetricRecord));
-        const std::uint64_t cct = take(kPerChannel * sizeof(CctRecord));
-        const std::uint64_t patches = take(kPerChannel * sizeof(PatchRecord));
-        const std::uint64_t worldlines = take(kPerChannel * sizeof(WorldlineRecord));
-        const std::uint64_t nodes = take(kPerChannel * sizeof(NodeRecord));
+        const std::uint64_t metrics = take(per[0] * elems[0]);
+        const std::uint64_t cct = take(per[1] * elems[1]);
+        const std::uint64_t patches = take(per[2] * elems[2]);
+        const std::uint64_t worldlines = take(per[3] * elems[3]);
+        const std::uint64_t nodes = take(per[4] * elems[4]);
         const std::uint64_t constraints = take(kConstraintBytes);
         const std::uint64_t committed = (off + 7) & ~7ull;
         if (committed > img.size()) {
@@ -87,7 +110,7 @@ namespace {
             e.version = 1;
             e.offset = at;
             e.element_size = elem;
-            e.capacity = kPerChannel * elem;
+            e.capacity = per[i] * elem;
             e.generation = 2;
             e.fingerprint = section_layout_fingerprint(kind);
             e.digest = 14695981039346656037ull;
@@ -100,12 +123,6 @@ namespace {
         entry(4, SectionKind::Nodes, nodes, sizeof(NodeRecord));
         entry(5, SectionKind::Constraints, constraints, sizeof(ConstraintSetHeader));
         {
-            // The nodes channel keeps a larger capacity than the record
-            // channels: a workspace projects many more nodes than metrics.
-            SectionEntry ne{};
-            std::memcpy(&ne, img.data() + dir + 4 * sizeof(SectionEntry), sizeof(ne));
-            ne.capacity = kPerChannel * sizeof(NodeRecord);
-            std::memcpy(img.data() + dir + 4 * sizeof(SectionEntry), &ne, sizeof(ne));
             SectionEntry ce{};
             std::memcpy(&ce, img.data() + dir + 5 * sizeof(SectionEntry), sizeof(ce));
             ce.capacity = kConstraintBytes;
