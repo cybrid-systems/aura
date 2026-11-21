@@ -271,7 +271,17 @@ void CompilerService::cache_module(const std::string& content, const std::string
         ir_cache_strings_[name] = ir_mod.string_pool;
         // Self-referencing cached functions need tree-walker fallback
         user_bindings_.insert(name);
-        function_sources_[name] = content;
+        // Issue #5384: a workspace define owns its canonical single-define
+        // source row (set-code / eval-current publish it). A module define
+        // with the same name must not clobber it with the WHOLE module text:
+        // the specialize pass scopes lowering to the named define, but the
+        // #4621 rest gate reads the FIRST root define, so a rest-param
+        // workspace define was IR-published from the whole module and its
+        // closure resolved to a sibling function ("invalid closure reference"
+        // / foreign arity after a rebind). Module-only names keep the module
+        // text row the relower cascade parses (#4547).
+        if (!is_workspace_lambda_define(name))
+            function_sources_[name] = content;
         module_functions_[path].push_back(name);
         // Issue #5374: snapshot for the require-path disk cache (same
         // pre-bind shape cache_define records for compile_module).
@@ -378,7 +388,10 @@ EvalResult CompilerService::compile_module(const std::string& name, const std::s
                 if (func.name == fname && func.id != cached.ir_entry()) {
                     ir_cache_[fname] = std::vector<aura::ir::IRFunction>{func};
                     ir_cache_strings_[fname] = cached.ir_strings();
-                    function_sources_[fname] = source;
+                    // Issue #5384: same rule as cache_module — a workspace
+                    // define keeps its canonical source row.
+                    if (!is_workspace_lambda_define(fname))
+                        function_sources_[fname] = source;
                     module_functions_[name].push_back(fname);
                     break;
                 }

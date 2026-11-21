@@ -48,6 +48,7 @@ extern int run_test_module_load_tail_export();
 extern int run_test_module_partition_map();
 extern int run_test_module_rebind_residual();
 extern int run_test_module_require_freevar();
+extern int run_test_module_workspace_source_clobber();
 extern int run_test_query_and_replace_batch();
 extern int run_test_query_by_marker_provenance();
 extern int run_test_query_epoch_contract();
@@ -62,7 +63,7 @@ int main() {
     using aura::test::g_passed;
     int members_failed = 0;
     int members_passed = 0;
-    std::println("=== test_module_query_batch (13 members) ===");
+    std::println("=== test_module_query_batch (15 members) ===");
     const struct {
         const char* name;
         int (*fn)();
@@ -73,6 +74,7 @@ int main() {
         {"test_module_partition_map", run_test_module_partition_map},
         {"test_module_rebind_residual", run_test_module_rebind_residual},
         {"test_module_require_freevar", run_test_module_require_freevar},
+        {"test_module_workspace_source_clobber", run_test_module_workspace_source_clobber},
         {"test_query_and_replace_batch", run_test_query_and_replace_batch},
         {"test_query_by_marker_provenance", run_test_query_by_marker_provenance},
         {"test_query_epoch_contract", run_test_query_epoch_contract},

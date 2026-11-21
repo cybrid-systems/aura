@@ -373,12 +373,28 @@ bool CompilerService::specialize_one_lambda_via_ir(const std::string& name) {
     if (!pr.success || pr.root == aura::ast::NULL_NODE)
         return false;
     flat.root = pr.root;
+    // Issue #5384: scope the parse to the NAMED define before any guard or
+    // lowering. A module-text source row (a same-name module define recorded
+    // by cache_module) parses to many defines; the #4621/#4618/#4372/#4587
+    // gates read flat.root, so they checked the FIRST define while the
+    // lowering published the named one — a rest-param define slipped past
+    // the rest gate and its closure resolved to a sibling function. The
+    // relower cascade already scopes this way (#2730).
+    {
+        const auto defs = find_top_level_defines(flat, pool, pr.root);
+        for (const auto& [n, id] : defs) {
+            if (n == name) {
+                flat.root = id;
+                break;
+            }
+        }
+    }
     // Issue #4621: a define with a rest parameter keeps the tree-walker
     // closure eval-current bound. The IR closure binds the rest slot
     // to the argument as-is (not as a pair list), so specialising it
     // silently changed the define's arity. The tree walker binds the
     // rest as a pair list - the same semantics a file define has.
-    if (define_body_has_rest_param_4621(flat, pr.root))
+    if (define_body_has_rest_param_4621(flat, flat.root))
         return false;
     // Issue #4618: a body whose set! targets a non-local cannot be
     // lowered to IR - lowering_impl.cpp's Set has no store for a
@@ -388,7 +404,7 @@ bool CompilerService::specialize_one_lambda_via_ir(const std::string& name) {
     // workspace or host global was a silent no-op after
     // (eval-current). Keep the tree-walker closure eval-current bound,
     // the same refusal shape #4372 uses for a lambda-form while.
-    if (define_body_sets_nonlocal_4618(flat, pool, pr.root, name))
+    if (define_body_sets_nonlocal_4618(flat, pool, flat.root, name))
         return false;
     // Issue #4372: lambda-form while applies its closures from the
     // primitive. Those ids are not this define's IR closure, so the
@@ -426,7 +442,7 @@ bool CompilerService::specialize_one_lambda_via_ir(const std::string& name) {
                 walk(c);
         }
     } lambda_while{flat, pool};
-    lambda_while.walk(pr.root);
+    lambda_while.walk(flat.root);
     if (lambda_while.hit)
         return false;
     // Issue #4587: a free name the lowerer cannot resolve becomes
@@ -434,7 +450,7 @@ bool CompilerService::specialize_one_lambda_via_ir(const std::string& name) {
     // Host cells and cached callees are real loads. Anything else
     // stays on the tree walker, which reports unbound. Checked
     // before the erase so a refused define keeps its TW cell.
-    if (workspace_lambda_free_name_unresolved(flat, pool, pr.root, name))
+    if (workspace_lambda_free_name_unresolved(flat, pool, flat.root, name))
         return false;
     // Value-cell rows point at the tree-walker closure from eval_flat.
     // Drop this name before lowering so a later caller copies the
