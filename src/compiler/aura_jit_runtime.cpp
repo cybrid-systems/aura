@@ -8086,13 +8086,20 @@ static std::mutex g_float_pool_mtx;
 //   g_float_on_freelist / g_float_free_list — released slots awaiting reuse.
 //   g_float_mint_serial — monotonic mint stamp; a slot minted after the mark
 //                         collected its roots is newborn and not judged.
-namespace {
-    std::vector<std::uint64_t> g_float_tenants;
-    std::vector<std::uint8_t> g_float_on_freelist;
-    std::vector<std::size_t> g_float_free_list;
-    std::vector<std::uint64_t> g_float_mint_serial;
-    std::uint64_t g_float_mint_serial_next = 0;
-} // namespace
+// These side tables are `inline` so every DSO that links this TU (the aura
+// binary, libaura_test_objects.so, libaura_jit_light_test_objects.so, the JIT
+// SO) shares ONE instance. aura_jit_runtime.cpp is compiled into several of
+// them; a plain anonymous-namespace definition gave each DSO its own copy,
+// and the dynamic linker resolved the pool's accessors to one copy while the
+// reclaim's pushes went to another — the free list then grew a buffer the
+// allocator consolidated against the primitive registry's bucket array
+// (corrupted size vs. prev_size, #5389). inline variables fold to a single
+// definition across the whole process, matching g_float_pool's SSOT intent.
+inline std::vector<std::uint64_t> g_float_tenants;
+inline std::vector<std::uint8_t> g_float_on_freelist;
+inline std::vector<std::size_t> g_float_free_list;
+inline std::vector<std::uint64_t> g_float_mint_serial;
+inline std::uint64_t g_float_mint_serial_next = 0;
 
 // Owner / mint hooks declared in runtime_shared.h (strong defs in service.ixx,
 // weak stubs in aura_jit_prim_dispatch_stub.cpp / test_concurrent_stubs.cpp).
