@@ -182,9 +182,15 @@
 ; The suite files run in parallel waves, so one sample can absorb a
 ; scheduler/GC pause without the algorithm changing shape. CI run
 ; 18be75e50 failed "dense replace is linear" on a single sample; the
-; linearity target is checked on the best of three per size.
+; linearity target is checked on the best of several per size. Best-of-3
+; still failed under a loaded CI wave (aura-ci:latest round); best-of-5
+; absorbs the pauses while a genuinely quadratic replace still fails
+; (no sample count hides quadratic growth).
 (define (best-ms-5324 th)
-  (min (ms-5324 th) (min (ms-5324 th) (ms-5324 th))))
+  (min (ms-5324 th)
+       (min (ms-5324 th)
+            (min (ms-5324 th)
+                 (min (ms-5324 th) (ms-5324 th))))))
 
 (test-case "replace rides the native scan" (hash "issue" 5324)
   (define sparse (string-append (repeat "a" 16000) "XYZ"))
