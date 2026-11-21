@@ -173,24 +173,25 @@
 ; Issue #5324: string-replace minted one substring per position to compare
 ; (a sparse 16000-char hit cost ~1.2 s here, 203 ms in the report). It now
 ; jumps between hits with the native string-index: same output, ~1 ms.
-(define (ms-5324 th)
-  (th)
-  (let ((t0 (monotonic-ms)))
-    (th)
-    (- (monotonic-ms) t0)))
 
-; The suite files run in parallel waves, so one sample can absorb a
-; scheduler/GC pause without the algorithm changing shape. CI run
-; 18be75e50 failed "dense replace is linear" on a single sample; the
-; linearity target is checked on the best of several per size. Best-of-3
-; still failed under a loaded CI wave (aura-ci:latest round); best-of-5
-; absorbs the pauses while a genuinely quadratic replace still fails
-; (no sample count hides quadratic growth).
-(define (best-ms-5324 th)
-  (min (ms-5324 th)
-       (min (ms-5324 th)
-            (min (ms-5324 th)
-                 (min (ms-5324 th) (ms-5324 th))))))
+; The suite files run in parallel CI waves. A wall-clock probe (monotonic-ms,
+; best-of-N) still failed "dense replace is linear" under a loaded wave even
+; at best-of-5: preemption inflates every sample and the small-size baseline
+; collapses to the 1ms floor, so the ratio checks misfire (#5389 follow-up CI
+; run 44925658024). Measure CPU time instead — /proc/self/stat utime+stime
+; ticks are immune to scheduler preemption — and batch enough reps per size
+; that each clock window spans many ticks (10ms resolution at 100Hz). Inputs
+; are built ONCE outside the timed window so construction cost is not charged
+; to the replace. A genuinely quadratic replace still fails the ratio checks
+; (verified: quadratic acc-append gives ~20/190/2570ms, ratios ~9.5x/13.5x).
+(define (cpu-ticks-5324)
+  (let ((f (string-split (read-file "/proc/self/stat") " ")))
+    (+ (string->number (list-ref f 13)) (string->number (list-ref f 14)))))
+(define (cpu-ms-5324 th reps)
+  (th)
+  (let ((t0 (cpu-ticks-5324)))
+    (let loop ((k 0)) (if (< k reps) (begin (th) (loop (+ k 1)))))
+    (/ (* 10.0 (- (cpu-ticks-5324) t0)) reps)))
 
 (test-case "replace rides the native scan" (hash "issue" 5324)
   (define sparse (string-append (repeat "a" 16000) "XYZ"))
@@ -198,20 +199,25 @@
   (check= (string-append (repeat "a" 16000) "Q") (string-replace sparse "XYZ" "Q"))
   (check= (repeat "abcdefghi_" 1600) (string-replace dense " " "_"))
   (check= sparse (string-replace sparse "ZZ" "Q"))
-  (check (< (ms-5324 (lambda () (string-replace sparse "XYZ" "Q"))) 150))
-  (check (< (ms-5324 (lambda () (string-replace sparse "ZZ" "Q"))) 150)))
+  ; One native scan over 16k chars is well under 150ms of CPU even on a slow
+  ; box; batch a few reps so the tick window is not a single 10ms quantum.
+  (check (< (cpu-ms-5324 (lambda () (string-replace sparse "XYZ" "Q")) 5) 150))
+  (check (< (cpu-ms-5324 (lambda () (string-replace sparse "ZZ" "Q")) 5) 150)))
 
 ; #5324: dense hits grow with the hit count, not quadratically, and the
 ; per-hit confirmation is skipped for a well-formed needle.
 (test-case "dense replace is linear" (hash "issue" 5324)
-  (define (mk n) (string-join (make-list n "ab") " "))
-  (define a (best-ms-5324 (lambda () (string-replace (mk 1000) " " "_"))))
-  (define b (best-ms-5324 (lambda () (string-replace (mk 4000) " " "_"))))
-  (define c (best-ms-5324 (lambda () (string-replace (mk 16000) " " "_"))))
+  (define s1 (string-join (make-list 1000 "ab") " "))
+  (define s4 (string-join (make-list 4000 "ab") " "))
+  (define s16 (string-join (make-list 16000 "ab") " "))
+  (define a (cpu-ms-5324 (lambda () (string-replace s1 " " "_")) 60))
+  (define b (cpu-ms-5324 (lambda () (string-replace s4 " " "_")) 20))
+  (define c (cpu-ms-5324 (lambda () (string-replace s16 " " "_")) 8))
   (check= (string-join (make-list 16000 "ab") "_")
-          (string-replace (mk 16000) " " "_"))
-  (check (<= b (* 5 (max 1 a))))
-  (check (<= c (* 5 (max 1 b))))
-  (check (< c 400)))
+          (string-replace s16 " " "_"))
+  ; Linear is ~4x per 4x size; 6x absorbs constant-factor noise. The 1ms
+  ; floor keeps a fast box's sub-tick small size from dividing by ~0.
+  (check (<= b (* 6 (max 1 a))))
+  (check (<= c (* 6 (max 1 b)))))
 
 (test-finish)
