@@ -197,8 +197,13 @@ static void ac4704_concurrent_release_never_lowers_watermark() {
     // while the worker releases the pin.
     std::thread sampler([&] {
         while (!stop.load(std::memory_order_acquire)) {
-            const auto w = ev.gc_safe_closure_id();
+            // Read the monotone threshold BEFORE the watermark: a sample
+            // taken before a (gc-freeze) raise must not be compared against
+            // a threshold published after it (that is an observer race, not
+            // a drop). Once f is observed, the floor can only stay >= f, so
+            // any later watermark read is comparable.
             const auto f = highest_freeze.load(std::memory_order_acquire);
+            const auto w = ev.gc_safe_closure_id();
             if (f != 0 && w < f) {
                 drops.fetch_add(1, std::memory_order_acq_rel);
                 auto cur = lowest_seen.load(std::memory_order_relaxed);
