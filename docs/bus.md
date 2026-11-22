@@ -174,3 +174,11 @@ canary 拒绝)、`test_bus_closed_loop_e2e`(#5382,三进程正常闭环 + 五类
 - 判决随 worldline 记录追加进映像（新增尾字段 `gate_verdict`/`gate_family`/`gate_adjusted_ppm`/`gate_threshold_ppm`/`gate_fingerprint`，layout_version 3；v1/v2 映像照读，尾字段默认零）。
 - 负向 KEEP 预算：协调者盯住最近若干次 KEEP。被撤回的 KEEP（可观测期退化自动撤回或裁判回滚）与被统计放行的对照都算负向事件；超过预算就把折价乘子翻倍并写 `GateTighten` 审计（准入自动收紧）。
 - 宿主环境变量：`AURA_BUS_GATE=1` 开启准入门；`AURA_BUS_GATE_THRESHOLD`（放行门槛，ppm）、`AURA_BUS_GATE_MIN_WINDOWS`（最少 held-out 窗口）、`AURA_BUS_GATE_BUDGET`（负向 KEEP 预算，ppm）、`AURA_BUS_GATE_WINDOW`（预算滑动窗口大小）、`AURA_BUS_GATE_CONTROL=0`（不强制负向对照）。默认全关，保持 v0.3.1 行为。
+
+### v0.3.2 审计回放(#5392)
+
+闭环要「跑坏了能证明」：审计必须可回放，裁决必须可确定性复现。回放是协调者侧的一次**只读**扫描——它从控制面日志与映像里重构 worldline 谱系，校验完整性，并从绑定的证据重算判决。
+
+- `(bus:audit-replay session)` → `(ok events worldlines keeps findings first-seq first-kind first-reason nodes)`。`findings = 0` 表示谱系完好；`first-kind` 指第一处缺陷的类别：1 孤儿事件（事件指向从未开启的 worldline）、2 断裂 parent 链、3 序号回退、4 映像审计节与控制面日志不一致、5 KEEP 缺约束结论、6 KEEP 缺准入判决、7 判决与重算不符、8 证据与五元不符。每行 node 是 `(worldline parent state trial-seq keep-seq verdict-seq constraint reproduced fingerprint timestamp-ms baseline candidate workload seed verifier gate-verdict gate-family adjusted reason)`。
+- `(bus:audit-evo session)` → `(ok text)`：同一条谱系渲染成 **evo schema v2** 的 JSONL（每行一个 JSON 对象，见 docs/evo.md），`aura evo log` 可直接读总线闭环日志。
+- 确定性复现：回放用判决记录里的策略快照（门槛、折价乘子、最少窗口数）从绑定的窗口重算判决，逐字节比较；判决是定点数，同一份证据两次重算必然一致。候选哈希会拿 trial 的补丁字节重算比对——篡改 `candidate_hash` 或篡改判决都会被检出。

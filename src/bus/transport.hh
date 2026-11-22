@@ -14,6 +14,7 @@
 #include "bus/constraint.hh"
 #include "bus/gate.hh"
 #include "bus/image.hh"
+#include "bus/replay.hh"
 
 #include <array>
 #include <cstddef>
@@ -70,6 +71,9 @@ enum class FrameType : std::uint16_t {
     // #5391: bind the judge's held-out evidence to a trial; the
     // coordinator recomputes the admission verdict from it.
     GateBind = 26,
+    // #5392: replay the audit log — reconstruct the worldline
+    // lineage, check its integrity and reproduce the verdicts.
+    AuditReplay = 27,
 };
 
 enum class RejectReason : std::uint16_t {
@@ -179,6 +183,50 @@ struct AuditReply {
     std::uint64_t truncated = 0;
 };
 
+// #5392: the audit replay request. The replay always covers the whole
+// control-plane log; the fields are reserved for a narrower view.
+struct AuditReplayBody {
+    std::uint64_t worldline = 0;
+    std::uint64_t since_seq = 0;
+    std::uint64_t flags = 0;
+};
+
+// The audit replay reply: the report, then one row per worldline.
+struct AuditReplayReply {
+    std::uint64_t events = 0;
+    std::uint64_t worldlines = 0;
+    std::uint64_t keeps = 0;
+    std::uint64_t findings = 0;
+    std::uint64_t first_seq = 0;
+    std::uint64_t first_kind = 0;
+    std::uint64_t truncated = 0;
+    std::uint64_t run = 0; // the workspace the log belongs to
+    char first_reason[48] = {};
+};
+
+// One worldline of the reconstructed lineage.
+struct AuditReplayNode {
+    std::uint64_t worldline = 0;
+    std::uint64_t parent = 0;
+    std::uint64_t state = 0;
+    std::uint64_t trial_seq = 0;
+    std::uint64_t keep_seq = 0;
+    std::uint64_t verdict_seq = 0;
+    std::uint64_t constraint = 0;
+    std::uint64_t reproduced = 0;
+    std::uint64_t fingerprint = 0;
+    std::uint64_t timestamp_ms = 0;
+    std::uint64_t baseline_gen = 0;
+    std::uint64_t candidate_hash = 0;
+    std::uint64_t workload_sym = 0;
+    std::uint64_t seed = 0;
+    std::uint64_t verifier_version = 0;
+    std::uint64_t gate_verdict = 0;
+    std::uint64_t gate_family = 0;
+    std::int64_t adjusted_ppm = 0;
+    char reason[48] = {};
+};
+
 struct GrantReply {
     std::uint64_t token = 0;
 };
@@ -217,6 +265,9 @@ static_assert(sizeof(HelloRejectBody) == 64);
 static_assert(sizeof(AuditQueryBody) == 32);
 static_assert(sizeof(AuditWire) == 120);
 static_assert(sizeof(AuditReply) == 16);
+static_assert(sizeof(AuditReplayBody) == 24);
+static_assert(sizeof(AuditReplayReply) == 112);
+static_assert(sizeof(AuditReplayNode) == 192);
 static_assert(sizeof(ChannelBody) == 56);
 static_assert(sizeof(CatchUpBody) == 32);
 static_assert(sizeof(GrantBody) == 56);
@@ -391,6 +442,10 @@ public:
     [[nodiscard]] const GateVerdictRecord* gate_verdict(std::uint64_t worldline) const;
     // The negative-KEEP window: how many KEEPs turned out harmful.
     [[nodiscard]] const NegativeKeepWindow& negative_keeps() const { return negative_keeps_; }
+    // #5392: replay the audit log — reconstruct the worldline
+    // lineage, check its integrity and reproduce the admission
+    // verdicts. A read: it changes nothing.
+    [[nodiscard]] ReplayReport replay() const;
 
     // Loan ledgers of the most recent single-peer session (accept_one /
     // wait_disconnect). serve() keeps per-session ledgers in its table.

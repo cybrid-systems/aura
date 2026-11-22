@@ -19,6 +19,7 @@
         bus:publish-source bus:bind-evidence bus:evidence bus:canary-confirm
         bus:candidate-digest bus:source-field bus:grant-activate
         bus:bind-gate bus:gate-evidence
+        bus:audit-replay bus:audit-evo
         bus:status bus:code bus:message bus:ok? bus:help
         bus:attach? bus:error? bus:record?)
 
@@ -195,6 +196,29 @@
 (define (bus:gate-evidence session worldline)
   (bus-call "gate-evidence" session worldline))
 
+; ── v0.3.2 audit replay (#5392) ───────────────────────────────
+; (bus:audit-replay session) -> (ok events worldlines keeps findings
+;                                 first-seq first-kind first-reason nodes)
+; Replay the audit log: reconstruct the worldline lineage, check its
+; integrity (no orphan event, no broken parent, monotonic sequence,
+; every KEEP with its constraint and admission evidence) and
+; reproduce the admission verdicts. findings = 0 means the lineage is
+; sound; first-kind names the first defect (1 orphan, 2 broken
+; parent, 3 sequence regression, 4 audit mismatch, 5 keep without
+; constraint, 6 keep without verdict, 7 verdict mismatch, 8 evidence
+; mismatch). Each node is
+; (worldline parent state trial-seq keep-seq verdict-seq constraint
+;  reproduced fingerprint timestamp-ms baseline candidate workload
+;  seed verifier gate-verdict gate-family adjusted reason).
+(define (bus:audit-replay session)
+  (bus-call "audit-replay" session))
+
+; (bus:audit-evo session) -> (ok text)
+; The same lineage as evo schema v2 JSONL (docs/evo.md): one JSON
+; object per line, so `aura evo log` reads the bus lineage directly.
+(define (bus:audit-evo session)
+  (bus-call "audit-evo" session))
+
 ; (bus:grant session bits channels loans expires worldline) -> (ok token)
 (define (bus:grant session bits channels loans expires worldline)
   (bus-call "grant" session bits channels loans expires worldline))
@@ -230,6 +254,7 @@
     "grant/revoke: (bus:grant session bits channels loans expires worldline) -> (ok token); (bus:revoke session token); needs grant\n"
     "audit: (bus:audit session worldline) -> (ok count truncated events); needs read\n"
     "gate: (bus:bind-gate session worldline round workload seed verifier folds threshold control verdict windows) -> (ok worldline); (bus:gate-evidence session worldline) -> (ok verdict family adjusted threshold fingerprint); the coordinator recomputes the admission verdict from the held-out windows\n"
+    "replay: (bus:audit-replay session) -> (ok events worldlines keeps findings first-seq first-kind first-reason nodes); (bus:audit-evo session) -> (ok text); the lineage, its integrity findings and the reproduced verdicts\n"
     "failures: (error code message); codes: schema-mismatch, seals-missing, loan-exhausted, image-full, validation-failed, permission, unregistered-id, transport-failed\n"))
 
 (define (bus:status record) (car record))

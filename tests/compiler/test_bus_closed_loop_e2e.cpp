@@ -170,6 +170,12 @@ const char* kHostScript = R"AURA(
        (define a (bus:audit msid 0))
        (display "audit=") (display a) (display "|") (newline)
        (loop))
+      ((string=? l "replay")
+       ; #5392: the replay is the hard gate of the closed loop — the
+       ; lineage must reconstruct with no orphan and no break.
+       (define r (bus:audit-replay msid))
+       (display "replay=") (display (list-ref r 4)) (display "|") (newline)
+       (loop))
       (else (loop)))))
 (bus:detach msid)
 (bus:unhost 8950)
@@ -292,6 +298,11 @@ int main() {
         check(has(audit, "audit="), "audit readable");
         // Trial kind=4, Keep kind=5, CanaryStart=14, CanarySeal=15
         check(has(audit, "4") && has(audit, "5"), "audit covers trial + keep");
+        // #5392: the replay is the hard gate of the closed loop — no
+        // orphan event, no broken parent, no missing verdict.
+        send_cmd(host_in, "replay\n");
+        const std::string replay = read_until(host_out, "|", 10000);
+        check(has(replay, "replay=0"), "the closed loop replays clean");
 
         ::close(prop_in);
         ::kill(prop, SIGKILL);

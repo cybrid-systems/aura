@@ -1506,6 +1506,8 @@ void RegSplitParts::register_api_reference_primitive(PrimRegistrar add, Evaluato
         out += "  (bus:bind-gate session worldline round workload seed verifier folds threshold "
                "control verdict windows) / (bus:gate-evidence session worldline) — the "
                "statistical admission (#5391)\n";
+        out += "  (bus:audit-replay session) / (bus:audit-evo session) — the audit replay: the "
+               "worldline lineage, its integrity findings and the evo schema v2 export (#5392)\n";
         out += "  needs: read for subscribe/query/audit; publish for publish*; "
                "trial/keep/rollback; grant; constraint-write for constraint changes\n";
         out +=

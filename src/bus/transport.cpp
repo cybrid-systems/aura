@@ -1082,20 +1082,80 @@ bool Server::gate_check(std::uint64_t worldline, std::uint64_t token, std::strin
     return true;
 }
 
+// ── Audit replay (#5392) ─────────────────────────────────────
+// A read over the control-plane log and the image: it reconstructs
+// the lineage, checks its integrity and reproduces the admission
+// verdicts from the bound evidence.
+
+ReplayReport Server::replay() const {
+    std::vector<ReplayEvidence> evidence;
+    evidence.reserve(evidence_.size() + gate_evidence_.size());
+    for (const auto& [id, five] : evidence_) {
+        ReplayEvidence item{};
+        item.worldline = id;
+        item.baseline_gen = five.baseline_gen;
+        item.candidate_hash = five.candidate_hash;
+        item.workload_sym = five.workload_sym;
+        item.seed = five.seed;
+        item.verifier_version = five.verifier_version;
+        item.has_five = true;
+        const auto git = gate_evidence_.find(id);
+        if (git != gate_evidence_.end()) {
+            item.gate = git->second;
+            item.has_gate = true;
+        }
+        const auto vit = gate_verdicts_.find(id);
+        if (vit != gate_verdicts_.end()) {
+            item.verdict = vit->second;
+            item.has_verdict = true;
+        }
+        evidence.push_back(item);
+    }
+    // A candidate that never bound the five-tuple can still hold a
+    // statistical verdict: the gate binds its own evidence.
+    for (const auto& [id, gate] : gate_evidence_) {
+        bool known = false;
+        for (const ReplayEvidence& item : evidence) {
+            if (item.worldline == id) {
+                known = true;
+                break;
+            }
+        }
+        if (known)
+            continue;
+        ReplayEvidence item{};
+        item.worldline = id;
+        item.gate = gate;
+        item.has_gate = true;
+        const auto vit = gate_verdicts_.find(id);
+        if (vit != gate_verdicts_.end()) {
+            item.verdict = vit->second;
+            item.has_verdict = true;
+        }
+        evidence.push_back(item);
+    }
+    const auto digest = [this](std::uint64_t worldline) { return candidate_digest(worldline); };
+    return replay_lineage(audit_.events(), {image_base_, image_size_}, evidence,
+                          gate_policy_.required, digest);
+}
+
 bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t root_token,
                             Capability& caps, LoanLedger& loans,
                             std::array<LoanLedger, 6>& channel_loans,
                             std::uint64_t staging_capacity, std::uint64_t& staging_used,
                             std::uint64_t* subscribed, const FrameHeader& header,
                             std::span<const std::byte> body) {
-    const auto deny = [&](int code, const std::string& why) {
+    const auto deny = [&](int code, const std::string& why, std::uint64_t worldline = 0) {
         ErrorBody eb{};
         eb.code = static_cast<std::uint32_t>(code);
         const std::size_t n = std::min(why.size(), sizeof(eb.message) - 1);
         std::memcpy(eb.message, why.data(), n);
         send_frame(conn_fd, FrameType::Error, session,
                    {reinterpret_cast<const std::byte*>(&eb), sizeof(eb)});
-        audit_.add_constraint(AuditKind::Denied, root_token, 0, 0, constraints_.version(), why);
+        // #5392: a refusal names the worldline it refused, so the
+        // replay can show it in the lineage.
+        audit_.add_constraint(AuditKind::Denied, root_token, worldline, 0, constraints_.version(),
+                              why);
     };
     const auto require = [&](std::uint64_t bit, std::uint64_t channel, std::uint64_t worldline) {
         std::string why;
@@ -1194,6 +1254,76 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
                 std::memcpy(wire.reason, e.reason.data(), n);
                 std::memcpy(out.data() + sizeof(reply) + i * sizeof(AuditWire), &wire,
                             sizeof(wire));
+            }
+            send_frame(conn_fd, FrameType::Credit, session, out);
+            break;
+        }
+        case FrameType::AuditReplay: {
+            // #5392: reconstruct the lineage, check its integrity and
+            // reproduce the admission verdicts. A read: it changes
+            // nothing.
+            if (header.len < sizeof(AuditReplayBody))
+                break;
+            AuditReplayBody request{};
+            std::memcpy(&request, body.data(), sizeof(request));
+            if (!require(kCapRead, 0, 0))
+                break;
+            const ReplayReport report = replay();
+            AuditReplayReply reply{};
+            reply.events = report.events;
+            reply.worldlines = report.worldlines;
+            reply.keeps = report.keeps;
+            reply.findings = report.findings;
+            reply.first_seq = report.first_seq;
+            reply.first_kind = report.first_kind;
+            reply.run = workspace_id_;
+            const std::size_t n = std::min(report.nodes.size(), std::size_t{16});
+            reply.truncated = report.nodes.size() > n ? 1 : 0;
+            const std::size_t reason_len =
+                std::min(report.first_reason.size(), sizeof(reply.first_reason) - 1);
+            std::memcpy(reply.first_reason, report.first_reason.data(), reason_len);
+            std::vector<std::byte> out(sizeof(reply) + n * sizeof(AuditReplayNode));
+            std::memcpy(out.data(), &reply, sizeof(reply));
+            for (std::size_t i = 0; i < n; ++i) {
+                const ReplayNode& node = report.nodes[i];
+                AuditReplayNode wire{};
+                wire.worldline = node.worldline;
+                wire.parent = node.parent;
+                wire.state = node.state;
+                wire.trial_seq = node.trial_seq;
+                wire.keep_seq = node.keep_seq;
+                wire.verdict_seq = node.verdict_seq;
+                wire.constraint = node.constraint;
+                wire.reproduced = node.reproduced;
+                wire.fingerprint = node.fingerprint;
+                // The reason of the KEEP (or the trial) event, and the
+                // evidence the verdict was made from.
+                for (const AuditEvent& event : audit_.events()) {
+                    if (event.worldline != node.worldline)
+                        continue;
+                    if (event.kind != AuditKind::Keep && event.kind != AuditKind::Rollback &&
+                        event.kind != AuditKind::CanaryRevert && event.kind != AuditKind::Trial)
+                        continue;
+                    wire.timestamp_ms = event.timestamp_ms;
+                    const std::size_t len = std::min(event.reason.size(), sizeof(wire.reason) - 1);
+                    std::memcpy(wire.reason, event.reason.data(), len);
+                    break;
+                }
+                const auto eit = evidence_.find(node.worldline);
+                if (eit != evidence_.end()) {
+                    wire.baseline_gen = eit->second.baseline_gen;
+                    wire.candidate_hash = eit->second.candidate_hash;
+                    wire.workload_sym = eit->second.workload_sym;
+                    wire.seed = eit->second.seed;
+                    wire.verifier_version = eit->second.verifier_version;
+                }
+                const auto vit = gate_verdicts_.find(node.worldline);
+                if (vit != gate_verdicts_.end()) {
+                    wire.gate_verdict = vit->second.verdict;
+                    wire.gate_family = vit->second.family;
+                    wire.adjusted_ppm = vit->second.adjusted_ppm;
+                }
+                std::memcpy(out.data() + sizeof(reply) + i * sizeof(wire), &wire, sizeof(wire));
             }
             send_frame(conn_fd, FrameType::Credit, session, out);
             break;
@@ -1547,7 +1677,8 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
                     }
                 }
                 if (missing_source) {
-                    deny(EINVAL, "validation-failed: patch source missing from string table");
+                    deny(EINVAL, "validation-failed: patch source missing from string table",
+                         loan.worldline);
                     break;
                 }
                 ConstraintContext ctx{};
@@ -1558,13 +1689,14 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
                 ctx.sources = sources;
                 const GateResult gate = constraints_.check(ctx, &audit_, root_token);
                 if (!gate.pass) {
-                    deny(EPERM, "constraint: " + gate.reason);
+                    deny(EPERM, "constraint: " + gate.reason, loan.worldline);
                     break;
                 }
                 // #5381: one observation at a time; a second canary while
                 // the first is unsealed would stack rollback snapshots.
                 if (canary_window_ != 0 && canary_worldline_ != 0) {
-                    deny(EBUSY, "canary-active: seal or revert the active observation first");
+                    deny(EBUSY, "canary-active: seal or revert the active observation first",
+                         loan.worldline);
                     break;
                 }
                 // #5379: evidence gate — a KEEP must carry a matching
@@ -1573,24 +1705,24 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
                 if (evidence_required_) {
                     const auto eit = evidence_.find(loan.worldline);
                     if (eit == evidence_.end()) {
-                        deny(EINVAL, "validation-failed: missing-evidence");
+                        deny(EINVAL, "validation-failed: missing-evidence", loan.worldline);
                         break;
                     }
                     const EvidenceBody& ev = eit->second;
                     if (ev.workload_sym == 0 || ev.seed == 0 || ev.verifier_version == 0) {
-                        deny(EINVAL, "validation-failed: incomplete-evidence");
+                        deny(EINVAL, "validation-failed: incomplete-evidence", loan.worldline);
                         break;
                     }
                     if (trial != nullptr && ev.baseline_gen != trial->base_generation) {
-                        deny(EINVAL, "validation-failed: stale-baseline");
+                        deny(EINVAL, "validation-failed: stale-baseline", loan.worldline);
                         break;
                     }
                     if (ev.baseline_gen != workspace_gen_) {
-                        deny(EINVAL, "validation-failed: stale-baseline");
+                        deny(EINVAL, "validation-failed: stale-baseline", loan.worldline);
                         break;
                     }
                     if (ev.candidate_hash != candidate_digest(loan.worldline)) {
-                        deny(EINVAL, "validation-failed: candidate-hash-mismatch");
+                        deny(EINVAL, "validation-failed: candidate-hash-mismatch", loan.worldline);
                         break;
                     }
                 }
@@ -1602,7 +1734,7 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
                 if (gate_policy_.required) {
                     std::string gwhy;
                     if (!gate_check(loan.worldline, root_token, &gwhy)) {
-                        deny(EINVAL, gwhy);
+                        deny(EINVAL, gwhy, loan.worldline);
                         break;
                     }
                 }
@@ -1612,13 +1744,13 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
                 // pending (a later retry or disconnect rollback).
                 if (apply_ && has_source) {
                     if (trial != nullptr && trial->base_generation != workspace_gen_) {
-                        deny(EINVAL, "validation-failed: stale-baseline");
+                        deny(EINVAL, "validation-failed: stale-baseline", loan.worldline);
                         break;
                     }
                     std::string why;
                     if (!apply_(loan.worldline, workspace_gen_, patches, sources,
                                 canary_window_ != 0, &why)) {
-                        deny(EINVAL, "validation-failed: " + why);
+                        deny(EINVAL, "validation-failed: " + why, loan.worldline);
                         break;
                     }
                     applied_live = true;

@@ -117,6 +117,7 @@ GateVerdictRecord gate_admit(const GateEvidenceBody& evidence, std::uint64_t fam
     rec.windows = evidence.fold_count;
     rec.threshold_ppm = policy.threshold_ppm;
     rec.tighten_factor = policy.tighten_factor;
+    rec.min_windows = policy.min_windows;
     rec.policy_version = policy.version;
     rec.fingerprint = gate_fingerprint(evidence);
     const std::size_t n = static_cast<std::size_t>(evidence.fold_count);

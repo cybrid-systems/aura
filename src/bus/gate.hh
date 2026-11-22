@@ -79,6 +79,7 @@ struct GateVerdictRecord {
     std::uint64_t haircut_ppm = 0;
     std::uint64_t threshold_ppm = 0;
     std::uint64_t tighten_factor = 0;
+    std::uint64_t min_windows = 0;
     std::uint64_t policy_version = 0;
     std::uint64_t fingerprint = 0;
 };

@@ -1871,7 +1871,7 @@ add_test(NAME test_error_kind_names_wire_verification COMMAND ./test_error_kind_
 # image_schema.cpp (non-import-std); the validator and test are meta-free.
 add_library(aura-bus STATIC src/bus/image.cpp src/bus/image_schema.cpp src/bus/transport.cpp
                                  src/bus/capability.cpp src/bus/channel.cpp src/bus/constraint.cpp
-                                 src/bus/query.cpp src/bus/host.cpp src/bus/gate.cpp)
+                                 src/bus/query.cpp src/bus/host.cpp src/bus/gate.cpp src/bus/replay.cpp)
 target_include_directories(aura-bus PUBLIC ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(aura PRIVATE aura-bus)
 # Issue #5127/#5122: evaluator_primitives_misc.cpp's bus-call bridge
@@ -2028,6 +2028,18 @@ target_compile_features(test_bus_stat_gate PUBLIC cxx_std_26)
 target_link_libraries(test_bus_stat_gate PRIVATE aura-bus)
 aura_strict_test_warnings(tests/compiler/test_bus_stat_gate.cpp)
 add_test(NAME test_bus_stat_gate_5391 COMMAND ./test_bus_stat_gate)
+
+# Issue #5392: audit replay and deterministic reproduction. The
+# coordinator reconstructs the worldline lineage from the audit log
+# and the image, checks its integrity (no orphan event, no broken
+# parent, monotonic sequence, every KEEP with its evidence) and
+# reproduces the admission verdicts byte for byte.
+add_executable(test_bus_audit_replay tests/compiler/test_bus_audit_replay.cpp)
+target_include_directories(test_bus_audit_replay PRIVATE src)
+target_compile_features(test_bus_audit_replay PUBLIC cxx_std_26)
+target_link_libraries(test_bus_audit_replay PRIVATE aura-bus)
+aura_strict_test_warnings(tests/compiler/test_bus_audit_replay.cpp)
+add_test(NAME test_bus_audit_replay_5392 COMMAND ./test_bus_audit_replay)
 
 # Issue #5373: a stale short-circuit name-cache row must not hijack a
 # later form whose pool-local SymId collides; display output was dropped.

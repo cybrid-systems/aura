@@ -22,6 +22,7 @@ module;
 #include "compiler/cct_probe.hh"
 #include "compiler/mutate_type_gate.hh" // #5380: contract protection mirror
 #include "compiler/evo_log_4910.hh"     // #5380: contract digest transport
+#include "compiler/json_escape.hh"      // #5392: the evo schema export
 
 module aura.compiler.evaluator;
 
@@ -1050,6 +1051,135 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                 return bus_list(ev, {bus_string(ev, "ok"),
                                      make_int(static_cast<std::int64_t>(ar.count)),
                                      make_int(static_cast<std::int64_t>(ar.truncated)), listed});
+            }
+
+            // #5392: replay the audit log — the reconstructed lineage,
+            // the integrity findings and the reproduced verdicts. The
+            // evo export renders the same lineage as evo schema v2
+            // JSONL, so `aura evo log` reads the bus lineage directly.
+            if (op == "audit-replay" || op == "audit-evo") {
+                std::int64_t sid = 0;
+                if (a.size() < 2 || !bus_int(a[1], &sid))
+                    return bus_error(ev, "validation-failed", "audit-replay needs a session id");
+                const auto sit = g_bus_sessions.find(sid);
+                if (sit == g_bus_sessions.end())
+                    return bus_error(ev, "unregistered-id", "unknown session");
+                auto& att = sit->second->att;
+                aura::bus::AuditReplayBody req{};
+                if (!aura::bus::send_frame(att.sock, aura::bus::FrameType::AuditReplay, att.session,
+                                           {reinterpret_cast<const std::byte*>(&req), sizeof(req)}))
+                    return bus_error(ev, "transport-failed", "audit replay send failed");
+                aura::bus::FrameHeader hdr{};
+                std::vector<std::byte> body(aura::bus::kBusMaxControlFrame);
+                if (!recv_reply(att.sock, &hdr, &body))
+                    return bus_error(ev, "transport-failed", "audit replay reply lost");
+                if (hdr.type == static_cast<std::uint16_t>(aura::bus::FrameType::Error)) {
+                    aura::bus::ErrorBody eb{};
+                    std::memcpy(&eb, body.data(), std::min(sizeof(eb), body.size()));
+                    return bus_error(ev, "permission", eb.message);
+                }
+                if (hdr.len < sizeof(aura::bus::AuditReplayReply))
+                    return bus_error(ev, "validation-failed", "malformed audit replay reply");
+                aura::bus::AuditReplayReply reply{};
+                std::memcpy(&reply, body.data(), sizeof(reply));
+                const std::uint64_t count =
+                    (hdr.len - sizeof(reply)) / sizeof(aura::bus::AuditReplayNode);
+                if (op == "audit-evo") {
+                    std::string text;
+                    for (std::uint64_t i = 0; i < count; ++i) {
+                        aura::bus::AuditReplayNode node{};
+                        std::memcpy(&node, body.data() + sizeof(reply) + i * sizeof(node),
+                                    sizeof(node));
+                        const std::string id = "w" + std::to_string(node.worldline);
+                        const std::string parent =
+                            node.parent != 0 ? "w" + std::to_string(node.parent) : std::string();
+                        const char* decision = "TRIAL";
+                        switch (node.state) {
+                            case 1:
+                                decision = "KEEP";
+                                break;
+                            case 2:
+                                decision = "ROLLBACK";
+                                break;
+                            case 3:
+                                decision = "REJECT";
+                                break;
+                            case 4:
+                                decision = "CANARY";
+                                break;
+                            default:
+                                break;
+                        }
+                        std::string reason;
+                        aura::json::escape_into(
+                            reason,
+                            std::string(node.reason, strnlen(node.reason, sizeof(node.reason))));
+                        text +=
+                            "{\"v\":2,\"id\":\"" + id + "\",\"parent\":\"" + parent +
+                            "\",\"run\":\"bus-" + std::to_string(reply.run) +
+                            "\",\"seq\":" + std::to_string(node.trial_seq) +
+                            ",\"ts_ms\":" + std::to_string(node.timestamp_ms) +
+                            ",\"kind\":\"bus:worldline\",\"target\":\"" +
+                            std::to_string(node.worldline) + "\",\"decision\":\"" + decision +
+                            "\",\"reason\":\"" + reason + "\",\"evidence\":{\"baseline_gen\":" +
+                            std::to_string(node.baseline_gen) +
+                            ",\"candidate_hash\":" + std::to_string(node.candidate_hash) +
+                            ",\"workload_sym\":" + std::to_string(node.workload_sym) +
+                            ",\"seed\":" + std::to_string(node.seed) +
+                            ",\"verifier_version\":" + std::to_string(node.verifier_version) +
+                            ",\"gate_verdict\":" + std::to_string(node.gate_verdict) +
+                            ",\"gate_family\":" + std::to_string(node.gate_family) +
+                            ",\"adjusted_ppm\":" + std::to_string(node.adjusted_ppm) +
+                            ",\"fingerprint\":" + std::to_string(node.fingerprint) +
+                            "},\"old\":null,\"new\":null,\"dur_ms\":0,\"algo\":\"bus\",\"gen\":0,"
+                            "\"slot\":0,\"search\":\"bus\",\"candidate\":\"" +
+                            id + "\",\"parents\":[\"" + parent +
+                            "\"],\"behavior\":null,\"objectives\":null,\"constraints\":null}\n";
+                    }
+                    return bus_list(ev, {bus_string(ev, "ok"), bus_string(ev, text)});
+                }
+                std::vector<EvalValue> rows;
+                for (std::uint64_t i = 0; i < count; ++i) {
+                    aura::bus::AuditReplayNode node{};
+                    std::memcpy(&node, body.data() + sizeof(reply) + i * sizeof(node),
+                                sizeof(node));
+                    rows.push_back(bus_list(
+                        ev,
+                        {make_int(static_cast<std::int64_t>(node.worldline)),
+                         make_int(static_cast<std::int64_t>(node.parent)),
+                         make_int(static_cast<std::int64_t>(node.state)),
+                         make_int(static_cast<std::int64_t>(node.trial_seq)),
+                         make_int(static_cast<std::int64_t>(node.keep_seq)),
+                         make_int(static_cast<std::int64_t>(node.verdict_seq)),
+                         make_int(static_cast<std::int64_t>(node.constraint)),
+                         make_int(static_cast<std::int64_t>(node.reproduced)),
+                         make_int(static_cast<std::int64_t>(node.fingerprint)),
+                         make_int(static_cast<std::int64_t>(node.timestamp_ms)),
+                         make_int(static_cast<std::int64_t>(node.baseline_gen)),
+                         make_int(static_cast<std::int64_t>(node.candidate_hash)),
+                         make_int(static_cast<std::int64_t>(node.workload_sym)),
+                         make_int(static_cast<std::int64_t>(node.seed)),
+                         make_int(static_cast<std::int64_t>(node.verifier_version)),
+                         make_int(static_cast<std::int64_t>(node.gate_verdict)),
+                         make_int(static_cast<std::int64_t>(node.gate_family)),
+                         make_int(node.adjusted_ppm),
+                         bus_string(ev, std::string(node.reason,
+                                                    strnlen(node.reason, sizeof(node.reason))))}));
+                }
+                EvalValue listed = make_void();
+                for (auto it = rows.rbegin(); it != rows.rend(); ++it)
+                    listed = make_pair(static_cast<std::uint64_t>(ev.push_pair(*it, listed)));
+                return bus_list(
+                    ev, {bus_string(ev, "ok"), make_int(static_cast<std::int64_t>(reply.events)),
+                         make_int(static_cast<std::int64_t>(reply.worldlines)),
+                         make_int(static_cast<std::int64_t>(reply.keeps)),
+                         make_int(static_cast<std::int64_t>(reply.findings)),
+                         make_int(static_cast<std::int64_t>(reply.first_seq)),
+                         make_int(static_cast<std::int64_t>(reply.first_kind)),
+                         bus_string(ev, std::string(reply.first_reason,
+                                                    strnlen(reply.first_reason,
+                                                            sizeof(reply.first_reason)))),
+                         listed});
             }
 
 
