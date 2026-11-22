@@ -19,6 +19,7 @@
 #include <string>
 
 #include "bus/capability.hh"
+#include "bus/gate.hh"
 #include "bus/image_format.hh"
 
 namespace aura::bus {
@@ -41,6 +42,9 @@ struct HostOptions {
     std::uint64_t canary_window = 0;     // metric ticks; 0 = no observation
     std::uint64_t canary_floor = 0;      // metric floor; 0 = no auto-revert
     std::uint64_t canary_metric_key = 0; // which metric key drives the window
+    // #5391: the statistical admission policy. Defaults keep the
+    // v0.3.1 surface: the gate is off until a host asks for it.
+    GatePolicy gate{};
     // #5378: apply a KEEP'd trial's patches to the live workspace. Runs
     // on the coordinator thread; must be all-or-nothing (byte-identical
     // on failure). canary=true means the apply enters observation and a

@@ -1503,6 +1503,9 @@ void RegSplitParts::register_api_reference_primitive(PrimRegistrar add, Evaluato
         out += "  (bus:grant session bits channels loans expires worldline) / (bus:revoke session "
                "token)\n";
         out += "  (bus:audit session worldline) / (bus:help)\n";
+        out += "  (bus:bind-gate session worldline round workload seed verifier folds threshold "
+               "control verdict windows) / (bus:gate-evidence session worldline) — the "
+               "statistical admission (#5391)\n";
         out += "  needs: read for subscribe/query/audit; publish for publish*; "
                "trial/keep/rollback; grant; constraint-write for constraint changes\n";
         out +=

@@ -151,6 +151,12 @@ enum class AuditKind : std::uint16_t {
     CanaryStart = 14,
     CanarySeal = 15,
     CanaryRevert = 16,
+    // #5391: statistical admission events. GateBind records the
+    // judge's held-out evidence, GateVerdict the coordinator's own
+    // recomputed decision, GateTighten a tightened admission policy.
+    GateBind = 17,
+    GateVerdict = 18,
+    GateTighten = 19,
 };
 
 struct AuditEvent {

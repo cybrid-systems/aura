@@ -634,6 +634,23 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                     opts.canary_floor = std::strtoull(cf, nullptr, 10);
                 if (const char* ck = ::getenv("AURA_BUS_CANARY_KEY"))
                     opts.canary_metric_key = std::strtoull(ck, nullptr, 10);
+                // #5391: the statistical admission policy. Off by
+                // default; a host opts in and sets the bar, the window
+                // floor, the negative-KEEP budget and its window.
+                if (const char* gate_on = ::getenv("AURA_BUS_GATE"))
+                    opts.gate.required = std::string(gate_on) == "1";
+                if (const char* gt = ::getenv("AURA_BUS_GATE_THRESHOLD"))
+                    opts.gate.threshold_ppm = std::strtoull(gt, nullptr, 10);
+                if (const char* gw = ::getenv("AURA_BUS_GATE_MIN_WINDOWS"))
+                    opts.gate.min_windows =
+                        static_cast<std::uint32_t>(std::strtoull(gw, nullptr, 10));
+                if (const char* gb = ::getenv("AURA_BUS_GATE_BUDGET"))
+                    opts.gate.negative_budget_ppm = std::strtoull(gb, nullptr, 10);
+                if (const char* gs = ::getenv("AURA_BUS_GATE_WINDOW"))
+                    opts.gate.budget_window =
+                        static_cast<std::uint32_t>(std::strtoull(gs, nullptr, 10));
+                if (const char* gc = ::getenv("AURA_BUS_GATE_CONTROL"))
+                    opts.gate.require_control = std::string(gc) != "0";
                 std::string out_path, why;
                 if (!aura::bus::host_start(opts, &out_path, &why))
                     return bus_error(ev, "transport-failed", why);
@@ -1190,6 +1207,104 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                              make_int(static_cast<std::int64_t>(found.verifier_version & kImm))});
                 }
                 return bus_error(ev, "unregistered-id", "worldline has no committed record");
+            }
+
+            // #5391: bind the judge's held-out evidence to a pending
+            // trial. The coordinator recomputes the admission verdict
+            // from the windows; the judge's own summary is audited, not
+            // believed.
+            // (bus-call "bind-gate" sid wl round workload seed verifier folds threshold control
+            //                     verdict windows)
+            if (op == "bind-gate") {
+                std::int64_t wl = 0, round = 0, workload = 0, seed = 0, verifier = 0, folds = 0,
+                             threshold = 0, control = 0, verdict = 0;
+                if (a.size() < 12 || !bus_int(a[2], &wl) || !bus_int(a[3], &round) ||
+                    !bus_int(a[4], &workload) || !bus_int(a[5], &seed) ||
+                    !bus_int(a[6], &verifier) || !bus_int(a[7], &folds) ||
+                    !bus_int(a[8], &threshold) || !bus_int(a[9], &control) ||
+                    !bus_int(a[10], &verdict))
+                    return bus_error(
+                        ev, "validation-failed",
+                        "bind-gate needs wl round workload seed verifier folds threshold control "
+                        "verdict windows");
+                aura::bus::GateEvidenceBody gev{};
+                gev.worldline = static_cast<std::uint64_t>(wl);
+                gev.round_id = static_cast<std::uint64_t>(round);
+                gev.workload_sym = static_cast<std::uint64_t>(workload);
+                gev.seed = static_cast<std::uint64_t>(seed);
+                gev.verifier_version = static_cast<std::uint64_t>(verifier);
+                gev.fold_count = static_cast<std::uint64_t>(folds);
+                gev.threshold_ppm = static_cast<std::uint64_t>(threshold);
+                gev.control = static_cast<std::uint64_t>(control);
+                gev.verdict = static_cast<std::uint64_t>(verdict);
+                // The held-out windows: a list of signed metric deltas.
+                const auto pairs = ev.pairs();
+                EvalValue cur = a[11];
+                std::size_t n = 0;
+                while (n < aura::bus::kGateMaxWindows && is_pair(cur)) {
+                    const auto idx = as_pair_idx(cur);
+                    if (idx >= pairs.size())
+                        break;
+                    std::int64_t w = 0;
+                    if (!bus_int(pairs[idx].car, &w))
+                        break;
+                    gev.windows[n++] = static_cast<std::uint64_t>(w);
+                    cur = pairs[idx].cdr;
+                }
+                if (n != static_cast<std::size_t>(folds) || folds <= 0)
+                    return bus_error(ev, "validation-failed",
+                                     "bind-gate window count does not match the fold count");
+                if (!aura::bus::send_frame(att.sock, aura::bus::FrameType::GateBind, att.session,
+                                           {reinterpret_cast<const std::byte*>(&gev), sizeof(gev)}))
+                    return bus_error(ev, "transport-failed", "gate bind send failed");
+                aura::bus::FrameHeader hdr{};
+                std::vector<std::byte> body(aura::bus::kBusMaxControlFrame);
+                if (!recv_reply(att.sock, &hdr, &body))
+                    return bus_error(ev, "transport-failed", "gate bind reply lost");
+                if (hdr.type == static_cast<std::uint16_t>(aura::bus::FrameType::Error)) {
+                    aura::bus::ErrorBody eb{};
+                    std::memcpy(&eb, body.data(), std::min(sizeof(eb), body.size()));
+                    return bus_error(ev, "permission", eb.message);
+                }
+                return bus_list(ev, {bus_string(ev, "ok"), make_int(wl)});
+            }
+
+            // #5391: read the coordinator's admission verdict for a
+            // worldline. (bus-call "gate-evidence" sid wl)
+            // -> (ok verdict family adjusted threshold fingerprint)
+            if (op == "gate-evidence") {
+                std::int64_t wl = 0;
+                if (a.size() < 3 || !bus_int(a[2], &wl))
+                    return bus_error(ev, "validation-failed", "gate-evidence needs a worldline id");
+                if ((state->att.caps & aura::bus::kCapRead) == 0)
+                    return bus_error(ev, "permission", "missing capability: read");
+                aura::bus::ChannelView view{};
+                if (!aura::bus::channel_view(state->att.view(), aura::bus::Channel::Worldlines,
+                                             &view))
+                    return bus_error(ev, "unavailable", "worldline section is missing");
+                const auto* base = static_cast<const std::byte*>(state->att.base);
+                aura::bus::WorldlineRecord found{};
+                bool have = false;
+                for (std::uint64_t i = 0; i < view.count; ++i) {
+                    aura::bus::WorldlineRecord w{};
+                    std::memcpy(&w, base + view.offset + i * view.element_size,
+                                std::min<std::uint64_t>(view.element_size, sizeof(w)));
+                    if (w.id == static_cast<std::uint64_t>(wl)) {
+                        found = w;
+                        have = true;
+                    }
+                }
+                if (!have)
+                    return bus_error(ev, "unregistered-id", "worldline has no committed record");
+                constexpr std::uint64_t kImm = (1ull << 62) - 1;
+                const std::int64_t adjusted = static_cast<std::int64_t>(found.gate_adjusted_ppm) -
+                                              static_cast<std::int64_t>(aura::bus::kGateBias);
+                return bus_list(
+                    ev,
+                    {bus_string(ev, "ok"), make_int(static_cast<std::int64_t>(found.gate_verdict)),
+                     make_int(static_cast<std::int64_t>(found.gate_family)), make_int(adjusted),
+                     make_int(static_cast<std::int64_t>(found.gate_threshold_ppm & kImm)),
+                     make_int(static_cast<std::int64_t>(found.gate_fingerprint & kImm))});
             }
 
             // #5379: read the coordinator's digest of a trial's patch

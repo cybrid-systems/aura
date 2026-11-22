@@ -18,6 +18,7 @@
         bus:trial bus:keep bus:rollback bus:grant bus:revoke bus:audit
         bus:publish-source bus:bind-evidence bus:evidence bus:canary-confirm
         bus:candidate-digest bus:source-field bus:grant-activate
+        bus:bind-gate bus:gate-evidence
         bus:status bus:code bus:message bus:ok? bus:help
         bus:attach? bus:error? bus:record?)
 
@@ -171,6 +172,29 @@
 (define (bus:grant-activate session token)
   (bus-call "grant-activate" session token))
 
+; ── v0.3.2 statistical admission (#5391) ──────────────────────
+; (bus:bind-gate session worldline round workload seed verifier folds
+;                 threshold control verdict windows) -> (ok worldline)
+; Bind the held-out evidence of a candidate to its trial. `windows` is
+; the list of per-fold out-of-sample metric deltas in parts per
+; million (signed); `round` groups the candidates of one admission
+; round — the family the multiple-comparison correction applies to.
+; `control` marks the round's negative control: a known-harmful
+; candidate the statistics must reject. The coordinator recomputes the
+; verdict from the windows; the judge's `verdict` is audited, not
+; believed.
+(define (bus:bind-gate session worldline round workload seed verifier folds threshold control
+               verdict windows)
+  (bus-call "bind-gate" session worldline round workload seed verifier folds threshold control
+             verdict windows))
+
+; (bus:gate-evidence session worldline) -> (ok verdict family adjusted threshold fingerprint)
+; Read the coordinator's own admission verdict for a worldline:
+; verdict 1 = keep, 2 = reject; adjusted is the deflated mean in
+; parts per million.
+(define (bus:gate-evidence session worldline)
+  (bus-call "gate-evidence" session worldline))
+
 ; (bus:grant session bits channels loans expires worldline) -> (ok token)
 (define (bus:grant session bits channels loans expires worldline)
   (bus-call "grant" session bits channels loans expires worldline))
@@ -205,6 +229,7 @@
     "keep/rollback: (bus:keep session worldline node value) / (bus:rollback session worldline); needs keep/rollback and the current constraints pass\n"
     "grant/revoke: (bus:grant session bits channels loans expires worldline) -> (ok token); (bus:revoke session token); needs grant\n"
     "audit: (bus:audit session worldline) -> (ok count truncated events); needs read\n"
+    "gate: (bus:bind-gate session worldline round workload seed verifier folds threshold control verdict windows) -> (ok worldline); (bus:gate-evidence session worldline) -> (ok verdict family adjusted threshold fingerprint); the coordinator recomputes the admission verdict from the held-out windows\n"
     "failures: (error code message); codes: schema-mismatch, seals-missing, loan-exhausted, image-full, validation-failed, permission, unregistered-id, transport-failed\n"))
 
 (define (bus:status record) (car record))

@@ -1,6 +1,6 @@
-# 本机工具总线（v0.3.1）
+# 本机工具总线（v0.3.2）
 
-本页是 #5121（v0.3.0 底座）与 #5376（v0.3.1 跨进程自进化闭环）的实现说明。只做同机协同：一条总线对应一个工作区、一份活 AST；不引入总线守护进程，不做跨机、RDMA 或 CXL。v0.3.1 在底座上交付多对端并发服务、KEEP 原子应用回活 AST、候选证据五元绑定、约束最小安全子集与金丝雀观察期。
+本页是 #5121（v0.3.0 底座）、#5376（v0.3.1 跨进程自进化闭环）与 #5391（v0.3.2 统计准入）的实现说明。只做同机协同：一条总线对应一个工作区、一份活 AST；不引入总线守护进程，不做跨机、RDMA 或 CXL。v0.3.1 在底座上交付多对端并发服务、KEEP 原子应用回活 AST、候选证据五元绑定、约束最小安全子集与金丝雀观察期；v0.3.2 把统计准入总线化——协调者自己重算判决。
 
 ## 默认传输
 
@@ -163,3 +163,14 @@ canary 拒绝)、`test_bus_closed_loop_e2e`(#5382,三进程正常闭环 + 五类
 - 失败是 `(error code message)`，不是 `#f`；`bus:ok?` / `bus:code` / `bus:message` 读取。错误码含 `schema-mismatch`、`seals-missing`、`loan-exhausted`、`image-full`、`validation-failed`、`permission`、`unregistered-id`、`transport-failed`。
 
 `(api-reference)` 现在也列出这些动词、所需能力和失败码。审计有两个面：控制面日志（带原因，供 `bus:audit`）和映像审计节（只追加，供映射方直接遍历）。
+
+### v0.3.2 统计准入(#5391)
+
+裁判负责测量，协调者负责裁决。裁判把候选的 held-out 证据绑到自己的 trial 上，协调者**不信裁判的汇总结论**：它从绑定的原始窗口重算均值、样本标准差与标准误，按**自己观察到的**候选族规模做多重比较校正（Bailey/López-de-Prado 折价 `E[max of N 正态] * se`，与 `std/validation` 的 `val:deflate` 同一套数学），然后裁决。结论是定点数，同一份证据永远重算出逐字节相同的判决。
+
+- `(bus:bind-gate session worldline round workload seed verifier folds threshold control verdict windows)` → `(ok worldline)`：绑定一份候选的 held-out 证据。`windows` 是逐折 out-of-sample 指标增量列表（百万分之一为单位，可负）；`round` 是候选所属的准入轮次（族），`workload`/`seed`/`verifier` 必须与已绑定的五元证据一致，`control=1` 标记本轮的负向对照（已知有害候选）。
+- `(bus:gate-evidence session worldline)` → `(ok verdict family adjusted threshold fingerprint)`：读回协调者自己的判决（verdict 1 = 放行，2 = 拒绝；adjusted 是折价后的均值，单位 ppm）。
+- 准入拒绝原因：`missing-gate-evidence`（没有统计证据）、`missing-negative-control`（本轮没有负向对照）、`negative-control-refused`（对照永不应用）、`negative-control-accepted`（统计放行了已知有害候选 = 门失效）、`gate-rejected`（统计不显著）、`gate-evidence-mismatch`（证据与五元不是同一次评估）。
+- 判决随 worldline 记录追加进映像（新增尾字段 `gate_verdict`/`gate_family`/`gate_adjusted_ppm`/`gate_threshold_ppm`/`gate_fingerprint`，layout_version 3；v1/v2 映像照读，尾字段默认零）。
+- 负向 KEEP 预算：协调者盯住最近若干次 KEEP。被撤回的 KEEP（可观测期退化自动撤回或裁判回滚）与被统计放行的对照都算负向事件；超过预算就把折价乘子翻倍并写 `GateTighten` 审计（准入自动收紧）。
+- 宿主环境变量：`AURA_BUS_GATE=1` 开启准入门；`AURA_BUS_GATE_THRESHOLD`（放行门槛，ppm）、`AURA_BUS_GATE_MIN_WINDOWS`（最少 held-out 窗口）、`AURA_BUS_GATE_BUDGET`（负向 KEEP 预算，ppm）、`AURA_BUS_GATE_WINDOW`（预算滑动窗口大小）、`AURA_BUS_GATE_CONTROL=0`（不强制负向对照）。默认全关，保持 v0.3.1 行为。

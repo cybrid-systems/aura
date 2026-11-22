@@ -115,7 +115,11 @@ Built build_image(std::span<std::byte> img, std::uint64_t node_tail_bytes = 0) {
     std::uint64_t off = dir_off + dir_slots * sizeof(SectionEntry);
 
     const std::uint64_t strings_off = off;
-    const std::uint64_t strings_len = 48;
+    // #5378: the string table reserves a fixed entry array; the string
+    // bytes follow it, so an entry's offset is always past the array.
+    const std::uint64_t strings_reserved =
+        (aura::bus::kStringSlotsReserved * sizeof(StringTableEntry) + 7) & ~7ull;
+    const std::uint64_t strings_len = strings_reserved + 64;
     off = align8(off + strings_len);
 
     const std::uint64_t symbols_off = off;
@@ -209,14 +213,14 @@ Built build_image(std::span<std::byte> img, std::uint64_t node_tail_bytes = 0) {
     entry(8, SectionKind::Audit, audit_off, audit_len, sizeof(AuditRecord), 2);
     entry(9, SectionKind::Staging, staging_off, 0, 1, 0);
 
-    // String table: two 8-aligned slices after the entry array.
-    put(img, strings_off, StringTableEntry{32, 5, 0});
-    put(img, strings_off + sizeof(StringTableEntry), StringTableEntry{40, 5, 0});
-    std::memcpy(img.data() + strings_off + 32, "hello", 5);
-    std::memcpy(img.data() + strings_off + 40, "world", 5);
+    // String table: two 8-aligned slices after the reserved entry array.
+    put(img, strings_off, StringTableEntry{strings_reserved, 5, 0});
+    put(img, strings_off + sizeof(StringTableEntry), StringTableEntry{strings_reserved + 8, 5, 0});
+    std::memcpy(img.data() + strings_off + strings_reserved, "hello", 5);
+    std::memcpy(img.data() + strings_off + strings_reserved + 8, "world", 5);
 
-    put(img, symbols_off, SymbolEntry{32, 5, 0});
-    put(img, symbols_off + sizeof(SymbolEntry), SymbolEntry{40, 5, 0});
+    put(img, symbols_off, SymbolEntry{strings_reserved, 5, 0});
+    put(img, symbols_off + sizeof(SymbolEntry), SymbolEntry{strings_reserved + 8, 5, 0});
 
     NodeRecord n0{};
     n0.kind = 1;
@@ -418,7 +422,7 @@ std::uint64_t section_dir_off_of(std::span<const std::byte> img, SectionKind kin
 } // namespace
 
 int main() {
-    constexpr std::uint64_t kSize = 4096;
+    constexpr std::uint64_t kSize = 1u << 16;
     std::vector<std::byte> backing(kSize);
     std::span<std::byte> img(backing);
     build_image(img);
@@ -600,8 +604,15 @@ int main() {
     copy = backing;
     {
         const std::uint64_t at = section_dir_off_of(copy, SectionKind::SymbolTable);
-        const SectionEntry e = get<SectionEntry>(copy, at);
-        put(copy, e.offset + offsetof(SymbolEntry, name_off), std::uint64_t{9999});
+        SectionEntry e = get<SectionEntry>(copy, at);
+        const std::uint64_t sat = section_dir_off_of(copy, SectionKind::StringTable);
+        const SectionEntry se = get<SectionEntry>(copy, sat);
+        // A name past the end of the string section.
+        put(copy, e.offset + offsetof(SymbolEntry, name_off), se.length + 4096);
+        // Re-commit the section digest: the out-of-range name is the
+        // defect under test, not a stale digest.
+        e.digest = fnv_bytes(copy, e.offset, e.length);
+        put(copy, at, e);
     }
     expect(ImageStatus::BadIndex, "symbol name outside the string table");
 
@@ -647,7 +658,7 @@ int main() {
 
     // ── Additive compatibility: tail fields and unknown sections ─
     {
-        std::vector<std::byte> grown(4096);
+        std::vector<std::byte> grown(1u << 16);
         std::span<std::byte> g(grown);
         const Built b = build_image(g, 8);
         const auto vc = aura::bus::validate_image(g);

@@ -780,6 +780,17 @@ void Server::project_worldline(std::uint64_t id, WorldlineState state, Constrain
         w.seed = it->second.seed;
         w.verifier_version = it->second.verifier_version;
     }
+    if (const auto it = gate_verdicts_.find(id); it != gate_verdicts_.end()) {
+        // #5391: the coordinator's admission verdict travels with the
+        // worldline record, so a reader can see what the statistics
+        // decided without replaying the audit.
+        w.gate_verdict = it->second.verdict;
+        w.gate_family = it->second.family;
+        w.gate_adjusted_ppm = static_cast<std::uint64_t>(it->second.adjusted_ppm +
+                                                         static_cast<std::int64_t>(kGateBias));
+        w.gate_threshold_ppm = it->second.threshold_ppm;
+        w.gate_fingerprint = it->second.fingerprint;
+    }
     std::memcpy(image_base_ + view.offset + view.length, &w,
                 static_cast<std::size_t>(std::min<std::uint64_t>(elem, sizeof(w))));
     std::uint64_t gen = 0;
@@ -877,6 +888,9 @@ void Server::canary_revert(std::uint64_t worldline, std::string_view reason) {
     }
     audit_.add_constraint(AuditKind::CanaryRevert, 0, worldline, 0, constraints_.version(),
                           std::string(reason));
+    // #5391: the observation proved the candidate harmful — the KEEP
+    // that carried it is a negative KEEP.
+    note_negative_keep(worldline);
     project_worldline(worldline, WorldlineState::Rolled, ConstraintResult::Pass);
 }
 
@@ -904,6 +918,168 @@ void Server::canary_check_metric(std::uint64_t key, std::uint64_t value) {
         }
         canary_seal(canary_worldline_, 0);
     }
+}
+
+// ── Statistical admission (#5391) ─────────────────────────────
+// The coordinator recomputes the judge's numbers from the bound
+// windows: a summary that flatters a candidate buys nothing, and the
+// multiple-comparison correction uses the family the coordinator
+// observed itself, not the one the judge declares.
+
+const GateEvidenceBody* Server::gate_evidence(std::uint64_t worldline) const {
+    const auto it = gate_evidence_.find(worldline);
+    return it == gate_evidence_.end() ? nullptr : &it->second;
+}
+
+const GateVerdictRecord* Server::gate_verdict(std::uint64_t worldline) const {
+    const auto it = gate_verdicts_.find(worldline);
+    return it == gate_verdicts_.end() ? nullptr : &it->second;
+}
+
+std::uint64_t Server::gate_family_size(std::uint64_t round_id) const {
+    const auto it = gate_rounds_.find(round_id);
+    return it == gate_rounds_.end() ? 0 : static_cast<std::uint64_t>(it->second.size());
+}
+
+bool Server::gate_round_has_control(std::uint64_t round_id) const {
+    const auto it = gate_rounds_.find(round_id);
+    if (it == gate_rounds_.end())
+        return false;
+    for (const std::uint64_t wl : it->second) {
+        const auto cit = gate_evidence_.find(wl);
+        if (cit != gate_evidence_.end() && cit->second.control != 0)
+            return true;
+    }
+    return false;
+}
+
+void Server::gate_bind_round(std::uint64_t round_id, std::uint64_t worldline) {
+    auto& members = gate_rounds_[round_id];
+    if (std::find(members.begin(), members.end(), worldline) == members.end())
+        members.push_back(worldline);
+    if (std::find(gate_round_order_.begin(), gate_round_order_.end(), round_id) ==
+        gate_round_order_.end())
+        gate_round_order_.push_back(round_id);
+    // A round that left the window cannot gain members: the family it
+    // was judged with stays fixed.
+    while (gate_round_order_.size() > 64) {
+        const std::uint64_t oldest = gate_round_order_.front();
+        gate_round_order_.erase(gate_round_order_.begin());
+        gate_rounds_.erase(oldest);
+    }
+}
+
+void Server::note_negative_keep(std::uint64_t worldline) {
+    const auto it = gate_keep_slots_.find(worldline);
+    if (it == gate_keep_slots_.end())
+        return;
+    negative_keeps_.mark_negative(it->second);
+    gate_tighten_if_needed();
+}
+
+void Server::note_negative_event() {
+    negative_keeps_.record_negative();
+    gate_tighten_if_needed();
+}
+
+void Server::gate_tighten_if_needed() {
+    if (!gate_policy_.required)
+        return;
+    if (!negative_keeps_.over_budget(gate_policy_.negative_budget_ppm))
+        return;
+    // The negative-KEEP rate is over budget: the admission tightens.
+    // The haircut multiplier is scale free, so it bites whatever the
+    // metric is.
+    gate_policy_.tighten_factor =
+        gate_policy_.tighten_factor >= 64 ? 64 : gate_policy_.tighten_factor * 2;
+    ++gate_policy_.version;
+    audit_.add_constraint(AuditKind::GateTighten, 0, 0, 0, gate_policy_.version,
+                          "gate-tightened: negative-keep-rate " +
+                              std::to_string(negative_keeps_.rate_ppm()) + "ppm over budget " +
+                              std::to_string(gate_policy_.negative_budget_ppm) + "ppm, factor " +
+                              std::to_string(gate_policy_.tighten_factor));
+}
+
+bool Server::gate_check(std::uint64_t worldline, std::uint64_t token, std::string* why) {
+    const auto it = gate_evidence_.find(worldline);
+    if (it == gate_evidence_.end()) {
+        if (why != nullptr)
+            *why = "validation-failed: missing-gate-evidence";
+        return false;
+    }
+    const GateEvidenceBody& gev = it->second;
+    // The statistical evidence must belong to the same evaluation as
+    // the bound five-tuple: same workload, same seed, same verifier.
+    const EvidenceBody* five = evidence(worldline);
+    if (five == nullptr || five->workload_sym != gev.workload_sym || five->seed != gev.seed ||
+        five->verifier_version != gev.verifier_version) {
+        if (why != nullptr)
+            *why = "validation-failed: gate-evidence-mismatch";
+        return false;
+    }
+    const std::uint64_t family = gate_family_size(gev.round_id);
+    // Every round carries a negative control the statistics must
+    // reject. A control the admission accepts is a hole in the gate:
+    // it is counted as a negative event and the round is refused.
+    if (gate_policy_.require_control) {
+        bool have_control = false;
+        bool control_accepted = false;
+        const auto rit = gate_rounds_.find(gev.round_id);
+        if (rit != gate_rounds_.end()) {
+            for (const std::uint64_t wl : rit->second) {
+                const auto cit = gate_evidence_.find(wl);
+                if (cit == gate_evidence_.end() || cit->second.control == 0)
+                    continue;
+                have_control = true;
+                std::string creason;
+                const GateVerdictRecord crec =
+                    gate_admit(cit->second, family, gate_policy_, &creason);
+                if (crec.verdict == static_cast<std::uint64_t>(GateVerdict::Keep)) {
+                    control_accepted = true;
+                    audit_.add_constraint(AuditKind::GateVerdict, token, wl, crec.verdict,
+                                          gate_policy_.version,
+                                          "gate-control-accepted: the admission accepted a "
+                                          "negative control");
+                }
+            }
+        }
+        if (!have_control) {
+            if (why != nullptr)
+                *why = "validation-failed: missing-negative-control";
+            return false;
+        }
+        if (control_accepted) {
+            note_negative_event();
+            if (why != nullptr)
+                *why = "validation-failed: negative-control-accepted";
+            return false;
+        }
+    }
+    // A negative control is never applied to the live workspace: it
+    // exists to prove the statistics reject a harmful candidate.
+    if (gev.control != 0) {
+        std::string creason;
+        const GateVerdictRecord crec = gate_admit(gev, family, gate_policy_, &creason);
+        audit_.add_constraint(AuditKind::GateVerdict, token, worldline, crec.verdict,
+                              gate_policy_.version, "gate-control-rejected: " + creason);
+        if (why != nullptr)
+            *why = "validation-failed: negative-control-refused";
+        return false;
+    }
+    std::string reason;
+    const GateVerdictRecord rec = gate_admit(gev, family, gate_policy_, &reason);
+    gate_verdicts_[worldline] = rec;
+    audit_.add_constraint(
+        AuditKind::GateVerdict, token, worldline, rec.verdict, gate_policy_.version,
+        std::string("gate-") + reason + ": observed " + std::to_string(rec.observed_ppm) +
+            "ppm adjusted " + std::to_string(rec.adjusted_ppm) + "ppm family " +
+            std::to_string(rec.family));
+    if (rec.verdict != static_cast<std::uint64_t>(GateVerdict::Keep)) {
+        if (why != nullptr)
+            *why = "validation-failed: gate-rejected: " + reason;
+        return false;
+    }
+    return true;
 }
 
 bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t root_token,
@@ -1264,6 +1440,54 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
             reply_loan(ok);
             break;
         }
+        case FrameType::GateBind: {
+            // #5391: bind the judge's held-out evidence to a pending
+            // trial. The owner or a capability scoped to that worldline
+            // may bind; the coordinator keeps the raw windows and
+            // recomputes the admission verdict from them.
+            if (header.len < sizeof(GateEvidenceBody)) {
+                deny(EINVAL, "gate evidence body is too short");
+                break;
+            }
+            GateEvidenceBody gev{};
+            std::memcpy(&gev, body.data(), sizeof(gev));
+            if (!require(kCapKeep, 0, gev.worldline))
+                break;
+            const TrialRecord* t = worldlines_.find(gev.worldline);
+            if (t == nullptr || !t->pending) {
+                deny(EPERM, "gate worldline is not a pending trial");
+                break;
+            }
+            if (t->owner != root_token && caps.worldline != gev.worldline) {
+                deny(EPERM, "worldline is owned by another session");
+                break;
+            }
+            if (gev.fold_count == 0 || gev.fold_count > kGateMaxWindows) {
+                deny(EINVAL, "validation-failed: gate-fold-count");
+                break;
+            }
+            bool window_ok = true;
+            for (std::size_t i = 0; i < static_cast<std::size_t>(gev.fold_count); ++i) {
+                const std::int64_t w = static_cast<std::int64_t>(gev.windows[i]);
+                if (w > kGateMaxWindowPpm || w < -kGateMaxWindowPpm) {
+                    window_ok = false;
+                    break;
+                }
+            }
+            if (!window_ok) {
+                deny(EINVAL, "validation-failed: gate-window-out-of-range");
+                break;
+            }
+            gate_evidence_[gev.worldline] = gev;
+            gate_bind_round(gev.round_id, gev.worldline);
+            record_audit(AuditKind::GateBind, root_token, gev.worldline, gev.fold_count);
+            notify_peers(session);
+            LoanBody ok{};
+            ok.worldline = gev.worldline;
+            ok.generation = generation_;
+            reply_loan(ok);
+            break;
+        }
         case FrameType::CandidateDigest: {
             // #5379: the proposer/judge reads the coordinator's FNV-1a
             // digest of the trial's committed patch bytes, to bind it as
@@ -1370,6 +1594,18 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
                         break;
                     }
                 }
+                // #5391: statistical admission — the coordinator
+                // recomputes the deflated statistic from the bound
+                // windows, corrects it for the round family and
+                // refuses anything that does not clear the bar. The
+                // workspace is untouched when the gate refuses.
+                if (gate_policy_.required) {
+                    std::string gwhy;
+                    if (!gate_check(loan.worldline, root_token, &gwhy)) {
+                        deny(EINVAL, gwhy);
+                        break;
+                    }
+                }
                 // #5378: apply to the live workspace BEFORE the ledger
                 // marks Kept. The callback is all-or-nothing; on failure
                 // the workspace is byte-identical and the trial stays
@@ -1408,6 +1644,9 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
                     }
                     if (workspace_gen_ > 0)
                         --workspace_gen_;
+                    // #5391: the judge reverted a kept worldline — the
+                    // KEEP was a negative one.
+                    note_negative_keep(loan.worldline);
                 }
             } else {
                 ok = worldlines_.rollback(loan.worldline, root_token, caps, &why);
@@ -1418,6 +1657,10 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
             }
             if (keep) {
                 record_audit(AuditKind::Keep, root_token, loan.worldline);
+                // #5391: the KEEP enters the negative-KEEP window. A
+                // later revert marks it negative and feeds the budget.
+                if (gate_policy_.required)
+                    gate_keep_slots_[loan.worldline] = negative_keeps_.record_positive();
                 if (canary_window_ != 0) {
                     canary_on_keep(loan.worldline);
                 } else {

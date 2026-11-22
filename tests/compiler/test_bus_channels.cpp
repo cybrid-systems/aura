@@ -64,7 +64,12 @@ Layout build(std::span<std::byte> img) {
         off = align8(off + bytes);
         return at;
     };
-    L.strings = take(24);
+    // #5378: the string table reserves a fixed entry array; the string
+    // bytes follow it, so an entry's offset is always past the array.
+    const std::uint64_t strings_reserved =
+        (kStringSlotsReserved * sizeof(StringTableEntry) + 7) & ~7ull;
+    const std::uint64_t strings_len = strings_reserved + 32;
+    L.strings = take(strings_len);
     L.symbols = take(sizeof(SymbolEntry));
     L.nodes = take(4 * sizeof(NodeRecord));
     L.metrics = take(8 * sizeof(MetricRecord));
@@ -105,7 +110,7 @@ Layout build(std::span<std::byte> img) {
         e.fingerprint = section_layout_fingerprint(kind);
         put(img, dir + static_cast<std::uint64_t>(i) * sizeof(SectionEntry), e);
     };
-    entry(0, SectionKind::StringTable, L.strings, sizeof(StringTableEntry), 1, 24);
+    entry(0, SectionKind::StringTable, L.strings, sizeof(StringTableEntry), 1, strings_len);
     entry(1, SectionKind::SymbolTable, L.symbols, sizeof(SymbolEntry), 1, sizeof(SymbolEntry));
     entry(2, SectionKind::Nodes, L.nodes, sizeof(NodeRecord), 1, 4 * sizeof(NodeRecord));
     entry(3, SectionKind::Metrics, L.metrics, sizeof(MetricRecord), 0, 8 * sizeof(MetricRecord));
@@ -114,9 +119,9 @@ Layout build(std::span<std::byte> img) {
     entry(6, SectionKind::Worldlines, L.worldlines, sizeof(WorldlineRecord), 0,
           8 * sizeof(WorldlineRecord));
 
-    put(img, L.strings, StringTableEntry{16, 3, 0});
-    std::memcpy(img.data() + L.strings + 16, "hot", 3);
-    put(img, L.symbols, SymbolEntry{16, 3, 0});
+    put(img, L.strings, StringTableEntry{strings_reserved, 3, 0});
+    std::memcpy(img.data() + L.strings + strings_reserved, "hot", 3);
+    put(img, L.symbols, SymbolEntry{strings_reserved, 3, 0});
 
     NodeRecord n{};
     n.kind = 1;
@@ -129,7 +134,7 @@ Layout build(std::span<std::byte> img) {
     // The string section carries entries plus inline bytes.
     {
         SectionEntry se = get<SectionEntry>(img, dir);
-        se.length = 24;
+        se.length = strings_len;
         put(img, dir, se);
     }
 

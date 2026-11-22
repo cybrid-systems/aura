@@ -113,24 +113,29 @@ namespace {
         h.section_count = kSections;
         put(img, 0, h);
 
-        auto entry = [&](std::uint32_t i, SectionKind kind, std::uint64_t at, std::uint32_t elem) {
+        // The capacity is a parameter: the constraints section is not a
+        // record channel and has no per[i] slot (reading one was an
+        // out-of-bounds access that gave the section a garbage size).
+        auto entry = [&](std::uint32_t i, SectionKind kind, std::uint64_t at, std::uint32_t elem,
+                         std::uint64_t capacity) {
             SectionEntry e{};
             e.kind = static_cast<std::uint32_t>(kind);
             e.version = 1;
             e.offset = at;
             e.element_size = elem;
-            e.capacity = per[i] * elem;
+            e.capacity = capacity;
             e.generation = 2;
             e.fingerprint = section_layout_fingerprint(kind);
             e.digest = 14695981039346656037ull;
             put(img, dir + static_cast<std::uint64_t>(i) * sizeof(SectionEntry), e);
         };
-        entry(0, SectionKind::Metrics, metrics, sizeof(MetricRecord));
-        entry(1, SectionKind::Cct, cct, sizeof(CctRecord));
-        entry(2, SectionKind::Patches, patches, sizeof(PatchRecord));
-        entry(3, SectionKind::Worldlines, worldlines, sizeof(WorldlineRecord));
-        entry(4, SectionKind::Nodes, nodes, sizeof(NodeRecord));
-        entry(5, SectionKind::Constraints, constraints, sizeof(ConstraintSetHeader));
+        entry(0, SectionKind::Metrics, metrics, sizeof(MetricRecord), per[0] * elems[0]);
+        entry(1, SectionKind::Cct, cct, sizeof(CctRecord), per[1] * elems[1]);
+        entry(2, SectionKind::Patches, patches, sizeof(PatchRecord), per[2] * elems[2]);
+        entry(3, SectionKind::Worldlines, worldlines, sizeof(WorldlineRecord), per[3] * elems[3]);
+        entry(4, SectionKind::Nodes, nodes, sizeof(NodeRecord), per[4] * elems[4]);
+        entry(5, SectionKind::Constraints, constraints, sizeof(ConstraintSetHeader),
+              kConstraintBytes);
         {
             // String table: fixed entry array, then the byte region.
             SectionEntry se{};
@@ -294,6 +299,8 @@ bool host_start(const HostOptions& opts, std::string* path_out, std::string* why
         host->server.set_revert_callback(opts.revert);
     host->server.set_workspace_generation(opts.workspace_generation);
     host->server.set_evidence_required(opts.evidence_required);
+    // #5391: the statistical admission policy (off by default).
+    host->server.set_gate_policy(opts.gate);
     host->server.set_canary_window(opts.canary_window);
     host->server.set_canary_floor(opts.canary_floor);
     host->server.set_canary_metric_key(opts.canary_metric_key);

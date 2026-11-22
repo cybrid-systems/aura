@@ -174,6 +174,14 @@ struct WorldlineRecord {
     std::uint64_t workload_sym;     // benchmark workload / phase identity
     std::uint64_t seed;             // replay random seed
     std::uint64_t verifier_version; // judge / verifier version
+    // ── #5391 gate verdict tail (layout_version 3) ─────────────
+    // The coordinator's own statistical admission decision. Zero =
+    // absent (v1/v2 records, or a trial that never reached the gate).
+    std::uint64_t gate_verdict;       // 0 unknown, 1 keep, 2 reject
+    std::uint64_t gate_family;        // the family size the correction used
+    std::uint64_t gate_adjusted_ppm;  // the deflated mean, biased by kGateBias
+    std::uint64_t gate_threshold_ppm; // the bar that was applied
+    std::uint64_t gate_fingerprint;   // the bound evidence's fingerprint
 };
 
 struct ConstraintSetHeader {
@@ -204,8 +212,9 @@ static_assert(sizeof(NodeRecord) == 64);
 static_assert(sizeof(PatchRecord) == 40);
 static_assert(sizeof(MetricRecord) == 24);
 static_assert(sizeof(CctRecord) == 48);
-static_assert(sizeof(WorldlineRecord) == 88);
+static_assert(sizeof(WorldlineRecord) == 128);
 static_assert(offsetof(WorldlineRecord, baseline_gen) == 48);
+static_assert(offsetof(WorldlineRecord, gate_verdict) == 88);
 static_assert(sizeof(ConstraintSetHeader) == 32);
 static_assert(sizeof(AuditRecord) == 40);
 
@@ -223,8 +232,9 @@ inline constexpr std::size_t kSymbolEntryFrozenFields = 3;
 inline constexpr std::size_t kConstraintFrozenFields = 4;
 
 // #5379: layout version 2 appends the WorldlineRecord evidence tail.
-// v1 images stay readable: element_size 48 records default the tail.
-inline constexpr std::uint64_t kImageLayoutVersion = 2;
+// #5391: layout version 3 appends the gate verdict tail. v1 images
+// stay readable: element_size 48 records default every tail to zero.
+inline constexpr std::uint64_t kImageLayoutVersion = 3;
 
 // The v1 worldline prefix width. A v1 image's worldline section uses
 // element_size 48; readers copy the prefix and default the evidence

@@ -12,6 +12,7 @@
 #include "bus/capability.hh"
 #include "bus/channel.hh"
 #include "bus/constraint.hh"
+#include "bus/gate.hh"
 #include "bus/image.hh"
 
 #include <array>
@@ -66,6 +67,9 @@ enum class FrameType : std::uint16_t {
     // to the token's effective (scoped) capability — the judge activates
     // the host's delegated keep+rollback on a single worldline.
     GrantActivate = 25,
+    // #5391: bind the judge's held-out evidence to a trial; the
+    // coordinator recomputes the admission verdict from it.
+    GateBind = 26,
 };
 
 enum class RejectReason : std::uint16_t {
@@ -371,6 +375,22 @@ public:
     // five-tuple (the v0.3.1 closed-loop gate). Off by default so the
     // v0.3.0 single-tool surface keeps working.
     void set_evidence_required(bool required) { evidence_required_ = required; }
+    // #5391: the statistical admission policy. When required, every
+    // KEEP must carry held-out evidence whose recomputed, family
+    // corrected statistic clears the bar, and the round must carry a
+    // negative control the statistics reject.
+    void set_gate_policy(const GatePolicy& policy) {
+        gate_policy_ = policy;
+        negative_keeps_.configure(policy.budget_window);
+    }
+    [[nodiscard]] const GatePolicy& gate_policy() const { return gate_policy_; }
+    // The evidence bound to a trial (nullptr when unbound).
+    [[nodiscard]] const GateEvidenceBody* gate_evidence(std::uint64_t worldline) const;
+    // The coordinator's admission verdict for a trial (nullptr when the
+    // trial never reached the gate).
+    [[nodiscard]] const GateVerdictRecord* gate_verdict(std::uint64_t worldline) const;
+    // The negative-KEEP window: how many KEEPs turned out harmful.
+    [[nodiscard]] const NegativeKeepWindow& negative_keeps() const { return negative_keeps_; }
 
     // Loan ledgers of the most recent single-peer session (accept_one /
     // wait_disconnect). serve() keeps per-session ledgers in its table.
@@ -443,6 +463,24 @@ private:
     void canary_seal(std::uint64_t worldline, std::uint64_t token);
     void canary_revert(std::uint64_t worldline, std::string_view reason);
     void canary_check_metric(std::uint64_t key, std::uint64_t value);
+    // #5391: the statistical admission. `why` names the refusal.
+    bool gate_check(std::uint64_t worldline, std::uint64_t token, std::string* why);
+    // The family size of a round: the candidates bound to it so far.
+    std::uint64_t gate_family_size(std::uint64_t round_id) const;
+    // True when the round carries a negative control candidate.
+    bool gate_round_has_control(std::uint64_t round_id) const;
+    // A KEEP that was reverted (or a control the statistics wrongly
+    // accepted) feeds the negative-KEEP budget.
+    void note_negative_keep(std::uint64_t worldline);
+    // A negative event without a KEEP (a control the statistics
+    // wrongly accepted).
+    void note_negative_event();
+    // Tighten the admission when the negative-KEEP rate is over the
+    // budget.
+    void gate_tighten_if_needed();
+    // Record the round a candidate belongs to; the family grows as
+    // more candidates bind.
+    void gate_bind_round(std::uint64_t round_id, std::uint64_t worldline);
 
     std::string path_;
     std::size_t image_bytes_ = kBusDefaultImageBytes;
@@ -484,6 +522,17 @@ private:
     bool evidence_required_ = false;
     // #5379: per-trial evidence bindings.
     std::unordered_map<std::uint64_t, EvidenceBody> evidence_;
+    // #5391: the statistical admission state.
+    GatePolicy gate_policy_{};
+    std::unordered_map<std::uint64_t, GateEvidenceBody> gate_evidence_;
+    std::unordered_map<std::uint64_t, GateVerdictRecord> gate_verdicts_;
+    // The candidates of each admission round: the family the
+    // multiple-comparison correction applies to.
+    std::unordered_map<std::uint64_t, std::vector<std::uint64_t>> gate_rounds_;
+    std::vector<std::uint64_t> gate_round_order_;
+    // The negative-KEEP window and the slot each KEEP holds in it.
+    NegativeKeepWindow negative_keeps_{};
+    std::unordered_map<std::uint64_t, std::size_t> gate_keep_slots_;
     // #5381: at most one active canary; its window/floor parameters.
     std::uint64_t canary_worldline_ = 0;
     std::uint64_t canary_window_ = 0;

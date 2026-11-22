@@ -93,7 +93,14 @@ int main() {
         check(!allows(caps, kCapRead, 0, 4, 0, &why), "past the expiry");
         caps.expires_gen = 0;
         caps.worldline = 9;
-        check(!allows(caps, kCapRead, 0, 2, 8, &why), "worldline scoped");
+        // #5377: a scoped grant narrows the worldline-targeted verbs
+        // (keep/rollback/trial). Reads stay allowed, so the judge can
+        // read the image and the audit while it holds a scoped
+        // keep+rollback on one worldline.
+        check(allows(caps, kCapRead, 0, 2, 8, &why), "a scoped grant still reads");
+        caps.bits |= kCapKeep;
+        check(!allows(caps, kCapKeep, 0, 2, 8, &why), "a scoped keep on another worldline");
+        check(why.find("scoped") != std::string::npos, "the scope reason");
         check(allows(caps, kCapRead, 0, 2, 9, &why), "matching worldline");
     }
 
