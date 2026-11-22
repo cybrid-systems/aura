@@ -301,6 +301,12 @@ bool host_start(const HostOptions& opts, std::string* path_out, std::string* why
     host->server.set_evidence_required(opts.evidence_required);
     // #5391: the statistical admission policy (off by default).
     host->server.set_gate_policy(opts.gate);
+    // #5393: the admission round budget and its checkpoint. The
+    // checkpoint sits next to the socket, so a restarted host resumes
+    // from it.
+    host->server.set_round_budget(opts.round_budget);
+    host->server.set_round_checkpoint_path(path + ".round");
+    host->server.round_resume();
     host->server.set_canary_window(opts.canary_window);
     host->server.set_canary_floor(opts.canary_floor);
     host->server.set_canary_metric_key(opts.canary_metric_key);

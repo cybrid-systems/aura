@@ -15,6 +15,7 @@
 #include "bus/gate.hh"
 #include "bus/image.hh"
 #include "bus/replay.hh"
+#include "bus/round.hh"
 
 #include <array>
 #include <cstddef>
@@ -74,6 +75,10 @@ enum class FrameType : std::uint16_t {
     // #5392: replay the audit log — reconstruct the worldline
     // lineage, check its integrity and reproduce the verdicts.
     AuditReplay = 27,
+    // #5393: ask the coordinator to open an admission round, and
+    // query the round state and its budget.
+    RoundOpen = 28,
+    RoundQuery = 29,
 };
 
 enum class RejectReason : std::uint16_t {
@@ -231,6 +236,27 @@ struct GrantReply {
     std::uint64_t token = 0;
 };
 
+// #5393: the round request and the round reply. The reply carries
+// both the state and the budget, so one struct answers both queries.
+struct RoundRequestBody {
+    std::uint64_t kind = 0; // 0 = state, 1 = budget
+    std::uint64_t reserved = 0;
+    std::uint64_t reserved2 = 0;
+};
+
+struct RoundReplyBody {
+    std::uint64_t phase = 0; // the RoundPhase
+    std::uint64_t round_id = 0;
+    std::uint64_t worldline = 0;
+    std::uint64_t opened = 0;  // the rounds opened so far
+    std::uint64_t sealed = 0;  // the rounds sealed so far
+    std::uint64_t wall_ms = 0; // the per-round wall budget
+    std::uint64_t cooldown_ms = 0;
+    std::uint64_t max_rounds = 0;
+    std::uint64_t version = 0;
+    char reason[48] = {};
+};
+
 struct LoanBody {
     std::uint64_t channel = 0;
     std::uint64_t offset = 0;
@@ -272,6 +298,8 @@ static_assert(sizeof(ChannelBody) == 56);
 static_assert(sizeof(CatchUpBody) == 32);
 static_assert(sizeof(GrantBody) == 56);
 static_assert(sizeof(GrantReply) == 8);
+static_assert(sizeof(RoundRequestBody) == 24);
+static_assert(sizeof(RoundReplyBody) == 120);
 static_assert(sizeof(LoanBody) == 40);
 static_assert(sizeof(EvidenceBody) == 48);
 
@@ -446,6 +474,35 @@ public:
     // lineage, check its integrity and reproduce the admission
     // verdicts. A read: it changes nothing.
     [[nodiscard]] ReplayReport replay() const;
+    // #5393: the admission round state machine. The host decides; the
+    // peers propose and adjudicate.
+    void set_round_budget(const RoundBudget& budget) { round_.configure(budget); }
+    [[nodiscard]] const RoundMachine& round() const { return round_; }
+    [[nodiscard]] const RoundCheckpoint& round_checkpoint() const { return round_checkpoint_; }
+    // Open a round. Fails when one is active, when an observation is
+    // unsealed, during the cooldown, or when the round cap is reached.
+    bool round_open(std::uint64_t session, std::string* why);
+    // The round's candidate was opened.
+    void round_note_trial(std::uint64_t worldline, std::uint64_t owner_session);
+    // A session activated a grant scoped to the round's candidate:
+    // it is the round's judge.
+    void round_note_judge(std::uint64_t session);
+    // The candidate is being adjudicated.
+    void round_note_keep(std::uint64_t worldline);
+    // The candidate was kept (under observation or sealed).
+    void round_note_seal(std::uint64_t worldline, bool canary);
+    // The observation sealed.
+    void round_note_canary_seal(std::uint64_t worldline);
+    // Fail closed: the round is abandoned and its pending candidate
+    // rolls back.
+    void round_roll(std::string_view reason);
+    // The budget: a round that ran out of wall clock is closed.
+    void round_budget_check();
+    // The checkpoint file (next to the socket).
+    void set_round_checkpoint_path(const std::string& path) { round_checkpoint_path_ = path; }
+    // Load the checkpoint and continue the round counter: a restarted
+    // host resumes instead of repeating the sealed work.
+    void round_resume();
 
     // Loan ledgers of the most recent single-peer session (accept_one /
     // wait_disconnect). serve() keeps per-session ledgers in its table.
@@ -511,6 +568,11 @@ private:
     void project_worldline(std::uint64_t id, WorldlineState state, ConstraintResult cr);
     // #5379: digest of a trial's committed patch bytes (FNV-1a 64).
     std::uint64_t candidate_digest(std::uint64_t worldline) const;
+    // #5393: the digest of the candidate's *content* — the patch
+    // targets plus the source texts they carry. The patch bytes alone
+    // name the string table index, which is not stable across hosts;
+    // the content is. 0 when the trial carries no patch.
+    std::uint64_t candidate_content_digest(std::uint64_t worldline) const;
     // #5378: collect the trial's committed patch records from the image.
     std::vector<PatchRecord> trial_patches(std::uint64_t worldline) const;
     // #5381: canary bookkeeping on the coordinator thread.
@@ -588,6 +650,10 @@ private:
     // The negative-KEEP window and the slot each KEEP holds in it.
     NegativeKeepWindow negative_keeps_{};
     std::unordered_map<std::uint64_t, std::size_t> gate_keep_slots_;
+    // #5393: the admission round state machine and its checkpoint.
+    RoundMachine round_{};
+    RoundCheckpoint round_checkpoint_{};
+    std::string round_checkpoint_path_;
     // #5381: at most one active canary; its window/floor parameters.
     std::uint64_t canary_worldline_ = 0;
     std::uint64_t canary_window_ = 0;

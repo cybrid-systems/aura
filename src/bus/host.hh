@@ -21,6 +21,7 @@
 #include "bus/capability.hh"
 #include "bus/gate.hh"
 #include "bus/image_format.hh"
+#include "bus/round.hh"
 
 namespace aura::bus {
 
@@ -45,6 +46,9 @@ struct HostOptions {
     // #5391: the statistical admission policy. Defaults keep the
     // v0.3.1 surface: the gate is off until a host asks for it.
     GatePolicy gate{};
+    // #5393: the admission round budget (wall clock, cooldown, the
+    // round cap). The checkpoint lives next to the socket.
+    RoundBudget round_budget{};
     // #5378: apply a KEEP'd trial's patches to the live workspace. Runs
     // on the coordinator thread; must be all-or-nothing (byte-identical
     // on failure). canary=true means the apply enters observation and a

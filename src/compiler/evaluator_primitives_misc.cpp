@@ -652,6 +652,15 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                         static_cast<std::uint32_t>(std::strtoull(gs, nullptr, 10));
                 if (const char* gc = ::getenv("AURA_BUS_GATE_CONTROL"))
                     opts.gate.require_control = std::string(gc) != "0";
+                // #5393: the round budget — the wall clock a round may
+                // take, the cooldown between two rounds and the round
+                // cap.
+                if (const char* rw = ::getenv("AURA_BUS_ROUND_WALL_MS"))
+                    opts.round_budget.wall_ms = std::strtoull(rw, nullptr, 10);
+                if (const char* rc = ::getenv("AURA_BUS_ROUND_COOLDOWN_MS"))
+                    opts.round_budget.cooldown_ms = std::strtoull(rc, nullptr, 10);
+                if (const char* rm = ::getenv("AURA_BUS_ROUND_MAX"))
+                    opts.round_budget.max_rounds = std::strtoull(rm, nullptr, 10);
                 std::string out_path, why;
                 if (!aura::bus::host_start(opts, &out_path, &why))
                     return bus_error(ev, "transport-failed", why);
@@ -1051,6 +1060,57 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                 return bus_list(ev, {bus_string(ev, "ok"),
                                      make_int(static_cast<std::int64_t>(ar.count)),
                                      make_int(static_cast<std::int64_t>(ar.truncated)), listed});
+            }
+
+            // #5393: the admission round state machine. A peer asks
+            // the coordinator to open a round; the host decides. The
+            // state and the budget are queries.
+            if (op == "round-open" || op == "round-state" || op == "round-budget") {
+                std::int64_t sid = 0;
+                if (a.size() < 2 || !bus_int(a[1], &sid))
+                    return bus_error(ev, "validation-failed", "round verbs need a session id");
+                const auto sit = g_bus_sessions.find(sid);
+                if (sit == g_bus_sessions.end())
+                    return bus_error(ev, "unregistered-id", "unknown session");
+                auto& att = sit->second->att;
+                aura::bus::RoundRequestBody req{};
+                req.kind = op == "round-budget" ? 1 : 0;
+                const auto type = op == "round-open" ? aura::bus::FrameType::RoundOpen
+                                                     : aura::bus::FrameType::RoundQuery;
+                if (!aura::bus::send_frame(att.sock, type, att.session,
+                                           {reinterpret_cast<const std::byte*>(&req), sizeof(req)}))
+                    return bus_error(ev, "transport-failed", "round request send failed");
+                aura::bus::FrameHeader hdr{};
+                std::vector<std::byte> body(aura::bus::kBusMaxControlFrame);
+                if (!recv_reply(att.sock, &hdr, &body))
+                    return bus_error(ev, "transport-failed", "round reply lost");
+                if (hdr.type == static_cast<std::uint16_t>(aura::bus::FrameType::Error)) {
+                    aura::bus::ErrorBody eb{};
+                    std::memcpy(&eb, body.data(), std::min(sizeof(eb), body.size()));
+                    return bus_error(ev, "permission", eb.message);
+                }
+                if (hdr.len < sizeof(aura::bus::RoundReplyBody))
+                    return bus_error(ev, "validation-failed", "malformed round reply");
+                aura::bus::RoundReplyBody reply{};
+                std::memcpy(&reply, body.data(), sizeof(reply));
+                const std::string reason(reply.reason, strnlen(reply.reason, sizeof(reply.reason)));
+                if (op == "round-open")
+                    return bus_list(ev, {bus_string(ev, "ok"),
+                                         make_int(static_cast<std::int64_t>(reply.round_id)),
+                                         make_int(static_cast<std::int64_t>(reply.phase))});
+                if (op == "round-budget")
+                    return bus_list(ev, {bus_string(ev, "ok"),
+                                         make_int(static_cast<std::int64_t>(reply.wall_ms)),
+                                         make_int(static_cast<std::int64_t>(reply.cooldown_ms)),
+                                         make_int(static_cast<std::int64_t>(reply.max_rounds)),
+                                         make_int(static_cast<std::int64_t>(reply.version))});
+                return bus_list(ev, {bus_string(ev, "ok"),
+                                     make_int(static_cast<std::int64_t>(reply.phase)),
+                                     make_int(static_cast<std::int64_t>(reply.round_id)),
+                                     make_int(static_cast<std::int64_t>(reply.worldline)),
+                                     make_int(static_cast<std::int64_t>(reply.opened)),
+                                     make_int(static_cast<std::int64_t>(reply.sealed)),
+                                     bus_string(ev, reason)});
             }
 
             // #5392: replay the audit log — the reconstructed lineage,

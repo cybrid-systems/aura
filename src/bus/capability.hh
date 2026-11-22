@@ -157,6 +157,14 @@ enum class AuditKind : std::uint16_t {
     GateBind = 17,
     GateVerdict = 18,
     GateTighten = 19,
+    // #5393: the admission round state machine.
+    RoundOpen = 20,   // a round was opened
+    RoundTrial = 21,  // the round's candidate was opened
+    RoundJudge = 22,  // the candidate went to the judge
+    RoundSeal = 23,   // the round sealed (the worldline is kept)
+    RoundRoll = 24,   // the round rolled back (fail closed)
+    RoundBudget = 25, // the round was closed by the budget
+    RoundResume = 26, // the host resumed from its checkpoint
 };
 
 struct AuditEvent {

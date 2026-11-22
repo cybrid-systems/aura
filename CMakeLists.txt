@@ -1871,7 +1871,8 @@ add_test(NAME test_error_kind_names_wire_verification COMMAND ./test_error_kind_
 # image_schema.cpp (non-import-std); the validator and test are meta-free.
 add_library(aura-bus STATIC src/bus/image.cpp src/bus/image_schema.cpp src/bus/transport.cpp
                                  src/bus/capability.cpp src/bus/channel.cpp src/bus/constraint.cpp
-                                 src/bus/query.cpp src/bus/host.cpp src/bus/gate.cpp src/bus/replay.cpp)
+                                 src/bus/query.cpp src/bus/host.cpp src/bus/gate.cpp src/bus/replay.cpp
+                                 src/bus/round.cpp)
 target_include_directories(aura-bus PUBLIC ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(aura PRIVATE aura-bus)
 # Issue #5127/#5122: evaluator_primitives_misc.cpp's bus-call bridge
@@ -2040,6 +2041,17 @@ target_compile_features(test_bus_audit_replay PUBLIC cxx_std_26)
 target_link_libraries(test_bus_audit_replay PRIVATE aura-bus)
 aura_strict_test_warnings(tests/compiler/test_bus_audit_replay.cpp)
 add_test(NAME test_bus_audit_replay_5392 COMMAND ./test_bus_audit_replay)
+
+# Issue #5393: the admission round state machine. One round at a time,
+# host-driven; a judge or proposer that dies, or a round that runs out
+# of budget, rolls the pending candidate back; a restarted host resumes
+# from its checkpoint.
+add_executable(test_bus_round_orchestration tests/compiler/test_bus_round_orchestration.cpp)
+target_include_directories(test_bus_round_orchestration PRIVATE src)
+target_compile_features(test_bus_round_orchestration PUBLIC cxx_std_26)
+target_link_libraries(test_bus_round_orchestration PRIVATE aura-bus)
+aura_strict_test_warnings(tests/compiler/test_bus_round_orchestration.cpp)
+add_test(NAME test_bus_round_orchestration_5393 COMMAND ./test_bus_round_orchestration)
 
 # Issue #5373: a stale short-circuit name-cache row must not hijack a
 # later form whose pool-local SymId collides; display output was dropped.

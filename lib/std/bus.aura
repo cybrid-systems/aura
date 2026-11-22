@@ -20,6 +20,7 @@
         bus:candidate-digest bus:source-field bus:grant-activate
         bus:bind-gate bus:gate-evidence
         bus:audit-replay bus:audit-evo
+        bus:round-open bus:round-state bus:round-budget
         bus:status bus:code bus:message bus:ok? bus:help
         bus:attach? bus:error? bus:record?)
 
@@ -219,6 +220,28 @@
 (define (bus:audit-evo session)
   (bus-call "audit-evo" session))
 
+; ── v0.3.2 轮次编排(#5393) ───────────────────────────────────
+; (bus:round-open session) -> (ok round-id phase)
+; Ask the coordinator to open an admission round. The host decides:
+; one round at a time, no round on top of an unsealed observation,
+; outside the cooldown and under the round cap. A refusal names the
+; reason (round-active / canary-active / round-cooldown /
+; round-budget-exhausted).
+(define (bus:round-open session)
+  (bus-call "round-open" session))
+
+; (bus:round-state session) -> (ok phase round-id worldline opened sealed reason)
+; The round state machine: phase 0 idle, 1 signal, 2 trial, 3 judge,
+; 4 canary, 5 sealed.
+(define (bus:round-state session)
+  (bus-call "round-state" session))
+
+; (bus:round-budget session) -> (ok wall-ms cooldown-ms max-rounds version)
+; The host's round budget: the wall clock a round may take, the gap
+; between two rounds, the round cap.
+(define (bus:round-budget session)
+  (bus-call "round-budget" session))
+
 ; (bus:grant session bits channels loans expires worldline) -> (ok token)
 (define (bus:grant session bits channels loans expires worldline)
   (bus-call "grant" session bits channels loans expires worldline))
@@ -255,6 +278,7 @@
     "audit: (bus:audit session worldline) -> (ok count truncated events); needs read\n"
     "gate: (bus:bind-gate session worldline round workload seed verifier folds threshold control verdict windows) -> (ok worldline); (bus:gate-evidence session worldline) -> (ok verdict family adjusted threshold fingerprint); the coordinator recomputes the admission verdict from the held-out windows\n"
     "replay: (bus:audit-replay session) -> (ok events worldlines keeps findings first-seq first-kind first-reason nodes); (bus:audit-evo session) -> (ok text); the lineage, its integrity findings and the reproduced verdicts\n"
+    "round: (bus:round-open session) -> (ok round-id phase); (bus:round-state session) -> (ok phase round-id worldline opened sealed reason); (bus:round-budget session) -> (ok wall-ms cooldown-ms max-rounds version); the admission round state machine\n"
     "failures: (error code message); codes: schema-mismatch, seals-missing, loan-exhausted, image-full, validation-failed, permission, unregistered-id, transport-failed\n"))
 
 (define (bus:status record) (car record))

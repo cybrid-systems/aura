@@ -14,6 +14,7 @@
 #include <atomic>
 #include <cerrno>
 #include <cstdlib>
+#include <chrono>
 #include <cstring>
 #include <deque>
 #include <vector>
@@ -834,6 +835,39 @@ std::uint64_t Server::candidate_digest(std::uint64_t worldline) const {
     return h & ((1ull << 62) - 1);
 }
 
+std::uint64_t Server::candidate_content_digest(std::uint64_t worldline) const {
+    const std::vector<PatchRecord> patches = trial_patches(worldline);
+    if (patches.empty())
+        return 0;
+    std::uint64_t h = 14695981039346656037ull;
+    const auto hash_u64 = [&h](std::uint64_t value) {
+        for (int i = 0; i < 8; ++i) {
+            h ^= (value >> (i * 8)) & 0xffu;
+            h *= 1099511628211ull;
+        }
+    };
+    for (const PatchRecord& p : patches) {
+        // The target and the field name the change; the string table
+        // index does not (it is not stable across hosts).
+        hash_u64(p.node);
+        hash_u64(p.field_offset);
+        if (p.field_offset == kPatchSourceField) {
+            std::string_view text;
+            if (string_table_read({image_base_, image_size_}, p.new_value, &text)) {
+                for (const char ch : text) {
+                    h ^= static_cast<std::uint64_t>(static_cast<unsigned char>(ch));
+                    h *= 1099511628211ull;
+                }
+            } else {
+                hash_u64(p.new_value);
+            }
+        } else {
+            hash_u64(p.new_value);
+        }
+    }
+    return h & ((1ull << 62) - 1);
+}
+
 const EvidenceBody* Server::evidence(std::uint64_t worldline) const {
     const auto it = evidence_.find(worldline);
     return it == evidence_.end() ? nullptr : &it->second;
@@ -875,6 +909,8 @@ void Server::canary_seal(std::uint64_t worldline, std::uint64_t token) {
     project_worldline(worldline, WorldlineState::Kept, ConstraintResult::Pass);
     workspace_gen_ = canary_applied_gen_;
     canary_worldline_ = 0;
+    // #5393: the observation sealed, the round is done.
+    round_note_canary_seal(worldline);
 }
 
 void Server::canary_revert(std::uint64_t worldline, std::string_view reason) {
@@ -891,6 +927,8 @@ void Server::canary_revert(std::uint64_t worldline, std::string_view reason) {
     // #5391: the observation proved the candidate harmful — the KEEP
     // that carried it is a negative KEEP.
     note_negative_keep(worldline);
+    // #5393: the round fails closed.
+    round_roll("canary reverted: the candidate did not hold up");
     project_worldline(worldline, WorldlineState::Rolled, ConstraintResult::Pass);
 }
 
@@ -1086,7 +1124,6 @@ bool Server::gate_check(std::uint64_t worldline, std::uint64_t token, std::strin
 // A read over the control-plane log and the image: it reconstructs
 // the lineage, checks its integrity and reproduces the admission
 // verdicts from the bound evidence.
-
 ReplayReport Server::replay() const {
     std::vector<ReplayEvidence> evidence;
     evidence.reserve(evidence_.size() + gate_evidence_.size());
@@ -1137,6 +1174,169 @@ ReplayReport Server::replay() const {
     const auto digest = [this](std::uint64_t worldline) { return candidate_digest(worldline); };
     return replay_lineage(audit_.events(), {image_base_, image_size_}, evidence,
                           gate_policy_.required, digest);
+}
+
+// ── The admission round (#5393) ──────────────────────────────
+// One round at a time, host-driven: the peers propose and adjudicate,
+// the coordinator decides. Every failure fails closed — the round is
+// abandoned and its pending candidate rolls back.
+
+namespace {
+    // The wall clock the budget counts. Monotonic: a clock jump must
+    // not close a round.
+    std::uint64_t round_now_ms() {
+        return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                              std::chrono::steady_clock::now().time_since_epoch())
+                                              .count());
+    }
+
+    // The wall clock the audit and the checkpoint record.
+    std::uint64_t round_wall_ms() {
+        return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                              std::chrono::system_clock::now().time_since_epoch())
+                                              .count());
+    }
+} // namespace
+
+bool Server::round_open(std::uint64_t session, std::string* why) {
+    std::string reason;
+    if (!round_.open(round_now_ms(), canary_worldline_ != 0, &reason)) {
+        if (why != nullptr)
+            *why = reason;
+        return false;
+    }
+    audit_.add_constraint(AuditKind::RoundOpen, session, 0, round_.id(), round_.budget().version,
+                          "round-open");
+    std::string cwhy;
+    (void)round_checkpoint_.record_round(round_.id(), round_.phase(), 0, round_wall_ms(), &cwhy);
+    return true;
+}
+
+void Server::round_note_trial(std::uint64_t worldline, std::uint64_t owner_session) {
+    if (!round_.active())
+        return;
+    std::string why;
+    if (!round_.note_trial(worldline, owner_session, &why))
+        return;
+    audit_.add_constraint(AuditKind::RoundTrial, owner_session, worldline, round_.id(),
+                          round_.budget().version, "round-trial");
+    std::string cwhy;
+    (void)round_checkpoint_.record_round(round_.id(), round_.phase(), worldline, round_wall_ms(),
+                                         &cwhy);
+}
+
+void Server::round_note_judge(std::uint64_t session) {
+    if (!round_.active())
+        return;
+    std::string why;
+    if (!round_.note_judge(session, &why))
+        return;
+    audit_.add_constraint(AuditKind::RoundJudge, session, round_.worldline(), round_.id(),
+                          round_.budget().version, "round-judge");
+}
+
+void Server::round_note_keep(std::uint64_t worldline) {
+    if (!round_.active() || round_.worldline() != worldline)
+        return;
+    std::string why;
+    if (!round_.note_keep(&why))
+        return;
+    audit_.add_constraint(AuditKind::RoundJudge, 0, worldline, round_.id(), round_.budget().version,
+                          "round-keep");
+}
+
+void Server::round_note_seal(std::uint64_t worldline, bool canary) {
+    if (!round_.active() || round_.worldline() != worldline)
+        return;
+    std::string why;
+    if (!round_.note_seal(canary, round_now_ms(), &why))
+        return;
+    audit_.add_constraint(AuditKind::RoundSeal, 0, worldline, round_.id(), round_.budget().version,
+                          canary ? "round-canary" : "round-sealed");
+    std::string cwhy;
+    (void)round_checkpoint_.record_round(round_.id(), round_.phase(), worldline, round_wall_ms(),
+                                         &cwhy);
+    if (canary)
+        return;
+    // The sealed candidate is remembered: a restarted host does not
+    // apply it twice.
+    // The seal is remembered by the candidate's content, so a
+    // restarted host recognizes the same candidate.
+    const std::uint64_t content = candidate_content_digest(worldline);
+    if (content != 0)
+        (void)round_checkpoint_.record_seal(content, worldline, round_wall_ms(), &cwhy);
+}
+
+void Server::round_note_canary_seal(std::uint64_t worldline) {
+    if (!round_.active() || round_.worldline() != worldline)
+        return;
+    std::string why;
+    if (!round_.note_canary_seal(round_now_ms(), &why))
+        return;
+    audit_.add_constraint(AuditKind::RoundSeal, 0, worldline, round_.id(), round_.budget().version,
+                          "round-canary-sealed");
+    std::string cwhy;
+    (void)round_checkpoint_.record_round(round_.id(), round_.phase(), worldline, round_wall_ms(),
+                                         &cwhy);
+    // The seal is remembered by the candidate's content, so a
+    // restarted host recognizes the same candidate.
+    const std::uint64_t content = candidate_content_digest(worldline);
+    if (content != 0)
+        (void)round_checkpoint_.record_seal(content, worldline, round_wall_ms(), &cwhy);
+}
+
+void Server::round_roll(std::string_view reason) {
+    if (!round_.active())
+        return;
+    const std::uint64_t worldline = round_.worldline();
+    // Fail closed: the pending candidate rolls back, nothing is
+    // applied.
+    if (worldline != 0) {
+        const TrialRecord* trial = worldlines_.find(worldline);
+        if (trial != nullptr && trial->pending) {
+            Capability caps{};
+            caps.bits = kCapRollback;
+            caps.channels = ~0ull;
+            caps.workspace = workspace_id_;
+            std::string why;
+            if (worldlines_.rollback(worldline, trial->owner, caps, &why)) {
+                record_audit(AuditKind::Rollback, trial->owner, worldline);
+                project_worldline(worldline, WorldlineState::Rolled, ConstraintResult::None);
+            }
+        }
+    }
+    std::string why;
+    if (!round_.roll(reason, round_now_ms(), &why))
+        return;
+    audit_.add_constraint(AuditKind::RoundRoll, 0, worldline, round_.id(), round_.budget().version,
+                          std::string("round-roll: ") + std::string(reason));
+    std::string cwhy;
+    (void)round_checkpoint_.record_round(round_.id(), round_.phase(), 0, round_wall_ms(), &cwhy);
+}
+
+void Server::round_budget_check() {
+    if (!round_.active() || !round_.expired(round_now_ms()))
+        return;
+    const std::uint64_t worldline = round_.worldline();
+    // The round ran out of time: close it like a judge that never came
+    // back.
+    round_roll("budget: the round ran out of wall clock");
+    audit_.add_constraint(AuditKind::RoundBudget, 0, worldline, round_.id(),
+                          round_.budget().version, "round-budget: the wall budget expired");
+}
+
+void Server::round_resume() {
+    std::string why;
+    if (!round_checkpoint_.open(round_checkpoint_path_, &why))
+        return;
+    // The round counter continues: a restarted host does not reuse the
+    // ids of the rounds it already ran.
+    round_.restore(round_checkpoint_.round_id());
+    if (round_checkpoint_.round_id() != 0) {
+        audit_.add_constraint(AuditKind::RoundResume, 0, round_checkpoint_.round_worldline(),
+                              round_checkpoint_.round_id(), round_.budget().version,
+                              "round-resume: the host continues after its checkpoint");
+    }
 }
 
 bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t root_token,
@@ -1507,6 +1707,8 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
             const std::uint64_t id =
                 worldlines_.open_trial(root_token, workspace_id_, workspace_gen_);
             record_audit(AuditKind::Trial, root_token, id);
+            // #5393: the trial joins the round when one is running.
+            round_note_trial(id, session);
             project_worldline(id, WorldlineState::Pending, ConstraintResult::None);
             notify_peers(session);
             LoanBody granted = loan;
@@ -1655,6 +1857,16 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
             const TrialRecord* trial = worldlines_.find(loan.worldline);
             bool applied_live = false;
             if (keep) {
+                // #5393: the candidate is being adjudicated.
+                round_note_keep(loan.worldline);
+                // #5393: a sealed candidate is never applied twice, not
+                // even after the host restarted. The identity is the
+                // candidate's content, not its patch bytes.
+                const std::uint64_t content = candidate_content_digest(loan.worldline);
+                if (content != 0 && round_checkpoint_.sealed(content)) {
+                    deny(EINVAL, "validation-failed: already-sealed", loan.worldline);
+                    break;
+                }
                 // #5380: resolve the trial's patches + source texts up
                 // front so the constraint gate can inspect them (purity,
                 // target allowlist) before anything touches the live AST.
@@ -1795,10 +2007,14 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
                     gate_keep_slots_[loan.worldline] = negative_keeps_.record_positive();
                 if (canary_window_ != 0) {
                     canary_on_keep(loan.worldline);
+                    // #5393: the candidate is under observation.
+                    round_note_seal(loan.worldline, true);
                 } else {
                     project_worldline(loan.worldline, WorldlineState::Kept, ConstraintResult::Pass);
                     if (applied_live)
                         ++workspace_gen_;
+                    // #5393: the round is sealed.
+                    round_note_seal(loan.worldline, false);
                 }
             } else if (canary_worldline_ != loan.worldline) {
                 record_audit(AuditKind::Rollback, root_token, loan.worldline);
@@ -1806,6 +2022,54 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
             }
             notify_peers(session);
             reply_loan(loan);
+            break;
+        }
+        case FrameType::RoundOpen: {
+            // #5393: a peer asks the coordinator to open a round. The
+            // host decides: one round at a time, no round on top of an
+            // unsealed observation, outside the cooldown, under the
+            // round cap.
+            if (header.len < sizeof(RoundRequestBody))
+                break;
+            RoundRequestBody request{};
+            std::memcpy(&request, body.data(), sizeof(request));
+            if (!require(kCapTrial, 0, 0))
+                break;
+            std::string why;
+            if (!round_open(session, &why)) {
+                deny(EBUSY, "round: " + why, round_.worldline());
+                break;
+            }
+            RoundReplyBody reply{};
+            reply.phase = static_cast<std::uint64_t>(round_.phase());
+            reply.round_id = round_.id();
+            send_frame(conn_fd, FrameType::Credit, session,
+                       {reinterpret_cast<const std::byte*>(&reply), sizeof(reply)});
+            notify_peers(session);
+            break;
+        }
+        case FrameType::RoundQuery: {
+            // #5393: the round state and its budget. A read.
+            if (header.len < sizeof(RoundRequestBody))
+                break;
+            RoundRequestBody request{};
+            std::memcpy(&request, body.data(), sizeof(request));
+            if (!require(kCapRead, 0, 0))
+                break;
+            RoundReplyBody reply{};
+            reply.phase = static_cast<std::uint64_t>(round_.phase());
+            reply.round_id = round_.id();
+            reply.worldline = round_.worldline();
+            reply.opened = round_.opened_count();
+            reply.sealed = round_.sealed_count();
+            reply.wall_ms = round_.budget().wall_ms;
+            reply.cooldown_ms = round_.budget().cooldown_ms;
+            reply.max_rounds = round_.budget().max_rounds;
+            reply.version = round_.budget().version;
+            const std::size_t n = std::min(round_.reason().size(), sizeof(reply.reason) - 1);
+            std::memcpy(reply.reason, round_.reason().data(), n);
+            send_frame(conn_fd, FrameType::Credit, session,
+                       {reinterpret_cast<const std::byte*>(&reply), sizeof(reply)});
             break;
         }
         case FrameType::Grant: {
@@ -1865,6 +2129,10 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
                 next.expires_gen = effective.expires_gen;
             caps = next;
             record_audit(AuditKind::Grant, root_token, effective.worldline, loan.channel);
+            // #5393: a session that activates a grant scoped to the
+            // round's candidate is the round's judge.
+            if (round_.active() && effective.worldline == round_.worldline())
+                round_note_judge(session);
             LoanBody ok{};
             ok.channel = caps.bits;
             ok.worldline = caps.worldline;
@@ -1962,6 +2230,12 @@ void Server::finish_session(PeerSession& peer) {
     for (std::uint64_t id : worldlines_.end_session(peer.root_token)) {
         record_audit(AuditKind::Rollback, peer.root_token, id);
         project_worldline(id, WorldlineState::Rolled, ConstraintResult::None);
+    }
+    // #5393: a round whose participant died fails closed — the
+    // pending candidate rolls back and the round is abandoned.
+    if (round_.active() &&
+        (peer.session == round_.owner_session() || peer.session == round_.judge_session())) {
+        round_roll(peer.session == round_.owner_session() ? "proposer gone" : "judge gone");
     }
     record_audit(AuditKind::Disconnect, peer.root_token);
     peer.loans.reclaim();
@@ -2103,12 +2377,19 @@ void Server::serve(const BuildFn& build) {
             pfds.push_back({peers_[i].conn_fd, POLLIN, 0});
         }
         std::size_t polled_peers = peer_at.size();
-        const int ready = ::poll(pfds.data(), static_cast<nfds_t>(pfds.size()), -1);
+        // #5393: a running round wakes the loop now and then, so the
+        // wall budget closes it even when nothing happens.
+        const int timeout = round_.active() ? 100 : -1;
+        const int ready = ::poll(pfds.data(), static_cast<nfds_t>(pfds.size()), timeout);
         if (ready < 0) {
             if (errno == EINTR)
                 continue;
             break;
         }
+        // #5393: the round budget is checked on every wakeup, so a
+        // round that runs out of time is closed even when the peers go
+        // quiet.
+        round_budget_check();
         // stop() rang the wake bell: leave without touching sessions.
         if (wake_fd_ >= 0 && pfds[1].revents != 0) {
             std::uint64_t count = 0;

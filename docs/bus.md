@@ -182,3 +182,15 @@ canary 拒绝)、`test_bus_closed_loop_e2e`(#5382,三进程正常闭环 + 五类
 - `(bus:audit-replay session)` → `(ok events worldlines keeps findings first-seq first-kind first-reason nodes)`。`findings = 0` 表示谱系完好；`first-kind` 指第一处缺陷的类别：1 孤儿事件（事件指向从未开启的 worldline）、2 断裂 parent 链、3 序号回退、4 映像审计节与控制面日志不一致、5 KEEP 缺约束结论、6 KEEP 缺准入判决、7 判决与重算不符、8 证据与五元不符。每行 node 是 `(worldline parent state trial-seq keep-seq verdict-seq constraint reproduced fingerprint timestamp-ms baseline candidate workload seed verifier gate-verdict gate-family adjusted reason)`。
 - `(bus:audit-evo session)` → `(ok text)`：同一条谱系渲染成 **evo schema v2** 的 JSONL（每行一个 JSON 对象，见 docs/evo.md），`aura evo log` 可直接读总线闭环日志。
 - 确定性复现：回放用判决记录里的策略快照（门槛、折价乘子、最少窗口数）从绑定的窗口重算判决，逐字节比较；判决是定点数，同一份证据两次重算必然一致。候选哈希会拿 trial 的补丁字节重算比对——篡改 `candidate_hash` 或篡改判决都会被检出。
+
+### v0.3.2 轮次编排(#5393)
+
+同一时刻至多一轮，由宿主推进：`idle → signal → trial → judge → canary → sealed`。提议方与裁判只负责提议和裁决，**起轮与收轮是宿主的决定**。每次状态转换都写审计，任何一环出故障都 fail-closed：待裁决的 worldline 自动回滚，不生效。
+
+- `(bus:round-open session)` → `(ok round-id phase)`：请求开一轮。宿主在下列情况下拒绝：`round-active`（已有一轮）、`canary-active`（观察期未封存）、`round-cooldown`（冷却未到）、`round-budget-exhausted`（轮次用尽）。
+- `(bus:round-state session)` → `(ok phase round-id worldline opened sealed reason)`：轮次状态（phase 0 idle、1 signal、2 trial、3 judge、4 canary、5 sealed）；`reason` 是上一次回滚的原因（如 `judge gone`、`proposer gone`、`budget: ...`）。
+- `(bus:round-budget session)` → `(ok wall-ms cooldown-ms max-rounds version)`：宿主的轮次预算。
+- fail-closed：裁判断连/崩溃 → 待裁决 worldline 回滚（`judge gone`）；提议方崩溃 → 未决 trial 回收（`proposer gone`）；轮次超 wall 预算 → 自动收轮（`RoundBudget` 审计）；金丝雀回退 → 本轮回滚。
+- 断点续跑：宿主把轮次与**已封存候选**写进套接字旁的检查点文件（`<socket>.round`）。宿主重启后从检查点续上（轮次编号继续），且**已封存候选不再被应用第二次**（`already-sealed`）。候选身份用它的**内容**摘要（补丁目标 + 源码文本），不是补丁字节——后者含字符串表下标，跨宿主不稳定。
+- 宿主环境变量：`AURA_BUS_ROUND_WALL_MS`（每轮 wall 预算，默认 30000）、`AURA_BUS_ROUND_COOLDOWN_MS`（两轮之间的冷却，默认 0）、`AURA_BUS_ROUND_MAX`（轮次上限，默认 0＝不限）。
+- 审计新增：`RoundOpen`(20)、`RoundTrial`(21)、`RoundJudge`(22)、`RoundSeal`(23)、`RoundRoll`(24)、`RoundBudget`(25)、`RoundResume`(26)。
