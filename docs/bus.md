@@ -1,6 +1,6 @@
 # 本机工具总线（v0.3.2）
 
-本页是 #5121（v0.3.0 底座）、#5376（v0.3.1 跨进程自进化闭环）与 #5391（v0.3.2 统计准入）的实现说明。只做同机协同：一条总线对应一个工作区、一份活 AST；不引入总线守护进程，不做跨机、RDMA 或 CXL。v0.3.1 在底座上交付多对端并发服务、KEEP 原子应用回活 AST、候选证据五元绑定、约束最小安全子集与金丝雀观察期；v0.3.2 把统计准入总线化——协调者自己重算判决。
+本页是 #5121（v0.3.0 底座）、#5376（v0.3.1 跨进程自进化闭环）与 #5391–#5395（v0.3.2 统计准入、审计回放、轮次编排、退化检测、性能与容量）的实现说明。只做同机协同：一条总线对应一个工作区、一份活 AST；不引入总线守护进程，不做跨机、RDMA 或 CXL。v0.3.1 在底座上交付多对端并发服务、KEEP 原子应用回活 AST、候选证据五元绑定、约束最小安全子集与金丝雀观察期；v0.3.2 把统计准入总线化——协调者自己重算判决——并让宿主自己起轮、自己发现退化、自己盯住自己的开销与容量。
 
 ## 默认传输
 
@@ -182,6 +182,15 @@ canary 拒绝)、`test_bus_closed_loop_e2e`(#5382,三进程正常闭环 + 五类
 - `(bus:audit-replay session)` → `(ok events worldlines keeps findings first-seq first-kind first-reason nodes)`。`findings = 0` 表示谱系完好；`first-kind` 指第一处缺陷的类别：1 孤儿事件（事件指向从未开启的 worldline）、2 断裂 parent 链、3 序号回退、4 映像审计节与控制面日志不一致、5 KEEP 缺约束结论、6 KEEP 缺准入判决、7 判决与重算不符、8 证据与五元不符。每行 node 是 `(worldline parent state trial-seq keep-seq verdict-seq constraint reproduced fingerprint timestamp-ms baseline candidate workload seed verifier gate-verdict gate-family adjusted reason)`。
 - `(bus:audit-evo session)` → `(ok text)`：同一条谱系渲染成 **evo schema v2** 的 JSONL（每行一个 JSON 对象，见 docs/evo.md），`aura evo log` 可直接读总线闭环日志。
 - 确定性复现：回放用判决记录里的策略快照（门槛、折价乘子、最少窗口数）从绑定的窗口重算判决，逐字节比较；判决是定点数，同一份证据两次重算必然一致。候选哈希会拿 trial 的补丁字节重算比对——篡改 `candidate_hash` 或篡改判决都会被检出。
+
+### v0.3.2 性能与容量(#5395)
+
+总线的开销必须**有界且可测**。协调者按**CPU 时间**（协调者线程的 `CLOCK_THREAD_CPUTIME_ID`）统计自己的开销——共享 runner 上的墙钟量的是调度器而不是工作（#5324 纪律）。
+
+- `(bus:slo session)` → `(ok frames frame-cpu-ns p99-cpu-ns publishes publish-cpu-ns attaches attach-cpu-ns catchups catchup-max loans pending)`：控制帧的服务成本（p99 是逐帧 CPU 成本的 99 分位）、publish 吞吐（按 CPU 秒折算）、握手成本、catchup 增量上界，以及当前未归还的 loan 与未决 trial（soak 看残留用）。
+- `(bus:capacity-plan session)` → `(ok rounds low remaining-metrics remaining-cc remaining-patches remaining-worldlines remaining-nodes committed-bytes image-bytes)`：映像里还剩多少容量、还能支撑多少轮。频道容量是**交付映像的函数**（#5387），所以容量规划也跟着映像走；`low = 1` 表示余量已经偏低（低于 8 轮），宿主据此告警。
+- 门控脚本：`tests/bench/bus_slo.py`（SLO 阈值版本化，`--check` 超限即失败）与 `tests/bench/bus_soak.py`（资源曲线采样与平坦性判定，`--check`）。周级 lane 在 `.github/workflows/bus-soak-weekly.yml`：先跑 SLO，再跑 soak（默认 24h）。
+- soak 的判据是**平坦**：RSS、fd 数、未归还 loan、未决 trial、映像 committed bytes 都不能单调增长；soak 还会周期性 SIGKILL worker（提议/裁判），闭环必须自恢复且不留残留。
 
 ### v0.3.2 轮次编排(#5393)
 

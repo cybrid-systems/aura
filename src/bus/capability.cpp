@@ -239,6 +239,15 @@ void WorldlineLedger::release_loan(std::uint64_t id) {
     }
 }
 
+std::size_t WorldlineLedger::pending_count() const {
+    std::size_t count = 0;
+    for (const TrialRecord& record : records_) {
+        if (record.pending)
+            ++count;
+    }
+    return count;
+}
+
 const TrialRecord* WorldlineLedger::find(std::uint64_t id) const {
     for (const auto& rec : records_) {
         if (rec.id == id)

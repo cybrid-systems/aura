@@ -1300,6 +1300,59 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                     ev, {bus_string(ev, "ok"), make_int(static_cast<std::int64_t>(reply.version))});
             }
 
+            // #5395: the bus's own performance counters and the
+            // capacity plan.
+            if (op == "slo" || op == "capacity-plan") {
+                std::int64_t sid = 0;
+                if (a.size() < 2 || !bus_int(a[1], &sid))
+                    return bus_error(ev, "validation-failed", "slo needs a session id");
+                const auto sit = g_bus_sessions.find(sid);
+                if (sit == g_bus_sessions.end())
+                    return bus_error(ev, "unregistered-id", "unknown session");
+                auto& att = sit->second->att;
+                aura::bus::SloQueryBody req{};
+                req.kind = op == "capacity-plan" ? 1 : 0;
+                if (!aura::bus::send_frame(att.sock, aura::bus::FrameType::SloQuery, att.session,
+                                           {reinterpret_cast<const std::byte*>(&req), sizeof(req)}))
+                    return bus_error(ev, "transport-failed", "slo query send failed");
+                aura::bus::FrameHeader hdr{};
+                std::vector<std::byte> body(aura::bus::kBusMaxControlFrame);
+                if (!recv_reply(att.sock, &hdr, &body))
+                    return bus_error(ev, "transport-failed", "slo query reply lost");
+                if (hdr.type == static_cast<std::uint16_t>(aura::bus::FrameType::Error)) {
+                    aura::bus::ErrorBody eb{};
+                    std::memcpy(&eb, body.data(), std::min(sizeof(eb), body.size()));
+                    return bus_error(ev, "permission", eb.message);
+                }
+                if (hdr.len < sizeof(aura::bus::SloReplyBody))
+                    return bus_error(ev, "validation-failed", "malformed slo reply");
+                aura::bus::SloReplyBody reply{};
+                std::memcpy(&reply, body.data(), sizeof(reply));
+                if (op == "slo")
+                    return bus_list(ev, {bus_string(ev, "ok"),
+                                         make_int(static_cast<std::int64_t>(reply.frames)),
+                                         make_int(static_cast<std::int64_t>(reply.frame_cpu_ns)),
+                                         make_int(static_cast<std::int64_t>(reply.p99_cpu_ns)),
+                                         make_int(static_cast<std::int64_t>(reply.publishes)),
+                                         make_int(static_cast<std::int64_t>(reply.publish_cpu_ns)),
+                                         make_int(static_cast<std::int64_t>(reply.attaches)),
+                                         make_int(static_cast<std::int64_t>(reply.attach_cpu_ns)),
+                                         make_int(static_cast<std::int64_t>(reply.catchups)),
+                                         make_int(static_cast<std::int64_t>(reply.catchup_max)),
+                                         make_int(static_cast<std::int64_t>(reply.loans)),
+                                         make_int(static_cast<std::int64_t>(reply.pending))});
+                return bus_list(ev, {bus_string(ev, "ok"),
+                                     make_int(static_cast<std::int64_t>(reply.rounds)),
+                                     make_int(static_cast<std::int64_t>(reply.low)),
+                                     make_int(static_cast<std::int64_t>(reply.remaining[0])),
+                                     make_int(static_cast<std::int64_t>(reply.remaining[1])),
+                                     make_int(static_cast<std::int64_t>(reply.remaining[2])),
+                                     make_int(static_cast<std::int64_t>(reply.remaining[3])),
+                                     make_int(static_cast<std::int64_t>(reply.remaining[4])),
+                                     make_int(static_cast<std::int64_t>(reply.committed_bytes)),
+                                     make_int(static_cast<std::int64_t>(reply.image_bytes))});
+            }
+
             // #5392: replay the audit log — the reconstructed lineage,
             // the integrity findings and the reproduced verdicts. The
             // evo export renders the same lineage as evo schema v2

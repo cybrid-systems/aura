@@ -115,6 +115,9 @@ public:
     bool rollback(std::uint64_t id, std::uint64_t owner, const Capability& caps, std::string* why);
     void release_loan(std::uint64_t id);
     const TrialRecord* find(std::uint64_t id) const;
+    // #5395: the trials that are still pending (the soak lane watches
+    // this number for a residue).
+    std::size_t pending_count() const;
     std::vector<std::uint64_t> end_session(std::uint64_t owner);
 
     // #5381: canary transitions. enter_canary requires a kept, applied

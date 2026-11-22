@@ -431,6 +431,9 @@ bool Server::handshake(int conn_fd, const HelloBody& hello, const BuildFn& build
                        std::uint64_t* session_out, Capability* caps_out, std::uint64_t* root_out,
                        int* event_out, std::uint64_t* staging_capacity_out, Attach* out,
                        TransportError* error) {
+    // #5395: the handshake's CPU cost, measured on the coordinator
+    // thread.
+    const std::uint64_t handshake_started_ns = slo_thread_cpu_ns();
     ucred cred{};
     socklen_t cred_len = sizeof(cred);
     if (getsockopt(conn_fd, SOL_SOCKET, SO_PEERCRED, &cred, &cred_len) != 0 ||
@@ -609,6 +612,9 @@ bool Server::handshake(int conn_fd, const HelloBody& hello, const BuildFn& build
     }
     write_constraints_image();
     record_audit(AuditKind::Attach, root_token, 0, hello.pid);
+    // #5395: the handshake's CPU cost is part of the bus's overhead.
+    ++slo_.attaches;
+    slo_.attach_cpu_ns += slo_thread_cpu_ns() - handshake_started_ns;
     *session_out = session;
     *caps_out = granted;
     *root_out = root_token;
@@ -1342,6 +1348,77 @@ void Server::round_resume() {
     }
 }
 
+// #5395: the capacity plan — the room left in the image and the
+// rounds it still supports. The channel capacities are a function of
+// the delivered image (#5387), so the plan follows the image.
+CapacityPlan Server::capacity_plan() const {
+    CapacityPlan plan{};
+    if (image_base_ == nullptr)
+        return plan;
+    const ImageHeader header = load_header({image_base_, image_size_});
+    plan.committed_bytes = header.committed_bytes;
+    plan.image_bytes = header.image_size;
+    static constexpr Channel kChannels[5] = {Channel::Metrics, Channel::Cct, Channel::Patches,
+                                             Channel::Worldlines, Channel::Nodes};
+    static constexpr SectionKind kSections[5] = {SectionKind::Metrics, SectionKind::Cct,
+                                                 SectionKind::Patches, SectionKind::Worldlines,
+                                                 SectionKind::Nodes};
+    std::uint64_t rounds = ~0ull;
+    for (std::size_t i = 0; i < 5; ++i) {
+        ChannelView view{};
+        if (!channel_view({image_base_, image_size_}, kChannels[i], &view))
+            continue;
+        SectionEntry entry{};
+        if (!find_section({image_base_, image_size_}, kSections[i], &entry))
+            continue;
+        const std::uint64_t stride = view.element_size != 0 ? view.element_size : 1;
+        const std::uint64_t used = view.count * stride;
+        plan.capacity[i] = entry.capacity;
+        plan.remaining[i] = entry.capacity > used ? (entry.capacity - used) / stride : 0;
+        if (kChannels[i] == Channel::Worldlines)
+            rounds = std::min(rounds, plan.remaining[i] / kSloWorldlinesPerRound);
+        else if (kChannels[i] == Channel::Patches)
+            rounds = std::min(rounds, plan.remaining[i] / kSloPatchesPerRound);
+    }
+    if (rounds == ~0ull)
+        rounds = 0;
+    plan.rounds = rounds;
+    plan.low = rounds <= kSloLowRounds ? 1 : 0;
+    return plan;
+}
+
+// #5395: the performance counters and the capacity plan.
+bool Server::slo_query(std::uint64_t kind, SloReplyBody* out, std::string* why) {
+    SloReplyBody reply{};
+    reply.frames = slo_.frames;
+    reply.frame_cpu_ns = slo_.frame_cpu_ns;
+    reply.p99_cpu_ns = slo_hist_.p99();
+    reply.publishes = slo_.publishes;
+    reply.publish_cpu_ns = slo_.publish_cpu_ns;
+    reply.attaches = slo_.attaches;
+    reply.attach_cpu_ns = slo_.attach_cpu_ns;
+    reply.catchups = slo_.catchups;
+    reply.catchup_max = slo_.catchup_max;
+    const CapacityPlan plan = capacity_plan();
+    reply.rounds = plan.rounds;
+    reply.low = plan.low;
+    for (std::size_t i = 0; i < 5; ++i)
+        reply.remaining[i] = plan.remaining[i];
+    reply.committed_bytes = plan.committed_bytes;
+    reply.image_bytes = plan.image_bytes;
+    // #5395: the soak lane watches the loans and the pending trials
+    // for a residue.
+    reply.pending = worldlines_.pending_count();
+    std::uint64_t loans = 0;
+    for (const PeerSession& peer : peers_)
+        loans += peer.loans.outstanding();
+    reply.loans = loans;
+    (void)kind;
+    *out = reply;
+    (void)why;
+    return true;
+}
+
 // #5394: the detector saw a sustained degradation. While an
 // observation runs, the degradation belongs to the candidate under
 // observation: it is rolled back. Otherwise it is a signal: the host
@@ -1584,6 +1661,11 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
                               (view.count - from) * view.element_size,
                               static_cast<std::uint64_t>(snapshot ? 1 : 0),
                               view.count};
+            // #5395: the catchup increment size (the largest one the
+            // coordinator ever handed out).
+            ++slo_.catchups;
+            if (reply.length > slo_.catchup_max)
+                slo_.catchup_max = reply.length;
             send_frame(conn_fd, FrameType::Credit, session,
                        {reinterpret_cast<const std::byte*>(&reply), sizeof(reply)});
             break;
@@ -1670,6 +1752,9 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
                 }
                 std::uint64_t gen = 0;
                 std::string why;
+                // #5395: the publish cost is part of the bus's
+                // overhead — CPU time, never the wall clock.
+                const std::uint64_t publish_started_ns = slo_thread_cpu_ns();
                 if (!channel_commit({image_base_, image_size_}, channel, loan.offset, loan.length,
                                     &gen, &why)) {
                     deny(EINVAL, why);
@@ -1680,6 +1765,9 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
                 channel_view({image_base_, image_size_}, channel, &view);
                 generation_ = gen;
                 record_audit(AuditKind::Publish, root_token, 0, loan.length);
+                // #5395: the publish cost, in CPU time.
+                ++slo_.publishes;
+                slo_.publish_cpu_ns += slo_thread_cpu_ns() - publish_started_ns;
                 // #5381: online metrics drive the canary observation. Run
                 // the check BEFORE the reply so a revert completes before
                 // the publisher's next form observes the workspace.
@@ -2205,6 +2293,24 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
                        {reinterpret_cast<const std::byte*>(&reply), sizeof(reply)});
             break;
         }
+        case FrameType::SloQuery: {
+            // #5395: the performance counters and the capacity plan.
+            if (header.len < sizeof(SloQueryBody))
+                break;
+            SloQueryBody request{};
+            std::memcpy(&request, body.data(), sizeof(request));
+            if (!require(kCapRead, 0, 0))
+                break;
+            SloReplyBody reply{};
+            std::string why;
+            if (!slo_query(request.kind, &reply, &why)) {
+                deny(EINVAL, "slo: " + why);
+                break;
+            }
+            send_frame(conn_fd, FrameType::Credit, session,
+                       {reinterpret_cast<const std::byte*>(&reply), sizeof(reply)});
+            break;
+        }
         case FrameType::Grant: {
             if (header.len < sizeof(GrantBody))
                 break;
@@ -2354,9 +2460,17 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
 
 bool Server::handle_frame(PeerSession& peer, const FrameHeader& header,
                           std::span<const std::byte> body) {
-    return dispatch_frame(peer.conn_fd, peer.session, peer.root_token, peer.caps, peer.loans,
-                          peer.channel_loans, peer.staging_capacity, peer.staging_used,
-                          &peer.subscribed, header, body);
+    // #5395: the cost of serving a control frame is the bus's own
+    // overhead — CPU time, never the wall clock (#5324).
+    const std::uint64_t started_ns = slo_thread_cpu_ns();
+    const bool keep = dispatch_frame(peer.conn_fd, peer.session, peer.root_token, peer.caps,
+                                     peer.loans, peer.channel_loans, peer.staging_capacity,
+                                     peer.staging_used, &peer.subscribed, header, body);
+    const std::uint64_t cost_ns = slo_thread_cpu_ns() - started_ns;
+    ++slo_.frames;
+    slo_.frame_cpu_ns += cost_ns;
+    slo_hist_.add(cost_ns);
+    return keep;
 }
 
 void Server::finish_session(PeerSession& peer) {

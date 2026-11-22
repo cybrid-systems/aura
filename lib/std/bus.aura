@@ -22,6 +22,7 @@
         bus:audit-replay bus:audit-evo
         bus:round-open bus:round-state bus:round-budget
         bus:degradation-state bus:degrade-install bus:degrade-rollback
+        bus:slo bus:capacity-plan
         bus:status bus:code bus:message bus:ok? bus:help
         bus:attach? bus:error? bus:record?)
 
@@ -266,6 +267,26 @@
 (define (bus:degrade-rollback session)
   (bus-call "degrade-rollback" session))
 
+; ── v0.3.2 性能与容量(#5395) ─────────────────────────────────
+; (bus:slo session) -> (ok frames frame-cpu-ns p99-cpu-ns publishes
+;                       publish-cpu-ns attaches attach-cpu-ns catchups
+;                       catchup-max)
+; The bus's own overhead, in CPU time (never the wall clock: a shared
+; runner measures the scheduler, not the work). The p99 is the 99th
+; percentile of the per-frame CPU cost.
+(define (bus:slo session)
+  (bus-call "slo" session))
+
+; (bus:capacity-plan session) -> (ok rounds low remaining-metrics
+;                                 remaining-cc remaining-patches
+;                                 remaining-worldlines remaining-nodes
+;                                 committed-bytes image-bytes)
+; The room left in the image and the rounds it still supports. The
+; channel capacities are a function of the delivered image (#5387), so
+; the plan follows the image.
+(define (bus:capacity-plan session)
+  (bus-call "capacity-plan" session))
+
 ; (bus:grant session bits channels loans expires worldline) -> (ok token)
 (define (bus:grant session bits channels loans expires worldline)
   (bus-call "grant" session bits channels loans expires worldline))
@@ -304,6 +325,7 @@
     "replay: (bus:audit-replay session) -> (ok events worldlines keeps findings first-seq first-kind first-reason nodes); (bus:audit-evo session) -> (ok text); the lineage, its integrity findings and the reproduced verdicts\n"
     "round: (bus:round-open session) -> (ok round-id phase); (bus:round-state session) -> (ok phase round-id worldline opened sealed reason); (bus:round-budget session) -> (ok wall-ms cooldown-ms max-rounds version); the admission round state machine\n"
     "degrade: (bus:degradation-state session) -> (ok version samples alerts last-change min-samples drift limit calm keys); (bus:degrade-install session min-samples alpha drift limit calm down-keys up-keys) / (bus:degrade-rollback session) -> (ok version); the host's degradation detector\n"
+    "slo: (bus:slo session) -> (ok frames frame-cpu-ns p99-cpu-ns publishes publish-cpu-ns attaches attach-cpu-ns catchups catchup-max); (bus:capacity-plan session) -> (ok rounds low remaining-metrics remaining-cc remaining-patches remaining-worldlines remaining-nodes committed-bytes image-bytes); the bus's own overhead and the room left\n"
     "failures: (error code message); codes: schema-mismatch, seals-missing, loan-exhausted, image-full, validation-failed, permission, unregistered-id, transport-failed\n"))
 
 (define (bus:status record) (car record))

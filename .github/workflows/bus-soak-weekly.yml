@@ -1,0 +1,54 @@
+# Issue #5395: the bus soak lane.
+# Not on PRs: the lane runs the bus for hours and the numbers are
+# sensitive to runner load, so the issue asked for a scheduled lane
+# rather than the PR gate. `--check` enforces the issue targets: the
+# resource curves (RSS, descriptors, loans, pending trials, the room
+# left in the image) must be flat, no round may fail, and the periodic
+# worker kills must not leave a residue.
+name: Bus soak weekly
+
+on:
+  schedule:
+    - cron: "41 3 * * 1" # Mondays 03:41 UTC
+  workflow_dispatch:
+    inputs:
+      hours:
+        description: "The soak duration in hours (default 24)."
+        required: false
+        default: "24"
+
+env:
+  AURA_BUILD_JOBS: "0"
+  CCACHE_DISABLE: 1
+
+jobs:
+  bus-soak:
+    runs-on: ubuntu-latest
+    timeout-minutes: 1800
+    container:
+      image: ghcr.io/cybrid-systems/aura-ci:latest
+    steps:
+    - uses: actions/checkout@v7
+
+    - uses: ./.github/actions/ci-krb5
+
+    - name: Install Python CI deps
+      run: pip install --break-system-packages -r requirements-dev.txt
+
+    # Target only the binary the bench spawns: build.py build also
+    # compiles every test target, which makes this lane much longer on
+    # a cold runner.
+    - name: Build aura
+      run: |
+        cmake -S . -B build -G Ninja -Wno-author \
+          -Werror=experimental -Wpolicy -Wdeprecated -Wstrict -Wnon-target-directive \
+          -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+        ninja -C build aura -j 4
+
+    - name: The bus SLO (#5395)
+      # The per-frame cost, the publish rate, the catchup increment and
+      # the attach cost, all in CPU time.
+      run: python3 tests/bench/bus_slo.py --check
+
+    - name: The bus soak (#5395)
+      run: python3 tests/bench/bus_soak.py --hours "${{ github.event.inputs.hours || '24' }}" --check

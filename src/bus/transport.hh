@@ -17,6 +17,7 @@
 #include "bus/image.hh"
 #include "bus/replay.hh"
 #include "bus/round.hh"
+#include "bus/slo.hh"
 
 #include <array>
 #include <cstddef>
@@ -84,6 +85,8 @@ enum class FrameType : std::uint16_t {
     // configuration or roll the previous one back.
     DegradeQuery = 30,
     DegradeConfig = 31,
+    // #5395: the bus's own performance counters and capacity plan.
+    SloQuery = 32,
 };
 
 enum class RejectReason : std::uint16_t {
@@ -299,6 +302,33 @@ struct DegradeReplyBody {
     std::uint64_t limit_ppm = 0;
     std::uint64_t calm_samples = 0;
     char reason[32] = {};
+};
+
+// #5395: the performance counters and the capacity plan. One reply
+// carries both; the request says which one the peer wants.
+struct SloQueryBody {
+    std::uint64_t kind = 0; // 0 = the counters, 1 = the capacity plan
+    std::uint64_t reserved = 0;
+    std::uint64_t reserved2 = 0;
+};
+
+struct SloReplyBody {
+    std::uint64_t frames = 0;
+    std::uint64_t frame_cpu_ns = 0;
+    std::uint64_t p99_cpu_ns = 0;
+    std::uint64_t publishes = 0;
+    std::uint64_t publish_cpu_ns = 0;
+    std::uint64_t attaches = 0;
+    std::uint64_t attach_cpu_ns = 0;
+    std::uint64_t catchups = 0;
+    std::uint64_t catchup_max = 0;
+    std::uint64_t rounds = 0;
+    std::uint64_t low = 0;
+    std::uint64_t remaining[5] = {};
+    std::uint64_t committed_bytes = 0;
+    std::uint64_t image_bytes = 0;
+    std::uint64_t loans = 0;   // the loans the peers hold
+    std::uint64_t pending = 0; // the trials that are still pending
 };
 
 struct DegradeKeyStateBody {
@@ -561,6 +591,11 @@ public:
     // Load the checkpoint and continue the round counter: a restarted
     // host resumes instead of repeating the sealed work.
     void round_resume();
+    // #5395: the bus's own performance counters and capacity plan.
+    [[nodiscard]] const SloCounters& slo() const { return slo_; }
+    [[nodiscard]] CapacityPlan capacity_plan() const;
+    // The performance counters or the capacity plan.
+    bool slo_query(std::uint64_t kind, SloReplyBody* out, std::string* why);
     // #5394: the degradation detector. The host watches the configured
     // metrics and opens a round when a degradation is sustained.
     void set_degrade_config(const DegradeConfig& config) { degrade_.configure(config); }
@@ -724,6 +759,9 @@ private:
     std::string round_checkpoint_path_;
     // #5394: the degradation detector.
     DegradeDetector degrade_{};
+    // #5395: the performance counters and the capacity plan.
+    SloCounters slo_{};
+    SloHistogram slo_hist_{};
     // #5381: at most one active canary; its window/floor parameters.
     std::uint64_t canary_worldline_ = 0;
     std::uint64_t canary_window_ = 0;
