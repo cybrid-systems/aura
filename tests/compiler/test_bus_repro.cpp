@@ -137,8 +137,29 @@ const char* kClientScript = R"AURA(
 (define ms (bus:attach "" 8945 3 127 255))
 (define msid (car (cdr ms)))
 (bus:project-nodes msid)
-(define rp (bus:repro msid 2))
+; The judge opens its own candidate, binds the held-out evidence, keeps
+; it and asks for the package: the sequence a nightly judge runs.
+(define tr (bus:trial msid 3))
+(define wl (car (cdr tr)))
+(define src (bus:publish-source msid "(lambda (x) (+ x 10))"))
+(bus:publish-patch msid 5 bus:source-field (car (cdr src)) wl 0)
+(define d (car (cdr (bus:candidate-digest msid wl))))
+(bus:bind-evidence msid wl 0 d 7 42 1)
+; The judge narrows its own session to the candidate's grant before it
+; binds and keeps: a scoped grant reaches nothing else.
+(define gt (bus:grant msid 7 255 4 3600 wl))
+(define ga (bus:grant-activate msid (car (cdr gt))))
+(display "cgrant=") (display (if (bus:ok? ga) "ok" (bus:code ga))) (display "|") (newline)
+(define g (bus:bind-gate msid wl 700 7 42 31 3 0 0 1 (list 500000 600000 700000)))
+(display "cbind=") (display (if (bus:ok? g) "ok" (bus:code g))) (display "|") (newline)
+(define k (bus:keep msid wl 0 0))
+(display "ckeep=") (display (if (bus:ok? k) "ok" (bus:code k))) (display "|") (newline)
+(define rp (bus:repro msid wl))
 (display "repro=") (display (if (bus:ok? rp) (list-ref rp 5) (bus:code rp)))
+(display "|") (newline)
+; The teardown reads the whole audit log before it detaches.
+(define au (bus:audit msid 0))
+(display "audit=") (display (if (bus:ok? au) (cadr au) (bus:code au)))
 (display "|") (newline)
 (display "DONE") (newline)
 )AURA";
@@ -268,6 +289,12 @@ int main() {
     int client_out = -1, client_in = -1;
     const pid_t client = run_script(d + "/client.aura", &client_out, &client_in);
     check(client > 0, "fork client");
+    const std::string cgrant = read_until(client_out, "|", 10000);
+    check(has(cgrant, "cgrant=ok"), "a peer narrows its session to a grant");
+    const std::string cbind = read_until(client_out, "|", 10000);
+    check(has(cbind, "cbind=ok"), "a peer binds the held-out evidence");
+    const std::string ckeep = read_until(client_out, "|", 10000);
+    check(!ckeep.empty(), "a peer's keep is answered");
     const std::string crepro = read_until(client_out, "|", 10000);
     check(has(crepro, "repro={"), "a peer reads the reproduction package");
     const ssize_t released = ::write(host_in, "go\n", 3);

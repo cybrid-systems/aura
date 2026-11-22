@@ -237,9 +237,21 @@ inline void install_fatal_signal_handlers() {
                     std::snprintf(line, sizeof(line), "Faulting IP: %s+%td in %s\n",
                                   dlinfo.dli_sname, off, dlinfo.dli_fname ? dlinfo.dli_fname : "?");
             } else {
-                ln = std::snprintf(line, sizeof(line),
-                                   "Faulting IP: %p (no symbol; -rdynamic missing or stripped)\n",
-                                   ip);
+                // The module is known even when the symbol is not: the
+                // offset into it is what addr2line needs.
+                Dl_info mod{};
+                if (::dladdr(ip, &mod) && mod.dli_fbase != nullptr) {
+                    const auto off = reinterpret_cast<std::uintptr_t>(ip) -
+                                     reinterpret_cast<std::uintptr_t>(mod.dli_fbase);
+                    ln = std::snprintf(line, sizeof(line),
+                                       "Faulting IP: %p in %s+0x%zx (no symbol; "
+                                       "-rdynamic missing or stripped)\n",
+                                       ip, mod.dli_fname ? mod.dli_fname : "?", off);
+                } else {
+                    ln = std::snprintf(
+                        line, sizeof(line),
+                        "Faulting IP: %p (no symbol; -rdynamic missing or stripped)\n", ip);
+                }
             }
             if (ln > 0)
                 (void)!::write(2, line, ln);
