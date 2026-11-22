@@ -9,11 +9,14 @@ module;
 #include "runtime_shared.h"
 #include "prim_registrar_scaffold.hh"
 
+#include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <ctime>
 #include <memory>
 #include <mutex>
 #include <unordered_map>
+#include <vector>
 
 #include "bus/transport.hh"
 #include "bus/host.hh"
@@ -284,6 +287,59 @@ namespace {
     };
     std::unordered_map<std::uint64_t, BusApplyState> g_bus_apply;
 
+    // #5397: the host's live define names and their node ids. A peer
+    // that wants to rewrite a named function asks the host; the node
+    // ids are host-local, so guessing them from another process is not
+    // sound.
+    bool bus_define_nodes(Evaluator& ev, std::vector<std::pair<std::string, std::uint64_t>>* out) {
+        auto* flat = ev.workspace_flat();
+        auto* pool = ev.workspace_pool();
+        if (flat == nullptr || pool == nullptr)
+            return false;
+        out->clear();
+        for (std::uint64_t id = 0; id < flat->size(); ++id) {
+            if (flat->is_free_slot(id))
+                continue;
+            if (flat->tag(static_cast<aura::ast::NodeId>(id)) != aura::ast::NodeTag::Define)
+                continue;
+            const auto sym = flat->sym_id(static_cast<aura::ast::NodeId>(id));
+            if (sym == aura::ast::INVALID_SYM)
+                continue;
+            out->emplace_back(std::string(pool->resolve(sym)), id);
+        }
+        return true;
+    }
+
+    // #5397: the mutable target allowlist. A bus KEEP may only rebind
+    // the functions the host declares. The std/contract protection set is
+    // a deny-list for the control plane; this is the allow-list for the
+    // policy functions the closed loop is allowed to evolve. Empty (the
+    // default) keeps the v0.3.1 surface: anything not protected may be
+    // rebound.
+    std::vector<std::string> bus_mutable_targets() {
+        std::vector<std::string> out;
+        const char* raw = ::getenv("AURA_BUS_MUTABLE_TARGETS");
+        if (raw == nullptr)
+            return out;
+        const std::string list(raw);
+        std::size_t at = 0;
+        while (at <= list.size()) {
+            const std::size_t comma = list.find(',', at);
+            std::string item =
+                list.substr(at, comma == std::string::npos ? std::string::npos : comma - at);
+            while (!item.empty() && std::isspace(static_cast<unsigned char>(item.front())))
+                item.erase(item.begin());
+            while (!item.empty() && std::isspace(static_cast<unsigned char>(item.back())))
+                item.pop_back();
+            if (!item.empty())
+                out.push_back(item);
+            if (comma == std::string::npos)
+                break;
+            at = comma + 1;
+        }
+        return out;
+    }
+
     // Resolve a workspace Define node id to its name (empty when absent).
     std::string bus_define_name(Evaluator& ev, std::uint64_t node) {
         auto* flat = ev.workspace_flat();
@@ -311,7 +367,8 @@ namespace {
 
     bool bus_apply_keep(Evaluator& ev, std::uint64_t workspace, std::uint64_t worldline,
                         std::span<const aura::bus::PatchRecord> patches,
-                        std::span<const std::string> sources, bool canary, std::string* why) {
+                        std::span<const std::string> sources, bool canary,
+                        const std::vector<std::string>& mutable_targets, std::string* why) {
         const auto fail = [&](const std::string& msg) {
             if (why)
                 *why = msg;
@@ -336,6 +393,19 @@ namespace {
         }
         if (rebinds.empty())
             return true; // nothing to apply to the live AST
+
+        // #5397: the mutable target allowlist. A candidate may rewrite
+        // several policy functions at once (choose-fn + admit-fn +
+        // ttl-fn), but only the ones the host declared. The check runs
+        // before the snapshot, so a refused candidate touches nothing.
+        if (!mutable_targets.empty()) {
+            for (const auto& [name, src] : rebinds) {
+                if (std::find(mutable_targets.begin(), mutable_targets.end(), name) ==
+                    mutable_targets.end()) {
+                    return fail("patch target is not a mutable target: " + name);
+                }
+            }
+        }
 
         // #5380: mirror the std/contract protection set before any rebind.
         // Refresh the installed digest, then check each target name.
@@ -616,16 +686,24 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                 // KEEP and canary observation are opt-in via env so the
                 // v0.3.0 surface stays the default.
                 opts.workspace_generation = ev.workspace_flat_generation();
-                opts.apply = [&ev, ws](std::uint64_t wl, std::uint64_t gen,
-                                       std::span<const aura::bus::PatchRecord> patches,
-                                       std::span<const std::string> sources, bool canary,
-                                       std::string* why) {
+                // #5397: the mutable target allowlist (empty = unrestricted).
+                const std::vector<std::string> mutable_targets = bus_mutable_targets();
+                opts.apply = [&ev, ws,
+                              mutable_targets](std::uint64_t wl, std::uint64_t gen,
+                                               std::span<const aura::bus::PatchRecord> patches,
+                                               std::span<const std::string> sources, bool canary,
+                                               std::string* why) {
                     (void)gen;
                     return bus_apply_keep(ev, static_cast<std::uint64_t>(ws), wl, patches, sources,
-                                          canary, why);
+                                          canary, mutable_targets, why);
                 };
                 opts.revert = [&ev, ws](std::uint64_t wl, std::string* why) {
                     return bus_revert_keep(ev, static_cast<std::uint64_t>(ws), wl, why);
+                };
+                // #5397: the host's define names, so a peer can address
+                // a named function.
+                opts.define_names = [&ev](std::vector<std::pair<std::string, std::uint64_t>>* out) {
+                    return bus_define_nodes(ev, out);
                 };
                 if (const char* ev_req = ::getenv("AURA_BUS_EVIDENCE"))
                     opts.evidence_required = std::string(ev_req) == "1";
@@ -1123,6 +1201,169 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                 return bus_list(ev, {bus_string(ev, "ok"),
                                      make_int(static_cast<std::int64_t>(ar.count)),
                                      make_int(static_cast<std::int64_t>(ar.truncated)), listed});
+            }
+
+            // #5397: the host's live define names. The node ids are
+            // host-local, so a peer asks the host for the name it wants
+            // to rewrite instead of guessing an id.
+            if (op == "defines") {
+                std::int64_t sid = 0;
+                if (a.size() < 2 || !bus_int(a[1], &sid))
+                    return bus_error(ev, "validation-failed", "defines needs a session id");
+                const auto sit = g_bus_sessions.find(sid);
+                if (sit == g_bus_sessions.end())
+                    return bus_error(ev, "unregistered-id", "unknown session");
+                auto& att = sit->second->att;
+                if (!aura::bus::send_frame(att.sock, aura::bus::FrameType::DefineQuery, att.session,
+                                           {}))
+                    return bus_error(ev, "transport-failed", "define query send failed");
+                aura::bus::FrameHeader hdr{};
+                std::vector<std::byte> body(aura::bus::kBusMaxControlFrame);
+                if (!recv_reply(att.sock, &hdr, &body))
+                    return bus_error(ev, "transport-failed", "define query reply lost");
+                if (hdr.type == static_cast<std::uint16_t>(aura::bus::FrameType::Error)) {
+                    aura::bus::ErrorBody eb{};
+                    std::memcpy(&eb, body.data(), std::min(sizeof(eb), body.size()));
+                    return bus_error(ev, "permission", eb.message);
+                }
+                if (body.size() < sizeof(aura::bus::DefineReply))
+                    return bus_error(ev, "validation-failed", "malformed define reply");
+                aura::bus::DefineReply reply{};
+                std::memcpy(&reply, body.data(), sizeof(reply));
+                std::vector<EvalValue> rows;
+                for (std::uint64_t i = 0; i < reply.count; ++i) {
+                    const std::size_t at = sizeof(reply) + i * sizeof(aura::bus::DefineWire);
+                    if (at + sizeof(aura::bus::DefineWire) > body.size())
+                        break;
+                    aura::bus::DefineWire w{};
+                    std::memcpy(&w, body.data() + at, sizeof(w));
+                    rows.push_back(bus_list(
+                        ev, {bus_string(ev, std::string(w.name, strnlen(w.name, sizeof(w.name)))),
+                             make_int(static_cast<std::int64_t>(w.node))}));
+                }
+                EvalValue listed = make_void();
+                for (auto it = rows.rbegin(); it != rows.rend(); ++it)
+                    listed = make_pair(static_cast<std::uint64_t>(ev.push_pair(*it, listed)));
+                return bus_list(ev, {bus_string(ev, "ok"),
+                                     make_int(static_cast<std::int64_t>(reply.count)),
+                                     make_int(static_cast<std::int64_t>(reply.truncated)), listed});
+            }
+
+            // #5397: the reproduction package of one worldline. It
+            // carries the five-tuple, the held-out windows, the policy
+            // snapshot and the verdict, so the admission decision can be
+            // re-run offline and must land on the same verdict.
+            if (op == "repro") {
+                std::int64_t sid = 0, wl = 0;
+                if (a.size() < 3 || !bus_int(a[1], &sid) || !bus_int(a[2], &wl))
+                    return bus_error(ev, "validation-failed",
+                                     "repro needs a session id and a worldline");
+                const auto sit = g_bus_sessions.find(sid);
+                if (sit == g_bus_sessions.end())
+                    return bus_error(ev, "unregistered-id", "unknown session");
+                auto& att = sit->second->att;
+                const std::uint64_t worldline = static_cast<std::uint64_t>(wl);
+                if (!aura::bus::send_frame(
+                        att.sock, aura::bus::FrameType::ReproQuery, att.session,
+                        {reinterpret_cast<const std::byte*>(&worldline), sizeof(worldline)}))
+                    return bus_error(ev, "transport-failed", "repro query send failed");
+                aura::bus::FrameHeader hdr{};
+                std::vector<std::byte> body(aura::bus::kBusMaxControlFrame);
+                if (!recv_reply(att.sock, &hdr, &body))
+                    return bus_error(ev, "transport-failed", "repro query reply lost");
+                if (hdr.type == static_cast<std::uint16_t>(aura::bus::FrameType::Error)) {
+                    aura::bus::ErrorBody eb{};
+                    std::memcpy(&eb, body.data(), std::min(sizeof(eb), body.size()));
+                    return bus_error(ev, "permission", eb.message);
+                }
+                if (body.size() < sizeof(aura::bus::ReproPackage))
+                    return bus_error(ev, "validation-failed", "malformed repro reply");
+                aura::bus::ReproPackage pkg{};
+                std::memcpy(&pkg, body.data(), sizeof(pkg));
+                EvalValue five = make_void();
+                if (pkg.has_five != 0) {
+                    five = bus_list(
+                        ev, {make_int(static_cast<std::int64_t>(pkg.five.baseline_gen)),
+                             make_int(static_cast<std::int64_t>(pkg.five.candidate_hash)),
+                             make_int(static_cast<std::int64_t>(pkg.five.workload_sym)),
+                             make_int(static_cast<std::int64_t>(pkg.five.seed)),
+                             make_int(static_cast<std::int64_t>(pkg.five.verifier_version))});
+                }
+                EvalValue windows = make_void();
+                if (pkg.has_gate != 0) {
+                    const std::uint64_t n =
+                        std::min<std::uint64_t>(pkg.gate.fold_count, aura::bus::kGateMaxWindows);
+                    for (std::uint64_t i = n; i > 0; --i) {
+                        const std::uint64_t raw = pkg.gate.windows[i - 1];
+                        windows = make_pair(static_cast<std::uint64_t>(
+                            ev.push_pair(make_int(static_cast<std::int64_t>(raw)), windows)));
+                    }
+                }
+                EvalValue policy = make_void();
+                if (pkg.has_gate != 0) {
+                    policy = bus_list(
+                        ev, {make_int(static_cast<std::int64_t>(pkg.gate.round_id)),
+                             make_int(static_cast<std::int64_t>(pkg.gate.threshold_ppm)),
+                             make_int(static_cast<std::int64_t>(pkg.gate.control)),
+                             make_int(static_cast<std::int64_t>(pkg.policy.min_windows)),
+                             make_int(static_cast<std::int64_t>(pkg.policy.budget_window)),
+                             make_int(static_cast<std::int64_t>(pkg.policy.tighten_factor)),
+                             make_int(static_cast<std::int64_t>(pkg.policy.version))});
+                }
+                EvalValue verdict = make_void();
+                if (pkg.has_verdict != 0) {
+                    verdict = bus_list(
+                        ev, {make_int(static_cast<std::int64_t>(pkg.verdict.verdict)),
+                             make_int(static_cast<std::int64_t>(pkg.verdict.family)),
+                             make_int(static_cast<std::int64_t>(pkg.verdict.observed_ppm)),
+                             make_int(static_cast<std::int64_t>(pkg.verdict.adjusted_ppm)),
+                             make_int(static_cast<std::int64_t>(pkg.verdict.haircut_ppm)),
+                             make_int(static_cast<std::int64_t>(pkg.verdict.threshold_ppm)),
+                             make_int(static_cast<std::int64_t>(pkg.verdict.fingerprint))});
+                }
+                // The package is also rendered as one JSON line, so a
+                // nightly can archive it verbatim and re-run the
+                // decision offline (`aura bus-repro FILE`).
+                std::string json =
+                    "{\"v\":1,\"worldline\":" + std::to_string(pkg.gate.worldline) +
+                    ",\"baseline_gen\":" + std::to_string(pkg.five.baseline_gen) +
+                    ",\"candidate_hash\":" + std::to_string(pkg.five.candidate_hash) +
+                    ",\"workload_sym\":" + std::to_string(pkg.five.workload_sym) +
+                    ",\"seed\":" + std::to_string(pkg.five.seed) +
+                    ",\"verifier_version\":" + std::to_string(pkg.five.verifier_version) +
+                    ",\"round_id\":" + std::to_string(pkg.gate.round_id) +
+                    ",\"fold_count\":" + std::to_string(pkg.gate.fold_count) +
+                    ",\"threshold_ppm\":" + std::to_string(pkg.gate.threshold_ppm) +
+                    ",\"control\":" + std::to_string(pkg.gate.control) + ",\"windows\":[";
+                {
+                    const std::uint64_t n =
+                        std::min<std::uint64_t>(pkg.gate.fold_count, aura::bus::kGateMaxWindows);
+                    for (std::uint64_t i = 0; i < n; ++i) {
+                        if (i != 0)
+                            json += ",";
+                        const std::uint64_t raw = pkg.gate.windows[i];
+                        json += std::to_string(static_cast<std::int64_t>(raw));
+                    }
+                }
+                json +=
+                    "],\"policy\":{\"threshold_ppm\":" + std::to_string(pkg.policy.threshold_ppm) +
+                    ",\"min_windows\":" + std::to_string(pkg.policy.min_windows) +
+                    ",\"budget_window\":" + std::to_string(pkg.policy.budget_window) +
+                    ",\"tighten_factor\":" + std::to_string(pkg.policy.tighten_factor) +
+                    ",\"version\":" + std::to_string(pkg.policy.version) +
+                    "},\"verdict\":{\"verdict\":" + std::to_string(pkg.verdict.verdict) +
+                    ",\"family\":" + std::to_string(pkg.verdict.family) +
+                    ",\"observed_ppm\":" + std::to_string(pkg.verdict.observed_ppm) +
+                    ",\"adjusted_ppm\":" + std::to_string(pkg.verdict.adjusted_ppm) +
+                    ",\"haircut_ppm\":" + std::to_string(pkg.verdict.haircut_ppm) +
+                    ",\"threshold_ppm\":" + std::to_string(pkg.verdict.threshold_ppm) +
+                    ",\"fingerprint\":" + std::to_string(pkg.verdict.fingerprint) +
+                    ",\"policy_version\":" + std::to_string(pkg.verdict.policy_version) +
+                    ",\"min_windows\":" + std::to_string(pkg.verdict.min_windows) +
+                    ",\"tighten_factor\":" + std::to_string(pkg.verdict.tighten_factor) +
+                    ",\"windows\":" + std::to_string(pkg.verdict.windows) + "}}";
+                return bus_list(ev, {bus_string(ev, "ok"), five, windows, policy, verdict,
+                                     bus_string(ev, json)});
             }
 
             // #5393: the admission round state machine. A peer asks

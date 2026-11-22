@@ -948,6 +948,9 @@ static std::string project_channel_4913() {
     return ok && dots == 2 && v.front() != '.' && v.back() != '.' ? std::string(v) : "nightly";
 }
 #include "cli_evo_4910.inc"
+// Issue #5397: `aura bus-repro FILE` — re-run a KEEP's admission
+// decision from its reproduction package, offline.
+#include "cli_bus_repro_5397.inc"
 // Issue #5263: the formatter is included first — the language server's
 // formatting handlers call cli_fmt_5263::reindent() directly (one C++
 // interface, no shell out, no new Aura primitive).
@@ -1196,6 +1199,12 @@ inline constexpr SubHelp4935 kSubHelp4935[] = {
      "\n"
      "Commands inside: :load FILE, :reload FILE, :ws, :worldline, :snapshot,\n"
      ":restore ID, :help\n"},
+    {"bus-repro", "re-run a bus KEEP's admission decision from its repro package",
+     "usage: aura bus-repro FILE [--json]\n"
+     "\n"
+     "  FILE holds one reproduction package per line (the `bus:repro` verb\n"
+     "  emits them). The decision is re-run offline and compared with the\n"
+     "  recorded verdict. Exit 0 when every package reproduces.\n"},
     {"evo", "inspect a project's evolution worldline",
      "usage: aura evo log [--json] [--all] [--run ID|last] [--front] "
      "[--lineage ID]\n"
@@ -1459,6 +1468,8 @@ static std::optional<int> front_door_4913(int& argc, char**& argv) {
     }
     if (sub == "evo")
         return aura_evo_4910(argc, argv);
+    if (sub == "bus-repro")
+        return aura_bus_repro_5397(argc, argv);
     if (sub == "lsp")
         return aura_lsp_4911();
     if (sub == "repl") {

@@ -19,7 +19,7 @@
         bus:publish-source bus:bind-evidence bus:evidence bus:canary-confirm
         bus:candidate-digest bus:source-field bus:grant-activate
         bus:bind-gate bus:gate-evidence
-        bus:audit-replay bus:audit-evo
+        bus:audit-replay bus:audit-evo bus:defines bus:repro
         bus:round-open bus:round-state bus:round-budget
         bus:degradation-state bus:degrade-install bus:degrade-rollback
         bus:slo bus:capacity-plan
@@ -221,6 +221,22 @@
 ; object per line, so `aura evo log` reads the bus lineage directly.
 (define (bus:audit-evo session)
   (bus-call "audit-evo" session))
+
+; (bus:defines session) -> (ok count truncated rows)
+; The host's live define names and their node ids. The node ids belong
+; to the host's own workspace AST, so a peer that wants to rewrite a
+; named function (choose-fn + admit-fn + ttl-fn) asks the host instead
+; of guessing an id. Each row is (name node).
+(define (bus:defines session)
+  (bus-call "defines" session))
+
+; (bus:repro session worldline) -> (ok five-tuple windows policy verdict)
+; The reproduction package of one worldline: the evidence five-tuple,
+; the held-out windows, the policy snapshot and the coordinator's own
+; verdict. Everything the admission decision was made from, so the
+; decision can be re-run offline and must land on the same verdict.
+(define (bus:repro session worldline)
+  (bus-call "repro" session worldline))
 
 ; ── v0.3.2 轮次编排(#5393) ───────────────────────────────────
 ; (bus:round-open session) -> (ok round-id phase)

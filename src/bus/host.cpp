@@ -297,6 +297,10 @@ bool host_start(const HostOptions& opts, std::string* path_out, std::string* why
         host->server.set_apply_callback(opts.apply);
     if (opts.revert)
         host->server.set_revert_callback(opts.revert);
+    // #5397: the host's define names, so a peer can address a named
+    // function instead of guessing a host-local node id.
+    if (opts.define_names)
+        host->server.set_define_nodes_callback(opts.define_names);
     host->server.set_workspace_generation(opts.workspace_generation);
     host->server.set_evidence_required(opts.evidence_required);
     // #5391: the statistical admission policy (off by default).

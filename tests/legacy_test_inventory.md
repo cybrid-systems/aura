@@ -1,7 +1,7 @@
 # Legacy test inventory
 
 **Issue:** [#1957](https://github.com/cybrid-systems/aura/issues/1957)
-**Generated:** 2026-11-22 by `scripts/tools/inventory_legacy_tests.py`
+**Generated:** 2026-11-23 by `scripts/tools/inventory_legacy_tests.py`
 **Status:** generated inventory, not the how-to-add-a-test policy. Policy is tests/HOMES.md. Re-run this script after consolidations.
 
 ## Purpose
@@ -18,8 +18,8 @@ This file is not the decision tree for a new test. Ask `python3 tests/run.py hom
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 949 | Preferred destination suites |
-| **Total scanned** | **949** | |
+| `tests/core/test_*.cpp` | 951 | Preferred destination suites |
+| **Total scanned** | **951** | |
 
 ### Related artifacts
 
@@ -43,7 +43,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 89 | 89 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 56 | 56 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 135 | 135 | P2 — often thin schema probes; collapse into obs matrix |
-| `uncategorized` | Uncategorized / mixed | 0 | 0 | 79 | 79 | P3 — review case-by-case |
+| `uncategorized` | Uncategorized / mixed | 0 | 0 | 81 | 81 | P3 — review case-by-case |
 
 ## Patterns, harness usage, coupling
 
@@ -304,6 +304,8 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_bus_image.cpp`
 - `tests/compiler/test_bus_keep_apply.cpp`
 - `tests/compiler/test_bus_multi_peer.cpp`
+- `tests/compiler/test_bus_multi_target.cpp`
+- `tests/compiler/test_bus_repro.cpp`
 - `tests/compiler/test_bus_round_orchestration.cpp`
 - `tests/compiler/test_bus_slo.cpp`
 - `tests/compiler/test_bus_stat_gate.cpp`
@@ -2113,13 +2115,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_verify_parse_shared_helper.cpp` (—) [domain_suite, theme_compiler] — Issue #1771 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_workspace_mtx_contention.cpp` (—) [domain_suite, theme_compiler] — AC1: Source cites #2523; residual strategy documented
 
-### `uncategorized` — Uncategorized / mixed (79)
+### `uncategorized` — Uncategorized / mixed (81)
 
 **Target:** manual triage before domain placement
 
 **Priority:** P3 — review case-by-case
 
-#### domain/ (79)
+#### domain/ (81)
 
 - `tests/core/test_address_bits_scratch.cpp` (—) [domain_suite, theme_core] — AC1: bit_cast round-trips a pointer and an integer address
 - `tests/compiler/test_and_or_error_value.cpp` (—) [domain_suite, theme_compiler] — (#4535 contract: only the UNCAUGHT face prints).
@@ -2138,6 +2140,8 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_bus_image.cpp` (—) [large, domain_suite, theme_compiler] — Issue #5122: relocatable bus image — golden two-process traversal and
 - `tests/compiler/test_bus_keep_apply.cpp` (—) [domain_suite, theme_compiler] — Issue #5378: KEEP atomically applies the trial's PatchRecord to the
 - `tests/compiler/test_bus_multi_peer.cpp` (—) [domain_suite, theme_compiler] — Issue #5377: bus:host serves multiple peers concurrently. Three real
+- `tests/compiler/test_bus_multi_target.cpp` (—) [domain_suite, theme_compiler] — Issue #5397: the target extension — one worldline rewrites several
+- `tests/compiler/test_bus_repro.cpp` (—) [domain_suite, theme_compiler] — Issue #5397: the reproduction package.
 - `tests/compiler/test_bus_stat_gate.cpp` (—) [large, domain_suite, theme_compiler] — Issue #5391: the statistical admission contract, busified.
 - `tests/compiler/test_bus_stdlib.cpp` (—) [domain_suite, theme_compiler] — Issue #5127: std/bus two-process attach/subscribe/publish/query.
 - `tests/compiler/test_bus_transport.cpp` (—) [domain_suite, theme_compiler] — Issue #5123: local bus transport — handshake, SCM_RIGHTS image, seals,

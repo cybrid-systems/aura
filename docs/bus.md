@@ -215,6 +215,16 @@ canary 拒绝)、`test_bus_closed_loop_e2e`(#5382,三进程正常闭环 + 五类
 - 宿主环境变量：`AURA_BUS_DEGRADE_KEYS`（盯住的指标键，逗号分隔）、`AURA_BUS_DEGRADE_UP`（其中「上升即退化」的键）、`AURA_BUS_DEGRADE_MIN_SAMPLES`、`AURA_BUS_DEGRADE_ALPHA`（EWMA 平滑，ppm）、`AURA_BUS_DEGRADE_DRIFT`（CUSUM 漂移，ppm）、`AURA_BUS_DEGRADE_LIMIT`（CUSUM 判决门限，ppm）、`AURA_BUS_DEGRADE_CALM`（滞回样本数）。不配置指标键时检测器保持安静，宿主行为与 v0.3.1 完全一致。
 - 审计新增：`DegradeAlert`(27)、`DegradeConfig`(28)。
 
+### v0.3.2 目标扩展与复现包(#5397)
+
+一个候选可以同时改写 **2–3 个纯策略函数**（choose-fn + admit-fn + ttl-fn），一次 KEEP 原子生效；每一次 KEEP 的裁决都留下一份**复现包**，离线重跑必须得到同一结论。
+
+- **按名字寻址**：`bus:defines` 向宿主要它活工作区的 define 名与节点 id（节点 id 是宿主本地的，从别的进程猜不可靠）。对端拿名字查 id，再对每个函数发一条 source-carrier 补丁，同属**一个 worldline**。
+- **原子应用**：一个 worldline 里的多条补丁要么全部生效，要么全部不生效。集合里任何一条坏了（语法不合法、被保护集挡住、不在可变目标白名单里），宿主的工作区**逐字节不变**。
+- **可变目标白名单**：宿主用 `AURA_BUS_MUTABLE_TARGETS`（逗号分隔的 define 名）声明闭环可以改写哪些函数；不在名单里的目标被拒。保护集（`std/contract` 镜像）是黑名单，可变目标名单是白名单，两者都过才放行。
+- **复现包**：`bus:repro` 导出该 worldline 的**证据五元 + held-out 窗口 + 策略快照 + 协调者自己的裁决**，一行 JSON。`aura bus-repro FILE` 离线重跑该裁决（同一个二进制的同一套统计），逐字段比对；不一致就非零退出。篡改一个窗口，复现立刻失败。
+- 公共面：`(bus:defines session)` → `(ok count truncated rows)`，每行 `(name node)`；`(bus:repro session worldline)` → `(ok five-tuple windows policy verdict json)`。
+
 ### v0.3.2 对抗对端边界(#5396)
 
 一个恶意对端不能拖垮总线，也不能借总线越权。原则：**越界的那个会话被切掉，其余会话无感**。

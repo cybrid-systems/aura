@@ -87,6 +87,13 @@ enum class FrameType : std::uint16_t {
     DegradeConfig = 31,
     // #5395: the bus's own performance counters and capacity plan.
     SloQuery = 32,
+    // #5397: the host's live define names, so a peer can address a
+    // function by name (the node ids are host-local).
+    DefineQuery = 33,
+    // #5397: the reproduction package of one worldline — the evidence
+    // five-tuple, the held-out windows, the policy snapshot and the
+    // verdict. A KEEP re-run from the package must reach the same verdict.
+    ReproQuery = 34,
 };
 
 enum class RejectReason : std::uint16_t {
@@ -244,6 +251,19 @@ struct GrantReply {
     std::uint64_t token = 0;
 };
 
+// #5397: the host's live define names. The node ids belong to the
+// host's own workspace AST, so a peer that wants to rewrite a named
+// function asks the host instead of guessing.
+struct DefineReply {
+    std::uint64_t count = 0;
+    std::uint64_t truncated = 0;
+};
+
+struct DefineWire {
+    char name[64] = {};
+    std::uint64_t node = 0;
+};
+
 // #5393: the round request and the round reply. The reply carries
 // both the state and the budget, so one struct answers both queries.
 struct RoundRequestBody {
@@ -359,6 +379,20 @@ struct EvidenceBody {
     std::uint64_t seed = 0;
     std::uint64_t verifier_version = 0;
 };
+
+// #5397: the reproduction package of one worldline. It carries
+// everything the admission decision was made from, so the decision can
+// be re-run offline and must land on the same verdict.
+struct ReproPackage {
+    EvidenceBody five{};         // the evidence five-tuple (#5379)
+    GateEvidenceBody gate{};     // the held-out windows (#5391)
+    GateVerdictRecord verdict{}; // the coordinator's own verdict
+    GatePolicy policy{};         // the policy snapshot that decided it
+    std::uint64_t has_five = 0;
+    std::uint64_t has_gate = 0;
+    std::uint64_t has_verdict = 0;
+};
+
 
 // ConstraintInstall body prefix: name/source bytes follow the two lengths.
 struct ConstraintWire {
@@ -551,6 +585,12 @@ public:
         std::uint64_t worldline, std::uint64_t generation, std::span<const PatchRecord> patches,
         std::span<const std::string> sources, bool canary, std::string* why)>;
     void set_apply_callback(ApplyFn fn) { apply_ = std::move(fn); }
+    // #5397: the host's live define names and their node ids. The
+    // coordinator asks on a DefineQuery frame; the host answers from
+    // its own workspace AST (the node ids are host-local).
+    using DefineNodesFn =
+        std::function<bool(std::vector<std::pair<std::string, std::uint64_t>>* out)>;
+    void set_define_nodes_callback(DefineNodesFn fn) { define_nodes_ = std::move(fn); }
     // #5381: restore the live workspace to the pre-canary snapshot.
     // Runs on the coordinator thread when an observation reverts.
     using RevertFn = std::function<bool(std::uint64_t worldline, std::string* why)>;
@@ -764,6 +804,7 @@ private:
     std::uint64_t projected_trials_ = 0;
     // #5378: host live-workspace apply + generation.
     ApplyFn apply_;
+    DefineNodesFn define_nodes_;
     std::uint64_t workspace_gen_ = 0;
     RevertFn revert_;
     // #5381: generation the active canary applied at (seal advances to it).

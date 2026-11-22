@@ -2182,6 +2182,88 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
             reply_loan(loan);
             break;
         }
+        case FrameType::DefineQuery: {
+            // #5397: the host's live define names. The node ids belong
+            // to the host's workspace AST, so a peer that wants to
+            // rewrite a named function (choose-fn + admit-fn + ttl-fn)
+            // asks the host instead of guessing an id.
+            if (!require(kCapRead, 0, 0))
+                break;
+            if (!define_nodes_) {
+                deny(EINVAL, "the host does not publish its define names");
+                break;
+            }
+            std::vector<std::pair<std::string, std::uint64_t>> names;
+            if (!define_nodes_(&names)) {
+                deny(EINVAL, "the host could not read its define names");
+                break;
+            }
+            // The frame body is bounded; the reply carries what fits and
+            // says how many it dropped.
+            constexpr std::size_t kMaxDefines = 64;
+            std::size_t count = 0;
+            std::size_t bytes = sizeof(DefineReply);
+            std::vector<std::byte> body;
+            body.reserve(kMaxDefines * sizeof(DefineWire));
+            for (const auto& [name, node] : names) {
+                if (count >= kMaxDefines)
+                    break;
+                if (name.size() >= sizeof(DefineWire{}.name))
+                    continue;
+                DefineWire wire{};
+                std::memcpy(wire.name, name.data(), name.size());
+                wire.node = node;
+                const std::size_t at = body.size();
+                body.resize(at + sizeof(wire));
+                std::memcpy(body.data() + at, &wire, sizeof(wire));
+                ++count;
+            }
+            bytes = sizeof(DefineReply) + body.size();
+            std::vector<std::byte> out(bytes);
+            DefineReply reply{};
+            reply.count = count;
+            reply.truncated = names.size() > count ? 1 : 0;
+            std::memcpy(out.data(), &reply, sizeof(reply));
+            if (!body.empty())
+                std::memcpy(out.data() + sizeof(reply), body.data(), body.size());
+            send_frame(conn_fd, FrameType::Credit, session,
+                       {reinterpret_cast<const std::byte*>(out.data()), out.size()});
+            break;
+        }
+        case FrameType::ReproQuery: {
+            // #5397: the reproduction package of one worldline. It
+            // carries the evidence five-tuple, the held-out windows, the
+            // policy snapshot and the verdict, so the admission decision
+            // can be re-run offline and must land on the same verdict.
+            if (header.len < sizeof(std::uint64_t)) {
+                deny(EINVAL, "repro query needs a worldline id");
+                break;
+            }
+            std::uint64_t worldline = 0;
+            std::memcpy(&worldline, body.data(), sizeof(worldline));
+            if (!require(kCapRead, 0, 0))
+                break;
+            ReproPackage package{};
+            const auto five = evidence(worldline);
+            if (five != nullptr) {
+                package.five = *five;
+                package.has_five = 1;
+            }
+            const auto gate = gate_evidence(worldline);
+            if (gate != nullptr) {
+                package.gate = *gate;
+                package.has_gate = 1;
+            }
+            const auto vit = gate_verdicts_.find(worldline);
+            if (vit != gate_verdicts_.end()) {
+                package.verdict = vit->second;
+                package.has_verdict = 1;
+            }
+            package.policy = gate_policy_;
+            send_frame(conn_fd, FrameType::Credit, session,
+                       {reinterpret_cast<const std::byte*>(&package), sizeof(package)});
+            break;
+        }
         case FrameType::RoundOpen: {
             // #5393: a peer asks the coordinator to open a round. The
             // host decides: one round at a time, no round on top of an

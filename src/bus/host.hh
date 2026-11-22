@@ -17,6 +17,7 @@
 #include <functional>
 #include <span>
 #include <string>
+#include <utility>
 
 #include "bus/capability.hh"
 #include "bus/degrade.hh"
@@ -68,6 +69,11 @@ struct HostOptions {
         apply;
     // #5381: restore the pre-canary snapshot when an observation reverts.
     std::function<bool(std::uint64_t worldline, std::string* why)> revert;
+    // #5397: the host's live define names and their node ids. A peer
+    // that wants to rewrite a named function (choose-fn + admit-fn +
+    // ttl-fn) asks the host for the id; the ids are host-local, so
+    // guessing them from another process is not sound.
+    std::function<bool(std::vector<std::pair<std::string, std::uint64_t>>* out)> define_names;
     // The live workspace generation at host time (trials bind to it).
     std::uint64_t workspace_generation = 0;
 };
