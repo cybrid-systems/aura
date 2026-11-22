@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.3.0
+
+Platform release: the workspace bus becomes a shared multi-peer host — one sealed image persists across peer sessions, incremental reads work, and channel capacity follows the delivered image — while module requires get a content-keyed disk IR cache. Long runs stop growing: the boxed-float pool is reclaimed, and the IR fast path survives workspaces with more than 64 lambda defines. No new syntax. The API is still not stable.
 
 - IR specialize (#5388): a workspace with more than 64 lambda defines keeps the IR fast path. `specialize_workspace_lambdas_via_ir`'s whole-workspace pass returned before specializing ANY name when the define count exceeded `kWorkspaceSpecializeCap` (64), so every define — even the first 64 — stayed on the tree walker. aura-runner's physics module (66 lambdas + 29 values) measured `ir-calls=0`; a trivial `(define (probe p i) (list-ref p i))` IR-compiled after 63 sibling defines and fell back after 64, content-independent. The cap is a cost bound on the two-pass O(n) lowering, not a correctness limit — each define still passes the per-define rest/set!/while/free-name gates. The default is now 512, overridable via `AURA_WORKSPACE_SPECIALIZE_CAP` (0 disables the full-workspace pass, the pre-fix escape hatch). Measured on aura-runner's physics: `ir-calls` 0 → 1.58M per 2-course kernel, steady-state 3000ms → 1890ms, golden digests byte-identical; the aura-perf gated round's held-out drops ~2300ms → ~1600ms. Regression: `workspace_source_ssot_2920.aura` case "workspace over the old 64-define cap keeps the IR fast path" (66 and 200 lambdas; fails on the pre-fix binary).
 - Test (#5324): the `string_replace` dense-replace linearity probe measures CPU time (`/proc/self/stat` utime+stime ticks, batched reps) instead of wall-clock `monotonic-ms` best-of-N, and builds its inputs once outside the timed window. The wall-clock probe kept failing "dense replace is linear" under loaded parallel CI waves even at best-of-5 (run 44925658024): preemption inflates every sample and the small-size baseline collapses to the 1ms floor, misfiring the ratio checks. CPU ticks are immune to scheduler preemption; a genuinely quadratic replace still fails the ratios (verified ~9.5x/13.5x per 4x size). The algorithm assertion (output equality) is unchanged.
@@ -13,6 +15,12 @@
 - Bus (#5383): a rejected attach no longer stops the host. Unknown role, wrong workspace, schema/uid mismatch or a mid-handshake EOF ends that connection only — `accept_one` closes the rejected socket and the serve loop keeps accepting; only a stop request or a dead listener ends it. Before, one misconfigured peer wedged the whole workspace bus (socket alive, `bus:host?` active, every later attach hanging on an unanswered Hello). Regression: `test_bus_host` case 5 — badrole/wrongws/raw-EOF rejections each followed by a legal peer that attaches, publishes and detaches.
 - Bus (#5128): the host image persists across peer sessions — one bus, one workspace, one live image. The first attach creates and seals it; every later peer is handed the same memfd, so the next tool reads the previous tool's committed CCT/metrics/patches/worldlines and the shared audit. Disconnect withdraws pending trials and loans, never committed evidence; unhost releases the mapping. Publish-time validation now enforces the attach invariants (patch node inside the node section, metric keys are legal immediates), `bus:project-nodes` emits batch-index edges with no symbol references, and the coordinator projects its trial ledger (pending + final verdict states) into the worldlines channel for subscribers. `test_bus_host` covers three sequential peers: perf publishes and installs a constraint, harness reads the same image and audit, maintainer's KEEP is gated by perf's constraint.
 - Module loading (#5374): the require path now uses the content-keyed disk IR cache that `compile_module` already had — `cache_module` reads `$XDG_CACHE_HOME/aura/modules/<path>_<hash>_<build-sha>.abfc` on a hit and skips per-define lowering, and writes the lowered bundles on a miss. Warm requires of the same content behave identically (string-literal pools included); a source or build change keys a new file. Regression: `test_module_disk_cache` in the module/query batch.
+
+Not in this version:
+
+- Debugger and DAP, semantic tokens, inlay hints, tree-sitter grammar, TCP mode, MELPA/ELPA publication.
+- macOS, Windows, and other Linux distributions.
+- API stability (still pre-1.0).
 
 ## 0.2.7
 
