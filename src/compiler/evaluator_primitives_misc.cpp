@@ -1275,7 +1275,10 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                     std::memcpy(&eb, body.data(), std::min(sizeof(eb), body.size()));
                     return bus_error(ev, "permission", eb.message);
                 }
-                const std::string text(reinterpret_cast<const char*>(body.data()), body.size());
+                // The reply is the text; hdr.len is its length (the
+                // buffer is a fixed-size scratch, padded with zeros).
+                const std::string text(reinterpret_cast<const char*>(body.data()),
+                                       std::min<std::size_t>(hdr.len, body.size()));
                 return bus_list(ev, {bus_string(ev, "ok"), bus_string(ev, text)});
             }
 

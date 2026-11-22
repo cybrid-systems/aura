@@ -129,6 +129,20 @@ bool has(const std::string& out, const char* line) {
     return out.find(line) != std::string::npos;
 }
 
+// A second process asks the coordinator for the package. The peer
+// reads the worldline channel through its own view of the image, so
+// the query is not the same query the host makes for itself.
+const char* kClientScript = R"AURA(
+(require "std/bus" all:)
+(define ms (bus:attach "" 8945 3 127 255))
+(define msid (car (cdr ms)))
+(bus:project-nodes msid)
+(define rp (bus:repro msid 2))
+(display "repro=") (display (if (bus:ok? rp) (list-ref rp 5) (bus:code rp)))
+(display "|") (newline)
+(display "DONE") (newline)
+)AURA";
+
 // Run `aura bus-repro FILE` as a child and collect its output. The
 // verifier is a separate process on purpose: the package must decide
 // the same thing with no coordinator and no live bus.
@@ -209,6 +223,9 @@ const char* kHostScript = R"AURA(
 (define rp (bus:repro msid wl))
 (display "pkg=") (display (list-ref rp 5)) (display "|") (newline)
 (display "DONE") (newline)
+; The host stays up until the test releases it: a peer asks for the
+; package while the coordinator is still serving.
+(read-line)
 )AURA";
 
 } // namespace
@@ -244,6 +261,17 @@ int main() {
           "the judge reads the candidate's committed source");
     const std::string pkg = read_until(host_out, "|", 10000);
     check(has(pkg, "pkg={"), "the host exports a reproduction package");
+
+    // The same query from another process: the peer reads the worldline
+    // channel through its own view of the image.
+    check(write_file(d + "/client.aura", kClientScript), "write client");
+    int client_out = -1, client_in = -1;
+    const pid_t client = run_script(d + "/client.aura", &client_out, &client_in);
+    check(client > 0, "fork client");
+    const std::string crepro = read_until(client_out, "|", 10000);
+    check(has(crepro, "repro={"), "a peer reads the reproduction package");
+    const ssize_t released = ::write(host_in, "go\n", 3);
+    (void)released;
 
     // The package is one JSON line: archive it verbatim.
     const std::size_t at = pkg.find("pkg=");
