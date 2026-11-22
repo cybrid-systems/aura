@@ -223,7 +223,7 @@ canary 拒绝)、`test_bus_closed_loop_e2e`(#5382,三进程正常闭环 + 五类
 - **原子应用**：一个 worldline 里的多条补丁要么全部生效，要么全部不生效。集合里任何一条坏了（语法不合法、被保护集挡住、不在可变目标白名单里），宿主的工作区**逐字节不变**。
 - **可变目标白名单**：宿主用 `AURA_BUS_MUTABLE_TARGETS`（逗号分隔的 define 名）声明闭环可以改写哪些函数；不在名单里的目标被拒。保护集（`std/contract` 镜像）是黑名单，可变目标名单是白名单，两者都过才放行。
 - **复现包**：`bus:repro` 导出该 worldline 的**证据五元 + held-out 窗口 + 策略快照 + 协调者自己的裁决**，一行 JSON。`aura bus-repro FILE` 离线重跑该裁决（同一个二进制的同一套统计），逐字段比对；不一致就非零退出。篡改一个窗口，复现立刻失败。
-- 公共面：`(bus:defines session)` → `(ok count truncated rows)`，每行 `(name node)`；`(bus:repro session worldline)` → `(ok five-tuple windows policy verdict json)`。
+- 公共面：`(bus:defines session)` → `(ok count truncated rows)`，每行 `(name node)`；`(bus:repro session worldline)` → `(ok five-tuple windows policy verdict json)`；`(bus:source-read session index)` → `(ok source-text)`：读回候选提交的**源码正文**。裁判要在 held-out 数据上**度量候选**，就必须看见提议方提交的那份文本——源码是已提交的证据，不是私有通道。
 
 ### v0.3.2 对抗对端边界(#5396)
 

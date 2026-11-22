@@ -1249,10 +1249,40 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                                      make_int(static_cast<std::int64_t>(reply.truncated)), listed});
             }
 
+            // #5397: read back a committed string-table entry — a
+            // candidate define's source. The judge measures the
+            // candidate body on held-out data, so it must see the text
+            // the proposer committed.
+            if (op == "source-read") {
+                std::int64_t sid = 0, index = 0;
+                if (a.size() < 3 || !bus_int(a[1], &sid) || !bus_int(a[2], &index))
+                    return bus_error(ev, "validation-failed",
+                                     "source-read needs a session id and an index");
+                const auto sit = g_bus_sessions.find(sid);
+                if (sit == g_bus_sessions.end())
+                    return bus_error(ev, "unregistered-id", "unknown session");
+                auto& att = sit->second->att;
+                const std::uint64_t idx = static_cast<std::uint64_t>(index);
+                if (!aura::bus::send_frame(att.sock, aura::bus::FrameType::SourceRead, att.session,
+                                           {reinterpret_cast<const std::byte*>(&idx), sizeof(idx)}))
+                    return bus_error(ev, "transport-failed", "source read send failed");
+                aura::bus::FrameHeader hdr{};
+                std::vector<std::byte> body(aura::bus::kBusMaxControlFrame);
+                if (!recv_reply(att.sock, &hdr, &body))
+                    return bus_error(ev, "transport-failed", "source read reply lost");
+                if (hdr.type == static_cast<std::uint16_t>(aura::bus::FrameType::Error)) {
+                    aura::bus::ErrorBody eb{};
+                    std::memcpy(&eb, body.data(), std::min(sizeof(eb), body.size()));
+                    return bus_error(ev, "permission", eb.message);
+                }
+                const std::string text(reinterpret_cast<const char*>(body.data()), body.size());
+                return bus_list(ev, {bus_string(ev, "ok"), bus_string(ev, text)});
+            }
+
             // #5397: the reproduction package of one worldline. It
             // carries the five-tuple, the held-out windows, the policy
-            // snapshot and the verdict, so the admission decision can be
-            // re-run offline and must land on the same verdict.
+            // snapshot and the verdict, so the admission decision can
+            // be re-run offline and must land on the same verdict.
             if (op == "repro") {
                 std::int64_t sid = 0, wl = 0;
                 if (a.size() < 3 || !bus_int(a[1], &sid) || !bus_int(a[2], &wl))
@@ -1351,7 +1381,13 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                     ",\"budget_window\":" + std::to_string(pkg.policy.budget_window) +
                     ",\"tighten_factor\":" + std::to_string(pkg.policy.tighten_factor) +
                     ",\"version\":" + std::to_string(pkg.policy.version) +
-                    "},\"verdict\":{\"verdict\":" + std::to_string(pkg.verdict.verdict) +
+                    // #5397: the package says whether the coordinator
+                    // actually recorded a verdict. A worldline kept
+                    // without the statistical gate has none, and the
+                    // offline re-run must not compare one it never
+                    // recorded.
+                    "},\"has_verdict\":" + std::to_string(pkg.has_verdict) +
+                    ",\"verdict\":{\"verdict\":" + std::to_string(pkg.verdict.verdict) +
                     ",\"family\":" + std::to_string(pkg.verdict.family) +
                     ",\"observed_ppm\":" + std::to_string(pkg.verdict.observed_ppm) +
                     ",\"adjusted_ppm\":" + std::to_string(pkg.verdict.adjusted_ppm) +

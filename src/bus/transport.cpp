@@ -2230,6 +2230,37 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
                        {reinterpret_cast<const std::byte*>(out.data()), out.size()});
             break;
         }
+        case FrameType::SourceRead: {
+            // #5397: read back a committed string-table entry. The judge
+            // measures the candidate body on held-out data, so it must
+            // see the text the proposer committed — the source is
+            // committed evidence, not a private channel.
+            if (header.len < sizeof(std::uint64_t)) {
+                deny(EINVAL, "source read needs an index");
+                break;
+            }
+            if (!require(kCapRead, 0, 0))
+                break;
+            std::uint64_t index = 0;
+            std::memcpy(&index, body.data(), sizeof(index));
+            if (image_base_ == nullptr) {
+                deny(EINVAL, "no image to read the source from");
+                break;
+            }
+            std::string_view text;
+            if (!string_table_read({image_base_, image_size_}, index, &text)) {
+                deny(EINVAL, "source index outside the string table");
+                break;
+            }
+            // The reply is the text itself: the source table entry is
+            // the payload.
+            std::vector<std::byte> out(text.size());
+            if (!out.empty())
+                std::memcpy(out.data(), text.data(), text.size());
+            send_frame(conn_fd, FrameType::Credit, session,
+                       {reinterpret_cast<const std::byte*>(out.data()), out.size()});
+            break;
+        }
         case FrameType::ReproQuery: {
             // #5397: the reproduction package of one worldline. It
             // carries the evidence five-tuple, the held-out windows, the

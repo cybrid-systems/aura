@@ -94,6 +94,10 @@ enum class FrameType : std::uint16_t {
     // five-tuple, the held-out windows, the policy snapshot and the
     // verdict. A KEEP re-run from the package must reach the same verdict.
     ReproQuery = 34,
+    // #5397: read back a committed string-table entry (a candidate
+    // define's source). The judge measures the candidate body, so it
+    // must see the text the proposer committed.
+    SourceRead = 35,
 };
 
 enum class RejectReason : std::uint16_t {

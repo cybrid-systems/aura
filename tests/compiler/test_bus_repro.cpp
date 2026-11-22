@@ -179,10 +179,12 @@ const char* kHostScript = R"AURA(
 (define msid (car (cdr ms)))
 (bus:project-nodes msid)
 (display "ready") (newline)
+(define *last-src* 0)
 (define (open-candidate body)
   (define tr (bus:trial msid 3))
   (define wl (car (cdr tr)))
   (define src (bus:publish-source msid body))
+  (set! *last-src* (car (cdr src)))
   (bus:publish-patch msid 5 bus:source-field (car (cdr src)) wl 0)
   (define d (car (cdr (bus:candidate-digest msid wl))))
   (bus:bind-evidence msid wl 0 d 7 42 1)
@@ -199,6 +201,10 @@ const char* kHostScript = R"AURA(
 (display "keep=") (display (if (bus:ok? k) "ok" (bus:code k))) (display "|") (newline)
 (define gv (bus:gate-evidence msid wl))
 (display "verdict=") (display (car (cdr gv))) (display "|") (newline)
+; The committed source: the judge must be able to read the body the
+; proposer committed (aura#5397), so it can measure the candidate.
+(define sr (bus:source-read msid *last-src*))
+(display "src=") (display (if (bus:ok? sr) (cadr sr) (bus:code sr))) (display "|") (newline)
 ; The reproduction package: the last element is the JSON line.
 (define rp (bus:repro msid wl))
 (display "pkg=") (display (list-ref rp 5)) (display "|") (newline)
@@ -233,6 +239,9 @@ int main() {
     check(has(keep, "keep=ok"), "the candidate is kept");
     const std::string verdict = read_until(host_out, "|", 10000);
     check(has(verdict, "verdict=1"), "the coordinator admits the candidate");
+    const std::string src = read_until(host_out, "|", 10000);
+    check(has(src, "src=(lambda (x) (+ x 10))"),
+          "the judge reads the candidate's committed source");
     const std::string pkg = read_until(host_out, "|", 10000);
     check(has(pkg, "pkg={"), "the host exports a reproduction package");
 

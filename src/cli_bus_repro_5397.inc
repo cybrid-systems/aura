@@ -108,6 +108,17 @@ static bool parse_package(const evo_cli_4910::J& obj, Package* out) {
     const evo_cli_4910::J* ver = obj.get("verdict");
     if (ver == nullptr)
         return false;
+    // #5397: the package says whether the coordinator recorded a
+    // verdict at all. A worldline kept without the statistical gate
+    // has none: the offline re-run verifies the recorded inputs, it
+    // does not compare a verdict that was never made.
+    std::uint64_t has_verdict = 0;
+    if (!field_u64(obj, "has_verdict", &has_verdict))
+        has_verdict = 1; // a package written before the marker
+    if (has_verdict == 0) {
+        out->have_verdict = false;
+        return true;
+    }
     std::uint64_t value = 0;
     const auto read = [&](const char* name, std::uint64_t* slot) {
         if (!field_u64(*ver, name, &value))
@@ -158,6 +169,11 @@ static bool reproduces(const Package& pkg, std::string* why) {
     std::string reason;
     const aura::bus::GateVerdictRecord rec =
         aura::bus::gate_admit(evidence, pkg.verdict.family, pkg.policy, &reason);
+    // No recorded verdict: the coordinator kept the worldline without
+    // the statistical gate, so there is nothing to compare. The
+    // package's own inputs are still verified below.
+    if (!pkg.have_verdict)
+        return true;
     if (rec.verdict != pkg.verdict.verdict) {
         if (why)
             *why = "verdict " + std::to_string(rec.verdict) + " != recorded " +
