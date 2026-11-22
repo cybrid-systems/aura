@@ -133,6 +133,64 @@ std::uint64_t CapabilityTable::issue_root(const Capability& caps) {
     return rec.token;
 }
 
+std::size_t CapabilityTable::depth_of(std::uint64_t token) const {
+    std::size_t depth = 0;
+    std::uint64_t current = token;
+    // The tree is short by construction; the walk is bounded anyway.
+    for (std::size_t guard = 0; guard < 64; ++guard) {
+        const GrantRecord* rec = nullptr;
+        for (const auto& candidate : records_) {
+            if (candidate.token == current) {
+                rec = &candidate;
+                break;
+            }
+        }
+        if (rec == nullptr || rec->parent == 0)
+            return depth;
+        ++depth;
+        current = rec->parent;
+    }
+    return depth;
+}
+
+std::size_t CapabilityTable::fanout_of(std::uint64_t token) const {
+    std::size_t count = 0;
+    for (const auto& rec : records_) {
+        // A revoked grant holds no authority, so it is not a child.
+        if (rec.parent == token && !rec.revoked)
+            ++count;
+    }
+    return count;
+}
+
+std::size_t CapabilityTable::session_grants(std::uint64_t root) const {
+    // The subtree under the session's root token: the grants the
+    // session may hand out.
+    std::size_t count = 0;
+    for (const auto& rec : records_) {
+        if (rec.token == root || rec.revoked)
+            continue;
+        std::uint64_t current = rec.parent;
+        for (std::size_t guard = 0; guard < 64 && current != 0; ++guard) {
+            if (current == root) {
+                ++count;
+                break;
+            }
+            const GrantRecord* parent = nullptr;
+            for (const auto& candidate : records_) {
+                if (candidate.token == current) {
+                    parent = &candidate;
+                    break;
+                }
+            }
+            if (parent == nullptr)
+                break;
+            current = parent->parent;
+        }
+    }
+    return count;
+}
+
 std::optional<std::uint64_t> CapabilityTable::derive(std::uint64_t parent, const Capability& child,
                                                      std::string* why) {
     Capability parent_caps{};
@@ -148,6 +206,39 @@ std::optional<std::uint64_t> CapabilityTable::derive(std::uint64_t parent, const
     }
     if (!attenuates(parent_caps, child, why))
         return std::nullopt;
+    // #5396: the grant tree's limits. A grant may only attenuate, so a
+    // deep or wide tree is either a mistake or an attempt to hand out
+    // authority in bulk.
+    if (depth_of(parent) + 1 > kMaxGrantDepth) {
+        if (why)
+            *why = "grant depth limit reached";
+        return std::nullopt;
+    }
+    if (fanout_of(parent) >= kMaxGrantFanout) {
+        if (why)
+            *why = "grant fanout limit reached";
+        return std::nullopt;
+    }
+    // The session that holds the parent may not hold an unbounded
+    // number of grants.
+    std::uint64_t root = parent;
+    for (std::size_t guard = 0; guard < 64; ++guard) {
+        const GrantRecord* rec = nullptr;
+        for (const auto& candidate : records_) {
+            if (candidate.token == root) {
+                rec = &candidate;
+                break;
+            }
+        }
+        if (rec == nullptr || rec->parent == 0)
+            break;
+        root = rec->parent;
+    }
+    if (session_grants(root) >= kMaxGrantsPerSession) {
+        if (why)
+            *why = "grant limit reached for this session";
+        return std::nullopt;
+    }
     GrantRecord rec{};
     rec.token = (next_token_++ * 0x9e3779b97f4a7c15ull ^ secret_) & ((1ull << 48) - 1);
     if (rec.token == 0)

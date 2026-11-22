@@ -62,7 +62,15 @@ struct GrantRecord {
     bool revoked = false;
 };
 
+// #5396: the grant tree's limits. A grant may only attenuate, so a
+// deep or wide tree is either a mistake or an attempt to hand out
+// authority in bulk.
+inline constexpr std::size_t kMaxGrantDepth = 4;
+inline constexpr std::size_t kMaxGrantFanout = 16;
+inline constexpr std::size_t kMaxGrantsPerSession = 32;
+
 // Coordinator-issued tokens and the capability derivation tree.
+// CapabilityTable: the coordinator's grant tree.
 class CapabilityTable {
 public:
     CapabilityTable();
@@ -78,6 +86,13 @@ public:
     bool effective(std::uint64_t token, Capability* out) const;
     bool revoked(std::uint64_t token) const;
     std::size_t record_count() const { return records_.size(); }
+    // #5396: the grants a session holds (the subtree under its root
+    // token).
+    std::size_t session_grants(std::uint64_t root) const;
+    // The depth of a token in the tree (the root is 0).
+    std::size_t depth_of(std::uint64_t token) const;
+    // The children a token has handed out.
+    std::size_t fanout_of(std::uint64_t token) const;
 
 private:
     std::vector<GrantRecord> records_;
@@ -171,6 +186,9 @@ enum class AuditKind : std::uint16_t {
     // #5394: the degradation detector.
     DegradeAlert = 27,  // the detector saw a sustained degradation
     DegradeConfig = 28, // the detector's configuration changed
+    // #5396: the adversarial peer events.
+    RateLimited = 29,  // a session exceeded its quota
+    GrantLimited = 30, // a grant tree limit was reached
 };
 
 struct AuditEvent {

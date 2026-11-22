@@ -309,6 +309,8 @@ bool host_start(const HostOptions& opts, std::string* path_out, std::string* why
     host->server.round_resume();
     // #5394: the degradation detector's configuration.
     host->server.set_degrade_config(opts.degrade);
+    // #5396: the adversarial peer quotas.
+    host->server.set_peer_quota(opts.peer_quota);
     host->server.set_canary_window(opts.canary_window);
     host->server.set_canary_floor(opts.canary_floor);
     host->server.set_canary_metric_key(opts.canary_metric_key);

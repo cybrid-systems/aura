@@ -2066,6 +2066,13 @@ add_test(NAME test_bus_degradation_trigger_5394 COMMAND ./test_bus_degradation_t
 # Issue #5395: the bus's own performance counters (CPU time, #5324) and
 # the capacity plan — the room left in the image and the rounds it still
 # supports.
+add_executable(test_bus_adversarial_peer tests/compiler/test_bus_adversarial_peer.cpp)
+target_include_directories(test_bus_adversarial_peer PRIVATE src)
+target_compile_features(test_bus_adversarial_peer PUBLIC cxx_std_26)
+target_link_libraries(test_bus_adversarial_peer PRIVATE aura-bus)
+aura_strict_test_warnings(tests/compiler/test_bus_adversarial_peer.cpp)
+add_test(NAME test_bus_adversarial_peer_5396 COMMAND ./test_bus_adversarial_peer)
+
 add_executable(test_bus_slo tests/compiler/test_bus_slo.cpp)
 target_include_directories(test_bus_slo PRIVATE src)
 target_compile_features(test_bus_slo PUBLIC cxx_std_26)

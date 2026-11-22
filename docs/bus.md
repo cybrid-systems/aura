@@ -214,3 +214,17 @@ canary 拒绝)、`test_bus_closed_loop_e2e`(#5382,三进程正常闭环 + 五类
 - 公共面：`(bus:degradation-state session)` → `(ok version samples alerts last-change min-samples drift limit calm keys)`，每个 key 行是 `(key higher-is-worse samples alerts ewma cusum-ppm)`；`(bus:degrade-install session min-samples alpha drift limit calm down-keys up-keys)` → `(ok version)`（需要 constraint-write）；`(bus:degrade-rollback session)` → `(ok version)`（需要 constraint-write）。
 - 宿主环境变量：`AURA_BUS_DEGRADE_KEYS`（盯住的指标键，逗号分隔）、`AURA_BUS_DEGRADE_UP`（其中「上升即退化」的键）、`AURA_BUS_DEGRADE_MIN_SAMPLES`、`AURA_BUS_DEGRADE_ALPHA`（EWMA 平滑，ppm）、`AURA_BUS_DEGRADE_DRIFT`（CUSUM 漂移，ppm）、`AURA_BUS_DEGRADE_LIMIT`（CUSUM 判决门限，ppm）、`AURA_BUS_DEGRADE_CALM`（滞回样本数）。不配置指标键时检测器保持安静，宿主行为与 v0.3.1 完全一致。
 - 审计新增：`DegradeAlert`(27)、`DegradeConfig`(28)。
+
+### v0.3.2 对抗对端边界(#5396)
+
+一个恶意对端不能拖垮总线，也不能借总线越权。原则：**越界的那个会话被切掉，其余会话无感**。
+
+- **握手超时**：连上但不说 hello 的对端占用会话槽 → 到期由协调者断开（默认 10s）。协调者的 poll 会为未完成握手的对端设超时唤醒，不靠别的会话的事件。
+- **控制帧速率配额**：令牌桶——每会话可突发 `frame_burst` 帧（默认 20000，够把交付映像的频道一次写满），持续速率 `frame_rate` 帧/秒（默认 1000）；桶空即断该会话，写审计 `RateLimited`。合法的批量发布不会误伤，持续洪泛会被切断。
+- **授权树上限**：授权深度 ≤ 4、单节点扇出 ≤ 16、单会话活跃授权 ≤ 32。授权只能衰减（子集），越限的授权请求被拒（permission）并单独写审计 `GrantLimited`。
+- **约束写入配额**：`constraint-write` 会话的 install/rollback 每次窗口（默认 16 次 / 1000ms）超限 → 拒绝（`rate-limited`）并写审计 `RateLimited`。
+- **回滚不得放宽门控**：约束集记录每条规则的**安装者**。任何 install/rollback 若会删掉**别的会话**安装的规则，一律拒绝（`the install/rollback would relax the protection set`）。自己装的规则可以自己回滚。
+- **畸形帧**：未知帧类型、越界频道、截断请求体、超长帧长都由协调者安全消化（宿主不崩，合法对端无感）；未知类型不终结会话，超长帧长则断开该会话。
+- **已知边界**：规则安装者是**运行时**属性，不进映像；宿主重启后重建约束集时这份归属信息丢失，保护集的保护只在一个宿主生命周期内成立。
+- 宿主环境变量：`AURA_BUS_PEER_FRAMES`（持续帧率，帧/秒，默认 1000）、`AURA_BUS_PEER_BURST`（令牌桶深度，默认 20000）、`AURA_BUS_PEER_HELLO_MS`（握手超时，默认 10000）、`AURA_BUS_PEER_CONSTRAINT_CHANGES`（约束写入配额，默认 16/窗口）、`AURA_BUS_PEER_CONSTRAINT_WINDOW_MS`（约束写入窗口，默认 1000ms）。
+- 审计新增：`RateLimited`(29)、`GrantLimited`(30)。

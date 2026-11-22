@@ -470,6 +470,13 @@ struct PeerSession {
     // ancillary fds before the Hello are unexpected and closed.
     bool hello_done = false;
     std::vector<std::byte> hello_buf;
+    // #5396: the frame rate bucket. The tokens are scaled by 1000 so
+    // the refill stays exact; the session starts with a full bucket.
+    std::uint64_t frame_tokens = 0;
+    std::uint64_t frame_refill_ms = 0;
+    // #5396: the handshake deadline. A connection that never says
+    // hello must not hold a session slot forever.
+    std::uint64_t hello_deadline_ms = 0;
 };
 
 bool send_frame(int fd, FrameType type, std::uint64_t session, std::span<const std::byte> body);
@@ -477,6 +484,25 @@ bool recv_frame(int fd, FrameHeader* header, std::span<std::byte> body, Transpor
 
 // Coordinator side: listen, accept peers, handshake, hand out the
 // sealed image, and serve every attached session until stop (#5377).
+// #5396: the quotas a session must respect. The defaults are
+// generous — a well-behaved peer never reaches them — but a flood, a
+// stalled handshake or a constraint-write loop is cut off.
+struct PeerQuota {
+    // The control frames a session may send per second, sustained. The
+    // bucket below lets a legitimate bulk publish through; a peer that
+    // wants more than the sustained rate drains the bucket and is cut
+    // off.
+    std::uint64_t frame_rate = 1000;
+    // The bucket depth: the frames a session may send back to back.
+    // Sized to fill the delivered image's channels in one go.
+    std::uint64_t frame_burst = 20000;
+    // The handshake deadline.
+    std::uint64_t hello_timeout_ms = 10000;
+    // The constraint changes a session may make per window.
+    std::uint64_t constraint_changes_per_window = 16;
+    std::uint64_t constraint_window_ms = 1000;
+};
+
 class Server {
 public:
     Server() = default;
@@ -599,6 +625,9 @@ public:
     // #5394: the degradation detector. The host watches the configured
     // metrics and opens a round when a degradation is sustained.
     void set_degrade_config(const DegradeConfig& config) { degrade_.configure(config); }
+    // #5396: the adversarial peer quotas.
+    void set_peer_quota(const PeerQuota& quota) { peer_quota_ = quota; }
+    [[nodiscard]] const PeerQuota& peer_quota() const { return peer_quota_; }
     [[nodiscard]] const DegradeDetector& degrade() const { return degrade_; }
     // The detector fired: open a round (the signal state) or, while an
     // observation runs, roll that observation back.
@@ -759,6 +788,16 @@ private:
     std::string round_checkpoint_path_;
     // #5394: the degradation detector.
     DegradeDetector degrade_{};
+    // #5396: the quotas a session must respect.
+    PeerQuota peer_quota_{};
+    // #5396: the per-session constraint-change counters
+    // (session id -> (window start, changes)).
+    std::unordered_map<std::uint64_t, std::pair<std::uint64_t, std::uint64_t>>
+        constraint_windows_{};
+    // The constraint-change quota: false when the session exhausted it.
+    bool allow_constraint_change(std::uint64_t session, std::uint64_t root_token);
+    // #5396: the frame rate bucket: false when the session exhausted it.
+    bool allow_frame(PeerSession& peer);
     // #5395: the performance counters and the capacity plan.
     SloCounters slo_{};
     SloHistogram slo_hist_{};

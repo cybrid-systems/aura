@@ -23,6 +23,7 @@
 #include "bus/gate.hh"
 #include "bus/image_format.hh"
 #include "bus/round.hh"
+#include "bus/transport.hh"
 
 namespace aura::bus {
 
@@ -53,6 +54,10 @@ struct HostOptions {
     // #5394: the degradation detector's configuration. Without watched
     // keys the detector stays quiet.
     DegradeConfig degrade{};
+    // #5396: the adversarial peer quotas. The defaults are generous —
+    // a well-behaved peer never reaches them — but a flood, a stalled
+    // handshake or a constraint-write loop is cut off.
+    PeerQuota peer_quota{};
     // #5378: apply a KEEP'd trial's patches to the live workspace. Runs
     // on the coordinator thread; must be all-or-nothing (byte-identical
     // on failure). canary=true means the apply enters observation and a

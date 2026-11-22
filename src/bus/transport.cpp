@@ -1439,6 +1439,49 @@ void Server::degrade_alert(std::uint64_t key) {
                           opened ? "degrade-alert: a round was opened" : "degrade-alert: " + why);
 }
 
+// #5396: the frame rate bucket. The session may send `frame_burst`
+// frames back to back and `frame_rate` frames per second sustained; a
+// peer that wants more drains the bucket and is cut off. The tokens are
+// scaled by 1000 so the refill stays exact.
+bool Server::allow_frame(PeerSession& peer) {
+    if (peer_quota_.frame_rate == 0 || peer_quota_.frame_burst == 0)
+        return true;
+    const std::uint64_t now_ms = round_now_ms();
+    if (peer.frame_refill_ms == 0)
+        peer.frame_refill_ms = now_ms;
+    const std::uint64_t elapsed = now_ms - peer.frame_refill_ms;
+    peer.frame_refill_ms = now_ms;
+    peer.frame_tokens += elapsed * peer_quota_.frame_rate;
+    const std::uint64_t cap = peer_quota_.frame_burst * 1000;
+    if (peer.frame_tokens > cap)
+        peer.frame_tokens = cap;
+    if (peer.frame_tokens < 1000)
+        return false; // the bucket is empty
+    peer.frame_tokens -= 1000;
+    return true;
+}
+
+// #5396: the constraint-change quota. A session that rewrites the gate
+// in a loop is throttled; the other sessions are untouched.
+bool Server::allow_constraint_change(std::uint64_t session, std::uint64_t root_token) {
+    if (peer_quota_.constraint_changes_per_window == 0)
+        return true;
+    const std::uint64_t now_ms = round_now_ms();
+    auto& entry = constraint_windows_[session];
+    if (entry.first == 0 || now_ms - entry.first >= peer_quota_.constraint_window_ms) {
+        entry.first = now_ms;
+        entry.second = 0;
+    }
+    ++entry.second;
+    if (entry.second > peer_quota_.constraint_changes_per_window) {
+        audit_.add_constraint(AuditKind::RateLimited, root_token, 0, entry.second,
+                              peer_quota_.constraint_changes_per_window,
+                              "rate-limited: the session exceeded its constraint change quota");
+        return false;
+    }
+    return true;
+}
+
 bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t root_token,
                             Capability& caps, LoanLedger& loans,
                             std::array<LoanLedger, 6>& channel_loans,
@@ -2324,6 +2367,11 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
             std::string why;
             const auto token = caps_table_.derive(parent, request.caps, &why);
             if (!token) {
+                // #5396: a refused grant is audited on its own, so the
+                // abuse pattern is visible.
+                audit_.add_constraint(AuditKind::GrantLimited, root_token, 0, 0,
+                                      caps_table_.record_count(),
+                                      std::string("grant-limited: ") + why);
                 deny(EPERM, why);
                 break;
             }
@@ -2393,6 +2441,12 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
             break;
         }
         case FrameType::ConstraintRollback: {
+            // #5396: the constraint-change quota. A session that
+            // rewrites the gate in a loop is throttled.
+            if (!allow_constraint_change(session, root_token)) {
+                deny(EBUSY, "rate-limited: the constraint change quota is exhausted");
+                break;
+            }
             if (!require(kCapConstraintWrite, 0, 0))
                 break;
             std::string why;
@@ -2408,6 +2462,12 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
         case FrameType::ConstraintInstall: {
             if (!require(kCapConstraintWrite, 0, 0))
                 break;
+            // #5396: the constraint-change quota (the rollback path
+            // has the same guard).
+            if (!allow_constraint_change(session, root_token)) {
+                deny(EBUSY, "rate-limited: the constraint change quota is exhausted");
+                break;
+            }
             ConstraintWire wire{};
             if (header.len < sizeof(wire)) {
                 deny(EINVAL, "constraint install body is too short");
@@ -2460,6 +2520,13 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
 
 bool Server::handle_frame(PeerSession& peer, const FrameHeader& header,
                           std::span<const std::byte> body) {
+    // #5396: the control-frame rate quota. A session that floods the
+    // coordinator is dropped; the other sessions keep running.
+    if (!allow_frame(peer)) {
+        audit_.add_constraint(AuditKind::RateLimited, peer.root_token, 0, 0, peer_quota_.frame_rate,
+                              "rate-limited: the session exceeded its frame quota");
+        return false;
+    }
     // #5395: the cost of serving a control frame is the bus's own
     // overhead — CPU time, never the wall clock (#5324).
     const std::uint64_t started_ns = slo_thread_cpu_ns();
@@ -2474,6 +2541,8 @@ bool Server::handle_frame(PeerSession& peer, const FrameHeader& header,
 }
 
 void Server::finish_session(PeerSession& peer) {
+    // #5396: the per-session counters die with the session.
+    constraint_windows_.erase(peer.session);
     for (std::uint64_t id : worldlines_.end_session(peer.root_token)) {
         record_audit(AuditKind::Rollback, peer.root_token, id);
         project_worldline(id, WorldlineState::Rolled, ConstraintResult::None);
@@ -2626,7 +2695,23 @@ void Server::serve(const BuildFn& build) {
         std::size_t polled_peers = peer_at.size();
         // #5393: a running round wakes the loop now and then, so the
         // wall budget closes it even when nothing happens.
-        const int timeout = round_.active() ? 100 : -1;
+        int timeout = round_.active() ? 100 : -1;
+        // #5396: a peer that is still waiting for its hello needs a
+        // wakeup when its handshake deadline passes.
+        if (timeout < 0) {
+            std::uint64_t earliest = 0;
+            for (const auto& peer : peers_) {
+                if (peer.hello_done || peer.hello_deadline_ms == 0)
+                    continue;
+                if (earliest == 0 || peer.hello_deadline_ms < earliest)
+                    earliest = peer.hello_deadline_ms;
+            }
+            if (earliest != 0) {
+                const std::uint64_t now = round_now_ms();
+                const std::uint64_t delta = earliest > now ? earliest - now : 0;
+                timeout = static_cast<int>(std::min<std::uint64_t>(delta + 1, 1000));
+            }
+        }
         const int ready = ::poll(pfds.data(), static_cast<nfds_t>(pfds.size()), timeout);
         if (ready < 0) {
             if (errno == EINTR)
@@ -2661,6 +2746,11 @@ void Server::serve(const BuildFn& build) {
                 }
                 PeerSession peer;
                 peer.conn_fd = fd;
+                // #5396: a connection that never says hello must not
+                // hold a session slot forever.
+                peer.hello_deadline_ms = round_now_ms() + peer_quota_.hello_timeout_ms;
+                peer.frame_refill_ms = round_now_ms();
+                peer.frame_tokens = peer_quota_.frame_burst * 1000;
                 peers_.push_back(std::move(peer));
                 // Feed the new peer immediately: its Hello may already be
                 // readable and the client blocks on HelloOk.
@@ -2694,8 +2784,26 @@ void Server::serve(const BuildFn& build) {
                     ended.push_back(i);
             }
         }
-        // Erase high indices first so the lower ones stay valid.
+        // #5396: the handshake deadline. A peer that connected and
+        // never said hello is dropped; the others are untouched.
+        {
+            const std::uint64_t now_ms = round_now_ms();
+            for (std::size_t i = 0; i < peers_.size(); ++i) {
+                if (peers_[i].hello_done || peers_[i].hello_deadline_ms == 0)
+                    continue;
+                if (now_ms < peers_[i].hello_deadline_ms)
+                    continue;
+                audit_.add_constraint(AuditKind::RateLimited, peers_[i].root_token, 0, 0,
+                                      peer_quota_.hello_timeout_ms,
+                                      "rate-limited: the handshake deadline passed");
+                ended.push_back(i);
+            }
+        }
+        // Erase high indices first so the lower ones stay valid. A peer
+        // may be listed twice (its feed failed and its handshake
+        // deadline passed) — it is finished once.
         std::sort(ended.begin(), ended.end(), std::greater<std::size_t>());
+        ended.erase(std::unique(ended.begin(), ended.end()), ended.end());
         for (const std::size_t i : ended) {
             finish_session(peers_[i]);
             peers_.erase(peers_.begin() + static_cast<std::ptrdiff_t>(i));

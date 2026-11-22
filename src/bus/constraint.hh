@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 #include "bus/image_format.hh"
 
@@ -51,6 +52,10 @@ struct ConstraintSet {
     // Workspace allow policy is part of the same versioned set; a rollback
     // restores both the rules and the policy (#5126).
     WorkspacePolicy policy{};
+    // #5396: who installed each rule. A change may not drop a rule
+    // another session installed — that is how a rollback would relax
+    // the gate behind the owner's back.
+    std::unordered_map<std::string, std::uint64_t> installers;
 };
 
 struct GateResult {

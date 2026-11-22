@@ -652,6 +652,19 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                         static_cast<std::uint32_t>(std::strtoull(gs, nullptr, 10));
                 if (const char* gc = ::getenv("AURA_BUS_GATE_CONTROL"))
                     opts.gate.require_control = std::string(gc) != "0";
+                // #5396: the adversarial peer quotas — the frame
+                // rate, the window, the handshake deadline and the
+                // constraint-change quota.
+                if (const char* pf = ::getenv("AURA_BUS_PEER_FRAMES"))
+                    opts.peer_quota.frame_rate = std::strtoull(pf, nullptr, 10);
+                if (const char* pb = ::getenv("AURA_BUS_PEER_BURST"))
+                    opts.peer_quota.frame_burst = std::strtoull(pb, nullptr, 10);
+                if (const char* ph = ::getenv("AURA_BUS_PEER_HELLO_MS"))
+                    opts.peer_quota.hello_timeout_ms = std::strtoull(ph, nullptr, 10);
+                if (const char* pc = ::getenv("AURA_BUS_PEER_CONSTRAINT_CHANGES"))
+                    opts.peer_quota.constraint_changes_per_window = std::strtoull(pc, nullptr, 10);
+                if (const char* cw = ::getenv("AURA_BUS_PEER_CONSTRAINT_WINDOW_MS"))
+                    opts.peer_quota.constraint_window_ms = std::strtoull(cw, nullptr, 10);
                 // #5393: the round budget — the wall clock a round may
                 // take, the cooldown between two rounds and the round
                 // cap.
