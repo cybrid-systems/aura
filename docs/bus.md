@@ -1,6 +1,6 @@
-# 本机工具总线（v0.3.0）
+# 本机工具总线（v0.3.1）
 
-本页是 #5121 的实现说明。v0.3.0 只做同机协同：一条总线对应一个工作区、一份活 AST；不引入总线守护进程，不做跨机、RDMA 或 CXL。
+本页是 #5121（v0.3.0 底座）与 #5376（v0.3.1 跨进程自进化闭环）的实现说明。只做同机协同：一条总线对应一个工作区、一份活 AST；不引入总线守护进程，不做跨机、RDMA 或 CXL。v0.3.1 在底座上交付多对端并发服务、KEEP 原子应用回活 AST、候选证据五元绑定、约束最小安全子集与金丝雀观察期。
 
 ## 默认传输
 
@@ -22,7 +22,7 @@
 
 ## 当前覆盖
 
-已实现：控制帧、握手与拒绝原因、memfd 封印与对端检查、eventfd 门铃、loan 计数与 `EAGAIN`/`ENOSPC`、断开回收、能力与 grant 树、worldline 的 trial/keep/rollback、约束门、订阅频道与 `Subscribe`/`CatchUp` 路由、`std/bus` 公共面。跨主机不在 v0.3.0。
+已实现（v0.3.0 底座 + v0.3.1 闭环）：控制帧、握手与拒绝原因、memfd 封印与对端检查、eventfd 门铃、loan 计数与 `EAGAIN`/`ENOSPC`、断开回收、能力与 grant 树、worldline 的 trial/keep/rollback、约束门、订阅频道与 `Subscribe`/`CatchUp` 路由、`std/bus` 公共面；多对端并发服务与会话隔离（#5377）、KEEP 原子应用回活 AST（#5378）、候选证据五元绑定与防陈旧提交（#5379）、约束最小安全子集与保护集镜像（#5380）、金丝雀两阶段提交与退化自动撤回（#5381）。跨主机不在本版。
 
 ## 能力
 
@@ -94,9 +94,15 @@
   `allow-small`(new-value ≤ 100,#5127 测试契约)与 `value-fits-immediate`
   (第 63 位为 0 的映像立即数不变量)。持 constraint-write 的对端用
   `bus:install-constraint` 安装注册名;未注册名拒绝。
-- **当前为单对端顺序服务**:accept → 服务到断开 → 再 accept。断开回收(未 KEEP
-  试改回滚、loan 收回)是交付语义。三工具同时附着的多对端服务是跟进项;
-  服务循环、能力、loan、约束与审计不变,只扩每对端状态。
+- **多对端并发服务**(#5377):协调者用一条 poll 事件循环同时服务所有已附着
+  对端(监听套接字 + 唤醒 eventfd + 每会话控制套接字)。每会话独立持有
+  conn_fd、session id、root grant、能力、loan 账本、暂存配额与订阅游标
+  (`PeerSession`);共享状态(映像、grant 树、worldline 台账、约束、审计)
+  只由协调者线程串行推进,代次推进无需加锁。某对端崩溃/EOF/心跳超时只
+  收回该会话未归还 loan、把其未决 trial 标 Rollback 并写审计,绝不影响
+  其他在线会话。宿主可经 `bus:grant`(带 worldline 作用域)实时委派单条
+  worldline 的 keep+rollback 给裁判,`bus:revoke` 递归失效。提交新代次后
+  向其他已订阅会话的门铃 eventfd 发通知,裁判/观察者无需轮询。
 - **被拒绝的附着只结束该连接**(#5383):未知角色、workspace 不符、schema/uid
   不符、握手半途 EOF 等拒绝会关闭该连接并继续 accept,不停服务循环;只有
   unhost/监听失效才退出。一个配置错误的对端不会瘫痪整条总线。
@@ -122,6 +128,15 @@ unhost 后套接字清理,以及三对端顺序服务(perf 发布并装约束 �
 时被拒绝。#5383 回归:badrole/wrongws/裸连接 EOF 三种拒绝之后,合法对端仍能
 附着、发布、detach(修复前服务循环在首次拒绝即退出,后续 attach 全部挂死)。
 
+v0.3.1 闭环测试:`test_bus_multi_peer`(#5377,三对端并发 + 提议进程 SIGKILL
+隔离 + 越权 KEEP 拒绝)、`test_bus_keep_apply`(#5378,源载体补丁原子应用回活
+AST,非法语法拒绝且源码逐字节不变)、`test_bus_evidence_binding`(#5379,五元
+证据匹配/伪造/陈旧/缺失 + v1 映像兼容)、`test_bus_constraints_subset`(#5380,
+保护集镜像 + pure-define-only 纯度门 + constraint-write 权限隔离)、
+`test_bus_canary_rollback`(#5381,低于底线自动撤回 + 窗口期满封存 + 并发
+canary 拒绝)、`test_bus_closed_loop_e2e`(#5382,三进程正常闭环 + 五类故障
+注入矩阵 + 审计可重放)。全部接入 ctest(`test_bus_*`)。
+
 ## std/bus 公共面
 
 `std/bus` 只包一个内核桥 `bus-call`（建立共享映像、跨进程附着、能力检查和原子发布代次是 Aura 写不出来的）。Aura 侧动词：
@@ -132,11 +147,19 @@ unhost 后套接字清理,以及三对端顺序服务(perf 发布并装约束 �
 - `(bus:query session channel since-generation since-count)` → `(ok generation count snapshot rows)`，rows 是解码后的记录列表。
 - `(bus:publish session key value)` → `(ok generation count)`；另有 `bus:publish-cct` / `bus:publish-patch` / `bus:publish-worldline` 把其余三种记录投影进对应频道（parent/worldline 用 -1 表示无）。
 - `(bus:project-nodes session)` / `(bus:project-cct session)` / `(bus:project-patches session)` / `(bus:project-worldlines session)` 从活工作区直接投影四类记录（见「活跃生产者」）。
-- `(bus:trial session channel)` → `(ok worldline)`；`(bus:keep session worldline node value)` 跑当前约束；`(bus:rollback session worldline)`。
-- `(bus:grant session bits channels loans expires worldline)` → `(ok token)`，只能衰减；`(bus:revoke session token)`。
+- `(bus:trial session channel)` → `(ok worldline)`；`(bus:keep session worldline node value)` 跑当前约束 + 证据门 + 活 AST 原子应用；`(bus:rollback session worldline)`。
+- `(bus:grant session bits channels loans expires worldline)` → `(ok token)`，只能衰减；`(bus:revoke session token)` 递归失效；`(bus:grant-activate session token)` → `(ok bits worldline)`，把本会话能力收窄到 token 的有效(Scoped)能力——裁判激活宿主委托的单 worldline keep+rollback(#5377)。
 - `(bus:audit session worldline)` → `(ok count truncated events)`；行是 `(kind token worldline result version timestamp-ms seq reason)`。`(bus:audit-filter session worldline actor since-seq)` 同一份日志按发起者和序号过滤，0 表示不过滤。
-- `(bus:grant session bits channels loans expires worldline)` → `(ok token)`，只能衰减；`(bus:revoke session token)`。
-- `(bus:audit session worldline)` → `(ok count truncated events)`；行是 `(kind token worldline result version timestamp-ms seq reason)`。`(bus:audit-filter session worldline actor since-seq)` 同一份日志按发起者和序号过滤，0 表示不过滤。
+
+### v0.3.1 闭环动词(#5378/#5379/#5381)
+
+- `(bus:publish-source session source-text)` → `(ok index generation)`：把候选 define 源码追加进映像字符串表,返回条目下标。提议方随后 `(bus:publish-patch session node bus:source-field index worldline generation)` 发布源载体补丁(field_offset = `bus:source-field` = 4294967280,new_value = 字符串表下标)。KEEP 时协调者把源码经 `mutate:rebind` + `eval-current` 原子应用回宿主活工作区;任一步失败即回滚快照,活 AST 逐字节不变。
+- `(bus:candidate-digest session worldline)` → `(ok digest)`：协调者对该 trial 已提交补丁字节流的 FNV-1a 摘要(截断低 62 位,fixnum 安全)。
+- `(bus:bind-evidence session worldline baseline candidate workload seed verifier)` → `(ok worldline)`：把五元证据绑定到未决 trial。KEEP 强制核对 `baseline_gen == 当前工作区代次`、`candidate_hash == digest(trial.patches)`、workload/seed/verifier 非零;任一缺失或不一致拒绝 KEEP(`stale-baseline` / `candidate-hash-mismatch` / `incomplete-evidence` / `missing-evidence`)。证据尾随 worldline 记录追加进映像(layout_version 2,v1 读者安全跳过)。
+- `(bus:evidence session worldline)` → `(ok baseline candidate workload seed verifier)`：读回某 worldline 最终记录的证据尾。
+- `(bus:canary-confirm session worldline)` → `(ok worldline)`：裁判提前封存活跃金丝雀。
+- 宿主环境变量:`AURA_BUS_EVIDENCE=1` 开启证据强制门;`AURA_BUS_CANARY_WINDOW=N` 开启 N 个指标 tick 的观察期;`AURA_BUS_CANARY_FLOOR=F` 设退化底线;`AURA_BUS_CANARY_KEY=K` 指定驱动观察期的指标键。观察期内连续两次低于底线自动撤回(恢复前一版快照,写 `canary-reverted` 审计);窗口期满达标自动封存为 Kept;同一时刻至多一个活跃 Canary,第二个 KEEP 被 `canary-active` 拒绝。默认全关,保持 v0.3.0 行为。
+- 约束最小安全子集(#5380):宿主预注册 `pure-define-only`(候选体禁 io/net/socket/ffi/mutate/set!/bus 等副作用算子)、`target-allowlist`、`metric-floor-bound` 三个参数化谓词;`std/contract` 的保护集经 #5317 digest 镜像进 KEEP 前的结构门,触碰受保护 define 一律拒绝。持 constraint-write 的会话才能安装/回滚约束。
 - 失败是 `(error code message)`，不是 `#f`；`bus:ok?` / `bus:code` / `bus:message` 读取。错误码含 `schema-mismatch`、`seals-missing`、`loan-exhausted`、`image-full`、`validation-failed`、`permission`、`unregistered-id`、`transport-failed`。
 
 `(api-reference)` 现在也列出这些动词、所需能力和失败码。审计有两个面：控制面日志（带原因，供 `bus:audit`）和映像审计节（只追加，供映射方直接遍历）。

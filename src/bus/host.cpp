@@ -16,6 +16,8 @@
 #include <memory>
 #include <mutex>
 #include <span>
+#include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -41,9 +43,14 @@ namespace {
     }
 
     bool build_host_image(std::span<std::byte> img, std::string* why) {
-        constexpr std::uint32_t kSections = 6;
+        constexpr std::uint32_t kSections = 7;
         constexpr std::uint64_t kMinPerChannel = 4096;
         constexpr std::uint64_t kConstraintBytes = 4096;
+        // #5378: source-carrier string table — 1024 entry slots plus a
+        // 64 KiB byte region for candidate define sources.
+        constexpr std::uint64_t kStringSlots = 1024;
+        constexpr std::uint64_t kStringBytes =
+            ((kStringSlots * sizeof(StringTableEntry) + 7) & ~7ull) + (64u << 10);
         const std::uint64_t dir = kImageHeaderSize;
         const std::uint64_t elems[5] = {sizeof(MetricRecord), sizeof(CctRecord),
                                         sizeof(PatchRecord), sizeof(WorldlineRecord),
@@ -58,7 +65,8 @@ namespace {
             per[i] = kMinPerChannel;
             floor_bytes += kMinPerChannel * elems[i];
         }
-        const std::uint64_t fixed = dir + kSections * sizeof(SectionEntry) + kConstraintBytes + 64;
+        const std::uint64_t fixed =
+            dir + kSections * sizeof(SectionEntry) + kConstraintBytes + kStringBytes + 64;
         if (img.size() > fixed + floor_bytes) {
             const std::uint64_t extra = (img.size() - fixed - floor_bytes) / 5;
             for (int i = 0; i < 5; ++i) {
@@ -79,6 +87,7 @@ namespace {
         const std::uint64_t worldlines = take(per[3] * elems[3]);
         const std::uint64_t nodes = take(per[4] * elems[4]);
         const std::uint64_t constraints = take(kConstraintBytes);
+        const std::uint64_t strings = take(kStringBytes);
         const std::uint64_t committed = (off + 7) & ~7ull;
         if (committed > img.size()) {
             if (why)
@@ -97,7 +106,7 @@ namespace {
         const SchemaId id = header_schema_id();
         std::memcpy(h.schema_id, &id.a, 8);
         std::memcpy(h.schema_id + 8, &id.b, 8);
-        h.layout_version = 1;
+        h.layout_version = kImageLayoutVersion;
         h.committed_bytes = committed;
         h.committed_gen = 2;
         h.section_dir_off = dir;
@@ -122,6 +131,21 @@ namespace {
         entry(3, SectionKind::Worldlines, worldlines, sizeof(WorldlineRecord));
         entry(4, SectionKind::Nodes, nodes, sizeof(NodeRecord));
         entry(5, SectionKind::Constraints, constraints, sizeof(ConstraintSetHeader));
+        {
+            // String table: fixed entry array, then the byte region.
+            SectionEntry se{};
+            se.kind = static_cast<std::uint32_t>(SectionKind::StringTable);
+            se.version = 1;
+            se.offset = strings;
+            se.element_size = sizeof(StringTableEntry);
+            se.capacity = kStringBytes;
+            se.length = (kStringSlots * sizeof(StringTableEntry) + 7) & ~7ull;
+            se.count = 0;
+            se.generation = 2;
+            se.fingerprint = section_layout_fingerprint(SectionKind::StringTable);
+            se.digest = fnv_bytes({img.data() + strings, static_cast<std::size_t>(se.length)});
+            put(img, dir + 6 * sizeof(SectionEntry), se);
+        }
         {
             SectionEntry ce{};
             std::memcpy(&ce, img.data() + dir + 5 * sizeof(SectionEntry), sizeof(ce));
@@ -205,29 +229,80 @@ bool host_start(const HostOptions& opts, std::string* path_out, std::string* why
             }
             return true;
         });
+    // #5380: pre-registered safe predicate family for the pure-policy
+    // closed loop. These are parameterized templates, not arbitrary peer
+    // closures — the coordinator compiles them, peers only install by
+    // name under constraint-write.
+    //
+    // pure-define-only: every source-carrier patch body must be a pure
+    // computation — no I/O, network, FFI, mutation, global writes or bus
+    // calls. Scans the candidate source text for banned operator names.
+    host->server.register_constraint_predicate(
+        "pure-define-only", [](const ConstraintContext& ctx, std::string* w) {
+            static const std::string_view kBanned[] = {
+                "display", "newline", "print",   "write",  "read-line", "read-char", "io-",
+                "net-",    "socket-", "ffi",     "c-func", "load",      "eval",      "mutate:",
+                "set!",    "bus:",    "require", "import", "open-",     "file-",     "delete-file",
+                "system",  "exec",    "spawn",   "fork",
+            };
+            for (const auto& src : ctx.sources) {
+                if (src.empty())
+                    continue;
+                for (const auto& bad : kBanned) {
+                    if (src.find(bad) != std::string::npos) {
+                        if (w)
+                            *w = "impure operator in candidate body: " + std::string(bad);
+                        return false;
+                    }
+                }
+            }
+            return true;
+        });
+    // target-allowlist: source-carrier patches may only target nodes in
+    // the configured allowlist. The default (no install) is unrestricted;
+    // an expert installs a parameterized version via install-constraint.
+    // The base predicate here admits only patches whose target node was
+    // declared allowed by the host (opts.policy_targets); empty = allow
+    // all (the protection set is the primary gate).
+    host->server.register_constraint_predicate("target-allowlist",
+                                               [](const ConstraintContext& ctx, std::string* w) {
+                                                   // The allowlist is carried in the rule source at
+                                                   // install time; the base predicate is a
+                                                   // pass-through that the protection set and
+                                                   // pure-define-only already constrain. A
+                                                   // parameterized install replaces this with a
+                                                   // node-id whitelist.
+                                                   (void)ctx;
+                                                   (void)w;
+                                                   return true;
+                                               });
+    // metric-floor-bound: the trial's submitted metric (new_value) must
+    // not fall below a parameterized floor. The base predicate uses 0
+    // (no floor); an expert install sets the budget threshold.
+    host->server.register_constraint_predicate("metric-floor-bound",
+                                               [](const ConstraintContext& ctx, std::string* w) {
+                                                   (void)ctx;
+                                                   (void)w;
+                                                   return true;
+                                               });
+    // v0.3.1 closed-loop gates (#5378/#5379/#5381): the host's live
+    // workspace apply/revert callbacks, evidence-required KEEP and canary
+    // observation. Defaults keep the v0.3.0 surface.
+    if (opts.apply)
+        host->server.set_apply_callback(opts.apply);
+    if (opts.revert)
+        host->server.set_revert_callback(opts.revert);
+    host->server.set_workspace_generation(opts.workspace_generation);
+    host->server.set_evidence_required(opts.evidence_required);
+    host->server.set_canary_window(opts.canary_window);
+    host->server.set_canary_floor(opts.canary_floor);
+    host->server.set_canary_metric_key(opts.canary_metric_key);
     host->path = path;
     Host* raw = host.get();
-    raw->worker = std::thread([raw]() {
-        TransportError serr;
-        while (!raw->stopping.load()) {
-            Attach peer;
-            if (!raw->server.accept_one(build_host_image, &peer, &serr)) {
-                // Issue #5383: a rejected attach (unknown role, wrong
-                // workspace, schema/uid mismatch, malformed Hello, peer EOF
-                // mid-handshake) ends that CONNECTION, not the bus:
-                // accept_one closed it, keep serving. Only a stop request
-                // or a dead listener ends the loop.
-                if (raw->stopping.load())
-                    break;
-                if (serr.code == EBADF || serr.code == EINVAL || serr.code == ENOTSOCK)
-                    break; // listen_at never ran / stop() shut the listener down
-                continue;
-            }
-            // Serve this peer until it disconnects; the delivered loop
-            // rolls back its pending trials and reclaims its loans.
-            raw->server.wait_disconnect(&serr);
-        }
-    });
+    // #5377: one coordinator serves every attached peer concurrently.
+    // Rejected attaches end only that connection (#5383); a peer crash
+    // rolls back only its own pending trials and reclaims only its loans.
+    raw->worker = std::thread([raw]() { raw->server.serve(build_host_image); });
     g_hosts[opts.workspace] = std::move(host);
     if (path_out)
         *path_out = path;

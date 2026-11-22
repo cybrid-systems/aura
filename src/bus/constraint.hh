@@ -15,6 +15,9 @@
 #include <functional>
 #include <string>
 #include <vector>
+#include "bus/image_format.hh"
+
+#include <span>
 
 namespace aura::bus {
 
@@ -22,6 +25,13 @@ struct ConstraintContext {
     std::uint64_t worldline = 0;
     std::uint64_t node = 0;
     std::uint64_t new_value = 0;
+    // #5380: the trial's committed patch records, so structural rules
+    // (protected set, target allowlist, purity) can inspect what a KEEP
+    // would actually apply. Empty for legacy immediate-only keeps.
+    std::span<const PatchRecord> patches{};
+    // #5380: the candidate define source texts, parallel to patches
+    // (empty for immediate field patches). Purity rules scan these.
+    std::span<const std::string> sources{};
 };
 
 using ConstraintPredicate = std::function<bool(const ConstraintContext&, std::string*)>;

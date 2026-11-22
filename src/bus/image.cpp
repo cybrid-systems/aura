@@ -10,6 +10,7 @@
 
 #include "bus/image_schema.hh"
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 
@@ -142,7 +143,12 @@ ImageCheck validate_image(std::span<const std::byte> image) {
         if (e.version > 1)
             return {ImageStatus::BadSection, "unsupported section version"};
         const std::uint64_t expected_size = expected_element_size(kind);
-        if (e.element_size < expected_size)
+        // #5379: the worldline record grew an evidence tail in layout v2.
+        // A v1 image (48-byte worldlines) stays valid: the frozen prefix
+        // is the v1 width, and readers default the unknown tail to zero.
+        const std::uint64_t min_size =
+            kind == SectionKind::Worldlines ? kWorldlineV1Size : expected_size;
+        if (e.element_size < min_size)
             return {ImageStatus::BadElementSize, "section element size is narrower than v1"};
         if (is_record_section(kind)) {
             if (e.capacity % e.element_size != 0)
@@ -177,16 +183,19 @@ ImageCheck validate_image(std::span<const std::byte> image) {
     const SectionView worldlines = view_section(image, h, SectionKind::Worldlines);
 
     // ── String table: entries index UTF-8 bytes inside the section ──
+    // The entry array is a FIXED reserved region (kStringSlotsReserved
+    // slots); bytes follow it. Validate each entry's byte range against
+    // the section length, and require the offset past the reserved array
+    // (not count*16, which grows as entries are added).
     if (strings.present) {
-        const auto* base = section_base(image, strings.entry);
-        const std::uint64_t entries_bytes = strings.count * sizeof(StringTableEntry);
+        const std::uint64_t reserved =
+            (kStringSlotsReserved * sizeof(StringTableEntry) + 7) & ~7ull;
         for (std::uint64_t i = 0; i < strings.count; ++i) {
             const StringTableEntry s = load_at<StringTableEntry>(
                 image, strings.entry.offset + i * strings.entry.element_size);
-            if (s.off % 8 != 0 || s.off < entries_bytes ||
+            if (s.off % 8 != 0 || s.off < reserved ||
                 !in_bounds(s.off, s.len, strings.entry.length))
                 return {ImageStatus::BadBounds, "string-table entry outside the section"};
-            (void)base;
         }
     }
 
@@ -272,9 +281,11 @@ ImageCheck validate_image(std::span<const std::byte> image) {
     // ── Worldlines: backward parents, state domain, patch range ──
     if (worldlines.present) {
         for (std::uint64_t i = 0; i < worldlines.count; ++i) {
-            const WorldlineRecord w = load_at<WorldlineRecord>(
-                image, worldlines.entry.offset + i * worldlines.entry.element_size);
-            if (w.state > static_cast<std::uint8_t>(WorldlineState::Rejected))
+            WorldlineRecord w{};
+            std::memcpy(&w,
+                        image.data() + worldlines.entry.offset + i * worldlines.entry.element_size,
+                        std::min<std::uint64_t>(worldlines.entry.element_size, sizeof(w)));
+            if (w.state > static_cast<std::uint8_t>(WorldlineState::Canary))
                 return {ImageStatus::BadSection, "worldline state outside the domain"};
             if (w.constraint_result > static_cast<std::uint8_t>(ConstraintResult::Fail))
                 return {ImageStatus::BadSection, "worldline constraint result outside the domain"};
@@ -293,9 +304,11 @@ ImageCheck validate_image(std::span<const std::byte> image) {
                         "worldline metric offset outside the metric section"};
         }
         const auto parent = [&](std::uint64_t i) {
-            return load_at<WorldlineRecord>(image, worldlines.entry.offset +
-                                                       i * worldlines.entry.element_size)
-                .parent;
+            WorldlineRecord w{};
+            std::memcpy(&w,
+                        image.data() + worldlines.entry.offset + i * worldlines.entry.element_size,
+                        std::min<std::uint64_t>(worldlines.entry.element_size, sizeof(w)));
+            return w.parent;
         };
         if (!backwards_parents(worldlines.count, parent, kImageNoParent))
             return {ImageStatus::BadCycle, "worldline parent does not point backwards"};
@@ -356,6 +369,85 @@ std::uint64_t audit_count(std::span<const std::byte> image) {
     if (!find_section(image, SectionKind::Audit, &e))
         return 0;
     return e.count;
+}
+
+// #5378: source-carrier string table. Layout: a fixed entry array at the
+// section head (kStringSlots slots reserved by the builder), then inline
+// UTF-8 bytes appended after the last committed byte. Entries never
+// move; a new entry fills the next free slot and its bytes land at the
+// committed tail. The builder sets length = the reserved array size, so
+// the byte region starts at length and grows with each append.
+// Exhaustion (no slot or no byte room) is a hard error.
+bool string_table_append(std::span<std::byte> image, std::string_view text, std::uint64_t* index,
+                         std::string* why) {
+    const auto fail = [&](const char* msg) {
+        if (why)
+            *why = msg;
+        return false;
+    };
+    SectionEntry e{};
+    if (!find_section(image, SectionKind::StringTable, &e))
+        return fail("string table section is missing");
+    if (e.element_size != sizeof(StringTableEntry))
+        return fail("string table element size mismatch");
+    // Layout: a fixed reserved entry array (kStringSlotsReserved slots),
+    // then the byte region. Entries fill the array from slot 0; bytes
+    // append at the committed tail, 8-aligned. The array size is FIXED so
+    // existing entries never move.
+    const std::uint64_t reserved = (kStringSlotsReserved * sizeof(StringTableEntry) + 7) & ~7ull;
+    const std::uint64_t tail = e.length < reserved ? reserved : e.length;
+    const std::uint64_t byte_off = (tail + 7) & ~7ull;
+    if ((e.count + 1) * sizeof(StringTableEntry) > reserved)
+        return fail("string table entry slots exhausted");
+    if (text.size() > kImageMaxRecords)
+        return fail("source text is too large");
+    const std::uint64_t aligned_len = (text.size() + 7) & ~7ull;
+    if (byte_off > e.capacity || aligned_len > e.capacity - byte_off)
+        return fail("string table is full");
+    StringTableEntry ent{};
+    ent.off = byte_off;
+    ent.len = static_cast<std::uint32_t>(text.size());
+    std::memcpy(image.data() + e.offset + e.count * sizeof(StringTableEntry), &ent, sizeof(ent));
+    if (!text.empty())
+        std::memcpy(image.data() + e.offset + byte_off, text.data(), text.size());
+    ImageHeader h = load_header(image);
+    const std::uint64_t next_gen = h.committed_gen + 2;
+    e.length = byte_off + aligned_len;
+    e.count += 1;
+    e.generation = next_gen;
+    e.digest = fnv_section(image, e.offset, e.length);
+    std::uint64_t at = 0;
+    for (std::uint32_t i = 0; i < h.section_count; ++i) {
+        const SectionEntry cand = load_section_entry(image, i);
+        if (cand.kind == static_cast<std::uint32_t>(SectionKind::StringTable)) {
+            at = h.section_dir_off + static_cast<std::uint64_t>(i) * sizeof(SectionEntry);
+            break;
+        }
+    }
+    if (at == 0)
+        return fail("string table directory entry vanished");
+    std::memcpy(image.data() + at, &e, sizeof(e));
+    std::atomic_thread_fence(std::memory_order_release);
+    h.committed_gen = next_gen;
+    std::memcpy(image.data(), &h, sizeof(h));
+    *index = e.count - 1;
+    return true;
+}
+
+bool string_table_read(std::span<const std::byte> image, std::uint64_t index,
+                       std::string_view* text) {
+    SectionEntry e{};
+    if (!find_section(image, SectionKind::StringTable, &e))
+        return false;
+    if (index >= e.count || e.element_size != sizeof(StringTableEntry))
+        return false;
+    const StringTableEntry ent =
+        load_at<StringTableEntry>(image, e.offset + index * e.element_size);
+    if (!in_bounds(ent.off, ent.len, e.length))
+        return false;
+    *text =
+        std::string_view(reinterpret_cast<const char*>(image.data() + e.offset + ent.off), ent.len);
+    return true;
 }
 
 bool audit_append(std::span<std::byte> image, AuditRecord* record, std::string* why) {

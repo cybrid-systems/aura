@@ -16,6 +16,8 @@
         bus:install-constraint bus:rollback-constraints
         bus:audit-filter
         bus:trial bus:keep bus:rollback bus:grant bus:revoke bus:audit
+        bus:publish-source bus:bind-evidence bus:evidence bus:canary-confirm
+        bus:candidate-digest bus:source-field bus:grant-activate
         bus:status bus:code bus:message bus:ok? bus:help
         bus:attach? bus:error? bus:record?)
 
@@ -123,6 +125,51 @@
 
 (define (bus:rollback session worldline)
   (bus-call "rollback" session worldline))
+
+; ── v0.3.1 closed loop (#5378/#5379/#5381) ─────────────────────
+; The source-carrier patch field marker: a patch with this field_offset
+; carries new_value = a string-table index holding the candidate define
+; source, not an immediate field value.
+(define bus:source-field 4294967280)
+
+; (bus:publish-source session source-text) -> (ok index generation)
+; Appends the candidate define source to the image string table. The
+; proposer then publishes a patch (bus:publish-patch session node
+; bus:source-field index worldline generation) naming the target define.
+(define (bus:publish-source session source-text)
+  (bus-call "publish-source" session source-text))
+
+; (bus:bind-evidence session worldline baseline candidate workload seed verifier)
+; -> (ok worldline). Binds the five-tuple evidence to a pending trial;
+; KEEP re-checks baseline/candidate against the live workspace and the
+; committed patch bytes. All of workload/seed/verifier must be nonzero.
+(define (bus:bind-evidence session worldline baseline candidate workload seed verifier)
+  (bus-call "bind-evidence" session worldline baseline candidate workload seed verifier))
+
+; (bus:evidence session worldline) -> (ok baseline candidate workload seed verifier)
+; Reads the committed evidence tail of a worldline record.
+(define (bus:evidence session worldline)
+  (bus-call "evidence" session worldline))
+
+; (bus:canary-confirm session worldline) -> (ok worldline)
+; Seals the active canary observation early (judge confirmation). The
+; window also seals automatically when it expires with metrics at/above
+; the floor; a floor breach reverts automatically.
+(define (bus:canary-confirm session worldline)
+  (bus-call "canary-confirm" session worldline))
+
+; (bus:candidate-digest session worldline) -> (ok digest)
+; The coordinator's FNV-1a digest of the trial's committed patch bytes;
+; bind it as candidate_hash in bus:bind-evidence.
+(define (bus:candidate-digest session worldline)
+  (bus-call "candidate-digest" session worldline))
+
+; (bus:grant-activate session token) -> (ok bits worldline)
+; Present a granted token to narrow this session's capability to the
+; token's effective (scoped) caps. The judge activates the host's
+; delegated keep+rollback on a single worldline before bus:keep.
+(define (bus:grant-activate session token)
+  (bus-call "grant-activate" session token))
 
 ; (bus:grant session bits channels loans expires worldline) -> (ok token)
 (define (bus:grant session bits channels loans expires worldline)

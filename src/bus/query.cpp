@@ -86,7 +86,9 @@ bool worldline_diff(std::span<const std::byte> image, std::uint64_t id_a, std::u
     WorldlineRecord ra{};
     WorldlineRecord rb{};
     for (std::uint64_t i = 0; i < wl.count; ++i) {
-        const WorldlineRecord w = load_at<WorldlineRecord>(image, wl.offset + i * wl.element_size);
+        WorldlineRecord w{};
+        std::memcpy(&w, image.data() + wl.offset + i * wl.element_size,
+                    std::min<std::uint64_t>(wl.element_size, sizeof(w)));
         if (a == nullptr && w.id == id_a) {
             ra = w;
             a = &ra;

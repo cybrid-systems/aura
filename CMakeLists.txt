@@ -1959,6 +1959,64 @@ target_link_libraries(test_bus_host PRIVATE aura-bus)
 aura_strict_test_warnings(tests/compiler/test_bus_host.cpp)
 add_test(NAME test_bus_host_5128 COMMAND ./test_bus_host)
 
+# Issue #5377: bus:host multi-peer concurrent service + session isolation.
+# Three real aura processes attach at once; proposer SIGKILL mid-trial
+# rolls back only its worldline; unscoped KEEP is refused.
+add_executable(test_bus_multi_peer tests/compiler/test_bus_multi_peer.cpp)
+target_include_directories(test_bus_multi_peer PRIVATE src)
+target_compile_features(test_bus_multi_peer PUBLIC cxx_std_26)
+target_link_libraries(test_bus_multi_peer PRIVATE aura-bus)
+aura_strict_test_warnings(tests/compiler/test_bus_multi_peer.cpp)
+add_test(NAME test_bus_multi_peer_5377 COMMAND ./test_bus_multi_peer)
+
+# Issue #5378: KEEP atomically applies PatchRecord to the live workspace.
+# Valid pure patch rebinds + re-evals; invalid syntax / stale baseline
+# refused with the workspace byte-identical.
+add_executable(test_bus_keep_apply tests/compiler/test_bus_keep_apply.cpp)
+target_include_directories(test_bus_keep_apply PRIVATE src)
+target_compile_features(test_bus_keep_apply PUBLIC cxx_std_26)
+target_link_libraries(test_bus_keep_apply PRIVATE aura-bus)
+aura_strict_test_warnings(tests/compiler/test_bus_keep_apply.cpp)
+add_test(NAME test_bus_keep_apply_5378 COMMAND ./test_bus_keep_apply)
+
+# Issue #5379: candidate evidence five-tuple binding + stale-submit
+# rejection; v1 (48-byte worldline) image stays readable by the v2 reader.
+add_executable(test_bus_evidence_binding tests/compiler/test_bus_evidence_binding.cpp)
+target_include_directories(test_bus_evidence_binding PRIVATE src)
+target_compile_features(test_bus_evidence_binding PUBLIC cxx_std_26)
+target_link_libraries(test_bus_evidence_binding PRIVATE aura-bus)
+aura_strict_test_warnings(tests/compiler/test_bus_evidence_binding.cpp)
+add_test(NAME test_bus_evidence_binding_5379 COMMAND ./test_bus_evidence_binding)
+
+# Issue #5380: bus constraint minimal safe subset — protection set mirror,
+# pure-define-only purity gate, constraint-write permission isolation.
+add_executable(test_bus_constraints_subset tests/compiler/test_bus_constraints_subset.cpp)
+target_include_directories(test_bus_constraints_subset PRIVATE src)
+target_compile_features(test_bus_constraints_subset PUBLIC cxx_std_26)
+target_link_libraries(test_bus_constraints_subset PRIVATE aura-bus)
+aura_strict_test_warnings(tests/compiler/test_bus_constraints_subset.cpp)
+add_test(NAME test_bus_constraints_subset_5380 COMMAND ./test_bus_constraints_subset)
+
+# Issue #5381: canary two-phase commit + automatic degradation revert.
+# Below-floor metrics auto-revert; at-floor window seals; concurrent
+# canary KEEP refused.
+add_executable(test_bus_canary_rollback tests/compiler/test_bus_canary_rollback.cpp)
+target_include_directories(test_bus_canary_rollback PRIVATE src)
+target_compile_features(test_bus_canary_rollback PUBLIC cxx_std_26)
+target_link_libraries(test_bus_canary_rollback PRIVATE aura-bus)
+aura_strict_test_warnings(tests/compiler/test_bus_canary_rollback.cpp)
+add_test(NAME test_bus_canary_rollback_5381 COMMAND ./test_bus_canary_rollback)
+
+# Issue #5382: three-process closed-loop e2e + fault-injection matrix.
+# Normal path (grant delegation, canary seal) plus proposer SIGKILL,
+# judge crash fail-closed, permission violation, backpressure probe.
+add_executable(test_bus_closed_loop_e2e tests/compiler/test_bus_closed_loop_e2e.cpp)
+target_include_directories(test_bus_closed_loop_e2e PRIVATE src)
+target_compile_features(test_bus_closed_loop_e2e PUBLIC cxx_std_26)
+target_link_libraries(test_bus_closed_loop_e2e PRIVATE aura-bus)
+aura_strict_test_warnings(tests/compiler/test_bus_closed_loop_e2e.cpp)
+add_test(NAME test_bus_closed_loop_e2e_5382 COMMAND ./test_bus_closed_loop_e2e)
+
 # Issue #5373: a stale short-circuit name-cache row must not hijack a
 # later form whose pool-local SymId collides; display output was dropped.
 add_executable(test_display_cache_5373 tests/compiler/test_display_cache_5373.cpp)

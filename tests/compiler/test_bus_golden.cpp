@@ -130,6 +130,12 @@ std::vector<std::byte> build_golden() {
             worldlines[i].patch_len = 2 * sizeof(PatchRecord);
             worldlines[i].patch_count = 2;
         }
+        // #5379 evidence tail (layout v2): deterministic, nonzero.
+        worldlines[i].baseline_gen = 2;
+        worldlines[i].candidate_hash = 0x5eed0000ull + i;
+        worldlines[i].workload_sym = 7;
+        worldlines[i].seed = 42;
+        worldlines[i].verifier_version = 1;
     }
 
     std::vector<AuditRecord> audit(8);
@@ -168,7 +174,7 @@ std::vector<std::byte> build_golden() {
     const SchemaId id = header_schema_id();
     std::memcpy(h.schema_id, &id.a, 8);
     std::memcpy(h.schema_id + 8, &id.b, 8);
-    h.layout_version = 1;
+    h.layout_version = kImageLayoutVersion;
     h.committed_bytes = committed;
     h.committed_gen = 2;
     h.section_dir_off = kDir;

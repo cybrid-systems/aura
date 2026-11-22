@@ -18,7 +18,10 @@ module;
 #include "bus/transport.hh"
 #include "bus/host.hh"
 #include "bus/query.hh"
+#include "bus/channel.hh"
 #include "compiler/cct_probe.hh"
+#include "compiler/mutate_type_gate.hh" // #5380: contract protection mirror
+#include "compiler/evo_log_4910.hh"     // #5380: contract digest transport
 
 module aura.compiler.evaluator;
 
@@ -34,6 +37,7 @@ using PrimRegistrar = std::function_ref<void(std::string, PrimFn)>;
 using types::as_bool;
 using types::as_cell_id;
 using types::as_closure_id;
+using types::as_error_idx;
 using types::as_float;
 using types::as_hash_idx;
 using types::as_int;
@@ -114,6 +118,56 @@ namespace {
     EvalValue bus_error(Evaluator& ev, std::string_view code, std::string_view message) {
         return bus_list(ev,
                         {bus_string(ev, "error"), bus_string(ev, code), bus_string(ev, message)});
+    }
+
+    // #5378: detect a make_merr failure pair (kind . (message . 0)) or a
+    // raised error value. mutate:rebind / eval-current return these on
+    // rejection; a plain #t / value is success.
+    bool bus_is_failure(Evaluator& ev, const EvalValue& v) {
+        if (is_error(v))
+            return true;
+        if (is_bool(v) && !as_bool(v))
+            return true;
+        if (!is_pair(v))
+            return false;
+        const auto oi = as_pair_idx(v);
+        const auto pairs = ev.pairs();
+        if (oi >= pairs.size())
+            return false;
+        const auto& outer = pairs[oi];
+        if (!is_string(outer.car) || !is_pair(outer.cdr))
+            return false;
+        const auto ii = as_pair_idx(outer.cdr);
+        if (ii >= pairs.size())
+            return false;
+        const auto& inner = pairs[ii];
+        return is_string(inner.car) && is_int(inner.cdr) && as_int(inner.cdr) == 0;
+    }
+
+    std::string bus_failure_message(Evaluator& ev, const EvalValue& v) {
+        const auto heap = ev.string_heap();
+        const auto str = [&heap](const EvalValue& s) -> std::string {
+            if (!is_string(s))
+                return {};
+            const auto idx = as_string_idx(s);
+            return idx < heap.size() ? heap[idx] : std::string();
+        };
+        if (is_error(v))
+            return "raised error " + std::to_string(as_error_idx(v));
+        if (is_pair(v)) {
+            const auto oi = as_pair_idx(v);
+            const auto pairs = ev.pairs();
+            if (oi < pairs.size() && is_string(pairs[oi].car)) {
+                std::string msg = str(pairs[oi].car);
+                if (is_pair(pairs[oi].cdr)) {
+                    const auto ii = as_pair_idx(pairs[oi].cdr);
+                    if (ii < pairs.size() && is_string(pairs[ii].car))
+                        msg += ": " + str(pairs[ii].car);
+                }
+                return msg;
+            }
+        }
+        return "rejected";
     }
 
     const char* bus_error_code(const aura::bus::TransportError& err) {
@@ -215,6 +269,155 @@ namespace {
         if (flat != nullptr)
             state.flat = flat;
         return flat != nullptr ? flat : state.flat;
+    }
+
+    // ── #5378: KEEP → live workspace apply ─────────────────────
+    // The coordinator thread calls this after the constraint + evidence
+    // gates pass. It resolves each source-carrier patch to a define name,
+    // snapshots the workspace, rebinds + re-evals, and restores the
+    // snapshot on any failure (all-or-nothing). The eval thread and the
+    // coordinator are serialized by the workspace mutation guards.
+    struct BusApplyState {
+        // Pre-canary snapshot id per worldline, for revert.
+        std::unordered_map<std::uint64_t, std::int64_t> canary_snapshots;
+    };
+    std::unordered_map<std::uint64_t, BusApplyState> g_bus_apply;
+
+    // Resolve a workspace Define node id to its name (empty when absent).
+    std::string bus_define_name(Evaluator& ev, std::uint64_t node) {
+        auto* flat = ev.workspace_flat();
+        auto* pool = ev.workspace_pool();
+        if (flat == nullptr || pool == nullptr || node >= flat->size())
+            return {};
+        if (flat->is_free_slot(node) ||
+            flat->tag(static_cast<aura::ast::NodeId>(node)) != aura::ast::NodeTag::Define)
+            return {};
+        const auto sym = flat->sym_id(static_cast<aura::ast::NodeId>(node));
+        if (sym == aura::ast::INVALID_SYM)
+            return {};
+        return std::string(pool->resolve(sym));
+    }
+
+    // Call a registered primitive by name; returns false when absent.
+    bool bus_call_prim(Evaluator& ev, std::string_view name, std::span<const EvalValue> args,
+                       EvalValue* out) {
+        auto fn = ev.primitives().lookup(name);
+        if (!fn)
+            return false;
+        *out = (*fn)(args);
+        return true;
+    }
+
+    bool bus_apply_keep(Evaluator& ev, std::uint64_t workspace, std::uint64_t worldline,
+                        std::span<const aura::bus::PatchRecord> patches,
+                        std::span<const std::string> sources, bool canary, std::string* why) {
+        const auto fail = [&](const std::string& msg) {
+            if (why)
+                *why = msg;
+            return false;
+        };
+        auto* flat = ev.workspace_flat();
+        if (flat == nullptr || ev.workspace_pool() == nullptr)
+            return fail("no live workspace to apply into");
+        // Collect source-carrier patches → (name, source). Immediate field
+        // patches are image-only evidence, not live-AST applies.
+        std::vector<std::pair<std::string, std::string>> rebinds;
+        for (std::size_t i = 0; i < patches.size(); ++i) {
+            const auto& p = patches[i];
+            if (p.field_offset != aura::bus::kPatchSourceField)
+                continue;
+            const std::string name = bus_define_name(ev, p.node);
+            if (name.empty())
+                return fail("patch target is not a live workspace define");
+            if (i >= sources.size() || sources[i].empty())
+                return fail("source-carrier patch has no source text");
+            rebinds.emplace_back(name, sources[i]);
+        }
+        if (rebinds.empty())
+            return true; // nothing to apply to the live AST
+
+        // #5380: mirror the std/contract protection set before any rebind.
+        // Refresh the installed digest, then check each target name.
+        {
+            const auto gen = aura::evo::contract_digest_gen();
+            if (gen != aura::compiler::mutate_type_gate::installed_contract_gen())
+                aura::compiler::mutate_type_gate::install_contract_digest(
+                    gen == 0 ? std::string() : aura::evo::contract_digest_copy(), gen);
+            for (const auto& [name, src] : rebinds) {
+                const auto ruling = aura::compiler::mutate_type_gate::check_contract_mutation(
+                    "mutate:rebind", name);
+                if (ruling.rejected)
+                    return fail(aura::compiler::mutate_type_gate::contract_refusal_message(
+                        ruling, "mutate:rebind"));
+            }
+        }
+
+        // Snapshot the workspace for all-or-nothing rollback.
+        EvalValue snap = make_void();
+        if (!bus_call_prim(ev, "mw:snapshot", {}, &snap) || !is_int(snap) || as_int(snap) < 0)
+            return fail("workspace snapshot failed");
+        const std::int64_t snap_id = as_int(snap);
+        const auto restore = [&]() {
+            EvalValue r = make_void();
+            const EvalValue arg = make_int(snap_id);
+            (void)bus_call_prim(ev, "mw:restore", {&arg, 1}, &r);
+            // mw:restore re-binds the restored defines itself (#5149).
+        };
+
+        // Apply each rebind, then re-eval. Any failure restores the snapshot.
+        for (const auto& [name, src] : rebinds) {
+            const EvalValue name_v = bus_string(ev, name);
+            const EvalValue src_v = bus_string(ev, src);
+            const EvalValue args[2] = {name_v, src_v};
+            EvalValue r = make_void();
+            if (!bus_call_prim(ev, "mutate:rebind", args, &r)) {
+                restore();
+                return fail("mutate:rebind unavailable");
+            }
+            if (bus_is_failure(ev, r)) {
+                restore();
+                return fail("rebind rejected: " + bus_failure_message(ev, r));
+            }
+        }
+        {
+            EvalValue r = make_void();
+            if (!bus_call_prim(ev, "eval-current", {}, &r)) {
+                restore();
+                return fail("eval-current unavailable");
+            }
+            if (bus_is_failure(ev, r)) {
+                restore();
+                return fail("eval rejected: " + bus_failure_message(ev, r));
+            }
+        }
+        if (canary)
+            g_bus_apply[workspace].canary_snapshots[worldline] = snap_id;
+        return true;
+    }
+
+    bool bus_revert_keep(Evaluator& ev, std::uint64_t workspace, std::uint64_t worldline,
+                         std::string* why) {
+        auto it = g_bus_apply.find(workspace);
+        if (it == g_bus_apply.end())
+            return true;
+        auto sit = it->second.canary_snapshots.find(worldline);
+        if (sit == it->second.canary_snapshots.end())
+            return true;
+        const EvalValue arg = make_int(sit->second);
+        EvalValue r = make_void();
+        const bool ok = bus_call_prim(ev, "mw:restore", {&arg, 1}, &r) && !bus_is_failure(ev, r);
+        // mw:restore restores the flat and re-binds the restored defines
+        // (#5149), but the live value cells / IR closures may still hold
+        // the canary body. Re-eval the workspace so the next call sees the
+        // restored source (same shape as mw:try-mutation's rollback).
+        if (ok) {
+            EvalValue er = make_void();
+            (void)bus_call_prim(ev, "eval-current", {}, &er);
+        }
+        it->second.canary_snapshots.erase(sit);
+        if (!ok && why)
+            *why = "canary revert restore failed";
+        return ok;
     }
 
 } // namespace
@@ -365,8 +568,17 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                 std::int64_t sid = 0;
                 if (a.size() < 2 || !bus_int(a[1], &sid))
                     return bus_error(ev, "validation-failed", "detach needs a session id");
-                if (g_bus_sessions.erase(sid) == 0)
+                const auto it = g_bus_sessions.find(sid);
+                if (it == g_bus_sessions.end())
                     return bus_error(ev, "unregistered-id", "unknown session");
+                // Send a Disconnect frame so the coordinator ends the
+                // session cleanly (rolls back pending trials, reclaims
+                // loans) before the socket closes.
+                aura::bus::LoanBody bye{};
+                (void)aura::bus::send_frame(
+                    it->second->att.sock, aura::bus::FrameType::Disconnect, it->second->att.session,
+                    {reinterpret_cast<const std::byte*>(&bye), sizeof(bye)});
+                g_bus_sessions.erase(it);
                 return bus_list(ev, {bus_string(ev, "ok")});
             }
 
@@ -397,6 +609,31 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                     else if (preset == "prod")
                         opts.preset = aura::bus::SandboxPreset::Prod;
                 }
+                // #5378/#5381: wire the live-workspace apply/revert. The
+                // coordinator thread runs these; the mutation guards
+                // serialize them against the eval thread. Evidence-gated
+                // KEEP and canary observation are opt-in via env so the
+                // v0.3.0 surface stays the default.
+                opts.workspace_generation = ev.workspace_flat_generation();
+                opts.apply = [&ev, ws](std::uint64_t wl, std::uint64_t gen,
+                                       std::span<const aura::bus::PatchRecord> patches,
+                                       std::span<const std::string> sources, bool canary,
+                                       std::string* why) {
+                    (void)gen;
+                    return bus_apply_keep(ev, static_cast<std::uint64_t>(ws), wl, patches, sources,
+                                          canary, why);
+                };
+                opts.revert = [&ev, ws](std::uint64_t wl, std::string* why) {
+                    return bus_revert_keep(ev, static_cast<std::uint64_t>(ws), wl, why);
+                };
+                if (const char* ev_req = ::getenv("AURA_BUS_EVIDENCE"))
+                    opts.evidence_required = std::string(ev_req) == "1";
+                if (const char* cw = ::getenv("AURA_BUS_CANARY_WINDOW"))
+                    opts.canary_window = std::strtoull(cw, nullptr, 10);
+                if (const char* cf = ::getenv("AURA_BUS_CANARY_FLOOR"))
+                    opts.canary_floor = std::strtoull(cf, nullptr, 10);
+                if (const char* ck = ::getenv("AURA_BUS_CANARY_KEY"))
+                    opts.canary_metric_key = std::strtoull(ck, nullptr, 10);
                 std::string out_path, why;
                 if (!aura::bus::host_start(opts, &out_path, &why))
                     return bus_error(ev, "transport-failed", why);
@@ -517,15 +754,24 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                                           make_int(static_cast<std::int64_t>(p.new_value)),
                                           make_int(static_cast<std::int64_t>(p.worldline)),
                                           make_int(static_cast<std::int64_t>(p.generation))}));
-                    } else if (channel == 4 && elem >= sizeof(aura::bus::WorldlineRecord)) {
+                    } else if (channel == 4 && elem >= aura::bus::kWorldlineV1Size) {
                         aura::bus::WorldlineRecord w{};
-                        std::memcpy(&w, rec, sizeof(w));
+                        std::memcpy(&w, rec, std::min<std::size_t>(elem, sizeof(w)));
                         rows.push_back(
                             bus_list(ev, {make_int(static_cast<std::int64_t>(w.id)),
                                           make_int(static_cast<std::int64_t>(w.parent)),
                                           make_int(w.state), make_int(w.constraint_result),
                                           make_int(static_cast<std::int64_t>(w.patch_off)),
                                           make_int(static_cast<std::int64_t>(w.patch_len))}));
+                    } else if (channel == 5 && elem >= sizeof(aura::bus::NodeRecord)) {
+                        aura::bus::NodeRecord n{};
+                        std::memcpy(&n, rec, sizeof(n));
+                        rows.push_back(
+                            bus_list(ev, {make_int(static_cast<std::int64_t>(n.kind)),
+                                          make_int(static_cast<std::int64_t>(n.slot)),
+                                          make_int(static_cast<std::int64_t>(n.sym)),
+                                          make_int(static_cast<std::int64_t>(n.parent)),
+                                          make_int(static_cast<std::int64_t>(n.first_child))}));
                     }
                 }
                 EvalValue listed = make_void();
@@ -632,8 +878,21 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                 if (hdr.type == static_cast<std::uint16_t>(aura::bus::FrameType::Error)) {
                     aura::bus::ErrorBody eb{};
                     std::memcpy(&eb, body.data(), std::min(sizeof(eb), body.size()));
-                    return bus_error(ev, op == "keep" ? "constraint-rejected" : "permission",
-                                     eb.message);
+                    const std::string msg(eb.message, strnlen(eb.message, sizeof(eb.message)));
+                    // #5379/#5378: the coordinator prefixes gate reasons;
+                    // surface the specific code, not a blanket constraint.
+                    std::string code = op == "keep" ? "constraint-rejected" : "permission";
+                    if (msg.rfind("validation-failed:", 0) == 0)
+                        code = "validation-failed";
+                    else if (msg.rfind("canary-active:", 0) == 0)
+                        code = "canary-active";
+                    else if (msg.rfind("missing capability:", 0) == 0 ||
+                             msg.rfind("channel not in", 0) == 0 ||
+                             msg.rfind("capability expired", 0) == 0 ||
+                             msg.rfind("capability is scoped", 0) == 0 ||
+                             msg.rfind("worldline is owned", 0) == 0)
+                        code = "permission";
+                    return bus_error(ev, code, msg);
                 }
                 return bus_list(
                     ev, {bus_string(ev, "ok"), make_int(static_cast<std::int64_t>(worldline))});
@@ -670,6 +929,36 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                 std::memcpy(&reply, body.data(), std::min(sizeof(reply), body.size()));
                 return bus_list(
                     ev, {bus_string(ev, "ok"), make_int(static_cast<std::int64_t>(reply.token))});
+            }
+
+            // #5377: activate a granted token — narrow this session's caps
+            // to the token's effective (scoped) capability. The judge uses
+            // the host's delegated keep+rollback on a single worldline.
+            // (bus-call "grant-activate" sid token) -> (ok bits worldline)
+            if (op == "grant-activate") {
+                std::int64_t token = 0;
+                if (a.size() < 3 || !bus_int(a[2], &token))
+                    return bus_error(ev, "validation-failed", "grant-activate needs a token");
+                aura::bus::LoanBody loan{};
+                loan.channel = static_cast<std::uint64_t>(token);
+                if (!send_loan(att.sock, att.session, aura::bus::FrameType::GrantActivate, loan))
+                    return bus_error(ev, "transport-failed", "grant activate send failed");
+                aura::bus::FrameHeader hdr{};
+                std::vector<std::byte> body(aura::bus::kBusMaxControlFrame);
+                if (!recv_reply(att.sock, &hdr, &body))
+                    return bus_error(ev, "transport-failed", "grant activate reply lost");
+                if (hdr.type == static_cast<std::uint16_t>(aura::bus::FrameType::Error)) {
+                    aura::bus::ErrorBody eb{};
+                    std::memcpy(&eb, body.data(), std::min(sizeof(eb), body.size()));
+                    return bus_error(ev, "permission", eb.message);
+                }
+                aura::bus::LoanBody ok{};
+                std::memcpy(&ok, body.data(), std::min(sizeof(ok), body.size()));
+                // Reflect the narrowed caps in the session's attach record.
+                state->att.caps = ok.channel;
+                return bus_list(ev, {bus_string(ev, "ok"),
+                                     make_int(static_cast<std::int64_t>(ok.channel)),
+                                     make_int(static_cast<std::int64_t>(ok.worldline))});
             }
 
             if (op == "revoke") {
@@ -790,6 +1079,166 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                 rec.patch_off = static_cast<std::uint64_t>(patch_off);
                 rec.patch_len = static_cast<std::uint64_t>(patch_len);
                 return bus_publish_record(ev, *state, 4, &rec, sizeof(rec));
+            }
+
+            // #5378: publish a candidate define source into the image's
+            // string table; returns (ok index generation). The proposer
+            // then publishes a patch with field=kPatchSourceField and
+            // value=index naming the target define node.
+            if (op == "publish-source") {
+                if (a.size() < 3 || !is_string(a[2]))
+                    return bus_error(ev, "validation-failed",
+                                     "publish-source needs a source string");
+                const std::string text = ev.string_at_or(as_string_idx(a[2]));
+                if (text.size() > aura::bus::kBusMaxControlFrame)
+                    return bus_error(ev, "validation-failed",
+                                     "source text exceeds the control frame");
+                if (!aura::bus::send_frame(
+                        att.sock, aura::bus::FrameType::SourcePublish, att.session,
+                        {reinterpret_cast<const std::byte*>(text.data()), text.size()}))
+                    return bus_error(ev, "transport-failed", "source publish send failed");
+                aura::bus::FrameHeader hdr{};
+                std::vector<std::byte> body(aura::bus::kBusMaxControlFrame);
+                if (!recv_reply(att.sock, &hdr, &body))
+                    return bus_error(ev, "transport-failed", "source publish reply lost");
+                if (hdr.type == static_cast<std::uint16_t>(aura::bus::FrameType::Error)) {
+                    aura::bus::ErrorBody eb{};
+                    std::memcpy(&eb, body.data(), std::min(sizeof(eb), body.size()));
+                    return bus_error(ev, eb.code == ENOSPC ? "image-full" : "permission",
+                                     eb.message);
+                }
+                aura::bus::LoanBody ok{};
+                std::memcpy(&ok, body.data(), std::min(sizeof(ok), body.size()));
+                return bus_list(ev, {bus_string(ev, "ok"),
+                                     make_int(static_cast<std::int64_t>(ok.offset)),
+                                     make_int(static_cast<std::int64_t>(ok.generation))});
+            }
+
+            // #5379: bind the evidence five-tuple to a pending trial.
+            // (bus-call "bind-evidence" sid wl baseline candidate workload seed verifier)
+            if (op == "bind-evidence") {
+                std::int64_t wl = 0, baseline = 0, candidate = 0, workload = 0, seed = 0,
+                             verifier = 0;
+                if (a.size() < 8 || !bus_int(a[2], &wl) || !bus_int(a[3], &baseline) ||
+                    !bus_int(a[4], &candidate) || !bus_int(a[5], &workload) ||
+                    !bus_int(a[6], &seed) || !bus_int(a[7], &verifier))
+                    return bus_error(
+                        ev, "validation-failed",
+                        "bind-evidence needs wl baseline candidate workload seed verifier");
+                aura::bus::EvidenceBody evb{};
+                evb.worldline = static_cast<std::uint64_t>(wl);
+                evb.baseline_gen = static_cast<std::uint64_t>(baseline);
+                evb.candidate_hash = static_cast<std::uint64_t>(candidate);
+                evb.workload_sym = static_cast<std::uint64_t>(workload);
+                evb.seed = static_cast<std::uint64_t>(seed);
+                evb.verifier_version = static_cast<std::uint64_t>(verifier);
+                if (!aura::bus::send_frame(att.sock, aura::bus::FrameType::EvidenceBind,
+                                           att.session,
+                                           {reinterpret_cast<const std::byte*>(&evb), sizeof(evb)}))
+                    return bus_error(ev, "transport-failed", "evidence bind send failed");
+                aura::bus::FrameHeader hdr{};
+                std::vector<std::byte> body(aura::bus::kBusMaxControlFrame);
+                if (!recv_reply(att.sock, &hdr, &body))
+                    return bus_error(ev, "transport-failed", "evidence bind reply lost");
+                if (hdr.type == static_cast<std::uint16_t>(aura::bus::FrameType::Error)) {
+                    aura::bus::ErrorBody eb{};
+                    std::memcpy(&eb, body.data(), std::min(sizeof(eb), body.size()));
+                    return bus_error(ev, "permission", eb.message);
+                }
+                return bus_list(ev, {bus_string(ev, "ok"), make_int(wl)});
+            }
+
+            // #5379: read a trial's bound evidence five-tuple.
+            // (bus-call "evidence" sid wl) -> (ok baseline candidate workload seed verifier)
+            if (op == "evidence") {
+                std::int64_t wl = 0;
+                if (a.size() < 3 || !bus_int(a[2], &wl))
+                    return bus_error(ev, "validation-failed", "evidence needs a worldline id");
+                // Reader-side: the evidence tail lives in the worldline
+                // record; find it in the mapped image (no control frame).
+                if ((state->att.caps & aura::bus::kCapRead) == 0)
+                    return bus_error(ev, "permission", "missing capability: read");
+                aura::bus::ChannelView view{};
+                if (!aura::bus::channel_view(state->att.view(), aura::bus::Channel::Worldlines,
+                                             &view))
+                    return bus_error(ev, "unavailable", "worldline section is missing");
+                const auto* base = static_cast<const std::byte*>(state->att.base);
+                // The ledger appends a record per state transition; the
+                // LAST record for the id carries the final evidence tail.
+                aura::bus::WorldlineRecord found{};
+                bool have = false;
+                for (std::uint64_t i = 0; i < view.count; ++i) {
+                    aura::bus::WorldlineRecord w{};
+                    std::memcpy(&w, base + view.offset + i * view.element_size,
+                                std::min<std::uint64_t>(view.element_size, sizeof(w)));
+                    if (w.id == static_cast<std::uint64_t>(wl)) {
+                        found = w;
+                        have = true;
+                    }
+                }
+                if (have) {
+                    // Evidence fields are 62-bit immediates (#5379);
+                    // mask defensively so a foreign record can never
+                    // abort make_int's fixnum contract.
+                    constexpr std::uint64_t kImm = (1ull << 62) - 1;
+                    return bus_list(
+                        ev, {bus_string(ev, "ok"),
+                             make_int(static_cast<std::int64_t>(found.baseline_gen & kImm)),
+                             make_int(static_cast<std::int64_t>(found.candidate_hash & kImm)),
+                             make_int(static_cast<std::int64_t>(found.workload_sym & kImm)),
+                             make_int(static_cast<std::int64_t>(found.seed & kImm)),
+                             make_int(static_cast<std::int64_t>(found.verifier_version & kImm))});
+                }
+                return bus_error(ev, "unregistered-id", "worldline has no committed record");
+            }
+
+            // #5379: read the coordinator's digest of a trial's patch
+            // bytes, to bind as candidate_hash. (bus-call "candidate-digest" sid wl)
+            if (op == "candidate-digest") {
+                std::int64_t wl = 0;
+                if (a.size() < 3 || !bus_int(a[2], &wl))
+                    return bus_error(ev, "validation-failed",
+                                     "candidate-digest needs a worldline id");
+                aura::bus::LoanBody loan{};
+                loan.worldline = static_cast<std::uint64_t>(wl);
+                if (!send_loan(att.sock, att.session, aura::bus::FrameType::CandidateDigest, loan))
+                    return bus_error(ev, "transport-failed", "candidate digest send failed");
+                aura::bus::FrameHeader hdr{};
+                std::vector<std::byte> body(aura::bus::kBusMaxControlFrame);
+                if (!recv_reply(att.sock, &hdr, &body))
+                    return bus_error(ev, "transport-failed", "candidate digest reply lost");
+                if (hdr.type == static_cast<std::uint16_t>(aura::bus::FrameType::Error)) {
+                    aura::bus::ErrorBody eb{};
+                    std::memcpy(&eb, body.data(), std::min(sizeof(eb), body.size()));
+                    return bus_error(ev, "permission", eb.message);
+                }
+                aura::bus::LoanBody ok{};
+                std::memcpy(&ok, body.data(), std::min(sizeof(ok), body.size()));
+                return bus_list(
+                    ev, {bus_string(ev, "ok"), make_int(static_cast<std::int64_t>(ok.offset))});
+            }
+
+            // #5381: seal the active canary early (judge confirmation).
+            if (op == "canary-confirm") {
+                std::int64_t wl = 0;
+                if (a.size() < 3 || !bus_int(a[2], &wl))
+                    return bus_error(ev, "validation-failed",
+                                     "canary-confirm needs a worldline id");
+                aura::bus::LoanBody loan{};
+                loan.channel = 1;
+                loan.worldline = static_cast<std::uint64_t>(wl);
+                if (!send_loan(att.sock, att.session, aura::bus::FrameType::CanaryConfirm, loan))
+                    return bus_error(ev, "transport-failed", "canary confirm send failed");
+                aura::bus::FrameHeader hdr{};
+                std::vector<std::byte> body(aura::bus::kBusMaxControlFrame);
+                if (!recv_reply(att.sock, &hdr, &body))
+                    return bus_error(ev, "transport-failed", "canary confirm reply lost");
+                if (hdr.type == static_cast<std::uint16_t>(aura::bus::FrameType::Error)) {
+                    aura::bus::ErrorBody eb{};
+                    std::memcpy(&eb, body.data(), std::min(sizeof(eb), body.size()));
+                    return bus_error(ev, "permission", eb.message);
+                }
+                return bus_list(ev, {bus_string(ev, "ok"), make_int(wl)});
             }
 
 

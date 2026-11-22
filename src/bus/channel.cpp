@@ -3,6 +3,7 @@
 // ──────────────────────────────────────────────────────────────
 #include "bus/channel.hh"
 
+#include <algorithm>
 #include <atomic>
 #include <cstring>
 
@@ -49,7 +50,16 @@ namespace {
                 *why = text;
             return false;
         };
-        const std::uint64_t element = expected_element_size(section_for(channel));
+        // The section's element size governs the stride: a v1 image
+        // (48-byte worldlines) stays readable after the #5379 tail was
+        // appended to the record type; the prefix is all a v1 record has.
+        std::uint64_t element = expected_element_size(section_for(channel));
+        const std::uint64_t entry_at = find_entry_offset(image, section_for(channel));
+        if (entry_at != kNoEntry) {
+            const SectionEntry se = load_at<SectionEntry>(image, entry_at);
+            if (se.element_size != 0)
+                element = se.element_size;
+        }
         if (element == 0 || bytes % element != 0)
             return fail("channel payload is not a whole number of records");
         const std::uint64_t records = bytes / element;
@@ -91,8 +101,9 @@ namespace {
                     break;
                 }
                 case Channel::Worldlines: {
-                    const WorldlineRecord w = load_at<WorldlineRecord>(image, at);
-                    if (w.state > static_cast<std::uint8_t>(WorldlineState::Rejected))
+                    WorldlineRecord w{};
+                    std::memcpy(&w, image.data() + at, std::min<std::uint64_t>(element, sizeof(w)));
+                    if (w.state > static_cast<std::uint8_t>(WorldlineState::Canary))
                         return fail("worldline state outside the domain");
                     if (w.constraint_result > static_cast<std::uint8_t>(ConstraintResult::Fail))
                         return fail("worldline constraint result outside the domain");
@@ -180,7 +191,9 @@ bool channel_commit(std::span<std::byte> image, Channel channel, std::uint64_t o
             *why = "publish offset is not the committed tail";
         return false;
     }
-    const std::uint64_t element = expected_element_size(section_for(channel));
+    // Stride follows the section (v1 images keep 48-byte worldlines).
+    const std::uint64_t element =
+        e.element_size != 0 ? e.element_size : expected_element_size(section_for(channel));
     if (bytes == 0 || element == 0 || bytes % element != 0) {
         if (why)
             *why = "publish length is not whole records";

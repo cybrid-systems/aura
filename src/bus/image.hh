@@ -175,6 +175,21 @@ bool audit_append(std::span<std::byte> image, AuditRecord* record, std::string* 
 // Committed audit-record count (0 when the builder reserved no section).
 std::uint64_t audit_count(std::span<const std::byte> image);
 
+// #5378: source-carrier string table. The coordinator appends a UTF-8
+// source text into the reserved tail of the StringTable section and
+// returns its entry index; a PatchRecord with field_offset
+// kPatchSourceField carries that index as new_value. Append-only, the
+// section and header advance to the next even committed generation.
+// Returns false when there is no string section or no room.
+bool string_table_append(std::span<std::byte> image, std::string_view text, std::uint64_t* index,
+                         std::string* why);
+// Read one string-table entry back (bounds-checked). False when absent.
+bool string_table_read(std::span<const std::byte> image, std::uint64_t index,
+                       std::string_view* text);
+// Patch field_offset marker: new_value is a StringTable entry index
+// holding the candidate define source, not an immediate field value.
+inline constexpr std::uint32_t kPatchSourceField = 0xFFFFFFF0u;
+
 // Versioned constraint object (#5126): the coordinator writes the current
 // set (header + opaque EDSL object blob) into the constraints section and
 // advances the committed generation. Readers get the version and the

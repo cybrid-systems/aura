@@ -7,15 +7,19 @@
 // delivered Server into a background host the owning process can start
 // from Aura: (bus:host workspace [image-bytes] [path]).
 //
-// One peer is served at a time (accept -> serve -> re-accept). Simultaneous
-// multi-peer sessions are the follow-up; the serving loop, capability
-// checks, loans, constraints and audit are the delivered ones, unchanged.
+// #5377: peers are served concurrently from one coordinator poll loop;
+// a session's crash/EOF reclaims only its own loans and pending trials.
+// The serving loop, capability checks, loans, constraints and audit are
+// the delivered ones, unchanged.
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
+#include <span>
 #include <string>
 
 #include "bus/capability.hh"
+#include "bus/image_format.hh"
 
 namespace aura::bus {
 
@@ -31,6 +35,24 @@ struct HostOptions {
     std::size_t image_bytes = 0; // 0 = kBusDefaultImageBytes
     std::string path;            // empty = default_socket_path(workspace)
     SandboxPreset preset = SandboxPreset::Dev;
+    // #5378/#5379/#5381 (v0.3.1 closed loop): evidence-gated KEEP and
+    // canary observation. Defaults keep the v0.3.0 surface.
+    bool evidence_required = false;
+    std::uint64_t canary_window = 0;     // metric ticks; 0 = no observation
+    std::uint64_t canary_floor = 0;      // metric floor; 0 = no auto-revert
+    std::uint64_t canary_metric_key = 0; // which metric key drives the window
+    // #5378: apply a KEEP'd trial's patches to the live workspace. Runs
+    // on the coordinator thread; must be all-or-nothing (byte-identical
+    // on failure). canary=true means the apply enters observation and a
+    // revert callback may later restore the pre-apply snapshot.
+    std::function<bool(std::uint64_t worldline, std::uint64_t generation,
+                       std::span<const PatchRecord> patches, std::span<const std::string> sources,
+                       bool canary, std::string* why)>
+        apply;
+    // #5381: restore the pre-canary snapshot when an observation reverts.
+    std::function<bool(std::uint64_t worldline, std::string* why)> revert;
+    // The live workspace generation at host time (trials bind to it).
+    std::uint64_t workspace_generation = 0;
 };
 
 // Start hosting the workspace bus in this process. Idempotent per

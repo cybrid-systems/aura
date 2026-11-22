@@ -15,12 +15,14 @@
 #include <cerrno>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <vector>
 
 #include <fcntl.h>
 #include <sys/eventfd.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
+#include <poll.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <sys/un.h>
@@ -111,11 +113,12 @@ namespace {
         }
     }
 
-    bool recv_header(int fd, FrameHeader* header, int* fds, std::size_t max_fds,
-                     std::size_t* nfds) {
+    // One recvmsg that may carry SCM_RIGHTS fds. Returns the byte count
+    // (0 = EOF, -1 = error/EAGAIN); received fds are appended to fds_out.
+    ssize_t recv_msg(int fd, void* buf, std::size_t len, std::vector<int>* fds_out) {
         struct iovec iov{};
-        iov.iov_base = header;
-        iov.iov_len = sizeof(FrameHeader);
+        iov.iov_base = buf;
+        iov.iov_len = len;
         struct msghdr msg{};
         msg.msg_iov = &iov;
         msg.msg_iovlen = 1;
@@ -127,17 +130,32 @@ namespace {
             n = ::recvmsg(fd, &msg, MSG_CMSG_CLOEXEC);
         } while (n < 0 && errno == EINTR);
         if (n <= 0)
-            return false;
-        *nfds = 0;
+            return n;
         for (auto* cmsg = CMSG_FIRSTHDR(&msg); cmsg != nullptr; cmsg = CMSG_NXTHDR(&msg, cmsg)) {
             if (cmsg->cmsg_level != SOL_SOCKET || cmsg->cmsg_type != SCM_RIGHTS)
                 continue;
             const std::size_t count = (cmsg->cmsg_len - CMSG_LEN(0)) / sizeof(int);
-            for (std::size_t i = 0; i < count && *nfds < max_fds; ++i) {
+            for (std::size_t i = 0; i < count; ++i) {
                 int received = -1;
                 std::memcpy(&received, CMSG_DATA(cmsg) + i * sizeof(int), sizeof(int));
-                fds[(*nfds)++] = received;
+                fds_out->push_back(received);
             }
+        }
+        return n;
+    }
+
+    bool recv_header(int fd, FrameHeader* header, int* fds, std::size_t max_fds,
+                     std::size_t* nfds) {
+        std::vector<int> got;
+        const ssize_t n = recv_msg(fd, header, sizeof(FrameHeader), &got);
+        if (n <= 0)
+            return false;
+        *nfds = 0;
+        for (const int f : got) {
+            if (*nfds < max_fds)
+                fds[(*nfds)++] = f;
+            else
+                ::close(f);
         }
         if (static_cast<std::size_t>(n) != sizeof(FrameHeader))
             return false;
@@ -308,10 +326,18 @@ bool recv_frame(int fd, FrameHeader* header, std::span<std::byte> body, Transpor
 }
 
 Server::~Server() {
+    for (auto& peer : peers_) {
+        if (peer.conn_fd >= 0)
+            ::close(peer.conn_fd);
+        if (peer.event_fd >= 0)
+            ::close(peer.event_fd);
+    }
     if (conn_fd_ >= 0)
         ::close(conn_fd_);
     if (listen_fd_ >= 0)
         ::close(listen_fd_);
+    if (wake_fd_ >= 0)
+        ::close(wake_fd_);
     if (!path_.empty())
         ::unlink(path_.c_str());
     // The shared image lives as long as the host (#5128); unhost releases
@@ -330,6 +356,12 @@ void Server::stop() {
         ::shutdown(listen_fd_, SHUT_RDWR);
     if (conn_fd_ >= 0)
         ::shutdown(conn_fd_, SHUT_RDWR);
+    // #5377: wake the poll loop; it observes the counter and exits.
+    if (wake_fd_ >= 0) {
+        const std::uint64_t one = 1;
+        ssize_t ignored = ::write(wake_fd_, &one, sizeof(one));
+        (void)ignored;
+    }
 }
 
 bool Server::listen_at(const std::string& path, std::size_t image_bytes, std::uint64_t workspace_id,
@@ -376,7 +408,9 @@ bool Server::listen_at(const std::string& path, std::size_t image_bytes, std::ui
             *error = {errno, "chmod failed"};
         return false;
     }
-    if (::listen(listen_fd_, 1) != 0) {
+    // #5377: several tools attach at once; the backlog holds connections
+    // waiting for the coordinator's accept pass.
+    if (::listen(listen_fd_, 16) != 0) {
         if (error)
             *error = {errno, "listen failed"};
         return false;
@@ -384,61 +418,30 @@ bool Server::listen_at(const std::string& path, std::size_t image_bytes, std::ui
     return true;
 }
 
-bool Server::accept_one(const BuildFn& build, Attach* out, TransportError* error) {
-    if (listen_fd_ < 0) {
-        if (error)
-            *error = {EBADF, "server is not listening"};
-        return false;
-    }
-    conn_fd_ = ::accept4(listen_fd_, nullptr, nullptr, SOCK_CLOEXEC);
-    if (conn_fd_ < 0) {
-        if (error)
-            *error = {errno, "accept failed"};
-        return false;
-    }
-    // Issue #5383: a rejected attach must close the connection; the serve
-    // loop keeps accepting. The guard releases on EVERY early return below
-    // (HelloReject sent or not); the success path disarms it because the
-    // server keeps conn_fd_ to observe the disconnect.
-    struct RejectClose {
-        int* fd;
-        bool armed = true;
-        ~RejectClose() {
-            if (armed && *fd >= 0) {
-                ::close(*fd);
-                *fd = -1;
-            }
-        }
-    } reject_close{&conn_fd_};
+// ── Handshake (#5123, shared by accept_one and serve) ────────
+// Validates the Hello, resolves capabilities, creates or reuses the
+// persistent image and sends HelloOk with the image + doorbell fds.
+// On success the session fields are filled and the coordinator keeps
+// conn_fd; on failure the connection is closed by the caller's guard.
+bool Server::handshake(int conn_fd, const HelloBody& hello, const BuildFn& build,
+                       std::uint64_t* session_out, Capability* caps_out, std::uint64_t* root_out,
+                       int* event_out, std::uint64_t* staging_capacity_out, Attach* out,
+                       TransportError* error) {
     ucred cred{};
     socklen_t cred_len = sizeof(cred);
-    if (getsockopt(conn_fd_, SOL_SOCKET, SO_PEERCRED, &cred, &cred_len) != 0 ||
+    if (getsockopt(conn_fd, SOL_SOCKET, SO_PEERCRED, &cred, &cred_len) != 0 ||
         cred.uid != ::getuid()) {
-        set_reject(conn_fd_, 0, RejectReason::Permission, "peer uid differs");
+        set_reject(conn_fd, 0, RejectReason::Permission, "peer uid differs");
         if (error)
             *error = {EPERM, "peer uid differs"};
         return false;
     }
-
-    FrameHeader header{};
-    std::vector<std::byte> body_buf(kBusMaxControlFrame);
-    if (!recv_frame(conn_fd_, &header, body_buf, error))
-        return false;
-    if (header.type != static_cast<std::uint16_t>(FrameType::Hello) ||
-        header.len != sizeof(HelloBody)) {
-        set_reject(conn_fd_, 0, RejectReason::Protocol, "expected Hello");
-        if (error)
-            *error = {EPROTO, "expected Hello"};
-        return false;
-    }
-    HelloBody hello{};
-    std::memcpy(&hello, body_buf.data(), sizeof(hello));
     const SchemaId header_id = header_schema_id();
     std::uint8_t expected[16] = {};
     std::memcpy(expected, &header_id.a, 8);
     std::memcpy(expected + 8, &header_id.b, 8);
     const auto reject = [&](RejectReason reason, std::string_view why, int code) {
-        set_reject(conn_fd_, 0, reason, why);
+        set_reject(conn_fd, 0, reason, why);
         if (error)
             *error = {code, std::string(why)};
         return false;
@@ -465,14 +468,7 @@ bool Server::accept_one(const BuildFn& build, Attach* out, TransportError* error
         record_audit(AuditKind::Denied, 0, 0, hello.role);
         return reject(RejectReason::Permission, "no capability allowed for this role", EACCES);
     }
-    session_caps_ = granted;
-    if (granted.max_loans > 0) {
-        const auto cap =
-            static_cast<std::uint32_t>(std::min<std::uint64_t>(granted.max_loans, kBusMaxLoans));
-        for (auto& ledger : channel_loans_)
-            ledger.set_cap(cap);
-    }
-    root_token_ = caps_table_.issue_root(granted);
+    const std::uint64_t root_token = caps_table_.issue_root(granted);
 
     // Issue #5128: one bus = one workspace = one live image. The image
     // outlives peer sessions: the first attach creates and builds it,
@@ -481,10 +477,6 @@ bool Server::accept_one(const BuildFn& build, Attach* out, TransportError* error
     // Disconnect withdraws trials and loans, never committed evidence.
     std::size_t bytes = image_size_;
     int image_fd = -1;
-    // The peer's mapping: fresh on the first attach, a new mapping of the
-    // persistent image on every later one. The host's own mapping
-    // (image_base_) is never handed to an Attach — that would unmap it
-    // when the peer detaches.
     void* base = nullptr;
     const bool first_image = image_base_ == nullptr;
     if (first_image) {
@@ -552,9 +544,10 @@ bool Server::accept_one(const BuildFn& build, Attach* out, TransportError* error
         return false;
     }
 
-    session_ = (static_cast<std::uint64_t>(::getpid()) << 32) ^ ++g_session_counter;
+    const std::uint64_t session =
+        (static_cast<std::uint64_t>(::getpid()) << 32) ^ ++g_session_counter;
     HelloOkBody ok{};
-    ok.session = session_;
+    ok.session = session;
     ok.caps = granted.bits;
     ok.channels = granted.channels;
     ok.max_loans = granted.max_loans;
@@ -564,12 +557,12 @@ bool Server::accept_one(const BuildFn& build, Attach* out, TransportError* error
     FrameHeader ok_header{};
     ok_header.len = sizeof(ok);
     ok_header.type = static_cast<std::uint16_t>(FrameType::HelloOk);
-    ok_header.session = session_;
+    ok_header.session = session;
     std::vector<std::byte> packet(sizeof(ok_header) + sizeof(ok));
     std::memcpy(packet.data(), &ok_header, sizeof(ok_header));
     std::memcpy(packet.data() + sizeof(ok_header), &ok, sizeof(ok));
     const int fds[2] = {image_fd, event_fd};
-    if (!send_with_fds(conn_fd_, packet.data(), packet.size(), fds, 2)) {
+    if (!send_with_fds(conn_fd, packet.data(), packet.size(), fds, 2)) {
         ::munmap(base, bytes);
         ::close(image_fd);
         ::close(event_fd);
@@ -578,39 +571,111 @@ bool Server::accept_one(const BuildFn& build, Attach* out, TransportError* error
         return false;
     }
 
-    out->event = event_fd;
-    out->image_fd = image_fd;
-    out->base = base;
-    out->size = bytes;
-    out->session = session_;
-    out->caps = ok.caps;
     // Reserve grants slices of a fixed staging window; exhaustion is a
     // hard error, never a resize.
-    staging_capacity_ = std::min<std::uint64_t>(
+    const std::uint64_t staging_capacity = std::min<std::uint64_t>(
         64u << 10, ih.committed_bytes < bytes ? bytes - ih.committed_bytes : 0);
-    staging_used_ = 0;
     if (first_image) {
         image_base_ = static_cast<std::byte*>(base);
         image_size_ = bytes;
         host_image_fd_ = ::dup(image_fd);
-        // The host's mapping must outlive the peer's Attach: give the
-        // peer its own mapping of the same memfd.
-        void* peer_base = ::mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_SHARED, image_fd, 0);
-        if (peer_base == MAP_FAILED) {
-            ::munmap(base, bytes);
-            image_base_ = nullptr;
-            ::close(host_image_fd_);
-            host_image_fd_ = -1;
-            ::close(image_fd);
-            ::close(event_fd);
-            if (error)
-                *error = {errno, "mmap peer image failed"};
-            return false;
+        if (out != nullptr) {
+            // The host's mapping must outlive the peer's Attach: give the
+            // peer its own mapping of the same memfd.
+            void* peer_base =
+                ::mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_SHARED, image_fd, 0);
+            if (peer_base == MAP_FAILED) {
+                ::munmap(base, bytes);
+                image_base_ = nullptr;
+                ::close(host_image_fd_);
+                host_image_fd_ = -1;
+                ::close(image_fd);
+                ::close(event_fd);
+                if (error)
+                    *error = {errno, "mmap peer image failed"};
+                return false;
+            }
+            base = peer_base;
         }
-        out->base = peer_base;
+        // serve(): the coordinator keeps this mapping (image_base_); the
+        // peer maps its own dup'd fd. Nothing to unmap at session end.
+    } else if (out == nullptr) {
+        ::munmap(base, bytes);
+        base = nullptr;
     }
     write_constraints_image();
-    record_audit(AuditKind::Attach, root_token_, 0, hello.pid);
+    record_audit(AuditKind::Attach, root_token, 0, hello.pid);
+    *session_out = session;
+    *caps_out = granted;
+    *root_out = root_token;
+    *event_out = event_fd;
+    *staging_capacity_out = staging_capacity;
+    if (out != nullptr) {
+        // The harness Attach owns the doorbell fd it was handed; the
+        // single-peer server keeps no reference of its own.
+        out->event = event_fd;
+        out->image_fd = image_fd;
+        out->base = base;
+        out->size = bytes;
+        out->session = session;
+        out->caps = ok.caps;
+    } else {
+        ::close(image_fd);
+    }
+    return true;
+}
+
+bool Server::accept_one(const BuildFn& build, Attach* out, TransportError* error) {
+    if (listen_fd_ < 0) {
+        if (error)
+            *error = {EBADF, "server is not listening"};
+        return false;
+    }
+    conn_fd_ = ::accept4(listen_fd_, nullptr, nullptr, SOCK_CLOEXEC);
+    if (conn_fd_ < 0) {
+        if (error)
+            *error = {errno, "accept failed"};
+        return false;
+    }
+    // Issue #5383: a rejected attach must close the connection; the serve
+    // loop keeps accepting. The guard releases on EVERY early return below
+    // (HelloReject sent or not); the success path disarms it because the
+    // server keeps conn_fd_ to observe the disconnect.
+    struct RejectClose {
+        int* fd;
+        bool armed = true;
+        ~RejectClose() {
+            if (armed && *fd >= 0) {
+                ::close(*fd);
+                *fd = -1;
+            }
+        }
+    } reject_close{&conn_fd_};
+
+    FrameHeader header{};
+    std::vector<std::byte> body_buf(kBusMaxControlFrame);
+    if (!recv_frame(conn_fd_, &header, body_buf, error))
+        return false;
+    if (header.type != static_cast<std::uint16_t>(FrameType::Hello) ||
+        header.len != sizeof(HelloBody)) {
+        set_reject(conn_fd_, 0, RejectReason::Protocol, "expected Hello");
+        if (error)
+            *error = {EPROTO, "expected Hello"};
+        return false;
+    }
+    HelloBody hello{};
+    std::memcpy(&hello, body_buf.data(), sizeof(hello));
+    int event_fd = -1;
+    if (!handshake(conn_fd_, hello, build, &session_, &session_caps_, &root_token_, &event_fd,
+                   &staging_capacity_, out, error))
+        return false;
+    if (session_caps_.max_loans > 0) {
+        const auto cap = static_cast<std::uint32_t>(
+            std::min<std::uint64_t>(session_caps_.max_loans, kBusMaxLoans));
+        for (auto& ledger : channel_loans_)
+            ledger.set_cap(cap);
+    }
+    staging_used_ = 0;
     // The server keeps conn_fd_ to observe disconnect; Attach::sock stays -1.
     reject_close.armed = false;
     return true;
@@ -681,58 +746,864 @@ bool Server::install_policy(const Capability& caps, WorkspacePolicy policy, std:
     return true;
 }
 
-bool Server::wait_disconnect(TransportError* error) {
-    FrameHeader header{};
-    std::vector<std::byte> body(kBusMaxControlFrame);
-    // Issue #5128: the coordinator projects its trial ledger into the
-    // worldlines channel so subscribers (harness) see every trial and its
-    // verdict, not just a producer's own workspace projections. Records
-    // are appended in id order; a settled trial appends its final state.
-    std::uint64_t& projected_trials = projected_trials_;
-    const auto project_worldline = [&](std::uint64_t id, WorldlineState state,
-                                       ConstraintResult cr) {
-        if (image_base_ == nullptr)
-            return;
-        SectionEntry se{};
-        if (!find_section({image_base_, image_size_}, SectionKind::Worldlines, &se))
-            return;
-        ChannelView view{};
-        if (!channel_view({image_base_, image_size_}, Channel::Worldlines, &view))
-            return;
-        if (view.length + sizeof(WorldlineRecord) > se.capacity)
-            return; // capacity exhaustion stays a hard error on the publish
-                    // path; the control-plane ledger remains authoritative
-        WorldlineRecord w{};
-        w.id = id;
-        w.parent = kImageNoParent;
-        w.state = static_cast<std::uint8_t>(state);
-        w.constraint_result = static_cast<std::uint8_t>(cr);
-        w.metrics_off = kImageNoIndex;
-        std::memcpy(image_base_ + view.offset + view.length, &w, sizeof(w));
-        std::uint64_t gen = 0;
-        std::string why;
-        if (channel_commit({image_base_, image_size_}, Channel::Worldlines,
-                           view.offset + view.length, sizeof(w), &gen, &why)) {
-            projected_trials = id;
-            generation_ = gen;
+// ── Shared protocol core (#5377) ─────────────────────────────
+// One switch serves both the single-peer harness path and the
+// multi-peer coordinator; session state arrives by reference so a
+// crash/EOF reclaim never touches another session's ledgers.
+
+void Server::project_worldline(std::uint64_t id, WorldlineState state, ConstraintResult cr) {
+    if (image_base_ == nullptr)
+        return;
+    SectionEntry se{};
+    if (!find_section({image_base_, image_size_}, SectionKind::Worldlines, &se))
+        return;
+    ChannelView view{};
+    if (!channel_view({image_base_, image_size_}, Channel::Worldlines, &view))
+        return;
+    // The section's stride governs the record width: a v1 image keeps
+    // 48-byte records, a v2 image carries the evidence tail (#5379).
+    const std::uint64_t elem = view.element_size != 0 ? view.element_size : sizeof(WorldlineRecord);
+    if (view.length + elem > se.capacity)
+        return; // capacity exhaustion stays a hard error on the publish
+                // path; the control-plane ledger remains authoritative
+    WorldlineRecord w{};
+    w.id = id;
+    w.parent = kImageNoParent;
+    w.state = static_cast<std::uint8_t>(state);
+    w.constraint_result = static_cast<std::uint8_t>(cr);
+    w.metrics_off = kImageNoIndex;
+    if (const TrialRecord* t = worldlines_.find(id))
+        w.baseline_gen = t->base_generation;
+    if (const auto it = evidence_.find(id); it != evidence_.end()) {
+        w.candidate_hash = it->second.candidate_hash;
+        w.workload_sym = it->second.workload_sym;
+        w.seed = it->second.seed;
+        w.verifier_version = it->second.verifier_version;
+    }
+    std::memcpy(image_base_ + view.offset + view.length, &w,
+                static_cast<std::size_t>(std::min<std::uint64_t>(elem, sizeof(w))));
+    std::uint64_t gen = 0;
+    std::string why;
+    if (channel_commit({image_base_, image_size_}, Channel::Worldlines, view.offset + view.length,
+                       elem, &gen, &why)) {
+        projected_trials_ = id;
+        generation_ = gen;
+    }
+}
+
+std::vector<PatchRecord> Server::trial_patches(std::uint64_t worldline) const {
+    std::vector<PatchRecord> out;
+    if (image_base_ == nullptr)
+        return out;
+    ChannelView view{};
+    if (!channel_view({image_base_, image_size_}, Channel::Patches, &view))
+        return out;
+    const std::uint64_t elem = view.element_size != 0 ? view.element_size : sizeof(PatchRecord);
+    for (std::uint64_t i = 0; i < view.count; ++i) {
+        PatchRecord p{};
+        std::memcpy(&p, image_base_ + view.offset + i * elem,
+                    static_cast<std::size_t>(std::min<std::uint64_t>(elem, sizeof(p))));
+        if (p.worldline == worldline)
+            out.push_back(p);
+    }
+    return out;
+}
+
+std::uint64_t Server::candidate_digest(std::uint64_t worldline) const {
+    std::uint64_t h = 14695981039346656037ull;
+    for (const PatchRecord& p : trial_patches(worldline)) {
+        const auto* bytes = reinterpret_cast<const std::byte*>(&p);
+        for (std::size_t i = 0; i < sizeof(p); ++i) {
+            h ^= static_cast<std::uint64_t>(static_cast<unsigned char>(bytes[i]));
+            h *= 1099511628211ull;
         }
-    };
+    }
+    // #5379: truncate to the low 62 bits — the fixnum-safe immediate
+    // domain (bit 63 clear, and the value fits make_int's 62-bit range).
+    return h & ((1ull << 62) - 1);
+}
+
+const EvidenceBody* Server::evidence(std::uint64_t worldline) const {
+    const auto it = evidence_.find(worldline);
+    return it == evidence_.end() ? nullptr : &it->second;
+}
+
+void Server::notify_peers(std::uint64_t except_session) {
+    const std::uint64_t one = 1;
+    for (const auto& peer : peers_) {
+        if (peer.session == except_session || peer.event_fd < 0)
+            continue;
+        ssize_t ignored = ::write(peer.event_fd, &one, sizeof(one));
+        (void)ignored;
+    }
+}
+
+// #5381: a KEEP with an observation window enters Canary instead of
+// sealing immediately. At most one canary is active at a time. The
+// live apply already happened; the generation advances only at seal,
+// so a revert leaves the baseline untouched.
+void Server::canary_on_keep(std::uint64_t worldline) {
+    if (canary_window_ == 0)
+        return;
+    std::string why;
+    if (!worldlines_.enter_canary(worldline, &why))
+        return;
+    canary_worldline_ = worldline;
+    canary_ticks_ = 0;
+    canary_below_ = 0;
+    canary_applied_gen_ = workspace_gen_ + 1;
+    record_audit(AuditKind::CanaryStart, 0, worldline, canary_window_);
+    project_worldline(worldline, WorldlineState::Canary, ConstraintResult::Pass);
+}
+
+void Server::canary_seal(std::uint64_t worldline, std::uint64_t token) {
+    std::string why;
+    if (!worldlines_.seal_canary(worldline, &why))
+        return;
+    record_audit(AuditKind::CanarySeal, token, worldline, canary_ticks_);
+    project_worldline(worldline, WorldlineState::Kept, ConstraintResult::Pass);
+    workspace_gen_ = canary_applied_gen_;
+    canary_worldline_ = 0;
+}
+
+void Server::canary_revert(std::uint64_t worldline, std::string_view reason) {
+    std::string why;
+    if (!worldlines_.revert_canary(worldline, &why))
+        return;
+    canary_worldline_ = 0;
+    if (revert_) {
+        std::string rwhy;
+        (void)revert_(worldline, &rwhy);
+    }
+    audit_.add_constraint(AuditKind::CanaryRevert, 0, worldline, 0, constraints_.version(),
+                          std::string(reason));
+    project_worldline(worldline, WorldlineState::Rolled, ConstraintResult::Pass);
+}
+
+void Server::canary_check_metric(std::uint64_t key, std::uint64_t value) {
+    if (canary_worldline_ == 0 || key != canary_metric_key_)
+        return;
+    ++canary_ticks_;
+    if (canary_floor_ != 0 && value < canary_floor_) {
+        ++canary_below_;
+        // Two consecutive samples under the floor: distribution drift,
+        // not a single noisy tick — revert automatically (#5381).
+        if (canary_below_ >= 2) {
+            canary_revert(canary_worldline_, "canary-reverted: metric below floor");
+            return;
+        }
+    } else {
+        canary_below_ = 0;
+    }
+    if (canary_window_ != 0 && canary_ticks_ >= canary_window_) {
+        // Window expired with the last sample under the floor: the
+        // observation did not prove the candidate — fail closed.
+        if (canary_floor_ != 0 && canary_below_ > 0) {
+            canary_revert(canary_worldline_, "canary-reverted: window expired below floor");
+            return;
+        }
+        canary_seal(canary_worldline_, 0);
+    }
+}
+
+bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t root_token,
+                            Capability& caps, LoanLedger& loans,
+                            std::array<LoanLedger, 6>& channel_loans,
+                            std::uint64_t staging_capacity, std::uint64_t& staging_used,
+                            std::uint64_t* subscribed, const FrameHeader& header,
+                            std::span<const std::byte> body) {
     const auto deny = [&](int code, const std::string& why) {
         ErrorBody eb{};
         eb.code = static_cast<std::uint32_t>(code);
         const std::size_t n = std::min(why.size(), sizeof(eb.message) - 1);
         std::memcpy(eb.message, why.data(), n);
-        send_frame(conn_fd_, FrameType::Error, session_,
+        send_frame(conn_fd, FrameType::Error, session,
                    {reinterpret_cast<const std::byte*>(&eb), sizeof(eb)});
-        record_audit(AuditKind::Denied, root_token_);
+        audit_.add_constraint(AuditKind::Denied, root_token, 0, 0, constraints_.version(), why);
     };
     const auto require = [&](std::uint64_t bit, std::uint64_t channel, std::uint64_t worldline) {
         std::string why;
-        if (allows(session_caps_, bit, channel, generation_, worldline, &why))
+        if (allows(caps, bit, channel, generation_, worldline, &why))
             return true;
         deny(EPERM, why);
         return false;
     };
+    const auto loan_from = [&]() {
+        LoanBody loan{};
+        if (header.len >= sizeof(loan))
+            std::memcpy(&loan, body.data(), sizeof(loan));
+        return loan;
+    };
+    const auto reply_loan = [&](const LoanBody& loan) {
+        send_frame(conn_fd, FrameType::Credit, session,
+                   {reinterpret_cast<const std::byte*>(&loan), sizeof(loan)});
+    };
+
+    switch (static_cast<FrameType>(header.type)) {
+        case FrameType::Subscribe:
+        case FrameType::Unsubscribe:
+        case FrameType::Query: {
+            const LoanBody loan = loan_from();
+            Channel channel{};
+            if (channel_from(loan.channel, &channel) && image_base_ != nullptr) {
+                if (!require(kCapRead, loan.channel, 0))
+                    break;
+                ChannelView view{};
+                if (!channel_view({image_base_, image_size_}, channel, &view)) {
+                    deny(EINVAL, "channel section is missing");
+                    break;
+                }
+                ChannelBody reply{loan.channel, view.generation, view.count,
+                                  view.offset,  view.length,     1,
+                                  view.count};
+                send_frame(conn_fd, FrameType::Credit, session,
+                           {reinterpret_cast<const std::byte*>(&reply), sizeof(reply)});
+                if (subscribed != nullptr) {
+                    if (header.type == static_cast<std::uint16_t>(FrameType::Subscribe))
+                        *subscribed |= 1ull << loan.channel;
+                    else if (header.type == static_cast<std::uint16_t>(FrameType::Unsubscribe))
+                        *subscribed &= ~(1ull << loan.channel);
+                }
+                if (header.type == static_cast<std::uint16_t>(FrameType::Subscribe))
+                    record_audit(AuditKind::Subscribe, root_token, 0, loan.channel);
+                break;
+            }
+            if (require(kCapRead, loan.channel, 0))
+                reply_loan(loan);
+            break;
+        }
+        case FrameType::AuditQuery: {
+            if (header.len < sizeof(AuditQueryBody))
+                break;
+            AuditQueryBody request{};
+            std::memcpy(&request, body.data(), sizeof(request));
+            if (!require(kCapRead, 0, 0))
+                break;
+            struct Selected {
+                std::uint64_t seq = 0;
+                const AuditEvent* event = nullptr;
+            };
+            std::vector<Selected> events;
+            const auto& all = audit_.events();
+            events.reserve(all.size());
+            for (std::size_t i = 0; i < all.size(); ++i) {
+                const std::uint64_t seq = static_cast<std::uint64_t>(i) + 1;
+                const AuditEvent& e = all[i];
+                if (request.since_seq != 0 && seq < request.since_seq)
+                    continue;
+                if (request.worldline != 0 && e.worldline != request.worldline)
+                    continue;
+                if (request.actor != 0 && e.token != request.actor)
+                    continue;
+                events.push_back({seq, &e});
+            }
+            constexpr std::size_t kMaxEvents = 20;
+            const std::size_t count = std::min(events.size(), kMaxEvents);
+            std::vector<std::byte> out(sizeof(AuditReply) + count * sizeof(AuditWire));
+            AuditReply reply{};
+            reply.count = count;
+            reply.truncated = events.size() > count ? 1 : 0;
+            std::memcpy(out.data(), &reply, sizeof(reply));
+            for (std::size_t i = 0; i < count; ++i) {
+                AuditWire wire{};
+                const AuditEvent& e = *events[i].event;
+                wire.kind = static_cast<std::uint64_t>(e.kind);
+                wire.token = e.token;
+                wire.worldline = e.worldline;
+                wire.result = e.result;
+                wire.version = e.constraint_version;
+                wire.timestamp_ms = e.timestamp_ms;
+                wire.seq = events[i].seq;
+                const std::size_t n = std::min(e.reason.size(), sizeof(wire.reason) - 1);
+                std::memcpy(wire.reason, e.reason.data(), n);
+                std::memcpy(out.data() + sizeof(reply) + i * sizeof(AuditWire), &wire,
+                            sizeof(wire));
+            }
+            send_frame(conn_fd, FrameType::Credit, session, out);
+            break;
+        }
+        case FrameType::CatchUp: {
+            if (header.len < sizeof(CatchUpBody) || image_base_ == nullptr)
+                break;
+            CatchUpBody request{};
+            std::memcpy(&request, body.data(), sizeof(request));
+            Channel channel{};
+            if (!channel_from(request.channel, &channel)) {
+                deny(EINVAL, "unknown channel");
+                break;
+            }
+            if (!require(kCapRead, request.channel, 0))
+                break;
+            ChannelView view{};
+            if (!channel_view({image_base_, image_size_}, channel, &view)) {
+                deny(EINVAL, "channel section is missing");
+                break;
+            }
+            // #5385: generations are image-global (audit and constraint
+            // writes advance them too), so a cursor is valid while its
+            // generation is at or below the section's and its count fits
+            // the append-only channel. Ahead of either — the cursor may
+            // predate a rebuild — forces a full snapshot, never a slice.
+            const bool snapshot = (request.generation == 0 && request.count == 0) ||
+                                  request.generation > view.generation ||
+                                  request.count > view.count;
+            const std::uint64_t from = snapshot ? 0 : request.count;
+            ChannelBody reply{request.channel,
+                              view.generation,
+                              view.count - from,
+                              view.offset + from * view.element_size,
+                              (view.count - from) * view.element_size,
+                              static_cast<std::uint64_t>(snapshot ? 1 : 0),
+                              view.count};
+            send_frame(conn_fd, FrameType::Credit, session,
+                       {reinterpret_cast<const std::byte*>(&reply), sizeof(reply)});
+            break;
+        }
+        case FrameType::Reserve: {
+            const LoanBody loan = loan_from();
+            Channel channel{};
+            if (channel_from(loan.channel, &channel) && image_base_ != nullptr) {
+                if (!require(kCapPublish, loan.channel, 0))
+                    break;
+                auto& ledger = channel_loans[static_cast<std::size_t>(channel)];
+                if (!ledger.reserve()) {
+                    deny(EAGAIN, "channel loan quota exhausted");
+                    break;
+                }
+                std::uint64_t offset = 0;
+                std::string why;
+                if (!channel_reserve({image_base_, image_size_}, channel, loan.length, &offset,
+                                     &why)) {
+                    ledger.release();
+                    deny(ENOSPC, why);
+                    break;
+                }
+                LoanBody granted = loan;
+                granted.offset = offset;
+                granted.generation = generation_;
+                reply_loan(granted);
+                break;
+            }
+            if (!require(kCapPublish, loan.channel, 0))
+                break;
+            if (!loans.reserve()) {
+                deny(EAGAIN, "loan quota exhausted");
+                break;
+            }
+            if (loan.length == 0 || loan.length > staging_capacity - staging_used) {
+                loans.release();
+                deny(ENOSPC, "staging window exhausted");
+                break;
+            }
+            LoanBody granted = loan;
+            granted.offset = staging_used;
+            granted.generation = generation_;
+            staging_used += loan.length;
+            reply_loan(granted);
+            break;
+        }
+        case FrameType::Publish: {
+            const LoanBody loan = loan_from();
+            Channel channel{};
+            if (channel_from(loan.channel, &channel) && image_base_ != nullptr) {
+                if (!require(kCapPublish, loan.channel, loan.worldline))
+                    break;
+                // #5380: a patch may only name a pending trial, never a
+                // settled worldline or an id that was never opened.
+                if (loan.worldline != 0 && loan.worldline != kImageNoIndex) {
+                    const TrialRecord* t = worldlines_.find(loan.worldline);
+                    if (t == nullptr || !t->pending) {
+                        deny(EPERM, "patch worldline is not a pending trial");
+                        break;
+                    }
+                }
+                // #5378: a source-carrier patch names a string-table
+                // entry; validate the index before the record commits.
+                if (channel == Channel::Patches) {
+                    const std::uint64_t elem = sizeof(PatchRecord);
+                    const std::uint64_t n = loan.length / elem;
+                    bool bad_source = false;
+                    for (std::uint64_t i = 0; i < n; ++i) {
+                        PatchRecord p{};
+                        std::memcpy(&p, image_base_ + loan.offset + i * elem, sizeof(p));
+                        if (p.field_offset == kPatchSourceField) {
+                            std::string_view src;
+                            if (!string_table_read({image_base_, image_size_}, p.new_value, &src)) {
+                                bad_source = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (bad_source) {
+                        deny(EINVAL, "patch source index outside the string table");
+                        break;
+                    }
+                }
+                std::uint64_t gen = 0;
+                std::string why;
+                if (!channel_commit({image_base_, image_size_}, channel, loan.offset, loan.length,
+                                    &gen, &why)) {
+                    deny(EINVAL, why);
+                    break;
+                }
+                channel_loans[static_cast<std::size_t>(channel)].release();
+                ChannelView view{};
+                channel_view({image_base_, image_size_}, channel, &view);
+                generation_ = gen;
+                record_audit(AuditKind::Publish, root_token, 0, loan.length);
+                // #5381: online metrics drive the canary observation. Run
+                // the check BEFORE the reply so a revert completes before
+                // the publisher's next form observes the workspace.
+                if (channel == Channel::Metrics && canary_worldline_ != 0) {
+                    const std::uint64_t elem =
+                        view.element_size != 0 ? view.element_size : sizeof(MetricRecord);
+                    const std::uint64_t n = loan.length / elem;
+                    for (std::uint64_t i = 0; i < n; ++i) {
+                        MetricRecord m{};
+                        std::memcpy(
+                            &m, image_base_ + loan.offset + i * elem,
+                            static_cast<std::size_t>(std::min<std::uint64_t>(elem, sizeof(m))));
+                        canary_check_metric(m.key_sym, m.value);
+                    }
+                }
+                ChannelBody reply{loan.channel, gen, view.count, view.offset,
+                                  view.length,  0,   view.count};
+                send_frame(conn_fd, FrameType::Credit, session,
+                           {reinterpret_cast<const std::byte*>(&reply), sizeof(reply)});
+                notify_peers(session);
+                break;
+            }
+            if (!require(kCapPublish, loan.channel, loan.worldline))
+                break;
+            if (loan.length == 0 || loan.offset > staging_capacity ||
+                loan.length > staging_capacity - loan.offset) {
+                deny(EINVAL, "publish range outside the staging window");
+                break;
+            }
+            reply_loan(loan);
+            break;
+        }
+        case FrameType::Credit: {
+            const LoanBody loan = loan_from();
+            Channel channel{};
+            if (channel_from(loan.channel, &channel) && image_base_ != nullptr)
+                channel_loans[static_cast<std::size_t>(channel)].release();
+            else
+                loans.release();
+            break;
+        }
+        case FrameType::Trial: {
+            const LoanBody loan = loan_from();
+            if (!require(kCapTrial, loan.channel, 0))
+                break;
+            // #5378: bind the trial to the live workspace generation it
+            // starts from; KEEP rejects a stale baseline.
+            const std::uint64_t id =
+                worldlines_.open_trial(root_token, workspace_id_, workspace_gen_);
+            record_audit(AuditKind::Trial, root_token, id);
+            project_worldline(id, WorldlineState::Pending, ConstraintResult::None);
+            notify_peers(session);
+            LoanBody granted = loan;
+            granted.worldline = id;
+            granted.generation = generation_;
+            reply_loan(granted);
+            break;
+        }
+        case FrameType::SourcePublish: {
+            // #5378: the body is raw UTF-8 source text. Append it to the
+            // string table and return the entry index; the proposer then
+            // publishes a patch with field_offset=kPatchSourceField and
+            // new_value=index. Needs publish; the text is committed evidence.
+            if (!require(kCapPublish, 0, 0))
+                break;
+            if (image_base_ == nullptr) {
+                deny(EINVAL, "no image to hold the source");
+                break;
+            }
+            const std::string_view text(reinterpret_cast<const char*>(body.data()), header.len);
+            std::uint64_t index = 0;
+            std::string why;
+            if (!string_table_append({image_base_, image_size_}, text, &index, &why)) {
+                deny(ENOSPC, why);
+                break;
+            }
+            generation_ = load_header({image_base_, image_size_}).committed_gen;
+            record_audit(AuditKind::Publish, root_token, 0, header.len);
+            notify_peers(session);
+            LoanBody ok{};
+            ok.offset = index;
+            ok.generation = generation_;
+            reply_loan(ok);
+            break;
+        }
+        case FrameType::EvidenceBind: {
+            // #5379: bind the five-tuple to a pending trial. Only the
+            // owner or a capability scoped to that worldline may bind.
+            if (header.len < sizeof(EvidenceBody)) {
+                deny(EINVAL, "evidence body is too short");
+                break;
+            }
+            EvidenceBody ev{};
+            std::memcpy(&ev, body.data(), sizeof(ev));
+            if (!require(kCapTrial, 0, ev.worldline))
+                break;
+            const TrialRecord* t = worldlines_.find(ev.worldline);
+            if (t == nullptr || !t->pending) {
+                deny(EPERM, "evidence worldline is not a pending trial");
+                break;
+            }
+            if (t->owner != root_token && caps.worldline != ev.worldline) {
+                deny(EPERM, "worldline is owned by another session");
+                break;
+            }
+            evidence_[ev.worldline] = ev;
+            record_audit(AuditKind::Publish, root_token, ev.worldline, ev.candidate_hash);
+            LoanBody ok{};
+            ok.worldline = ev.worldline;
+            ok.generation = generation_;
+            reply_loan(ok);
+            break;
+        }
+        case FrameType::CandidateDigest: {
+            // #5379: the proposer/judge reads the coordinator's FNV-1a
+            // digest of the trial's committed patch bytes, to bind it as
+            // candidate_hash. Needs read; no state change.
+            const LoanBody loan = loan_from();
+            if (!require(kCapRead, 0, loan.worldline))
+                break;
+            LoanBody ok{};
+            ok.worldline = loan.worldline;
+            ok.offset = candidate_digest(loan.worldline);
+            ok.generation = generation_;
+            reply_loan(ok);
+            break;
+        }
+        case FrameType::CanaryConfirm: {
+            // #5381: the judge seals an active observation early.
+            const LoanBody loan = loan_from();
+            if (!require(kCapKeep, loan.channel, loan.worldline))
+                break;
+            if (canary_worldline_ != loan.worldline) {
+                deny(EPERM, "worldline is not the active canary");
+                break;
+            }
+            canary_seal(loan.worldline, root_token);
+            notify_peers(session);
+            reply_loan(loan);
+            break;
+        }
+        case FrameType::Keep:
+        case FrameType::Rollback: {
+            const LoanBody loan = loan_from();
+            const bool keep = header.type == static_cast<std::uint16_t>(FrameType::Keep);
+            if (!require(keep ? kCapKeep : kCapRollback, loan.channel, loan.worldline))
+                break;
+            const TrialRecord* trial = worldlines_.find(loan.worldline);
+            bool applied_live = false;
+            if (keep) {
+                // #5380: resolve the trial's patches + source texts up
+                // front so the constraint gate can inspect them (purity,
+                // target allowlist) before anything touches the live AST.
+                const std::vector<PatchRecord> patches = trial_patches(loan.worldline);
+                std::vector<std::string> sources;
+                sources.reserve(patches.size());
+                bool has_source = false;
+                bool missing_source = false;
+                for (const auto& p : patches) {
+                    if (p.field_offset == kPatchSourceField) {
+                        has_source = true;
+                        std::string_view text;
+                        if (!string_table_read({image_base_, image_size_}, p.new_value, &text)) {
+                            missing_source = true;
+                            break;
+                        }
+                        sources.emplace_back(text);
+                    } else {
+                        sources.emplace_back();
+                    }
+                }
+                if (missing_source) {
+                    deny(EINVAL, "validation-failed: patch source missing from string table");
+                    break;
+                }
+                ConstraintContext ctx{};
+                ctx.worldline = loan.worldline;
+                ctx.node = loan.offset;
+                ctx.new_value = loan.length;
+                ctx.patches = patches;
+                ctx.sources = sources;
+                const GateResult gate = constraints_.check(ctx, &audit_, root_token);
+                if (!gate.pass) {
+                    deny(EPERM, "constraint: " + gate.reason);
+                    break;
+                }
+                // #5381: one observation at a time; a second canary while
+                // the first is unsealed would stack rollback snapshots.
+                if (canary_window_ != 0 && canary_worldline_ != 0) {
+                    deny(EBUSY, "canary-active: seal or revert the active observation first");
+                    break;
+                }
+                // #5379: evidence gate — a KEEP must carry a matching
+                // five-tuple; stale baselines and forged candidate hashes
+                // are rejected before anything touches the live AST.
+                if (evidence_required_) {
+                    const auto eit = evidence_.find(loan.worldline);
+                    if (eit == evidence_.end()) {
+                        deny(EINVAL, "validation-failed: missing-evidence");
+                        break;
+                    }
+                    const EvidenceBody& ev = eit->second;
+                    if (ev.workload_sym == 0 || ev.seed == 0 || ev.verifier_version == 0) {
+                        deny(EINVAL, "validation-failed: incomplete-evidence");
+                        break;
+                    }
+                    if (trial != nullptr && ev.baseline_gen != trial->base_generation) {
+                        deny(EINVAL, "validation-failed: stale-baseline");
+                        break;
+                    }
+                    if (ev.baseline_gen != workspace_gen_) {
+                        deny(EINVAL, "validation-failed: stale-baseline");
+                        break;
+                    }
+                    if (ev.candidate_hash != candidate_digest(loan.worldline)) {
+                        deny(EINVAL, "validation-failed: candidate-hash-mismatch");
+                        break;
+                    }
+                }
+                // #5378: apply to the live workspace BEFORE the ledger
+                // marks Kept. The callback is all-or-nothing; on failure
+                // the workspace is byte-identical and the trial stays
+                // pending (a later retry or disconnect rollback).
+                if (apply_ && has_source) {
+                    if (trial != nullptr && trial->base_generation != workspace_gen_) {
+                        deny(EINVAL, "validation-failed: stale-baseline");
+                        break;
+                    }
+                    std::string why;
+                    if (!apply_(loan.worldline, workspace_gen_, patches, sources,
+                                canary_window_ != 0, &why)) {
+                        deny(EINVAL, "validation-failed: " + why);
+                        break;
+                    }
+                    applied_live = true;
+                }
+            }
+            std::string why;
+            bool ok = false;
+            if (keep) {
+                ok = worldlines_.keep(loan.worldline, root_token, caps, &why, applied_live);
+            } else if (canary_worldline_ == loan.worldline) {
+                // #5381: rolling back the active canary restores the
+                // pre-observation snapshot (judge-initiated revert).
+                canary_revert(loan.worldline, "canary-reverted: judge rollback");
+                ok = true;
+            } else if (trial != nullptr && trial->kept && trial->applied_live && apply_) {
+                // A sealed worldline the judge reverts: restore the live
+                // workspace and step the generation back (#5381).
+                ok = worldlines_.rollback_kept(loan.worldline, root_token, caps, &why);
+                if (ok) {
+                    if (revert_) {
+                        std::string rwhy;
+                        (void)revert_(loan.worldline, &rwhy);
+                    }
+                    if (workspace_gen_ > 0)
+                        --workspace_gen_;
+                }
+            } else {
+                ok = worldlines_.rollback(loan.worldline, root_token, caps, &why);
+            }
+            if (!ok) {
+                deny(EPERM, why);
+                break;
+            }
+            if (keep) {
+                record_audit(AuditKind::Keep, root_token, loan.worldline);
+                if (canary_window_ != 0) {
+                    canary_on_keep(loan.worldline);
+                } else {
+                    project_worldline(loan.worldline, WorldlineState::Kept, ConstraintResult::Pass);
+                    if (applied_live)
+                        ++workspace_gen_;
+                }
+            } else if (canary_worldline_ != loan.worldline) {
+                record_audit(AuditKind::Rollback, root_token, loan.worldline);
+                project_worldline(loan.worldline, WorldlineState::Rolled, ConstraintResult::None);
+            }
+            notify_peers(session);
+            reply_loan(loan);
+            break;
+        }
+        case FrameType::Grant: {
+            if (header.len < sizeof(GrantBody))
+                break;
+            GrantBody request{};
+            std::memcpy(&request, body.data(), sizeof(request));
+            if (!require(kCapGrant, 0, 0))
+                break;
+            if (request.caps.workspace == 0)
+                request.caps.workspace = workspace_id_;
+            const std::uint64_t parent = request.parent == 0 ? root_token : request.parent;
+            std::string why;
+            const auto token = caps_table_.derive(parent, request.caps, &why);
+            if (!token) {
+                deny(EPERM, why);
+                break;
+            }
+            GrantReply reply{};
+            reply.token = *token;
+            send_frame(conn_fd, FrameType::Credit, session,
+                       {reinterpret_cast<const std::byte*>(&reply), sizeof(reply)});
+            record_audit(AuditKind::Grant, root_token, 0, *token);
+            break;
+        }
+        case FrameType::GrantActivate: {
+            // #5377: the session presents a granted token (loan.channel)
+            // to narrow its own capability to the token's effective caps.
+            // The judge activates the host's delegated scoped keep+rollback
+            // on a single worldline. Only narrowing is allowed — the token
+            // must be effective (not revoked) and a subset of the session's
+            // current caps is NOT required (the grant widens the session's
+            // scope to the delegated worldline, but never adds bits beyond
+            // the token). The session's root grant stays; the active caps
+            // become the intersection, scoped to the token's worldline.
+            const LoanBody loan = loan_from();
+            Capability effective{};
+            if (!caps_table_.effective(loan.channel, &effective)) {
+                deny(EPERM, "grant token is missing or revoked");
+                break;
+            }
+            if (effective.workspace != workspace_id_) {
+                deny(EPERM, "grant token is for another workspace");
+                break;
+            }
+            // The token delegates keep+rollback scoped to one worldline.
+            // The session KEEPS its existing read/publish bits and GAINS
+            // the delegated keep+rollback, scoped to the token's worldline.
+            // The grant tree already enforced attenuation at derive time,
+            // so the delegated bits are a subset of the host's authority.
+            Capability next = caps;
+            next.bits |= effective.bits;
+            next.channels |= effective.channels;
+            next.worldline = effective.worldline;
+            next.workspace = workspace_id_;
+            if (effective.expires_gen != 0)
+                next.expires_gen = effective.expires_gen;
+            caps = next;
+            record_audit(AuditKind::Grant, root_token, effective.worldline, loan.channel);
+            LoanBody ok{};
+            ok.channel = caps.bits;
+            ok.worldline = caps.worldline;
+            ok.generation = generation_;
+            reply_loan(ok);
+            break;
+        }
+        case FrameType::Revoke: {
+            const LoanBody loan = loan_from();
+            if (!require(kCapGrant, 0, 0))
+                break;
+            const std::size_t revoked = caps_table_.revoke(loan.channel);
+            if (revoked == 0) {
+                deny(ENOENT, "unknown grant token");
+                break;
+            }
+            record_audit(AuditKind::Revoke, root_token, 0, revoked);
+            reply_loan(loan);
+            break;
+        }
+        case FrameType::ConstraintRollback: {
+            if (!require(kCapConstraintWrite, 0, 0))
+                break;
+            std::string why;
+            if (!constraints_.rollback(caps, &audit_, root_token, &why)) {
+                deny(EPERM, why);
+                break;
+            }
+            write_constraints_image();
+            const LoanBody empty{};
+            reply_loan(empty);
+            break;
+        }
+        case FrameType::ConstraintInstall: {
+            if (!require(kCapConstraintWrite, 0, 0))
+                break;
+            ConstraintWire wire{};
+            if (header.len < sizeof(wire)) {
+                deny(EINVAL, "constraint install body is too short");
+                break;
+            }
+            std::memcpy(&wire, body.data(), sizeof(wire));
+            const std::uint64_t payload = header.len - sizeof(wire);
+            if (wire.name_len > payload || wire.source_len > payload - wire.name_len) {
+                deny(EINVAL, "constraint install lengths are inconsistent");
+                break;
+            }
+            const char* text = reinterpret_cast<const char*>(body.data() + sizeof(wire));
+            std::string name(text, wire.name_len);
+            std::string source(text + wire.name_len, wire.source_len);
+            const auto pred = predicate_registry_.find(name);
+            if (pred == predicate_registry_.end()) {
+                deny(EPERM, "constraint source is not registered: " + name);
+                break;
+            }
+            ConstraintSet next = constraints_.current();
+            bool replaced = false;
+            for (auto& rule : next.rules) {
+                if (rule.name == name) {
+                    rule.check = pred->second;
+                    rule.source = source;
+                    replaced = true;
+                    break;
+                }
+            }
+            if (!replaced)
+                next.rules.push_back({name, pred->second, source});
+            std::string why;
+            if (!constraints_.install(std::move(next), caps, &audit_, root_token, &why)) {
+                deny(EPERM, why);
+                break;
+            }
+            write_constraints_image();
+            LoanBody installed{};
+            installed.generation = constraints_.version();
+            reply_loan(installed);
+            break;
+        }
+        case FrameType::Disconnect:
+            return false;
+        default:
+            break;
+    }
+    return true;
+}
+
+bool Server::handle_frame(PeerSession& peer, const FrameHeader& header,
+                          std::span<const std::byte> body) {
+    return dispatch_frame(peer.conn_fd, peer.session, peer.root_token, peer.caps, peer.loans,
+                          peer.channel_loans, peer.staging_capacity, peer.staging_used,
+                          &peer.subscribed, header, body);
+}
+
+void Server::finish_session(PeerSession& peer) {
+    for (std::uint64_t id : worldlines_.end_session(peer.root_token)) {
+        record_audit(AuditKind::Rollback, peer.root_token, id);
+        project_worldline(id, WorldlineState::Rolled, ConstraintResult::None);
+    }
+    record_audit(AuditKind::Disconnect, peer.root_token);
+    peer.loans.reclaim();
+    for (auto& ledger : peer.channel_loans)
+        ledger.reclaim();
+    peer.staging_used = 0;
+    if (peer.conn_fd >= 0)
+        ::close(peer.conn_fd);
+    peer.conn_fd = -1;
+    if (peer.event_fd >= 0)
+        ::close(peer.event_fd);
+    peer.event_fd = -1;
+}
+
+bool Server::wait_disconnect(TransportError* error) {
+    FrameHeader header{};
+    std::vector<std::byte> body(kBusMaxControlFrame);
     const auto finish = [&]() {
         for (std::uint64_t id : worldlines_.end_session(root_token_)) {
             record_audit(AuditKind::Rollback, root_token_, id);
@@ -747,365 +1618,188 @@ bool Server::wait_disconnect(TransportError* error) {
         conn_fd_ = -1;
         return true;
     };
-
     while (true) {
         if (!recv_frame(conn_fd_, &header, body, error))
             return finish();
+        if (!dispatch_frame(conn_fd_, session_, root_token_, session_caps_, loans_, channel_loans_,
+                            staging_capacity_, staging_used_, nullptr, header,
+                            {body.data(), header.len}))
+            return finish();
+    }
+}
 
-        const auto loan_from = [&]() {
-            LoanBody loan{};
-            if (header.len >= sizeof(loan))
-                std::memcpy(&loan, body.data(), sizeof(loan));
-            return loan;
-        };
-        const auto reply_loan = [&](const LoanBody& loan) {
-            send_frame(conn_fd_, FrameType::Credit, session_,
-                       {reinterpret_cast<const std::byte*>(&loan), sizeof(loan)});
-        };
-
-        switch (static_cast<FrameType>(header.type)) {
-            case FrameType::Subscribe:
-            case FrameType::Unsubscribe:
-            case FrameType::Query: {
-                const LoanBody loan = loan_from();
-                Channel channel{};
-                if (channel_from(loan.channel, &channel) && image_base_ != nullptr) {
-                    if (!require(kCapRead, loan.channel, 0))
-                        break;
-                    ChannelView view{};
-                    if (!channel_view({image_base_, image_size_}, channel, &view)) {
-                        deny(EINVAL, "channel section is missing");
-                        break;
-                    }
-                    ChannelBody reply{loan.channel, view.generation, view.count,
-                                      view.offset,  view.length,     1,
-                                      view.count};
-                    send_frame(conn_fd_, FrameType::Credit, session_,
-                               {reinterpret_cast<const std::byte*>(&reply), sizeof(reply)});
-                    if (header.type == static_cast<std::uint16_t>(FrameType::Subscribe))
-                        record_audit(AuditKind::Subscribe, root_token_, 0, loan.channel);
-                    break;
-                }
-                if (require(kCapRead, loan.channel, 0))
-                    reply_loan(loan);
-                break;
-            }
-            case FrameType::AuditQuery: {
-                if (header.len < sizeof(AuditQueryBody))
-                    break;
-                AuditQueryBody request{};
-                std::memcpy(&request, body.data(), sizeof(request));
-                if (!require(kCapRead, 0, 0))
-                    break;
-                struct Selected {
-                    std::uint64_t seq = 0;
-                    const AuditEvent* event = nullptr;
-                };
-                std::vector<Selected> events;
-                const auto& all = audit_.events();
-                events.reserve(all.size());
-                for (std::size_t i = 0; i < all.size(); ++i) {
-                    const std::uint64_t seq = static_cast<std::uint64_t>(i) + 1;
-                    const AuditEvent& e = all[i];
-                    if (request.since_seq != 0 && seq < request.since_seq)
-                        continue;
-                    if (request.worldline != 0 && e.worldline != request.worldline)
-                        continue;
-                    if (request.actor != 0 && e.token != request.actor)
-                        continue;
-                    events.push_back({seq, &e});
-                }
-                constexpr std::size_t kMaxEvents = 20;
-                const std::size_t count = std::min(events.size(), kMaxEvents);
-                std::vector<std::byte> out(sizeof(AuditReply) + count * sizeof(AuditWire));
-                AuditReply reply{};
-                reply.count = count;
-                reply.truncated = events.size() > count ? 1 : 0;
-                std::memcpy(out.data(), &reply, sizeof(reply));
-                for (std::size_t i = 0; i < count; ++i) {
-                    AuditWire wire{};
-                    const AuditEvent& e = *events[i].event;
-                    wire.kind = static_cast<std::uint64_t>(e.kind);
-                    wire.token = e.token;
-                    wire.worldline = e.worldline;
-                    wire.result = e.result;
-                    wire.version = e.constraint_version;
-                    wire.timestamp_ms = e.timestamp_ms;
-                    wire.seq = events[i].seq;
-                    const std::size_t n = std::min(e.reason.size(), sizeof(wire.reason) - 1);
-                    std::memcpy(wire.reason, e.reason.data(), n);
-                    std::memcpy(out.data() + sizeof(reply) + i * sizeof(AuditWire), &wire,
-                                sizeof(wire));
-                }
-                send_frame(conn_fd_, FrameType::Credit, session_, out);
-                break;
-            }
-            case FrameType::CatchUp: {
-                if (header.len < sizeof(CatchUpBody) || image_base_ == nullptr)
-                    break;
-                CatchUpBody request{};
-                std::memcpy(&request, body.data(), sizeof(request));
-                Channel channel{};
-                if (!channel_from(request.channel, &channel)) {
-                    deny(EINVAL, "unknown channel");
-                    break;
-                }
-                if (!require(kCapRead, request.channel, 0))
-                    break;
-                ChannelView view{};
-                if (!channel_view({image_base_, image_size_}, channel, &view)) {
-                    deny(EINVAL, "channel section is missing");
-                    break;
-                }
-                // #5385: generations are image-global (audit and constraint
-                // writes advance them too), so a cursor is valid while its
-                // generation is at or below the section's and its count fits
-                // the append-only channel. Ahead of either — the cursor may
-                // predate a rebuild — forces a full snapshot, never a slice.
-                const bool snapshot = (request.generation == 0 && request.count == 0) ||
-                                      request.generation > view.generation ||
-                                      request.count > view.count;
-                const std::uint64_t from = snapshot ? 0 : request.count;
-                ChannelBody reply{request.channel,
-                                  view.generation,
-                                  view.count - from,
-                                  view.offset + from * view.element_size,
-                                  (view.count - from) * view.element_size,
-                                  static_cast<std::uint64_t>(snapshot ? 1 : 0),
-                                  view.count};
-                send_frame(conn_fd_, FrameType::Credit, session_,
-                           {reinterpret_cast<const std::byte*>(&reply), sizeof(reply)});
-                break;
-            }
-            case FrameType::Reserve: {
-                const LoanBody loan = loan_from();
-                Channel channel{};
-                if (channel_from(loan.channel, &channel) && image_base_ != nullptr) {
-                    if (!require(kCapPublish, loan.channel, 0))
-                        break;
-                    auto& ledger = channel_loans_[static_cast<std::size_t>(channel)];
-                    if (!ledger.reserve()) {
-                        deny(EAGAIN, "channel loan quota exhausted");
-                        break;
-                    }
-                    std::uint64_t offset = 0;
-                    std::string why;
-                    if (!channel_reserve({image_base_, image_size_}, channel, loan.length, &offset,
-                                         &why)) {
-                        ledger.release();
-                        deny(ENOSPC, why);
-                        break;
-                    }
-                    LoanBody granted = loan;
-                    granted.offset = offset;
-                    granted.generation = generation_;
-                    reply_loan(granted);
-                    break;
-                }
-                if (!require(kCapPublish, loan.channel, 0))
-                    break;
-                if (!loans_.reserve()) {
-                    deny(EAGAIN, "loan quota exhausted");
-                    break;
-                }
-                if (loan.length == 0 || loan.length > staging_capacity_ - staging_used_) {
-                    loans_.release();
-                    deny(ENOSPC, "staging window exhausted");
-                    break;
-                }
-                LoanBody granted = loan;
-                granted.offset = staging_used_;
-                granted.generation = generation_;
-                staging_used_ += loan.length;
-                reply_loan(granted);
-                break;
-            }
-            case FrameType::Publish: {
-                const LoanBody loan = loan_from();
-                Channel channel{};
-                if (channel_from(loan.channel, &channel) && image_base_ != nullptr) {
-                    if (!require(kCapPublish, loan.channel, loan.worldline))
-                        break;
-                    std::uint64_t gen = 0;
-                    std::string why;
-                    if (!channel_commit({image_base_, image_size_}, channel, loan.offset,
-                                        loan.length, &gen, &why)) {
-                        deny(EINVAL, why);
-                        break;
-                    }
-                    channel_loans_[static_cast<std::size_t>(channel)].release();
-                    ChannelView view{};
-                    channel_view({image_base_, image_size_}, channel, &view);
-                    ChannelBody reply{loan.channel, gen, view.count, view.offset,
-                                      view.length,  0,   view.count};
-                    send_frame(conn_fd_, FrameType::Credit, session_,
-                               {reinterpret_cast<const std::byte*>(&reply), sizeof(reply)});
-                    generation_ = gen;
-                    record_audit(AuditKind::Publish, root_token_, 0, loan.length);
-                    break;
-                }
-                if (!require(kCapPublish, loan.channel, loan.worldline))
-                    break;
-                if (loan.length == 0 || loan.offset > staging_capacity_ ||
-                    loan.length > staging_capacity_ - loan.offset) {
-                    deny(EINVAL, "publish range outside the staging window");
-                    break;
-                }
-                reply_loan(loan);
-                break;
-            }
-            case FrameType::Credit: {
-                const LoanBody loan = loan_from();
-                Channel channel{};
-                if (channel_from(loan.channel, &channel) && image_base_ != nullptr)
-                    channel_loans_[static_cast<std::size_t>(channel)].release();
-                else
-                    loans_.release();
-                break;
-            }
-            case FrameType::Trial: {
-                const LoanBody loan = loan_from();
-                if (!require(kCapTrial, loan.channel, 0))
-                    break;
-                const std::uint64_t id = worldlines_.open_trial(root_token_, workspace_id_);
-                record_audit(AuditKind::Trial, root_token_, id);
-                project_worldline(id, WorldlineState::Pending, ConstraintResult::None);
-                LoanBody granted = loan;
-                granted.worldline = id;
-                granted.generation = generation_;
-                reply_loan(granted);
-                break;
-            }
-            case FrameType::Keep:
-            case FrameType::Rollback: {
-                const LoanBody loan = loan_from();
-                const bool keep = header.type == static_cast<std::uint16_t>(FrameType::Keep);
-                if (!require(keep ? kCapKeep : kCapRollback, loan.channel, loan.worldline))
-                    break;
-                if (keep) {
-                    const GateResult gate = constraints_.check(
-                        {loan.worldline, loan.offset, loan.length}, &audit_, root_token_);
-                    if (!gate.pass) {
-                        deny(EPERM, "constraint: " + gate.reason);
-                        break;
-                    }
-                }
-                std::string why;
-                const bool ok =
-                    keep ? worldlines_.keep(loan.worldline, root_token_, session_caps_, &why)
-                         : worldlines_.rollback(loan.worldline, root_token_, session_caps_, &why);
-                if (!ok) {
-                    deny(EPERM, why);
-                    break;
-                }
-                record_audit(keep ? AuditKind::Keep : AuditKind::Rollback, root_token_,
-                             loan.worldline);
-                project_worldline(loan.worldline,
-                                  keep ? WorldlineState::Kept : WorldlineState::Rolled,
-                                  keep ? ConstraintResult::Pass : ConstraintResult::None);
-                reply_loan(loan);
-                break;
-            }
-            case FrameType::Grant: {
-                if (header.len < sizeof(GrantBody))
-                    break;
-                GrantBody request{};
-                std::memcpy(&request, body.data(), sizeof(request));
-                if (!require(kCapGrant, 0, 0))
-                    break;
-                if (request.caps.workspace == 0)
-                    request.caps.workspace = workspace_id_;
-                const std::uint64_t parent = request.parent == 0 ? root_token_ : request.parent;
-                std::string why;
-                const auto token = caps_table_.derive(parent, request.caps, &why);
-                if (!token) {
-                    deny(EPERM, why);
-                    break;
-                }
-                GrantReply reply{};
-                reply.token = *token;
-                send_frame(conn_fd_, FrameType::Credit, session_,
-                           {reinterpret_cast<const std::byte*>(&reply), sizeof(reply)});
-                record_audit(AuditKind::Grant, root_token_, 0, *token);
-                break;
-            }
-            case FrameType::Revoke: {
-                const LoanBody loan = loan_from();
-                if (!require(kCapGrant, 0, 0))
-                    break;
-                const std::size_t revoked = caps_table_.revoke(loan.channel);
-                if (revoked == 0) {
-                    deny(ENOENT, "unknown grant token");
-                    break;
-                }
-                record_audit(AuditKind::Revoke, root_token_, 0, revoked);
-                reply_loan(loan);
-                break;
-            }
-            case FrameType::ConstraintRollback: {
-                if (!require(kCapConstraintWrite, 0, 0))
-                    break;
-                std::string why;
-                if (!constraints_.rollback(session_caps_, &audit_, root_token_, &why)) {
-                    deny(EPERM, why);
-                    break;
-                }
-                write_constraints_image();
-                const LoanBody empty{};
-                reply_loan(empty);
-                break;
-            }
-            case FrameType::ConstraintInstall: {
-                if (!require(kCapConstraintWrite, 0, 0))
-                    break;
-                ConstraintWire wire{};
-                if (header.len < sizeof(wire)) {
-                    deny(EINVAL, "constraint install body is too short");
-                    break;
-                }
-                std::memcpy(&wire, body.data(), sizeof(wire));
-                const std::uint64_t payload = header.len - sizeof(wire);
-                if (wire.name_len > payload || wire.source_len > payload - wire.name_len) {
-                    deny(EINVAL, "constraint install lengths are inconsistent");
-                    break;
-                }
-                const char* text = reinterpret_cast<const char*>(body.data() + sizeof(wire));
-                std::string name(text, wire.name_len);
-                std::string source(text + wire.name_len, wire.source_len);
-                const auto pred = predicate_registry_.find(name);
-                if (pred == predicate_registry_.end()) {
-                    deny(EPERM, "constraint source is not registered: " + name);
-                    break;
-                }
-                ConstraintSet next = constraints_.current();
-                bool replaced = false;
-                for (auto& rule : next.rules) {
-                    if (rule.name == name) {
-                        rule.check = pred->second;
-                        rule.source = source;
-                        replaced = true;
-                        break;
-                    }
-                }
-                if (!replaced)
-                    next.rules.push_back({name, pred->second, source});
-                std::string why;
-                if (!constraints_.install(std::move(next), session_caps_, &audit_, root_token_,
-                                          &why)) {
-                    deny(EPERM, why);
-                    break;
-                }
-                write_constraints_image();
-                LoanBody installed{};
-                installed.generation = constraints_.version();
-                reply_loan(installed);
-                break;
-            }
-            case FrameType::Disconnect:
-                return finish();
-            default:
-                break;
+// ── Multi-peer coordinator (#5377) ───────────────────────────
+// One poll loop over the listener, the wake eventfd and every session
+// socket. All shared state (image commits, grant tree, worldline
+// ledger, constraints, audit) is touched only here, so generation
+// advances stay serialized without locks. A session's crash/EOF
+// reclaims only its own loans and pending trials.
+void Server::serve(const BuildFn& build) {
+    if (listen_fd_ < 0)
+        return;
+    wake_fd_ = ::eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+    // Drain one complete frame from a session's buffer; false ends it.
+    const auto drain = [&](PeerSession& peer) {
+        while (true) {
+            const std::size_t avail = peer.inbuf.size();
+            if (avail < sizeof(FrameHeader))
+                return true;
+            FrameHeader header{};
+            std::memcpy(&header, peer.inbuf.data(), sizeof(header));
+            if (header.len > kBusMaxControlFrame)
+                return false;
+            if (avail < sizeof(header) + header.len)
+                return true;
+            const std::span<const std::byte> body(peer.inbuf.data() + sizeof(header), header.len);
+            const bool keep = handle_frame(peer, header, body);
+            peer.inbuf.erase(peer.inbuf.begin(),
+                             peer.inbuf.begin() +
+                                 static_cast<std::ptrdiff_t>(sizeof(header) + header.len));
+            if (!keep)
+                return false;
         }
+    };
+    // Feed readable bytes into a session; false on EOF/error/protocol.
+    const auto feed = [&](PeerSession& peer) {
+        std::byte buf[4096];
+        while (true) {
+            std::vector<int> fds;
+            const ssize_t n = recv_msg(peer.conn_fd, buf, sizeof(buf), &fds);
+            for (const int f : fds)
+                ::close(f); // ancillary data after Hello is unexpected
+            if (n == 0) {
+                return false;
+            }
+            if (n < 0) {
+                if (errno == EAGAIN || errno == EWOULDBLOCK)
+                    return true;
+                return false;
+            }
+            if (!peer.hello_done) {
+                peer.hello_buf.insert(peer.hello_buf.end(), buf, buf + n);
+                constexpr std::size_t kHelloBytes = sizeof(FrameHeader) + sizeof(HelloBody);
+                if (peer.hello_buf.size() < kHelloBytes)
+                    continue;
+                FrameHeader header{};
+                std::memcpy(&header, peer.hello_buf.data(), sizeof(header));
+                if (header.type != static_cast<std::uint16_t>(FrameType::Hello) ||
+                    header.len != sizeof(HelloBody)) {
+                    set_reject(peer.conn_fd, 0, RejectReason::Protocol, "expected Hello");
+                    return false;
+                }
+                HelloBody hello{};
+                std::memcpy(&hello, peer.hello_buf.data() + sizeof(header), sizeof(hello));
+                TransportError err;
+                if (!handshake(peer.conn_fd, hello, build, &peer.session, &peer.caps,
+                               &peer.root_token, &peer.event_fd, &peer.staging_capacity, nullptr,
+                               &err)) {
+                    return false;
+                }
+                if (peer.caps.max_loans > 0) {
+                    const auto cap = static_cast<std::uint32_t>(
+                        std::min<std::uint64_t>(peer.caps.max_loans, kBusMaxLoans));
+                    for (auto& ledger : peer.channel_loans)
+                        ledger.set_cap(cap);
+                }
+                peer.hello_done = true;
+                peer.inbuf.assign(peer.hello_buf.begin() + static_cast<std::ptrdiff_t>(kHelloBytes),
+                                  peer.hello_buf.end());
+                peer.hello_buf.clear();
+                peer.hello_buf.shrink_to_fit();
+                if (!drain(peer))
+                    return false;
+                continue;
+            }
+            peer.inbuf.insert(peer.inbuf.end(), buf, buf + n);
+            if (!drain(peer))
+                return false;
+        }
+    };
+    while (true) {
+        std::vector<pollfd> pfds;
+        std::vector<std::size_t> peer_at; // pfds index -> peers_ index
+        pfds.push_back({listen_fd_, POLLIN, 0});
+        if (wake_fd_ >= 0)
+            pfds.push_back({wake_fd_, POLLIN, 0});
+        for (std::size_t i = 0; i < peers_.size(); ++i) {
+            if (peers_[i].conn_fd < 0)
+                continue;
+            peer_at.push_back(i);
+            pfds.push_back({peers_[i].conn_fd, POLLIN, 0});
+        }
+        std::size_t polled_peers = peer_at.size();
+        const int ready = ::poll(pfds.data(), static_cast<nfds_t>(pfds.size()), -1);
+        if (ready < 0) {
+            if (errno == EINTR)
+                continue;
+            break;
+        }
+        // stop() rang the wake bell: leave without touching sessions.
+        if (wake_fd_ >= 0 && pfds[1].revents != 0) {
+            std::uint64_t count = 0;
+            ssize_t ignored = ::read(wake_fd_, &count, sizeof(count));
+            (void)ignored;
+            break;
+        }
+        if ((pfds[0].revents & POLLIN) != 0) {
+            // Accept every pending connection without blocking: the
+            // listener is nonblocking only for this drain, then restored
+            // so stop()'s shutdown still wakes a blocked poll/accept.
+            const int lfl = ::fcntl(listen_fd_, F_GETFL, 0);
+            ::fcntl(listen_fd_, F_SETFL, lfl | O_NONBLOCK);
+            while (true) {
+                const int fd =
+                    ::accept4(listen_fd_, nullptr, nullptr, SOCK_CLOEXEC | SOCK_NONBLOCK);
+                if (fd < 0) {
+                    break;
+                }
+                PeerSession peer;
+                peer.conn_fd = fd;
+                peers_.push_back(std::move(peer));
+                // Feed the new peer immediately: its Hello may already be
+                // readable and the client blocks on HelloOk.
+                if (!feed(peers_.back())) {
+                    finish_session(peers_.back());
+                    peers_.pop_back();
+                }
+            }
+            ::fcntl(listen_fd_, F_SETFL, lfl);
+        }
+        if ((pfds[0].revents & (POLLERR | POLLHUP | POLLNVAL)) != 0)
+            break; // listener shut down by stop()
+        // Service the peers present at poll time. A feed may dispatch a
+        // frame whose handler (KEEP apply) re-enters the bus from the host
+        // eval thread; that is serialized by g_bus_mutex on the eval side.
+        // Newly accepted peers are fed on the next iteration.
+        std::vector<std::size_t> ended;
+        for (std::size_t p = 0; p < polled_peers; ++p) {
+            PeerSession& peer = peers_[peer_at[p]];
+            const short rev = pfds[2 + p].revents;
+            if ((rev & (POLLERR | POLLNVAL)) != 0)
+                ended.push_back(peer_at[p]);
+            else if ((rev & (POLLIN | POLLHUP)) != 0 && !feed(peer))
+                ended.push_back(peer_at[p]);
+        }
+        // Feed newly accepted peers that have not completed hello yet.
+        for (std::size_t i = polled_peers; i < peers_.size(); ++i) {
+            if (peers_[i].conn_fd >= 0 && !peers_[i].hello_done) {
+                if (!feed(peers_[i]))
+                    ended.push_back(i);
+            }
+        }
+        // Erase high indices first so the lower ones stay valid.
+        std::sort(ended.begin(), ended.end(), std::greater<std::size_t>());
+        for (const std::size_t i : ended) {
+            finish_session(peers_[i]);
+            peers_.erase(peers_.begin() + static_cast<std::ptrdiff_t>(i));
+        }
+    }
+    for (auto& peer : peers_)
+        finish_session(peer);
+    peers_.clear();
+    if (wake_fd_ >= 0) {
+        ::close(wake_fd_);
+        wake_fd_ = -1;
     }
 }
 

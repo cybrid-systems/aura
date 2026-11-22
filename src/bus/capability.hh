@@ -89,22 +89,44 @@ struct TrialRecord {
     std::uint64_t id = 0;
     std::uint64_t owner = 0; // grant token that opened the trial
     std::uint64_t workspace = 0;
+    // #5378: host workspace generation when the trial opened; KEEP
+    // rejects a stale baseline (another worldline applied first).
+    std::uint64_t base_generation = 0;
     bool pending = false;
     bool kept = false;
     bool rolled_back = false;
     bool loan_outstanding = false;
+    // #5378: the KEEP applied a source-carrier patch to the live AST
+    // (vs an immediate-only image-evidence trial).
+    bool applied_live = false;
+    // #5381: observation mode — kept=true but the live apply is under a
+    // canary window; seal confirms Kept, a revert rolls back to Rolled.
+    bool canary = false;
 };
 
 // Trial worldlines and their ownership. keep/rollback require either
 // ownership or a capability explicitly scoped to that worldline.
 class WorldlineLedger {
 public:
-    std::uint64_t open_trial(std::uint64_t owner, std::uint64_t workspace);
-    void release_loan(std::uint64_t id);
-    bool keep(std::uint64_t id, std::uint64_t owner, const Capability& caps, std::string* why);
+    std::uint64_t open_trial(std::uint64_t owner, std::uint64_t workspace,
+                             std::uint64_t base_generation = 0);
+    bool keep(std::uint64_t id, std::uint64_t owner, const Capability& caps, std::string* why,
+              bool applied_live = false);
     bool rollback(std::uint64_t id, std::uint64_t owner, const Capability& caps, std::string* why);
+    void release_loan(std::uint64_t id);
     const TrialRecord* find(std::uint64_t id) const;
     std::vector<std::uint64_t> end_session(std::uint64_t owner);
+
+    // #5381: canary transitions. enter_canary requires a kept, applied
+    // trial; seal_canary ends observation as Kept; revert_canary rolls
+    // the observation back (the caller restores the workspace snapshot).
+    bool enter_canary(std::uint64_t id, std::string* why);
+    bool seal_canary(std::uint64_t id, std::string* why);
+    bool revert_canary(std::uint64_t id, std::string* why);
+    // #5381: rolling back an already-kept worldline (a sealed canary the
+    // judge reverts). Ownership/scope rules are the same as rollback.
+    bool rollback_kept(std::uint64_t id, std::uint64_t owner, const Capability& caps,
+                       std::string* why);
 
 private:
     std::vector<TrialRecord> records_;
@@ -125,6 +147,10 @@ enum class AuditKind : std::uint16_t {
     ConstraintResult = 11,
     ConstraintChange = 12,
     ConstraintRollback = 13,
+    // #5381: canary observation lifecycle events.
+    CanaryStart = 14,
+    CanarySeal = 15,
+    CanaryRevert = 16,
 };
 
 struct AuditEvent {

@@ -145,6 +145,9 @@ enum class WorldlineState : std::uint8_t {
     Kept = 1,
     Rolled = 2,
     Rejected = 3,
+    // #5381: applied and under online observation; seals to Kept or
+    // reverts to Rolled. Additive enum value (#5122 tail-compat rule).
+    Canary = 4,
 };
 
 enum class ConstraintResult : std::uint8_t {
@@ -163,6 +166,14 @@ struct WorldlineRecord {
     std::uint64_t metrics_off;
     std::uint64_t patch_off;
     std::uint64_t patch_len;
+    // ── #5379 evidence tail (layout_version 2) ─────────────────
+    // The frozen prefix above keeps the v1 schema id; a v1 reader
+    // skips this tail. Zero = absent (v1 records, unbound trials).
+    std::uint64_t baseline_gen;     // host workspace generation at trial open
+    std::uint64_t candidate_hash;   // FNV-1a of the trial's patch bytes
+    std::uint64_t workload_sym;     // benchmark workload / phase identity
+    std::uint64_t seed;             // replay random seed
+    std::uint64_t verifier_version; // judge / verifier version
 };
 
 struct ConstraintSetHeader {
@@ -193,7 +204,8 @@ static_assert(sizeof(NodeRecord) == 64);
 static_assert(sizeof(PatchRecord) == 40);
 static_assert(sizeof(MetricRecord) == 24);
 static_assert(sizeof(CctRecord) == 48);
-static_assert(sizeof(WorldlineRecord) == 48);
+static_assert(sizeof(WorldlineRecord) == 88);
+static_assert(offsetof(WorldlineRecord, baseline_gen) == 48);
 static_assert(sizeof(ConstraintSetHeader) == 32);
 static_assert(sizeof(AuditRecord) == 40);
 
@@ -209,6 +221,20 @@ inline constexpr std::size_t kAuditFrozenFields = 6;
 inline constexpr std::size_t kStringEntryFrozenFields = 3;
 inline constexpr std::size_t kSymbolEntryFrozenFields = 3;
 inline constexpr std::size_t kConstraintFrozenFields = 4;
+
+// #5379: layout version 2 appends the WorldlineRecord evidence tail.
+// v1 images stay readable: element_size 48 records default the tail.
+inline constexpr std::uint64_t kImageLayoutVersion = 2;
+
+// The v1 worldline prefix width. A v1 image's worldline section uses
+// element_size 48; readers copy the prefix and default the evidence
+// tail to zero (#5379 additive-evolution rule).
+inline constexpr std::uint32_t kWorldlineV1Size = 48;
+
+// #5378: the host string table reserves this many entry slots; the byte
+// region follows the fixed array. string_table_append uses it to keep
+// the entry array size constant so validation's count*16 bound holds.
+inline constexpr std::uint64_t kStringSlotsReserved = 1024;
 
 inline constexpr std::uint32_t expected_element_size(SectionKind kind) {
     switch (kind) {
