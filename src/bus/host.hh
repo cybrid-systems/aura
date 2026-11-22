@@ -19,6 +19,7 @@
 #include <string>
 
 #include "bus/capability.hh"
+#include "bus/degrade.hh"
 #include "bus/gate.hh"
 #include "bus/image_format.hh"
 #include "bus/round.hh"
@@ -49,6 +50,9 @@ struct HostOptions {
     // #5393: the admission round budget (wall clock, cooldown, the
     // round cap). The checkpoint lives next to the socket.
     RoundBudget round_budget{};
+    // #5394: the degradation detector's configuration. Without watched
+    // keys the detector stays quiet.
+    DegradeConfig degrade{};
     // #5378: apply a KEEP'd trial's patches to the live workspace. Runs
     // on the coordinator thread; must be all-or-nothing (byte-identical
     // on failure). canary=true means the apply enters observation and a

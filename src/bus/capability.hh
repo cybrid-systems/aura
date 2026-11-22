@@ -165,6 +165,9 @@ enum class AuditKind : std::uint16_t {
     RoundRoll = 24,   // the round rolled back (fail closed)
     RoundBudget = 25, // the round was closed by the budget
     RoundResume = 26, // the host resumed from its checkpoint
+    // #5394: the degradation detector.
+    DegradeAlert = 27,  // the detector saw a sustained degradation
+    DegradeConfig = 28, // the detector's configuration changed
 };
 
 struct AuditEvent {

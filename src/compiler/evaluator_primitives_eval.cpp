@@ -1508,6 +1508,10 @@ void RegSplitParts::register_api_reference_primitive(PrimRegistrar add, Evaluato
                "statistical admission (#5391)\n";
         out += "  (bus:audit-replay session) / (bus:audit-evo session) — the audit replay: the "
                "worldline lineage, its integrity findings and the evo schema v2 export (#5392)\n";
+        out += "  (bus:round-open session) / (bus:round-state session) / (bus:round-budget "
+               "session) — the admission round state machine (#5393)\n";
+        out += "  (bus:degradation-state session) / (bus:degrade-install session ...) / "
+               "(bus:degrade-rollback session) — the host's degradation detector (#5394)\n";
         out += "  needs: read for subscribe/query/audit; publish for publish*; "
                "trial/keep/rollback; grant; constraint-write for constraint changes\n";
         out +=

@@ -53,7 +53,7 @@ bool write_file(const std::string& path, const char* text) {
 }
 
 pid_t run_script(const std::string& script, int* out_fd, int* in_fd, const char* window,
-                 const char* floor, const char* key) {
+                 const char* floor, const char* key, bool degrade = false) {
     int out[2], in[2];
     if (pipe(out) != 0 || pipe(in) != 0)
         return -1;
@@ -71,6 +71,13 @@ pid_t run_script(const std::string& script, int* out_fd, int* in_fd, const char*
         setenv("AURA_BUS_CANARY_WINDOW", window, 1);
         setenv("AURA_BUS_CANARY_FLOOR", floor, 1);
         setenv("AURA_BUS_CANARY_KEY", key, 1);
+        // #5394: the degradation detector watches the same metric.
+        if (degrade) {
+            setenv("AURA_BUS_DEGRADE_KEYS", key, 1);
+            setenv("AURA_BUS_DEGRADE_UP", key, 1);
+            setenv("AURA_BUS_DEGRADE_MIN_SAMPLES", "4", 1);
+            setenv("AURA_BUS_DEGRADE_LIMIT", "200000", 1);
+        }
         const std::string exe = aura_binary();
         execl(exe.c_str(), "aura", script.c_str(), static_cast<char*>(nullptr));
         _exit(24);
@@ -290,6 +297,39 @@ int main() {
         int status = 0;
         waitpid(pid, &status, 0);
         check(has(out, "DONE"), "busy host finished");
+    }
+
+    // 4. #5394: the degradation detector watches the same metric. A
+    //    sustained rise rolls the observation back — the candidate
+    //    degraded the metric it was supposed to improve.
+    {
+        int out_fd = -1, in_fd = -1;
+        const pid_t pid = run_script(d + "/host.aura", &out_fd, &in_fd, "8", "0", "9", true);
+        check(pid > 0, "fork the detector host");
+        check(wait_socket(sock), "detector socket appeared");
+        check(has(read_until(out_fd, "ready", 10000), "ready"), "detector host ready");
+        send_cmd(in_fd, "keep\n");
+        check(has(read_until(out_fd, "|", 10000), "keep=ok"), "detector: KEEP enters canary");
+        // The baseline, then a sustained rise: the detector fires.
+        send_cmd(in_fd, "metric 40\n");
+        (void)read_until(out_fd, "|", 10000);
+        for (int i = 0; i < 3; ++i) {
+            send_cmd(in_fd, "metric 1000\n");
+            (void)read_until(out_fd, "|", 10000);
+        }
+        send_cmd(in_fd, "choose\n");
+        check(has(read_until(out_fd, "|", 10000), "choose=6"),
+              "detector: the degraded candidate was rolled back");
+        send_cmd(in_fd, "audit\n");
+        const std::string a = read_until(out_fd, "|", 10000);
+        // DegradeAlert kind = 27, CanaryRevert kind = 16
+        check(has(a, "27"), "detector: the degradation alert is audited");
+        check(has(a, "16"), "detector: the observation was reverted");
+        ::close(in_fd);
+        const std::string out = read_all(out_fd);
+        int status = 0;
+        waitpid(pid, &status, 0);
+        check(has(out, "DONE"), "detector host finished");
     }
 
     if (g_failed == 0)

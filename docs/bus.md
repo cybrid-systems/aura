@@ -194,3 +194,14 @@ canary 拒绝)、`test_bus_closed_loop_e2e`(#5382,三进程正常闭环 + 五类
 - 断点续跑：宿主把轮次与**已封存候选**写进套接字旁的检查点文件（`<socket>.round`）。宿主重启后从检查点续上（轮次编号继续），且**已封存候选不再被应用第二次**（`already-sealed`）。候选身份用它的**内容**摘要（补丁目标 + 源码文本），不是补丁字节——后者含字符串表下标，跨宿主不稳定。
 - 宿主环境变量：`AURA_BUS_ROUND_WALL_MS`（每轮 wall 预算，默认 30000）、`AURA_BUS_ROUND_COOLDOWN_MS`（两轮之间的冷却，默认 0）、`AURA_BUS_ROUND_MAX`（轮次上限，默认 0＝不限）。
 - 审计新增：`RoundOpen`(20)、`RoundTrial`(21)、`RoundJudge`(22)、`RoundSeal`(23)、`RoundRoll`(24)、`RoundBudget`(25)、`RoundResume`(26)。
+
+### v0.3.2 退化检测(#5394)
+
+无人值守的起点是「自主检测退化」。宿主在 metrics 频道上盯住几个关键指标，跑 **EWMA + 单边 CUSUM 变点检测**：CUSUM 按指标自身量纲归一（ppm），所以阈值与单位无关；全部整数运算，同一批样本必然给出同一结论。
+
+- 检测到**持续退化** → 宿主**自己起轮**（轮次状态机的 signal 态）；若此刻正处于金丝雀观察期，则说明被观察的候选把指标搞坏了 → **自动撤回**该观察（复用 #5381 的回滚路径）。
+- **误触发有界**：最小观测窗口（样本不足不告警）+ 滞回（告警后必须回到基线、变化分数归零，才允许再次告警）。stationary 负载下不会起轮。
+- 检测器**版本化**：配置有版本号，每次安装/回滚都写审计（`DegradeConfig`），判决带上当时的版本。
+- 公共面：`(bus:degradation-state session)` → `(ok version samples alerts last-change min-samples drift limit calm keys)`，每个 key 行是 `(key higher-is-worse samples alerts ewma cusum-ppm)`；`(bus:degrade-install session min-samples alpha drift limit calm down-keys up-keys)` → `(ok version)`（需要 constraint-write）；`(bus:degrade-rollback session)` → `(ok version)`（需要 constraint-write）。
+- 宿主环境变量：`AURA_BUS_DEGRADE_KEYS`（盯住的指标键，逗号分隔）、`AURA_BUS_DEGRADE_UP`（其中「上升即退化」的键）、`AURA_BUS_DEGRADE_MIN_SAMPLES`、`AURA_BUS_DEGRADE_ALPHA`（EWMA 平滑，ppm）、`AURA_BUS_DEGRADE_DRIFT`（CUSUM 漂移，ppm）、`AURA_BUS_DEGRADE_LIMIT`（CUSUM 判决门限，ppm）、`AURA_BUS_DEGRADE_CALM`（滞回样本数）。不配置指标键时检测器保持安静，宿主行为与 v0.3.1 完全一致。
+- 审计新增：`DegradeAlert`(27)、`DegradeConfig`(28)。

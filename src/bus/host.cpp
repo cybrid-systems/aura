@@ -307,6 +307,8 @@ bool host_start(const HostOptions& opts, std::string* path_out, std::string* why
     host->server.set_round_budget(opts.round_budget);
     host->server.set_round_checkpoint_path(path + ".round");
     host->server.round_resume();
+    // #5394: the degradation detector's configuration.
+    host->server.set_degrade_config(opts.degrade);
     host->server.set_canary_window(opts.canary_window);
     host->server.set_canary_floor(opts.canary_floor);
     host->server.set_canary_metric_key(opts.canary_metric_key);

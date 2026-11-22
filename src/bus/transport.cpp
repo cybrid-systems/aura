@@ -1339,6 +1339,26 @@ void Server::round_resume() {
     }
 }
 
+// #5394: the detector saw a sustained degradation. While an
+// observation runs, the degradation belongs to the candidate under
+// observation: it is rolled back. Otherwise it is a signal: the host
+// opens a round.
+void Server::degrade_alert(std::uint64_t key) {
+    const std::uint64_t version = degrade_.version();
+    if (canary_worldline_ != 0) {
+        // #5381: the observation window reuses the detector — a
+        // candidate that degrades the metric does not hold up.
+        audit_.add_constraint(AuditKind::DegradeAlert, 0, canary_worldline_, key, version,
+                              "degrade-alert: the observation degraded");
+        canary_revert(canary_worldline_, "canary reverted: the detector saw a degradation");
+        return;
+    }
+    std::string why;
+    const bool opened = round_open(0, &why);
+    audit_.add_constraint(AuditKind::DegradeAlert, 0, 0, key, version,
+                          opened ? "degrade-alert: a round was opened" : "degrade-alert: " + why);
+}
+
 bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t root_token,
                             Capability& caps, LoanLedger& loans,
                             std::array<LoanLedger, 6>& channel_loans,
@@ -1660,7 +1680,7 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
                 // #5381: online metrics drive the canary observation. Run
                 // the check BEFORE the reply so a revert completes before
                 // the publisher's next form observes the workspace.
-                if (channel == Channel::Metrics && canary_worldline_ != 0) {
+                if (channel == Channel::Metrics) {
                     const std::uint64_t elem =
                         view.element_size != 0 ? view.element_size : sizeof(MetricRecord);
                     const std::uint64_t n = loan.length / elem;
@@ -1669,6 +1689,10 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
                         std::memcpy(
                             &m, image_base_ + loan.offset + i * elem,
                             static_cast<std::size_t>(std::min<std::uint64_t>(elem, sizeof(m))));
+                        // #5394: the detector watches the same metrics.
+                        std::uint64_t fired = 0;
+                        if (degrade_.observe(m.key_sym, m.value, &fired))
+                            degrade_alert(fired);
                         canary_check_metric(m.key_sym, m.value);
                     }
                 }
@@ -2068,6 +2092,112 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
             reply.version = round_.budget().version;
             const std::size_t n = std::min(round_.reason().size(), sizeof(reply.reason) - 1);
             std::memcpy(reply.reason, round_.reason().data(), n);
+            send_frame(conn_fd, FrameType::Credit, session,
+                       {reinterpret_cast<const std::byte*>(&reply), sizeof(reply)});
+            break;
+        }
+        case FrameType::DegradeQuery: {
+            // #5394: the detector's state and its configuration. A read.
+            if (header.len < sizeof(DegradeQueryBody))
+                break;
+            DegradeQueryBody request{};
+            std::memcpy(&request, body.data(), sizeof(request));
+            if (!require(kCapRead, 0, 0))
+                break;
+            const DegradeConfig& config = degrade_.config();
+            DegradeReplyBody reply{};
+            reply.version = config.version;
+            reply.samples = degrade_.samples();
+            reply.alerts = degrade_.alerts();
+            reply.last_change = degrade_.last_change();
+            reply.key_count = degrade_.states().size();
+            reply.min_samples = config.min_samples;
+            reply.ewma_alpha_ppm = config.ewma_alpha_ppm;
+            reply.drift_ppm = config.drift_ppm;
+            reply.limit_ppm = config.limit_ppm;
+            reply.calm_samples = config.calm_samples;
+            const std::size_t n = std::min(degrade_.states().size(), std::size_t{8});
+            std::vector<std::byte> out(sizeof(reply) + n * sizeof(DegradeKeyStateBody));
+            std::memcpy(out.data(), &reply, sizeof(reply));
+            for (std::size_t i = 0; i < n; ++i) {
+                const DegradeKeyState& state = degrade_.states()[i];
+                DegradeKeyStateBody wire{};
+                wire.key = state.key;
+                wire.higher_is_worse = state.higher_is_worse ? 1 : 0;
+                wire.samples = state.samples;
+                wire.alerts = state.alerts;
+                wire.ewma = state.ewma;
+                wire.cusum_ppm = state.cusum_ppm;
+                std::memcpy(out.data() + sizeof(reply) + i * sizeof(wire), &wire, sizeof(wire));
+            }
+            send_frame(conn_fd, FrameType::Credit, session, out);
+            break;
+        }
+        case FrameType::DegradeConfig: {
+            // #5394: install a new detector configuration or roll the
+            // previous one back. The configuration is a policy: it needs
+            // constraint-write, and every change is audited with its
+            // version.
+            if (header.len < sizeof(DegradeConfigBody))
+                break;
+            DegradeConfigBody request{};
+            std::memcpy(&request, body.data(), sizeof(request));
+            if (!require(kCapConstraintWrite, 0, 0))
+                break;
+            if ((request.flags & 1) != 0) {
+                // The rollback: the previous configuration returns.
+                if (!degrade_.rollback()) {
+                    deny(EPERM, "degrade: there is no previous configuration");
+                    break;
+                }
+                const DegradeConfig& config = degrade_.config();
+                audit_.add_constraint(AuditKind::DegradeConfig, root_token, 0, config.version,
+                                      config.version, "degrade-config: rolled back");
+                DegradeReplyBody reply{};
+                reply.version = config.version;
+                reply.min_samples = config.min_samples;
+                reply.ewma_alpha_ppm = config.ewma_alpha_ppm;
+                reply.drift_ppm = config.drift_ppm;
+                reply.limit_ppm = config.limit_ppm;
+                reply.calm_samples = config.calm_samples;
+                reply.key_count = config.keys.size();
+                send_frame(conn_fd, FrameType::Credit, session,
+                           {reinterpret_cast<const std::byte*>(&reply), sizeof(reply)});
+                break;
+            }
+            if (request.key_count > 16 ||
+                header.len <
+                    sizeof(DegradeConfigBody) + request.key_count * sizeof(DegradeKeyBody)) {
+                deny(EINVAL, "degrade: the configuration body is too short");
+                break;
+            }
+            DegradeConfig config{};
+            config.min_samples = request.min_samples;
+            config.ewma_alpha_ppm = request.ewma_alpha_ppm;
+            config.drift_ppm = request.drift_ppm;
+            config.limit_ppm = request.limit_ppm;
+            config.calm_samples = request.calm_samples;
+            config.version = degrade_.version() + 1;
+            for (std::uint64_t i = 0; i < request.key_count; ++i) {
+                DegradeKeyBody key{};
+                std::memcpy(&key, body.data() + sizeof(DegradeConfigBody) + i * sizeof(key),
+                            sizeof(key));
+                DegradeKey watched{};
+                watched.key = key.key;
+                watched.higher_is_worse = key.higher_is_worse != 0;
+                config.keys.push_back(watched);
+            }
+            degrade_.install(config);
+            audit_.add_constraint(AuditKind::DegradeConfig, root_token, 0, config.version,
+                                  config.version, "degrade-config: installed");
+            DegradeReplyBody reply{};
+            reply.version = config.version;
+            reply.min_samples = config.min_samples;
+            reply.ewma_alpha_ppm = config.ewma_alpha_ppm;
+            reply.drift_ppm = config.drift_ppm;
+            reply.limit_ppm = config.limit_ppm;
+            reply.calm_samples = config.calm_samples;
+            reply.key_count = config.keys.size();
             send_frame(conn_fd, FrameType::Credit, session,
                        {reinterpret_cast<const std::byte*>(&reply), sizeof(reply)});
             break;

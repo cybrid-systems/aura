@@ -661,6 +661,56 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                     opts.round_budget.cooldown_ms = std::strtoull(rc, nullptr, 10);
                 if (const char* rm = ::getenv("AURA_BUS_ROUND_MAX"))
                     opts.round_budget.max_rounds = std::strtoull(rm, nullptr, 10);
+                // #5394: the degradation detector. The watched metric
+                // keys come first; the keys where a *rise* is the
+                // degradation follow.
+                if (const char* keys = ::getenv("AURA_BUS_DEGRADE_KEYS")) {
+                    const std::string list(keys);
+                    std::size_t at = 0;
+                    while (at < list.size()) {
+                        const std::size_t comma = list.find(',', at);
+                        const std::string item = list.substr(
+                            at, comma == std::string::npos ? std::string::npos : comma - at);
+                        if (!item.empty()) {
+                            aura::bus::DegradeKey watched{};
+                            watched.key = std::strtoull(item.c_str(), nullptr, 10);
+                            watched.higher_is_worse = false;
+                            opts.degrade.keys.push_back(watched);
+                        }
+                        if (comma == std::string::npos)
+                            break;
+                        at = comma + 1;
+                    }
+                }
+                if (const char* up = ::getenv("AURA_BUS_DEGRADE_UP")) {
+                    const std::string list(up);
+                    std::size_t at = 0;
+                    while (at < list.size()) {
+                        const std::size_t comma = list.find(',', at);
+                        const std::string item = list.substr(
+                            at, comma == std::string::npos ? std::string::npos : comma - at);
+                        if (!item.empty()) {
+                            const std::uint64_t key = std::strtoull(item.c_str(), nullptr, 10);
+                            for (aura::bus::DegradeKey& watched : opts.degrade.keys) {
+                                if (watched.key == key)
+                                    watched.higher_is_worse = true;
+                            }
+                        }
+                        if (comma == std::string::npos)
+                            break;
+                        at = comma + 1;
+                    }
+                }
+                if (const char* ms = ::getenv("AURA_BUS_DEGRADE_MIN_SAMPLES"))
+                    opts.degrade.min_samples = std::strtoull(ms, nullptr, 10);
+                if (const char* al = ::getenv("AURA_BUS_DEGRADE_ALPHA"))
+                    opts.degrade.ewma_alpha_ppm = std::strtoull(al, nullptr, 10);
+                if (const char* dr = ::getenv("AURA_BUS_DEGRADE_DRIFT"))
+                    opts.degrade.drift_ppm = std::strtoull(dr, nullptr, 10);
+                if (const char* li = ::getenv("AURA_BUS_DEGRADE_LIMIT"))
+                    opts.degrade.limit_ppm = std::strtoull(li, nullptr, 10);
+                if (const char* ca = ::getenv("AURA_BUS_DEGRADE_CALM"))
+                    opts.degrade.calm_samples = std::strtoull(ca, nullptr, 10);
                 std::string out_path, why;
                 if (!aura::bus::host_start(opts, &out_path, &why))
                     return bus_error(ev, "transport-failed", why);
@@ -1111,6 +1161,143 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                                      make_int(static_cast<std::int64_t>(reply.opened)),
                                      make_int(static_cast<std::int64_t>(reply.sealed)),
                                      bus_string(ev, reason)});
+            }
+
+            // #5394: the degradation detector — its state, and the
+            // versioned configuration (install or roll back).
+            if (op == "degradation-state" || op == "degrade-install" || op == "degrade-rollback") {
+                std::int64_t sid = 0;
+                if (a.size() < 2 || !bus_int(a[1], &sid))
+                    return bus_error(ev, "validation-failed", "degrade verbs need a session id");
+                const auto sit = g_bus_sessions.find(sid);
+                if (sit == g_bus_sessions.end())
+                    return bus_error(ev, "unregistered-id", "unknown session");
+                auto& att = sit->second->att;
+                if (op == "degradation-state") {
+                    aura::bus::DegradeQueryBody req{};
+                    if (!aura::bus::send_frame(
+                            att.sock, aura::bus::FrameType::DegradeQuery, att.session,
+                            {reinterpret_cast<const std::byte*>(&req), sizeof(req)}))
+                        return bus_error(ev, "transport-failed", "degrade query send failed");
+                    aura::bus::FrameHeader hdr{};
+                    std::vector<std::byte> body(aura::bus::kBusMaxControlFrame);
+                    if (!recv_reply(att.sock, &hdr, &body))
+                        return bus_error(ev, "transport-failed", "degrade query reply lost");
+                    if (hdr.type == static_cast<std::uint16_t>(aura::bus::FrameType::Error)) {
+                        aura::bus::ErrorBody eb{};
+                        std::memcpy(&eb, body.data(), std::min(sizeof(eb), body.size()));
+                        return bus_error(ev, "permission", eb.message);
+                    }
+                    if (hdr.len < sizeof(aura::bus::DegradeReplyBody))
+                        return bus_error(ev, "validation-failed", "malformed degrade reply");
+                    aura::bus::DegradeReplyBody reply{};
+                    std::memcpy(&reply, body.data(), sizeof(reply));
+                    const std::uint64_t count =
+                        (hdr.len - sizeof(reply)) / sizeof(aura::bus::DegradeKeyStateBody);
+                    std::vector<EvalValue> rows;
+                    for (std::uint64_t i = 0; i < count; ++i) {
+                        aura::bus::DegradeKeyStateBody key{};
+                        std::memcpy(&key, body.data() + sizeof(reply) + i * sizeof(key),
+                                    sizeof(key));
+                        rows.push_back(
+                            bus_list(ev, {make_int(static_cast<std::int64_t>(key.key)),
+                                          make_int(static_cast<std::int64_t>(key.higher_is_worse)),
+                                          make_int(static_cast<std::int64_t>(key.samples)),
+                                          make_int(static_cast<std::int64_t>(key.alerts)),
+                                          make_int(key.ewma), make_int(key.cusum_ppm)}));
+                    }
+                    EvalValue listed = make_void();
+                    for (auto it = rows.rbegin(); it != rows.rend(); ++it)
+                        listed = make_pair(static_cast<std::uint64_t>(ev.push_pair(*it, listed)));
+                    return bus_list(ev, {bus_string(ev, "ok"),
+                                         make_int(static_cast<std::int64_t>(reply.version)),
+                                         make_int(static_cast<std::int64_t>(reply.samples)),
+                                         make_int(static_cast<std::int64_t>(reply.alerts)),
+                                         make_int(static_cast<std::int64_t>(reply.last_change)),
+                                         make_int(static_cast<std::int64_t>(reply.min_samples)),
+                                         make_int(static_cast<std::int64_t>(reply.drift_ppm)),
+                                         make_int(static_cast<std::int64_t>(reply.limit_ppm)),
+                                         make_int(static_cast<std::int64_t>(reply.calm_samples)),
+                                         listed});
+                }
+                // The configuration: install a new version or roll the
+                // previous one back.
+                aura::bus::DegradeConfigBody config{};
+                config.flags = op == "degrade-rollback" ? 1 : 0;
+                if (op == "degrade-install") {
+                    std::int64_t min_samples = 0, alpha = 0, drift = 0, limit = 0, calm = 0;
+                    if (a.size() < 7 || !bus_int(a[2], &min_samples) || !bus_int(a[3], &alpha) ||
+                        !bus_int(a[4], &drift) || !bus_int(a[5], &limit) || !bus_int(a[6], &calm))
+                        return bus_error(
+                            ev, "validation-failed",
+                            "degrade-install needs min-samples alpha drift limit calm keys");
+                    config.min_samples = static_cast<std::uint64_t>(min_samples);
+                    config.ewma_alpha_ppm = static_cast<std::uint64_t>(alpha);
+                    config.drift_ppm = static_cast<std::uint64_t>(drift);
+                    config.limit_ppm = static_cast<std::uint64_t>(limit);
+                    config.calm_samples = static_cast<std::uint64_t>(calm);
+                    // The keys: a list of key ids, and the ones where a
+                    // rise is the degradation.
+                    const auto pairs = ev.pairs();
+                    const auto read_keys = [&](std::size_t index,
+                                               std::vector<aura::bus::DegradeKeyBody>* out) {
+                        EvalValue cur = index < a.size() ? a[index] : make_void();
+                        while (is_pair(cur) && out->size() < 16) {
+                            const auto idx = as_pair_idx(cur);
+                            if (idx >= pairs.size())
+                                break;
+                            std::int64_t key = 0;
+                            if (!bus_int(pairs[idx].car, &key))
+                                break;
+                            aura::bus::DegradeKeyBody wire{};
+                            wire.key = static_cast<std::uint64_t>(key);
+                            out->push_back(wire);
+                            cur = pairs[idx].cdr;
+                        }
+                    };
+                    std::vector<aura::bus::DegradeKeyBody> down;
+                    std::vector<aura::bus::DegradeKeyBody> up;
+                    read_keys(7, &down);
+                    read_keys(8, &up);
+                    config.key_count = down.size() + up.size();
+                    std::vector<std::byte> payload(
+                        sizeof(config) + config.key_count * sizeof(aura::bus::DegradeKeyBody));
+                    std::memcpy(payload.data(), &config, sizeof(config));
+                    std::size_t at = sizeof(config);
+                    for (const auto& key : down) {
+                        std::memcpy(payload.data() + at, &key, sizeof(key));
+                        at += sizeof(key);
+                    }
+                    for (const auto& key : up) {
+                        aura::bus::DegradeKeyBody wire = key;
+                        wire.higher_is_worse = 1;
+                        std::memcpy(payload.data() + at, &wire, sizeof(wire));
+                        at += sizeof(wire);
+                    }
+                    if (!aura::bus::send_frame(att.sock, aura::bus::FrameType::DegradeConfig,
+                                               att.session, payload))
+                        return bus_error(ev, "transport-failed", "degrade config send failed");
+                } else {
+                    if (!aura::bus::send_frame(
+                            att.sock, aura::bus::FrameType::DegradeConfig, att.session,
+                            {reinterpret_cast<const std::byte*>(&config), sizeof(config)}))
+                        return bus_error(ev, "transport-failed", "degrade rollback send failed");
+                }
+                aura::bus::FrameHeader hdr{};
+                std::vector<std::byte> body(aura::bus::kBusMaxControlFrame);
+                if (!recv_reply(att.sock, &hdr, &body))
+                    return bus_error(ev, "transport-failed", "degrade config reply lost");
+                if (hdr.type == static_cast<std::uint16_t>(aura::bus::FrameType::Error)) {
+                    aura::bus::ErrorBody eb{};
+                    std::memcpy(&eb, body.data(), std::min(sizeof(eb), body.size()));
+                    return bus_error(ev, "permission", eb.message);
+                }
+                if (hdr.len < sizeof(aura::bus::DegradeReplyBody))
+                    return bus_error(ev, "validation-failed", "malformed degrade reply");
+                aura::bus::DegradeReplyBody reply{};
+                std::memcpy(&reply, body.data(), sizeof(reply));
+                return bus_list(
+                    ev, {bus_string(ev, "ok"), make_int(static_cast<std::int64_t>(reply.version))});
             }
 
             // #5392: replay the audit log — the reconstructed lineage,

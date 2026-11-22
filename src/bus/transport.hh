@@ -12,6 +12,7 @@
 #include "bus/capability.hh"
 #include "bus/channel.hh"
 #include "bus/constraint.hh"
+#include "bus/degrade.hh"
 #include "bus/gate.hh"
 #include "bus/image.hh"
 #include "bus/replay.hh"
@@ -79,6 +80,10 @@ enum class FrameType : std::uint16_t {
     // query the round state and its budget.
     RoundOpen = 28,
     RoundQuery = 29,
+    // #5394: the degradation detector — read its state, install a new
+    // configuration or roll the previous one back.
+    DegradeQuery = 30,
+    DegradeConfig = 31,
 };
 
 enum class RejectReason : std::uint16_t {
@@ -257,6 +262,54 @@ struct RoundReplyBody {
     char reason[48] = {};
 };
 
+// #5394: the degradation detector. The query reads its state; the
+// config frame installs a new configuration (kind 0) or rolls the
+// previous one back (kind 1). The keys follow the fixed prefix: one
+// (key, direction) pair per watched metric.
+struct DegradeQueryBody {
+    std::uint64_t kind = 0; // 0 = the state, 1 = the config
+    std::uint64_t reserved = 0;
+    std::uint64_t reserved2 = 0;
+};
+
+struct DegradeConfigBody {
+    std::uint64_t min_samples = 0;
+    std::uint64_t ewma_alpha_ppm = 0;
+    std::uint64_t drift_ppm = 0;
+    std::uint64_t limit_ppm = 0;
+    std::uint64_t calm_samples = 0;
+    std::uint64_t key_count = 0;
+    std::uint64_t flags = 0; // bit 0 = roll back instead of installing
+};
+
+struct DegradeKeyBody {
+    std::uint64_t key = 0;
+    std::uint64_t higher_is_worse = 0;
+};
+
+struct DegradeReplyBody {
+    std::uint64_t version = 0;
+    std::uint64_t samples = 0;
+    std::uint64_t alerts = 0;
+    std::uint64_t last_change = 0;
+    std::uint64_t key_count = 0;
+    std::uint64_t min_samples = 0;
+    std::uint64_t ewma_alpha_ppm = 0;
+    std::uint64_t drift_ppm = 0;
+    std::uint64_t limit_ppm = 0;
+    std::uint64_t calm_samples = 0;
+    char reason[32] = {};
+};
+
+struct DegradeKeyStateBody {
+    std::uint64_t key = 0;
+    std::uint64_t higher_is_worse = 0;
+    std::uint64_t samples = 0;
+    std::uint64_t alerts = 0;
+    std::int64_t ewma = 0;
+    std::int64_t cusum_ppm = 0;
+};
+
 struct LoanBody {
     std::uint64_t channel = 0;
     std::uint64_t offset = 0;
@@ -300,6 +353,11 @@ static_assert(sizeof(GrantBody) == 56);
 static_assert(sizeof(GrantReply) == 8);
 static_assert(sizeof(RoundRequestBody) == 24);
 static_assert(sizeof(RoundReplyBody) == 120);
+static_assert(sizeof(DegradeQueryBody) == 24);
+static_assert(sizeof(DegradeConfigBody) == 56);
+static_assert(sizeof(DegradeKeyBody) == 16);
+static_assert(sizeof(DegradeReplyBody) == 112);
+static_assert(sizeof(DegradeKeyStateBody) == 48);
 static_assert(sizeof(LoanBody) == 40);
 static_assert(sizeof(EvidenceBody) == 48);
 
@@ -503,6 +561,13 @@ public:
     // Load the checkpoint and continue the round counter: a restarted
     // host resumes instead of repeating the sealed work.
     void round_resume();
+    // #5394: the degradation detector. The host watches the configured
+    // metrics and opens a round when a degradation is sustained.
+    void set_degrade_config(const DegradeConfig& config) { degrade_.configure(config); }
+    [[nodiscard]] const DegradeDetector& degrade() const { return degrade_; }
+    // The detector fired: open a round (the signal state) or, while an
+    // observation runs, roll that observation back.
+    void degrade_alert(std::uint64_t key);
 
     // Loan ledgers of the most recent single-peer session (accept_one /
     // wait_disconnect). serve() keeps per-session ledgers in its table.
@@ -654,6 +719,8 @@ private:
     RoundMachine round_{};
     RoundCheckpoint round_checkpoint_{};
     std::string round_checkpoint_path_;
+    // #5394: the degradation detector.
+    DegradeDetector degrade_{};
     // #5381: at most one active canary; its window/floor parameters.
     std::uint64_t canary_worldline_ = 0;
     std::uint64_t canary_window_ = 0;
