@@ -739,6 +739,8 @@ private:
     void notify_peers(std::uint64_t except_session);
     // Append one worldline ledger record into the worldlines channel.
     void project_worldline(std::uint64_t id, WorldlineState state, ConstraintResult cr);
+    // Re-project a record without rewriting the state it carries.
+    void project_worldline_preserving(std::uint64_t id);
     // #5379: digest of a trial's committed patch bytes (FNV-1a 64).
     std::uint64_t candidate_digest(std::uint64_t worldline) const;
     // #5393: the digest of the candidate's *content* — the patch

@@ -761,6 +761,35 @@ bool Server::install_policy(const Capability& caps, WorkspacePolicy policy, std:
 // multi-peer coordinator; session state arrives by reference so a
 // crash/EOF reclaim never touches another session's ledgers.
 
+// Re-project a worldline record, keeping the state and the constraint
+// result it already carries: a field that changes after the record was
+// published (the gate verdict, #5391) must not rewrite the state.
+void Server::project_worldline_preserving(std::uint64_t id) {
+    WorldlineState state = WorldlineState::Pending;
+    ConstraintResult cr = ConstraintResult::None;
+    if (image_base_ != nullptr) {
+        SectionEntry se{};
+        ChannelView view{};
+        if (find_section({image_base_, image_size_}, SectionKind::Worldlines, &se) &&
+            channel_view({image_base_, image_size_}, Channel::Worldlines, &view)) {
+            const std::uint64_t elem =
+                view.element_size != 0 ? view.element_size : sizeof(WorldlineRecord);
+            const auto* base = static_cast<const std::byte*>(image_base_);
+            for (std::uint64_t i = 0; i < view.count; ++i) {
+                WorldlineRecord w{};
+                std::memcpy(&w, base + view.offset + i * elem,
+                            static_cast<std::size_t>(std::min<std::uint64_t>(elem, sizeof(w))));
+                if (w.id == id) {
+                    state = static_cast<WorldlineState>(w.state);
+                    cr = static_cast<ConstraintResult>(w.constraint_result);
+                    break;
+                }
+            }
+        }
+    }
+    project_worldline(id, state, cr);
+}
+
 void Server::project_worldline(std::uint64_t id, WorldlineState state, ConstraintResult cr) {
     if (image_base_ == nullptr)
         return;
@@ -1116,6 +1145,11 @@ bool Server::gate_check(std::uint64_t worldline, std::uint64_t token, std::strin
     std::string reason;
     const GateVerdictRecord rec = gate_admit(gev, family, gate_policy_, &reason);
     gate_verdicts_[worldline] = rec;
+    // The verdict travels with the worldline record (#5391): a reader
+    // asks `bus:gate-evidence` and sees what the statistics decided.
+    // The record was projected before the verdict existed, so it is
+    // projected again now (keeping the state it already carries).
+    project_worldline_preserving(worldline);
     audit_.add_constraint(
         AuditKind::GateVerdict, token, worldline, rec.verdict, gate_policy_.version,
         std::string("gate-") + reason + ": observed " + std::to_string(rec.observed_ppm) +
