@@ -5,6 +5,7 @@
 // unscoped third party's KEEP is refused with permission.
 
 #include <cstdio>
+#include <map>
 #include <cstdlib>
 #include <cstring>
 #include <string>
@@ -77,8 +78,13 @@ pid_t run_script(const std::string& script, int* out_fd, int* in_fd) {
     return pid;
 }
 
+// The bytes past the marker: one pipe read can carry more than one
+// line, and the next command's reply must not be lost with it.
+std::map<int, std::string> g_pending;
+
 std::string read_all(int fd) {
-    std::string s;
+    std::string s = g_pending[fd];
+    g_pending.erase(fd);
     char buf[512];
     ssize_t n;
     while ((n = ::read(fd, buf, sizeof(buf))) > 0)
@@ -89,31 +95,27 @@ std::string read_all(int fd) {
 
 // Read until a marker line appears or the pipe closes / times out.
 std::string read_until(int fd, const char* marker, int timeout_ms) {
-    std::string s;
-    char buf[512];
+    std::string& buffer = g_pending[fd];
+    const std::size_t len = std::strlen(marker);
     int waited = 0;
-    while (waited < timeout_ms) {
+    while (buffer.find(marker) == std::string::npos && waited < timeout_ms) {
         struct pollfd pfd{fd, POLLIN, 0};
         const int pr = ::poll(&pfd, 1, 50);
         waited += 50;
-        if (pr > 0 && (pfd.revents & POLLIN)) {
+        if (pr > 0 && (pfd.revents & (POLLIN | POLLHUP))) {
+            char buf[512];
             const ssize_t n = ::read(fd, buf, sizeof(buf));
             if (n <= 0)
                 break;
-            s.append(buf, static_cast<std::size_t>(n));
-            if (s.find(marker) != std::string::npos)
-                break;
-        } else if (pr > 0 && (pfd.revents & POLLHUP)) {
-            // Drain any remaining bytes before the hangup.
-            const ssize_t n = ::read(fd, buf, sizeof(buf));
-            if (n <= 0)
-                break;
-            s.append(buf, static_cast<std::size_t>(n));
-            if (s.find(marker) != std::string::npos)
-                break;
+            buffer.append(buf, static_cast<std::size_t>(n));
         }
     }
-    return s;
+    const std::size_t at = buffer.find(marker);
+    if (at == std::string::npos)
+        return std::string();
+    std::string out = buffer.substr(0, at + len);
+    buffer.erase(0, at + len);
+    return out;
 }
 
 bool has(const std::string& out, const char* line) {
@@ -284,7 +286,9 @@ int main() {
         // Host still serves: ask for the live score (unchanged, the
         // crashed proposer's trial never applied).
         check(::write(host_in, "score\n", 6) == 6, "send score command");
-        const std::string hscore = read_until(host_out, "score=", 10000);
+        // The reader stops at the marker: the value follows it.
+        const std::string hscore =
+            read_until(host_out, "score=", 10000) + read_until(host_out, "\n", 10000);
         check(has(hscore, "score=6"), "host workspace intact after proposer crash (score=6)");
 
         ::close(host_in);

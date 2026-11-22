@@ -351,6 +351,9 @@ Server::~Server() {
 }
 
 void Server::stop() {
+    // The flag comes first: the serving thread leaves on the flag, not
+    // on the bell (a stray write must not stop the coordinator).
+    stop_requested_ = true;
     // Shutdown, not close: the serving thread may be blocked in accept
     // or recv on these fds and must observe the error before closing.
     if (listen_fd_ >= 0)
@@ -2520,12 +2523,15 @@ void Server::serve(const BuildFn& build) {
         // round that runs out of time is closed even when the peers go
         // quiet.
         round_budget_check();
-        // stop() rang the wake bell: leave without touching sessions.
-        if (wake_fd_ >= 0 && pfds[1].revents != 0) {
+        // The wake bell is a wakeup, not an exit: only a stop() request
+        // stops the coordinator. A stray write (or a recycled
+        // descriptor) must not take the bus down.
+        if (wake_fd_ >= 0 && (pfds[1].revents & POLLIN) != 0) {
             std::uint64_t count = 0;
             ssize_t ignored = ::read(wake_fd_, &count, sizeof(count));
             (void)ignored;
-            break;
+            if (stop_requested_)
+                break;
         }
         if ((pfds[0].revents & POLLIN) != 0) {
             // Accept every pending connection without blocking: the
@@ -2551,8 +2557,9 @@ void Server::serve(const BuildFn& build) {
             }
             ::fcntl(listen_fd_, F_SETFL, lfl);
         }
-        if ((pfds[0].revents & (POLLERR | POLLHUP | POLLNVAL)) != 0)
+        if ((pfds[0].revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) {
             break; // listener shut down by stop()
+        }
         // Service the peers present at poll time. A feed may dispatch a
         // frame whose handler (KEEP apply) re-enters the bus from the host
         // eval thread; that is serialized by g_bus_mutex on the eval side.

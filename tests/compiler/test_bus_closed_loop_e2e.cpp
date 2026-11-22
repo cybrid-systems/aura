@@ -7,6 +7,7 @@
 // worldline lineage.
 
 #include <cstdio>
+#include <map>
 #include <cstdlib>
 #include <cstring>
 #include <string>
@@ -83,34 +84,43 @@ pid_t run_script(const std::string& script, int* out_fd, int* in_fd) {
     return pid;
 }
 
+// The bytes past the marker: one pipe read can carry more than one
+// line, and the next command's reply must not be lost with it.
+std::map<int, std::string> g_pending;
+
 std::string read_until(int fd, const char* marker, int timeout_ms) {
-    std::string s;
-    char buf[512];
+    std::string& buffer = g_pending[fd];
+    const std::size_t len = std::strlen(marker);
     int waited = 0;
-    while (waited < timeout_ms) {
+    while (buffer.find(marker) == std::string::npos && waited < timeout_ms) {
         struct pollfd pfd{fd, POLLIN, 0};
         const int pr = ::poll(&pfd, 1, 50);
         waited += 50;
         if (pr > 0 && (pfd.revents & (POLLIN | POLLHUP))) {
+            char buf[512];
             const ssize_t n = ::read(fd, buf, sizeof(buf));
             if (n <= 0)
                 break;
-            s.append(buf, static_cast<std::size_t>(n));
-            if (s.find(marker) != std::string::npos)
-                break;
+            buffer.append(buf, static_cast<std::size_t>(n));
         }
     }
-    return s;
+    const std::size_t at = buffer.find(marker);
+    if (at == std::string::npos)
+        return std::string();
+    std::string out = buffer.substr(0, at + len);
+    buffer.erase(0, at + len);
+    return out;
 }
 
 std::string read_all(int fd) {
-    std::string s;
+    std::string out = g_pending[fd];
+    g_pending.erase(fd);
     char buf[512];
     ssize_t n;
     while ((n = ::read(fd, buf, sizeof(buf))) > 0)
-        s.append(buf, static_cast<std::size_t>(n));
+        out.append(buf, static_cast<std::size_t>(n));
     ::close(fd);
-    return s;
+    return out;
 }
 
 bool has(const std::string& out, const char* line) {

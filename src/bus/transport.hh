@@ -680,6 +680,9 @@ private:
     // serve() path: the session table and the wake eventfd stop() writes.
     std::vector<PeerSession> peers_;
     int wake_fd_ = -1;
+    // #5394: only a stop() request stops the coordinator; the wake
+    // bell is just a wakeup.
+    bool stop_requested_ = false;
     SandboxPreset preset_ = SandboxPreset::Dev;
     CapabilityTable caps_table_{};
     AuditLog audit_{};
