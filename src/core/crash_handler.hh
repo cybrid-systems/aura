@@ -222,6 +222,30 @@ inline void install_fatal_signal_handlers() {
         if (n > 0)
             (void)!::write(2, hdr, n);
 
+        // 2b) SIGABRT is a deliberate abort(): the stack is intact, so
+        // the frames can be walked. A memory fault is not — the frame
+        // chain there can be corrupt, which is why backtrace(3) is only
+        // used for the abort path.
+        if (sig == SIGABRT) {
+            void* frames[64];
+            const int count = ::backtrace(frames, 64);
+            for (int i = 0; i < count; ++i) {
+                Dl_info info{};
+                char line[512];
+                int ln = 0;
+                if (::dladdr(frames[i], &info) && info.dli_fname != nullptr) {
+                    const auto off = reinterpret_cast<std::uintptr_t>(frames[i]) -
+                                     reinterpret_cast<std::uintptr_t>(info.dli_fbase);
+                    ln = std::snprintf(line, sizeof(line), "  #%d %s+0x%zx\n", i, info.dli_fname,
+                                       off);
+                } else {
+                    ln = std::snprintf(line, sizeof(line), "  #%d %p\n", i, frames[i]);
+                }
+                if (ln > 0)
+                    (void)!::write(2, line, ln);
+            }
+        }
+
         // 3) Symbol-resolve the faulting IP (and si_addr) with dladdr.
         //    dladdr is async-signal-safe (POSIX) and works on the alt stack.
         //    Requires -rdynamic to see internal symbols; otherwise we still
