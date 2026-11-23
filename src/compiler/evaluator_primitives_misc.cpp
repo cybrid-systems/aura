@@ -630,9 +630,13 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                 const std::uint64_t size = state->att.size;
                 const std::uint64_t granted = state->att.caps;
                 g_bus_sessions[sid] = std::move(state);
-                return bus_list(ev, {bus_string(ev, "ok"), make_int(sid),
-                                     make_int(static_cast<std::int64_t>(size)),
-                                     make_int(static_cast<std::int64_t>(granted))});
+                // #5408: size and the granted capability mask are raw
+                // 64-bit values from HelloOk; promote instead of aborting
+                // when one is outside the fixnum domain.
+                return bus_list(ev,
+                                {bus_string(ev, "ok"), make_int(sid),
+                                 types::make_int_or_promote(static_cast<std::int64_t>(size)),
+                                 types::make_int_or_promote(static_cast<std::int64_t>(granted))});
             }
 
             if (op == "detach") {

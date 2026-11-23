@@ -381,6 +381,8 @@ int main() {
               "#5408: the fingerprint stays a fixnum");
         check(src.find("pkg.five.candidate_hash & kImm") != std::string::npos,
               "#5408: the candidate hash stays a fixnum");
+        check(src.find("#5408: size and the granted capability mask") != std::string::npos,
+              "#5408: attach promotes 64-bit size/caps");
     }
 
     return g_failed == 0 ? 0 : 1;
