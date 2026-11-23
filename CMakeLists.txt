@@ -1872,7 +1872,8 @@ add_test(NAME test_error_kind_names_wire_verification COMMAND ./test_error_kind_
 add_library(aura-bus STATIC src/bus/image.cpp src/bus/image_schema.cpp src/bus/transport.cpp
                                  src/bus/capability.cpp src/bus/channel.cpp src/bus/constraint.cpp
                                  src/bus/query.cpp src/bus/host.cpp src/bus/gate.cpp src/bus/replay.cpp
-                                 src/bus/round.cpp src/bus/degrade.cpp src/bus/slo.cpp src/bus/tasks.cpp)
+                                 src/bus/round.cpp src/bus/degrade.cpp src/bus/slo.cpp src/bus/tasks.cpp
+                                 src/bus/approval.cpp)
 target_include_directories(aura-bus PUBLIC ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(aura PRIVATE aura-bus)
 # Issue #5127/#5122: evaluator_primitives_misc.cpp's bus-call bridge
@@ -2110,6 +2111,14 @@ target_compile_features(test_bus_tasks PUBLIC cxx_std_26)
 target_link_libraries(test_bus_tasks PRIVATE aura-bus)
 aura_strict_test_warnings(tests/compiler/test_bus_tasks.cpp)
 add_test(NAME test_bus_tasks_5399 COMMAND ./test_bus_tasks)
+
+# Issue #5404: the approval point and its fail-closed timeout.
+add_executable(test_bus_approval tests/compiler/test_bus_approval.cpp)
+target_include_directories(test_bus_approval PRIVATE src)
+target_compile_features(test_bus_approval PUBLIC cxx_std_26)
+target_link_libraries(test_bus_approval PRIVATE aura-bus)
+aura_strict_test_warnings(tests/compiler/test_bus_approval.cpp)
+add_test(NAME test_bus_approval_5404 COMMAND ./test_bus_approval)
 
 # Issue #5373: a stale short-circuit name-cache row must not hijack a
 # later form whose pool-local SymId collides; display output was dropped.

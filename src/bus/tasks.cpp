@@ -133,6 +133,7 @@ void TaskBoard::apply(const TaskRecord& event) {
             task.id = event.task_id;
             task.parent = event.parent;
             task.ref = event.ref;
+            task.flags = event.flags;
             task.state = TaskState::Open;
             tasks_[task.id] = task;
             next_id_ = std::max(next_id_, task.id + 1);
@@ -194,12 +195,13 @@ bool TaskBoard::persist(const TaskRecord& event) {
     return true;
 }
 
-bool TaskBoard::post(std::uint64_t actor, std::uint64_t parent, std::uint64_t ref, Task* out,
-                     TaskRecord* event, std::string* why) {
+bool TaskBoard::post(std::uint64_t actor, std::uint64_t parent, std::uint64_t ref,
+                     std::uint64_t flags, Task* out, TaskRecord* event, std::string* why) {
     Task task{};
     task.id = next_id_++;
     task.parent = parent;
     task.ref = ref;
+    task.flags = flags;
     task.state = TaskState::Open;
     TaskRecord record{};
     record.task_id = task.id;
@@ -207,6 +209,7 @@ bool TaskBoard::post(std::uint64_t actor, std::uint64_t parent, std::uint64_t re
     record.kind = static_cast<std::uint64_t>(TaskEventKind::Post);
     record.actor = actor;
     record.ref = ref;
+    record.flags = flags;
     if (!persist(record)) {
         --next_id_;
         if (why)
@@ -481,6 +484,18 @@ bool TaskBoard::get(std::uint64_t id, Task* out) const {
     if (out)
         *out = it->second;
     return true;
+}
+
+bool TaskBoard::next_open(Task* out) const {
+    for (const auto& [id, task] : tasks_) {
+        (void)id;
+        if (task.state != TaskState::Open)
+            continue;
+        if (out)
+            *out = task;
+        return true;
+    }
+    return false;
 }
 
 std::vector<Task> TaskBoard::list() const {

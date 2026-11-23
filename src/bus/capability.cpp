@@ -38,6 +38,8 @@ const char* capability_name(std::uint64_t bit) {
             return "grant";
         case kCapConstraintWrite:
             return "constraint-write";
+        case kCapApprove:
+            return "approve";
     }
     return "unknown";
 }

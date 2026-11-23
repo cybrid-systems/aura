@@ -9,6 +9,7 @@
 #ifndef AURA_BUS_TRANSPORT_HH
 #define AURA_BUS_TRANSPORT_HH
 
+#include "bus/approval.hh"
 #include "bus/capability.hh"
 #include "bus/channel.hh"
 #include "bus/constraint.hh"
@@ -104,6 +105,9 @@ enum class FrameType : std::uint16_t {
     // by one, not by six.
     TaskAction = 36,
     TaskReply = 37,
+    // #5404: request/approve/deny an object (a task/contract id).
+    ApprovalAction = 38,
+    ApprovalReply = 39,
 };
 
 enum class RejectReason : std::uint16_t {
@@ -417,6 +421,23 @@ struct TaskReplyBody {
     char reason[32] = {};
 };
 
+// #5404: decision 0 requests a pending approval (timeout default 5 min),
+// 1 approves, 2 denies. object is a task id (or a contract fingerprint).
+struct ApprovalRequestBody {
+    std::uint64_t object = 0;
+    std::uint64_t decision = 0;
+    std::uint64_t timeout_ms = 0;
+    std::uint64_t reserved = 0;
+};
+
+struct ApprovalReplyBody {
+    std::uint64_t object = 0;
+    std::uint64_t state = 0; // ApprovalState
+    std::uint64_t deadline_ms = 0;
+    std::uint64_t actor = 0;
+    char reason[32] = {};
+};
+
 // #5397: the reproduction package of one worldline. It carries
 // everything the admission decision was made from, so the decision can
 // be re-run offline and must land on the same verdict.
@@ -463,6 +484,8 @@ static_assert(sizeof(LoanBody) == 40);
 static_assert(sizeof(EvidenceBody) == 48);
 static_assert(sizeof(TaskRequestBody) == 56);
 static_assert(sizeof(TaskReplyBody) == 96);
+static_assert(sizeof(ApprovalRequestBody) == 32);
+static_assert(sizeof(ApprovalReplyBody) == 64);
 
 struct TransportError {
     int code = 0; // errno or RejectReason
@@ -783,6 +806,9 @@ private:
     // and expire leases whose deadline passed.
     void commit_task_event(const TaskRecord& event);
     void task_expire();
+    // #5404: the approval board and its expiry sweep.
+    void approval_expire();
+    [[nodiscard]] const ApprovalBoard& approvals() const { return approvals_; }
     // Return every task a cleanly detaching session still holds.
     void task_release_owner(std::uint64_t owner);
     // Re-project a record without rewriting the state it carries.
@@ -881,6 +907,8 @@ private:
     std::string round_checkpoint_path_;
     // #5399: the task board and its checkpoint.
     TaskBoard tasks_{};
+    // #5404: task/scoped-contract approvals.
+    ApprovalBoard approvals_{};
     std::string task_checkpoint_path_;
     // #5394: the degradation detector.
     DegradeDetector degrade_{};

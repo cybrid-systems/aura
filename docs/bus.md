@@ -26,7 +26,7 @@
 
 ## 能力
 
-- 位：`read`、`publish`、`trial`、`keep`、`rollback`、`grant`、`constraint-write`。订阅、查询和审计读取不是新位，它们是 `read` 加频道掩码。
+- 位：`read`、`publish`、`trial`、`keep`、`rollback`、`grant`、`constraint-write`、`approve`。订阅、查询和审计读取不是新位，它们是 `read` 加频道掩码。
 - 每个能力还带频道掩码、workspace、可选 loan 配额、到期代次、worldline 作用域和 task 作用域。派生只能缩小，不能加位、加频道、放宽配额/到期/作用域，也不能换 workspace；task 作用域只能收窄到一个任务，不能改到另一个任务。
 - 附着时按工作区允许策略授予请求的子集；角色（perf/harness/maintainer）只是提示，未知角色默认拒绝。
 - 只有持有 `grant` 的会话才能再授权，且形成派生树；撤销祖先会递归失效。
@@ -108,7 +108,7 @@
 - **被拒绝的附着只结束该连接**(#5383):未知角色、workspace 不符、schema/uid
   不符、握手半途 EOF 等拒绝会关闭该连接并继续 accept,不停服务循环;只有
   unhost/监听失效才退出。一个配置错误的对端不会瘫痪整条总线。
-- **任务看板**（#5399）：`bus:post-task` / `bus:claim` / `bus:heartbeat` / `bus:complete` / `bus:fail` / `bus:task-status`。任务有 id、父任务、契约引用（ref）、持有者、租约代次和到期时间；同一任务同一时刻只有一个有效租约，双 claim 被拒（`task-claimed`），非持有者心跳/完成被拒（`task-not-owner`）。租约到期后任务回到 open，其他对端可认领；干净 `bus:detach` 立即释放，崩溃（EOF）则等到租约到期。任务事件写入 channel 6，并追加到套接字旁的 `.tasks` 检查点；`bus:unhost`/`bus:host` 重启后从检查点恢复未完成任务。
+- **任务看板**（#5399/#5404）：`bus:post-task` / `bus:claim` / `bus:heartbeat` / `bus:complete` / `bus:fail` / `bus:task-status`；`bus:approve` 是人工批准点（decision 0 请求、1 批准、2 拒绝，pending 超时即拒绝）。任务有 id、父任务、契约引用（ref）、持有者、租约代次和到期时间；同一任务同一时刻只有一个有效租约，双 claim 被拒（`task-claimed`），非持有者心跳/完成被拒（`task-not-owner`）。租约到期后任务回到 open，其他对端可认领；干净 `bus:detach` 立即释放，崩溃（EOF）则等到租约到期。任务事件写入 channel 6，并追加到套接字旁的 `.tasks` 检查点；`bus:unhost`/`bus:host` 重启后从检查点恢复未完成任务。
 - 宿主进程自己也可以 `bus:attach` 成为对端(同进程经套接字,统一路径)。
 - **映像跨会话持久**(#5128 完成线):一条总线一份映像。首个对端附着时创建并
   封印映像,之后每个对端拿到同一个 memfd 的新映射——前一个工具提交的 CCT /

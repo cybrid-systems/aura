@@ -26,10 +26,14 @@ enum CapBit : std::uint64_t {
     kCapRollback = 1ull << 4,
     kCapGrant = 1ull << 5,
     kCapConstraintWrite = 1ull << 6,
+    // #5404: the human approval point. Separate from constraint-write:
+    // approving a contract is not the same authority as rewriting the gate.
+    kCapApprove = 1ull << 7,
 };
 
-inline constexpr std::uint64_t kCapAll =
-    kCapRead | kCapPublish | kCapTrial | kCapKeep | kCapRollback | kCapGrant | kCapConstraintWrite;
+inline constexpr std::uint64_t kCapAll = kCapRead | kCapPublish | kCapTrial | kCapKeep |
+                                         kCapRollback | kCapGrant | kCapConstraintWrite |
+                                         kCapApprove;
 
 const char* capability_name(std::uint64_t bit);
 
@@ -201,6 +205,11 @@ enum class AuditKind : std::uint16_t {
     TaskFail = 35,
     TaskRelease = 36,
     TaskExpire = 37,
+    // #5404: the human approval point.
+    ApprovalRequest = 38,
+    ApprovalGrant = 39,
+    ApprovalDeny = 40,
+    ApprovalTimeout = 41,
 };
 
 struct AuditEvent {

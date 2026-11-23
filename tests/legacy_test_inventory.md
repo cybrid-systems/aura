@@ -18,8 +18,8 @@ This file is not the decision tree for a new test. Ask `python3 tests/run.py hom
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 953 | Preferred destination suites |
-| **Total scanned** | **953** | |
+| `tests/core/test_*.cpp` | 954 | Preferred destination suites |
+| **Total scanned** | **954** | |
 
 ### Related artifacts
 
@@ -43,7 +43,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 89 | 89 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 56 | 56 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 135 | 135 | P2 — often thin schema probes; collapse into obs matrix |
-| `uncategorized` | Uncategorized / mixed | 0 | 0 | 82 | 82 | P3 — review case-by-case |
+| `uncategorized` | Uncategorized / mixed | 0 | 0 | 83 | 83 | P3 — review case-by-case |
 
 ## Patterns, harness usage, coupling
 
@@ -289,6 +289,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_bugfix.cpp`
 - `tests/compiler/test_build_kv_hash_batch.cpp`
 - `tests/compiler/test_bus_adversarial_peer.cpp`
+- `tests/compiler/test_bus_approval.cpp`
 - `tests/compiler/test_bus_audit_replay.cpp`
 - `tests/compiler/test_bus_canary_rollback.cpp`
 - `tests/compiler/test_bus_capability.cpp`
@@ -2118,13 +2119,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_verify_parse_shared_helper.cpp` (—) [domain_suite, theme_compiler] — Issue #1771 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_workspace_mtx_contention.cpp` (—) [domain_suite, theme_compiler] — AC1: Source cites #2523; residual strategy documented
 
-### `uncategorized` — Uncategorized / mixed (82)
+### `uncategorized` — Uncategorized / mixed (83)
 
 **Target:** manual triage before domain placement
 
 **Priority:** P3 — review case-by-case
 
-#### domain/ (82)
+#### domain/ (83)
 
 - `tests/core/test_address_bits_scratch.cpp` (—) [domain_suite, theme_core] — AC1: bit_cast round-trips a pointer and an integer address
 - `tests/compiler/test_and_or_error_value.cpp` (—) [domain_suite, theme_compiler] — (#4535 contract: only the UNCAUGHT face prints).
@@ -2135,6 +2136,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_aura_result_error_policy.cpp` (—) [domain_suite, theme_compiler] — test_aura_result_error_policy.cpp — Issues #807 + #808:
 - `tests/compiler/test_bugfix.cpp` (—) [domain_suite, theme_compiler] — Issue #957/#968/#982/#984 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_bus_adversarial_peer.cpp` (—) [domain_suite, theme_compiler] — Issue #5396: the adversarial peer boundaries.
+- `tests/compiler/test_bus_approval.cpp` (—) [small, domain_suite, theme_compiler] — Issue #5404: the human approval point. A pending object has a
 - `tests/compiler/test_bus_audit_replay.cpp` (—) [large, domain_suite, theme_compiler] — Issue #5392: audit replay and deterministic reproduction.
 - `tests/compiler/test_bus_constraint_defaults.cpp` (—) [domain_suite, theme_compiler] — Issue #5401: target-allowlist and metric-floor-bound are fail-closed.
 - `tests/compiler/test_bus_constraints.cpp` (—) [domain_suite, theme_compiler] — Issue #5126: constraint gate on KEEP, versioned sets, audit.

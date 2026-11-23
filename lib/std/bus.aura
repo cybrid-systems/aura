@@ -24,7 +24,7 @@
         bus:degradation-state bus:degrade-install bus:degrade-rollback
         bus:slo bus:capacity-plan
         bus:post-task bus:claim bus:heartbeat bus:complete bus:fail
-        bus:task-status
+        bus:task-status bus:approve
         bus:status bus:code bus:message bus:ok? bus:help
         bus:attach? bus:error? bus:record?)
 
@@ -295,11 +295,20 @@
   (bus-call "degrade-rollback" session))
 
 ; ── v0.3.3 任务看板(#5399) ───────────────────────────────────
-; (bus:post-task session parent ref) -> (ok id state owner epoch deadline parent ref)
+; (bus:post-task session parent ref [flags]) -> (ok id state owner epoch deadline parent ref)
 ; Publish a task. parent/ref are opaque (a parent task id, a contract
-; fingerprint or a worldline).
-(define (bus:post-task session parent ref)
-  (bus-call "post-task" session parent ref))
+; fingerprint or a worldline). flags bit 0 means the task needs an
+; approval before it can be claimed (#5404).
+(define (bus:post-task session parent ref . flags)
+  (bus-call "post-task" session parent ref (if (pair? flags) (car flags) 0)))
+
+; (bus:approve session object decision timeout-ms) -> (ok object state deadline)
+; decision 0 requests a pending approval, 1 approves, 2 denies, 3
+; queries the current state. A pending object that times out is denied
+; (state 3); a task with flag bit 0 cannot be claimed until its object
+; is approved. Needs approve.
+(define (bus:approve session object decision timeout-ms)
+  (bus-call "approve" session object decision timeout-ms))
 
 ; (bus:claim session lease-ms [task-id]) -> (ok id state owner epoch deadline parent ref)
 ; Atomically claim a specific task, or the oldest open one when task-id
@@ -392,7 +401,8 @@
     "round: (bus:round-open session) -> (ok round-id phase); (bus:round-state session) -> (ok phase round-id worldline opened sealed reason); (bus:round-budget session) -> (ok wall-ms cooldown-ms max-rounds version); the admission round state machine\n"
     "degrade: (bus:degradation-state session) -> (ok version samples alerts last-change min-samples drift limit calm keys); (bus:degrade-install session min-samples alpha drift limit calm down-keys up-keys) / (bus:degrade-rollback session) -> (ok version); the host's degradation detector\n"
     "slo: (bus:slo session) -> (ok frames frame-cpu-ns p99-cpu-ns publishes publish-cpu-ns attaches attach-cpu-ns catchups catchup-max); (bus:capacity-plan session) -> (ok rounds low remaining-metrics remaining-cc remaining-patches remaining-worldlines remaining-nodes committed-bytes image-bytes); the bus's own overhead and the room left\n"
-    "tasks: (bus:post-task session parent ref) -> (ok id state owner epoch deadline parent ref); (bus:claim session lease-ms [task-id]) claims the oldest open task (or the named one) atomically; (bus:heartbeat session task-id lease-ms) renews; (bus:complete session task-id ref) / (bus:fail session task-id ref) finish; (bus:task-status session task-id) reads state (0 open, 1 claimed, 2 done, 3 failed) and open-count; channel 6 carries the task events\n"
+    "tasks: (bus:post-task session parent ref [flags]) -> (ok id state owner epoch deadline parent ref); (bus:claim session lease-ms [task-id]) claims the oldest open task (or the named one) atomically; (bus:heartbeat session task-id lease-ms) renews; (bus:complete session task-id ref) / (bus:fail session task-id ref) finish; (bus:task-status session task-id) reads state (0 open, 1 claimed, 2 done, 3 failed) and open-count; channel 6 carries the task events\n"
+    "approve: (bus:approve session object decision timeout-ms) -> (ok object state deadline); decision 0 request, 1 approve, 2 deny, 3 query; a pending object times out to denied; needs approve; a task posted with flags bit 0 cannot be claimed until approved\n"
     "failures: (error code message); codes: schema-mismatch, seals-missing, loan-exhausted, image-full, validation-failed, permission, unregistered-id, transport-failed\n"))
 
 (define (bus:status record) (car record))

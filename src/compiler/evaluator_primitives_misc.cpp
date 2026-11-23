@@ -841,13 +841,14 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
             // vocabulary and keeps the precise reason in the message.
             const auto task_call = [&](std::uint64_t task_op, std::uint64_t task_id,
                                        std::uint64_t parent, std::uint64_t lease_ms,
-                                       std::uint64_t ref) -> EvalValue {
+                                       std::uint64_t ref, std::uint64_t flags) -> EvalValue {
                 aura::bus::TaskRequestBody req{};
                 req.op = task_op;
                 req.task_id = task_id;
                 req.parent = parent;
                 req.lease_ms = lease_ms;
                 req.ref = ref;
+                req.flags = flags;
                 if (!aura::bus::send_frame(att.sock, aura::bus::FrameType::TaskAction, att.session,
                                            {reinterpret_cast<const std::byte*>(&req), sizeof(req)}))
                     return bus_error(ev, "transport-failed", "task send failed");
@@ -1013,15 +1014,20 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                                      make_int(static_cast<std::int64_t>(cb.snapshot)), listed});
             }
 
-            // #5399: the task board.
+            // #5399/#5404: the task board. post-task takes an optional
+            // flags word (bit 0 = needs approval).
             if (op == "post-task" || op == "claim" || op == "heartbeat" || op == "complete" ||
                 op == "fail" || op == "task-status") {
-                std::int64_t arg1 = 0, arg2 = 0;
+                std::int64_t arg1 = 0, arg2 = 0, flags = 0;
                 if (op == "post-task") {
                     if (a.size() < 4 || !bus_int(a[2], &arg1) || !bus_int(a[3], &arg2))
                         return bus_error(ev, "validation-failed", "post-task needs parent and ref");
+                    if (a.size() >= 5 && !bus_int(a[4], &flags))
+                        return bus_error(ev, "validation-failed",
+                                         "post-task flags must be an integer");
                     return task_call(0, 0, static_cast<std::uint64_t>(arg1), 0,
-                                     static_cast<std::uint64_t>(arg2));
+                                     static_cast<std::uint64_t>(arg2),
+                                     static_cast<std::uint64_t>(flags));
                 }
                 if (op == "claim") {
                     if (a.size() < 3 || !bus_int(a[2], &arg1))
@@ -1030,25 +1036,62 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                         return bus_error(ev, "validation-failed",
                                          "claim task id is not an integer");
                     return task_call(1, static_cast<std::uint64_t>(arg2), 0,
-                                     static_cast<std::uint64_t>(arg1), 0);
+                                     static_cast<std::uint64_t>(arg1), 0, 0);
                 }
                 if (op == "task-status") {
                     if (a.size() < 3 || !bus_int(a[2], &arg1))
                         return bus_error(ev, "validation-failed", "task-status needs an id");
-                    return task_call(5, static_cast<std::uint64_t>(arg1), 0, 0, 0);
+                    return task_call(5, static_cast<std::uint64_t>(arg1), 0, 0, 0, 0);
                 }
                 if (a.size() < 4 || !bus_int(a[2], &arg1) || !bus_int(a[3], &arg2))
                     return bus_error(ev, "validation-failed", "task verb needs id and value");
                 if (op == "heartbeat")
                     return task_call(2, static_cast<std::uint64_t>(arg1), 0,
-                                     static_cast<std::uint64_t>(arg2), 0);
+                                     static_cast<std::uint64_t>(arg2), 0, 0);
                 if (op == "complete")
                     return task_call(3, static_cast<std::uint64_t>(arg1), 0, 0,
-                                     static_cast<std::uint64_t>(arg2));
+                                     static_cast<std::uint64_t>(arg2), 0);
                 if (op == "fail")
                     return task_call(4, static_cast<std::uint64_t>(arg1), 0, 0,
-                                     static_cast<std::uint64_t>(arg2));
-                return task_call(5, static_cast<std::uint64_t>(arg1), 0, 0, 0);
+                                     static_cast<std::uint64_t>(arg2), 0);
+                return task_call(5, static_cast<std::uint64_t>(arg1), 0, 0, 0, 0);
+            }
+
+            // #5404: request/approve/deny an approval object.
+            if (op == "approve") {
+                std::int64_t object = 0, decision = 0, timeout = 0;
+                if (a.size() < 4 || !bus_int(a[2], &object) || !bus_int(a[3], &decision))
+                    return bus_error(ev, "validation-failed", "approve needs object and decision");
+                if (a.size() >= 5 && !bus_int(a[4], &timeout))
+                    return bus_error(ev, "validation-failed", "approve timeout must be an integer");
+                aura::bus::ApprovalRequestBody req{};
+                req.object = static_cast<std::uint64_t>(object);
+                req.decision = static_cast<std::uint64_t>(decision);
+                req.timeout_ms = static_cast<std::uint64_t>(timeout);
+                if (!aura::bus::send_frame(att.sock, aura::bus::FrameType::ApprovalAction,
+                                           att.session,
+                                           {reinterpret_cast<const std::byte*>(&req), sizeof(req)}))
+                    return bus_error(ev, "transport-failed", "approve send failed");
+                aura::bus::FrameHeader hdr{};
+                std::vector<std::byte> body(aura::bus::kBusMaxControlFrame);
+                if (!recv_reply(att.sock, &hdr, &body))
+                    return bus_error(ev, "transport-failed", "approve reply lost");
+                if (hdr.type == static_cast<std::uint16_t>(aura::bus::FrameType::Error)) {
+                    aura::bus::ErrorBody eb{};
+                    std::memcpy(&eb, body.data(), std::min(sizeof(eb), body.size()));
+                    return bus_error(ev, eb.code == EPERM ? "permission" : "validation-failed",
+                                     eb.message);
+                }
+                if (hdr.type != static_cast<std::uint16_t>(aura::bus::FrameType::ApprovalReply) ||
+                    hdr.len < sizeof(aura::bus::ApprovalReplyBody))
+                    return bus_error(ev, "validation-failed", "malformed approve reply");
+                aura::bus::ApprovalReplyBody reply{};
+                std::memcpy(&reply, body.data(), sizeof(reply));
+                return bus_list(ev, {bus_string(ev, "ok"),
+                                     make_int(static_cast<std::int64_t>(reply.object)),
+                                     make_int(static_cast<std::int64_t>(reply.state)),
+                                     make_int(static_cast<std::int64_t>(reply.deadline_ms)),
+                                     make_int(static_cast<std::int64_t>(reply.actor))});
             }
 
             if (op == "publish-metric") {

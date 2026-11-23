@@ -1318,6 +1318,14 @@ void Server::task_expire() {
         commit_task_event(event);
 }
 
+void Server::approval_expire() {
+    std::vector<ApprovalRecord> events;
+    if (approvals_.expire(round_now_ms(), &events) == 0)
+        return;
+    for (const ApprovalRecord& record : events)
+        record_audit(AuditKind::ApprovalTimeout, record.actor, 0, record.object);
+}
+
 void Server::task_release_owner(std::uint64_t owner) {
     for (const Task& task : tasks_.list()) {
         if (task.state != TaskState::Claimed || task.owner != owner)
@@ -2776,6 +2784,53 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
             reply_loan(installed);
             break;
         }
+        case FrameType::ApprovalAction: {
+            // #5404: request (0), approve (1) or deny (2) an object.
+            if (header.len < sizeof(ApprovalRequestBody)) {
+                deny(EINVAL, "malformed approval request");
+                break;
+            }
+            ApprovalRequestBody req{};
+            std::memcpy(&req, body.data(), sizeof(req));
+            if (!require(kCapApprove, 0, 0))
+                break;
+            approval_expire();
+            ApprovalRecord record{};
+            std::string why;
+            bool ok = false;
+            if (req.decision == 0) {
+                ok = approvals_.request(req.object, root_token, req.timeout_ms, round_now_ms(),
+                                        &record, &why);
+                if (ok)
+                    record_audit(AuditKind::ApprovalRequest, root_token, 0, record.object);
+            } else if (req.decision == 1 || req.decision == 2) {
+                ok = approvals_.decide(req.object, req.decision, root_token, round_now_ms(),
+                                       &record, &why);
+                if (ok)
+                    record_audit(req.decision == 1 ? AuditKind::ApprovalGrant
+                                                   : AuditKind::ApprovalDeny,
+                                 root_token, 0, record.object);
+            } else if (req.decision == 3) {
+                // Read-only query of the current state.
+                ok = approvals_.get(req.object, &record);
+                if (!ok)
+                    why = "unknown approval";
+            } else {
+                why = "approval decision must be 0, 1, 2 or 3";
+            }
+            if (!ok) {
+                deny(why == "unknown approval" ? ENOENT : EINVAL, why);
+                break;
+            }
+            ApprovalReplyBody reply{};
+            reply.object = record.object;
+            reply.state = static_cast<std::uint64_t>(record.state);
+            reply.deadline_ms = record.deadline_ms;
+            reply.actor = record.actor;
+            send_frame(conn_fd, FrameType::ApprovalReply, session,
+                       {reinterpret_cast<const std::byte*>(&reply), sizeof(reply)});
+            break;
+        }
         case FrameType::TaskAction: {
             // #5399: the task board. The op is in the body so the frame
             // namespace grows by one; the reply is one TaskReplyBody.
@@ -2803,14 +2858,48 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
             // A claim/heartbeat must see a lease that already expired
             // even when the poll loop has not woken for it yet.
             task_expire();
+            approval_expire();
             switch (req.op) {
                 case 0:
-                    ok = tasks_.post(root_token, req.parent, req.ref, &task, &event, &why);
+                    ok = tasks_.post(root_token, req.parent, req.ref, req.flags, &task, &event,
+                                     &why);
+                    // #5404: a task that needs a contract approval starts
+                    // as a pending approval object (default 5 min).
+                    if (ok && (req.flags & kTaskNeedsApproval) != 0) {
+                        ApprovalRecord pending{};
+                        if (approvals_.request(task.id, root_token, 0, now_ms, &pending, &why))
+                            record_audit(AuditKind::ApprovalRequest, root_token, 0, task.id);
+                    }
                     break;
-                case 1:
-                    ok = tasks_.claim(root_token, req.task_id, req.lease_ms, now_ms, &task, &event,
+                case 1: {
+                    // #5404: resolve the claim candidate first, then refuse
+                    // an unapproved approval-gated task without claiming it.
+                    Task candidate{};
+                    bool have = req.task_id != 0 ? tasks_.get(req.task_id, &candidate)
+                                                 : tasks_.next_open(&candidate);
+                    if (!have) {
+                        why = req.task_id != 0 ? "task-unknown" : "task-none-open";
+                        break;
+                    }
+                    if ((candidate.flags & kTaskNeedsApproval) != 0) {
+                        ApprovalRecord approval{};
+                        const bool known = approvals_.get(candidate.id, &approval);
+                        if (!known || approval.state != ApprovalState::Approved) {
+                            if (!known)
+                                why = "contract-unapproved";
+                            else if (approval.state == ApprovalState::Pending)
+                                why = "contract-approval-pending";
+                            else if (approval.state == ApprovalState::Timeout)
+                                why = "contract-approval-timeout";
+                            else
+                                why = "contract-denied";
+                            break;
+                        }
+                    }
+                    ok = tasks_.claim(root_token, candidate.id, req.lease_ms, now_ms, &task, &event,
                                       &why);
                     break;
+                }
                 case 2:
                     ok = tasks_.heartbeat(root_token, req.task_id, req.lease_ms, now_ms, &task,
                                           &event, &why);
@@ -3051,7 +3140,8 @@ void Server::serve(const BuildFn& build) {
         std::size_t polled_peers = peer_at.size();
         // #5393: a running round wakes the loop now and then, so the
         // wall budget closes it even when nothing happens.
-        int timeout = (round_.active() || tasks_.has_leases()) ? 100 : -1;
+        int timeout =
+            (round_.active() || tasks_.has_leases() || approvals_.has_pending()) ? 100 : -1;
         // #5396: a peer that is still waiting for its hello needs a
         // wakeup when its handshake deadline passes.
         if (timeout < 0) {
@@ -3078,6 +3168,8 @@ void Server::serve(const BuildFn& build) {
         // whose deadline passed is open again even if its holder died
         // without a Disconnect.
         task_expire();
+        // #5404: a pending approval that runs out of time is denied.
+        approval_expire();
         // #5393: the round budget is checked on every wakeup, so a
         // round that runs out of time is closed even when the peers go
         // quiet.

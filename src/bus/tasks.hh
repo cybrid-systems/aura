@@ -19,6 +19,10 @@
 
 namespace aura::bus {
 
+// #5404: a task with this flag cannot be claimed until its object is
+// approved through bus:approve.
+inline constexpr std::uint64_t kTaskNeedsApproval = 1ull << 0;
+
 struct Task {
     std::uint64_t id = 0;
     std::uint64_t parent = 0;
@@ -26,7 +30,8 @@ struct Task {
     std::uint64_t owner = 0; // the holder's root grant token
     std::uint64_t lease_epoch = 0;
     std::uint64_t deadline_ms = 0;
-    std::uint64_t ref = 0; // contract fingerprint / worldline / result
+    std::uint64_t ref = 0;   // contract fingerprint / worldline / result
+    std::uint64_t flags = 0; // #5404: kTaskNeedsApproval
 };
 
 // The task board. Only the coordinator thread calls the mutators, so
@@ -43,8 +48,8 @@ public:
     [[nodiscard]] const std::string& checkpoint_path() const { return checkpoint_path_; }
 
     // Publish a task. parent/ref are opaque to the board.
-    bool post(std::uint64_t actor, std::uint64_t parent, std::uint64_t ref, Task* out,
-              TaskRecord* event, std::string* why);
+    bool post(std::uint64_t actor, std::uint64_t parent, std::uint64_t ref, std::uint64_t flags,
+              Task* out, TaskRecord* event, std::string* why);
     // Claim a specific task (task_id != 0) or the oldest open task
     // (task_id == 0). A claimed task cannot be claimed again until its
     // lease expires or it is released.
@@ -69,6 +74,8 @@ public:
     std::size_t expire(std::uint64_t now_ms, std::vector<TaskRecord>* events);
 
     [[nodiscard]] bool get(std::uint64_t id, Task* out) const;
+    // The oldest open task (the claim(0) candidate), without claiming.
+    [[nodiscard]] bool next_open(Task* out) const;
     [[nodiscard]] std::vector<Task> list() const;
     [[nodiscard]] bool has_leases() const;
     [[nodiscard]] std::size_t size() const { return tasks_.size(); }
