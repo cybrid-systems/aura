@@ -15351,7 +15351,8 @@ void Evaluator::rebind_workspace_define_after_rollback(const std::string& name) 
         if (sync_workspace_value_cells_fn_)
             sync_workspace_value_cells_fn_();
     } catch (...) {
-        // noexcept rollback path: leave the pre-rebind binding in place.
+        // [SILENCE-PRIM-#615] noexcept rollback path: leave the pre-rebind
+        // binding in place.
     }
 }
 
