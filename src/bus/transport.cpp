@@ -164,7 +164,10 @@ namespace {
     }
 
     bool channel_from(std::uint64_t id, Channel* out) {
-        if (id < 1 || id > 5)
+        // #5399: channel 6 is the task board. A pre-v0.3.3 image has
+        // no tasks section; channel_view then reports the section
+        // missing, which is the same refusal as an unknown channel.
+        if (id < 1 || id > 6)
             return false;
         *out = static_cast<Channel>(id);
         return true;
@@ -1241,6 +1244,92 @@ namespace {
     }
 } // namespace
 
+// ── The task board (#5399) ───────────────────────────────────
+// The board is authoritative in memory; every event is mirrored into
+// the tasks channel (best effort) and the checkpoint next to the
+// socket (durable across a host restart).
+bool Server::task_resume(std::string* why) {
+    if (task_checkpoint_path_.empty())
+        return true;
+    std::string reason;
+    if (!tasks_.resume(task_checkpoint_path_, &reason)) {
+        if (why)
+            *why = reason;
+        return false;
+    }
+    task_expire();
+    return true;
+}
+
+void Server::commit_task_event(const TaskRecord& event) {
+    AuditKind kind = AuditKind::TaskPost;
+    switch (static_cast<TaskEventKind>(event.kind)) {
+        case TaskEventKind::Post:
+            kind = AuditKind::TaskPost;
+            break;
+        case TaskEventKind::Claim:
+            kind = AuditKind::TaskClaim;
+            break;
+        case TaskEventKind::Heartbeat:
+            kind = AuditKind::TaskHeartbeat;
+            break;
+        case TaskEventKind::Complete:
+            kind = AuditKind::TaskComplete;
+            break;
+        case TaskEventKind::Fail:
+            kind = AuditKind::TaskFail;
+            break;
+        case TaskEventKind::Release:
+            kind = AuditKind::TaskRelease;
+            break;
+        case TaskEventKind::Expire:
+        case TaskEventKind::Requeue:
+            kind = AuditKind::TaskExpire;
+            break;
+    }
+    record_audit(kind, event.actor, 0, event.task_id);
+    if (image_base_ == nullptr)
+        return;
+    SectionEntry se{};
+    if (!find_section({image_base_, image_size_}, SectionKind::Tasks, &se))
+        return;
+    ChannelView view{};
+    if (!channel_view({image_base_, image_size_}, Channel::Tasks, &view))
+        return;
+    const std::uint64_t elem = view.element_size != 0 ? view.element_size : sizeof(TaskRecord);
+    if (view.length + elem > se.capacity)
+        return;
+    std::memcpy(image_base_ + view.offset + view.length, &event,
+                static_cast<std::size_t>(std::min<std::uint64_t>(elem, sizeof(event))));
+    std::uint64_t gen = 0;
+    std::string why;
+    if (channel_commit({image_base_, image_size_}, Channel::Tasks, view.offset + view.length, elem,
+                       &gen, &why)) {
+        generation_ = gen;
+        notify_peers(0);
+    }
+}
+
+void Server::task_expire() {
+    std::vector<TaskRecord> events;
+    if (tasks_.expire(round_now_ms(), &events) == 0)
+        return;
+    for (const TaskRecord& event : events)
+        commit_task_event(event);
+}
+
+void Server::task_release_owner(std::uint64_t owner) {
+    for (const Task& task : tasks_.list()) {
+        if (task.state != TaskState::Claimed || task.owner != owner)
+            continue;
+        Task released{};
+        TaskRecord event{};
+        std::string why;
+        if (tasks_.release(owner, task.id, &released, &event, &why))
+            commit_task_event(event);
+    }
+}
+
 bool Server::round_open(std::uint64_t session, std::string* why) {
     std::string reason;
     if (!round_.open(round_now_ms(), canary_worldline_ != 0, &reason)) {
@@ -1518,7 +1607,7 @@ bool Server::allow_constraint_change(std::uint64_t session, std::uint64_t root_t
 
 bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t root_token,
                             Capability& caps, LoanLedger& loans,
-                            std::array<LoanLedger, 6>& channel_loans,
+                            std::array<LoanLedger, 7>& channel_loans,
                             std::uint64_t staging_capacity, std::uint64_t& staging_used,
                             std::uint64_t* subscribed, const FrameHeader& header,
                             std::span<const std::byte> body) {
@@ -1558,31 +1647,38 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
         case FrameType::Query: {
             const LoanBody loan = loan_from();
             Channel channel{};
-            if (channel_from(loan.channel, &channel) && image_base_ != nullptr) {
-                if (!require(kCapRead, loan.channel, 0))
-                    break;
-                ChannelView view{};
-                if (!channel_view({image_base_, image_size_}, channel, &view)) {
-                    deny(EINVAL, "channel section is missing");
-                    break;
-                }
-                ChannelBody reply{loan.channel, view.generation, view.count,
-                                  view.offset,  view.length,     1,
-                                  view.count};
-                send_frame(conn_fd, FrameType::Credit, session,
-                           {reinterpret_cast<const std::byte*>(&reply), sizeof(reply)});
-                if (subscribed != nullptr) {
-                    if (header.type == static_cast<std::uint16_t>(FrameType::Subscribe))
-                        *subscribed |= 1ull << loan.channel;
-                    else if (header.type == static_cast<std::uint16_t>(FrameType::Unsubscribe))
-                        *subscribed &= ~(1ull << loan.channel);
-                }
-                if (header.type == static_cast<std::uint16_t>(FrameType::Subscribe))
-                    record_audit(AuditKind::Subscribe, root_token, 0, loan.channel);
+            // #5407: an unknown channel is the same refusal on every verb.
+            // Before, subscribe fell through to a Credit reply carrying the
+            // request bytes, which the client decoded as a malformed
+            // ChannelBody ("malformed subscribe reply") while query already
+            // answered "unknown channel".
+            if (!channel_from(loan.channel, &channel)) {
+                deny(EINVAL, "unknown channel");
                 break;
             }
-            if (require(kCapRead, loan.channel, 0))
-                reply_loan(loan);
+            if (image_base_ == nullptr) {
+                deny(EINVAL, "bus image is not ready");
+                break;
+            }
+            if (!require(kCapRead, loan.channel, 0))
+                break;
+            ChannelView view{};
+            if (!channel_view({image_base_, image_size_}, channel, &view)) {
+                deny(EINVAL, "channel section is missing");
+                break;
+            }
+            ChannelBody reply{
+                loan.channel, view.generation, view.count, view.offset, view.length, 1, view.count};
+            send_frame(conn_fd, FrameType::Credit, session,
+                       {reinterpret_cast<const std::byte*>(&reply), sizeof(reply)});
+            if (subscribed != nullptr) {
+                if (header.type == static_cast<std::uint16_t>(FrameType::Subscribe))
+                    *subscribed |= 1ull << loan.channel;
+                else if (header.type == static_cast<std::uint16_t>(FrameType::Unsubscribe))
+                    *subscribed &= ~(1ull << loan.channel);
+            }
+            if (header.type == static_cast<std::uint16_t>(FrameType::Subscribe))
+                record_audit(AuditKind::Subscribe, root_token, 0, loan.channel);
             break;
         }
         case FrameType::AuditQuery: {
@@ -2657,7 +2753,97 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
             reply_loan(installed);
             break;
         }
+        case FrameType::TaskAction: {
+            // #5399: the task board. The op is in the body so the frame
+            // namespace grows by one; the reply is one TaskReplyBody.
+            if (header.len < sizeof(TaskRequestBody)) {
+                deny(EINVAL, "malformed task request");
+                break;
+            }
+            TaskRequestBody req{};
+            std::memcpy(&req, body.data(), sizeof(req));
+            if (req.op > 5) {
+                deny(EINVAL, "unknown task op");
+                break;
+            }
+            if (req.op == 5) {
+                if (!require(kCapRead, 0, 0))
+                    break;
+            } else if (!require(kCapPublish, 0, 0)) {
+                break;
+            }
+            Task task{};
+            TaskRecord event{};
+            std::string why;
+            bool ok = false;
+            const std::uint64_t now_ms = round_now_ms();
+            // A claim/heartbeat must see a lease that already expired
+            // even when the poll loop has not woken for it yet.
+            task_expire();
+            switch (req.op) {
+                case 0:
+                    ok = tasks_.post(root_token, req.parent, req.ref, &task, &event, &why);
+                    break;
+                case 1:
+                    ok = tasks_.claim(root_token, req.task_id, req.lease_ms, now_ms, &task, &event,
+                                      &why);
+                    break;
+                case 2:
+                    ok = tasks_.heartbeat(root_token, req.task_id, req.lease_ms, now_ms, &task,
+                                          &event, &why);
+                    break;
+                case 3:
+                    ok = tasks_.complete(root_token, req.task_id, req.ref, now_ms, &task, &event,
+                                         &why);
+                    break;
+                case 4:
+                    ok = tasks_.fail(root_token, req.task_id, req.ref, now_ms, &task, &event, &why);
+                    break;
+                case 5:
+                    ok = tasks_.get(req.task_id, &task);
+                    if (!ok)
+                        why = "task-unknown";
+                    break;
+                default:
+                    why = "unknown task op";
+                    break;
+            }
+            if (!ok) {
+                int code = EINVAL;
+                if (why == "task-not-owner")
+                    code = EPERM;
+                else if (why == "task-unknown" || why == "task-none-open")
+                    code = ENOENT;
+                else if (why == "task-claimed" || why == "task-done" || why == "task-failed")
+                    code = EBUSY;
+                deny(code, why);
+                break;
+            }
+            if (req.op != 5)
+                commit_task_event(event);
+            TaskReplyBody reply{};
+            reply.task_id = task.id;
+            reply.state = static_cast<std::uint64_t>(task.state);
+            reply.owner = task.owner;
+            reply.lease_epoch = task.lease_epoch;
+            reply.deadline_ms = task.deadline_ms;
+            reply.parent = task.parent;
+            reply.ref = task.ref;
+            if (req.op == 5) {
+                for (const Task& listed : tasks_.list()) {
+                    if (listed.state == TaskState::Open)
+                        ++reply.count;
+                }
+            }
+            send_frame(conn_fd, FrameType::TaskReply, session,
+                       {reinterpret_cast<const std::byte*>(&reply), sizeof(reply)});
+            break;
+        }
         case FrameType::Disconnect:
+            // A clean detach hands its claims back immediately; a crash
+            // (EOF) leaves them to the lease deadline, so a killed
+            // worker's task is not lost (#5399).
+            task_release_owner(root_token);
             return false;
         default:
             break;
@@ -2842,7 +3028,7 @@ void Server::serve(const BuildFn& build) {
         std::size_t polled_peers = peer_at.size();
         // #5393: a running round wakes the loop now and then, so the
         // wall budget closes it even when nothing happens.
-        int timeout = round_.active() ? 100 : -1;
+        int timeout = (round_.active() || tasks_.has_leases()) ? 100 : -1;
         // #5396: a peer that is still waiting for its hello needs a
         // wakeup when its handshake deadline passes.
         if (timeout < 0) {
@@ -2865,6 +3051,10 @@ void Server::serve(const BuildFn& build) {
                 continue;
             break;
         }
+        // #5399: lease expiry runs on every wakeup; a claimed task
+        // whose deadline passed is open again even if its holder died
+        // without a Disconnect.
+        task_expire();
         // #5393: the round budget is checked on every wakeup, so a
         // round that runs out of time is closed even when the peers go
         // quiet.

@@ -1,6 +1,6 @@
-# 本机工具总线（v0.3.2）
+# 本机工具总线（v0.3.3-dev）
 
-本页是 #5121（v0.3.0 底座）、#5376（v0.3.1 跨进程自进化闭环）与 #5391–#5395（v0.3.2 统计准入、审计回放、轮次编排、退化检测、性能与容量）的实现说明。只做同机协同：一条总线对应一个工作区、一份活 AST；不引入总线守护进程，不做跨机、RDMA 或 CXL。v0.3.1 在底座上交付多对端并发服务、KEEP 原子应用回活 AST、候选证据五元绑定、约束最小安全子集与金丝雀观察期；v0.3.2 把统计准入总线化——协调者自己重算判决——并让宿主自己起轮、自己发现退化、自己盯住自己的开销与容量。
+本页是 #5121（v0.3.0 底座）、#5376（v0.3.1 跨进程自进化闭环）、#5391–#5395（v0.3.2 统计准入、审计回放、轮次编排、退化检测、性能与容量）与 #5399（v0.3.3 任务看板）的实现说明。只做同机协同：一条总线对应一个工作区、一份活 AST；不引入总线守护进程，不做跨机、RDMA 或 CXL。v0.3.1 在底座上交付多对端并发服务、KEEP 原子应用回活 AST、候选证据五元绑定、约束最小安全子集与金丝雀观察期；v0.3.2 把统计准入总线化——协调者自己重算判决——并让宿主自己起轮、自己发现退化、自己盯住自己的开销与容量。
 
 ## 默认传输
 
@@ -36,20 +36,22 @@
 
 ## 增量频道
 
-四条频道各有自己的节、代次和容量：
+六条频道各有自己的节、代次和容量：
 
 - `metrics`：键走符号表，值是合法立即数（第 63 位为 0）。
 - `cct`：父下标只许向后，mid 用低 62 位，node 指向节点节。
 - `patches`：字段偏移、新值、worldline、代次；旧值由补丁日志保留。
 - `worldlines`：状态、约束结果、指标偏移、补丁区间、目标指标。
+- `nodes`：活工作区的 FlatAST 节点。
+- `tasks`（#5399，channel 6）：任务看板的追加事件流（post/claim/heartbeat/complete/fail/release/expire），当前状态由事件重放得到。
 
 协调者在节尾的预留容量里追加记录，提交时更新该节 length/count/digest/generation，并把映像头 committed_gen 推进到下一个偶数代次。订阅者只在稳定代次上读；游标记录上次的 generation/count，下一次只取新增记录。代次是映像全局的（审计/约束写入也推进），游标代次不超前于节代次且 count 不超量即按 count 切片；任一超前（可能已重建）返回完整快照，绝不静默错位。gen=0 且 count=0 读全量。容量用尽是硬错误，不扩容。
 
 控制面接线：
 
-- `Subscribe` 的 channel 1..4 分别对应指标、CCT、补丁、worldline；回 `ChannelBody`（generation、count、offset、length、snapshot=1）。
+- `Subscribe` 的 channel 1..6 分别对应指标、CCT、补丁、worldline、节点、任务；回 `ChannelBody`（generation、count、offset、length、snapshot=1）。
 - `CatchUp` 带上次 generation/count；协调者只返回新增记录范围，游标代次或 count 超前时返回完整快照（snapshot=1）。回复里 count 是本次范围的记录数，total 是频道已提交总数（下一次游标）。
-- `Reserve`/`Publish` 对 channel 1..4 直接操作该节尾部的预留容量；Publish 成功后回新的 generation/count，并把该次发布写进审计。
+- `Reserve`/`Publish` 对 channel 1..6 直接操作该节尾部的预留容量；Publish 成功后回新的 generation/count，并把该次发布写进审计。
 - 对端只有在拿到 `publish` 或 `trial` 时才以可写方式映射映像；只读会话仍是 `PROT_READ`。
 
 ### 活跃生产者（#5122）
@@ -106,6 +108,7 @@
 - **被拒绝的附着只结束该连接**(#5383):未知角色、workspace 不符、schema/uid
   不符、握手半途 EOF 等拒绝会关闭该连接并继续 accept,不停服务循环;只有
   unhost/监听失效才退出。一个配置错误的对端不会瘫痪整条总线。
+- **任务看板**（#5399）：`bus:post-task` / `bus:claim` / `bus:heartbeat` / `bus:complete` / `bus:fail` / `bus:task-status`。任务有 id、父任务、契约引用（ref）、持有者、租约代次和到期时间；同一任务同一时刻只有一个有效租约，双 claim 被拒（`task-claimed`），非持有者心跳/完成被拒（`task-not-owner`）。租约到期后任务回到 open，其他对端可认领；干净 `bus:detach` 立即释放，崩溃（EOF）则等到租约到期。任务事件写入 channel 6，并追加到套接字旁的 `.tasks` 检查点；`bus:unhost`/`bus:host` 重启后从检查点恢复未完成任务。
 - 宿主进程自己也可以 `bus:attach` 成为对端(同进程经套接字,统一路径)。
 - **映像跨会话持久**(#5128 完成线):一条总线一份映像。首个对端附着时创建并
   封印映像,之后每个对端拿到同一个 memfd 的新映射——前一个工具提交的 CCT /

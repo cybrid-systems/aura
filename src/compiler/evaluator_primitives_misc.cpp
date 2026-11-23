@@ -836,6 +836,53 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                 return bus_error(ev, "unregistered-id", "unknown session");
             auto& att = state->att;
 
+            // #5399: one task-board verb. The reply is a TaskReplyBody;
+            // a task refusal maps its errno-style code to the bus error
+            // vocabulary and keeps the precise reason in the message.
+            const auto task_call = [&](std::uint64_t task_op, std::uint64_t task_id,
+                                       std::uint64_t parent, std::uint64_t lease_ms,
+                                       std::uint64_t ref) -> EvalValue {
+                aura::bus::TaskRequestBody req{};
+                req.op = task_op;
+                req.task_id = task_id;
+                req.parent = parent;
+                req.lease_ms = lease_ms;
+                req.ref = ref;
+                if (!aura::bus::send_frame(att.sock, aura::bus::FrameType::TaskAction, att.session,
+                                           {reinterpret_cast<const std::byte*>(&req), sizeof(req)}))
+                    return bus_error(ev, "transport-failed", "task send failed");
+                aura::bus::FrameHeader hdr{};
+                std::vector<std::byte> body(aura::bus::kBusMaxControlFrame);
+                if (!recv_reply(att.sock, &hdr, &body))
+                    return bus_error(ev, "transport-failed", "task reply lost");
+                if (hdr.type == static_cast<std::uint16_t>(aura::bus::FrameType::Error)) {
+                    aura::bus::ErrorBody eb{};
+                    std::memcpy(&eb, body.data(), std::min(sizeof(eb), body.size()));
+                    std::string code = "validation-failed";
+                    if (eb.code == EPERM)
+                        code = "permission";
+                    else if (eb.code == ENOENT)
+                        code = "unregistered-id";
+                    return bus_error(ev, code, eb.message);
+                }
+                if (hdr.type != static_cast<std::uint16_t>(aura::bus::FrameType::TaskReply) ||
+                    hdr.len < sizeof(aura::bus::TaskReplyBody))
+                    return bus_error(ev, "validation-failed", "malformed task reply");
+                aura::bus::TaskReplyBody reply{};
+                std::memcpy(&reply, body.data(), sizeof(reply));
+                return bus_list(ev, {
+                                        bus_string(ev, "ok"),
+                                        make_int(static_cast<std::int64_t>(reply.task_id)),
+                                        make_int(static_cast<std::int64_t>(reply.state)),
+                                        make_int(static_cast<std::int64_t>(reply.owner)),
+                                        make_int(static_cast<std::int64_t>(reply.lease_epoch)),
+                                        make_int(static_cast<std::int64_t>(reply.deadline_ms)),
+                                        make_int(static_cast<std::int64_t>(reply.parent)),
+                                        make_int(static_cast<std::int64_t>(reply.ref)),
+                                        make_int(static_cast<std::int64_t>(reply.count)),
+                                    });
+            };
+
             if (op == "subscribe") {
                 std::int64_t channel = 0;
                 if (a.size() < 3 || !bus_int(a[2], &channel))
@@ -944,6 +991,17 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                                           make_int(static_cast<std::int64_t>(n.sym)),
                                           make_int(static_cast<std::int64_t>(n.parent)),
                                           make_int(static_cast<std::int64_t>(n.first_child))}));
+                    } else if (channel == 6 && elem >= sizeof(aura::bus::TaskRecord)) {
+                        aura::bus::TaskRecord t{};
+                        std::memcpy(&t, rec, sizeof(t));
+                        rows.push_back(
+                            bus_list(ev, {make_int(static_cast<std::int64_t>(t.task_id)),
+                                          make_int(static_cast<std::int64_t>(t.parent)),
+                                          make_int(static_cast<std::int64_t>(t.kind)),
+                                          make_int(static_cast<std::int64_t>(t.actor)),
+                                          make_int(static_cast<std::int64_t>(t.lease_epoch)),
+                                          make_int(static_cast<std::int64_t>(t.deadline_ms)),
+                                          make_int(static_cast<std::int64_t>(t.ref))}));
                     }
                 }
                 EvalValue listed = make_void();
@@ -953,6 +1011,44 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                                      make_int(static_cast<std::int64_t>(cb.generation)),
                                      make_int(static_cast<std::int64_t>(cb.total)),
                                      make_int(static_cast<std::int64_t>(cb.snapshot)), listed});
+            }
+
+            // #5399: the task board.
+            if (op == "post-task" || op == "claim" || op == "heartbeat" || op == "complete" ||
+                op == "fail" || op == "task-status") {
+                std::int64_t arg1 = 0, arg2 = 0;
+                if (op == "post-task") {
+                    if (a.size() < 4 || !bus_int(a[2], &arg1) || !bus_int(a[3], &arg2))
+                        return bus_error(ev, "validation-failed", "post-task needs parent and ref");
+                    return task_call(0, 0, static_cast<std::uint64_t>(arg1), 0,
+                                     static_cast<std::uint64_t>(arg2));
+                }
+                if (op == "claim") {
+                    if (a.size() < 3 || !bus_int(a[2], &arg1))
+                        return bus_error(ev, "validation-failed", "claim needs a lease");
+                    if (a.size() >= 4 && !bus_int(a[3], &arg2))
+                        return bus_error(ev, "validation-failed",
+                                         "claim task id is not an integer");
+                    return task_call(1, static_cast<std::uint64_t>(arg2), 0,
+                                     static_cast<std::uint64_t>(arg1), 0);
+                }
+                if (op == "task-status") {
+                    if (a.size() < 3 || !bus_int(a[2], &arg1))
+                        return bus_error(ev, "validation-failed", "task-status needs an id");
+                    return task_call(5, static_cast<std::uint64_t>(arg1), 0, 0, 0);
+                }
+                if (a.size() < 4 || !bus_int(a[2], &arg1) || !bus_int(a[3], &arg2))
+                    return bus_error(ev, "validation-failed", "task verb needs id and value");
+                if (op == "heartbeat")
+                    return task_call(2, static_cast<std::uint64_t>(arg1), 0,
+                                     static_cast<std::uint64_t>(arg2), 0);
+                if (op == "complete")
+                    return task_call(3, static_cast<std::uint64_t>(arg1), 0, 0,
+                                     static_cast<std::uint64_t>(arg2));
+                if (op == "fail")
+                    return task_call(4, static_cast<std::uint64_t>(arg1), 0, 0,
+                                     static_cast<std::uint64_t>(arg2));
+                return task_call(5, static_cast<std::uint64_t>(arg1), 0, 0, 0);
             }
 
             if (op == "publish-metric") {

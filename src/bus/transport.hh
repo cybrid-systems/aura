@@ -18,6 +18,7 @@
 #include "bus/replay.hh"
 #include "bus/round.hh"
 #include "bus/slo.hh"
+#include "bus/tasks.hh"
 
 #include <array>
 #include <cstddef>
@@ -98,6 +99,11 @@ enum class FrameType : std::uint16_t {
     // define's source). The judge measures the candidate body, so it
     // must see the text the proposer committed.
     SourceRead = 35,
+    // #5399: one task-board verb (post/claim/heartbeat/complete/fail/
+    // status). The op travels in the body so the frame namespace grows
+    // by one, not by six.
+    TaskAction = 36,
+    TaskReply = 37,
 };
 
 enum class RejectReason : std::uint16_t {
@@ -384,6 +390,33 @@ struct EvidenceBody {
     std::uint64_t verifier_version = 0;
 };
 
+// #5399: the task-board request. op selects the verb; task_id 0 on a
+// claim means "the oldest open task". lease_ms 0 uses the coordinator
+// default. ref is an opaque contract/worldline/result value.
+struct TaskRequestBody {
+    std::uint64_t op = 0; // 0 post, 1 claim, 2 heartbeat, 3 complete, 4 fail, 5 status
+    std::uint64_t task_id = 0;
+    std::uint64_t parent = 0;
+    std::uint64_t lease_ms = 0;
+    std::uint64_t ref = 0;
+    std::uint64_t flags = 0;
+    std::uint64_t reserved = 0;
+};
+
+// #5399: the task reply. state is a TaskState; owner is the holder's
+// root token; count is the number of open tasks for a status query.
+struct TaskReplyBody {
+    std::uint64_t task_id = 0;
+    std::uint64_t state = 0;
+    std::uint64_t owner = 0;
+    std::uint64_t lease_epoch = 0;
+    std::uint64_t deadline_ms = 0;
+    std::uint64_t parent = 0;
+    std::uint64_t ref = 0;
+    std::uint64_t count = 0;
+    char reason[32] = {};
+};
+
 // #5397: the reproduction package of one worldline. It carries
 // everything the admission decision was made from, so the decision can
 // be re-run offline and must land on the same verdict.
@@ -428,6 +461,8 @@ static_assert(sizeof(DegradeReplyBody) == 112);
 static_assert(sizeof(DegradeKeyStateBody) == 48);
 static_assert(sizeof(LoanBody) == 40);
 static_assert(sizeof(EvidenceBody) == 48);
+static_assert(sizeof(TaskRequestBody) == 56);
+static_assert(sizeof(TaskReplyBody) == 96);
 
 struct TransportError {
     int code = 0; // errno or RejectReason
@@ -497,7 +532,7 @@ struct PeerSession {
     std::uint64_t root_token = 0;
     Capability caps{};
     LoanLedger loans{};
-    std::array<LoanLedger, 6> channel_loans{};
+    std::array<LoanLedger, 7> channel_loans{};
     std::uint64_t staging_capacity = 0;
     std::uint64_t staging_used = 0;
     std::uint64_t subscribed = 0; // channel-id bitmask from Subscribe frames
@@ -661,6 +696,11 @@ public:
     // Load the checkpoint and continue the round counter: a restarted
     // host resumes instead of repeating the sealed work.
     void round_resume();
+    // #5399: the task board's checkpoint (next to the socket) and the
+    // board itself. A restarted host resumes the open/claimed tasks.
+    void set_task_checkpoint_path(const std::string& path) { task_checkpoint_path_ = path; }
+    bool task_resume(std::string* why);
+    [[nodiscard]] const TaskBoard& task_board() const { return tasks_; }
     // #5395: the bus's own performance counters and capacity plan.
     [[nodiscard]] const SloCounters& slo() const { return slo_; }
     [[nodiscard]] CapacityPlan capacity_plan() const;
@@ -729,7 +769,7 @@ private:
     // the single-peer harness path and serve() run the same protocol.
     bool dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t root_token,
                         Capability& caps, LoanLedger& loans,
-                        std::array<LoanLedger, 6>& channel_loans, std::uint64_t staging_capacity,
+                        std::array<LoanLedger, 7>& channel_loans, std::uint64_t staging_capacity,
                         std::uint64_t& staging_used, std::uint64_t* subscribed,
                         const FrameHeader& header, std::span<const std::byte> body);
     // End a session: roll back its pending trials, reclaim its loans,
@@ -739,6 +779,12 @@ private:
     void notify_peers(std::uint64_t except_session);
     // Append one worldline ledger record into the worldlines channel.
     void project_worldline(std::uint64_t id, WorldlineState state, ConstraintResult cr);
+    // #5399: append one task event into the tasks channel (best effort)
+    // and expire leases whose deadline passed.
+    void commit_task_event(const TaskRecord& event);
+    void task_expire();
+    // Return every task a cleanly detaching session still holds.
+    void task_release_owner(std::uint64_t owner);
     // Re-project a record without rewriting the state it carries.
     void project_worldline_preserving(std::uint64_t id);
     // #5379: digest of a trial's committed patch bytes (FNV-1a 64).
@@ -782,7 +828,7 @@ private:
     int conn_fd_ = -1;
     std::uint64_t session_ = 0;
     LoanLedger loans_{};
-    std::array<LoanLedger, 6> channel_loans_{};
+    std::array<LoanLedger, 7> channel_loans_{};
     std::uint64_t staging_capacity_ = 0;
     std::uint64_t staging_used_ = 0;
     Capability session_caps_{};
@@ -833,6 +879,9 @@ private:
     RoundMachine round_{};
     RoundCheckpoint round_checkpoint_{};
     std::string round_checkpoint_path_;
+    // #5399: the task board and its checkpoint.
+    TaskBoard tasks_{};
+    std::string task_checkpoint_path_;
     // #5394: the degradation detector.
     DegradeDetector degrade_{};
     // #5396: the quotas a session must respect.

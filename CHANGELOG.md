@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Bus (#5399): the task board. A sixth channel, `tasks`, carries the append-only board events (`TaskRecord`), and `bus:post-task` / `bus:claim` / `bus:heartbeat` / `bus:complete` / `bus:fail` / `bus:task-status` drive them. A claim is atomic: a second claim while the lease is live is refused `task-claimed`, a non-holder heartbeat/complete is refused `task-not-owner`, and a lease that expires (or a clean `bus:detach`) puts the task back to open so another worker can claim it. The board is checkpointed next to the socket and `bus:unhost`/`bus:host` resumes open/claimed tasks instead of losing them. The channel is additive outside the frozen header schema: a v0.3.2 reader skips the unknown section, while a current reader validates it. Regression: `test_bus_tasks` and the `bus_tasks` suite.
+- Bus (#5407): `bus:subscribe` now refuses an unknown channel with the same `permission/unknown channel` error as `bus:query`; before, it leaked the request bytes as a `Credit` and the client reported `validation-failed/malformed subscribe reply`.
+
 ## 0.3.2
 
 Autonomous performance-optimization loop: the bus now judges the statistics itself, so a KEEP is not a judge's promise but a recomputed result. No new syntax. The API is still not stable.

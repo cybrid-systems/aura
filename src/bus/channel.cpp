@@ -115,6 +115,17 @@ namespace {
                     // Children/siblings may be committed in the same batch;
                     // attach validates bounds, the producer bounds the batch.
                     break;
+                case Channel::Tasks: {
+                    TaskRecord t{};
+                    std::memcpy(&t, image.data() + at, std::min<std::uint64_t>(element, sizeof(t)));
+                    if (t.task_id == 0)
+                        return fail("task record has no task id");
+                    if (t.kind > static_cast<std::uint64_t>(TaskEventKind::Requeue))
+                        return fail("task event kind outside the domain");
+                    if (t.parent != 0 && t.parent >= t.task_id)
+                        return fail("task parent does not point to an earlier task");
+                    break;
+                }
             }
         }
         return true;
@@ -134,6 +145,8 @@ SectionKind section_for(Channel channel) {
             return SectionKind::Worldlines;
         case Channel::Nodes:
             return SectionKind::Nodes;
+        case Channel::Tasks:
+            return SectionKind::Tasks;
     }
     return SectionKind::Metrics;
 }

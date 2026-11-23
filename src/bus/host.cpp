@@ -43,7 +43,7 @@ namespace {
     }
 
     bool build_host_image(std::span<std::byte> img, std::string* why) {
-        constexpr std::uint32_t kSections = 7;
+        constexpr std::uint32_t kSections = 8;
         constexpr std::uint64_t kMinPerChannel = 4096;
         constexpr std::uint64_t kConstraintBytes = 4096;
         // #5378: source-carrier string table — 1024 entry slots plus a
@@ -52,24 +52,24 @@ namespace {
         constexpr std::uint64_t kStringBytes =
             ((kStringSlots * sizeof(StringTableEntry) + 7) & ~7ull) + (64u << 10);
         const std::uint64_t dir = kImageHeaderSize;
-        const std::uint64_t elems[5] = {sizeof(MetricRecord), sizeof(CctRecord),
-                                        sizeof(PatchRecord), sizeof(WorldlineRecord),
-                                        sizeof(NodeRecord)};
+        const std::uint64_t elems[6] = {sizeof(MetricRecord), sizeof(CctRecord),
+                                        sizeof(PatchRecord),  sizeof(WorldlineRecord),
+                                        sizeof(NodeRecord),   sizeof(TaskRecord)};
         // #5387: channel capacity scales with the delivered image instead
         // of a fixed 4096 records. Each channel keeps at least 4096 slots;
         // space beyond that floor is split evenly. Exhaustion stays a hard
         // error — nothing grows after attach.
-        std::uint64_t per[5];
+        std::uint64_t per[6];
         std::uint64_t floor_bytes = 0;
-        for (int i = 0; i < 5; ++i) {
+        for (int i = 0; i < 6; ++i) {
             per[i] = kMinPerChannel;
             floor_bytes += kMinPerChannel * elems[i];
         }
         const std::uint64_t fixed =
             dir + kSections * sizeof(SectionEntry) + kConstraintBytes + kStringBytes + 64;
         if (img.size() > fixed + floor_bytes) {
-            const std::uint64_t extra = (img.size() - fixed - floor_bytes) / 5;
-            for (int i = 0; i < 5; ++i) {
+            const std::uint64_t extra = (img.size() - fixed - floor_bytes) / 6;
+            for (int i = 0; i < 6; ++i) {
                 const std::uint64_t add = std::min(
                     extra / elems[i], static_cast<std::uint64_t>(kImageMaxRecords) - per[i]);
                 per[i] += add;
@@ -88,6 +88,8 @@ namespace {
         const std::uint64_t nodes = take(per[4] * elems[4]);
         const std::uint64_t constraints = take(kConstraintBytes);
         const std::uint64_t strings = take(kStringBytes);
+        // #5399: the task board channel follows the existing sections.
+        const std::uint64_t tasks = take(per[5] * elems[5]);
         const std::uint64_t committed = (off + 7) & ~7ull;
         if (committed > img.size()) {
             if (why)
@@ -136,6 +138,7 @@ namespace {
         entry(4, SectionKind::Nodes, nodes, sizeof(NodeRecord), per[4] * elems[4]);
         entry(5, SectionKind::Constraints, constraints, sizeof(ConstraintSetHeader),
               kConstraintBytes);
+        entry(7, SectionKind::Tasks, tasks, sizeof(TaskRecord), per[5] * elems[5]);
         {
             // String table: fixed entry array, then the byte region.
             SectionEntry se{};
@@ -311,6 +314,16 @@ bool host_start(const HostOptions& opts, std::string* path_out, std::string* why
     host->server.set_round_budget(opts.round_budget);
     host->server.set_round_checkpoint_path(path + ".round");
     host->server.round_resume();
+    // #5399: the task board resumes from the checkpoint next to the
+    // socket. A malformed checkpoint fails the host closed rather than
+    // silently losing claimed work.
+    host->server.set_task_checkpoint_path(path + ".tasks");
+    std::string task_why;
+    if (!host->server.task_resume(&task_why)) {
+        if (why)
+            *why = task_why;
+        return false;
+    }
     // #5394: the degradation detector's configuration.
     host->server.set_degrade_config(opts.degrade);
     // #5396: the adversarial peer quotas.

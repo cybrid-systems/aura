@@ -93,6 +93,11 @@ namespace {
                 return digest_type(^^AuditRecord, kAuditFrozenFields);
             case SectionKind::Staging:
                 return {}; // raw bytes: no schema
+            case SectionKind::Tasks:
+                // #5399: outside the frozen header digest on purpose.
+                // A pre-v0.3.3 reader treats the section as unknown;
+                // a current reader validates its fixed-width records.
+                return {};
         }
         return {};
     }

@@ -23,6 +23,8 @@
         bus:round-open bus:round-state bus:round-budget
         bus:degradation-state bus:degrade-install bus:degrade-rollback
         bus:slo bus:capacity-plan
+        bus:post-task bus:claim bus:heartbeat bus:complete bus:fail
+        bus:task-status
         bus:status bus:code bus:message bus:ok? bus:help
         bus:attach? bus:error? bus:record?)
 
@@ -35,9 +37,9 @@
 ; the coordinator is the Aura process that owns the live workspace, not
 ; a separate daemon). Roles: 1 perf, 2 harness, 3 maintainer, 0 generic.
 ; (bus:host workspace [image-bytes] [path]) -> (ok path workspace);
-; idempotent per workspace. One peer is served at a time; after a
-; disconnect the next peer is accepted. The sandbox preset comes from
-; AURA_SANDBOX (ci drops constraint-write, prod also grant).
+; idempotent per workspace. Peers are served concurrently (#5377); a
+; disconnect ends only that session, never the host. The sandbox preset
+; comes from AURA_SANDBOX (ci drops constraint-write, prod also grant).
 (define (bus:host workspace . rest)
   (let ((bytes (if (pair? rest) (car rest) 0))
         (path (if (and (pair? rest) (pair? (cdr rest))) (car (cdr rest)) "")))
@@ -291,6 +293,38 @@
 (define (bus:degrade-rollback session)
   (bus-call "degrade-rollback" session))
 
+; ── v0.3.3 任务看板(#5399) ───────────────────────────────────
+; (bus:post-task session parent ref) -> (ok id state owner epoch deadline parent ref)
+; Publish a task. parent/ref are opaque (a parent task id, a contract
+; fingerprint or a worldline).
+(define (bus:post-task session parent ref)
+  (bus-call "post-task" session parent ref))
+
+; (bus:claim session lease-ms [task-id]) -> (ok id state owner epoch deadline parent ref)
+; Atomically claim a specific task, or the oldest open one when task-id
+; is omitted/0. A second claim while the lease is live is refused
+; (task-claimed); after the deadline another worker can claim it.
+(define (bus:claim session lease-ms . task-id)
+  (bus-call "claim" session lease-ms (if (pair? task-id) (car task-id) 0)))
+
+; (bus:heartbeat session task-id lease-ms) -> (ok ...)
+; Renew the holder's lease. A non-holder or an expired lease is refused.
+(define (bus:heartbeat session task-id lease-ms)
+  (bus-call "heartbeat" session task-id lease-ms))
+
+; (bus:complete session task-id ref) / (bus:fail session task-id ref)
+; Finish the task. Only the current holder can finish it.
+(define (bus:complete session task-id ref)
+  (bus-call "complete" session task-id ref))
+
+(define (bus:fail session task-id ref)
+  (bus-call "fail" session task-id ref))
+
+; (bus:task-status session task-id) -> (ok id state owner epoch deadline parent ref open-count)
+; state: 0 open, 1 claimed, 2 done, 3 failed.
+(define (bus:task-status session task-id)
+  (bus-call "task-status" session task-id))
+
 ; ── v0.3.2 性能与容量(#5395) ─────────────────────────────────
 ; (bus:slo session) -> (ok frames frame-cpu-ns p99-cpu-ns publishes
 ;                       publish-cpu-ns attaches attach-cpu-ns catchups
@@ -330,7 +364,7 @@
 ; Agent-facing help: verbs, capabilities and failure codes.
 (define (bus:help)
   (string-append
-    "std/bus (v0.3.0) — local tool bus\n"
+    "std/bus (v0.3.3) — local tool bus\n"
     "host: (bus:host workspace [image-bytes] [path]) -> (ok path workspace); the workspace owner hosts; roles 1 perf / 2 harness / 3 maintainer\n"
     "unhost: (bus:unhost workspace); host?: (bus:host? workspace) -> (ok 0|1)\n"
     "attach: (bus:attach path workspace role caps channels) -> (ok session size caps)\n"
@@ -347,10 +381,14 @@
     "audit: (bus:audit session worldline) -> (ok count truncated events); needs read\n"
     "gate: (bus:bind-gate session worldline round workload seed verifier folds threshold control verdict windows) -> (ok worldline); (bus:gate-evidence session worldline) -> (ok verdict family adjusted threshold fingerprint); the coordinator recomputes the admission verdict from the held-out windows\n"
     "replay: (bus:audit-replay session) -> (ok events worldlines keeps findings first-seq first-kind first-reason nodes); (bus:audit-evo session) -> (ok text); the lineage, its integrity findings and the reproduced verdicts\n"
-    "source: (bus:source-read session index) -> (ok source-text); the committed source of a candidate define, so the judge can measure it\n"
+    "source: (bus:publish-source session source-text) -> (ok index generation); (bus:source-read session index) -> (ok source-text); (bus:source-field) is the patch field marker; the committed source of a candidate define, so the judge can measure it\n"
+    "evidence: (bus:bind-evidence session worldline baseline candidate workload seed verifier) -> (ok worldline); (bus:evidence session worldline) -> (ok five-tuple); (bus:candidate-digest session worldline) -> (ok digest); (bus:canary-confirm session worldline) seals an observation\n"
+    "grant: (bus:grant-activate session token) narrows this session to a granted token's capability\n"
+    "defines: (bus:defines session) -> (ok count rows); rows = (name node-id); the host's live define names, so a peer can address a function by name\n"
     "round: (bus:round-open session) -> (ok round-id phase); (bus:round-state session) -> (ok phase round-id worldline opened sealed reason); (bus:round-budget session) -> (ok wall-ms cooldown-ms max-rounds version); the admission round state machine\n"
     "degrade: (bus:degradation-state session) -> (ok version samples alerts last-change min-samples drift limit calm keys); (bus:degrade-install session min-samples alpha drift limit calm down-keys up-keys) / (bus:degrade-rollback session) -> (ok version); the host's degradation detector\n"
     "slo: (bus:slo session) -> (ok frames frame-cpu-ns p99-cpu-ns publishes publish-cpu-ns attaches attach-cpu-ns catchups catchup-max); (bus:capacity-plan session) -> (ok rounds low remaining-metrics remaining-cc remaining-patches remaining-worldlines remaining-nodes committed-bytes image-bytes); the bus's own overhead and the room left\n"
+    "tasks: (bus:post-task session parent ref) -> (ok id state owner epoch deadline parent ref); (bus:claim session lease-ms [task-id]) claims the oldest open task (or the named one) atomically; (bus:heartbeat session task-id lease-ms) renews; (bus:complete session task-id ref) / (bus:fail session task-id ref) finish; (bus:task-status session task-id) reads state (0 open, 1 claimed, 2 done, 3 failed) and open-count; channel 6 carries the task events\n"
     "failures: (error code message); codes: schema-mismatch, seals-missing, loan-exhausted, image-full, validation-failed, permission, unregistered-id, transport-failed\n"))
 
 (define (bus:status record) (car record))

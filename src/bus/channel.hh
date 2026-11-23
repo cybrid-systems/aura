@@ -1,7 +1,8 @@
 // ──────────────────────────────────────────────────────────────
 //  channel.hh — incremental channels over a committed image (#5125)
 //
-//  Four channels: metrics, CCT, AST patches and worldline results.
+//  Six channels: metrics, CCT, AST patches, worldline results, nodes
+//  and the task board (#5399).
 //  The coordinator appends records into a section's reserved capacity
 //  and advances the section/committed generation; subscribers read only
 //  the committed range and ask for the records after their cursor.
@@ -23,6 +24,7 @@ enum class Channel : std::uint8_t {
     Patches = 3,
     Worldlines = 4,
     Nodes = 5,
+    Tasks = 6,
 };
 
 SectionKind section_for(Channel channel);

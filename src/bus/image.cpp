@@ -118,7 +118,10 @@ ImageCheck validate_image(std::span<const std::byte> image) {
         return {ImageStatus::BadDirectory, "section directory outside the committed prefix"};
 
     // ── Directory pass ───────────────────────────────────────────
-    bool seen[static_cast<std::size_t>(SectionKind::Staging) + 1] = {};
+    // #5399: Tasks is the newest known kind. The header schema id does
+    // not include it, so a pre-v0.3.3 reader sees an unknown section
+    // and skips it (below) while a current reader validates it.
+    bool seen[static_cast<std::size_t>(SectionKind::Tasks) + 1] = {};
     std::uint64_t total_records = 0;
     for (std::uint32_t i = 0; i < h.section_count; ++i) {
         const SectionEntry e = load_section_entry(image, i);
@@ -130,7 +133,7 @@ ImageCheck validate_image(std::span<const std::byte> image) {
             return {ImageStatus::BadBounds, "section length exceeds its capacity"};
         if (e.element_size == 0)
             return {ImageStatus::BadElementSize, "section element size is zero"};
-        if (e.kind > static_cast<std::uint32_t>(SectionKind::Staging)) {
+        if (e.kind > static_cast<std::uint32_t>(SectionKind::Tasks)) {
             // Unknown section kind: ignored by this version, but still
             // bounds-checked above.
             continue;
@@ -342,7 +345,7 @@ ImageCheck validate_image(std::span<const std::byte> image) {
     // Committed section bytes are immutable in that generation.
     for (std::uint32_t i = 0; i < h.section_count; ++i) {
         const SectionEntry e = load_section_entry(image, i);
-        if (e.kind > static_cast<std::uint32_t>(SectionKind::Staging))
+        if (e.kind > static_cast<std::uint32_t>(SectionKind::Tasks))
             continue;
         if (static_cast<SectionKind>(e.kind) == SectionKind::Staging)
             continue;

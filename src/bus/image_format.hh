@@ -45,6 +45,11 @@ enum class SectionKind : std::uint32_t {
     Constraints = 8,
     Audit = 9,
     Staging = 10,
+    // #5399: the task board channel. Appended after Staging so the
+    // frozen header schema id (built from kKnownKinds) is unchanged:
+    // a v0.3.2 reader treats kind 11 as an unknown section and skips
+    // it, while a v0.3.3 reader validates and serves it.
+    Tasks = 11,
 };
 
 struct ImageHeader {
@@ -201,6 +206,38 @@ struct AuditRecord {
     std::uint64_t generation;
 };
 
+// #5399: one append-only task-board event in the tasks channel. The
+// board state is the replay of these events; a host restart rebuilds
+// it from the image/checkpoint. Fixed width, no pointers.
+enum class TaskEventKind : std::uint64_t {
+    Post = 0,      // a task was published
+    Claim = 1,     // a session took the lease
+    Heartbeat = 2, // the holder renewed its lease
+    Complete = 3,  // the holder finished successfully
+    Fail = 4,      // the holder reported failure
+    Release = 5,   // the holder/disconnect returned the task
+    Expire = 6,    // the lease ran out; the task is open again
+    Requeue = 7,   // a coordinator requeued a claimed task
+};
+
+enum class TaskState : std::uint64_t {
+    Open = 0,
+    Claimed = 1,
+    Done = 2,
+    Failed = 3,
+};
+
+struct TaskRecord {
+    std::uint64_t task_id = 0;
+    std::uint64_t parent = 0; // 0 = root task
+    std::uint64_t kind = 0;   // TaskEventKind
+    std::uint64_t actor = 0;  // the session's root grant token
+    std::uint64_t lease_epoch = 0;
+    std::uint64_t deadline_ms = 0;
+    std::uint64_t ref = 0;   // contract fingerprint / worldline / result
+    std::uint64_t flags = 0; // reserved
+};
+
 static_assert(sizeof(ImageHeader) == kImageHeaderSize);
 static_assert(offsetof(ImageHeader, committed_gen) == 64);
 static_assert(offsetof(ImageHeader, bell) == 128);
@@ -217,6 +254,7 @@ static_assert(offsetof(WorldlineRecord, baseline_gen) == 48);
 static_assert(offsetof(WorldlineRecord, gate_verdict) == 88);
 static_assert(sizeof(ConstraintSetHeader) == 32);
 static_assert(sizeof(AuditRecord) == 40);
+static_assert(sizeof(TaskRecord) == 64);
 
 // v1 frozen field counts. A schema id hashes only this prefix, so a
 // later layout that appends fields keeps the id and bumps
@@ -268,6 +306,8 @@ inline constexpr std::uint32_t expected_element_size(SectionKind kind) {
             return sizeof(AuditRecord);
         case SectionKind::Staging:
             return 1;
+        case SectionKind::Tasks:
+            return sizeof(TaskRecord);
     }
     return 0;
 }

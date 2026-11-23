@@ -189,6 +189,14 @@ enum class AuditKind : std::uint16_t {
     // #5396: the adversarial peer events.
     RateLimited = 29,  // a session exceeded its quota
     GrantLimited = 30, // a grant tree limit was reached
+    // #5399: the task board. Each event names the task in detail.
+    TaskPost = 31,
+    TaskClaim = 32,
+    TaskHeartbeat = 33,
+    TaskComplete = 34,
+    TaskFail = 35,
+    TaskRelease = 36,
+    TaskExpire = 37,
 };
 
 struct AuditEvent {

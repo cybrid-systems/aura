@@ -195,16 +195,6 @@ bool has(const std::string& out, const char* line) {
     return out.find(line) != std::string::npos;
 }
 
-bool wait_socket(const std::string& sock) {
-    for (int i = 0; i < 400; ++i) {
-        struct stat st{};
-        if (::stat(sock.c_str(), &st) == 0)
-            return true;
-        usleep(50000);
-    }
-    return false;
-}
-
 // The host publishes a few metrics and reads the counters back.
 const char* kHostScript = R"AURA(
 (require "std/bus" all:)
@@ -327,12 +317,13 @@ int main() {
             return 1;
         check(setenv("XDG_RUNTIME_DIR", dir, 1) == 0, "setenv XDG_RUNTIME_DIR");
         const std::string d(dir);
-        const std::string sock = default_socket_path(8963);
         check(write_file(d + "/slo.aura", kHostScript), "write the script");
         int out_fd = -1, in_fd = -1;
         const pid_t pid = run_script(d + "/slo.aura", &out_fd, &in_fd);
         check(pid > 0, "fork the host");
-        check(wait_socket(sock), "the host socket appeared");
+        // The host script is one-shot: it may unlink the socket and exit
+        // before the first stat, so the output is the readiness signal
+        // (the #5128 host is exercised by test_bus_host separately).
         const std::string out = read_until(out_fd, "DONE", 20000);
         check(has(out, "slo="), "the slo counters are readable");
         check(has(out, "capacity="), "the capacity plan is readable");
