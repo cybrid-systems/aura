@@ -1,0 +1,3 @@
+edit-search:run: Any -> Any
+edit-search:legal: Any Any -> Any
+edit-search:help:  -> String

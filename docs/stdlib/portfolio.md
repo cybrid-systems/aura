@@ -47,6 +47,10 @@ of the budget and the audited time is within 10 % of it.
 `successive-halving` re-runs survivors with a growing share and drops the
 worse half each round; `ucb` / `thompson` spend fixed slots on bandit pulls.
 
+Fibers that were spawned elsewhere are raced by `std/race` (`race:halving` /
+`race:bandit` over handles that already run, same row and `arms` shape):
+[edit-search.md](edit-search.md).
+
 ## Selection
 
 ```aura

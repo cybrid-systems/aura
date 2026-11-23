@@ -1,0 +1,204 @@
+; tests/suite/edit_search.aura — Issue #5413
+; std/edit-search: a node is an edit sequence, a child is one more edit its
+; stage permits. The engines are the ones main already has: prop:tree
+; (engine "mcts") and the std/search beam (engine "beam"), so these cases
+; pin the stage gate, the budget, the dead ends and what each engine finds.
+
+(require "std/test" all:)
+(require "std/edit-search" all:)
+(require "std/search" all:)
+
+(test-file "edit_search.aura")
+
+; move -> fight -> boss. Only a1 passes "move"; b1 then passes "fight".
+; b2 breaks the program; a2 changes nothing.
+(define (ed name stage v)
+  (hash "name" name "stage" stage "v" v))
+
+(define edits
+  (list (ed "a1" "move" 1) (ed "a2" "move" 2)
+        (ed "b1" "fight" 4) (ed "b2" "fight" 1)
+        (ed "c1" "boss" 8) (ed "c2" "boss" 3)))
+
+(define (names seq)
+  (map (lambda (e) (hash-ref e "name")) seq))
+
+(define (has? seq n)
+  (if (member n (names seq)) #t #f))
+
+; a name list (what a ranking row holds) holds n
+(define (includes? ns n)
+  (if (member n ns) #t #f))
+
+(define (stage-of name)
+  (let loop ((xs edits))
+    (if (string=? (hash-ref (car xs) "name") name)
+      (hash-ref (car xs) "stage")
+      (loop (cdr xs)))))
+
+(define (evaluate seq)
+  (let* ((move (has? seq "a1"))
+         (fight (and move (has? seq "b1")))
+         (broken (has? seq "b2"))
+         (score (foldl (lambda (acc e) (+ acc (hash-ref e "v"))) 0 seq)))
+    (hash "score" (if broken -100 score)
+          "ok" (not broken)
+          "passed" (append (if move (list "move") (list))
+                           (if fight (list "fight") (list))))))
+
+(define spec
+  (hash "stages" (list "move" "fight" "boss")
+        "edits" edits
+        "evaluate" evaluate
+        "max-depth" 3))
+
+; spec plus key/value pairs
+(define (with-opts . kvs)
+  (let loop ((o spec) (xs kvs))
+    (if (null? xs)
+      o
+      (loop (hash-set o (car xs) (car (cdr xs))) (cdr (cdr xs))))))
+
+; The gate as a predicate on a name sequence: a "fight" edit needs an a1
+; before it, a "boss" edit needs a1 and b1 before it.
+(define (gated? seq)
+  (let loop ((xs seq) (move #f) (fight #f))
+    (if (null? xs)
+      #t
+      (cond
+        ((and (string=? (stage-of (car xs)) "fight") (not move)) #f)
+        ((and (string=? (stage-of (car xs)) "boss") (not fight)) #f)
+        (else
+          (loop (cdr xs)
+                (or move (string=? (car xs) "a1"))
+                (or fight (and move (string=? (car xs) "b1")))))))))
+
+; Every evaluated sequence of a run, best first: (names . info).
+(define (ranking r) (hash-ref r "ranking"))
+
+(define (all-gated? r)
+  (every (lambda (row) (gated? (car row))) (ranking r)))
+
+; A broken candidate is evaluated once and never expanded: no evaluated
+; sequence extends one that contains the breaking edit.
+(define (no-broken-extended? r)
+  (every (lambda (row)
+           (let ((ns (car row)))
+             (or (not (includes? ns "b2")) (string=? "b2" (last ns)))))
+         (ranking r)))
+
+(test-case "the stage gate decides what may follow a sequence" (hash "issue" 5413)
+  (check= (list "a1" "a2") (names (edit-search:legal spec (list))))
+  ; a1 passes "move": fight edits open, boss edits stay closed
+  (check= (list "a1" "a2" "b1" "b2") (names (edit-search:legal spec (list "a1"))))
+  ; a2 passes nothing
+  (check= (list "a1" "a2") (names (edit-search:legal spec (list "a2"))))
+  ; a1 b1 passes "fight": every edit is legal
+  (check= (names edits) (names (edit-search:legal spec (list "a1" "b1")))))
+
+(test-case "mcts finds the best gated sequence within its budget" (hash "issue" 5413)
+  (define r (edit-search:run (with-opts "engine" "mcts" "budget" 120)))
+  (check= "mcts" (hash-ref r "engine"))
+  (check= (list "a1" "b1" "c1") (names (hash-ref r "best-seq")))
+  (check (= 13.0 (hash-ref r "best-score")))
+  (check= "c1" (hash-ref r "best-name"))
+  (check= (hash-ref (cdr (car (ranking r))) "score") (hash-ref r "best-score"))
+  (check (all-gated? r))
+  (check (no-broken-extended? r))
+  ; every evaluated sequence is ranked once, best first
+  (check (= (hash-ref r "evaluated") (length (ranking r))))
+  (check (>= (hash-ref (cdr (car (ranking r))) "score")
+             (hash-ref (cdr (car (cdr (ranking r)))) "score"))))
+
+(test-case "budget counts distinct evaluations" (hash "issue" 5413)
+  (define r (edit-search:run (with-opts "engine" "mcts" "budget" 5)))
+  (check= 5 (hash-ref r "evaluated"))
+  (check= 5 (length (ranking r)))
+  (check (all-gated? r)))
+
+(test-case "beam widens in offer order and a prior reorders the offers" (hash "issue" 5413)
+  (define wide (edit-search:run (with-opts "engine" "beam" "width" 8 "budget" 200)))
+  (check= "beam" (hash-ref wide "engine"))
+  ; The beam keeps "width" offers a generation in offer order and prunes the
+  ; rest: a bounded enumeration, not a best-first search. It promises the
+  ; gate, the dead ends and the budget, not the optimum.
+  (check (all-gated? wide))
+  (check (no-broken-extended? wide))
+  (check (pair? (hash-ref wide "best-seq")))
+  (check (= (hash-ref wide "best-score")
+            (hash-ref (cdr (car (ranking wide))) "score")))
+  ; width 2 keeps two offers a generation, so the plain order spends them
+  ; on the first node's children; the prior (higher edit value first)
+  ; offers the fight edits early and finds a better sequence
+  (define plain (edit-search:run (with-opts "engine" "beam" "width" 2 "budget" 200)))
+  (define ranked (edit-search:run (with-opts "engine" "beam" "width" 2 "budget" 200
+                                             "prior" (lambda (e s i) (hash-ref e "v")))))
+  (check (< (length (ranking plain)) (length (ranking wide))))
+  (check (> (hash-ref ranked "best-score") (hash-ref plain "best-score")))
+  (check (all-gated? plain))
+  (check (all-gated? ranked))
+  ; the beam never evaluates past the budget
+  (define small (edit-search:run (with-opts "engine" "beam" "width" 4 "budget" 5)))
+  (check (<= (hash-ref small "evaluated") 5)))
+
+(test-case "no stages makes every edit legal" (hash "issue" 5413)
+  (define open (hash-set spec "stages" (list)))
+  (check= (names edits) (names (edit-search:legal open (list))))
+  (check= (names edits) (names (edit-search:legal open (list "c2")))))
+
+(test-case "a rule replaces the default gate" (hash "issue" 5413)
+  ; at most one edit of each stage
+  (define one-each
+    (hash-set spec "rule"
+              (lambda (e seq info)
+                (not (member (hash-ref e "stage")
+                             (map (lambda (x) (hash-ref x "stage")) seq))))))
+  ; a rule replaces the default gate, so the stage order no longer applies
+  (check= (names edits) (names (edit-search:legal one-each (list))))
+  (check= (list "b1" "b2" "c1" "c2") (names (edit-search:legal one-each (list "a1"))))
+  (check= (list "c1" "c2") (names (edit-search:legal one-each (list "a1" "b1")))))
+
+(test-case "a broken candidate is evaluated once, reported, never expanded"
+          (hash "issue" 5413)
+  ; b2 answers ok #f: it is ranked last with its score and nothing extends it
+  (define r (edit-search:run (with-opts "engine" "mcts" "budget" 120)))
+  (define broken (filter (lambda (row) (includes? (car row) "b2")) (ranking r)))
+  (check (pair? broken))
+  (check (every (lambda (row) (not (hash-ref (cdr row) "ok"))) broken))
+  (check (no-broken-extended? r))
+  ; a thrown error is the same verdict
+  (define t (edit-search:run (hash-set spec "evaluate"
+                                       (lambda (seq)
+                                         (if (has? seq "a2")
+                                           (error "a2 does not parse")
+                                           (length seq))))))
+  (define last-row (last (ranking t)))
+  (check (not (hash-ref (cdr last-row) "ok")))
+  (check (< (hash-ref (cdr last-row) "score") -1.0e29))
+  (check (every (lambda (row)
+                  ; a2 is only ever the last edit of an evaluated sequence
+                  (or (not (includes? (car row) "a2"))
+                      (string=? "a2" (last (car row)))))
+                (ranking t))))
+
+(test-case "a bad spec is refused by name" (hash "issue" 5413)
+  (check= "edit-search:run: engine is \"mcts\" or \"beam\""
+          (try (edit-search:run (hash-set spec "engine" "nope")) (catch (e) e)))
+  (check= "edit-search:run: evaluate must be a procedure (lambda (seq) ...)"
+          (try (edit-search:run (hash-set spec "evaluate" 5)) (catch (e) e)))
+  (check (string-prefix?
+           (try (edit-search:run (hash-set spec "edits" (list (ed "x" "move" 1)
+                                                               (ed "x" "move" 2))))
+                (catch (e) e))
+           "edit-search: edits need unique names: x"))
+  (check= "edit-search:legal: seq names an edit that spec does not list"
+          (try (edit-search:legal spec (list "zz")) (catch (e) e))))
+
+(test-case "the reserved std/search kinds stay refused" (hash "issue" 5413)
+  ; engine "mcts" is this module's prop:tree wrapper, not a std/search kind
+  (check= "search:init: unknown kind mcts" (try (search:init "mcts" (hash)) (catch (e) e)))
+  (check= "search:init: unknown kind cma-es" (try (search:init "cma-es" (hash)) (catch (e) e))))
+  (check (not (member "mcts" (search:kinds))))
+  (check (not (member "cma-es" (search:kinds))))
+
+(test-finish)

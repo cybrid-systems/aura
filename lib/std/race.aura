@@ -1,0 +1,430 @@
+; lib/std/race.aura — racing and early stop over fibers that already run
+; (Issue #5413, M4 prerequisite).
+;
+; std/portfolio allocates a budget across member FACTORIES: it spawns each
+; member itself and learns a score only when the member returns. A live
+; process that rehearses N candidates has already spawned them (fiber:spawn)
+; and needs the opposite: watch their INTERMEDIATE scores and fiber:cancel
+; the ones that cannot win, without restarting a survivor.
+;
+; A race is a value. Enter fibers that already run, then run one policy:
+;
+;   (define r (race:make (hash "score" (lambda (name) (atomic:counter-value (cell name))))))
+;   (race:enter! r "a" (fiber:spawn trial-a))
+;   (race:enter! r "b" (fiber:spawn trial-b))
+;   (race:halving r (hash "round-ms" 200 "rounds" 3))
+;   (race:bandit r (hash "slot-ms" 100 "slots" 12 "policy" "ucb"))
+;
+;   (hash-ref (race:result r) "winner")   ; name of the best arm
+;   (race:arms r)                         ; ((name mean samples) ...) ledger
+;   (race:join r "a")                      ; after "join" #f: wait for one arm
+;   (race:cancel r "b")                    ; stop one arm and reclaim it
+;
+; "score" is (lambda (name) ...) and answers an arm's CURRENT intermediate
+; score: a number, #f (none yet), or (hash "score" n "done" #t) to say the
+; trial finished by itself. It runs on the race driver's thread; a trial
+; publishes through its own cell (atomic:counter, a channel), never by
+; writing into the race.
+;
+; Policies (higher wins unless "sense" is "min"):
+;   race:halving   successive halving: each round keeps the better half of
+;                  the live arms (never fewer than "keep"), cancels the rest
+;   race:bandit    one slot at a time; an arm is cancelled once its share of
+;                  "in the top half of the live arms" is confidently below
+;                  another arm's (Hoeffding bounds). The ledger is a
+;                  std/search bandit (search:arms): one pull per arm per
+;                  slot, the policy (ucb / thompson) picks the pull order.
+;
+; Budget accounting is std/portfolio's shape. (race:result r) carries rows
+; (member / budget-ms / actual-ms / status / score / value), winner,
+; winner-score, budget-ms and spent-ms like (portfolio:run ...), and "arms"
+; as (name mean n) rows like its ucb / thompson allocation. A bandit race
+; also carries the search bandit's own ledger.
+;
+; Cancellation is cooperative (docs/stdlib/fiber-cancel.md): a trial must
+; reach a safepoint (fiber:yield, a channel, a join) to observe it. A cut
+; arm is cancelled AND joined before the policy goes on, so its thread is
+; reclaimed; a body that never yields blocks the race in that join.
+;
+; Waiting: there is no kernel sleep yet. The default timed wait is a yield
+; loop on the steady clock (the orch-wait-sec shape): it burns its thread
+; for the length of the round. A host with a timer injects "sleep"
+; (lambda (ms) ...); tests inject one to stay deterministic.
+;
+; Import: (require "std/race" all:)
+
+(export race:make race:enter! race:halving race:bandit race:cancel race:result
+        race:arms race:join race:help)
+
+(require "std/list" all:)
+(require "std/string" all:)
+(require "std/search" all:)
+
+;; ── small helpers ─────────────────────────────────────────────
+
+; A missing key and an explicit () read the same.
+(define (race-opt h k d)
+  (if (hash? h)
+    (let ((v (hash-ref h k ())))
+      (if (null? v) d v))
+    d))
+
+; (integer? 3.0) is #t, so a count goes through floor first.
+(define (race-int v d)
+  (cond ((and (integer? v) (not (inexact? v))) v)
+        ((number? v) (inexact->exact (floor v)))
+        (else d)))
+
+(define (race-num v d)
+  (if (number? v) (* 1.0 v) d))
+
+; Is a better than b? An arm without a numeric score loses to one with it.
+(define (race-better? sense a b)
+  (cond ((not (number? a)) #f)
+        ((not (number? b)) #t)
+        ((string=? sense "min") (< a b))
+        (else (> a b))))
+
+(define race-default-clock (lambda () (monotonic-ms)))
+
+(define (race-sleep-spin ms)
+  (let ((deadline (+ (monotonic-ms) ms)))
+    (let loop ()
+      (if (< (monotonic-ms) deadline)
+        (begin (fiber:yield) (loop))
+        #t))))
+
+;; ── the race (a value; no module state) ───────────────────────
+
+(define (race:make opts)
+  (let* ((o (if (hash? opts) opts (hash)))
+         (score (race-opt o "score" #f))
+         (sleep (race-opt o "sleep" #f))
+         (clock (race-opt o "clock" #f))
+         (sense (race-opt o "sense" "max")))
+    (hash "arms" (list)
+          "sense" (if (string=? sense "min") "min" "max")
+          "seed" (race-int (race-opt o "seed" 42) 42)
+          "score" (if (procedure? score) score #f)
+          "sleep" (if (procedure? sleep) sleep race-sleep-spin)
+          "clock" (if (procedure? clock) clock race-default-clock)
+          "t0" 0 "round" 0 "slot-ms" 0 "alloc" "" "ledger" #f)))
+
+; Register a fiber that already runs. #f for a duplicate or a bad argument.
+(define (race:enter! r name fid)
+  (if (or (not (string? name)) (not (integer? fid)) (race-arm r name))
+    #f
+    (let ((a (hash "name" name
+                   "fid" fid
+                   "t0" ((hash-ref r "clock"))
+                   "t-end" #f
+                   "score" #f
+                   "reward" 0
+                   "samples" 0
+                   "sum" 0.0
+                   "rounds" 0
+                   "status" "live"
+                   "value" #f
+                   "cut" #f)))
+      (hash-set! r "arms" (append (hash-ref r "arms") (list a)))
+      a)))
+
+; std/list find returns the element itself, () when nothing matches.
+(define (race-arm r name)
+  (let ((hit (find (lambda (a) (string=? (hash-ref a "name") name))
+                   (hash-ref r "arms"))))
+    (if (null? hit) #f hit)))
+
+(define (race-name a) (hash-ref a "name"))
+
+(define (race-live r)
+  (filter (lambda (a) (string=? (hash-ref a "status") "live"))
+          (hash-ref r "arms")))
+
+; Best first. sort is stable, so equals keep the order they were given in.
+(define (race-sort r arms)
+  (sort arms
+        (lambda (x y)
+          (race-better? (hash-ref r "sense") (hash-ref x "score") (hash-ref y "score")))))
+
+(define (race-ranked r) (race-sort r (race-live r)))
+
+(define (race-begin! r alloc slot-ms)
+  (if (= 0 (hash-ref r "t0"))
+    (hash-set! r "t0" ((hash-ref r "clock"))))
+  (hash-set! r "alloc" alloc)
+  (hash-set! r "slot-ms" slot-ms)
+  (hash-set! r "round" 0))
+
+; Every arm alive at the start of a round was given that round's budget.
+(define (race-bump-rounds! r)
+  (hash-set! r "round" (+ 1 (hash-ref r "round")))
+  (for-each (lambda (a) (hash-set! a "rounds" (+ 1 (hash-ref a "rounds"))))
+            (race-live r)))
+
+; What a fiber's result says about it. "raised" is set when the join raised
+; inside try (the catch binds the cause as a string).
+(define (race-classify cut v raised)
+  (cond
+    ((and cut (or raised (error? v))) "cancelled")
+    ((and raised (string-prefix? (format "~a" v) "fiber-cancelled")) "cancelled")
+    ((or raised (error? v)) "error")
+    (else "ok")))
+
+; Wait for an arm's fiber and record what it returned.
+(define (race-await! r a)
+  (let* ((raw (try (fiber:join (hash-ref a "fid")) (catch (e) (list 'raised e))))
+         (raised (and (pair? raw) (eq? (car raw) 'raised)))
+         (v (if raised (cadr raw) raw)))
+    (hash-set! a "value" v)
+    (hash-set! a "status" (race-classify (hash-ref a "cut") v raised))
+    (hash-set! a "t-end" ((hash-ref r "clock")))
+    a))
+
+; Cancel an arm and reclaim its fiber.
+(define (race-cut-arm! r a)
+  (hash-set! a "cut" #t)
+  (try (fiber:cancel (hash-ref a "fid")) (catch (e) #f))
+  (race-await! r a))
+
+; Cancel the live arms named in names.
+(define (race-cut-names! r names)
+  (for-each (lambda (a)
+              (if (member (race-name a) names) (race-cut-arm! r a)))
+            (race-live r)))
+
+(define (race:cancel r name)
+  (let ((a (race-arm r name)))
+    (if (and a (string=? (hash-ref a "status") "live"))
+      (race-cut-arm! r a)
+      #f)))
+
+; Wait for an arm that still runs (live, or done by its own report) and
+; record its result. A finished arm is answered as it is.
+(define (race:join r name)
+  (let ((a (race-arm r name)))
+    (if (and a (or (string=? (hash-ref a "status") "live")
+                   (string=? (hash-ref a "status") "done")))
+      (race-await! r a)
+      a)))
+
+;; ── observing intermediate scores ─────────────────────────────
+
+; Read every live arm's score. "reward" is 1 when the arm is in the top
+; half of the live arms this time (strictly better than the median score),
+; else 0: the quantity the bandit policy keeps a ledger of.
+(define (race-observe! r)
+  (let ((score (hash-ref r "score"))
+        (sense (hash-ref r "sense")))
+    (for-each
+      (lambda (a)
+        (let* ((v (if score (try (score (race-name a)) (catch (e) #f)) #f))
+               (s (cond ((number? v) v)
+                        ((and (hash? v) (number? (hash-ref v "score" #f)))
+                         (hash-ref v "score" #f))
+                        (else (hash-ref a "score")))))
+          (if (number? s)
+            (begin
+              (hash-set! a "score" s)
+              (hash-set! a "sum" (+ (hash-ref a "sum") (* 1.0 s)))))
+          (hash-set! a "samples" (+ 1 (hash-ref a "samples")))
+          (if (and (hash? v) (hash-ref v "done" #f))
+            (begin
+              (hash-set! a "status" "done")
+              (hash-set! a "t-end" ((hash-ref r "clock")))))))
+      (race-live r))
+    (let* ((live (race-live r))
+           (median (if (null? live)
+                     #f
+                     (hash-ref (list-ref (race-sort r live) (quotient (length live) 2))
+                               "score"))))
+      (for-each (lambda (a)
+                  (hash-set! a "reward"
+                             (if (and (number? median)
+                                      (race-better? sense (hash-ref a "score") median))
+                               1
+                               0)))
+                live))))
+
+;; ── policy: successive halving ────────────────────────────────
+
+; Rounds that halve n live arms down to keep.
+(define (race-halving-rounds n keep)
+  (let loop ((k n) (rounds 0))
+    (if (or (<= k keep) (<= k 1))
+      rounds
+      (loop (max keep (quotient (+ k 1) 2)) (+ rounds 1)))))
+
+; Keep the better half (at least "keep"), cancel the rest.
+(define (race-halving-cut! r keep)
+  (let* ((live (race-ranked r))
+         (target (max keep (quotient (+ (length live) 1) 2))))
+    (race-cut-names! r (map race-name (skip target live)))))
+
+; "join" #t (default): wait for the arms still live and report their
+; results. #f leaves them running (status "live") for the caller to join.
+(define (race-finish! r o)
+  (if (race-opt o "join" #t)
+    (for-each (lambda (a) (race-await! r a)) (race-live r))
+    #f)
+  (race:result r))
+
+; opts: round-ms (100), rounds (enough to halve down to "keep"), keep (1),
+; join (#t).
+(define (race:halving r . rest)
+  (let* ((o (if (and (pair? rest) (hash? (car rest))) (car rest) (hash)))
+         (round-ms (race-num (race-opt o "round-ms" 100) 100.0))
+         (keep (max 1 (race-int (race-opt o "keep" 1) 1)))
+         (asked (race-int (race-opt o "rounds" 0) 0))
+         (rounds (if (> asked 0)
+                   asked
+                   (race-halving-rounds (length (race-live r)) keep))))
+    (race-begin! r "successive-halving" round-ms)
+    (let loop ((round 0))
+      (if (or (>= round rounds) (<= (length (race-live r)) keep))
+        (race-finish! r o)
+        (begin
+          (race-bump-rounds! r)
+          ((hash-ref r "sleep") round-ms)
+          (race-observe! r)
+          (race-halving-cut! r keep)
+          (loop (+ round 1)))))))
+
+;; ── policy: bandit ────────────────────────────────────────────
+
+; One pull per enrolled arm per slot, each feeding the pending arm its
+; latest reward. The policy picks the pull order, so every arm's ledger
+; advances about evenly.
+(define (race-pull st r)
+  (let loop ((s st) (k (length (hash-ref r "arms"))))
+    (if (<= k 0)
+      s
+      (let* ((pending (search:pending s))
+             (name (if (pair? pending) (car pending) #f))
+             (a (if name (race-arm r name) #f)))
+        (if a
+          (loop (search:step s (hash-ref a "reward")) (- k 1))
+          s)))))
+
+; A live arm whose upper bound on "share of slots in the top half" is below
+; another arm's lower bound cannot catch up: cut it. The bound is Hoeffding's
+; (mean ± sqrt(ln(1/delta) / 2n)); an arm with no pull yet is never cut.
+; rows are search:arms rows: ((arm pulls keeps) ...).
+(define (race-dominated rows delta live-names)
+  (let* ((radius (lambda (n) (sqrt (/ (log (/ 1.0 delta)) (* 2.0 n)))))
+         (bound (lambda (row sign)
+                  (let ((n (cadr row)))
+                    (if (= n 0)
+                      #f
+                      (let ((m (/ (caddr row) n)))
+                        (+ m (* sign (radius n))))))))
+         (best-lcb (let loop ((xs rows) (best #f))
+                     (if (null? xs)
+                       best
+                       (let ((v (bound (car xs) -1.0)))
+                         (loop (cdr xs)
+                               (if (and v (or (not best) (> v best))) v best))))))
+         (losing (filter (lambda (row)
+                           (let ((u (bound row 1.0)))
+                             (and u best-lcb (< u best-lcb)
+                                  (member (car row) live-names))))
+                         rows)))
+    (map car losing)))
+
+; opts: slot-ms (100), slots (8), policy ("ucb" | "thompson"), delta (0.05),
+; keep (1), final (#t: at the end cut down to "keep" by lower bound),
+; join (#t).
+(define (race:bandit r . rest)
+  (let* ((o (if (and (pair? rest) (hash? (car rest))) (car rest) (hash)))
+         (slot-ms (race-num (race-opt o "slot-ms" 100) 100.0))
+         (slots (max 1 (race-int (race-opt o "slots" 8) 8)))
+         (asked (race-opt o "policy" "ucb"))
+         (policy (if (string=? asked "thompson") "thompson" "ucb"))
+         (delta (min 0.5 (max 0.001 (race-num (race-opt o "delta" 0.05) 0.05))))
+         (keep (max 1 (race-int (race-opt o "keep" 1) 1)))
+         (names (map race-name (race-live r))))
+    (race-begin! r policy slot-ms)
+    (if (null? names)
+      (race-finish! r o)
+      (let loop ((slot 0)
+                 (st (search:init "bandit"
+                                  (hash "arms" names
+                                        "policy" policy
+                                        "seed" (hash-ref r "seed")))))
+        (if (or (>= slot slots) (<= (length (race-live r)) keep))
+          (begin
+            (hash-set! r "ledger" (search:arms st))
+            (if (race-opt o "final" #t)
+              (let* ((live (race-ranked r)))
+                (if (> (length live) keep)
+                  (race-cut-names! r (map race-name (skip keep live))))))
+            (race-finish! r o))
+          (begin
+            (race-bump-rounds! r)
+            ((hash-ref r "sleep") slot-ms)
+            (race-observe! r)
+            (let* ((st2 (race-pull st r))
+                   (cut (race-dominated (search:arms st2) delta
+                                        (map race-name (race-live r)))))
+              (race-cut-names! r cut)
+              (loop (+ slot 1) st2))))))))
+
+;; ── results ───────────────────────────────────────────────────
+
+(define (race-row r a)
+  (hash "member" (race-name a)
+        "fid" (hash-ref a "fid")
+        "budget-ms" (* (hash-ref a "rounds") (hash-ref r "slot-ms"))
+        "actual-ms" (- (or (hash-ref a "t-end") ((hash-ref r "clock")))
+                       (hash-ref a "t0"))
+        "status" (hash-ref a "status")
+        "score" (hash-ref a "score")
+        "samples" (hash-ref a "samples")
+        "value" (hash-ref a "value")
+        "cut" (hash-ref a "cut")))
+
+; The best arm: not cut, not errored, with a numeric score.
+(define (race-pick r)
+  (let ((ranked (race-sort
+                  r
+                  (filter (lambda (a)
+                            (and (not (hash-ref a "cut"))
+                                 (number? (hash-ref a "score"))
+                                 (not (string=? (hash-ref a "status") "error"))))
+                          (hash-ref r "arms")))))
+    (if (null? ranked)
+      (cons #f #f)
+      (cons (race-name (car ranked)) (hash-ref (car ranked) "score")))))
+
+; (name mean-of-observed-scores samples) per arm, the shape of the "arms"
+; field in a std/portfolio ucb / thompson run.
+(define (race:arms r)
+  (map (lambda (a)
+         (let ((n (hash-ref a "samples")))
+           (list (race-name a)
+                 (if (= n 0) 0.0 (/ (hash-ref a "sum") n))
+                 n)))
+       (hash-ref r "arms")))
+
+(define (race:result r)
+  (let ((w (race-pick r)))
+    (hash "alloc" (hash-ref r "alloc")
+          "rows" (map (lambda (a) (race-row r a)) (hash-ref r "arms"))
+          "winner" (car w)
+          "winner-score" (cdr w)
+          "rounds" (hash-ref r "round")
+          "budget-ms" (* (hash-ref r "round") (hash-ref r "slot-ms"))
+          "spent-ms" (- ((hash-ref r "clock")) (hash-ref r "t0"))
+          "arms" (race:arms r)
+          "ledger" (hash-ref r "ledger")
+          "sense" (hash-ref r "sense"))))
+
+(define (race:help)
+  (string-append
+   "std/race (#5413)\n"
+   "  (race:make (hash \"score\" (lambda (name) ...) [\"sense\" \"max\"] [\"sleep\" fn] [\"clock\" fn]))\n"
+   "  (race:enter! r \"name\" fiber-id)      ; a fiber that already runs\n"
+   "  (race:halving r (hash \"round-ms\" 100 \"rounds\" 3 \"keep\" 1 \"join\" #t))\n"
+   "  (race:bandit r (hash \"slot-ms\" 100 \"slots\" 8 \"policy\" \"ucb\" \"delta\" 0.05))\n"
+   "  (race:cancel r \"name\") (race:join r \"name\") (race:result r) (race:arms r)\n"
+   "  score answers a number | #f | (hash \"score\" n \"done\" #t)\n"))

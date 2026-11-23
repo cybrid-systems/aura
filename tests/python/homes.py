@@ -384,6 +384,41 @@ HOMES: tuple[Home, ...] = (
         note=("One search protocol over the program space. Every kind is a value; new kinds append a case here."),
     ),
     _h(
+        "std/edit-search",
+        "aura",
+        "tests/suite/edit_search.aura",
+        ("std/edit-search", "edit-search", "edit-search:run", "stage gate"),
+        tag="edit-search",
+        requires=("std/edit-search",),
+        body=(
+            '(check= (list "a") (map (lambda (e) (hash-ref e "name"))\n'
+            '  (edit-search:legal (hash "stages" (list "s0" "s1")\n'
+            '                         "edits" (list (hash "name" "a" "stage" "s0")\n'
+            '                                       (hash "name" "b" "stage" "s1"))\n'
+            '                         "evaluate" (lambda (seq) 0))\n'
+            "                    (list))))"
+        ),
+        roots=("lib/std/edit-search.aura",),
+        note=(
+            "Stage-aware tree search over edit sequences (#5413): the stage gate, the budget, "
+            "dead ends, and what each engine (prop:tree, std/search beam) finds."
+        ),
+    ),
+    _h(
+        "std/race",
+        "aura",
+        "tests/suite/fiber_race.aura",
+        ("std/race", "race:halving", "race:bandit", "fiber race", "race"),
+        tag="race",
+        requires=("std/race",),
+        body="(check (hash? (race:make (hash))))",
+        roots=("lib/std/race.aura",),
+        note=(
+            "Racing fibers that already run (#5413): successive halving and bandit cancellation "
+            "by intermediate score; budget rows in the std/portfolio shape."
+        ),
+    ),
+    _h(
         "lang/module",
         "aura",
         "tests/suite/module.aura",

@@ -1,0 +1,9 @@
+race:make: Any -> Any
+race:enter!: Any Any Any -> Any
+race:cancel: Any Any -> Any
+race:join: Any Any -> Any
+race:halving: Any Any -> Any
+race:bandit: Any Any -> Any
+race:arms: Any -> Any
+race:result: Any -> Any
+race:help:  -> String

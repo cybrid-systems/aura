@@ -1,0 +1,210 @@
+; tests/suite/fiber_race.aura — Issue #5413
+; std/race: successive halving and bandit cancellation over fibers that
+; already run. Scores are scripted through an injected sleep, so every case
+; but the last is deterministic; the last one reads real atomic counters
+; under the default timed wait.
+
+(require "std/test" all:)
+(require "std/race" all:)
+
+(test-file "fiber_race.aura")
+
+; A trial is parked on its own channel: a blocking recv is a cancellation
+; safepoint and costs no CPU while it waits. release! lets one finish.
+(define *gates* (hash))
+
+(define (spawn-trial name)
+  (let ((ch (channel:create 1)))
+    (hash-set! *gates* name ch)
+    (fiber:spawn (lambda () (channel:recv ch)))))
+
+(define (release! name)
+  (let ((ch (hash-ref *gates* name #f)))
+    (if ch (channel:send ch 'go) #f)))
+
+; The scripted clock: the injected "sleep" only advances a counter, so
+; "score" can answer by round and "clock" reads the same counter.
+(define *round* 0)
+
+; table: name -> constant score. A second hash carries other race options.
+(define (const-race table . rest)
+  (set! *round* 0)
+  (race:make (hash "score" (lambda (name) (hash-ref table name))
+                      "sleep" (lambda (ms) (set! *round* (+ *round* 1)))
+                      "clock" (lambda () (* *round* 10))
+                      "sense" (if (null? rest) "max" (hash-ref (car rest) "sense")))))
+
+(define (enter-all! r names)
+  (for-each (lambda (name) (race:enter! r name (spawn-trial name))) names))
+
+(define (row-of res name)
+  (let loop ((rows (hash-ref res "rows")))
+    (if (string=? (hash-ref (car rows) "member") name)
+      (car rows)
+      (loop (cdr rows)))))
+
+; Leave no fiber behind: cut what still races, let a self-reported finish
+; really finish, and join it.
+(define (reclaim! r)
+  (for-each (lambda (a)
+              (let ((name (hash-ref a "name")))
+                (if (not (race:cancel r name))
+                  (begin (release! name) (race:join r name)))))
+            (hash-ref r "arms")))
+
+; A spinning trial adds to its own atomic cell and yields; spinner-score
+; reads the cell.
+(define *cells* (hash))
+
+(define (spawn-spinner name step)
+  (let ((c (atomic:counter 0)))
+    (hash-set! *cells* name c)
+    (fiber:spawn (lambda ()
+      (let loop ()
+        (atomic:add! c step)
+        (fiber:yield)
+        (loop))))))
+
+(define (spinner-score name)
+  (atomic:counter-value (hash-ref *cells* name)))
+
+(test-case "halving keeps the better half each round and cancels the rest" (hash "issue" 5413)
+  (define r (const-race (hash "a" 4 "b" 3 "c" 2 "d" 1)))
+  (enter-all! r (list "a" "b" "c" "d"))
+  (define res (race:halving r (hash "round-ms" 100 "join" #f)))
+  (check= 2 (hash-ref res "rounds"))
+  (check= "successive-halving" (hash-ref res "alloc"))
+  (check= "a" (hash-ref res "winner"))
+  (check (= 4.0 (hash-ref res "winner-score")))
+  (check= "live" (hash-ref (row-of res "a") "status"))
+  (check (not (hash-ref (row-of res "a") "cut")))
+  (check= "cancelled" (hash-ref (row-of res "b") "status"))
+  (check= "cancelled" (hash-ref (row-of res "c") "status"))
+  (check= "cancelled" (hash-ref (row-of res "d") "status"))
+  ; budget accounting: an arm was given every round it survived
+  (check (= 200.0 (hash-ref (row-of res "a") "budget-ms")))
+  (check (= 200.0 (hash-ref (row-of res "b") "budget-ms")))
+  (check (= 100.0 (hash-ref (row-of res "c") "budget-ms")))
+  (check (= 200.0 (hash-ref res "budget-ms")))
+  ; the ledger is (name mean-of-observed-scores samples)
+  (check= (list (list "a" 4.0 2) (list "b" 3.0 2) (list "c" 2.0 1) (list "d" 1.0 1))
+          (hash-ref res "arms"))
+  (reclaim! r)
+  (check= "cancelled" (hash-ref (race:join r "a") "status")))
+
+(test-case "a cut trial observes the documented cancel condition" (hash "issue" 5413)
+  (define r (const-race (hash "fast" 9 "slow" 1)))
+  (enter-all! r (list "fast" "slow"))
+  (define res (race:halving r (hash "round-ms" 10 "join" #f)))
+  (define slow (row-of res "slow"))
+  (check= "cancelled" (hash-ref slow "status"))
+  (check (hash-ref slow "cut"))
+  (check (string-prefix? (hash-ref slow "value") "fiber-cancelled: "))
+  (reclaim! r))
+
+(test-case "a trial that finishes by itself is never cut" (hash "issue" 5413)
+  (set! *round* 0)
+  (define r
+    (race:make (hash "score"
+                     (lambda (name)
+                       (if (and (string=? name "fin") (> *round* 0))
+                         (hash "score" 7 "done" #t)
+                         5))
+                     "sleep" (lambda (ms) (set! *round* (+ *round* 1)))
+                     "clock" (lambda () (* *round* 10)))))
+  (enter-all! r (list "run" "fin"))
+  (define res (race:halving r (hash "round-ms" 10 "rounds" 1 "join" #f)))
+  (check= "fin" (hash-ref res "winner"))
+  (check= "done" (hash-ref (row-of res "fin") "status"))
+  (check (not (hash-ref (row-of res "fin") "cut")))
+  (check= "live" (hash-ref (row-of res "run") "status"))
+  (reclaim! r)
+  ; the finished trial is joined (and answered with what it returned),
+  ; the running one is cut
+  (check= "ok" (hash-ref (race:join r "fin") "status"))
+  (check= 'go (hash-ref (race:join r "fin") "value"))
+  (check= "cancelled" (hash-ref (race:join r "run") "status")))
+
+(test-case "bandit cuts the arms that are confidently out of the top half" (hash "issue" 5413)
+  (define r (const-race (hash "good" 3 "mid" 2 "bad" 1)))
+  (enter-all! r (list "good" "mid" "bad"))
+  (define res (race:bandit r (hash "slot-ms" 100 "slots" 12 "join" #f)))
+  (check= "ucb" (hash-ref res "alloc"))
+  (check= "good" (hash-ref res "winner"))
+  (check= "live" (hash-ref (row-of res "good") "status"))
+  (check= "cancelled" (hash-ref (row-of res "mid") "status"))
+  (check= "cancelled" (hash-ref (row-of res "bad") "status"))
+  ; it stopped once one arm was left, before the slot budget ran out
+  (check (< (hash-ref res "rounds") 12))
+  ; the ledger is the std/search bandit's own: (arm pulls keeps), where
+  ; keeps counts the slots spent in the top half of the live arms
+  (define ledger (hash-ref res "ledger"))
+  (check= (list "good" "mid" "bad") (map car ledger))
+  (check (every (lambda (row) (= 3 (length row))) ledger))
+  (check (> (list-ref (car ledger) 1) 0))
+  (check (= (list-ref (car ledger) 1) (list-ref (car ledger) 2)))
+  (check (= 0 (list-ref (car (cdr ledger)) 2)))
+  (check (= 0 (list-ref (car (cdr (cdr ledger))) 2)))
+  (reclaim! r))
+
+(test-case "thompson is the other pull policy" (hash "issue" 5413)
+  (define r (const-race (hash "good" 3 "mid" 2 "bad" 1)))
+  (enter-all! r (list "good" "mid" "bad"))
+  (define res (race:bandit r (hash "slot-ms" 100 "slots" 12 "join" #f
+                                   "policy" "thompson")))
+  (check= "thompson" (hash-ref res "alloc"))
+  (check= "good" (hash-ref res "winner"))
+  (check= "cancelled" (hash-ref (row-of res "mid") "status"))
+  (check= "cancelled" (hash-ref (row-of res "bad") "status"))
+  (reclaim! r))
+
+(test-case "equal arms are never dominated; the final cut keeps one" (hash "issue" 5413)
+  (define r (const-race (hash "x" 5 "y" 5)))
+  (enter-all! r (list "x" "y"))
+  (define res (race:bandit r (hash "slot-ms" 10 "slots" 4 "join" #f)))
+  (check= 4 (hash-ref res "rounds"))
+  (check= "x" (hash-ref res "winner"))
+  (check= "live" (hash-ref (row-of res "x") "status"))
+  (check= "cancelled" (hash-ref (row-of res "y") "status"))
+  ; neither was ever strictly better than the median (itself)
+  (check (every (lambda (row) (= 0 (list-ref row 2))) (hash-ref res "ledger")))
+  (reclaim! r))
+
+(test-case "sense min races the lowest score" (hash "issue" 5413)
+  (define r (const-race (hash "lo" 1 "hi" 9) (hash "sense" "min")))
+  (enter-all! r (list "lo" "hi"))
+  (define res (race:bandit r (hash "slot-ms" 100 "slots" 12 "join" #f)))
+  (check= "min" (hash-ref res "sense"))
+  (check= "lo" (hash-ref res "winner"))
+  (check= "live" (hash-ref (row-of res "lo") "status"))
+  (check= "cancelled" (hash-ref (row-of res "hi") "status"))
+  (reclaim! r))
+
+(test-case "enter refuses a duplicate; cancel answers #f for a finished arm" (hash "issue" 5413)
+  (define r (const-race (hash "a" 1)))
+  (define fid (spawn-trial "a"))
+  (check (hash? (race:enter! r "a" fid)))
+  (check (not (race:enter! r "a" fid)))
+  (check (not (race:enter! r "b" "not-a-fiber")))
+  (check= "a" (hash-ref (race:cancel r "a") "name"))
+  (check (not (race:cancel r "a")))
+  (check (not (race:cancel r "zz")))
+  (check= "cancelled" (hash-ref (race:join r "a") "status")))
+
+(test-case "real intermediate scores: the faster trials survive" (hash "issue" 5413)
+  ; each trial spins on its own thread and publishes progress in an atomic
+  ; cell; the race reads the cells after one round of the default wait
+  (define r (race:make (hash "score" spinner-score)))
+  (for-each (lambda (pair)
+              (race:enter! r (car pair) (spawn-spinner (car pair) (cdr pair))))
+            (list (cons "f16" 16) (cons "f12" 12) (cons "f2" 2) (cons "f1" 1)))
+  (define res (race:halving r (hash "round-ms" 150 "rounds" 1 "join" #f)))
+  (check= "f16" (hash-ref res "winner"))
+  (check= "live" (hash-ref (row-of res "f12") "status"))
+  (check= "cancelled" (hash-ref (row-of res "f2") "status"))
+  (check= "cancelled" (hash-ref (row-of res "f1") "status"))
+  (check (> (hash-ref (row-of res "f1") "actual-ms") 100))
+  (reclaim! r)
+  (check= "cancelled" (hash-ref (race:join r "f16") "status")))
+
+(test-finish)

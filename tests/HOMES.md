@@ -92,6 +92,8 @@ Append there. Names `std/iter` re-exports are the `std/list` contract. Names
 | std/contract (negative selection / anomaly detectors) | `tests/suite/contracts_negative_selection.aura` | `negative:train`, `negative:detect`, `negative:register`, `std/negative` |
 | std/feedback (one transform's record) | `tests/suite/feedback_record.aura` | `feedback:rebind`, `feedback:transform`, `ws:diff`, `mutation:trace`, `std/feedback`, `std/source-diff` |
 | std/search | `tests/suite/search_clonal.aura` | `search:init`, `std/search` |
+| std/edit-search | `tests/suite/edit_search.aura` | `std/edit-search`, `edit-search:run`, `stage gate` |
+| std/race | `tests/suite/fiber_race.aura` | `std/race`, `race:halving`, `fiber race` |
 | lang/module | `tests/suite/module.aura` | `lang/module`, `overwrite warning` |
 | lang/parser | `tests/suite/paren_semi_comment_5199.aura` | `unclosed list`, `(;` |
 | runtime/fiber | `tests/suite/issue_5064_fiber_cancel_text.aura` | `fiber cancel` |
@@ -116,6 +118,8 @@ A stem (no `.` in the last component) matches the end, `/`, `.`, or `_`.
 - std/negative: `lib/std/negative.aura`, `lib/std/qd.aura`, `lib/std/contract.aura`
 - std/feedback: `lib/std/feedback.aura`, `lib/std/source-diff.aura`, `lib/std/workspace.aura`, `lib/std/ast.aura`, `lib/std/ast-viz.aura`
 - std/search: `lib/std/search.aura`
+- std/edit-search: `lib/std/edit-search.aura`
+- std/race: `lib/std/race.aura`
 - lang/module: `src/compiler/evaluator_module_loader.cpp`, `src/compiler/evaluator_primitives_module.cpp`, `src/core/module_boundary.ixx`
 - lang/parser: `src/parser/`, `src/compiler/diag.ixx`, `src/compiler/evaluator_primitives_diagnostic.cpp`
 - runtime/fiber: `src/serve/fiber`, `src/core/fiber_context`, `src/compiler/fiber`, `src/compiler/evaluator_fiber`, `src/compiler/evaluator_primitives_fiber`

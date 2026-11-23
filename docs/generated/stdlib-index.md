@@ -2,7 +2,7 @@
 
 # Standard library index (generated)
 
-**113** modules in `lib/std/`. Load: `(require "std/name" all:)`.
+**115** modules in `lib/std/`. Load: `(require "std/name" all:)`.
 
 | Module | Exports | Description |
 |--------|---------|-------------|
@@ -35,6 +35,7 @@
 | `std/data` | `make-trie` `trie-insert` `trie-search` `trie-prefix?` `trie-keys` | Aura standard data structures library |
 | `std/datetime` | `;` `Core` `timestamp` `timestamp-ms` `steady-ms` `timestamp->year` `timestamp->month` `timestamp->day` … (+20) | datetime.aura — Date and time utilities |
 | `std/diagnose` | `diagnose` | lib/std/diagnose.aura — error-string → fix plan (#5006) |
+| `std/edit-search` | `edit-search:run` `edit-search:legal` `edit-search:help` | lib/std/edit-search.aura — stage-aware tree search over AST edit sequences |
 | `std/edsl-test-harness` | `section` `it` `describe` `report` `summary` `total-pass` `total-fail` `reset-totals` … (+2) | Compatibility shim for std/test (#5224). New cases use test-case. |
 | `std/encoding` | `hex-encode` `hex-decode` `base64-encode` `base64-decode` | lib/std/encoding.aura — Encoding utilities |
 | `std/engine-metrics` | `engine-metrics:get` `engine-metrics:list` `engine-metrics:group` `engine-metrics:prefix` `engine-metrics:all` `engine-metrics:count` | lib/std/engine-metrics.aura — Issue #1433 thin wrappers around (engine:metrics) |
@@ -90,13 +91,14 @@
 | `std/query` | `query:list-categories` `query:help` `query:help-topics` `query:nodes-with-marker` `query:find-by-name` `query:subtree` `query:defines` `query:defines-by-marker` … (+8) | lib/std/query.aura — query: namespace high-level Agent API |
 | `std/queue` | `make-queue` `enqueue` `dequeue` `queue-front` `queue-rest` `queue-empty?` `queue-length` `queue->list` … (+1) | queue.aura — FIFO queue (two-list, immutable, amortized O(1)) |
 | `std/r7rs` | `r7rs:libraries` `r7rs:coverage` `r7rs:status` `r7rs:missing` `r7rs:library-exports` | lib/std/r7rs.aura — R7RS-small coverage table (Issue #5005) |
+| `std/race` | `race:make` `race:enter!` `race:halving` `race:bandit` `race:cancel` `race:result` `race:arms` `race:join` … (+1) | lib/std/race.aura — racing and early stop over fibers that already run |
 | `std/random` | `make-random` `random-next` `random-integer` `random-float` `random-range` `random-vector` `shuffle` `random-seed` | random.aura — Simple pseudo-random number generator |
 | `std/record` | — | lib/std/record.aura — SRFI-9 records (Issue #5003) |
 | `std/refactor` | `refactor:rename-var` `refactor:extract-function` `refactor:inline-function` `refactor:last-gate` | — |
 | `std/regex` | `re-match?` `re-find` `re-replace` `re-split` `re-quote` | lib/std/regex.aura — Regular expression utilities |
 | `std/rule` | `rule:define` `rule:apply` `rule:apply-all` `rule:list` `rule:list-violations` `rule:remove` `rule:enable` `rule:disable` … (+3) | Aura std/rule — 代码规范系统 (P2) |
 | `std/safe-refactor` | `safe-refactor:with-snapshot` `safe-refactor:replace-fn` `safe-refactor:check-and-apply` `safe-refactor:rollback` `safe-refactor:contract-pre` `safe-refactor:contract-post` `safe-refactor:last-gate` | lib/std/safe-refactor.aura — verification-gated refactoring |
-| `std/search` | `search:init` `search:step` `search:batch` `search:run` `search:pending` `search:best` `search:best-score` `search:export` … (+6) | lib/std/search.aura — one search protocol over the program space (#5007) |
+| `std/search` | `search:init` `search:step` `search:batch` `search:run` `search:pending` `search:best` `search:best-score` `search:export` … (+7) | lib/std/search.aura — one search protocol over the program space (#5007) |
 | `std/set` | `set` `set?` `set-copy` `set-clear!` `set-adjoin` `set-adjoin!` `set-delete` `set-delete!` … (+37) | lib/std/set.aura — SRFI-113 sets on the unified hash table (Issue #5003) |
 | `std/socket` | `tcp-connect` `tcp-send` `tcp-recv` `tcp-close` `tcp-listen` `tcp-local-port` `tcp-accept` `tcp-accept-timeout` | socket.aura — TCP socket library (client + server) |
 | `std/sort` | `list-sort` `list-stable-sort` `list-sort!` `list-stable-sort!` `vector-sort` `vector-stable-sort` `vector-sort!` `vector-stable-sort!` … (+3) | lib/std/sort.aura — SRFI-132 sorting (Issue #5003) |

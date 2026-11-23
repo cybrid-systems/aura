@@ -120,6 +120,12 @@
     (list "search"
       (list "Aura layer: one search protocol — init/step/best/export; kinds grid/pso/abc/fss/ant/es/anneal/bandit/beam (#5007)"
             "(require \"std/search\" all:)(search:run (search:init \"es\" (hash \"dim\" 2 \"pop\" 8)) fitness 10)"))
+    (list "edit-search"
+      (list "Stage-aware tree search over AST edit sequences: prop:tree or the std/search beam behind one stage gate (#5413)"
+            "(require \"std/edit-search\" all:)(edit-search:legal spec (list))"))
+    (list "race"
+      (list "Race fibers that already run: halving / bandit cancel by intermediate score, portfolio-shaped budget rows (#5413)"
+            "(require \"std/race\" all:)(race:halving r (hash \"round-ms\" 200 \"rounds\" 3))"))
     ; ── Legacy swarm surfaces (#5007): importable, NOT recommended. ──
     ; Use std/search for the same algorithms through search:step. pso/abc/
     ; fss/ant keep their module names for one release; boids is coupling

@@ -9,6 +9,7 @@
 ;   (search:run state fitness n)→ state          ; n batches
 ;   (search:best state)         → candidate
 ;   (search:export state)       → persistable value (no closures)
+;   (search:arms state)         → ((arm pulls keeps) ...)  (bandit; else ())
 ;
 ; Higher is better. The caller owns fitness and commit; this module only
 ; proposes candidates. State lives in an alist value, never in a module
@@ -46,7 +47,7 @@
 
 (export search:init search:step search:batch search:run search:pending
         search:best search:best-score search:export search:import search:kind search:gen
-        search:kinds search:complete? search:help)
+        search:kinds search:complete? search:help search:arms)
 
 (require "std/list" all:)
 (require "std/string" all:)
@@ -944,7 +945,10 @@
                                 (/ (* 1.0 (search-arm-get r "keeps" 0)) n))
                               (search-sqrt (/ (* 2.0 (search-ln total)) n)))))))
            (let loop ((xs rows) (best #f))
-             (if (null? xs) best
+              ; The best row is (score . arm); the caller wants the arm. The
+              ; pair used to leak as the pick, so no row matched it and the
+              ; ledger froze after the first pass over the arms (#5413).
+              (if (null? xs) (if best (cdr best) #f)
                (let ((sc (score (car xs))))
                  (loop (cdr xs)
                        (if (or (not best) (> sc (car best)))
@@ -986,6 +990,19 @@
                                             (cons "policy" policy)))
                   "pending" (list pick))
             "seed" (search-next-seed seed)))))
+
+; The bandit ledger as data: ((arm pulls keeps) ...), one row per arm in
+; enrollment order. keeps counts the pulls whose score was > 0. Another
+; kind answers ().
+(define (search:arms st)
+  (if (string=? (search:kind st) "bandit")
+    (let ((rows (sget (sget st "extra" (quote ())) "arms" (quote ()))))
+      (map (lambda (row)
+             (list (search-arm-get row "arm" "")
+                   (search-arm-get row "n" 0)
+                   (search-arm-get row "keeps" 0)))
+           rows))
+    (quote ())))
 
 ;; ── beam ──
 (define (search-tree-children tree node)

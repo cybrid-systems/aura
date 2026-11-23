@@ -1,0 +1,418 @@
+; lib/std/edit-search.aura — stage-aware tree search over AST edit sequences
+; (Issue #5413, M4 prerequisite).
+;
+; A node is an edit sequence: the ordered list of edit descriptors applied to
+; one base program. A child appends one edit that the CURRENT stage permits.
+; "no 'fight' edit until the 'move' contract is met" is therefore a gate on
+; expansion, re-checked every time a node is expanded. The tree is never
+; materialised up front, so it does not matter that it is exponential.
+;
+; Nothing here is a new algorithm. The two engines are the ones main has:
+;   "mcts"  proposer MCTS-AHD (prop:tree): UCT with depth decay and
+;           progressive widening. This module is its inner proposer, so the
+;           edit vocabulary and the stage gate decide what a child is.
+;   "beam"  std/search beam over a tree this module materialises one
+;           generation ahead. A sequence with no legal child leaves the
+;           beam (std/search keeps such a leaf and re-scores it); this
+;           module keeps its real score in the ranking.
+; "mcts" here is an engine name, not a std/search kind: (search:init "mcts")
+; and (search:init "cma-es") still refuse.
+;
+; Import: (require "std/edit-search" all:)
+;
+;   (define r (edit-search:run
+;     (hash "stages" (list "move" "fight")
+;           "edits" (list (hash "name" "walk" "stage" "move")
+;                         (hash "name" "swing" "stage" "fight"))
+;           "evaluate" (lambda (seq) (hash "score" 3 "passed" (list "move")))
+;           "engine" "mcts" "budget" 24)))
+;   (hash-ref r "best-seq")   ; the edit descriptors, best sequence found
+;   (hash-ref r "best-score")
+;   (hash-ref r "ranking")    ; ((name ...) . info) for every evaluated sequence
+;
+; evaluate is (lambda (seq) ...) with the list of edit descriptors. It returns
+; a number, or a hash with "score" and optionally "passed" (the stages whose
+; contract seq meets) and "ok" (#f = a broken candidate, never expanded). A
+; thrown error is also a broken candidate. Higher is better.
+;
+; Stage gate (default rule): an edit of stage s may follow seq once every
+; stage before s in "stages" is in seq's "passed". With no "stages" every
+; edit is legal. "rule" (lambda (edit seq info) ...) replaces the rule.
+;
+; Options: budget (distinct evaluations, default 32), max-depth (8), seed,
+; root-passed (stages the base program already meets), root-score,
+; c / alpha / decay (mcts, see prop:tree), width (beam, 4),
+; prior (beam: (lambda (edit seq info) number), higher is offered first).
+
+(export edit-search:run edit-search:legal edit-search:help)
+
+(require "std/list" all:)
+(require "std/string" all:)
+(require "std/search" all:)
+(require "std/proposer" all:)
+
+;; ── small helpers ─────────────────────────────────────────────
+
+; A missing key and an explicit () read the same.
+(define (es-opt h k d)
+  (if (hash? h)
+    (let ((v (hash-ref h k ())))
+      (if (null? v) d v))
+    d))
+
+(define (es-num v d)
+  (if (number? v) (* 1.0 v) d))
+
+; (integer? 3.0) is #t, so a count goes through floor first.
+(define (es-int v d)
+  (cond ((and (integer? v) (not (inexact? v))) v)
+        ((number? v) (inexact->exact (floor v)))
+        (else d)))
+(define (es-list-of v)
+  (if (list? v) v (list)))
+
+; A score no real candidate can reach: evicted from the beam.
+(define es-dead -1.0e300)
+; A broken candidate: last in the ranking, still reported.
+(define es-failed -1.0e30)
+
+; A UCT value no evaluated score can reach: a node the tree must stop asking.
+(define es-cold -1.0e9)
+
+;; ── the search world (one mutable hash; no module state) ──────
+
+; A row is (name stage edit). The sequence value is a list of rows.
+(define (es-row-name row) (car row))
+(define (es-row-stage row) (car (cdr row)))
+(define (es-edit row) (car (cdr (cdr row))))
+
+(define (es-rows edits stages)
+  (let loop ((xs edits) (i 0) (seen (list)) (acc (list)))
+    (if (not (pair? xs))
+      (reverse acc)
+      (let* ((e (car xs))
+             (name (let ((n (if (hash? e) (hash-ref e "name" #f) #f)))
+                     (if (string? n) n (number->string i))))
+             (stage (if (hash? e)
+                      (hash-ref e "stage" #f)
+                      (if (null? stages) #f (car stages)))))
+        (if (member name seen)
+          (error (string-append "edit-search: edits need unique names: " name))
+          (loop (cdr xs) (+ i 1) (cons name seen)
+                (cons (list name stage e) acc)))))))
+
+(define (es-key seq)
+  (string-join (map es-row-name seq) "/"))
+
+(define (es-world spec)
+  (let* ((o (if (hash? spec) spec (hash)))
+         (evaluate (es-opt o "evaluate" #f))
+         (rule (es-opt o "rule" #f))
+         (prior (es-opt o "prior" #f))
+         (root-passed (es-list-of (es-opt o "root-passed" (list))))
+         (w (hash)))
+    (if (not (procedure? evaluate))
+      (error "edit-search:run: evaluate must be a procedure (lambda (seq) ...)"))
+    (hash-set! w "spec" o)
+    (hash-set! w "stages" (es-list-of (es-opt o "stages" (list))))
+    (hash-set! w "edits" (es-rows (es-opt o "edits" (list)) (hash-ref w "stages")))
+    (hash-set! w "evaluate" evaluate)
+    (hash-set! w "rule" (if (procedure? rule) rule #f))
+    (hash-set! w "prior" (if (procedure? prior) prior #f))
+    (hash-set! w "root-passed" root-passed)
+    (hash-set! w "root-info"
+               (hash "score" (es-num (es-opt o "root-score" 0.0) 0.0)
+                      "passed" root-passed
+                      "ok" #t))
+    (hash-set! w "max-depth" (max 1 (es-int (es-opt o "max-depth" 8) 8)))
+    (hash-set! w "budget" (max 1 (es-int (es-opt o "budget" 32) 32)))
+    (hash-set! w "memo" (hash))
+    (hash-set! w "evaluated" 0)
+    (hash-set! w "best" #f)
+    w))
+
+;; ── evaluation (memoised: a sequence is evaluated once) ───────
+
+(define (es-info raw parent-passed)
+  (cond
+    ((number? raw)
+     (hash "score" (* 1.0 raw) "passed" parent-passed "ok" #t))
+    ((and (hash? raw) (hash-ref raw "ok" #t))
+     (hash "score" (es-num (hash-ref raw "score" 0.0) 0.0)
+           "passed" (let ((p (hash-ref raw "passed" #f)))
+                      (if (list? p) p parent-passed))
+           "ok" #t))
+    (else
+     (hash "score" es-failed "passed" parent-passed "ok" #f))))
+
+; The parent of a sequence is always evaluated first (the tree expands it
+; before its children), so this recursion stops at a memo hit.
+(define (es-eval! w seq)
+  ; the base program is the root info, never an evaluate call
+  (if (null? seq)
+    (hash-ref w "root-info")
+    (es-eval-node! w seq)))
+
+(define (es-eval-node! w seq)
+  (let* ((key (es-key seq))
+         (memo (hash-ref w "memo"))
+         (hit (hash-ref memo key #f)))
+    (if hit
+      hit
+      (let* ((parent-passed
+               (hash-ref (es-eval! w (take seq (- (length seq) 1))) "passed"))
+             ; Past the budget a node is not evaluated: it is a dead end for
+             ; this run and never enters the ranking.
+             (out (>= (hash-ref w "evaluated") (hash-ref w "budget")))
+             (raw (if out
+                    (hash "ok" #f)
+                    (try ((hash-ref w "evaluate") (map es-edit seq))
+                         (catch (e) (hash "ok" #f)))))
+             (info (es-info raw parent-passed)))
+        (if out
+          (hash-set! info "skipped" #t)
+          (begin
+            (hash-set! memo key info)
+            (hash-set! w "evaluated" (+ 1 (hash-ref w "evaluated")))
+            (if (hash-ref info "ok")
+              (let* ((best (hash-ref w "best"))
+                     (s (hash-ref info "score")))
+                (if (or (not best) (> s (hash-ref (cdr best) "score")))
+                  (hash-set! w "best" (cons seq info)))))))
+         info))))
+
+;; ── the stage gate ────────────────────────────────────────────
+
+(define (es-before stages stage)
+  (let loop ((xs stages) (acc (list)))
+    (cond
+      ((null? xs) (reverse acc))
+      ((equal? (car xs) stage) (reverse acc))
+      (else (loop (cdr xs) (cons (car xs) acc))))))
+
+(define (es-stage-open? stage passed stages)
+  (cond
+    ((null? stages) #t)
+    ((not (member stage stages)) #f)
+    (else (let loop ((need (es-before stages stage)))
+            (cond
+              ((null? need) #t)
+              ((member (car need) passed) (loop (cdr need)))
+              (else #f))))))
+
+; The edits that may be appended to seq, in offer order.
+(define (es-legal w seq info)
+  (if (and (hash-ref info "ok")
+           (< (length seq) (hash-ref w "max-depth")))
+    (let* ((stages (hash-ref w "stages"))
+           (passed (hash-ref info "passed"))
+           (rule (hash-ref w "rule"))
+           (edits (map es-edit seq))
+           (legal (filter
+                    (lambda (row)
+                      (if rule
+                        (try (rule (es-edit row) edits info) (catch (e) #f))
+                        (es-stage-open? (es-row-stage row) passed stages)))
+                    (hash-ref w "edits")))
+           (prior (hash-ref w "prior")))
+      (if prior
+        (sort legal
+              (lambda (a b)
+                (> (try (prior (es-edit a) edits info) (catch (e) 0.0))
+                   (try (prior (es-edit b) edits info) (catch (e) 0.0)))))
+        legal))
+    (list)))
+
+;; ── engine "mcts": proposer MCTS-AHD over the edit tree ───────
+
+; The tree's inner proposer. prop:tree asks it for child number "slot" of the
+; node whose proposal heads ctx "parents". A node with fewer legal children
+; than that answers with a stop: it repeats the parent's sequence (prop:tree
+; always stores a child; an empty answer would leave a node with no proposal)
+; and the step evaluates nothing. "terminal" says the parent has no legal
+; child at all.
+(define (es-propose w cctx)
+  (let* ((ps (es-opt cctx "parents" (list)))
+         (parent (if (pair? ps) (car ps) #f))
+         (pseq (if (hash? parent)
+                 (es-opt (hash-ref parent "meta" (hash)) "seq" (list))
+                 (list)))
+         (slot (es-int (es-opt cctx "slot" 0) 0))
+         (pinfo (if (null? pseq)
+                  (hash-ref w "root-info")
+                  (es-eval! w pseq)))
+         (legal (es-legal w pseq pinfo))
+         (stop (>= slot (length legal)))
+         (seq (if stop pseq (append pseq (list (list-ref legal slot))))))
+    (list (hash "kind" "prop-proposal"
+                "genome" ""
+                "thought" ""
+                "target" ""
+                "strategy" "edit-search"
+                "parents" (list)
+                "meta" (hash "seq" seq "stop" stop
+                             "terminal" (null? legal))))))
+
+; A stop node, and a terminal node's own entry, are made unattractive so UCT
+; spends no further step on them (a node with no legal child only ever
+; answers stop again, and re-asking it hides its unexplored siblings). The
+; rewards already backed up through them stay on their ancestors.
+(define (es-freeze! tr meta)
+  (let* ((id (hash-ref meta "node" #f))
+         (node (if (string? id) (prop:tree-node tr id) #f))
+         (pid (if (hash? node) (hash-ref node "parent" #f) #f))
+         (parent (if (string? pid) (prop:tree-node tr pid) #f)))
+    (if (hash? node) (hash-set! node "value" es-cold))
+    (if (and (hash? parent) (hash-ref meta "terminal" #f))
+      (hash-set! parent "value" es-cold))))
+
+; A step is idle when it evaluates nothing new: a stop answer (the node was
+; widened past its legal children, or is terminal), or a sequence another
+; node already reached. Idle steps are not backed up; a run of them means the
+; tree is out of new sequences worth a step. "k" is every edit and alpha is
+; 0, so a node is widened to all of its legal children before the tree
+; descends into it; the rest of that widening is stop answers.
+(define (es-run-mcts w)
+  (let* ((o (hash-ref w "spec"))
+         (n (length (hash-ref w "edits")))
+         (tr (prop:tree (lambda (cctx) (es-propose w cctx))
+                        (hash "c" (es-num (es-opt o "c" 0.7) 0.7)
+                              "alpha" (es-num (es-opt o "alpha" 0.0) 0.0)
+                              "decay" (es-opt o "decay" "linear")
+                              "k" (max 1.0 (* 1.0 n)))))
+         (ctx (prop:ctx (hash "seed" (es-int (es-opt o "seed" 42) 42))))
+         (slack (+ 32 (* 8 n))))
+    (let loop ((idle 0))
+      (if (or (>= (hash-ref w "evaluated") (hash-ref w "budget"))
+              (> idle slack))
+        tr
+        (let* ((props (prop:propose tr ctx))
+               (p (if (pair? props) (car props) #f))
+               (meta (if p (hash-ref p "meta" (hash)) (hash)))
+               (seq (es-opt meta "seq" (list))))
+          (cond
+            ((not p) (loop slack))
+            ((hash-ref meta "stop" #f)
+             (es-freeze! tr meta)
+             (loop (+ idle 1)))
+            (else
+             (let* ((before (hash-ref w "evaluated"))
+                    (info (es-eval! w seq)))
+               (if (> (hash-ref w "evaluated") before)
+                 (begin
+                   (prop:tree-backprop! tr p (hash-ref info "score"))
+                   (loop 0))
+                 (loop (+ idle 1)))))))))))
+
+;; ── engine "beam": std/search beam over a lazily built tree ───
+
+; Children are registered while the parent is scored, which is before the
+; beam reads them at the end of the generation.
+(define (es-run-beam w)
+  (let* ((o (hash-ref w "spec"))
+         (width (max 1 (es-int (es-opt o "width" 4) 4)))
+         (root "root")
+         (tree (hash))
+         (nodes (hash))
+         (dead (hash))
+         (link! (lambda (seq info)
+                  ; → the child names of seq, registered under its key
+                  (let loop ((kids (es-legal w seq info)) (acc (list)))
+                    (if (null? kids)
+                      (let ((names (reverse acc)))
+                        (if (pair? names)
+                          (hash-set! tree (if (null? seq) root (es-key seq)) names)
+                          names)
+                        names)
+                      (let ((child (append seq (list (car kids)))))
+                        (hash-set! nodes (es-key child) child)
+                        (loop (cdr kids) (cons (es-key child) acc)))))))
+         (fitness (lambda (path)
+                    (if (null? (cdr path))
+                      (hash-ref (hash-ref w "root-info") "score")
+                      (let* ((seq (hash-ref nodes (last path)))
+                             (info (es-eval! w seq)))
+                        ; A finished sequence (no legal child, or broken, or
+                        ; past the budget) leaves the beam: the beam would
+                        ; carry a leaf and re-score it every generation.
+                        (if (pair? (link! seq info))
+                          (hash-ref info "score")
+                          (begin
+                            (hash-set! dead (last path) #t)
+                            es-dead))))))
+         ; The beam is stuck once every pending path was scored and produced
+         ; no child: nothing is left to try.
+         (stuck? (lambda (st)
+                   (every (lambda (path) (hash-ref dead (last path) #f))
+                          (search:pending st)))))
+    (link! (list) (hash-ref w "root-info"))
+    (let loop ((st (search:init "beam"
+                                (hash "root" root "tree" tree "width" width))))
+      (if (or (search:complete? st)
+              (stuck? st)
+              (>= (hash-ref w "evaluated") (hash-ref w "budget")))
+        st
+        (loop (search:batch st fitness))))))
+
+;; ── results ───────────────────────────────────────────────────
+
+; ((name ...) . info), best first. A broken candidate is last.
+(define (es-ranking w)
+  (let ((memo (hash-ref w "memo")))
+    (sort (map (lambda (k) (cons (string-split k "/") (hash-ref memo k)))
+               (hash-keys memo))
+          (lambda (a b) (> (hash-ref (cdr a) "score") (hash-ref (cdr b) "score"))))))
+
+(define (es-result w engine state)
+  (let* ((best (hash-ref w "best"))
+         (seq (if best (car best) (list)))
+         (info (if best (cdr best) (hash-ref w "root-info"))))
+    (hash "engine" engine
+          "best" (if best (es-edit (last seq)) #f)
+          "best-name" (if best (es-row-name (last seq)) #f)
+          "best-seq" (map es-edit seq)
+          "best-score" (hash-ref info "score")
+          "best-info" info
+          "evaluated" (hash-ref w "evaluated")
+          "ranking" (es-ranking w)
+          "state" state)))
+
+(define (edit-search:run spec)
+  (let* ((w (es-world spec))
+         (engine (es-opt spec "engine" "mcts"))
+         (state (cond
+                 ((string=? engine "beam") (es-run-beam w))
+                 ((string=? engine "mcts") (es-run-mcts w))
+                 (else (error "edit-search:run: engine is \"mcts\" or \"beam\"")))))
+    (es-result w engine state)))
+
+; The edits that may follow seq under spec, in offer order. seq is a list of
+; edit names (the form ranking uses); () is the base program. seq is
+; evaluated once to learn which stages it passes.
+(define (edit-search:legal spec seq)
+  (let* ((w (es-world spec))
+         (rows (map (lambda (name)
+                      (let ((hit (find (lambda (row) (equal? (es-row-name row) name))
+                                       (hash-ref w "edits"))))
+                        ; std/list find returns the element itself
+                        (if (pair? hit) hit #f)))
+                    (es-list-of seq))))
+    (if (member #f rows)
+      (error "edit-search:legal: seq names an edit that spec does not list")
+      (map es-edit
+           (es-legal w rows
+                     (if (null? rows)
+                       (hash-ref w "root-info")
+                       (es-eval! w rows)))))))
+
+(define (edit-search:help)
+  (string-append
+   "std/edit-search (#5413)\n"
+   "  (edit-search:run (hash \"stages\" (list \"move\" \"fight\")\n"
+   "                       \"edits\" (list (hash \"name\" \"walk\" \"stage\" \"move\") ...)\n"
+   "                       \"evaluate\" (lambda (seq) (hash \"score\" s \"passed\" (list \"move\")))\n"
+   "                       \"engine\" \"mcts\"|\"beam\" \"budget\" 32 \"max-depth\" 8))\n"
+   "      a node is an edit sequence; a child appends one edit its stage permits\n"
+   "      mcts = prop:tree (UCT + widening), beam = std/search beam, lazily built\n"
+   "  (edit-search:legal spec names)  ; the edits that may follow a sequence\n"
+   "  result: best-seq best-score best-info ranking evaluated state\n"))

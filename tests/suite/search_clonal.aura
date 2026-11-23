@@ -180,4 +180,27 @@
                            sphere 10))
   (check (> (length (search:pending wide)) (length (search:pending st)))))
 
+; std/search is the home of every kind, so the bandit ledger case sits
+; beside the clonal ones.
+(test-case "bandit ledger is data and UCB keeps pulling after the first pass" (hash "issue" 5413)
+  (define arms (list "low" "mid" "high"))
+  (define (reward arm) (if (string=? arm "high") 1.0 0.0))
+  (define (pulls row) (car (cdr row)))
+  (define (keeps row) (car (cdr (cdr row))))
+  (check= (list (list "low" 0 0) (list "mid" 0 0) (list "high" 0 0))
+          (search:arms (search:init "bandit" (hash "arms" arms "policy" "ucb"))))
+  ; search_bandit.aura stops at "the best arm wins". Once every arm had a
+  ; pull, the UCB pick used to leak a (score . arm) pair: no row matched it
+  ; and the ledger froze at one pull per arm.
+  (define u (search:run (search:init "bandit" (hash "arms" arms "policy" "ucb"))
+                        reward 12))
+  (define rows (search:arms u))
+  (check= arms (map car rows))
+  (check (= 12 (foldl (lambda (acc row) (+ acc (pulls row))) 0 rows)))
+  (check (> (pulls (car (cdr (cdr rows)))) (pulls (car rows))))
+  (check (= (keeps (car (cdr (cdr rows)))) (pulls (car (cdr (cdr rows))))))
+  (check (= 0 (keeps (car rows))))
+  ; another kind has no ledger
+  (check= (list) (search:arms (search:init "clonal" opts))))
+
 (test-finish)
