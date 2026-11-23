@@ -3,10 +3,114 @@
 // ──────────────────────────────────────────────────────────────
 #include "bus/constraint.hh"
 
+#include "bus/image.hh"
+
 #include <algorithm>
+#include <charconv>
+#include <optional>
+#include <string_view>
 #include <utility>
+#include <vector>
 
 namespace aura::bus {
+namespace {
+
+    // Comma/space separated unsigned integers. An empty string is a valid
+    // empty list; a token that is not a number is not.
+    std::optional<std::vector<std::uint64_t>> parse_u64_list(std::string_view source) {
+        std::vector<std::uint64_t> out;
+        std::size_t i = 0;
+        while (i < source.size()) {
+            while (i < source.size() &&
+                   (source[i] == ',' || source[i] == ' ' || source[i] == '\t' ||
+                    source[i] == '\n' || source[i] == '\r'))
+                ++i;
+            if (i >= source.size())
+                break;
+            const std::size_t begin = i;
+            while (i < source.size() && source[i] >= '0' && source[i] <= '9')
+                ++i;
+            if (i == begin)
+                return std::nullopt;
+            std::uint64_t value = 0;
+            const auto [ptr, ec] = std::from_chars(source.data() + begin, source.data() + i, value);
+            if (ec != std::errc() || ptr != source.data() + i)
+                return std::nullopt;
+            out.push_back(value);
+            while (i < source.size() && source[i] != ',' && source[i] != ' ' && source[i] != '\t' &&
+                   source[i] != '\n' && source[i] != '\r')
+                return std::nullopt; // a suffix like "12x" is not a number
+        }
+        return out;
+    }
+
+    std::optional<std::uint64_t> parse_u64(std::string_view source) {
+        std::size_t i = 0;
+        while (i < source.size() && (source[i] == ' ' || source[i] == '\t'))
+            ++i;
+        const std::size_t begin = i;
+        while (i < source.size() && source[i] >= '0' && source[i] <= '9')
+            ++i;
+        if (i == begin)
+            return std::nullopt;
+        std::uint64_t value = 0;
+        const auto [ptr, ec] = std::from_chars(source.data() + begin, source.data() + i, value);
+        if (ec != std::errc() || ptr != source.data() + i)
+            return std::nullopt;
+        while (i < source.size() &&
+               (source[i] == ' ' || source[i] == '\t' || source[i] == '\n' || source[i] == '\r'))
+            ++i;
+        if (i != source.size())
+            return std::nullopt;
+        return value;
+    }
+
+} // namespace
+
+ConstraintPredicate target_allowlist_predicate(std::string_view source) {
+    const auto allowed = parse_u64_list(source);
+    if (!allowed) {
+        return [](const ConstraintContext&, std::string* why) {
+            if (why)
+                *why = "target-allowlist source is not a node-id list";
+            return false;
+        };
+    }
+    return [allowed = *allowed](const ConstraintContext& ctx, std::string* why) {
+        for (const PatchRecord& patch : ctx.patches) {
+            if (patch.field_offset != kPatchSourceField)
+                continue;
+            if (std::find(allowed.begin(), allowed.end(), patch.node) == allowed.end()) {
+                if (why)
+                    *why = "source patch target " + std::to_string(patch.node) +
+                           " is not in target-allowlist";
+                return false;
+            }
+        }
+        return true;
+    };
+}
+
+ConstraintPredicate metric_floor_predicate(std::string_view source) {
+    const auto floor = parse_u64(source);
+    if (!floor) {
+        return [](const ConstraintContext&, std::string* why) {
+            if (why)
+                *why = "metric-floor-bound has no numeric floor";
+            return false;
+        };
+    }
+    return [floor = *floor](const ConstraintContext& ctx, std::string* why) {
+        if (ctx.new_value < floor) {
+            if (why)
+                *why = "metric " + std::to_string(ctx.new_value) + " is below the floor " +
+                       std::to_string(floor);
+            return false;
+        }
+        return true;
+    };
+}
+
 
 GateResult ConstraintStore::check(const ConstraintContext& ctx, AuditLog* audit,
                                   std::uint64_t token) {

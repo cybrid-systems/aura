@@ -267,32 +267,22 @@ bool host_start(const HostOptions& opts, std::string* path_out, std::string* why
             return true;
         });
     // target-allowlist: source-carrier patches may only target nodes in
-    // the configured allowlist. The default (no install) is unrestricted;
-    // an expert installs a parameterized version via install-constraint.
-    // The base predicate here admits only patches whose target node was
-    // declared allowed by the host (opts.policy_targets); empty = allow
-    // all (the protection set is the primary gate).
-    host->server.register_constraint_predicate("target-allowlist",
-                                               [](const ConstraintContext& ctx, std::string* w) {
-                                                   // The allowlist is carried in the rule source at
-                                                   // install time; the base predicate is a
-                                                   // pass-through that the protection set and
-                                                   // pure-define-only already constrain. A
-                                                   // parameterized install replaces this with a
-                                                   // node-id whitelist.
-                                                   (void)ctx;
-                                                   (void)w;
-                                                   return true;
-                                               });
+    // the installed allowlist. #5401: the base predicate is fail-closed;
+    // the install handler replaces it with the source-parameterized form.
+    host->server.register_constraint_predicate(
+        "target-allowlist", [](const ConstraintContext&, std::string* w) {
+            if (w)
+                *w = "target-allowlist is not installed with a node list";
+            return false;
+        });
     // metric-floor-bound: the trial's submitted metric (new_value) must
-    // not fall below a parameterized floor. The base predicate uses 0
-    // (no floor); an expert install sets the budget threshold.
-    host->server.register_constraint_predicate("metric-floor-bound",
-                                               [](const ConstraintContext& ctx, std::string* w) {
-                                                   (void)ctx;
-                                                   (void)w;
-                                                   return true;
-                                               });
+    // not fall below the installed floor. #5401: no floor means refuse.
+    host->server.register_constraint_predicate(
+        "metric-floor-bound", [](const ConstraintContext&, std::string* w) {
+            if (w)
+                *w = "metric-floor-bound is not installed with a floor";
+            return false;
+        });
     // v0.3.1 closed-loop gates (#5378/#5379/#5381): the host's live
     // workspace apply/revert callbacks, evidence-required KEEP and canary
     // observation. Defaults keep the v0.3.0 surface.

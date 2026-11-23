@@ -27,7 +27,7 @@
 ## 能力
 
 - 位：`read`、`publish`、`trial`、`keep`、`rollback`、`grant`、`constraint-write`。订阅、查询和审计读取不是新位，它们是 `read` 加频道掩码。
-- 每个能力还带频道掩码、workspace、可选 loan 配额、到期代次和 worldline 作用域。派生只能缩小，不能加位、加频道、放宽配额/到期/作用域，也不能换 workspace。
+- 每个能力还带频道掩码、workspace、可选 loan 配额、到期代次、worldline 作用域和 task 作用域。派生只能缩小，不能加位、加频道、放宽配额/到期/作用域，也不能换 workspace；task 作用域只能收窄到一个任务，不能改到另一个任务。
 - 附着时按工作区允许策略授予请求的子集；角色（perf/harness/maintainer）只是提示，未知角色默认拒绝。
 - 只有持有 `grant` 的会话才能再授权，且形成派生树；撤销祖先会递归失效。
 - `keep` / `rollback` 只作用于本会话开的 trial，或能力显式 scoped 到的 worldline；`keep` 还要求该 trial 的 loan 尚未归还。
@@ -162,7 +162,7 @@ canary 拒绝)、`test_bus_closed_loop_e2e`(#5382,三进程正常闭环 + 五类
 - `(bus:evidence session worldline)` → `(ok baseline candidate workload seed verifier)`：读回某 worldline 最终记录的证据尾。
 - `(bus:canary-confirm session worldline)` → `(ok worldline)`：裁判提前封存活跃金丝雀。
 - 宿主环境变量:`AURA_BUS_EVIDENCE=1` 开启证据强制门;`AURA_BUS_CANARY_WINDOW=N` 开启 N 个指标 tick 的观察期;`AURA_BUS_CANARY_FLOOR=F` 设退化底线;`AURA_BUS_CANARY_KEY=K` 指定驱动观察期的指标键。观察期内连续两次低于底线自动撤回(恢复前一版快照,写 `canary-reverted` 审计);窗口期满达标自动封存为 Kept;同一时刻至多一个活跃 Canary,第二个 KEEP 被 `canary-active` 拒绝。默认全关,保持 v0.3.0 行为。
-- 约束最小安全子集(#5380):宿主预注册 `pure-define-only`(候选体禁 io/net/socket/ffi/mutate/set!/bus 等副作用算子)、`target-allowlist`、`metric-floor-bound` 三个参数化谓词;`std/contract` 的保护集经 #5317 digest 镜像进 KEEP 前的结构门,触碰受保护 define 一律拒绝。持 constraint-write 的会话才能安装/回滚约束。
+- 约束最小安全子集(#5380/#5401):宿主预注册 `pure-define-only`(候选体禁 io/net/socket/ffi/mutate/set!/bus 等副作用算子)、`target-allowlist`、`metric-floor-bound` 三个参数化谓词;`std/contract` 的保护集经 #5317 digest 镜像进 KEEP 前的结构门,触碰受保护 define 一律拒绝。持 constraint-write 的会话才能安装/回滚约束。`target-allowlist` 与 `metric-floor-bound` 默认拒绝:安装源为空/非法即拒绝;前者接受逗号或空格分隔的节点 id 列表,只检查源码载体补丁,后者接受数字底线,低于底线拒绝。
 - 失败是 `(error code message)`，不是 `#f`；`bus:ok?` / `bus:code` / `bus:message` 读取。错误码含 `schema-mismatch`、`seals-missing`、`loan-exhausted`、`image-full`、`validation-failed`、`permission`、`unregistered-id`、`transport-failed`。
 
 `(api-reference)` 现在也列出这些动词、所需能力和失败码。审计有两个面：控制面日志（带原因，供 `bus:audit`）和映像审计节（只追加，供映射方直接遍历）。

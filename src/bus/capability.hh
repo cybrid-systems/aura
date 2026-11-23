@@ -40,6 +40,7 @@ struct Capability {
     std::uint64_t max_loans = 0;   // 0 = no derived quota
     std::uint64_t expires_gen = 0; // 0 = no expiry
     std::uint64_t worldline = 0;   // 0 = unscoped
+    std::uint64_t task = 0;        // #5401: 0 = unscoped; else a task id
 
     friend constexpr bool operator==(const Capability&, const Capability&) = default;
 };
@@ -117,6 +118,9 @@ struct TrialRecord {
     // #5381: observation mode — kept=true but the live apply is under a
     // canary window; seal confirms Kept, a revert rolls back to Rolled.
     bool canary = false;
+    // #5401: the task this trial belongs to (0 = unscoped). A capability
+    // scoped to a task may only open/keep/rollback that task's trial.
+    std::uint64_t task = 0;
 };
 
 // Trial worldlines and their ownership. keep/rollback require either
@@ -124,7 +128,7 @@ struct TrialRecord {
 class WorldlineLedger {
 public:
     std::uint64_t open_trial(std::uint64_t owner, std::uint64_t workspace,
-                             std::uint64_t base_generation = 0);
+                             std::uint64_t base_generation = 0, std::uint64_t task = 0);
     bool keep(std::uint64_t id, std::uint64_t owner, const Capability& caps, std::string* why,
               bool applied_live = false);
     bool rollback(std::uint64_t id, std::uint64_t owner, const Capability& caps, std::string* why);

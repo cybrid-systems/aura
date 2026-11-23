@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 #include "bus/image_format.hh"
@@ -36,6 +37,12 @@ struct ConstraintContext {
 };
 
 using ConstraintPredicate = std::function<bool(const ConstraintContext&, std::string*)>;
+
+// #5401: fail-closed parameterized rules. An empty or unparsable source
+// yields a predicate that refuses the operation it guards; a valid
+// source yields the executable allowlist / floor.
+ConstraintPredicate target_allowlist_predicate(std::string_view source);
+ConstraintPredicate metric_floor_predicate(std::string_view source);
 
 struct ConstraintRule {
     std::string name;

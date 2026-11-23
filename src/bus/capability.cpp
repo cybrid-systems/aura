@@ -61,6 +61,8 @@ bool attenuates(const Capability& parent, const Capability& child, std::string* 
         return fail("widens the expiry");
     if (parent.worldline != 0 && child.worldline != parent.worldline)
         return fail("changes the worldline scope");
+    if (parent.task != 0 && child.task != parent.task)
+        return fail("changes the task scope");
     return true;
 }
 
@@ -85,6 +87,10 @@ Capability intersect(const Capability& a, const Capability& b) {
         out.worldline = b.worldline;
     else if (b.worldline == 0 || b.worldline == a.worldline)
         out.worldline = a.worldline;
+    if (a.task == 0)
+        out.task = b.task;
+    else if (b.task == 0 || b.task == a.task)
+        out.task = a.task;
     return out;
 }
 
@@ -309,12 +315,13 @@ bool CapabilityTable::revoked(std::uint64_t token) const {
 }
 
 std::uint64_t WorldlineLedger::open_trial(std::uint64_t owner, std::uint64_t workspace,
-                                          std::uint64_t base_generation) {
+                                          std::uint64_t base_generation, std::uint64_t task) {
     TrialRecord rec{};
     rec.id = next_id_++;
     rec.owner = owner;
     rec.workspace = workspace;
     rec.base_generation = base_generation;
+    rec.task = task;
     rec.pending = true;
     rec.loan_outstanding = true;
     records_.push_back(rec);
@@ -367,6 +374,10 @@ bool WorldlineLedger::keep(std::uint64_t id, std::uint64_t owner, const Capabili
         return fail("unknown worldline");
     if (rec->owner != owner && caps.worldline != id)
         return fail("worldline is owned by another session");
+    if (rec->task != 0 || caps.task != 0) {
+        if (rec->task != caps.task)
+            return fail("capability is scoped to another task");
+    }
     if (!rec->pending)
         return fail("worldline is not pending");
     if (!rec->loan_outstanding)
@@ -397,6 +408,10 @@ bool WorldlineLedger::rollback(std::uint64_t id, std::uint64_t owner, const Capa
         return fail("unknown worldline");
     if (rec->owner != owner && caps.worldline != id)
         return fail("worldline is owned by another session");
+    if (rec->task != 0 || caps.task != 0) {
+        if (rec->task != caps.task)
+            return fail("capability is scoped to another task");
+    }
     if (!rec->pending)
         return fail("worldline is not pending");
     rec->pending = false;
@@ -418,6 +433,10 @@ bool WorldlineLedger::rollback_kept(std::uint64_t id, std::uint64_t owner, const
             continue;
         if (rec.owner != owner && caps.worldline != id)
             return fail("worldline is owned by another session");
+        if (rec.task != 0 || caps.task != 0) {
+            if (rec.task != caps.task)
+                return fail("capability is scoped to another task");
+        }
         if (!rec.kept || rec.rolled_back)
             return fail("worldline is not kept");
         rec.kept = false;

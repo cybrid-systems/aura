@@ -1990,10 +1990,17 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
             const LoanBody loan = loan_from();
             if (!require(kCapTrial, loan.channel, 0))
                 break;
+            // #5401: a task-scoped capability may only open that task's
+            // trial. The request carries the task id in worldline (the
+            // reply replaces it with the new worldline id).
+            if (caps.task != 0 && loan.worldline != caps.task) {
+                deny(EPERM, "capability is scoped to another task");
+                break;
+            }
             // #5378: bind the trial to the live workspace generation it
             // starts from; KEEP rejects a stale baseline.
             const std::uint64_t id =
-                worldlines_.open_trial(root_token, workspace_id_, workspace_gen_);
+                worldlines_.open_trial(root_token, workspace_id_, workspace_gen_, loan.worldline);
             record_audit(AuditKind::Trial, root_token, id);
             // #5393: the trial joins the round when one is running.
             round_note_trial(id, session);
@@ -2655,6 +2662,11 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
             next.channels |= effective.channels;
             next.worldline = effective.worldline;
             next.workspace = workspace_id_;
+            // #5401: activating a task-scoped grant narrows the session
+            // to that task; a task-less grant never widens an existing
+            // task scope.
+            if (effective.task != 0)
+                next.task = effective.task;
             if (effective.expires_gen != 0)
                 next.expires_gen = effective.expires_gen;
             caps = next;
@@ -2726,7 +2738,18 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
             std::string name(text, wire.name_len);
             std::string source(text + wire.name_len, wire.source_len);
             const auto pred = predicate_registry_.find(name);
-            if (pred == predicate_registry_.end()) {
+            // #5401: these two registered names are parameterized by the
+            // install source. The factory returns a fail-closed predicate
+            // for an empty or malformed source; it never falls back to
+            // the permissive base predicate.
+            ConstraintPredicate check;
+            if (name == "target-allowlist") {
+                check = target_allowlist_predicate(source);
+            } else if (name == "metric-floor-bound") {
+                check = metric_floor_predicate(source);
+            } else if (pred != predicate_registry_.end()) {
+                check = pred->second;
+            } else {
                 deny(EPERM, "constraint source is not registered: " + name);
                 break;
             }
@@ -2734,14 +2757,14 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
             bool replaced = false;
             for (auto& rule : next.rules) {
                 if (rule.name == name) {
-                    rule.check = pred->second;
+                    rule.check = check;
                     rule.source = source;
                     replaced = true;
                     break;
                 }
             }
             if (!replaced)
-                next.rules.push_back({name, pred->second, source});
+                next.rules.push_back({name, check, source});
             std::string why;
             if (!constraints_.install(std::move(next), caps, &audit_, root_token, &why)) {
                 deny(EPERM, why);

@@ -1100,11 +1100,15 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
 
 
             if (op == "trial") {
-                std::int64_t channel = 1;
+                std::int64_t channel = 1, task = 0;
                 if (a.size() >= 3 && !bus_int(a[2], &channel))
                     return bus_error(ev, "validation-failed", "trial channel must be an integer");
+                if (a.size() >= 4 && !bus_int(a[3], &task))
+                    return bus_error(ev, "validation-failed", "trial task id must be an integer");
                 aura::bus::LoanBody loan{};
                 loan.channel = static_cast<std::uint64_t>(channel);
+                // #5401: the request's worldline field carries the task id.
+                loan.worldline = static_cast<std::uint64_t>(task);
                 if (!send_loan(att.sock, att.session, aura::bus::FrameType::Trial, loan))
                     return bus_error(ev, "transport-failed", "trial send failed");
                 aura::bus::FrameHeader hdr{};
@@ -1169,17 +1173,21 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
 
             if (op == "grant") {
                 std::int64_t bits = 0, channels = 0, loans = 0, expires = 0, worldline = 0;
+                std::int64_t task = 0;
                 if (a.size() < 7 || !bus_int(a[2], &bits) || !bus_int(a[3], &channels) ||
                     !bus_int(a[4], &loans) || !bus_int(a[5], &expires) ||
                     !bus_int(a[6], &worldline))
                     return bus_error(ev, "validation-failed",
                                      "grant needs bits, channels, loans, expires, worldline");
+                if (a.size() >= 8 && !bus_int(a[7], &task))
+                    return bus_error(ev, "validation-failed", "grant task id must be an integer");
                 aura::bus::GrantBody request{};
                 request.caps.bits = static_cast<std::uint64_t>(bits);
                 request.caps.channels = static_cast<std::uint64_t>(channels);
                 request.caps.max_loans = static_cast<std::uint64_t>(loans);
                 request.caps.expires_gen = static_cast<std::uint64_t>(expires);
                 request.caps.worldline = static_cast<std::uint64_t>(worldline);
+                request.caps.task = static_cast<std::uint64_t>(task);
                 if (!aura::bus::send_frame(
                         att.sock, aura::bus::FrameType::Grant, att.session,
                         {reinterpret_cast<const std::byte*>(&request), sizeof(request)}))

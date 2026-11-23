@@ -450,7 +450,7 @@ static_assert(sizeof(AuditReplayReply) == 112);
 static_assert(sizeof(AuditReplayNode) == 192);
 static_assert(sizeof(ChannelBody) == 56);
 static_assert(sizeof(CatchUpBody) == 32);
-static_assert(sizeof(GrantBody) == 56);
+static_assert(sizeof(GrantBody) == 64);
 static_assert(sizeof(GrantReply) == 8);
 static_assert(sizeof(RoundRequestBody) == 24);
 static_assert(sizeof(RoundReplyBody) == 120);

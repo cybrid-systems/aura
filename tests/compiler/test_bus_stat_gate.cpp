@@ -205,16 +205,6 @@ bool has(const std::string& out, const char* line) {
     return out.find(line) != std::string::npos;
 }
 
-bool wait_socket(const std::string& sock) {
-    for (int i = 0; i < 200; ++i) {
-        struct stat st{};
-        if (::stat(sock.c_str(), &st) == 0)
-            return true;
-        usleep(50000);
-    }
-    return false;
-}
-
 // The host, the proposer and the judge in one process: the judge binds
 // the held-out evidence of a negative control and of a legitimate
 // candidate, the legitimate candidate is KEPT and the coordinator's own
@@ -637,13 +627,11 @@ int main() {
             return 1;
         check(setenv("XDG_RUNTIME_DIR", dir, 1) == 0, "setenv XDG_RUNTIME_DIR");
         const std::string d(dir);
-        const std::string sock = default_socket_path(8941);
         check(write_file(d + "/gate.aura", kGateScript), "write gate script");
 
         int out_fd = -1, in_fd = -1;
         const pid_t pid = run_script(d + "/gate.aura", &out_fd, &in_fd);
         check(pid > 0, "fork the gate host");
-        check(wait_socket(sock), "the gate socket appeared");
         check(has(read_until(out_fd, "ready", 20000), "ready"), "the gate host is ready");
         const std::string out = read_until(out_fd, "DONE", 20000);
         if (!has(out, "bind=ok"))

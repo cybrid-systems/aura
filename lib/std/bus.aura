@@ -122,9 +122,10 @@
 (define (bus:publish-worldline session id parent state constraint patch-off patch-len)
   (bus-call "publish-worldline" session id parent state constraint patch-off patch-len))
 
-; (bus:trial session channel) -> (ok worldline)
-(define (bus:trial session channel)
-  (bus-call "trial" session channel))
+; (bus:trial session channel [task-id]) -> (ok worldline)
+; A task-scoped capability must pass the task id (default 0).
+(define (bus:trial session channel . task-id)
+  (bus-call "trial" session channel (if (pair? task-id) (car task-id) 0)))
 
 ; (bus:keep session worldline node value) runs the current constraints.
 (define (bus:keep session worldline node value)
@@ -345,9 +346,12 @@
 (define (bus:capacity-plan session)
   (bus-call "capacity-plan" session))
 
-; (bus:grant session bits channels loans expires worldline) -> (ok token)
-(define (bus:grant session bits channels loans expires worldline)
-  (bus-call "grant" session bits channels loans expires worldline))
+; (bus:grant session bits channels loans expires worldline [task-id]) -> (ok token)
+; A task-scoped grant carries the task id; the worker may only open,
+; keep and roll back that task's trial (#5401).
+(define (bus:grant session bits channels loans expires worldline . task-id)
+  (bus-call "grant" session bits channels loans expires worldline
+            (if (pair? task-id) (car task-id) 0)))
 
 (define (bus:revoke session token)
   (bus-call "revoke" session token))
@@ -375,9 +379,9 @@
     "query: (bus:hotspots session top) -> (ok count rows); (bus:diff-worldlines session id-a id-b) -> (ok state-a state-b rows); needs read\n"
     "constraints: (bus:constraints session) -> (ok version count rows); rows = (name source); needs read\n"
     "query: (bus:query session channel since-generation since-count) -> (ok generation count snapshot rows)\n"
-    "trial: (bus:trial session channel) -> (ok worldline); needs trial\n"
+    "trial: (bus:trial session channel [task-id]) -> (ok worldline); needs trial; a task-scoped grant must pass its task id\n"
     "keep/rollback: (bus:keep session worldline node value) / (bus:rollback session worldline); needs keep/rollback and the current constraints pass\n"
-    "grant/revoke: (bus:grant session bits channels loans expires worldline) -> (ok token); (bus:revoke session token); needs grant\n"
+    "grant/revoke: (bus:grant session bits channels loans expires worldline [task-id]) -> (ok token); (bus:revoke session token); needs grant; a task id scopes the grant to that task's trial (#5401)\n"
     "audit: (bus:audit session worldline) -> (ok count truncated events); needs read\n"
     "gate: (bus:bind-gate session worldline round workload seed verifier folds threshold control verdict windows) -> (ok worldline); (bus:gate-evidence session worldline) -> (ok verdict family adjusted threshold fingerprint); the coordinator recomputes the admission verdict from the held-out windows\n"
     "replay: (bus:audit-replay session) -> (ok events worldlines keeps findings first-seq first-kind first-reason nodes); (bus:audit-evo session) -> (ok text); the lineage, its integrity findings and the reproduced verdicts\n"

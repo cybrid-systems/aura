@@ -1998,6 +1998,15 @@ target_link_libraries(test_bus_constraints_subset PRIVATE aura-bus)
 aura_strict_test_warnings(tests/compiler/test_bus_constraints_subset.cpp)
 add_test(NAME test_bus_constraints_subset_5380 COMMAND ./test_bus_constraints_subset)
 
+# Issue #5401: target-allowlist and metric-floor-bound are fail-closed,
+# parameterized by the install source.
+add_executable(test_bus_constraint_defaults tests/compiler/test_bus_constraint_defaults.cpp)
+target_include_directories(test_bus_constraint_defaults PRIVATE src)
+target_compile_features(test_bus_constraint_defaults PUBLIC cxx_std_26)
+target_link_libraries(test_bus_constraint_defaults PRIVATE aura-bus)
+aura_strict_test_warnings(tests/compiler/test_bus_constraint_defaults.cpp)
+add_test(NAME test_bus_constraint_defaults_5401 COMMAND ./test_bus_constraint_defaults)
+
 # Issue #5381: canary two-phase commit + automatic degradation revert.
 # Below-floor metrics auto-revert; at-floor window seals; concurrent
 # canary KEEP refused.
