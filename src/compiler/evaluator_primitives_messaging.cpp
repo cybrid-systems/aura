@@ -4,7 +4,8 @@
 module;
 
 #include "runtime_shared.h"
-#include "core/diag_print.hh" // #4936 eprintln_nothrow
+#include "prim_registrar_scaffold.hh" // #5414: register_prim + PrimSpec (fiber:sleep)
+#include "core/diag_print.hh"         // #4936 eprintln_nothrow
 #include "messaging_bridge.h"
 
 #include "security_capabilities.h"
@@ -2326,6 +2327,74 @@ void RegSplitParts::register_messaging_fiber_lifecycle_primitives(PrimRegistrar 
         }
         return make_void();
     });
+
+    // (fiber:sleep ms) — wait ms milliseconds without burning the thread.
+    // Issue #5414: the one kernel primitive a timer needs. Every deadline in
+    // lib/std used to be a yield loop on the steady clock (orch-wait-sec),
+    // which is not a sleep: on the thread backend fiber:yield is a no-op, so
+    // the loop spins, and a fiber on the scheduler could not wait without
+    // re-queuing itself.
+    //
+    //   scheduler fiber that may park (--serve-async, an orch agent body):
+    //       a timed park — Waiting with a park deadline the IO loop honours
+    //       (the mailbox recv protocol). The worker stays free, and a
+    //       (fiber:cancel) lands at once through the eventfd nudge.
+    //   anything else (a CLI thread-backend body, the host thread, a fiber
+    //       inside a live mutation boundary, where a yield is refused):
+    //       the OS thread sleeps in slices of at most kSliceMs and looks
+    //       for a cancel request between slices.
+    //
+    //   #t     the whole interval elapsed
+    //   error  a bad argument, or the 'fiber-cancelled' condition
+    register_prim(
+        add, ev, "fiber:sleep",
+        [&ev](std::span<const EvalValue> a) -> EvalValue {
+            constexpr std::int64_t kSliceMs = 20;       // cancel latency, slice path
+            constexpr std::int64_t kMaxMs = 86'400'000; // one day
+            if (a.empty() || !is_int(a[0]) || as_int(a[0]) < 0 || as_int(a[0]) > kMaxMs) {
+                return make_primitive_error(
+                    ev.string_heap_, ev.error_values_,
+                    "fiber:sleep: usage: (fiber:sleep ms), 0 <= ms <= 86400000",
+                    ev.primitive_error_counter_ptr());
+            }
+            auto* self = aura::serve::g_current_fiber;
+            const auto wake =
+                std::chrono::steady_clock::now() + std::chrono::milliseconds(as_int(a[0]));
+            for (;;) {
+                // The wait is a cancellation safepoint: a request that is
+                // already pending answers now; one that lands during the
+                // wait answers at the next check.
+                if (auto cancel_cond = fiber_cancel_safepoint(ev, ev.string_heap_, ev.error_values_,
+                                                              ev.primitive_error_counter_ptr()))
+                    return *cancel_cond;
+                const auto now = std::chrono::steady_clock::now();
+                if (now >= wake)
+                    return make_bool(true);
+                const auto left =
+                    std::chrono::duration_cast<std::chrono::milliseconds>(wake - now).count();
+                if (self && channel_can_park_fiber()) {
+                    self->set_state(aura::serve::FiberState::Waiting);
+                    self->set_park_deadline_ms(static_cast<int>(std::max<std::int64_t>(1, left)));
+                    aura::serve::Fiber::yield(aura::serve::YieldReason::Explicit);
+                    self->clear_park_deadline();
+                    self->set_state(aura::serve::FiberState::Running);
+                } else {
+                    TwPlainPark park_5274; // #5274: certified park across the blocking wait
+                    std::this_thread::sleep_for(
+                        std::chrono::milliseconds(std::min(left, kSliceMs)));
+                }
+            }
+        },
+        [] {
+            aura::compiler::PrimSpec s = aura::compiler::impure_general(
+                1, "(ms:int) -> bool",
+                "Wait ms milliseconds without burning the thread. A scheduler fiber parks "
+                "with a deadline; another thread sleeps in slices. Cancellable: answers the "
+                "fiber-cancelled condition when (fiber:cancel) lands during the wait. #t "
+                "once the whole interval elapsed.");
+            s.safety_flags = aura::compiler::kPrimSafetyFiber;
+            return s;
+        }());
 
     // (mutate :session-create name) — Create a new isolated session (serve mode only)
     // Returns #t on success, #f in stdin mode or if name already exists

@@ -419,6 +419,34 @@ HOMES: tuple[Home, ...] = (
         ),
     ),
     _h(
+        "std/schedule",
+        "aura",
+        "tests/suite/schedule.aura",
+        ("std/schedule", "schedule:after", "schedule:open", "schedule", "timer"),
+        tag="schedule",
+        requires=("std/schedule",),
+        body="(check (hash? (schedule:make (hash))))",
+        roots=("lib/std/schedule.aura",),
+        note=(
+            "Timers over (fiber:sleep ms) and a directory of alarm files that survives a "
+            "restart (#5414): fire once, cancel, at-least-once recovery."
+        ),
+    ),
+    _h(
+        "std/portfolio",
+        "aura",
+        "tests/suite/portfolio_select_4945.aura",
+        ("std/portfolio", "portfolio:run", "portfolio"),
+        tag="portfolio",
+        requires=("std/portfolio",),
+        body="(check (hash? (portfolio:make (hash))))",
+        roots=("lib/std/portfolio.aura",),
+        note=(
+            "Algorithm portfolios (#4945): registry, budgeted runs with a watchdog, "
+            "equal / successive-halving / ucb / thompson allocation, performance matrix."
+        ),
+    ),
+    _h(
         "lang/module",
         "aura",
         "tests/suite/module.aura",
@@ -454,7 +482,7 @@ HOMES: tuple[Home, ...] = (
         "runtime/fiber",
         "aura",
         "tests/suite/issue_5064_fiber_cancel_text.aura",
-        ("fiber cancel", "fiber:cancel", "runtime/fiber"),
+        ("fiber cancel", "fiber:cancel", "runtime/fiber", "fiber:sleep", "fiber sleep"),
         tag="fiber",
         body=(
             '(define payload "fiber-cancelled: cancel requested via (fiber:cancel)")\n'
@@ -468,10 +496,13 @@ HOMES: tuple[Home, ...] = (
         ),
         roots=(
             "src/serve/fiber",
+            "src/serve/scheduler.cpp",
             "src/core/fiber_context",
             "src/compiler/fiber",
             "src/compiler/evaluator_fiber",
             "src/compiler/evaluator_primitives_fiber",
+            # fiber:spawn / cancel / yield / sleep are registered in the messaging TU
+            "src/compiler/evaluator_primitives_messaging.cpp",
         ),
         note="runtime/fiber cancel payload. Cancellation is not a type error.",
     ),

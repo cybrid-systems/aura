@@ -46,10 +46,10 @@
 ; arm is cancelled AND joined before the policy goes on, so its thread is
 ; reclaimed; a body that never yields blocks the race in that join.
 ;
-; Waiting: there is no kernel sleep yet. The default timed wait is a yield
-; loop on the steady clock (the orch-wait-sec shape): it burns its thread
-; for the length of the round. A host with a timer injects "sleep"
-; (lambda (ms) ...); tests inject one to stay deterministic.
+; Waiting: the default timed wait is (fiber:sleep ms) (#5414). On the
+; scheduler the race driver parks with a deadline; on the CLI thread
+; backend its thread sleeps in slices. A host with its own timer injects
+; "sleep" (lambda (ms) ...); the suite injects one to stay deterministic.
 ;
 ; Import: (require "std/race" all:)
 
@@ -87,12 +87,10 @@
 
 (define race-default-clock (lambda () (monotonic-ms)))
 
-(define (race-sleep-spin ms)
-  (let ((deadline (+ (monotonic-ms) ms)))
-    (let loop ()
-      (if (< (monotonic-ms) deadline)
-        (begin (fiber:yield) (loop))
-        #t))))
+; #5414: the kernel wait. Before it this was a yield loop on the steady
+; clock, which spun the driver's thread on the CLI backend.
+(define (race-sleep ms)
+  (if (positive? ms) (fiber:sleep (max 0 (inexact->exact (floor ms)))) #t))
 
 ;; ── the race (a value; no module state) ───────────────────────
 
@@ -106,7 +104,7 @@
           "sense" (if (string=? sense "min") "min" "max")
           "seed" (race-int (race-opt o "seed" 42) 42)
           "score" (if (procedure? score) score #f)
-          "sleep" (if (procedure? sleep) sleep race-sleep-spin)
+          "sleep" (if (procedure? sleep) sleep race-sleep)
           "clock" (if (procedure? clock) clock race-default-clock)
           "t0" 0 "round" 0 "slot-ms" 0 "alloc" "" "ledger" #f)))
 

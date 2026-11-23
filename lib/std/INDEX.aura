@@ -126,6 +126,9 @@
     (list "race"
       (list "Race fibers that already run: halving / bandit cancel by intermediate score, portfolio-shaped budget rows (#5413)"
             "(require \"std/race\" all:)(race:halving r (hash \"round-ms\" 200 \"rounds\" 3))"))
+    (list "schedule"
+      (list "Timers over (fiber:sleep ms) and a directory of alarm files that survives a restart (#5414)"
+            "(require \"std/schedule\" all:)(schedule:after s 60000 thunk)"))
     ; ── Legacy swarm surfaces (#5007): importable, NOT recommended. ──
     ; Use std/search for the same algorithms through search:step. pso/abc/
     ; fss/ant keep their module names for one release; boids is coupling

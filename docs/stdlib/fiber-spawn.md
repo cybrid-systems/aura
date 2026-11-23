@@ -23,6 +23,10 @@ Thread fallback is a **supported concurrent denseness backend** for
 Hephaestus axis C (multi-worker rebind under load). Real stackful
 ucontext fibers require serve-async (epoll).
 
+A timed wait is `(fiber:sleep ms)`: a park with a deadline on the scheduler
+backend, a sliced thread sleep on the thread backend
+([fiber-sleep.md](fiber-sleep.md)).
+
 ## Minimal denseness CLI
 
 ```bash

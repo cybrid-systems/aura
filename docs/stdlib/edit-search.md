@@ -155,9 +155,9 @@ must reach a safepoint (`fiber:yield`, a channel, a join) to observe it. A
 cut arm is cancelled **and joined** before the policy goes on, so its thread
 is reclaimed; a body that never yields blocks the race in that join.
 
-**Waiting.** There is no kernel sleep yet: the default timed wait is a yield
-loop on the steady clock (the `orch-wait-sec` shape) and burns its thread
-for the length of the round. A host with a timer injects `"sleep"`
+**Waiting.** The default timed wait is `(fiber:sleep ms)` (#5414): on the
+scheduler the race driver parks with a deadline, on the CLI thread backend
+its thread sleeps. A host with its own timer injects `"sleep"`
 `(lambda (ms) ...)`; the suite injects one to stay deterministic.
 
 ## Recommended composition for a rehearsal

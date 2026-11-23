@@ -19,6 +19,9 @@ Cancellation is **cooperative**. The target observes the request at its next
 safepoint and raises a catchable condition there:
 
 - `(fiber:yield)` — the primary safepoint (checked before the hand-off);
+- `(fiber:sleep)` — checked before the wait and after every wake: a parked
+  sleeper is nudged at once, a slice-sleeping thread answers within its
+  slice ([fiber-sleep.md](fiber-sleep.md));
 - the fiber-parking channel prims (`channel:send` / `channel:recv`) — a
   parked fiber is nudged with a 1-byte eventfd write and re-checks the
   request when the scheduler resumes it;

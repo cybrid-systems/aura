@@ -314,7 +314,8 @@
                 (loop))
             (if (>= (monotonic-ms) deadline)
                 (orch-ask-timeout-record who timeout)
-                (begin (fiber:yield) (loop))))))))
+                ; #5414: poll on the kernel wait instead of a yield spin
+                (begin (fiber:sleep 1) (loop))))))))
 
 ; ── orch:ask — send one task, wait for its result ──
 ; A stopped local agent is refused with a record: {status:"agent-stopped",
@@ -486,16 +487,13 @@
       (orch-yield-safe)
       r)))
 
-; Cooperative wait. There is no kernel sleep: a tight yield loop watches
-; the steady clock, and fiber:yield is the cancellation safepoint so a
-; caller that finished early can stop the timer.
+; Cooperative wait (#5414): fiber:sleep is the kernel wait — a scheduler
+; fiber parks with a deadline, any other thread sleeps — and it is the
+; cancellation safepoint, so a caller that finished early can stop the
+; timer. Before #5414 this was a yield loop on the steady clock, which
+; spun the thread on the CLI backend.
 (define (orch-wait-sec sec)
-  (let ((start (monotonic-ms))
-        (limit (* sec 1000)))
-    (let loop ()
-      (if (>= (- (monotonic-ms) start) limit)
-        #t
-        (begin (fiber:yield) (loop))))))
+  (fiber:sleep (max 0 (inexact->exact (floor (* sec 1000))))))
 
 (define (orch-join-ordered ids)
   (let loop ((xs ids) (acc (quote ())))

@@ -1,0 +1,41 @@
+;; suite-mode: serve-async
+; tests/suite/fiber_sleep_park.aura — Issue #5414
+; On the scheduler backend ((query :fiber-backend) = 1) fiber:sleep is a
+; timed park: the fiber leaves its worker with a deadline the IO loop
+; honours, so a cancel lands at once and a short sleeper wakes while a long
+; one is parked. The slice-sleep form is issue_5064_fiber_cancel_text.aura.
+
+(require "std/test" all:)
+
+(test-file "fiber_sleep_park.aura")
+
+(test-case "a parked sleep wakes on time and leaves the worker free" (hash "issue" 5414)
+  (check= 1 (query :fiber-backend))
+  (define t0 (monotonic-ms))
+  (check= #t (fiber:sleep 80))
+  (check (>= (- (monotonic-ms) t0) 70))
+  ; both sleepers share this fiber's worker; the short one is not stuck
+  ; behind the parked long one
+  (define long (fiber:spawn (lambda () (fiber:sleep 400) 'long)))
+  (define short (fiber:spawn (lambda () (fiber:sleep 80) 'short)))
+  (check= 'short (fiber:join short))
+  (check= 'long (fiber:join long)))
+
+(test-case "a parked sleep is cancelled at once" (hash "issue" 5414)
+  (define g (fiber:spawn (lambda ()
+    (try (fiber:sleep 60000) (catch (e) (list 'cancelled e))))))
+  (fiber:sleep 30)
+  (check= #t (fiber:cancel g))
+  (define t0 (monotonic-ms))
+  (define joined (fiber:join g))
+  (check= 'cancelled (car joined))
+  (check (< (- (monotonic-ms) t0) 5000)))
+
+(test-case "a sleep longer than the idle window still wakes" (hash "issue" 5414)
+  ; the scheduler stops itself after three idle ticks; a parked sleep is
+  ; waiting, not idle, so a 3.5 s sleep outlives the window and answers #t
+  (define t0 (monotonic-ms))
+  (check= #t (fiber:sleep 3500))
+  (check (>= (- (monotonic-ms) t0) 3400)))
+
+(test-finish)

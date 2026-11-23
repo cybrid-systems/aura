@@ -1372,6 +1372,7 @@ void Scheduler::run() {
         // scheduler re-queues it at its own deadline. Scan owned_fibers_ (not
         // wait_map_: a parked fiber need not be epoll-registered) and never
         // sleep past the nearest armed deadline.
+        bool timed_park_armed = false; // #5414: a Waiting fiber with a deadline
         {
             const auto now_ns =
                 static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -1393,6 +1394,7 @@ void Scheduler::run() {
                 }
             }
             if (nearest != 0) {
+                timed_park_armed = true;
                 const std::uint64_t delta_ns = nearest > now_ns ? nearest - now_ns : 0;
                 int park_ms = static_cast<int>((delta_ns + 999999ULL) / 1000000ULL);
                 if (park_ms < 1)
@@ -1602,6 +1604,11 @@ void Scheduler::run() {
                         break;
                     }
                 }
+                // Issue #5414: a fiber parked on a (fiber:sleep) deadline is
+                // waiting, not done. Without this, three idle ticks abandoned
+                // a sleep longer than the idle window.
+                if (timed_park_armed)
+                    all_idle = false;
                 if (all_idle && !running_.load(std::memory_order_acquire))
                     break;
                 // If idle for multiple cycles, auto-stop (avoids hang).

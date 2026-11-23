@@ -1,0 +1,10 @@
+schedule:make: Any -> Any
+schedule:after: Any Any Any Any -> Any
+schedule:at: Any Any Any Any -> Any
+schedule:cancel: Any Any -> Bool
+schedule:pending: Any -> Any
+schedule:timers: Any -> Any
+schedule:shutdown: Any -> Any
+schedule:on-due!: Any Any -> Any
+schedule:open: Any Any -> Any
+schedule:help:  -> String

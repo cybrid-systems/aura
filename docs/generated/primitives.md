@@ -2,11 +2,11 @@
 
 # Primitives (generated)
 
-**422** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
+**423** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
 Both registration channels are covered (Issue #5008): `register_prim` / `add(...)` in `src/**/*.cpp` **and** the evaluator ctor hot table in `src/compiler/evaluator_primitives_builtins.cpp` (`+ - * / = < > <= >= not and or eq?` live only there).
 Runtime canonical list: `(query :api-reference)` (includes `*deprecated*` section).
 Tiers (Issue #5008): one list, `docs/stdlib/primitive-tiers.json`; criterion + gate in [primitive-authoring-contract.md](../stdlib/primitive-authoring-contract.md).
-**kernel** 421 · **stdlib-candidate** 0 · **delete** 1
+**kernel** 422 · **stdlib-candidate** 0 · **delete** 1
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
 **Authoring (Issue #2915)**: prefer `register_prim` in `src/compiler/prim_registrar_scaffold.hh`; full contract [primitive-authoring-contract.md](../stdlib/primitive-authoring-contract.md) + [contributing.md](../contributing.md).
@@ -14,16 +14,17 @@ Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:me
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 17 primitives (4%)
-- **core**: 404 primitives (96%)
+- **core**: 405 primitives (96%)
 - **internal-observable**: 0 primitives (0%)
 - **convenience**: 1 primitives (0%)
 
 Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.py` (Issue #559 taxonomy: mutation-safety / internal-observable / convenience / core default). Per-primitive classification overrides via `docs/primitive_categories.yaml` were removed per Anqi 2026-07-19 directive (aura philosophy, no per-issue plan docs).
 
-## Fiber: (4)
+## Fiber: (5)
 
 - `fiber:cancel` *[core]* `kernel` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `fiber:join` *[core]* `kernel` — `src/compiler/evaluator_primitives_messaging.cpp`
+- `fiber:sleep` *[core]* `kernel` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `fiber:spawn` *[core]* `kernel` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `fiber:yield` *[core]* `kernel` — `src/compiler/evaluator_primitives_messaging.cpp`
 
@@ -536,7 +537,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `panic-safe-source` `kernel` — `src/compiler/evaluator_primitives_obs_eval.cpp`
 - `workspace-persist-info` `kernel` — `src/compiler/evaluator_primitives_persist.cpp`
 
-### Core builtins (must remain primitive) (404)
+### Core builtins (must remain primitive) (405)
 
 - `%base64-decode` `kernel` — `src/compiler/evaluator_primitives_char.cpp`
 - `%base64-encode` `kernel` — `src/compiler/evaluator_primitives_char.cpp`
@@ -680,6 +681,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `ffi:unpin-buffer` `kernel` — `src/compiler/ffi_primitives_impl.cpp`
 - `fiber:cancel` `kernel` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `fiber:join` `kernel` — `src/compiler/evaluator_primitives_messaging.cpp`
+- `fiber:sleep` `kernel` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `fiber:spawn` `kernel` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `fiber:yield` `kernel` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `filter` `kernel` — `src/compiler/evaluator_primitives_list.cpp`
@@ -951,7 +953,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 
 Criterion: a name stays **kernel** only when Aura code cannot implement it without losing atomicity or a host effect. **stdlib-candidate** names are pure value->value functions Aura can host; **delete** names duplicate another registered name. See [primitive-authoring-contract.md](../stdlib/primitive-authoring-contract.md).
 
-### kernel (421)
+### kernel (422)
 
 - `%base64-decode` *[K-HOSTLIB]* — `src/compiler/evaluator_primitives_char.cpp`
 - `%base64-encode` *[K-HOSTLIB]* — `src/compiler/evaluator_primitives_char.cpp`
@@ -1107,6 +1109,7 @@ Criterion: a name stays **kernel** only when Aura code cannot implement it witho
 - `ffi:unpin-buffer` *[K-FFI]* — `src/compiler/ffi_primitives_impl.cpp`
 - `fiber:cancel` *[K-FIBER]* — `src/compiler/evaluator_primitives_messaging.cpp`
 - `fiber:join` *[K-FIBER]* — `src/compiler/evaluator_primitives_messaging.cpp`
+- `fiber:sleep` *[K-EXC-5414]* — `src/compiler/evaluator_primitives_messaging.cpp`
 - `fiber:spawn` *[K-FIBER]* — `src/compiler/evaluator_primitives_messaging.cpp`
 - `fiber:yield` *[K-FIBER]* — `src/compiler/evaluator_primitives_messaging.cpp`
 - `filter` *[K-PAIR-TABLE]* — `src/compiler/evaluator_primitives_list.cpp`

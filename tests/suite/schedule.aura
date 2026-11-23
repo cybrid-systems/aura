@@ -1,0 +1,190 @@
+; tests/suite/schedule.aura — Issue #5414
+; std/schedule: timers over (fiber:sleep ms), and a directory of alarm files
+; that survives a restart. A "restart" is a second schedule:open over the
+; same directory: it sees only what the files still say.
+
+(require "std/test" all:)
+(require "std/schedule" all:)
+(require "std/fs" all:)
+
+(test-file "schedule.aura")
+
+; each case gets its own directory; the files are removed at the end
+(define *root* (string-append "/tmp/aura-schedule-" (number->string (current-time-ms))))
+(define *hits* 0)
+
+(define (bump! n)
+  (lambda () (set! *hits* (+ *hits* n))))
+
+(define (dir name)
+  (string-append *root* "/" name))
+
+(define (alarm-file d id)
+  (string-append d "/" id ".json"))
+
+; an alarm file as a process that died would have left it
+(define (leave-alarm! d id due state payload)
+  (write-file (alarm-file d id)
+              (json-encode (hash "id" id "due" due "payload" payload "state" state))))
+
+(define (states s)
+  (map (lambda (t) (hash-ref t "state")) (schedule:timers s)))
+
+(test-case "a timer fires once, after its interval" (hash "issue" 5414)
+  (set! *hits* 0)
+  (define s (schedule:make (hash)))
+  (define t (schedule:after s 60 (bump! 1) "why"))
+  (check= "armed" (hash-ref t "state"))
+  (check= "why" (hash-ref t "payload"))
+  (check= (list (hash-ref t "id"))
+          (map (lambda (x) (hash-ref x "id")) (schedule:pending s)))
+  (check= 0 *hits*)
+  (fiber:sleep 150)
+  (check= 1 *hits*)
+  (check= (list "done") (states s))
+  (check= (list) (schedule:pending s)))
+
+(test-case "a cancelled timer never fires" (hash "issue" 5414)
+  (set! *hits* 0)
+  (define s (schedule:make (hash)))
+  (define t (schedule:after s 4000 (bump! 1)))
+  (check= #t (schedule:cancel s t))
+  (fiber:sleep 120)
+  (check= 0 *hits*)
+  (check= (list "cancelled") (states s))
+  (check= (list) (schedule:pending s))
+  ; already stopped: there is nothing to cancel
+  (check (not (schedule:cancel s t)))
+  (check (not (schedule:cancel s "no-such-timer"))))
+
+(test-case "schedule:cancel takes the id as well as the timer" (hash "issue" 5414)
+  (set! *hits* 0)
+  (define s (schedule:make (hash)))
+  (define t (schedule:after s 4000 (bump! 1)))
+  (check= #t (schedule:cancel s (hash-ref t "id")))
+  (check= 0 *hits*))
+
+(test-case "schedule:at fires at an absolute time" (hash "issue" 5414)
+  (set! *hits* 0)
+  (define s (schedule:make (hash)))
+  (define due (+ (current-time-ms) 60))
+  (define t (schedule:at s due (bump! 1)))
+  (check= due (hash-ref t "due"))
+  (fiber:sleep 150)
+  (check= 1 *hits*)
+  (check= (list "done") (states s)))
+
+(test-case "a persisted timer writes its alarm file and removes it once it ran"
+          (hash "issue" 5414)
+  (set! *hits* 0)
+  (define d (dir "persisted"))
+  (define s (schedule:open d))
+  (define t (schedule:after s 80 (bump! 1) (hash "k" "v")))
+  (check (file-exists? (alarm-file d (hash-ref t "id"))))
+  (fiber:sleep 200)
+  (check= 1 *hits*)
+  (check (not (file-exists? (alarm-file d (hash-ref t "id")))))
+  (check= (list) (dir-files d)))
+
+(test-case "a restart hands the overdue alarms to on-due once and re-arms the rest"
+          (hash "issue" 5414)
+  (define d (dir "restart"))
+  (make-directory d)
+  (define now (current-time-ms))
+  ; "past" is overdue and never ran; "mid" was running when the process died
+  (leave-alarm! d "past" (- now 1000) "armed" "p")
+  (leave-alarm! d "mid" (- now 5) "fired" 7)
+  (leave-alarm! d "future" (+ now 300000) "armed" #f)
+  (define handed (list))
+  (define s (schedule:open d (hash "on-due"
+                                   (lambda (timer)
+                                     (set! handed (cons (list (hash-ref timer "id")
+                                                              (hash-ref timer "payload"))
+                                                       handed))))))
+  (check= 2 (length handed))
+  (check (member (list "past" "p") handed))
+  (check (member (list "mid" 7) handed))
+  ; the future alarm is armed again, the two that ran are gone
+  (check= (list "future") (map (lambda (t) (hash-ref t "id")) (schedule:pending s)))
+  (check= (list "future.json") (dir-files d))
+  (check= #t (schedule:cancel s "future"))
+  (check= (list) (dir-files d))
+  ; the next restart finds nothing to hand over
+  (define again (list))
+  (schedule:open d (hash "on-due" (lambda (timer) (set! again (cons timer again)))))
+  (check= (list) again))
+
+(test-case "a handler that throws leaves the alarm to be handed over again"
+          (hash "issue" 5414)
+  (define d (dir "retry"))
+  (make-directory d)
+  (define now (current-time-ms))
+  (leave-alarm! d "past" (- now 1000) "armed" "p")
+  (define s (schedule:open d))
+  ; on-due refuses the first time: the file says "fired", the alarm is kept
+  (define calls 0)
+  (check= "boom"
+          (try (schedule:on-due! s (lambda (timer)
+                                     (set! calls (+ calls 1))
+                                     (error "boom")))
+               (catch (e) e)))
+  (check= 1 calls)
+  (define text (read-file (alarm-file d "past")))
+  (check (string-contains? text "\"state\":\"fired\""))
+  ; the next handler gets it
+  (check= 1 (schedule:on-due! s (lambda (timer) (set! calls (+ calls 1)) #t)))
+  (check= 2 calls)
+  (check= (list) (dir-files d)))
+
+(test-case "a file that is not an alarm is a refusal that names it" (hash "issue" 5414)
+  (define d (dir "torn"))
+  (make-directory d)
+  (write-file (string-append d "/torn.json") "{\"id\": \"x\"")
+  (check (string-prefix? (try (schedule:open d (hash)) (catch (e) e))
+                         "schedule:open: not an alarm file: "))
+  ; an id that does not match its file name would be rewritten and deleted
+  ; under another name, so it is refused as well
+  (leave-alarm! d "under-another-name" (+ (current-time-ms) 1000) "armed" #f)
+  (check (string-prefix? (try (schedule:open d (hash)) (catch (e) e))
+                         "schedule:open: not an alarm file: "))
+  (file-delete (string-append d "/torn.json"))
+  (file-delete (alarm-file d "under-another-name"))
+  (check (schedule:open d (hash))))
+
+(test-case "shutdown stops the fibers and keeps the alarm files" (hash "issue" 5414)
+  (set! *hits* 0)
+  (define d (dir "shutdown"))
+  (define s (schedule:open d))
+  (define t (schedule:after s 60000 (bump! 1)))
+  (check= 1 (schedule:shutdown s))
+  (fiber:sleep 50)
+  (check= 0 *hits*)
+  ; the alarm is still on disk, still armed, and no fiber is running
+  (check (file-exists? (alarm-file d (hash-ref t "id"))))
+  (check= (list "armed") (states s))
+  (check= 0 (schedule:shutdown s))
+  (check= #t (schedule:cancel s t))
+  (check= (list) (dir-files d)))
+
+(test-case "a bad argument is refused by name" (hash "issue" 5414)
+  (define s (schedule:make (hash)))
+  (check= "schedule:after: thunk must be a procedure"
+          (try (schedule:after s 10 5) (catch (e) e)))
+  (check= "schedule:at: thunk must be a procedure"
+          (try (schedule:at s 0 5) (catch (e) e)))
+  (check= "schedule:at: due must be epoch milliseconds"
+          (try (schedule:at s -1 (lambda () #t)) (catch (e) e)))
+  (check= "schedule:make: dir must be a directory path"
+          (try (schedule:make (hash "dir" 5)) (catch (e) e)))
+  (check= "schedule:on-due!: fn must be a procedure"
+          (try (schedule:on-due! s 5) (catch (e) e))))
+
+; best effort: leave no alarm files behind
+(for-each (lambda (d)
+            (if (file-exists? d)
+              (for-each (lambda (name) (file-delete (string-append d "/" name)))
+                        (dir-files d))
+              #f))
+          (map dir (list "persisted" "restart" "retry" "torn" "shutdown")))
+
+(test-finish)

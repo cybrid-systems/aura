@@ -129,10 +129,17 @@
 
 (define portfolio-default-clock (lambda () (monotonic-ms)))
 
+; #5414: the watchdog waits on the kernel sleep, in slices of the caller's
+; clock, instead of a yield loop on that clock (which spun its thread on
+; the CLI backend). The sleep is the watchdog's own cancel safepoint.
 (define (portfolio-await deadline clock)
-  (if (< (clock) deadline)
-    (begin (fiber:yield) (portfolio-await deadline clock))
-    #t))
+  (let loop ()
+    (let ((left (- deadline (clock))))
+      (if (<= left 0)
+        #t
+        (begin
+          (fiber:sleep (max 1 (inexact->exact (floor (min left 20)))))
+          (loop))))))
 
 (define (portfolio-finish start)
   (let* ((m (hash-ref start "member"))

@@ -94,9 +94,11 @@ Append there. Names `std/iter` re-exports are the `std/list` contract. Names
 | std/search | `tests/suite/search_clonal.aura` | `search:init`, `std/search` |
 | std/edit-search | `tests/suite/edit_search.aura` | `std/edit-search`, `edit-search:run`, `stage gate` |
 | std/race | `tests/suite/fiber_race.aura` | `std/race`, `race:halving`, `fiber race` |
+| std/schedule | `tests/suite/schedule.aura` | `std/schedule`, `schedule:after`, `timer` |
+| std/portfolio | `tests/suite/portfolio_select_4945.aura` | `std/portfolio`, `portfolio:run` |
 | lang/module | `tests/suite/module.aura` | `lang/module`, `overwrite warning` |
 | lang/parser | `tests/suite/paren_semi_comment_5199.aura` | `unclosed list`, `(;` |
-| runtime/fiber | `tests/suite/issue_5064_fiber_cancel_text.aura` | `fiber cancel` |
+| runtime/fiber | `tests/suite/issue_5064_fiber_cancel_text.aura` | `fiber cancel`, `fiber:sleep` |
 | runtime/orch | `tests/suite/orchestrator.aura` | `runtime/orch`, `orchestrator` |
 | runtime/workspace | `tests/suite/workspace_source_ssot_2920.aura` | `runtime/workspace`, `workspace` |
 | typecheck oracle | `tests/suite/typecheck_three_paths.aura` | `typecheck-status`, `typecheck-current`, `--typecheck` |
@@ -120,9 +122,11 @@ A stem (no `.` in the last component) matches the end, `/`, `.`, or `_`.
 - std/search: `lib/std/search.aura`
 - std/edit-search: `lib/std/edit-search.aura`
 - std/race: `lib/std/race.aura`
+- std/schedule: `lib/std/schedule.aura`
+- std/portfolio: `lib/std/portfolio.aura`
 - lang/module: `src/compiler/evaluator_module_loader.cpp`, `src/compiler/evaluator_primitives_module.cpp`, `src/core/module_boundary.ixx`
 - lang/parser: `src/parser/`, `src/compiler/diag.ixx`, `src/compiler/evaluator_primitives_diagnostic.cpp`
-- runtime/fiber: `src/serve/fiber`, `src/core/fiber_context`, `src/compiler/fiber`, `src/compiler/evaluator_fiber`, `src/compiler/evaluator_primitives_fiber`
+- runtime/fiber: `src/serve/fiber`, `src/serve/scheduler.cpp`, `src/core/fiber_context`, `src/compiler/fiber`, `src/compiler/evaluator_fiber`, `src/compiler/evaluator_primitives_fiber`, `src/compiler/evaluator_primitives_messaging.cpp`
 - runtime/orch: `src/orch/`, `lib/std/orch.aura`
 - runtime/workspace: `src/core/workspace`, `src/compiler/evaluator_workspace`, `src/compiler/evaluator_primitives_workspace`, `src/compiler/evaluator_primitives_query_workspace`, `lib/std/query-workspace.aura`
 - typecheck oracle: `src/compiler/evaluator_primitives_eval.cpp`, `src/compiler/evaluator_typecheck.cpp`, `src/compiler/service_typecheck.cpp`, `src/compiler/reg_split_parts_decl.inc`

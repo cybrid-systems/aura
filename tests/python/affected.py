@@ -24,7 +24,9 @@ from aura_file_runner import (
     first_expect,
     format_failure_detail,
     invoke_aura_load,
+    invoke_aura_serve_async,
     judge_aura_file,
+    suite_mode,
 )
 from homes import HOMES, Home, match_homes
 from smoke_cases import load_smoke_cases
@@ -300,8 +302,15 @@ def _run_aura_file(rel: str, *, env: dict[str, str], timeout_s: float, kind: str
         print(f"affected: missing {rel}", flush=True)
         return [row]
     case = _file_case(rel)
+    text = path.read_text(encoding="utf-8", errors="replace")
     try:
-        proc = invoke_aura_load(path, aura_bin=AURA_BIN, env=env, timeout_s=timeout_s, cwd=ROOT)
+        # A `;; suite-mode: serve-async` file is one exec request over a
+        # pipe, the way the suite runner starts it (#5414). Under --load it
+        # would run on the thread backend and test the wrong path.
+        if suite_mode(text) == "serve-async":
+            proc = invoke_aura_serve_async(text, aura_bin=AURA_BIN, env=env, timeout_s=timeout_s)
+        else:
+            proc = invoke_aura_load(path, aura_bin=AURA_BIN, env=env, timeout_s=timeout_s, cwd=ROOT)
     except subprocess.TimeoutExpired:
         row = CaseRow(rel, "(file)", None, False, kind)
         _emit(row)
