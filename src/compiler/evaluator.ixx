@@ -2956,7 +2956,8 @@ public:
     void park_raised_diagnostic(aura::diag::Diagnostic d);
 
     // Module loaded callback: called after a module file is successfully loaded.
-    using ModuleLoadedFn = std::function<void(const std::string& source, const std::string& path)>;
+    using ModuleLoadedFn =
+        std::function<void(const std::string& source, const std::string& path, Env* module_env)>;
 
     void set_module_loaded_callback(ModuleLoadedFn cb) { module_loaded_cb_ = std::move(cb); }
     // Issue #911 / #1837: type_registry_ is either (a) non-owning
@@ -3930,6 +3931,13 @@ public:
     // and --load, which keep the error value (#2570).
     void set_require_failure_is_diagnostic(bool on) noexcept {
         require_failure_is_diagnostic_ = on;
+    }
+    // Issue #5420 form face: a file evaluated one form at a time repeats the
+    // same import set per form. The overwrite warnings are useful for a
+    // single whole-program import, but must not pollute the program's stdout.
+    void set_suppress_import_warnings(bool on) noexcept { suppress_import_warnings_ = on; }
+    [[nodiscard]] bool suppress_import_warnings() const noexcept {
+        return suppress_import_warnings_;
     }
     // Issue #4899: the IR entry needs this face to decide whether an escaped
     // statement-position error value becomes a located diagnostic.
@@ -7715,6 +7723,7 @@ private:
     void forget_import_bind_origin(const Env* env) noexcept;
     // Issue #4460: file-mode oneshot (see set_require_failure_is_diagnostic).
     bool require_failure_is_diagnostic_ = false;
+    bool suppress_import_warnings_ = false;
     const void* ir_entry_escape_flat_ = nullptr; // Issue #4899 follow-up
     std::uint32_t ir_entry_escape_node_ = 0;
     // Issue #4575: diagnostic from a require that pre_exec kept in the AST.

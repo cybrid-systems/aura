@@ -3559,7 +3559,8 @@ static bool oneshot_toplevel_hof_5334(const std::string& all_input) {
 // caller should keep the single cs.eval path. force_face takes the same
 // form-by-form route without the env var (Issue #5334).
 static int eval_oneshot_force_soa(aura::compiler::CompilerService& cs, const std::string& all_input,
-                                  bool stop_first_4909, bool force_face = false) {
+                                  bool stop_first_4909, bool force_face = false,
+                                  bool allow_walker = false) {
     {
         const char* strict_env2 = ::aura::config::raw(::aura::config::Key::AURA_PIPELINE_STRICT);
         const std::string_view strict_v2 =
@@ -3579,6 +3580,11 @@ static int eval_oneshot_force_soa(aura::compiler::CompilerService& cs, const std
             aura::ast::FlatAST parse_flat(parse_alloc);
             auto pr = aura::parser::parse_to_flat(all_input, parse_flat, parse_pool);
             if (!pr.success || pr.root == aura::ast::NULL_NODE) {
+                // Issue #5420: the whole-program face owns parse diagnostics
+                // (source caret + \"parse error:\" prefix). Fall through instead
+                // of printing the bare splitter message.
+                if (allow_walker)
+                    return -1;
                 std::println(std::cerr, "error: {}", pr.error.empty() ? "parse error" : pr.error);
                 return 1;
             }
@@ -3609,7 +3615,7 @@ static int eval_oneshot_force_soa(aura::compiler::CompilerService& cs, const std
                     !form.starts_with("(define\n") && !form.starts_with("(define\t") &&
                     !form.starts_with("(begin");
                 aura::compiler::set_tree_walker_fallback_policy(
-                    value_define || special_define
+                    allow_walker || value_define || special_define
                         ? aura::compiler::TreeWalkerFallbackPolicy::Allow
                         : aura::compiler::TreeWalkerFallbackPolicy::ForceSoa);
                 // Issue #4892 (string_ref_walk_4320 bench regression): a lone top-level form whose
@@ -3622,7 +3628,8 @@ static int eval_oneshot_force_soa(aura::compiler::CompilerService& cs, const std
                 // Forms that build closures or touch fibers / agents keep the
                 // exact #4865 face (their bodies must see live top-level
                 // cells; the walker shortcut is what gives them that).
-                const bool wrap_begin = !value_define && !form.empty() && form[0] == '(' &&
+                const bool wrap_begin = !allow_walker && !value_define && !form.empty() &&
+                                        form[0] == '(' &&
                                         !form_head_is_definitional_4893(form) &&
                                         !is_toplevel_hof_5334(form) &&
                                         !form_builds_closure_or_task_4892(form);
@@ -4765,6 +4772,7 @@ static int run_oneshot_or_file(int argc, char** argv) {
     // take it back before touching the Evaluator. Destroyed before ~cs
     // drains still-running workers (they need the mutex to finish).
     aura::messaging::CliMainEvalBodyLock cli_body_lock;
+    cs.evaluator().set_suppress_import_warnings(true);
     // Soft oneshot std prelude (#4178–#4219): auto-load Soft std list /
     // string / hash / math so bare oneshot (`aura -e` / file / pipe) binds
     // foldr, any/all, string-take/drop/pad/trim/split/replace/case,
@@ -4798,8 +4806,14 @@ static int run_oneshot_or_file(int argc, char** argv) {
     // cell (set! / hash-set! / channel:send lost). Evaluate form by form under
     // force-soa, exactly as --load does, so each define publishes its live
     // cell before a later form's closure is lowered.
+    // Issue #5420: the form-by-form face is not just a force-soa escape.
+    // It is what lets a top-level define publish its IR closure before a
+    // later form calls it. The old whole-program path evaluated the Begin
+    // on the tree walker, which overwrote the cached IR bindings and left
+    // every file / -e / load hot loop at ir-calls=0.
     if (const int forced = eval_oneshot_force_soa(cs, all_input, stop_first_4909,
-                                                  oneshot_toplevel_hof_5334(all_input));
+                                                  /*force_face=*/true,
+                                                  /*allow_walker=*/true);
         forced >= 0)
         return forced;
     if (auto r = cs.eval(all_input)) {

@@ -1486,9 +1486,13 @@ _file_4931_stack_report() {
     fi
     local dir errs
     dir=$(mktemp -d /tmp/aura-4931so.XXXXXX)
+    # Issue #5420 makes a plain top-level define IR-specialised, and the IR
+    # heap-frame guard turns this recursion into a clean depth error instead
+    # of a SIGSEGV. Keep this case on the tree walker (a non-local set! is
+    # refused by cache_define) so the SIGSEGV handler is still exercised.
     ( ulimit -s 512
       AURA_SANDBOX=off AURA_PIPELINE_STRICT=0 timeout 25 "$AURA" -e \
-          '(define (f n) (if (= n 0) 0 (+ 1 (f (- n 1))))) (f 200000)' \
+          '(define x 0) (define (f n) (set! x n) (if (= n 0) 0 (+ 1 (f (- n 1))))) (f 200000)' \
           >/dev/null 2>"$dir/err" ) || true
     errs=$(cat "$dir/err" 2>/dev/null || true)
     if printf '%s\n' "$errs" | grep -q 'AURA CRASH' \

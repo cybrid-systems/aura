@@ -14,7 +14,8 @@ import std;
 
 namespace aura::compiler {
 
-void CompilerService::cache_module(const std::string& content, const std::string& path) {
+void CompilerService::cache_module(const std::string& content, const std::string& path,
+                                   aura::compiler::Env* module_env) {
     IrCacheGate ir_gate(ir_cache_gate_); // #4717 shared IR/closure cache
     // don't survive re-evaluation via cache_define.
 
@@ -109,8 +110,14 @@ void CompilerService::cache_module(const std::string& content, const std::string
 
     // Cache each define (IR only — tree-walker already evaluated the module)
     for (auto& [name, node_id] : finder) {
-        if (ir_cache_.count(name))
+        if (ir_cache_.count(name)) {
+            // Issue #5420: a disk-cache hit already has the IR bundle; the
+            // module env still holds the tree-walker closure from eval_flat.
+            // Publish the cached closure into that env before returning.
+            if (module_env != nullptr && disk_lowered.count(name) != 0)
+                (void)bind_define_env_only_to_env(flat, pool, node_id, name, *module_env);
             continue; // already cached
+        }
 
         // Skip value defines (e.g., (define pi 3.14)) — only cache function defines
         // A function define's body is a Lambda node
@@ -146,18 +153,33 @@ void CompilerService::cache_module(const std::string& content, const std::string
                 const aura::ast::FlatAST& f;
                 const aura::ast::StringPool& p;
                 const std::unordered_set<std::string>& params;
+                const std::string& self_name;
                 const Evaluator& eval;
                 const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>,
                                          aura::core::TransparentStringHash, std::equal_to<>>&
                     ir_cache;
                 bool skip = false;
+                std::unordered_set<std::string> let_bound;
                 void walk(aura::ast::NodeId id) {
                     if (skip || id >= f.size())
                         return;
                     auto nv = f.get(id);
+                    if (nv.tag == aura::ast::NodeTag::Let ||
+                        nv.tag == aura::ast::NodeTag::LetRec) {
+                        auto nm = std::string(p.resolve(nv.sym_id));
+                        if (!nv.children.empty())
+                            walk(nv.child(0));
+                        let_bound.insert(nm);
+                        if (nv.children.size() >= 2)
+                            walk(nv.child(1));
+                        let_bound.erase(nm);
+                        return;
+                    }
                     if (nv.tag == aura::ast::NodeTag::Variable) {
                         auto var_name = std::string(p.resolve(nv.sym_id));
-                        if (params.count(var_name))
+                        if (params.count(var_name) || let_bound.count(var_name))
+                            return;
+                        if (var_name == self_name)
                             return;
                         if (eval.primitives().slot_for_name(var_name) <
                             eval.primitives().slot_count())
@@ -170,7 +192,7 @@ void CompilerService::cache_module(const std::string& content, const std::string
                         walk(c);
                 }
             };
-            FnCheck fc{flat, pool, param_names, evaluator_, ir_cache_};
+            FnCheck fc{flat, pool, param_names, name, evaluator_, ir_cache_};
             if (!body_node.children.empty())
                 fc.walk(body_node.child(0));
             skip_ir_cache_fn = fc.skip;
@@ -222,7 +244,7 @@ void CompilerService::cache_module(const std::string& content, const std::string
         std::vector<std::string> cache_hits;
         auto ir_mod = lower_to_ir_with_cache_tracked(
             flat, pool, arena_, cache_ptr, &cache_hits, &evaluator_.primitives(), nullptr,
-            cache_strings_ptr, nullptr, &type_registry_, value_cells_for_lowering());
+            cache_strings_ptr, &name, &type_registry_, value_cells_for_lowering());
         flat.root = saved_root; // restore
 
         // Run passes
@@ -260,6 +282,11 @@ void CompilerService::cache_module(const std::string& content, const std::string
         }
         ir_cache_[name] = std::move(bundle);
         ir_cache_bridge_[name] = std::move(bridge_bundle);
+        // Issue #5420: eval_flat installed a tree-walker closure in the
+        // module env. Publish the IR closure now so calling the export from
+        // the entry program hits ir-calls instead of the walker.
+        if (module_env != nullptr)
+            (void)bind_define_env_only_to_env(flat, pool, node_id, name, *module_env);
         // Issue #2572: persist the module's ConstString pool with the
         // cached IR. Without this, call-site lower_to_ir_with_cache
         // copies the function but cannot remap ConstString indices

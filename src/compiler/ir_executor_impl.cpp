@@ -919,6 +919,32 @@ static bool ir_user_arity_bad(const aura::ir::IRFunction& func, std::size_t got)
     return user_arity_mismatch(static_cast<std::size_t>(func.arg_count), func.variadic, got);
 }
 
+// Issue #5421: dotted-rest packing for the interpreter. The JIT packs in
+// OpArg (#5222); the interpreter hands the callee a user-args vector in
+// the same shape: named parameters followed by one pair-list rest slot.
+static std::vector<EvalValue> ir_pack_rest_args(const aura::ir::IRFunction& func,
+                                                std::span<const EvalValue> args,
+                                                Evaluator* ev) {
+    std::vector<EvalValue> out(args.begin(), args.end());
+    if (!func.variadic || func.arg_count == 0)
+        return out;
+    const std::size_t named = static_cast<std::size_t>(func.arg_count) - 1;
+    if (out.size() > named && ev != nullptr) {
+        EvalValue rest = types::make_void();
+        auto& pairs = ev->pairs();
+        for (std::size_t ri = out.size(); ri > named; --ri) {
+            const auto pid = pairs.size();
+            pairs.push_back({std::move(out[ri - 1]), rest});
+            rest = types::make_pair(pid);
+        }
+        out.resize(named);
+        out.push_back(rest);
+    } else if (out.size() == named) {
+        out.push_back(types::make_void());
+    }
+    return out;
+}
+
 static SourceLocation ir_call_arity_loc(const IRInstruction* instr, Evaluator* ev) {
     std::uint32_t line = 1;
     std::uint32_t col = 1;
@@ -1179,11 +1205,16 @@ EvalResult IRInterpreter::call_closure(std::uint64_t closure_id, std::span<const
     // Issue #4467: user args only. closure.env is the capture prefix.
     if (auto arity = ir_user_arity_diag(nullptr, callee_func, args.size(), context_.evaluator))
         return std::unexpected(std::move(*arity));
+    // Issue #5421: the IR interpreter used to pass a dotted-rest slot the
+    // argument as-is. Bind the trailing actual arguments as a pair list,
+    // exactly like the tree walker and the #5222 JIT path.
+    std::vector<EvalValue> user_args =
+        ir_pack_rest_args(callee_func, args, context_.evaluator);
     std::vector<EvalValue> all_args;
-    all_args.reserve(closure.env.size() + args.size());
+    all_args.reserve(closure.env.size() + user_args.size());
     for (auto& ev : closure.env)
         all_args.push_back(ev);
-    for (auto& a : args)
+    for (auto& a : user_args)
         all_args.push_back(a);
 
     if (context_.metrics) {
@@ -1236,7 +1267,8 @@ EvalResult IRInterpreter::execute_function(const IRFunction& func,
     // Issue #4620: frame locals are the function's own slots.
     auto local_count = func.local_count;
     std::vector<EvalValue> locals(local_count, make_void());
-    auto result = run_function(func, locals, args);
+    auto user_args = ir_pack_rest_args(func, args, context_.evaluator);
+    auto result = run_function(func, locals, user_args);
     if (std::holds_alternative<EvalResult>(result))
         return std::get<EvalResult>(std::move(result));
     return std::unexpected(Diagnostic{ErrorKind::IRCorruption, "unexpected pending call"});
@@ -2526,10 +2558,14 @@ namespace {
                                                         st.context.evaluator))
                         return IrFlow::ret_eval(std::unexpected(std::move(*arity)));
 
+                    // Issue #5421: direct IR calls need the same dotted-rest
+                    // packing as call_closure / the JIT.
+                    auto user_args = ir_pack_rest_args(callee_func, call_args,
+                                                       st.context.evaluator);
                     std::vector<EvalValue> all_args;
                     for (auto& ev : closure.env)
                         all_args.push_back(ev);
-                    for (auto& a : call_args)
+                    for (auto& a : user_args)
                         all_args.push_back(a);
 
                     // Issue #2292: stamp call-site block + next instr so
@@ -2822,10 +2858,12 @@ namespace {
                     if (auto arity = ir_user_arity_diag(&instr, callee_func, apply_args.size(),
                                                         st.context.evaluator))
                         return IrFlow::ret_eval(std::unexpected(std::move(*arity)));
+                    auto user_args = ir_pack_rest_args(callee_func, apply_args,
+                                                       st.context.evaluator);
                     std::vector<EvalValue> all_args;
                     for (auto& ev : closure.env)
                         all_args.push_back(ev);
-                    for (auto& a : apply_args)
+                    for (auto& a : user_args)
                         all_args.push_back(a);
 
                     // Issue #2292: stamp call-site block + next instr (Apply).

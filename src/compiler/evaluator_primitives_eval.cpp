@@ -1356,6 +1356,28 @@ void RegSplitParts::register_load_primitive(PrimRegistrar add, Evaluator& ev, Ma
         } restore_top_pool(ev.top_env());
         auto result = ev.eval_flat(*ev.workspace_flat_, *ev.workspace_pool_, expanded, ev.top_);
         ev.workspace_flat_->clear_all_dirty();
+        // Issue #5420: load-file replaces the workspace, so publish define
+        // sources and specialize its lambdas exactly like set-code. Without
+        // the source rows specialize_one_lambda_via_ir has nothing to lower.
+        if (result && ev.update_function_source_fn_) {
+            auto& wf = *ev.workspace_flat_;
+            auto* wp = ev.workspace_pool_;
+            for (aura::ast::NodeId id = 0; id < wf.size(); ++id) {
+                if (wf.is_free_slot(id))
+                    continue;
+                auto v = wf.get(id);
+                if (v.tag != aura::ast::NodeTag::Define || v.sym_id == aura::ast::INVALID_SYM)
+                    continue;
+                auto nm = std::string(wp->resolve(v.sym_id));
+                if (nm.empty())
+                    continue;
+                auto src = aura::ast::unparse_to_string(wf, *wp, id);
+                if (!src.empty())
+                    ev.update_function_source_fn_(nm, src);
+            }
+        }
+        if (result)
+            ev.bind_workspace_lambda_via_ir("");
         if (result)
             return *result;
         return make_void();

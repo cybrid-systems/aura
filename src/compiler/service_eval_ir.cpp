@@ -389,13 +389,8 @@ bool CompilerService::specialize_one_lambda_via_ir(const std::string& name) {
             }
         }
     }
-    // Issue #4621: a define with a rest parameter keeps the tree-walker
-    // closure eval-current bound. The IR closure binds the rest slot
-    // to the argument as-is (not as a pair list), so specialising it
-    // silently changed the define's arity. The tree walker binds the
-    // rest as a pair list - the same semantics a file define has.
-    if (define_body_has_rest_param_4621(flat, flat.root))
-        return false;
+    // Issue #5421: dotted-rest is lowerable; the IR interpreter packs
+    // trailing user arguments into a pair list (parity with #5222 JIT).
     // Issue #4618: a body whose set! targets a non-local cannot be
     // lowered to IR - lowering_impl.cpp's Set has no store for a
     // top-level cell and returns the value with the store dropped.

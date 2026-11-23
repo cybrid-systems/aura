@@ -220,12 +220,10 @@ EvalResult CompilerService::cache_define(std::string_view source, aura::ast::Fla
     // reached lowering, which drops the store. Refuse it the same way.
     if (!skip_ir_cache && define_body_sets_nonlocal_4618(flat, pool, expanded_root, name_str))
         skip_ir_cache = true;
-    // Issue #4621: a rest parameter cannot be lowered to IR (the rest
-    // slot takes the argument as-is, not as a pair list). Keep the
-    // define on the tree walker, like a file define with a rest
-    // parameter.
-    if (!skip_ir_cache && define_body_has_rest_param_4621(flat, expanded_root))
-        skip_ir_cache = true;
+    // Issue #5421: a dotted-rest define is lowerable now that the IR
+    // interpreter packs the trailing arguments into a pair list (the
+    // JIT already did, #5222). Keep the old tree-walker escape only for
+    // the non-local set! and unresolved-name gates below.
 
     if (skip_ir_cache) {
         // Issue #4618: a refused define owns no IR body. A rebind /

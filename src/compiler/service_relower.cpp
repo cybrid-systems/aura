@@ -855,15 +855,7 @@ bool CompilerService::relower_define_blocks(const std::string& name, std::string
         it->second.dirty = true;
         return false;
     }
-    // Issue #4621: the same refusal for a rest parameter - it cannot
-    // be lowered to IR (the rest slot takes the argument as-is, not as
-    // a pair list). Leave the entry dirty; the caller's fallback is
-    // cache_define, which skips IR and keeps the tree-walker closure
-    // that binds the rest as a pair list.
-    if (define_body_has_rest_param_4621(flat, expanded_root)) {
-        it->second.dirty = true;
-        return false;
-    }
+    // Issue #5421: dotted-rest is lowerable; see ir_executor_impl.cpp.
     // Issue #3550: callee cascade before partial peel / block count.
     // Issue #3656: unknown cone (calls empty + node fn edges) is not
     // a successful instr peel — fail-closed full.

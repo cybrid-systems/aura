@@ -938,7 +938,7 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
 
     // 10b. IR caching callback (registered by CompilerService)
     if (module_loaded_cb_) {
-        module_loaded_cb_(content, resolved);
+        module_loaded_cb_(content, resolved, mod_env);
     }
     const auto mt_ir_cached = std::chrono::steady_clock::now();
 

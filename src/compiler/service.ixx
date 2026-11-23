@@ -6050,7 +6050,8 @@ public:
 
     // Parse module content and cache all top-level defines in ir_cache_.
     // Called by Evaluator after each successful module load.
-    void cache_module(const std::string& content, const std::string& path);
+    void cache_module(const std::string& content, const std::string& path,
+                      aura::compiler::Env* module_env = nullptr);
 
     // ---- Issue #272: IR-native define env binding --------------------
 
@@ -6458,6 +6459,29 @@ public:
             });
     }
 
+    // Issue #5420: module envs need the same IR publication as the top
+    // env. The cell storage is evaluator-wide; only the binding env differs.
+    std::size_t bind_define_value_in_env_at(aura::compiler::Env& env, const std::string& name,
+                                            const types::EvalValue& value,
+                                            bool as_cell = true) {
+        auto bind_guard = env.lock_bindings_exclusive();
+        if (!as_cell) {
+            env.bind(name, value);
+            return 0;
+        }
+        std::scoped_lock<std::recursive_mutex> cells_lock(evaluator_.cells_storage_mutex());
+        auto existing = env.lookup_binding(name);
+        if (existing && types::is_cell(*existing)) {
+            auto ci = types::as_cell_id(*existing);
+            evaluator_.cells()[ci] = value;
+            return ci;
+        }
+        auto ci = evaluator_.cells().size();
+        evaluator_.cells().push_back(value);
+        env.bind(name, types::make_cell(ci));
+        return ci;
+    }
+
     std::size_t bind_define_value_in_env(const std::string& name, const types::EvalValue& value) {
         // Issue #4715 AC2: a define / rebind evaluated inside a body with an
         // open overlay never reaches the shared env - it lands in the fiber's
@@ -6468,22 +6492,7 @@ public:
         if (auto private_cell =
                 primitives_detail::fiber_cow_overlay_capture_define(evaluator_, name, value))
             return *private_cell;
-        // Issue #4717: this publishes a NEW cell slot and its top-env binding
-        // while fiber bodies read both (TSan: cells() slot write vs
-        // sync_workspace_value_cells_from_env / eval_flat_body). Lock order
-        // everywhere is bindings -> cell storage.
-        auto bind_guard = evaluator_.top_env().lock_bindings_exclusive();
-        std::scoped_lock<std::recursive_mutex> cells_lock(evaluator_.cells_storage_mutex());
-        auto existing = evaluator_.top_env().lookup_binding(name);
-        if (existing && types::is_cell(*existing)) {
-            auto ci = types::as_cell_id(*existing);
-            evaluator_.cells()[ci] = value;
-            return ci;
-        }
-        auto ci = evaluator_.cells().size();
-        evaluator_.cells().push_back(value);
-        evaluator_.top_env().bind(name, types::make_cell(ci));
-        return ci;
+        return bind_define_value_in_env_at(evaluator_.top_env(), name, value);
     }
 
     [[nodiscard]] const std::unordered_map<std::string, std::size_t,
@@ -6915,9 +6924,33 @@ public:
         return bind_function_define_via_ir(ir_mod, name_str);
     }
 
-    bool bind_function_define_via_ir(const aura::ir::IRModule& ir_mod, const std::string& name) {
+    bool bind_define_env_only_to_env(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
+                                     aura::ast::NodeId expanded_root,
+                                     const std::string& name_str,
+                                     aura::compiler::Env& target_env) {
+        IrCacheGate ir_gate(ir_cache_gate_); // #4717 shared IR/closure cache
+        const auto saved_root = flat.root;
+        flat.root = expanded_root;
+        auto cache_ptr = ir_cache_.empty() ? nullptr : &ir_cache_;
+        auto cache_bridge_ptr = ir_cache_bridge_.empty() ? nullptr : &ir_cache_bridge_;
+        auto cache_strings_ptr = ir_cache_strings_.empty() ? nullptr : &ir_cache_strings_;
+        auto ir_mod = lower_to_ir_with_cache_tracked(
+            flat, pool, arena_, cache_ptr, nullptr, &evaluator_.primitives(), cache_bridge_ptr,
+            cache_strings_ptr, &name_str, &type_registry_, value_cells_for_lowering());
+        flat.root = saved_root;
+        return bind_function_define_via_ir(ir_mod, name_str, &target_env);
+    }
+
+    bool bind_function_define_via_ir(const aura::ir::IRModule& ir_mod, const std::string& name,
+                                     aura::compiler::Env* target_env = nullptr) {
         IrCacheGate ir_gate(ir_cache_gate_); // #4717 shared IR/closure cache
         if (ir_mod.functions.empty())
+            return false;
+        // A module define and a workspace define can share a bare name. The
+        // global closure-binding table is keyed by that name; keep the
+        // workspace owner and leave the module on its tree-walker closure.
+        if (target_env != nullptr && target_env != &evaluator_.top_env() &&
+            ir_define_env_bindings_.count(name) != 0)
             return false;
 
         auto binding = std::make_shared<IRDefineEnvBinding>(
@@ -6967,7 +7000,11 @@ public:
             old_it != ir_define_env_bindings_.end() ? old_it->second : nullptr;
 
         ir_define_closure_owner_[new_cid] = name;
-        bind_define_value_in_env(name, binding->bound_closure);
+        if (target_env != nullptr)
+            bind_define_value_in_env_at(*target_env, name, binding->bound_closure,
+                                        /*as_cell=*/false);
+        else
+            bind_define_value_in_env(name, binding->bound_closure);
         ir_define_env_bindings_[name] = std::move(binding);
         if (old_binding != nullptr && old_binding->closure_id != new_cid) {
             ir_define_closure_owner_.erase(old_binding->closure_id);
@@ -7044,8 +7081,7 @@ public:
         if (!pr.success || pr.root == aura::ast::NULL_NODE)
             return nullptr;
         flat.root = pr.root;
-        if (define_body_has_rest_param_4621(flat, pr.root) ||
-            define_body_sets_nonlocal_4618(flat, pool, pr.root, name) ||
+        if (define_body_sets_nonlocal_4618(flat, pool, pr.root, name) ||
             workspace_lambda_free_name_unresolved(flat, pool, pr.root, name))
             return nullptr;
         auto ir_mod = lower_to_ir_with_cache_tracked(

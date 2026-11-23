@@ -703,8 +703,9 @@ CompilerService::CompilerService()
     };
     // Cache module defines in IR after each import (incl. recursive fns)
     evaluator_.set_module_loaded_callback(
-        [this](const std::string& content, const std::string& path) {
-            cache_module(content, path);
+        [this](const std::string& content, const std::string& path,
+               aura::compiler::Env* module_env) {
+            cache_module(content, path, module_env);
         });
 
     // Issue #97 Action 1: hot-swap callback. Allows (mutate :hot-swap-fn "name" "new-src")
