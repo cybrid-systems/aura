@@ -1598,7 +1598,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_bus_agents_e2e.cpp` (—) [domain_suite, theme_compiler] — Issue #5406: the multi-agent end-to-end lane, mock LLM only.
 - `tests/compiler/test_bus_round_orchestration.cpp` (—) [large, domain_suite, theme_compiler] — Issue #5393: the admission round state machine and its fail-closed
 - `tests/compiler/test_bus_slo.cpp` (—) [domain_suite, theme_compiler] — Issue #5395: the bus's own performance counters and the capacity
-- `tests/compiler/test_bus_supervisor.cpp` (—) [small, domain_suite, theme_compiler] — Issue #5400: the supervisor's scaling decision. The plan is a pure
+- `tests/compiler/test_bus_supervisor.cpp` (—) [domain_suite, theme_compiler] — Issue #5400: the supervisor's scaling decision. The plan is a pure
 - `tests/compiler/test_bus_tasks.cpp` (—) [domain_suite, theme_compiler] — Issue #5399: the bus task board. A host publishes a task; a worker
 - `tests/compiler/test_capability_high_risk_promote.cpp` (—) [domain_suite, theme_compiler] — AC1: Registry-only grant self-evo → has_capability true without relying
 - `tests/compiler/test_channel_rendezvous.cpp` (—) [large, domain_suite, theme_compiler] — AC1: rendezvous send blocks until concurrent recv
