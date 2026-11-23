@@ -261,11 +261,11 @@ public:
     // Issue #480: metadata accessors for primitive:describe.
     [[nodiscard]] const PrimMeta& meta_for_slot(std::size_t slot) const { return meta_[slot]; }
     [[nodiscard]] std::size_t documented_meta_count() const noexcept {
-        std::size_t n = 0;
-        for (const auto& m : meta_)
-            if (!m.doc.empty())
-                ++n;
-        return n;
+        std::size_t documented = 0;
+        for (const auto& meta_entry : meta_)
+            if (!meta_entry.doc.empty())
+                ++documented;
+        return documented;
     }
     // Issue #697: post-registration meta backfill for domain primitives.
     void set_meta_for_name(const std::string& name, PrimMeta meta) {
@@ -312,18 +312,18 @@ public:
             const PrimFn* raw = held.get();
             const char* name_cstr = name.c_str();
             hot_timing_held_.push_back(std::move(held));
-            PrimFn timed = [raw,
-                            name_cstr](std::span<const types::EvalValue> a) -> types::EvalValue {
+            PrimFn timed =
+                [raw, name_cstr](std::span<const types::EvalValue> arguments) -> types::EvalValue {
                 if (!aura::core::arena_policy::in_render_hotpath())
-                    return (*raw)(a);
+                    return (*raw)(arguments);
                 const auto t0 = std::chrono::steady_clock::now();
-                auto r = (*raw)(a);
+                auto result = (*raw)(arguments);
                 const auto ns =
                     static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
                                                    std::chrono::steady_clock::now() - t0)
                                                    .count());
                 aura::compiler::render_telemetry::record_tracked_prim(name_cstr, ns);
-                return r;
+                return result;
             };
             fn_slots_[i] = timed;
             table_[name] = timed;
