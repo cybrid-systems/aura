@@ -35,6 +35,17 @@ namespace {
         return hash;
     }
 
+    // #5425: continue an FNV-1a state over appended bytes (the audit log
+    // is append-only, so its section digest is a streaming hash).
+    std::uint64_t fnv_continue(std::span<const std::byte> image, std::uint64_t off,
+                               std::uint64_t len, std::uint64_t hash) {
+        for (std::uint64_t i = 0; i < len; ++i) {
+            hash ^= static_cast<std::uint64_t>(static_cast<unsigned char>(image[off + i]));
+            hash *= 1099511628211ull;
+        }
+        return hash;
+    }
+
     template <typename T> T load_at(std::span<const std::byte> image, std::uint64_t off) {
         T v{};
         if (in_bounds(off, sizeof(T), image.size()))
@@ -400,13 +411,25 @@ bool string_table_append(std::span<std::byte> image, std::string_view text, std:
     const std::uint64_t reserved = (kStringSlotsReserved * sizeof(StringTableEntry) + 7) & ~7ull;
     const std::uint64_t tail = e.length < reserved ? reserved : e.length;
     const std::uint64_t byte_off = (tail + 7) & ~7ull;
-    if ((e.count + 1) * sizeof(StringTableEntry) > reserved)
-        return fail("string table entry slots exhausted");
+    if ((e.count + 1) * sizeof(StringTableEntry) > reserved) {
+        if (why) {
+            const std::uint64_t left =
+                e.count < kStringSlotsReserved ? kStringSlotsReserved - e.count : 0;
+            *why = "string table slots exhausted (" + std::to_string(left) + "/" +
+                   std::to_string(kStringSlotsReserved) + " left)";
+        }
+        return false;
+    }
     if (text.size() > kImageMaxRecords)
         return fail("source text is too large");
     const std::uint64_t aligned_len = (text.size() + 7) & ~7ull;
-    if (byte_off > e.capacity || aligned_len > e.capacity - byte_off)
-        return fail("string table is full");
+    if (byte_off > e.capacity || aligned_len > e.capacity - byte_off) {
+        if (why) {
+            const std::uint64_t left = e.capacity > e.length ? e.capacity - e.length : 0;
+            *why = "string table bytes full (" + std::to_string(left) + " B left)";
+        }
+        return false;
+    }
     StringTableEntry ent{};
     ent.off = byte_off;
     ent.len = static_cast<std::uint32_t>(text.size());
@@ -478,10 +501,15 @@ bool audit_append(std::span<std::byte> image, AuditRecord* record, std::string* 
     const std::uint64_t next_gen = h.committed_gen + 2;
     record->generation = next_gen;
     std::memcpy(image.data() + e.offset + e.length, record, sizeof(*record));
+    const std::uint64_t old_length = e.length;
     e.length += sizeof(*record);
     e.count += 1;
     e.generation = next_gen;
-    e.digest = fnv_section(image, e.offset, e.length);
+    // #5425: the audit section is append-only; continue the digest over
+    // the new record instead of rehashing the whole section.
+    const std::uint64_t prefix_digest =
+        (old_length == 0 || e.digest == 0) ? fnv_section(image, e.offset, old_length) : e.digest;
+    e.digest = fnv_continue(image, e.offset + old_length, sizeof(*record), prefix_digest);
     std::uint64_t at = 0;
     const ImageHeader dh = load_header(image);
     for (std::uint32_t i = 0; i < dh.section_count; ++i) {

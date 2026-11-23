@@ -37,6 +37,19 @@ namespace {
         return hash;
     }
 
+    // #5425: continue an FNV-1a state over the appended bytes. FNV-1a is
+    // a streaming hash: fnv(prefix||suffix) == continue(suffix, fnv(prefix)),
+    // so a channel commit touches only the new records instead of the
+    // whole section.
+    std::uint64_t fnv_continue(std::span<const std::byte> image, std::uint64_t off,
+                               std::uint64_t len, std::uint64_t hash) {
+        for (std::uint64_t i = 0; i < len; ++i) {
+            hash ^= static_cast<std::uint64_t>(static_cast<unsigned char>(image[off + i]));
+            hash *= 1099511628211ull;
+        }
+        return hash;
+    }
+
     template <typename T> T load_at(std::span<const std::byte> image, std::uint64_t off) {
         T v{};
         std::memcpy(&v, image.data() + off, sizeof(T));
@@ -222,9 +235,16 @@ bool channel_commit(std::span<std::byte> image, Channel channel, std::uint64_t o
 
     ImageHeader h = load_header(image);
     const std::uint64_t next_gen = h.committed_gen + 2;
+    const std::uint64_t old_length = e.length;
     e.length += bytes;
     e.count += static_cast<std::uint32_t>(bytes / element);
-    e.digest = fnv_bytes(image, e.offset, e.length);
+    // #5425: commit is append-only, so the section digest continues from
+    // the previous state over the newly appended bytes. A zero digest on
+    // a non-empty section (a legacy/foreign builder) falls back to one
+    // full recompute; the steady state is O(bytes) per commit, not O(N).
+    const std::uint64_t prefix_digest =
+        (old_length == 0 || e.digest == 0) ? fnv_bytes(image, e.offset, old_length) : e.digest;
+    e.digest = fnv_continue(image, offset, bytes, prefix_digest);
     e.generation = next_gen;
     std::memcpy(image.data() + at, &e, sizeof(e));
     std::atomic_thread_fence(std::memory_order_release);

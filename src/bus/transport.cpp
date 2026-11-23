@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cerrno>
+#include <cstdio>
 #include <cstdlib>
 #include <chrono>
 #include <cstring>
@@ -331,6 +332,10 @@ bool recv_frame(int fd, FrameHeader* header, std::span<std::byte> body, Transpor
 }
 
 Server::~Server() {
+    if (gate_checkpoint_ != nullptr) {
+        std::fclose(gate_checkpoint_);
+        gate_checkpoint_ = nullptr;
+    }
     for (auto& peer : peers_) {
         if (peer.conn_fd >= 0)
             ::close(peer.conn_fd);
@@ -863,7 +868,15 @@ void Server::project_worldline_preserving(std::uint64_t id) {
             const std::uint64_t elem =
                 view.element_size != 0 ? view.element_size : sizeof(WorldlineRecord);
             const auto* base = static_cast<const std::byte*>(image_base_);
-            for (std::uint64_t i = 0; i < view.count; ++i) {
+            // #5425: the record index is tracked when it is projected; a
+            // miss (a server attached to a pre-existing image) keeps the
+            // scan fallback.
+            const auto known = worldline_record_index_.find(id);
+            const std::uint64_t first = known == worldline_record_index_.end() ? 0 : known->second;
+            const std::uint64_t last = known == worldline_record_index_.end()
+                                           ? view.count
+                                           : std::min(view.count, first + 1);
+            for (std::uint64_t i = first; i < last; ++i) {
                 WorldlineRecord w{};
                 std::memcpy(&w, base + view.offset + i * elem,
                             static_cast<std::size_t>(std::min<std::uint64_t>(elem, sizeof(w))));
@@ -902,7 +915,11 @@ void Server::project_worldline(std::uint64_t id, WorldlineState state, Constrain
     if (const TrialRecord* t = worldlines_.find(id))
         w.baseline_gen = t->base_generation;
     if (const auto it = evidence_.find(id); it != evidence_.end()) {
-        w.candidate_hash = it->second.candidate_hash;
+        // #5424: the evidence is peer-supplied; the worldline tail is a
+        // read-back surface whose values must stay in the 62-bit Aura
+        // immediate domain. The canonical candidate digest is already
+        // truncated (#5379), a forged bind is not.
+        w.candidate_hash = it->second.candidate_hash & ((1ull << 62) - 1);
         w.workload_sym = it->second.workload_sym;
         w.seed = it->second.seed;
         w.verifier_version = it->second.verifier_version;
@@ -916,7 +933,7 @@ void Server::project_worldline(std::uint64_t id, WorldlineState state, Constrain
         w.gate_adjusted_ppm = static_cast<std::uint64_t>(it->second.adjusted_ppm +
                                                          static_cast<std::int64_t>(kGateBias));
         w.gate_threshold_ppm = it->second.threshold_ppm;
-        w.gate_fingerprint = it->second.fingerprint;
+        w.gate_fingerprint = it->second.fingerprint & ((1ull << 62) - 1);
     }
     std::memcpy(image_base_ + view.offset + view.length, &w,
                 static_cast<std::size_t>(std::min<std::uint64_t>(elem, sizeof(w))));
@@ -925,6 +942,7 @@ void Server::project_worldline(std::uint64_t id, WorldlineState state, Constrain
     if (channel_commit({image_base_, image_size_}, Channel::Worldlines, view.offset + view.length,
                        elem, &gen, &why)) {
         projected_trials_ = id;
+        worldline_record_index_[id] = view.count;
         generation_ = gen;
     }
 }
@@ -1342,7 +1360,212 @@ bool Server::task_resume(std::string* why) {
             *why = reason;
         return false;
     }
+    if (!gates_resume(why))
+        return false;
     task_expire();
+    return true;
+}
+
+// #5427: contracts, approvals and budgets are gates, not hints. They
+// persist beside the task checkpoint as an append-only record stream;
+// a restart replays them with the task board. If the stream is missing
+// while tasks were restored, the gates are unknowable: the host keeps
+// `gates_lost_` and refuses to claim or complete a restored task.
+namespace {
+    constexpr char kGateCheckpointMagic[8] = {'A', 'U', 'R', 'A', 'G', 'A', 'T', 'E'};
+    constexpr std::uint32_t kGateCheckpointVersion = 1;
+    struct GateCheckpointHeader {
+        char magic[8];
+        std::uint32_t version;
+        std::uint32_t reserved;
+        std::uint64_t count;
+    };
+    static_assert(sizeof(GateCheckpointHeader) == 24);
+    struct GateCheckpointRecord {
+        std::uint64_t kind;
+        std::uint64_t a, b, c, d, e, f, g;
+    };
+    static_assert(sizeof(GateCheckpointRecord) == 64);
+    enum class GateRecordKind : std::uint64_t {
+        Contract = 1,
+        Approval = 2,
+        Budget = 3,
+        // The gate ledger was missing while tasks were restored: a
+        // durable fail-closed marker so a second restart does not see an
+        // empty-but-valid file and silently re-open the gates.
+        Lost = 4,
+    };
+} // namespace
+
+bool Server::gates_resume(std::string* why) {
+    gate_checkpoint_path_ = task_checkpoint_path_ + ".gates";
+    const auto remember_restored = [this]() {
+        for (const Task& task : tasks_.list())
+            restored_tasks_[task.id] = 1;
+    };
+    std::FILE* f = std::fopen(gate_checkpoint_path_.c_str(), "r+b");
+    if (f == nullptr) {
+        if (errno != ENOENT) {
+            if (why)
+                *why = std::string("gate checkpoint open failed: ") + std::strerror(errno);
+            return false;
+        }
+        f = std::fopen(gate_checkpoint_path_.c_str(), "w+b");
+        if (f == nullptr) {
+            if (why)
+                *why = std::string("gate checkpoint create failed: ") + std::strerror(errno);
+            return false;
+        }
+        GateCheckpointHeader header{};
+        std::memcpy(header.magic, kGateCheckpointMagic, sizeof(header.magic));
+        header.version = kGateCheckpointVersion;
+        std::fwrite(&header, sizeof(header), 1, f);
+        std::fflush(f);
+        gate_checkpoint_ = f;
+        remember_restored();
+        if (!restored_tasks_.empty()) {
+            gates_lost_ = true;
+            GateCheckpointRecord marker{};
+            marker.kind = static_cast<std::uint64_t>(GateRecordKind::Lost);
+            std::fwrite(&marker, sizeof(marker), 1, f);
+            std::fflush(f);
+            audit_.add_constraint(AuditKind::GateResume, 0, 0, 0, 0,
+                                  "gate-resume: the gate checkpoint was missing; failing closed");
+        }
+        return true;
+    }
+    std::fseek(f, 0, SEEK_END);
+    const long size = std::ftell(f);
+    std::rewind(f);
+    GateCheckpointHeader header{};
+    bool header_ok = size >= static_cast<long>(sizeof(header)) &&
+                     std::fread(&header, sizeof(header), 1, f) == 1 &&
+                     std::memcmp(header.magic, kGateCheckpointMagic, sizeof(header.magic)) == 0 &&
+                     header.version == kGateCheckpointVersion;
+    if (!header_ok) {
+        // A corrupt/foreign ledger is not silently treated as empty.
+        std::fclose(f);
+        gate_checkpoint_ = nullptr;
+        gates_lost_ = true;
+        remember_restored();
+        audit_.add_constraint(AuditKind::GateResume, 0, 0, 0, 0,
+                              "gate-resume: the gate checkpoint is unreadable; failing closed");
+        return true;
+    }
+    long valid_end = static_cast<long>(sizeof(header));
+    while (true) {
+        GateCheckpointRecord record{};
+        if (std::fread(&record, sizeof(record), 1, f) != 1)
+            break;
+        switch (static_cast<GateRecordKind>(record.kind)) {
+            case GateRecordKind::Contract: {
+                Contract contract{};
+                contract.task = record.a;
+                contract.test_ref = record.b;
+                contract.metric_floor = record.c;
+                contract.fingerprint = record.d;
+                contract.tests_passed = record.e;
+                contract.metric = record.f;
+                contract.has_evidence = record.g != 0;
+                contracts_.restore(contract);
+                break;
+            }
+            case GateRecordKind::Approval: {
+                ApprovalRecord approval{};
+                approval.object = record.a;
+                approval.state = static_cast<ApprovalState>(record.b);
+                approval.deadline_ms = record.c;
+                approval.actor = record.d;
+                approval.decided_ms = record.e;
+                approvals_.restore(approval);
+                break;
+            }
+            case GateRecordKind::Budget: {
+                BudgetUsage usage{};
+                usage.tokens = record.b;
+                usage.wall_ms = record.c;
+                usage.failures = record.d;
+                usage.started_ms = record.e;
+                usage.tripped = record.f != 0;
+                if (usage.tripped)
+                    usage.reason = "budget exceeded (restored from the checkpoint)";
+                budget_.restore(record.a, usage);
+                break;
+            }
+            case GateRecordKind::Lost:
+                gates_lost_ = true;
+                break;
+            default:
+                break;
+        }
+        valid_end = std::ftell(f);
+    }
+    if (valid_end < 0 || ::ftruncate(::fileno(f), valid_end) != 0) {
+        if (why)
+            *why = "gate checkpoint truncate failed";
+        std::fclose(f);
+        return false;
+    }
+    std::fseek(f, 0, SEEK_END);
+    gate_checkpoint_ = f;
+    remember_restored();
+    return true;
+}
+
+bool Server::gate_persist_contract(const Contract& contract) {
+    if (gate_checkpoint_ == nullptr)
+        return true;
+    GateCheckpointRecord record{};
+    record.kind = static_cast<std::uint64_t>(GateRecordKind::Contract);
+    record.a = contract.task;
+    record.b = contract.test_ref;
+    record.c = contract.metric_floor;
+    record.d = contract.fingerprint;
+    record.e = contract.tests_passed;
+    record.f = contract.metric;
+    record.g = contract.has_evidence ? 1 : 0;
+    if (std::fwrite(&record, sizeof(record), 1, gate_checkpoint_) != 1 ||
+        std::fflush(gate_checkpoint_) != 0) {
+        gates_lost_ = true;
+        return false;
+    }
+    return true;
+}
+
+bool Server::gate_persist_approval(const ApprovalRecord& approval) {
+    if (gate_checkpoint_ == nullptr)
+        return true;
+    GateCheckpointRecord record{};
+    record.kind = static_cast<std::uint64_t>(GateRecordKind::Approval);
+    record.a = approval.object;
+    record.b = static_cast<std::uint64_t>(approval.state);
+    record.c = approval.deadline_ms;
+    record.d = approval.actor;
+    record.e = approval.decided_ms;
+    if (std::fwrite(&record, sizeof(record), 1, gate_checkpoint_) != 1 ||
+        std::fflush(gate_checkpoint_) != 0) {
+        gates_lost_ = true;
+        return false;
+    }
+    return true;
+}
+
+bool Server::gate_persist_budget(std::uint64_t task, const BudgetUsage& usage) {
+    if (gate_checkpoint_ == nullptr)
+        return true;
+    GateCheckpointRecord record{};
+    record.kind = static_cast<std::uint64_t>(GateRecordKind::Budget);
+    record.a = task;
+    record.b = usage.tokens;
+    record.c = usage.wall_ms;
+    record.d = usage.failures;
+    record.e = usage.started_ms;
+    record.f = usage.tripped ? 1 : 0;
+    if (std::fwrite(&record, sizeof(record), 1, gate_checkpoint_) != 1 ||
+        std::fflush(gate_checkpoint_) != 0) {
+        gates_lost_ = true;
+        return false;
+    }
     return true;
 }
 
@@ -1410,8 +1633,10 @@ void Server::approval_expire() {
     std::vector<ApprovalRecord> events;
     if (approvals_.expire(round_now_ms(), &events) == 0)
         return;
-    for (const ApprovalRecord& record : events)
+    for (const ApprovalRecord& record : events) {
+        gate_persist_approval(record);
         record_audit(AuditKind::ApprovalTimeout, record.actor, 0, record.object);
+    }
 }
 
 void Server::task_release_owner(std::uint64_t owner) {
@@ -1601,6 +1826,19 @@ CapacityPlan Server::capacity_plan() const {
     }
     if (rounds == ~0ull)
         rounds = 0;
+    // #5428: the string table is its own capacity wall. Candidate loops
+    // publish one source carrier per candidate, so its free slots bound
+    // the rounds just like a channel's records do.
+    SectionEntry strings{};
+    if (find_section({image_base_, image_size_}, SectionKind::StringTable, &strings)) {
+        const std::uint64_t slot_capacity = std::min<std::uint64_t>(
+            kStringSlotsReserved, strings.capacity / sizeof(StringTableEntry));
+        plan.remaining_source_slots =
+            strings.count < slot_capacity ? slot_capacity - strings.count : 0;
+        plan.remaining_source_bytes =
+            strings.capacity > strings.length ? strings.capacity - strings.length : 0;
+        rounds = std::min(rounds, plan.remaining_source_slots / kSloSourcesPerRound);
+    }
     plan.rounds = rounds;
     plan.low = rounds <= kSloLowRounds ? 1 : 0;
     return plan;
@@ -1625,6 +1863,8 @@ bool Server::slo_query(std::uint64_t kind, SloReplyBody* out, std::string* why) 
         reply.remaining[i] = plan.remaining[i];
     reply.committed_bytes = plan.committed_bytes;
     reply.image_bytes = plan.image_bytes;
+    reply.source_slots = plan.remaining_source_slots;
+    reply.source_bytes = plan.remaining_source_bytes;
     // #5395: the soak lane watches the loans and the pending trials
     // for a residue.
     reply.pending = worldlines_.pending_count();
@@ -1709,13 +1949,44 @@ bool Server::allow_frame(PeerSession& peer) {
     const std::uint64_t elapsed = now_ms - peer.frame_refill_ms;
     peer.frame_refill_ms = now_ms;
     peer.frame_tokens += elapsed * peer_quota_.frame_rate;
-    const std::uint64_t cap = peer_quota_.frame_burst * 1000;
+    const std::uint64_t cap = frame_burst_frames() * 1000;
     if (peer.frame_tokens > cap)
         peer.frame_tokens = cap;
     if (peer.frame_tokens < 1000)
         return false; // the bucket is empty
     peer.frame_tokens -= 1000;
     return true;
+}
+
+// #5426: a bulk publish is two frames per record (Reserve + Publish), so
+// the bucket must hold the delivered image's largest channel to keep the
+// documented "fill the channel in one go" promise. The old fixed 20000
+// was sized for the pre-#5387 4096-record channel. An explicit quota
+// (anything but the default 20000) still wins, so adversarial tests and
+// operators can pin a small bucket.
+std::uint64_t Server::frame_burst_frames() const {
+    constexpr std::uint64_t kDefaultBurst = 20000;
+    if (peer_quota_.frame_burst != kDefaultBurst)
+        return peer_quota_.frame_burst;
+    if (frame_burst_cache_ != 0)
+        return frame_burst_cache_;
+    if (image_base_ == nullptr)
+        return kDefaultBurst;
+    static constexpr Channel kChannels[5] = {Channel::Metrics, Channel::Cct, Channel::Patches,
+                                             Channel::Worldlines, Channel::Nodes};
+    std::uint64_t records = 0;
+    for (const Channel channel : kChannels) {
+        ChannelView view{};
+        if (!channel_view({image_base_, image_size_}, channel, &view))
+            continue;
+        SectionEntry entry{};
+        if (!find_section({image_base_, image_size_}, section_for(channel), &entry))
+            continue;
+        const std::uint64_t stride = view.element_size != 0 ? view.element_size : 1;
+        records = std::max(records, entry.capacity / stride);
+    }
+    frame_burst_cache_ = std::max(kDefaultBurst, records * 2 + 1024);
+    return frame_burst_cache_;
 }
 
 // #5396: the constraint-change quota. A session that rewrites the gate
@@ -2984,6 +3255,8 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
                 BudgetUsage global{};
                 const bool ok = budget_.charge(req.task, req.tokens, req.wall_ms, req.failures,
                                                round_now_ms(), &usage, &global, &why);
+                gate_persist_budget(req.task, usage);
+                gate_persist_budget(0, global);
                 if (!ok) {
                     record_audit(AuditKind::BudgetExceeded, root_token, 0, req.task);
                     // Fail the offending task; a global trip stops every
@@ -3060,6 +3333,8 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
                     break;
                 }
                 ok = contracts_.create(req.task, req.test_ref, req.metric_floor, &contract, &why);
+                if (ok)
+                    gate_persist_contract(contract);
                 if (ok) {
                     TaskRecord event{};
                     ok = tasks_.set_flags(req.task, task.flags | kTaskNeedsApproval, &task, &event,
@@ -3070,6 +3345,7 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
                 if (ok) {
                     ApprovalRecord pending{};
                     approvals_.request(req.task, root_token, 0, round_now_ms(), &pending, &why);
+                    gate_persist_approval(pending);
                     record_audit(AuditKind::ApprovalRequest, root_token, 0, req.task);
                     record_audit(AuditKind::ContractCreate, root_token, 0, req.task);
                     reply.state = static_cast<std::uint64_t>(ApprovalState::Pending);
@@ -3078,8 +3354,12 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
                 if (!require(kCapRead, 0, 0))
                     break;
                 ok = contracts_.get(req.task, &contract);
-                if (!ok)
-                    why = "contract is missing";
+                if (!ok) {
+                    why =
+                        gates_lost_ && restored_tasks_.count(req.task) != 0
+                            ? "contract state was lost with the host restart; reissue the contract"
+                            : "contract is missing";
+                }
                 if (ok) {
                     ApprovalRecord approval{};
                     if (approvals_.get(req.task, &approval))
@@ -3100,8 +3380,10 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
                     break;
                 }
                 ok = contracts_.evidence(req.task, req.tests_passed, req.metric, &contract, &why);
-                if (ok)
+                if (ok) {
+                    gate_persist_contract(contract);
                     record_audit(AuditKind::ContractEvidence, root_token, 0, req.task);
+                }
             } else {
                 why = "unknown contract op";
             }
@@ -3137,15 +3419,19 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
             if (req.decision == 0) {
                 ok = approvals_.request(req.object, root_token, req.timeout_ms, round_now_ms(),
                                         &record, &why);
-                if (ok)
+                if (ok) {
+                    gate_persist_approval(record);
                     record_audit(AuditKind::ApprovalRequest, root_token, 0, record.object);
+                }
             } else if (req.decision == 1 || req.decision == 2) {
                 ok = approvals_.decide(req.object, req.decision, root_token, round_now_ms(),
                                        &record, &why);
-                if (ok)
+                if (ok) {
+                    gate_persist_approval(record);
                     record_audit(req.decision == 1 ? AuditKind::ApprovalGrant
                                                    : AuditKind::ApprovalDeny,
                                  root_token, 0, record.object);
+                }
             } else if (req.decision == 3) {
                 // Read-only query of the current state.
                 ok = approvals_.get(req.object, &record);
@@ -3203,8 +3489,10 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
                     // as a pending approval object (default 5 min).
                     if (ok && (req.flags & kTaskNeedsApproval) != 0) {
                         ApprovalRecord pending{};
-                        if (approvals_.request(task.id, root_token, 0, now_ms, &pending, &why))
+                        if (approvals_.request(task.id, root_token, 0, now_ms, &pending, &why)) {
+                            gate_persist_approval(pending);
                             record_audit(AuditKind::ApprovalRequest, root_token, 0, task.id);
+                        }
                     }
                     break;
                 case 1: {
@@ -3220,6 +3508,11 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
                                                  : tasks_.next_open(&candidate);
                     if (!have) {
                         why = req.task_id != 0 ? "task-unknown" : "task-none-open";
+                        break;
+                    }
+                    if (gates_lost_ && restored_tasks_.count(candidate.id) != 0) {
+                        why = "gate-state-lost: the contract/budget ledger was lost with the host "
+                              "restart";
                         break;
                     }
                     if ((candidate.flags & kTaskNeedsApproval) != 0) {
@@ -3239,8 +3532,15 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
                     }
                     ok = tasks_.claim(root_token, candidate.id, req.lease_ms, now_ms, &task, &event,
                                       &why);
-                    if (ok)
+                    if (ok) {
                         budget_.start(candidate.id, now_ms);
+                        BudgetUsage started{};
+                        BudgetUsage global{};
+                        (void)budget_.report(candidate.id, &started);
+                        (void)budget_.global_report(&global);
+                        gate_persist_budget(candidate.id, started);
+                        gate_persist_budget(0, global);
+                    }
                     break;
                 }
                 case 2:
@@ -3250,8 +3550,26 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
                 case 3: {
                     // #5402: a contract task can only complete when the
                     // contract is approved and its evidence is satisfied.
+                    // #5427: a task flagged as contract-gated must have a
+                    // contract; a missing one (e.g. after a lost restart)
+                    // fails closed instead of silently completing.
+                    Task gate_task{};
+                    if (!tasks_.get(req.task_id, &gate_task)) {
+                        why = "task-unknown";
+                        break;
+                    }
+                    if (gates_lost_ && restored_tasks_.count(req.task_id) != 0) {
+                        why = "gate-state-lost: the contract/budget ledger was lost with the host "
+                              "restart";
+                        break;
+                    }
                     Contract contract{};
-                    if (contracts_.get(req.task_id, &contract)) {
+                    const bool has_contract = contracts_.get(req.task_id, &contract);
+                    if (has_contract || (gate_task.flags & kTaskNeedsApproval) != 0) {
+                        if (!has_contract) {
+                            why = "contract is missing";
+                            break;
+                        }
                         ApprovalRecord approval{};
                         if (!approvals_.get(req.task_id, &approval) ||
                             approval.state != ApprovalState::Approved) {
@@ -3327,6 +3645,16 @@ bool Server::handle_frame(PeerSession& peer, const FrameHeader& header,
     if (!allow_frame(peer)) {
         audit_.add_constraint(AuditKind::RateLimited, peer.root_token, 0, 0, peer_quota_.frame_rate,
                               "rate-limited: the session exceeded its frame quota");
+        // #5426: tell the peer why before cutting it. A bulk publisher
+        // that hits the limit must not see an ambiguous transport error.
+        ErrorBody eb{};
+        eb.code = static_cast<std::uint32_t>(RejectReason::Protocol);
+        const std::string message =
+            "rate-limited: the session exceeded its frame quota; retry after the bucket refills";
+        const std::size_t n = std::min(message.size(), sizeof(eb.message) - 1);
+        std::memcpy(eb.message, message.data(), n);
+        (void)send_frame(peer.conn_fd, FrameType::Error, peer.session,
+                         {reinterpret_cast<const std::byte*>(&eb), sizeof(eb)});
         return false;
     }
     // #5395: the cost of serving a control frame is the bus's own
@@ -3462,6 +3790,11 @@ void Server::serve(const BuildFn& build) {
                                &err)) {
                     return false;
                 }
+                // #5426: the image now exists; size the burst bucket from
+                // its channels (or the explicit quota) before any traffic.
+                frame_burst_cache_ = 0;
+                peer.frame_tokens = frame_burst_frames() * 1000;
+                peer.frame_refill_ms = round_now_ms();
                 if (peer.caps.max_loans > 0) {
                     const auto cap = static_cast<std::uint32_t>(
                         std::min<std::uint64_t>(peer.caps.max_loans, kBusMaxLoans));
@@ -3559,7 +3892,7 @@ void Server::serve(const BuildFn& build) {
                 // hold a session slot forever.
                 peer.hello_deadline_ms = round_now_ms() + peer_quota_.hello_timeout_ms;
                 peer.frame_refill_ms = round_now_ms();
-                peer.frame_tokens = peer_quota_.frame_burst * 1000;
+                peer.frame_tokens = frame_burst_frames() * 1000;
                 peers_.push_back(std::move(peer));
                 // Feed the new peer immediately: its Hello may already be
                 // readable and the client blocks on HelloOk.

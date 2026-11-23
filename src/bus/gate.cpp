@@ -85,7 +85,12 @@ std::uint64_t gate_fingerprint(const GateEvidenceBody& evidence) {
                               : kGateMaxWindows;
     for (std::size_t i = 0; i < n; ++i)
         hash_u64(h, evidence.windows[i]);
-    return h;
+    // #5424: the fingerprint travels into the image and is decoded into
+    // an Aura immediate (make_int's 62-bit domain). Keep the value in
+    // that domain at the source: truncating only on one read path would
+    // make gate-evidence, repro and audit-replay disagree on the same
+    // verdict.
+    return h & ((1ull << 62) - 1);
 }
 
 bool gate_window_stats(const std::uint64_t* windows, std::size_t count, std::int64_t* observed_ppm,

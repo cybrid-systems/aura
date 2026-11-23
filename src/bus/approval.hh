@@ -44,6 +44,9 @@ public:
     [[nodiscard]] std::vector<ApprovalRecord> list() const;
     // Mark expired pending records Timeout. One event per expiry.
     std::size_t expire(std::uint64_t now_ms, std::vector<ApprovalRecord>* events);
+    // #5427: re-apply a persisted approval (checkpoint replay).
+    void restore(const ApprovalRecord& record) { records_[record.object] = record; }
+    [[nodiscard]] const std::map<std::uint64_t, ApprovalRecord>& all() const { return records_; }
 
 private:
     std::map<std::uint64_t, ApprovalRecord> records_;

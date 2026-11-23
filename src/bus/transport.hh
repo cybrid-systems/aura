@@ -27,6 +27,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <functional>
 #include <span>
@@ -377,6 +378,9 @@ struct SloReplyBody {
     std::uint64_t remaining[5] = {};
     std::uint64_t committed_bytes = 0;
     std::uint64_t image_bytes = 0;
+    // #5428: the string-table room (source-carrier slots and bytes).
+    std::uint64_t source_slots = 0;
+    std::uint64_t source_bytes = 0;
     std::uint64_t loans = 0;   // the loans the peers hold
     std::uint64_t pending = 0; // the trials that are still pending
 };
@@ -814,6 +818,10 @@ public:
     void set_task_checkpoint_path(const std::string& path) { task_checkpoint_path_ = path; }
     bool task_resume(std::string* why);
     [[nodiscard]] const TaskBoard& task_board() const { return tasks_; }
+    // #5427: false when a restored task's gate state (contract/approval/
+    // budget) could not be recovered; every completion/claim on a
+    // restored task then fails closed.
+    [[nodiscard]] bool gates_lost() const { return gates_lost_; }
     // #5403: task/global budget limits. The defaults are bounded.
     void set_budget_policy(const BudgetPolicy& policy) { budget_.configure(policy); }
     [[nodiscard]] const BudgetLedger& budget() const { return budget_; }
@@ -831,7 +839,10 @@ public:
     // metrics and opens a round when a degradation is sustained.
     void set_degrade_config(const DegradeConfig& config) { degrade_.configure(config); }
     // #5396: the adversarial peer quotas.
-    void set_peer_quota(const PeerQuota& quota) { peer_quota_ = quota; }
+    void set_peer_quota(const PeerQuota& quota) {
+        peer_quota_ = quota;
+        frame_burst_cache_ = 0;
+    }
     [[nodiscard]] const PeerQuota& peer_quota() const { return peer_quota_; }
     [[nodiscard]] const DegradeDetector& degrade() const { return degrade_; }
     // The detector fired: open a round (the signal state) or, while an
@@ -983,6 +994,10 @@ private:
     int host_image_fd_ = -1;
     // Trial records already projected into the worldlines channel (#5128).
     std::uint64_t projected_trials_ = 0;
+    // #5425: worldline id -> record index in the worldlines channel. The
+    // gate verdict re-projection used to scan the whole section for every
+    // bound candidate, which is O(n^2) over a long run.
+    std::unordered_map<std::uint64_t, std::uint64_t> worldline_record_index_;
     // #5378: host live-workspace apply + generation.
     ApplyFn apply_;
     DefineNodesFn define_nodes_;
@@ -1017,10 +1032,22 @@ private:
     // #5403: task/global budget ledger.
     BudgetLedger budget_{};
     std::string task_checkpoint_path_;
+    // #5427: the contract/approval/budget ledger persists beside the
+    // task checkpoint. One append-only record stream, replayed on start.
+    std::FILE* gate_checkpoint_ = nullptr;
+    std::string gate_checkpoint_path_;
+    bool gates_lost_ = false;
+    std::unordered_map<std::uint64_t, std::uint8_t> restored_tasks_{};
+    bool gates_resume(std::string* why);
+    bool gate_persist_contract(const Contract& contract);
+    bool gate_persist_approval(const ApprovalRecord& record);
+    bool gate_persist_budget(std::uint64_t task, const BudgetUsage& usage);
     // #5394: the degradation detector.
     DegradeDetector degrade_{};
     // #5396: the quotas a session must respect.
     PeerQuota peer_quota_{};
+    // #5426: the computed burst bucket (0 = not computed yet).
+    mutable std::uint64_t frame_burst_cache_ = 0;
     // #5396: the per-session constraint-change counters
     // (session id -> (window start, changes)).
     std::unordered_map<std::uint64_t, std::pair<std::uint64_t, std::uint64_t>>
@@ -1029,6 +1056,9 @@ private:
     bool allow_constraint_change(std::uint64_t session, std::uint64_t root_token);
     // #5396: the frame rate bucket: false when the session exhausted it.
     bool allow_frame(PeerSession& peer);
+    // #5426: the burst bucket follows the delivered image's channels
+    // unless the operator pinned an explicit quota.
+    [[nodiscard]] std::uint64_t frame_burst_frames() const;
     // #5395: the performance counters and the capacity plan.
     SloCounters slo_{};
     SloHistogram slo_hist_{};

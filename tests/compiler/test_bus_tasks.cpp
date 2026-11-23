@@ -134,8 +134,9 @@ const char* kHostScript = R"AURA(
 (define h (bus:host 8903))
 (display (if (bus:ok? h) "host-ready" "host-FAIL")) (newline)
 (define msid 0)
-(define ms (bus:attach "" 8903 0 127 255))
+(define ms (bus:attach "" 8903 0 255 255))
 (set! msid (car (cdr ms)))
+(define gated-id 0)
 (define (show tag r) (display tag) (display "=") (display r) (newline))
 ; #5407: an unknown channel is the same refusal from subscribe and query.
 (define sub0 (bus:subscribe msid 0))
@@ -153,7 +154,7 @@ const char* kHostScript = R"AURA(
        (loop))
       ((string=? l "host")
        (define h2 (bus:host 8903))
-       (define ms2 (bus:attach "" 8903 0 127 255))
+       (define ms2 (bus:attach "" 8903 0 255 255))
        (set! msid (car (cdr ms2)))
        (display "hosted") (newline)
        (loop))
@@ -168,6 +169,32 @@ const char* kHostScript = R"AURA(
        (loop))
       ((string=? l "events")
        (show "events" (bus:query msid 6 0 0))
+       (loop))
+      ((string=? l "gated")
+       (define p (bus:post-task msid 0 88 1))
+       (set! gated-id (list-ref p 1))
+       (show "gated-post" p)
+       (show "gated-contract" (bus:contract msid gated-id 42 100))
+       (show "gated-approve" (bus:approve msid gated-id 1 0))
+       (show "gated-claim" (bus:claim msid 900 gated-id))
+       (show "gated-charge" (bus:budget-charge msid gated-id 5000))
+       (loop))
+      ((string=? l "gates")
+       (show "gates-contract" (bus:contract-status msid gated-id))
+       (show "gates-budget" (bus:budget-report msid gated-id))
+       (show "gates-claim" (bus:claim msid 5000 gated-id))
+       (show "gates-complete" (bus:complete msid gated-id 0))
+       (loop))
+      ((string=? l "sources")
+       (define (fill i)
+         (if (< i 1026)
+             (let ((r (bus:publish-source msid "x")))
+               (if (bus:ok? r)
+                   (fill (+ i 1))
+                   (show "source-stop" (bus:message r))))
+             (show "source-stop" "unexpected")))
+       (fill 1)
+       (show "capacity-src" (bus:capacity-plan msid))
        (loop))
       ((string=? l "quit")
        (bus:detach msid)
@@ -320,6 +347,42 @@ int main() {
     waitpid(c, &c_status, 0);
     ::close(c_in);
     ::close(c_out);
+
+    // #5427: a gated task's contract, approval and budget survive the
+    // host restart. The restored task still refuses a zero-evidence
+    // completion (the gate is fail-closed, not fail-open).
+    check(::write(host_in, "gated\n", 6) == 6, "send gated");
+    const std::string gated =
+        read_until(host_out, "gated-charge=", 10000) + read_until(host_out, "\n", 10000);
+    check(has(gated, "gated-post=(ok 3"), "the gated task is posted");
+    check(has(gated, "gated-contract=(ok"), "the contract is created");
+    check(has(gated, "gated-approve=(ok"), "the contract is approved");
+    check(has(gated, "gated-claim=(ok 3"), "the gated task is claimed");
+    check(has(gated, "gated-charge=(ok"), "the task budget is charged");
+    check(::write(host_in, "unhost\n", 7) == 7, "send unhost with gates");
+    check(has(read_until(host_out, "unhosted", 10000), "unhosted"), "host unhosted with gates");
+    check(::write(host_in, "host\n", 5) == 5, "send host with gates");
+    check(has(read_until(host_out, "hosted", 10000), "hosted"), "host rehosted with gates");
+    check(::write(host_in, "gates\n", 6) == 6, "send gates");
+    const std::string gates =
+        read_until(host_out, "gates-complete=", 10000) + read_until(host_out, "\n", 10000);
+    check(has(gates, "gates-contract=(ok"), "the contract survived the restart");
+    check(has(gates, "gates-budget=(ok") && has(gates, "5000"),
+          "the spent budget survived the restart");
+    check(has(gates, "gates-claim=(ok 3"), "the restored gated task is claimable");
+    check(has(gates, "gates-complete=(error") && has(gates, "contract has no evidence"),
+          "the restored contract refuses a zero-evidence completion");
+
+    // #5428: the string table is a capacity wall too. Filling it makes
+    // the plan report zero source slots and flag low before a candidate
+    // loop would die on an unexplained append failure.
+    check(::write(host_in, "sources\n", 8) == 8, "send sources");
+    const std::string sources = read_until(host_out, "source-stop=", 20000) +
+                                read_until(host_out, "capacity-src=", 20000) +
+                                read_until(host_out, "\n", 20000);
+    check(has(sources, "string table slots exhausted"), "the source limit names the string table");
+    check(has(sources, "0/1024 left"), "the source limit reports the remaining slots");
+    check(has(sources, "capacity-src=(ok 0 1"), "the plan flags low and counts zero rounds");
 
     check(::write(host_in, "quit\n", 5) == 5, "send quit");
     const std::string host_out_text = read_all(host_out);

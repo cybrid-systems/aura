@@ -152,7 +152,10 @@ ReplayReport replay_lineage(const std::vector<AuditEvent>& events, std::span<con
         node.parent = record->parent == kImageNoParent ? 0 : record->parent;
         node.state = record->state;
         node.constraint = record->constraint_result;
-        node.fingerprint = record->gate_fingerprint;
+        // #5424: an image written before the fingerprint was truncated
+        // may still carry a raw 64-bit FNV value. The replay node feeds
+        // an Aura immediate, so mask it here as well as at the source.
+        node.fingerprint = record->gate_fingerprint & ((1ull << 62) - 1);
         if (node.parent != 0 && by_id.find(node.parent) == by_id.end() &&
             opened.find(node.parent) == opened.end()) {
             sink.add(ReplayFinding::BrokenParent, node.trial_seq,

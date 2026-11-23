@@ -185,13 +185,26 @@ int main() {
         }
         // The bucket holds 64 frames: the session is cut off.
         bool dropped = false;
+        std::string cut_reason;
         for (int i = 0; i < 96 && !dropped; ++i) {
             FrameHeader hdr{};
             std::vector<std::byte> reply;
             if (!read_frame(att.sock, &hdr, &reply, &err))
                 dropped = true;
+            else if (hdr.type == static_cast<std::uint16_t>(FrameType::Error)) {
+                // #5426: the cut is announced with a rate-limit error
+                // before the session is closed. Other dispatch errors
+                // (the empty test image has no channel section) do not
+                // end the session.
+                const std::string message = error_message(reply);
+                if (message.find("rate-limited") != std::string::npos) {
+                    dropped = true;
+                    cut_reason = message;
+                }
+            }
         }
         check(dropped, "the flood is cut off");
+        check(cut_reason.find("rate-limited") != std::string::npos, "the cut names the rate limit");
         ::close(att.sock);
         TransportError e{};
         check(honest.alive(&e), "the honest peer survives the flood");

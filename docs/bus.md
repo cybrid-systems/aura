@@ -112,7 +112,7 @@
 - **任务审计时间线**（#5405）：`bus:task-audit session task-id`（或 `bus:audit-filter` 的可选 task 参数）按任务过滤发布、认领、续约、重派、批准、契约、配额、完成/失败事件，顺序与审计日志一致；回放仍走 #5392。
 - **配额与熔断**（#5403）：`bus:budget-charge` 上报 token/墙钟/失败次数，`bus:budget-report` 读任务账本（task 0 读全局）。任务超限即失败该任务；全局超限失败所有已认领任务并拒绝新 claim（`global budget exhausted`）。默认值有界：任务 2M token / 1h / 3 次失败，全局 20M / 24h / 20 次；`AURA_BUS_TASK_*` / `AURA_BUS_GLOBAL_*` 可覆盖。
 - **验收契约**（#5402）：`bus:contract` 给 open 任务挂 test-ref + metric-floor（指纹绑定字段），任务随即变为需批准；`bus:approve` 批准后 worker 才能 claim；`bus:contract-evidence` 上报 tests-passed/metric，`bus:complete` 只有在契约批准、测试通过且指标达到底线时才放行。
-- **任务看板**（#5399/#5404）：`bus:post-task` / `bus:claim` / `bus:heartbeat` / `bus:complete` / `bus:fail` / `bus:task-status`；`bus:approve` 是人工批准点（decision 0 请求、1 批准、2 拒绝，pending 超时即拒绝）。任务有 id、父任务、契约引用（ref）、持有者、租约代次和到期时间；同一任务同一时刻只有一个有效租约，双 claim 被拒（`task-claimed`），非持有者心跳/完成被拒（`task-not-owner`）。租约到期后任务回到 open，其他对端可认领；干净 `bus:detach` 立即释放，崩溃（EOF）则等到租约到期。任务事件写入 channel 6，并追加到套接字旁的 `.tasks` 检查点；`bus:unhost`/`bus:host` 重启后从检查点恢复未完成任务。
+- **任务看板**（#5399/#5404）：`bus:post-task` / `bus:claim` / `bus:heartbeat` / `bus:complete` / `bus:fail` / `bus:task-status`；`bus:approve` 是人工批准点（decision 0 请求、1 批准、2 拒绝，pending 超时即拒绝）。任务有 id、父任务、契约引用（ref）、持有者、租约代次和到期时间；同一任务同一时刻只有一个有效租约，双 claim 被拒（`task-claimed`），非持有者心跳/完成被拒（`task-not-owner`）。租约到期后任务回到 open，其他对端可认领；干净 `bus:detach` 立即释放，崩溃（EOF）则等到租约到期。任务事件写入 channel 6，并追加到套接字旁的 `.tasks` 检查点；契约、批准与预算账本追加到旁的 `.tasks.gates`，`bus:unhost`/`bus:host` 重启后一起重放。若任务恢复而 `.tasks.gates` 丢失，恢复出来的任务**fail-closed**：claim/complete 都被拒绝，直到 planner 重新下发契约/预算，避免门在重启后静默放行。
 - 宿主进程自己也可以 `bus:attach` 成为对端(同进程经套接字,统一路径)。
 - **映像跨会话持久**(#5128 完成线):一条总线一份映像。首个对端附着时创建并
   封印映像,之后每个对端拿到同一个 memfd 的新映射——前一个工具提交的 CCT /
@@ -195,7 +195,7 @@ canary 拒绝)、`test_bus_closed_loop_e2e`(#5382,三进程正常闭环 + 五类
 总线的开销必须**有界且可测**。协调者按**CPU 时间**（协调者线程的 `CLOCK_THREAD_CPUTIME_ID`）统计自己的开销——共享 runner 上的墙钟量的是调度器而不是工作（#5324 纪律）。
 
 - `(bus:slo session)` → `(ok frames frame-cpu-ns p99-cpu-ns publishes publish-cpu-ns attaches attach-cpu-ns catchups catchup-max loans pending)`：控制帧的服务成本（p99 是逐帧 CPU 成本的 99 分位）、publish 吞吐（按 CPU 秒折算）、握手成本、catchup 增量上界，以及当前未归还的 loan 与未决 trial（soak 看残留用）。
-- `(bus:capacity-plan session)` → `(ok rounds low remaining-metrics remaining-cc remaining-patches remaining-worldlines remaining-nodes committed-bytes image-bytes)`：映像里还剩多少容量、还能支撑多少轮。频道容量是**交付映像的函数**（#5387），所以容量规划也跟着映像走；`low = 1` 表示余量已经偏低（低于 8 轮），宿主据此告警。
+- `(bus:capacity-plan session)` → `(ok rounds low remaining-metrics remaining-cc remaining-patches remaining-worldlines remaining-nodes committed-bytes image-bytes remaining-source-slots remaining-source-bytes)`：映像里还剩多少容量、还能支撑多少轮。频道容量是**交付映像的函数**（#5387），所以容量规划也跟着映像走；字符串表（候选源码，1024 个槽位 + 64 KiB 字节区）同样是容量墙，`rounds` 与 `low` 都算上它。`low = 1` 表示余量已经偏低（低于 8 轮/槽），宿主据此告警。
 - 门控脚本：`tests/bench/bus_slo.py`（SLO 阈值版本化，`--check` 超限即失败）与 `tests/bench/bus_soak.py`（资源曲线采样与平坦性判定，`--check`）。周级 lane 在 `.github/workflows/bus-soak-weekly.yml`：先跑 SLO，再跑 soak（默认 24h）。
 - soak 的判据是**平坦**：RSS、fd 数、未归还 loan、未决 trial、映像 committed bytes 都不能单调增长；soak 还会周期性 SIGKILL worker（提议/裁判），闭环必须自恢复且不留残留。
 
@@ -237,7 +237,7 @@ canary 拒绝)、`test_bus_closed_loop_e2e`(#5382,三进程正常闭环 + 五类
 一个恶意对端不能拖垮总线，也不能借总线越权。原则：**越界的那个会话被切掉，其余会话无感**。
 
 - **握手超时**：连上但不说 hello 的对端占用会话槽 → 到期由协调者断开（默认 10s）。协调者的 poll 会为未完成握手的对端设超时唤醒，不靠别的会话的事件。
-- **控制帧速率配额**：令牌桶——每会话可突发 `frame_burst` 帧（默认 20000，够把交付映像的频道一次写满），持续速率 `frame_rate` 帧/秒（默认 1000）；桶空即断该会话，写审计 `RateLimited`。合法的批量发布不会误伤，持续洪泛会被切断。
+- **控制帧速率配额**：令牌桶——每会话可突发 `frame_burst` 帧，持续速率 `frame_rate` 帧/秒（默认 1000）。突发桶默认按**交付映像的实际频道容量**计算（一条 publish 两个帧，足够从空频道写满一条频道），不再写死 20000；显式设置 `AURA_BUS_PEER_BURST` 时以显式值为准。桶空时对端先收到一条 `rate-limited: ...` 错误帧，随后会话被切断，宿主写审计 `RateLimited`。合法的批量发布不会误伤，持续洪泛会被切断。
 - **授权树上限**：授权深度 ≤ 4、单节点扇出 ≤ 16、单会话活跃授权 ≤ 32。授权只能衰减（子集），越限的授权请求被拒（permission）并单独写审计 `GrantLimited`。
 - **约束写入配额**：`constraint-write` 会话的 install/rollback 每次窗口（默认 16 次 / 1000ms）超限 → 拒绝（`rate-limited`）并写审计 `RateLimited`。
 - **回滚不得放宽门控**：约束集记录每条规则的**安装者**。任何 install/rollback 若会删掉**别的会话**安装的规则，一律拒绝（`the install/rollback would relax the protection set`）。自己装的规则可以自己回滚。

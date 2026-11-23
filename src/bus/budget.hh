@@ -53,6 +53,15 @@ public:
     }
     [[nodiscard]] bool global_tripped() const { return global_.tripped; }
     [[nodiscard]] std::uint64_t task_started(std::uint64_t task) const;
+    // #5427: re-apply persisted usage (checkpoint replay). task 0 is the
+    // global ledger.
+    void restore(std::uint64_t task, const BudgetUsage& usage) {
+        if (task == 0)
+            global_ = usage;
+        else
+            tasks_[task] = usage;
+    }
+    [[nodiscard]] const std::map<std::uint64_t, BudgetUsage>& all_tasks() const { return tasks_; }
 
 private:
     bool check(const BudgetLimits& limits, BudgetUsage* usage, std::uint64_t now_ms,

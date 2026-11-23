@@ -666,6 +666,29 @@ int main() {
         ::unlink(path.c_str());
     }
 
+    // ── #5424: a raw 64-bit fingerprint in an old image is masked ─
+    {
+        std::vector<AuditEvent> events;
+        events.push_back(event(AuditKind::Trial, 1, 100));
+        ImageFixture image;
+        WorldlineRecord record{};
+        record.id = 1;
+        record.parent = kImageNoParent;
+        record.state = static_cast<std::uint8_t>(WorldlineState::Kept);
+        record.constraint_result = static_cast<std::uint8_t>(ConstraintResult::Pass);
+        record.metrics_off = kImageNoIndex;
+        // A pre-fix image may carry the raw FNV-1a value, above 2^62.
+        record.gate_fingerprint = 0x5c042cdf1facefb1ull;
+        image.worldlines.push_back(record);
+        image.build();
+        const ReplayReport report = replay_lineage(events, image.view(), {}, false, nullptr);
+        check(report.nodes.size() == 1, "the raw-fingerprint worldline replays");
+        check((report.nodes[0].fingerprint >> 62) == 0,
+              "the replayed fingerprint stays in the immediate domain");
+        check(report.nodes[0].fingerprint == (0x5c042cdf1facefb1ull & ((1ull << 62) - 1)),
+              "the replay truncates the raw fingerprint");
+    }
+
     // ── The std/bus surface, end to end ─────────────────────────
     {
         char tmpl[] = "/tmp/aura-bus-replay-XXXXXX";

@@ -63,6 +63,10 @@ struct CapacityPlan {
     std::uint64_t low = 0;    // 1 = the room is running low
     std::uint64_t committed_bytes = 0;
     std::uint64_t image_bytes = 0;
+    // #5428: the string table is a separate, fixed wall: the source
+    // carriers of a candidate loop fill it before any channel fills.
+    std::uint64_t remaining_source_slots = 0;
+    std::uint64_t remaining_source_bytes = 0;
     std::uint64_t version = 1;
 };
 
@@ -70,6 +74,8 @@ struct CapacityPlan {
 // records. The estimate is deliberately conservative.
 inline constexpr std::uint64_t kSloWorldlinesPerRound = 1;
 inline constexpr std::uint64_t kSloPatchesPerRound = 2;
+// #5428: one candidate source carrier per round.
+inline constexpr std::uint64_t kSloSourcesPerRound = 1;
 // Below this many rounds the coordinator warns.
 inline constexpr std::uint64_t kSloLowRounds = 8;
 

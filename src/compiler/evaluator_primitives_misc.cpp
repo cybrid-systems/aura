@@ -1711,7 +1711,7 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                     ",\"adjusted_ppm\":" + std::to_string(pkg.verdict.adjusted_ppm) +
                     ",\"haircut_ppm\":" + std::to_string(pkg.verdict.haircut_ppm) +
                     ",\"threshold_ppm\":" + std::to_string(pkg.verdict.threshold_ppm) +
-                    ",\"fingerprint\":" + std::to_string(pkg.verdict.fingerprint) +
+                    ",\"fingerprint\":" + std::to_string(pkg.verdict.fingerprint & kImm) +
                     ",\"policy_version\":" + std::to_string(pkg.verdict.policy_version) +
                     ",\"min_windows\":" + std::to_string(pkg.verdict.min_windows) +
                     ",\"tighten_factor\":" + std::to_string(pkg.verdict.tighten_factor) +
@@ -1994,7 +1994,9 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                                      make_int(static_cast<std::int64_t>(reply.remaining[3])),
                                      make_int(static_cast<std::int64_t>(reply.remaining[4])),
                                      make_int(static_cast<std::int64_t>(reply.committed_bytes)),
-                                     make_int(static_cast<std::int64_t>(reply.image_bytes))});
+                                     make_int(static_cast<std::int64_t>(reply.image_bytes)),
+                                     make_int(static_cast<std::int64_t>(reply.source_slots)),
+                                     make_int(static_cast<std::int64_t>(reply.source_bytes))});
             }
 
             // #5392: replay the audit log — the reconstructed lineage,
@@ -2066,15 +2068,16 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                             ",\"kind\":\"bus:worldline\",\"target\":\"" +
                             std::to_string(node.worldline) + "\",\"decision\":\"" + decision +
                             "\",\"reason\":\"" + reason + "\",\"evidence\":{\"baseline_gen\":" +
-                            std::to_string(node.baseline_gen) +
-                            ",\"candidate_hash\":" + std::to_string(node.candidate_hash) +
+                            std::to_string(node.baseline_gen) + ",\"candidate_hash\":" +
+                            std::to_string(node.candidate_hash & ((1ull << 62) - 1)) +
                             ",\"workload_sym\":" + std::to_string(node.workload_sym) +
                             ",\"seed\":" + std::to_string(node.seed) +
                             ",\"verifier_version\":" + std::to_string(node.verifier_version) +
                             ",\"gate_verdict\":" + std::to_string(node.gate_verdict) +
                             ",\"gate_family\":" + std::to_string(node.gate_family) +
                             ",\"adjusted_ppm\":" + std::to_string(node.adjusted_ppm) +
-                            ",\"fingerprint\":" + std::to_string(node.fingerprint) +
+                            ",\"fingerprint\":" +
+                            std::to_string(node.fingerprint & ((1ull << 62) - 1)) +
                             "},\"old\":null,\"new\":null,\"dur_ms\":0,\"algo\":\"bus\",\"gen\":0,"
                             "\"slot\":0,\"search\":\"bus\",\"candidate\":\"" +
                             id + "\",\"parents\":[\"" + parent +
@@ -2097,10 +2100,11 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                          make_int(static_cast<std::int64_t>(node.verdict_seq)),
                          make_int(static_cast<std::int64_t>(node.constraint)),
                          make_int(static_cast<std::int64_t>(node.reproduced)),
-                         make_int(static_cast<std::int64_t>(node.fingerprint)),
+                         make_int(static_cast<std::int64_t>(node.fingerprint & ((1ull << 62) - 1))),
                          make_int(static_cast<std::int64_t>(node.timestamp_ms)),
                          make_int(static_cast<std::int64_t>(node.baseline_gen)),
-                         make_int(static_cast<std::int64_t>(node.candidate_hash)),
+                         make_int(
+                             static_cast<std::int64_t>(node.candidate_hash & ((1ull << 62) - 1))),
                          make_int(static_cast<std::int64_t>(node.workload_sym)),
                          make_int(static_cast<std::int64_t>(node.seed)),
                          make_int(static_cast<std::int64_t>(node.verifier_version)),
@@ -2371,8 +2375,12 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                 if (!have)
                     return bus_error(ev, "unregistered-id", "worldline has no committed record");
                 constexpr std::uint64_t kImm = (1ull << 62) - 1;
-                const std::int64_t adjusted = static_cast<std::int64_t>(found.gate_adjusted_ppm) -
-                                              static_cast<std::int64_t>(aura::bus::kGateBias);
+                // #5424: an unjudged worldline has no adjusted metric; the
+                // biased zero would decode as -(2^61) and leak the bias.
+                const std::int64_t adjusted =
+                    found.gate_verdict == 0 ? 0
+                                            : static_cast<std::int64_t>(found.gate_adjusted_ppm) -
+                                                  static_cast<std::int64_t>(aura::bus::kGateBias);
                 return bus_list(
                     ev,
                     {bus_string(ev, "ok"), make_int(static_cast<std::int64_t>(found.gate_verdict)),

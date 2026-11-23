@@ -227,6 +227,8 @@ enum class AuditKind : std::uint16_t {
     // the count in this cycle, version the live count after it.
     SupervisorSpawn = 49,
     SupervisorShrink = 50,
+    // #5427: the contract/approval/budget ledger resumed (or was lost).
+    GateResume = 51,
 };
 
 struct AuditEvent {

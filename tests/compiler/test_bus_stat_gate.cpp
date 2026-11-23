@@ -320,6 +320,10 @@ int main() {
             make_evidence(4, 100, {300000, 320000, 280000, 999999}, false);
         check(gate_fingerprint(tampered) != gate_fingerprint(marginal),
               "the fingerprint binds the windows");
+        // #5424: the fingerprint is decoded into an Aura immediate; it
+        // must stay in make_int's 62-bit domain at the source.
+        check((gate_fingerprint(tampered) >> 62) == 0,
+              "the fingerprint stays in the 62-bit immediate domain");
 
         // The negative-KEEP window: the rate and the budget.
         NegativeKeepWindow window;

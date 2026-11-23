@@ -54,7 +54,10 @@ PEERS = 4
 # The image the host serves. A modest one: the attach cost is
 # dominated by the mapping, not by the protocol.
 IMAGE_BYTES = 64 << 20
-METRICS_PER_PEER = 200
+# #5425: 4 cohorts x 4 peers x 1250 = 20k records per run. The old
+# 800-record pattern never left the quadratic curve's flat prefix.
+METRICS_PER_PEER = 1250
+COHORTS = 4
 CATCHUPS_PER_PEER = 20
 
 HOST_SCRIPT = """
@@ -151,16 +154,20 @@ def run(workspace: int, timeout: float) -> dict:
         try:
             if "ready" not in _wait_for(proc, "ready", timeout):
                 raise SystemExit("bus_slo: the host did not come up")
-            proc.stdin.write("traffic\n")
-            proc.stdin.flush()
-            if "traffic-done" not in _wait_for(proc, "traffic-done", timeout):
-                raise SystemExit("bus_slo: the traffic did not finish")
+            cohorts = []
+            for _ in range(COHORTS):
+                proc.stdin.write("traffic\n")
+                proc.stdin.flush()
+                if "traffic-done" not in _wait_for(proc, "traffic-done", timeout):
+                    raise SystemExit("bus_slo: the traffic did not finish")
+                proc.stdin.write("slo\n")
+                proc.stdin.flush()
+                seen = _wait_for(proc, "slo=", timeout)
+                cohorts.append(_record(seen, "slo"))
             proc.stdin.write("catchup\n")
             proc.stdin.flush()
             if "catchup-done" not in _wait_for(proc, "catchup-done", timeout):
                 raise SystemExit("bus_slo: the catchups did not finish")
-            proc.stdin.write("slo\n")
-            proc.stdin.flush()
             proc.stdin.write("capacity\n")
             proc.stdin.flush()
             proc.stdin.write("quit\n")
@@ -170,7 +177,7 @@ def run(workspace: int, timeout: float) -> dict:
             except subprocess.TimeoutExpired:
                 proc.kill()
                 out, _ = proc.communicate()
-            slo = _record(out, "slo")
+            slo = cohorts[-1]
             capacity = _record(out, "capacity")
         finally:
             if proc.poll() is None:
@@ -186,6 +193,21 @@ def run(workspace: int, timeout: float) -> dict:
         frame_avg_ns = 0.0
         if frames > 0:
             frame_avg_ns = frame_cpu_ns / frames
+        # The per-cohort marginal cost: subtract the previous cumulative
+        # counters. A constant-time commit keeps this flat; an O(N)
+        # section rehash makes it climb with the channel length.
+        cohort_costs = []
+        previous_publishes = 0
+        previous_cpu = 0
+        for sample in cohorts:
+            cohort_publishes = sample[4] - previous_publishes
+            cohort_cpu = sample[5] - previous_cpu
+            previous_publishes, previous_cpu = sample[4], sample[5]
+            if cohort_publishes > 0:
+                cohort_costs.append(cohort_cpu / cohort_publishes)
+        growth = 0.0
+        if cohort_costs and cohort_costs[0] > 0:
+            growth = cohort_costs[-1] / cohort_costs[0] - 1.0
         return {
             "slo_version": SLO_VERSION,
             "frames": frames,
@@ -195,6 +217,8 @@ def run(workspace: int, timeout: float) -> dict:
             "publishes": publishes,
             "publish_cpu_ns": publish_cpu_ns,
             "publish_rate": publish_rate,
+            "cohort_publish_ns": [int(c) for c in cohort_costs],
+            "publish_cost_growth": growth,
             "attaches": attaches,
             "attach_cpu_ns": attach_cpu_ns,
             "catchups": catchups,
@@ -225,6 +249,8 @@ def check(report: dict) -> list[str]:
         problems.append(f"frame p99 {report['frame_p99_ns']} ns > {TARGET_FRAME_P99_NS} ns")
     if report["publish_rate"] < TARGET_PUBLISH_RATE:
         problems.append(f"publish rate {report['publish_rate']:.0f}/CPU-s < {TARGET_PUBLISH_RATE}/CPU-s")
+    if report["publish_cost_growth"] > 0.20:
+        problems.append(f"publish cost grew {report['publish_cost_growth'] * 100:.0f}% over 20k records > 20%")
     if report["catchup_max_bytes"] > TARGET_CATCHUP_MAX_BYTES:
         problems.append(f"catchup increment {report['catchup_max_bytes']} B > {TARGET_CATCHUP_MAX_BYTES} B")
     if report["attach_cpu_ns"] > TARGET_ATTACH_CPU_NS:
@@ -254,6 +280,9 @@ def main() -> int:
         print(f"  frame p99       {report['frame_p99_ns']} ns (target {TARGET_FRAME_P99_NS})")
         print(f"  publishes       {report['publishes']} in {report['publish_cpu_ns']} ns")
         print(f"  publish rate    {report['publish_rate']:.0f} records/CPU-s (target {TARGET_PUBLISH_RATE})")
+        print(
+            f"  cohort cost     {report['cohort_publish_ns']} ns/record (growth {report['publish_cost_growth'] * 100:.0f}%)"
+        )
         print(f"  attaches        {report['attaches']} in {report['attach_cpu_ns']} ns")
         print(f"  catchup max     {report['catchup_max_bytes']} B (target {TARGET_CATCHUP_MAX_BYTES})")
         print(f"  capacity        {report['capacity_rounds']} rounds left (target {TARGET_CAPACITY_ROUNDS})")
