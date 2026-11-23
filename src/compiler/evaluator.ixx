@@ -4362,17 +4362,27 @@ public:
         workspace_source_text_valid_ = true;
         workspace_source_text_generation_ =
             workspace_flat_ ? workspace_flat_->generation() : std::uint16_t{0};
+        workspace_source_text_rebind_patched_ = false;
     }
     void invalidate_workspace_source_text() noexcept {
         workspace_source_text_.clear();
         workspace_source_text_valid_ = false;
         workspace_source_text_generation_ = 0;
         workspace_source_text_rebind_patch_pending_ = false;
+        workspace_source_text_rebind_patched_ = false;
     }
-    // Issue #5412: mutate:rebind can patch the set-code text in place, so
-    // current-source keeps the comments/formatting of every untouched define.
-    // The patch is queued before set_child (old body line/col are still
-    // live) and committed only after the rebind passes its gates.
+    // Issue #5412 / #4772: the rebind text patch is kept for
+    // current-source :workspace :preserve, but a fork snapshot must still
+    // defer its O(workspace) source string. Snapshot capture checks this
+    // flag so a patched workspace stays on the lazy #4772 path.
+    [[nodiscard]] bool workspace_source_text_rebind_patched() const noexcept {
+        return workspace_source_text_rebind_patched_;
+    }
+    // Issue #5412: mutate:rebind rewrites the target define form in the
+    // set-code text in place, so current-source keeps the comments and
+    // formatting of every untouched define. The patch is queued before
+    // set_child (the old define's line/col are still live) and committed
+    // only after the rebind passes its gates.
     bool queue_workspace_source_patch_for_define(const std::string& new_code,
                                                  aura::ast::NodeId define_node);
     bool commit_pending_workspace_source_patch();
@@ -8379,6 +8389,7 @@ private:
     std::string pending_workspace_source_patch_;
     bool pending_workspace_source_patch_valid_ = false;
     bool workspace_source_text_rebind_patch_pending_ = false;
+    bool workspace_source_text_rebind_patched_ = false;
 
     // Last mutate typecheck error (empty = no error). Set by auto-typecheck
     // after mutate:rebind etc. Cleared on next successful mutate.

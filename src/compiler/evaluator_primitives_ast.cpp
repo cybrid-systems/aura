@@ -1064,7 +1064,13 @@ void RegSplitParts::register_ast_snapshot_primitive(PrimRegistrar add, Evaluator
             // live flat now, since the image is that flat's content.
             std::string source;
             bool source_lazy = false;
-            if (ev.workspace_source_text_valid_ && !ev.workspace_source_text_.empty() &&
+            // Issue #5412 / #4772: a rebind keeps the patched text for
+            // current-source :workspace :preserve, but a fork snapshot must
+            // still defer its O(workspace) source. Copying the patched text
+            // here would make every fork an eager capture and break the
+            // structural-sharing contract.
+            if (!ev.workspace_source_text_rebind_patched() && ev.workspace_source_text_valid_ &&
+                !ev.workspace_source_text_.empty() &&
                 ev.workspace_source_text_generation_ == ev.workspace_flat_->generation()) {
                 source = ev.workspace_source_text_;
             } else if (ev.workspace_flat_->size() == 0) {

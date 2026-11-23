@@ -15818,6 +15818,8 @@ bool Evaluator::queue_workspace_source_patch_for_define(const std::string& new_c
     };
     const auto def_view = workspace_flat_->get(define_node);
     const auto def_start = offset_for(def_view.line, def_view.col);
+    if (def_start.has_value() == false)
+        return false;
     const auto source = std::string_view(workspace_source_text_);
     const auto scan_end = [source](std::size_t start) -> std::optional<std::size_t> {
         std::size_t cursor = start;
@@ -15879,63 +15881,52 @@ bool Evaluator::queue_workspace_source_patch_for_define(const std::string& new_c
         }
         return std::nullopt;
     };
-    const auto skip_trivia = [source](std::size_t start) -> std::size_t {
-        std::size_t cursor = start;
-        while (cursor < source.size()) {
-            if (std::isspace(static_cast<unsigned char>(source[cursor])))
-                ++cursor;
-            else if (source[cursor] == ';')
-                while (cursor < source.size() && source[cursor] != '\n')
-                    ++cursor;
-            else if (source[cursor] == '#' && cursor + 1 < source.size() &&
-                     source[cursor + 1] == '|') {
-                cursor += 2;
-                while (cursor + 1 < source.size() &&
-                       !(source[cursor] == '|' && source[cursor + 1] == '#'))
-                    ++cursor;
-                cursor = cursor + 1 < source.size() ? cursor + 2 : source.size();
-            } else
-                break;
-        }
-        return cursor;
-    };
-    if (def_start.has_value() == false)
-        return false;
-    const auto name_start = offset_for(def_view.name_line, def_view.name_col);
-    if (name_start.has_value() == false)
-        return false;
-    std::size_t name_end = *name_start;
-    if (name_end < source.size() && source[name_end] == '(') {
-        const auto name_list_end = scan_end(name_end);
-        if (name_list_end.has_value() == false)
+    // Define nodes carry the position of the `define` token (set_loc uses
+    // the head token), not the opening paren. Step back over whitespace to
+    // the form's `(` so the whole define can be replaced. Replacing only the
+    // body is wrong for shorthand (define (f x) ...) nodes: name_line/name_col
+    // point at the name token inside the params list, so a body scan would
+    // land on the first parameter.
+    std::size_t form_start = *def_start;
+    if (form_start >= source.size() || source[form_start] != '(') {
+        std::size_t back = form_start;
+        while (back > 0 && std::isspace(static_cast<unsigned char>(source[back - 1])))
+            --back;
+        if (back == 0 || source[back - 1] != '(')
             return false;
-        name_end = *name_list_end;
-    } else {
-        while (name_end < source.size()) {
-            const char character = source[name_end];
-            if (std::isspace(static_cast<unsigned char>(character)) || character == '(' ||
-                character == ')' || character == ';')
-                break;
-            ++name_end;
-        }
+        form_start = back - 1;
     }
-    const std::size_t body_start = skip_trivia(name_end);
-    if (body_start == 0)
+    const auto form_end = scan_end(form_start);
+    if (form_end.has_value() == false)
+        return false;
+    const auto sym = workspace_flat_->sym_id(define_node);
+    if (sym == aura::ast::INVALID_SYM)
+        return false;
+    const std::string name(workspace_pool_->resolve(sym));
+    if (name.empty())
         return false;
     std::size_t first_nonspace = 0;
     while (first_nonspace < new_code.size() &&
            std::isspace(static_cast<unsigned char>(new_code[first_nonspace])))
         ++first_nonspace;
     const bool full_define = new_code.compare(first_nonspace, 7, "(define") == 0;
-    const auto body_end = scan_end(body_start);
-    const auto def_end = full_define ? scan_end(*def_start) : std::nullopt;
-    if (body_end.has_value() == false || (full_define && def_end.has_value() == false))
-        return false;
-    const std::size_t start = full_define ? *def_start : body_start;
-    const std::size_t end = full_define ? *def_end : *body_end;
-    if (end <= start || end > source.size())
-        return false;
-    pending_workspace_source_patch_ = source.substr(0, start) + new_code + source.substr(end);
+    std::string replacement;
+    if (full_define) {
+        replacement = new_code;
+    } else {
+        // A bare rebind value replaces the define's value, not a sugar body.
+        // Mirror update_function_source_fn_'s canonical wrapper so a lambda
+        // stays semantically `(define name (lambda ...))`.
+        replacement.reserve(new_code.size() + name.size() + 10);
+        replacement = "(define ";
+        replacement += name;
+        replacement += ' ';
+        replacement += new_code;
+        replacement += ')';
+    }
+    pending_workspace_source_patch_.assign(source.substr(0, form_start));
+    pending_workspace_source_patch_ += replacement;
+    pending_workspace_source_patch_ += source.substr(*form_end);
     pending_workspace_source_patch_valid_ = true;
     return true;
 }
@@ -15948,6 +15939,7 @@ bool Evaluator::commit_pending_workspace_source_patch() {
     workspace_source_text_generation_ =
         workspace_flat_ ? workspace_flat_->generation() : std::uint16_t{0};
     workspace_source_text_rebind_patch_pending_ = true;
+    workspace_source_text_rebind_patched_ = true;
     pending_workspace_source_patch_valid_ = false;
     pending_workspace_source_patch_.clear();
     return true;
