@@ -15322,38 +15322,15 @@ void Evaluator::rebind_workspace_defines_after_rollback() noexcept {
     }
 }
 
-// Issue #5411: a failed mutate:rebind restores the AST and only the target
-// define's binding needs to move back. Re-evaluating the whole workspace here
-// would reset every counter/RNG/entity cell; eval just the target node.
+// Issue #5411 / #4682: a failed mutate:rebind must not re-evaluate the
+// target from the script env. rebind_refresh_env runs only after every gate,
+// and sync_workspace_value_cells does not overwrite bindings, so the
+// pre-rebind cell in top_env is still the live one. Re-evaluating the
+// restored define built a fresh closure in the script env, where workspace
+// shadowing (e.g. a user `abs`) is not visible, and made a live function
+// fall back to primitive bindings (tc_prim_base_env_4682). Keep the old cell.
 void Evaluator::rebind_workspace_define_after_rollback(const std::string& name) noexcept {
-    if (!workspace_flat_ || !workspace_pool_ || name.empty())
-        return;
-    auto* flat = workspace_flat_;
-    auto* pool = workspace_pool_;
-    aura::ast::NodeId target = aura::ast::NULL_NODE;
-    for (aura::ast::NodeId id = 0; id < flat->size(); ++id) {
-        if (flat->is_free_slot(id) || flat->tag(id) != aura::ast::NodeTag::Define)
-            continue;
-        const auto sym = flat->sym_id(id);
-        if (sym != aura::ast::INVALID_SYM && pool->resolve(sym) == name) {
-            target = id;
-            break;
-        }
-    }
-    if (target == aura::ast::NULL_NODE || !flat->is_live_node(target))
-        return;
-    try {
-        Env& top = top_env();
-        const auto saved_pool = top.pool();
-        (void)eval_flat(*flat, *pool, target, top);
-        if (saved_pool && saved_pool != top.pool())
-            top.set_pool(saved_pool);
-        if (sync_workspace_value_cells_fn_)
-            sync_workspace_value_cells_fn_();
-    } catch (...) {
-        // [SILENCE-PRIM-#615] noexcept rollback path: leave the pre-rebind
-        // binding in place.
-    }
+    (void)name;
 }
 
 namespace {
