@@ -22,8 +22,7 @@ def run(program: str) -> list[str]:
         env = os.environ.copy()
         env["AURA_SANDBOX"] = "off"
         env["AURA_PIPELINE_STRICT"] = "0"
-        r = subprocess.run([str(AURA_BIN), str(p)], capture_output=True, text=True,
-                           timeout=120, env=env)
+        r = subprocess.run([str(AURA_BIN), str(p)], capture_output=True, text=True, timeout=120, env=env)
         if r.returncode != 0:
             raise AssertionError(f"aura rc={r.returncode}\n{r.stdout}\n{r.stderr}")
         blocks: list[str] = []
@@ -41,7 +40,7 @@ def run(program: str) -> list[str]:
         return blocks
 
 
-PROBE = r'''
+PROBE = r"""
 (set-code "; header comment\n(define a 1) ; a stays\n\n(define b 2) ; b changes\n")
 (eval-current)
 (display "BEGIN\n")
@@ -51,7 +50,7 @@ PROBE = r'''
 (display "BEGIN\n")
 (display (current-source :workspace :preserve))
 (display "END\n")
-'''
+"""
 
 
 class SourceFidelity(unittest.TestCase):

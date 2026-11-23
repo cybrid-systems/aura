@@ -53,9 +53,7 @@ class PerfMap(unittest.TestCase):
             )
             perf_map = Path("/tmp") / f"perf-{proc.pid}.map"
             perf_map.unlink(missing_ok=True)
-            out, err = proc.communicate(
-                "(begin (define (hot x) (+ x x)) (hot 21))\n", timeout=120
-            )
+            out, err = proc.communicate("(begin (define (hot x) (+ x x)) (hot 21))\n", timeout=120)
             self.assertEqual(proc.returncode, 0, err[-800:])
             self.assertIn("42", out, err[-800:])
             self.assertTrue(perf_map.is_file(), f"missing {perf_map}")

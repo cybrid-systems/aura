@@ -22,15 +22,13 @@ def run(program: str) -> dict[str, str]:
         env = os.environ.copy()
         env["AURA_SANDBOX"] = "off"
         env["AURA_PIPELINE_STRICT"] = "0"
-        r = subprocess.run([str(AURA_BIN), str(p)], capture_output=True, text=True,
-                           timeout=120, env=env)
+        r = subprocess.run([str(AURA_BIN), str(p)], capture_output=True, text=True, timeout=120, env=env)
         if r.returncode != 0:
             raise AssertionError(f"aura rc={r.returncode}\n{r.stdout}\n{r.stderr}")
-        return {k: v for k, v in (line.split("=", 1) for line in r.stdout.splitlines()
-                                  if "=" in line)}
+        return {k: v for k, v in (line.split("=", 1) for line in r.stdout.splitlines() if "=" in line)}
 
 
-PROBE = r'''
+PROBE = r"""
 (require "std/hot-strategy" all:)
 (define (p k v) (display k) (display "=") (display v) (newline))
 (set-code "(define counter 0)\n(define (tick) (set! counter (+ counter 1)))")
@@ -54,7 +52,7 @@ PROBE = r'''
 (p "heal" (hot-strategy:heal!))
 (tick)
 (p "after_heal" counter)
-'''
+"""
 
 
 class HotState(unittest.TestCase):

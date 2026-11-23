@@ -12,8 +12,11 @@ CASES = (
     (5410, "test_snapshot_contract", "m4_5410.Fork.test_snapshot_contract"),
     (5410, "test_overlay_is_the_fork_api", "m4_5410.Fork.test_overlay_is_the_fork_api"),
     (5411, "test_rebind_preserves_state", "m4_5411.HotState.test_rebind_preserves_state"),
-    (5412, "test_untouched_comments_and_layout_survive",
-     "m4_5412.SourceFidelity.test_untouched_comments_and_layout_survive"),
+    (
+        5412,
+        "test_untouched_comments_and_layout_survive",
+        "m4_5412.SourceFidelity.test_untouched_comments_and_layout_survive",
+    ),
 )
 
 

@@ -27,8 +27,7 @@ def run(program: str) -> dict[str, str]:
         env = os.environ.copy()
         env["AURA_SANDBOX"] = "off"
         env["AURA_PIPELINE_STRICT"] = "0"
-        r = subprocess.run([str(AURA_BIN), str(p)], capture_output=True, text=True,
-                           timeout=120, env=env)
+        r = subprocess.run([str(AURA_BIN), str(p)], capture_output=True, text=True, timeout=120, env=env)
         if r.returncode != 0:
             raise AssertionError(f"aura rc={r.returncode}\n{r.stdout}\n{r.stderr}")
         out: dict[str, str] = {}
@@ -39,7 +38,7 @@ def run(program: str) -> dict[str, str]:
         return out
 
 
-PROBE = r'''
+PROBE = r"""
 (define (p k v) (display k) (display "=") (display v) (newline))
 (p "pre_snapshot" (mutate :snapshot "n"))
 (p "pre_reason" (query :snapshot-fail-reason))
@@ -59,7 +58,7 @@ PROBE = r'''
 (p "join1" (fiber:join f1))
 (p "join2" (fiber:join f2))
 (p "x" x)
-'''
+"""
 
 
 class Fork(unittest.TestCase):
