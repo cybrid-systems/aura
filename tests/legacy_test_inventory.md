@@ -18,8 +18,8 @@ This file is not the decision tree for a new test. Ask `python3 tests/run.py hom
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 956 | Preferred destination suites |
-| **Total scanned** | **956** | |
+| `tests/core/test_*.cpp` | 958 | Preferred destination suites |
+| **Total scanned** | **958** | |
 
 ### Related artifacts
 
@@ -37,7 +37,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 96 | 96 | P0 — well-contained, batch drivers already exist |
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 284 | 284 | P0 — high volume; strong domain suite foothold |
-| `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 116 | 116 | P1 — domain suite already collapses many obs gates |
+| `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 118 | 118 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 33 | 33 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 62 | 62 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 89 | 89 | P2 — link-profile heavy; migrate AC smoke first |
@@ -289,6 +289,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_bugfix.cpp`
 - `tests/compiler/test_build_kv_hash_batch.cpp`
 - `tests/compiler/test_bus_adversarial_peer.cpp`
+- `tests/compiler/test_bus_agents_e2e.cpp`
 - `tests/compiler/test_bus_approval.cpp`
 - `tests/compiler/test_bus_audit_replay.cpp`
 - `tests/compiler/test_bus_budget.cpp`
@@ -314,6 +315,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_bus_slo.cpp`
 - `tests/compiler/test_bus_stat_gate.cpp`
 - `tests/compiler/test_bus_stdlib.cpp`
+- `tests/compiler/test_bus_supervisor.cpp`
 - `tests/compiler/test_bus_tasks.cpp`
 - `tests/compiler/test_bus_transport.cpp`
 - `tests/compiler/test_cache_entry_version_stamp.cpp`
@@ -1576,13 +1578,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_workspace_rollback_latest.cpp` (—) [domain_suite, theme_compiler] — AC1: source has no second all_mutations() ID walk inside rollback-latest
 - `tests/core/test_workspace_state_lock.cpp` (—) [domain_suite, theme_core] — tests/core/test_workspace_state_lock.cpp — Issue #1994 (F-004), retargeted
 
-### `fiber_orch` — Fiber / orchestration / steal / Guard (116)
+### `fiber_orch` — Fiber / orchestration / steal / Guard (118)
 
 **Target:** tests/core/test_fiber_resume_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P1 — domain suite already collapses many obs gates
 
-#### domain/ (116)
+#### domain/ (118)
 
 - `tests/orch/test_agent_apply_mutex.cpp` (—) [large, domain_suite, theme_orch] — AC1: No process-static mutex on orch spawn apply path (grep clean).
 - `tests/orch/test_agent_failure_policy.cpp` (—) [large, domain_suite, theme_orch] — AC1: AgentFailurePolicy available under aura::orch; StallPolicy
@@ -1592,8 +1594,10 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_aot_bridge_checkpoint_version_steal.cpp` (—) [domain_suite, theme_compiler] — test_aot_bridge_checkpoint_version_steal.cpp — Issue #653 / #3813:
 - `tests/core/test_aura_fiber_rt_embed.cpp` (—) [domain_suite, theme_core] — aura_test_objects, no evaluator, no JIT, no reflect, no stub TU of its own.
 - `tests/serve/test_boundary_yield_steal_metrics.cpp` (—) [domain_suite, theme_serve] — AC1: high-frequency MB yield → yield_mutation_boundary_total + hold_ns
+- `tests/compiler/test_bus_agents_e2e.cpp` (—) [domain_suite, theme_compiler] — Issue #5406: the multi-agent end-to-end lane, mock LLM only.
 - `tests/compiler/test_bus_round_orchestration.cpp` (—) [large, domain_suite, theme_compiler] — Issue #5393: the admission round state machine and its fail-closed
 - `tests/compiler/test_bus_slo.cpp` (—) [domain_suite, theme_compiler] — Issue #5395: the bus's own performance counters and the capacity
+- `tests/compiler/test_bus_supervisor.cpp` (—) [small, domain_suite, theme_compiler] — Issue #5400: the supervisor's scaling decision. The plan is a pure
 - `tests/compiler/test_bus_tasks.cpp` (—) [domain_suite, theme_compiler] — Issue #5399: the bus task board. A host publishes a task; a worker
 - `tests/compiler/test_capability_high_risk_promote.cpp` (—) [domain_suite, theme_compiler] — AC1: Registry-only grant self-evo → has_capability true without relying
 - `tests/compiler/test_channel_rendezvous.cpp` (—) [large, domain_suite, theme_compiler] — AC1: rendezvous send blocks until concurrent recv
