@@ -3687,6 +3687,15 @@ RegSplitParts::rebind_link_new_body(Evaluator& ev, aura::ast::FlatAST& flat,
         }
     }
     const std::uint64_t cone_log_before_4682 = flat.mutation_log_size();
+    // Issue #5412: queue a text patch now, while the old body's line/col still
+    // point into the set-code source. It is committed only after the rebind
+    // passes every gate below.
+    if (a.size() >= 2 && is_string(a[1])) {
+        const auto code_idx = as_string_idx(a[1]);
+        if (code_idx < ev.string_heap_.size())
+            (void)ev.queue_workspace_source_patch_for_define(
+                name, ev.string_at(code_idx), old_define, old_value_node);
+    }
     flat.add_mutation_with_rollback(old_define, "rebind", name, summary, summary,
                                     aura::ast::MutationStatus::Committed,
                                     /*field_offset=*/0, static_cast<std::uint64_t>(old_value_node),
@@ -4117,11 +4126,16 @@ template <typename Ctx> void RegSplitParts::register_mutate_rebind_primitive(Ctx
         struct RebindAfterRejected {
             Evaluator& ev;
             bool failed = false;
+            std::string target_name;
             explicit RebindAfterRejected(Evaluator& e)
                 : ev(e) {}
             ~RebindAfterRejected() {
+                ev.discard_pending_workspace_source_patch();
                 if (failed) {
-                    ev.rebind_workspace_defines_after_rollback();
+                    if (!target_name.empty())
+                        ev.rebind_workspace_define_after_rollback(target_name);
+                    else
+                        ev.rebind_workspace_defines_after_rollback();
                     ev.defines_bound_flat_ = ev.workspace_flat_;
                     // Issue #4540: the rollback above is what puts the
                     // RESTORED bodies back in top_env. Arm the cascade
@@ -4176,6 +4190,7 @@ template <typename Ctx> void RegSplitParts::register_mutate_rebind_primitive(Ctx
         }
         auto& flat = *ev.workspace_flat_;
         auto name = ev.string_at(name_idx);
+        rebind_after_rejected.target_name = name;
         // Phase 2.5.0: route via ev.canonical_pool() (== workspace_pool, explicit).
         auto sym = ev.canonical_pool()->intern(name);
 
@@ -4259,6 +4274,7 @@ template <typename Ctx> void RegSplitParts::register_mutate_rebind_primitive(Ctx
             // the current body, exactly like the real-rebind path.
             ev.note_rebind_light_focus(name);
             ev.defines_bound_flat_ = ev.workspace_flat_;
+            (void)ev.commit_pending_workspace_source_patch();
             return make_bool(true);
         }
 
@@ -4305,6 +4321,7 @@ template <typename Ctx> void RegSplitParts::register_mutate_rebind_primitive(Ctx
         ev.note_rebind_light_focus(name);
         rebind_after_rejected.failed = false;
         ev.defines_bound_flat_ = ev.workspace_flat_;
+        (void)ev.commit_pending_workspace_source_patch();
         return make_bool(true);
     });
 }

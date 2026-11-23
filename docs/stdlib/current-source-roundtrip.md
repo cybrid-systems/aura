@@ -7,6 +7,7 @@ Locks dual-workspace source fidelity for agent closed loops:
 | #2918 | `ast:snapshot` / `ast:diff` use `(current-source :workspace)` |
 | #2919 | P0 unparse tags (type / linear / define-type / escapes / dotted lambda) |
 | #2920 | FlatAST SSOT after mutate (no stale set-code text for JIT) |
+| #5412 | (current-source :workspace :preserve) keeps untouched comments/layout after mutate:rebind |
 
 ## Test locations
 
@@ -42,4 +43,16 @@ When a new production `NodeTag` lands, add an unparse arm in
 11 Snapshot restore  
 12 No angle fallback  
 13 Deep nest / depth cap  
-14 Null workspace  
+14 Null workspace
+
+## Source-preserving export (#5412)
+
+Plain (current-source :workspace) is the compact unparse view and is what
+the roundtrip matrix above pins. For M4's AST-to-PR path use:
+
+    (current-source :workspace :preserve)
+
+It returns the set-code buffer with only the changed define body patched by
+mutate:rebind; comments and whitespace in every untouched define stay
+byte-identical. When the source stamp is stale (another structural mutate),
+it falls back to the compact unparse rather than returning stale text.

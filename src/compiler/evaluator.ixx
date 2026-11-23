@@ -4367,6 +4367,177 @@ public:
         workspace_source_text_.clear();
         workspace_source_text_valid_ = false;
         workspace_source_text_generation_ = 0;
+        workspace_source_text_rebind_patch_pending_ = false;
+    }
+    // Issue #5412: mutate:rebind can patch the set-code text in place, so
+    // current-source keeps the comments/formatting of every untouched define.
+    // The patch is queued before set_child (old body line/col are still
+    // live) and committed only after the rebind passes its gates.
+    bool queue_workspace_source_patch_for_define(const std::string& name,
+                                                 const std::string& new_code,
+                                                 aura::ast::NodeId define_node,
+                                                 aura::ast::NodeId old_body_node) {
+        if (!workspace_source_text_valid_ || workspace_source_text_.empty() || !workspace_flat_)
+            return false;
+        auto offset_for = [&](std::uint32_t line, std::uint32_t col) -> std::optional<std::size_t> {
+            if (line == 0 || col == 0)
+                return std::nullopt;
+            std::size_t off = 0;
+            for (std::uint32_t l = 1; l < line; ++l) {
+                const auto nl = workspace_source_text_.find('\n', off);
+                if (nl == std::string::npos)
+                    return std::nullopt;
+                off = nl + 1;
+            }
+            off += static_cast<std::size_t>(col - 1);
+            if (off > workspace_source_text_.size())
+                return std::nullopt;
+            return off;
+        };
+        const auto def_v = workspace_flat_->get(define_node);
+        const auto def_start = offset_for(def_v.line, def_v.col);
+        const std::string& src = workspace_source_text_;
+        auto scan_end = [&src](std::size_t start) -> std::optional<std::size_t> {
+            std::size_t i = start;
+            int depth = 0;
+            bool seen = false;
+            while (i < src.size()) {
+                const char c = src[i];
+                if (c == ';') {
+                    while (i < src.size() && src[i] != '\n')
+                        ++i;
+                    continue;
+                }
+                if (c == '#' && i + 1 < src.size() && src[i + 1] == '|') {
+                    i += 2;
+                    while (i + 1 < src.size() &&
+                           !(src[i] == '|' && src[i + 1] == '#'))
+                        ++i;
+                    i = i + 1 < src.size() ? i + 2 : src.size();
+                    continue;
+                }
+                if (c == '"') {
+                    ++i;
+                    while (i < src.size()) {
+                        if (src[i] == '\\') {
+                            i += 2;
+                            continue;
+                        }
+                        if (src[i] == '"') {
+                            ++i;
+                            break;
+                        }
+                        ++i;
+                    }
+                    seen = true;
+                    continue;
+                }
+                if (c == '(' || c == '[' || c == '{') {
+                    ++depth;
+                    seen = true;
+                    ++i;
+                    continue;
+                }
+                if (c == ')' || c == ']' || c == '}') {
+                    if (!seen)
+                        return std::nullopt;
+                    if (depth == 0)
+                        return i;
+                    --depth;
+                    ++i;
+                    if (depth == 0)
+                        return i;
+                    continue;
+                }
+                if (depth == 0 && seen && std::isspace(static_cast<unsigned char>(c)))
+                    return i;
+                if (!std::isspace(static_cast<unsigned char>(c)))
+                    seen = true;
+                ++i;
+            }
+            return std::nullopt;
+        };
+        auto skip_trivia = [&src](std::size_t i) -> std::size_t {
+            while (i < src.size()) {
+                if (std::isspace(static_cast<unsigned char>(src[i]))) {
+                    ++i;
+                    continue;
+                }
+                if (src[i] == ';') {
+                    while (i < src.size() && src[i] != '\n')
+                        ++i;
+                    continue;
+                }
+                if (src[i] == '#' && i + 1 < src.size() && src[i + 1] == '|') {
+                    i += 2;
+                    while (i + 1 < src.size() && !(src[i] == '|' && src[i + 1] == '#'))
+                        ++i;
+                    i = i + 1 < src.size() ? i + 2 : src.size();
+                    continue;
+                }
+                break;
+            }
+            return i;
+        };
+        if (!def_start)
+            return false;
+        // The define node points at the define token; the name span is the
+        // declaration token (#5249). The body starts after that token.
+        auto name_start = offset_for(def_v.name_line, def_v.name_col);
+        std::size_t body_start = 0;
+        if (name_start) {
+            std::size_t ne = *name_start;
+            if (ne < src.size() && src[ne] == '(') {
+                const auto e = scan_end(ne);
+                if (!e)
+                    return false;
+                ne = *e;
+            } else {
+                while (ne < src.size()) {
+                    const char c = src[ne];
+                    if (std::isspace(static_cast<unsigned char>(c)) || c == '(' || c == ')' ||
+                        c == ';')
+                        break;
+                    ++ne;
+                }
+            }
+            body_start = skip_trivia(ne);
+        }
+        if (body_start == 0)
+            return false;
+        std::size_t nz = 0;
+        while (nz < new_code.size() && std::isspace(static_cast<unsigned char>(new_code[nz])))
+            ++nz;
+        const bool full_define = new_code.compare(nz, 7, "(define") == 0;
+        const auto body_end = scan_end(body_start);
+        const auto def_end = full_define ? scan_end(*def_start) : std::nullopt;
+        if (!body_end || (full_define && !def_end))
+            return false;
+        const std::size_t start = full_define ? *def_start : body_start;
+        const std::size_t end = full_define ? *def_end : *body_end;
+        if (end <= start || end > src.size())
+            return false;
+        std::string patched = src.substr(0, start) + new_code + src.substr(end);
+        pending_workspace_source_patch_ = std::move(patched);
+        pending_workspace_source_patch_valid_ = true;
+        (void)name;
+        return true;
+    }
+    bool commit_pending_workspace_source_patch() {
+        if (!pending_workspace_source_patch_valid_)
+            return false;
+        workspace_source_text_ = std::move(pending_workspace_source_patch_);
+        workspace_source_text_valid_ = true;
+        workspace_source_text_generation_ =
+            workspace_flat_ ? workspace_flat_->generation() : std::uint16_t{0};
+        workspace_source_text_rebind_patch_pending_ = true;
+        pending_workspace_source_patch_valid_ = false;
+        pending_workspace_source_patch_.clear();
+        return true;
+    }
+    void discard_pending_workspace_source_patch() noexcept {
+        pending_workspace_source_patch_valid_ = false;
+        pending_workspace_source_patch_.clear();
     }
     // Phase 4: JIT-execute an Aura source string and return the result.
     // Used by (eval-current :jit) to compile-and-run the workspace.
@@ -8367,6 +8538,9 @@ private:
     std::string workspace_source_text_;
     bool workspace_source_text_valid_ = false;
     std::uint16_t workspace_source_text_generation_ = 0;
+    std::string pending_workspace_source_patch_;
+    bool pending_workspace_source_patch_valid_ = false;
+    bool workspace_source_text_rebind_patch_pending_ = false;
 
     // Last mutate typecheck error (empty = no error). Set by auto-typecheck
     // after mutate:rebind etc. Cleared on next successful mutate.
@@ -20856,6 +21030,9 @@ private:
     // the restored root into top_ so calls work with no extra eval-current.
     // Append-only at struct end.
     void rebind_workspace_defines_after_rollback() noexcept;
+    // Issue #5411: failed mutate:rebind rolls back the target define only,
+    // so unrelated runtime cells (counters, RNG, entities) survive.
+    void rebind_workspace_define_after_rollback(const std::string& name) noexcept;
     // Issue #4368: workspace :switch shares top_env. Re-eval the flat just
     // activated. Do not restamp free slots — that resurrects a cycle after
     // restore + delete + create and the walk never returns.

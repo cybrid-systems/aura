@@ -15322,6 +15322,39 @@ void Evaluator::rebind_workspace_defines_after_rollback() noexcept {
     }
 }
 
+// Issue #5411: a failed mutate:rebind restores the AST and only the target
+// define's binding needs to move back. Re-evaluating the whole workspace here
+// would reset every counter/RNG/entity cell; eval just the target node.
+void Evaluator::rebind_workspace_define_after_rollback(const std::string& name) noexcept {
+    if (!workspace_flat_ || !workspace_pool_ || name.empty())
+        return;
+    auto* flat = workspace_flat_;
+    auto* pool = workspace_pool_;
+    aura::ast::NodeId target = aura::ast::NULL_NODE;
+    for (aura::ast::NodeId id = 0; id < flat->size(); ++id) {
+        if (flat->is_free_slot(id) || flat->tag(id) != aura::ast::NodeTag::Define)
+            continue;
+        const auto sym = flat->sym_id(id);
+        if (sym != aura::ast::INVALID_SYM && pool->resolve(sym) == name) {
+            target = id;
+            break;
+        }
+    }
+    if (target == aura::ast::NULL_NODE || !flat->is_live_node(target))
+        return;
+    try {
+        Env& top = top_env();
+        const auto saved_pool = top.pool();
+        (void)eval_flat(*flat, *pool, target, top);
+        if (saved_pool && saved_pool != top.pool())
+            top.set_pool(saved_pool);
+        if (sync_workspace_value_cells_fn_)
+            sync_workspace_value_cells_fn_();
+    } catch (...) {
+        // noexcept rollback path: leave the pre-rebind binding in place.
+    }
+}
+
 namespace {
 
     std::uint64_t mix_switch_define_fp(std::uint64_t h, std::uint64_t v) noexcept {

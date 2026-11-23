@@ -155,7 +155,9 @@
     (hash-set! *hs-rules* name (list body snap body))
     (list #t *hs-version* snap)))
 
-; Atomic-ish swap: snapshot → mutate:rebind → eval-current.
+; Atomic-ish swap: snapshot → mutate:rebind. mutate:rebind installs the new
+; closure and keeps every other cell's runtime state; eval-current would
+; re-evaluate the whole workspace and reset counters/RNG/entities (#5411).
 ; Returns (ok version snap-id) where ok is #t/#f.
 ; Does NOT auto-heal; caller may (hot-strategy:heal!) on failure.
 (define (hot-strategy:swap! name body summary)
@@ -174,9 +176,7 @@
                     (let ((rebound (mutate :rebind name body sum)))
                       ; Only exact #t is success — reject may be #f or an error
                       ; object (truthy), neither of which must promote last-good.
-                      (if (equal? rebound #t)
-                          (begin (eval-current) #t)
-                          #f))
+                      (if (equal? rebound #t) #t #f))
                     (catch (e) #f))))
           (let ((post (if ok (hot-strategy:contract-post) #f)))
             (cond
@@ -220,7 +220,6 @@
       (let ((rebound (mutate :rebind name rollback "hot-strategy:heal")))
         (if (equal? rebound #t)
           (begin
-            (try (eval-current) (catch (e) #t))
             (hs-note-healed! name rollback))
           #f))
       (catch (e) #f))))
@@ -232,7 +231,6 @@
            #f)))
     (if restored
       (begin
-        (try (eval-current) (catch (e) #f))
         (hs-note-healed! name rollback))
       ; The checkpoint missed. Rebind the pre-swap expression, not the
       ; withdrawn body that swap! stored as last-good.

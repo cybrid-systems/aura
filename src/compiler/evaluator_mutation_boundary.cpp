@@ -2866,7 +2866,20 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
     // the post-mutate reader. Cross-link #2918 snapshot path.
     if (success && workspace_flat_) {
         if (cp.lightweight || workspace_flat_->mutation_log_size() > cp.mutation_log_size) {
-            invalidate_workspace_source_text();
+            // Issue #5412: a successful mutate:rebind patched the source text
+            // but later boundary work can still bump the flat generation.
+            // Stamp it here, at the outermost exit, and keep it.
+            if (workspace_source_text_rebind_patch_pending_) {
+                workspace_source_text_generation_ = workspace_flat_->generation();
+                workspace_source_text_rebind_patch_pending_ = false;
+            }
+            // Issue #5412: mutate:rebind patches the source text and stamps
+            // the post-rebind generation. Keep that patch; any other write
+            // leaves the stamp stale and invalidates as before.
+            if (workspace_source_text_rebind_patch_pending_ ||
+                !(workspace_source_text_valid_ && workspace_flat_ &&
+                  workspace_source_text_generation_ == workspace_flat_->generation()))
+                invalidate_workspace_source_text();
         }
     }
     if (cp.lightweight && workspace_flat_) {

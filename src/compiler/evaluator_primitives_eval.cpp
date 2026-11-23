@@ -1435,6 +1435,7 @@ void RegSplitParts::register_source_inspection_primitives(PrimRegistrar add, Eva
         // called, and the test expects a different result in that case.
         enum class Source { Default, Workspace };
         Source which = Source::Default;
+        bool preserve_text = false;
         aura::ast::UnparseOptions uopts{};
         for (const auto& arg : a) {
             if (!types::is_keyword(arg))
@@ -1445,6 +1446,8 @@ void RegSplitParts::register_source_inspection_primitives(PrimRegistrar add, Eva
             const auto& kw = ev.keyword_table_[kidx];
             if (kw == ":workspace")
                 which = Source::Workspace;
+            else if (kw == ":preserve")
+                preserve_text = true;
             else if (kw == ":pretty")
                 uopts.pretty = true;
             else if (kw == ":define-fn-sugar")
@@ -1464,6 +1467,19 @@ void RegSplitParts::register_source_inspection_primitives(PrimRegistrar add, Eva
         }
         if (!flat || !pool)
             return make_string(0);
+
+        // Issue #5412: the source-preserving export path. mutate:rebind patches
+        // the set-code text and stamps the new generation; untouched comments
+        // and whitespace stay byte-identical. Fall back to unparse when the
+        // stamp is stale or a pretty/sugar view was requested.
+        if (which == Source::Workspace && preserve_text && !uopts.pretty &&
+            !uopts.define_fn_sugar && ev.workspace_source_text_valid_ &&
+            !ev.workspace_source_text_.empty() &&
+            ev.workspace_source_text_generation_ == flat->generation()) {
+            const auto id = static_cast<std::uint64_t>(
+                ev.push_string_heap(std::string(ev.workspace_source_text_)));
+            return make_string(id);
+        }
 
         auto src = aura::ast::unparse_to_string(*flat, *pool, flat->root, uopts);
         const auto id = static_cast<std::uint64_t>(ev.push_string_heap(std::move(src)));
