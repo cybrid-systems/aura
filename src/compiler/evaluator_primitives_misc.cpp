@@ -1309,18 +1309,30 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                     std::memcpy(&eb, body.data(), std::min(sizeof(eb), body.size()));
                     return bus_error(ev, "permission", eb.message);
                 }
-                if (body.size() < sizeof(aura::bus::ReproPackage))
+                // #5408: the reply must be the package frame the host
+                // sends, and hdr.len is its actual length (the scratch
+                // buffer is always kBusMaxControlFrame bytes, so body.size()
+                // cannot detect a short frame).
+                if (hdr.type != static_cast<std::uint16_t>(aura::bus::FrameType::Credit))
+                    return bus_error(ev, "validation-failed", "unexpected repro reply frame");
+                if (hdr.len < sizeof(aura::bus::ReproPackage))
                     return bus_error(ev, "validation-failed", "malformed repro reply");
                 aura::bus::ReproPackage pkg{};
                 std::memcpy(&pkg, body.data(), sizeof(pkg));
+                // #5408: hashes are raw 64-bit values; a fixnum cannot hold
+                // them, and make_int() would abort once production arms the
+                // hot contract. Keep the low immediate bits in the list
+                // (the JSON line below keeps the full value).
+                constexpr std::uint64_t kImm = (1ull << 62) - 1;
                 EvalValue five = make_void();
                 if (pkg.has_five != 0) {
                     five = bus_list(
-                        ev, {make_int(static_cast<std::int64_t>(pkg.five.baseline_gen)),
-                             make_int(static_cast<std::int64_t>(pkg.five.candidate_hash)),
-                             make_int(static_cast<std::int64_t>(pkg.five.workload_sym)),
-                             make_int(static_cast<std::int64_t>(pkg.five.seed)),
-                             make_int(static_cast<std::int64_t>(pkg.five.verifier_version))});
+                        ev,
+                        {make_int(static_cast<std::int64_t>(pkg.five.baseline_gen & kImm)),
+                         make_int(static_cast<std::int64_t>(pkg.five.candidate_hash & kImm)),
+                         make_int(static_cast<std::int64_t>(pkg.five.workload_sym & kImm)),
+                         make_int(static_cast<std::int64_t>(pkg.five.seed & kImm)),
+                         make_int(static_cast<std::int64_t>(pkg.five.verifier_version & kImm))});
                 }
                 EvalValue windows = make_void();
                 if (pkg.has_gate != 0) {
@@ -1328,8 +1340,8 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                         std::min<std::uint64_t>(pkg.gate.fold_count, aura::bus::kGateMaxWindows);
                     for (std::uint64_t i = n; i > 0; --i) {
                         const std::uint64_t raw = pkg.gate.windows[i - 1];
-                        windows = make_pair(static_cast<std::uint64_t>(
-                            ev.push_pair(make_int(static_cast<std::int64_t>(raw)), windows)));
+                        windows = make_pair(static_cast<std::uint64_t>(ev.push_pair(
+                            types::make_int_or_promote(static_cast<std::int64_t>(raw)), windows)));
                     }
                 }
                 EvalValue policy = make_void();
@@ -1352,7 +1364,7 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                              make_int(static_cast<std::int64_t>(pkg.verdict.adjusted_ppm)),
                              make_int(static_cast<std::int64_t>(pkg.verdict.haircut_ppm)),
                              make_int(static_cast<std::int64_t>(pkg.verdict.threshold_ppm)),
-                             make_int(static_cast<std::int64_t>(pkg.verdict.fingerprint))});
+                             make_int(static_cast<std::int64_t>(pkg.verdict.fingerprint & kImm))});
                 }
                 // The package is also rendered as one JSON line, so a
                 // nightly can archive it verbatim and re-run the

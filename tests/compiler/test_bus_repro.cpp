@@ -59,6 +59,19 @@ bool write_file(const std::string& path, const char* text) {
     return true;
 }
 
+std::string read_text_file(const std::string& path) {
+    FILE* f = std::fopen(path.c_str(), "rb");
+    if (!f)
+        return {};
+    std::string out;
+    char buf[4096];
+    std::size_t n = 0;
+    while ((n = std::fread(buf, 1, sizeof(buf), f)) > 0)
+        out.append(buf, n);
+    std::fclose(f);
+    return out;
+}
+
 pid_t run_script(const std::string& script, int* out_fd, int* in_fd) {
     int out[2], in[2];
     if (pipe(out) != 0 || pipe(in) != 0)
@@ -77,6 +90,10 @@ pid_t run_script(const std::string& script, int* out_fd, int* in_fd) {
         // The host enforces the statistical admission, so a KEEP needs
         // the held-out evidence.
         setenv("AURA_BUS_GATE", "1", 1);
+        // #5408: a fixnum overflow in make_int() only aborts when the hot
+        // contract is armed; arm it so the kept-worldline query is a real
+        // regression test for the production crash.
+        setenv("AURA_HOT_HARDEN", "1", 1);
         const std::string exe = aura_binary();
         execl(exe.c_str(), "aura", script.c_str(), static_cast<char*>(nullptr));
         _exit(24);
@@ -353,5 +370,18 @@ int main() {
 
     if (g_failed == 0)
         std::printf("test_bus_repro: all checks passed\n");
+    // #5408: the repro reply is a Credit frame whose length is hdr.len,
+    // and the 64-bit hashes stay inside the fixnum domain in the list
+    // (the JSON line above keeps the full value).
+    {
+        const auto src = read_text_file("src/compiler/evaluator_primitives_misc.cpp");
+        check(src.find("hdr.len < sizeof(aura::bus::ReproPackage)") != std::string::npos,
+              "#5408: repro validates the actual frame length");
+        check(src.find("pkg.verdict.fingerprint & kImm") != std::string::npos,
+              "#5408: the fingerprint stays a fixnum");
+        check(src.find("pkg.five.candidate_hash & kImm") != std::string::npos,
+              "#5408: the candidate hash stays a fixnum");
+    }
+
     return g_failed == 0 ? 0 : 1;
 }
