@@ -1940,7 +1940,8 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                                      make_int(static_cast<std::int64_t>(reply.workers)),
                                      make_int(static_cast<std::int64_t>(reply.cpu_free_pct)),
                                      make_int(static_cast<std::int64_t>(reply.mem_free_mb)),
-                                     make_int(static_cast<std::int64_t>(reply.reason))});
+                                     make_int(static_cast<std::int64_t>(reply.reason)),
+                                     make_int(static_cast<std::int64_t>(reply.open_tasks))});
             }
 
             // #5395: the bus's own performance counters and the

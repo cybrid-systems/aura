@@ -74,6 +74,27 @@ int main() {
         check(p.reason == 1, "fixture is CPU-bound");
     }
 
+    // #5423: production policy knobs; zero/invalid values keep the
+    // default bound instead of disabling it.
+    {
+        check(::setenv("AURA_SUPERVISOR_RESERVE_MB", "512", 1) == 0, "set reserve knob");
+        check(::setenv("AURA_SUPERVISOR_PER_WORKER_MB", "64", 1) == 0, "set worker mb knob");
+        check(::setenv("AURA_SUPERVISOR_PER_WORKER_CPU_PCT", "50", 1) == 0, "set worker cpu knob");
+        const SupervisorPolicy tuned = supervisor_policy_from_env();
+        check(tuned.reserve_mb == 512, "reserve knob read");
+        check(tuned.per_worker_mb == 64, "worker mb knob read");
+        check(tuned.per_worker_cpu_pct == 50, "worker cpu knob read");
+
+        check(::setenv("AURA_SUPERVISOR_PER_WORKER_MB", "0", 1) == 0, "set zero worker mb");
+        check(::setenv("AURA_SUPERVISOR_PER_WORKER_CPU_PCT", "0", 1) == 0, "set zero worker cpu");
+        const SupervisorPolicy fallback = supervisor_policy_from_env();
+        check(fallback.per_worker_mb == 128, "zero worker mb keeps the default");
+        check(fallback.per_worker_cpu_pct == 25, "zero worker cpu keeps the default");
+        unsetenv("AURA_SUPERVISOR_RESERVE_MB");
+        unsetenv("AURA_SUPERVISOR_PER_WORKER_MB");
+        unsetenv("AURA_SUPERVISOR_PER_WORKER_CPU_PCT");
+    }
+
     if (g_failed == 0)
         std::printf("test_bus_supervisor: all checks passed\n");
     return g_failed == 0 ? 0 : 1;

@@ -21,6 +21,7 @@
 
 #include <fcntl.h>
 #include <sys/eventfd.h>
+#include <sys/file.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
 #include <poll.h>
@@ -342,8 +343,10 @@ Server::~Server() {
         ::close(listen_fd_);
     if (wake_fd_ >= 0)
         ::close(wake_fd_);
-    if (!path_.empty())
+    if (!path_.empty() && owns_path_)
         ::unlink(path_.c_str());
+    if (lock_fd_ >= 0)
+        ::close(lock_fd_);
     // The shared image lives as long as the host (#5128); unhost releases
     // the mapping and the host's fd reference. Peers already detached keep
     // their own dup'd fds until they close them.
@@ -396,8 +399,78 @@ bool Server::listen_at(const std::string& path, std::size_t image_bytes, std::ui
             }
         }
     }
+
+    // #5422: one host per (workspace, socket) across processes. The lock
+    // is released by the kernel when a crashed host dies, so a restart
+    // can take over; a live host holds it for its lifetime.
+    const std::string lock_path = path + ".lock";
+    lock_fd_ = ::open(lock_path.c_str(), O_CREAT | O_RDWR | O_CLOEXEC, 0600);
+    if (lock_fd_ < 0) {
+        if (error)
+            *error = {errno, "open host lock failed"};
+        return false;
+    }
+    if (::flock(lock_fd_, LOCK_EX | LOCK_NB) != 0) {
+        const int locked_errno = errno;
+        ::close(lock_fd_);
+        lock_fd_ = -1;
+        if (error)
+            *error = {locked_errno,
+                      locked_errno == EWOULDBLOCK ? "bus is already hosted" : "host lock failed"};
+        return false;
+    }
+
+    // A crashed host leaves its socket node behind. Probe it: a live
+    // listener refuses the takeover; ECONNREFUSED/ENOENT is stale and is
+    // unlinked. Never remove a path that is not a socket.
+    struct stat st{};
+    if (::lstat(path.c_str(), &st) == 0) {
+        if (!S_ISSOCK(st.st_mode)) {
+            ::close(lock_fd_);
+            lock_fd_ = -1;
+            if (error)
+                *error = {EEXIST, "socket path exists and is not a socket"};
+            return false;
+        }
+        int probe_errno = 0;
+        const int probe = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+        if (probe >= 0) {
+            sockaddr_un addr{};
+            addr.sun_family = AF_UNIX;
+            std::memcpy(addr.sun_path, path.c_str(), path.size() + 1);
+            if (::connect(probe, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0)
+                probe_errno = errno;
+            ::close(probe);
+        } else {
+            probe_errno = errno;
+        }
+        if (probe_errno == 0) {
+            ::close(lock_fd_);
+            lock_fd_ = -1;
+            if (error)
+                *error = {EADDRINUSE, "bus is already hosted"};
+            return false;
+        }
+        if (probe_errno != ECONNREFUSED && probe_errno != ENOENT) {
+            ::close(lock_fd_);
+            lock_fd_ = -1;
+            if (error)
+                *error = {probe_errno, "cannot probe the existing bus socket"};
+            return false;
+        }
+        if (::unlink(path.c_str()) != 0 && errno != ENOENT) {
+            ::close(lock_fd_);
+            lock_fd_ = -1;
+            if (error)
+                *error = {errno, "unlink stale bus socket failed"};
+            return false;
+        }
+    }
+
     listen_fd_ = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
     if (listen_fd_ < 0) {
+        ::close(lock_fd_);
+        lock_fd_ = -1;
         if (error)
             *error = {errno, "socket failed"};
         return false;
@@ -406,22 +479,34 @@ bool Server::listen_at(const std::string& path, std::size_t image_bytes, std::ui
     addr.sun_family = AF_UNIX;
     std::memcpy(addr.sun_path, path.c_str(), path.size() + 1);
     if (::bind(listen_fd_, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
+        const int bind_errno = errno;
+        ::close(lock_fd_);
+        lock_fd_ = -1;
         if (error)
-            *error = {errno, "bind failed"};
+            *error = {bind_errno, "bind failed"};
         return false;
     }
     if (::chmod(path.c_str(), 0600) != 0) {
+        const int chmod_errno = errno;
+        ::unlink(path.c_str());
+        ::close(lock_fd_);
+        lock_fd_ = -1;
         if (error)
-            *error = {errno, "chmod failed"};
+            *error = {chmod_errno, "chmod failed"};
         return false;
     }
     // #5377: several tools attach at once; the backlog holds connections
     // waiting for the coordinator's accept pass.
     if (::listen(listen_fd_, 16) != 0) {
+        const int listen_errno = errno;
+        ::unlink(path.c_str());
+        ::close(lock_fd_);
+        lock_fd_ = -1;
         if (error)
-            *error = {errno, "listen failed"};
+            *error = {listen_errno, "listen failed"};
         return false;
     }
+    owns_path_ = true;
     return true;
 }
 
@@ -1562,12 +1647,13 @@ bool Server::supervisor_query(SupervisorReplyBody* out, std::string* why) {
     SupervisorCapacity capacity{};
     if (!measure_capacity(&capacity, why))
         return false;
-    const SupervisorPlan plan = plan_workers(SupervisorPolicy{}, capacity);
+    const SupervisorPlan plan = plan_workers(supervisor_policy_from_env(), capacity);
     SupervisorReplyBody reply{};
     reply.workers = plan.workers;
     reply.cpu_free_pct = capacity.cpu_free_pct;
     reply.mem_free_mb = capacity.mem_free_mb;
     reply.reason = plan.reason;
+    reply.open_tasks = tasks_.open_count();
     const char* reason = plan.reason == 0   ? "room"
                          : plan.reason == 1 ? "cpu-bound"
                          : plan.reason == 2 ? "memory-bound"

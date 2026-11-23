@@ -43,6 +43,7 @@ struct Options {
     bool spawn_once = false;
     std::uint64_t interval_ms = 1000;
     std::uint64_t spawn_batch = 4;
+    std::uint64_t drain_ms = 10000;
 };
 
 inline constexpr std::string_view kUsage5400 =
@@ -65,6 +66,7 @@ inline constexpr std::string_view kUsage5400 =
     "  --spawn-once       supervisor: one spawn cycle, wait, exit (CI)\n"
     "  --interval-ms N    supervisor spawn loop interval (default 1000)\n"
     "  --spawn-batch N    max workers started per cycle (default 4)\n"
+    "  --drain-ms N       graceful drain before SIGTERM (default 10000)\n"
     "\n"
     "Roles: 4 planner posts tasks, 5 worker claims/executes them,\n"
     "6 supervisor asks the host how many workers its real CPU/memory\n"
@@ -191,6 +193,14 @@ inline bool parse_5400(int argc, char** argv, Options* out, bool* help, std::str
             if (!parse_u64_5400(v, &out->spawn_batch) || out->spawn_batch == 0 ||
                 out->spawn_batch > 64) {
                 *error = "--spawn-batch must be between 1 and 64";
+                return false;
+            }
+        } else if (a == "--drain-ms") {
+            std::string v;
+            if (!value("--drain-ms", &v))
+                return false;
+            if (!parse_u64_5400(v, &out->drain_ms) || out->drain_ms > 3600000) {
+                *error = "--drain-ms must be between 0 and 3600000";
                 return false;
             }
         } else {
@@ -366,6 +376,30 @@ inline void wait_children(std::vector<pid_t>* children) {
         terminate_children(children);
 }
 
+inline bool fatal_attach(const std::string& why) {
+    return why.starts_with("attach rejected");
+}
+
+inline void sleep_reaping(std::uint64_t ms, std::vector<pid_t>* children) {
+    for (std::uint64_t waited = 0; waited < ms && !g_stop; waited += 100) {
+        const auto slice = std::min<std::uint64_t>(100, ms - waited);
+        std::this_thread::sleep_for(std::chrono::milliseconds(slice));
+        reap(children);
+    }
+}
+
+// Graceful drain: let active workers finish, then terminate the rest.
+inline void drain_children(std::vector<pid_t>* children, std::uint64_t ms) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(ms);
+    while (!children->empty() && std::chrono::steady_clock::now() < deadline) {
+        reap(children);
+        if (!children->empty())
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    if (!children->empty())
+        terminate_children(children);
+}
+
 inline int run(const Options& opts, int* exit_code) {
     *exit_code = 1;
     std::signal(SIGINT, on_signal);
@@ -373,13 +407,6 @@ inline int run(const Options& opts, int* exit_code) {
 
     const std::string path =
         opts.path.empty() ? aura::bus::default_socket_path(opts.workspace) : opts.path;
-    aura::bus::Attach att;
-    aura::bus::TransportError err;
-    aura::bus::Client client;
-    if (!client.connect_to(path, opts.workspace, 6, 255, &att, &err)) {
-        std::println(std::cerr, "error: supervisor attach failed: {}", err.message);
-        return 1;
-    }
     const std::string self = ::aura::compiler::paths::resolve_self_executable(nullptr);
     if (self.empty()) {
         std::println(std::cerr, "error: cannot resolve the aura executable for workers");
@@ -388,23 +415,59 @@ inline int run(const Options& opts, int* exit_code) {
 
     std::vector<pid_t> children;
     std::uint64_t total_spawned = 0;
-    std::uint64_t last_desired = ~std::uint64_t{0};
+    std::uint64_t last_target = ~std::uint64_t{0};
     bool query_ok = true;
+    bool connected = false;
+    std::uint64_t reconnect_ms = 1000;
+    aura::bus::Attach att;
+
     while (!g_stop) {
+        if (!connected) {
+            aura::bus::Attach fresh;
+            aura::bus::TransportError err;
+            aura::bus::Client client;
+            if (!client.connect_to(path, opts.workspace, 6, 255, &fresh, &err)) {
+                if (fatal_attach(err.message)) {
+                    std::println(std::cerr, "error: supervisor attach rejected: {}", err.message);
+                    query_ok = false;
+                    break;
+                }
+                std::println("supervisor-reconnect-wait={} reason={}", reconnect_ms, err.message);
+                std::fflush(stdout);
+                sleep_reaping(reconnect_ms, &children);
+                reconnect_ms = std::min<std::uint64_t>(reconnect_ms * 2, 30000);
+                continue;
+            }
+            att = std::move(fresh);
+            connected = true;
+            reconnect_ms = 1000;
+            std::println("supervisor-attached=1");
+            std::fflush(stdout);
+        }
+
         reap(&children);
         aura::bus::SupervisorReplyBody plan{};
         std::string why;
         if (!query_plan(att, &plan, &why)) {
-            std::println(std::cerr, "error: supervise query failed: {}", why);
-            query_ok = false;
-            break;
+            std::println(std::cerr, "warning: host query failed: {}", why);
+            connected = false;
+            att = aura::bus::Attach{};
+            sleep_reaping(reconnect_ms, &children);
+            reconnect_ms = std::min<std::uint64_t>(reconnect_ms * 2, 30000);
+            continue;
         }
+
         const std::uint64_t alive = children.size();
+        // Capacity alone must not spawn an idle loop: start workers only
+        // for open work. A live worker may already hold a claim, so the
+        // target is bounded by alive + open tasks.
+        const std::uint64_t target =
+            std::min<std::uint64_t>(plan.workers, alive + plan.open_tasks);
         std::uint64_t spawned = 0;
         std::uint64_t stopped = 0;
-        if (plan.workers > alive) {
+        if (target > alive) {
             const std::uint64_t want =
-                std::min<std::uint64_t>(plan.workers - alive, opts.spawn_batch);
+                std::min<std::uint64_t>(target - alive, opts.spawn_batch);
             for (std::uint64_t i = 0; i < want; ++i) {
                 std::string spawn_why;
                 const pid_t pid = spawn_worker(opts, self, &spawn_why);
@@ -416,32 +479,32 @@ inline int run(const Options& opts, int* exit_code) {
                 ++spawned;
                 ++total_spawned;
             }
-        } else if (plan.workers < alive && plan.workers < last_desired) {
+        } else if (target < alive && target < last_target) {
             // A shrink is a decision, not a kill: active workers finish
             // their task and exit; the supervisor stops replacing them.
-            stopped = alive - plan.workers;
+            stopped = alive - target;
         }
         if (spawned > 0 || stopped > 0) {
-            if (!send_note(att, spawned, stopped, children.size()))
+            if (!send_note(att, spawned, stopped, children.size())) {
                 std::println(std::cerr, "warning: supervisor note was not delivered");
+                connected = false;
+                att = aura::bus::Attach{};
+            }
         }
         std::println(
-            "supervisor-desired={} alive={} spawned={} stopped={} cpu-free-pct={} mem-free-mb={} "
-            "reason={}",
-            plan.workers, children.size(), spawned, stopped, plan.cpu_free_pct, plan.mem_free_mb,
-            plan.reason);
+            "supervisor-desired={} open-tasks={} target={} alive={} spawned={} stopped={} "
+            "cpu-free-pct={} mem-free-mb={} reason={}",
+            plan.workers, plan.open_tasks, target, children.size(), spawned, stopped,
+            plan.cpu_free_pct, plan.mem_free_mb, plan.reason);
         std::fflush(stdout);
-        last_desired = plan.workers;
+        last_target = target;
         if (opts.spawn_once)
             break;
-        for (std::uint64_t waited = 0; waited < opts.interval_ms && !g_stop; waited += 100) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-            reap(&children);
-        }
+        sleep_reaping(opts.interval_ms, &children);
     }
 
     if (!opts.spawn_once)
-        terminate_children(&children);
+        drain_children(&children, opts.drain_ms);
     else
         wait_children(&children);
 

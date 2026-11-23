@@ -156,6 +156,7 @@
         (agent-say "cpu-free-pct" (list-ref plan 2))
         (agent-say "mem-free-mb" (list-ref plan 3))
         (agent-say "reason" (list-ref plan 4))
+        (agent-say "open-tasks" (list-ref plan 5))
         (bus:detach SID)
         (agent-exit 0)))))
 

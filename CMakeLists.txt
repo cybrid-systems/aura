@@ -2082,7 +2082,9 @@ target_include_directories(test_bus_repro PRIVATE src)
 target_compile_features(test_bus_repro PUBLIC cxx_std_26)
 target_link_libraries(test_bus_repro PRIVATE aura-bus)
 aura_strict_test_warnings(tests/compiler/test_bus_repro.cpp)
-add_test(NAME test_bus_repro_5397 COMMAND ./test_bus_repro)
+add_test(NAME test_bus_repro_5397 COMMAND ${CMAKE_CURRENT_BINARY_DIR}/test_bus_repro)
+# #5422: the #5408 source checks read src/ relative to the repo root.
+set_tests_properties(test_bus_repro_5397 PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
 add_executable(test_bus_multi_target tests/compiler/test_bus_multi_target.cpp)
 target_include_directories(test_bus_multi_target PRIVATE src)

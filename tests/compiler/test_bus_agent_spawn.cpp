@@ -410,24 +410,141 @@ int main() {
                        "--spawn", "--interval-ms", "100"},
                       &out, &in);
         ::close(in);
-        bool saw_worker = false;
-        for (int i = 0; i < 40 && !saw_worker; ++i) {
-            saw_worker = count_workers(kPort) >= 1;
-            if (!saw_worker)
-                usleep(50000);
+        // With no open tasks, capacity alone must not start an idle loop.
+        const std::string idle =
+            read_until(out, "supervisor-desired=", 5000) + read_until(out, "\n", 1000);
+        check(has(idle, "open-tasks=0"), "idle supervisor sees no work");
+        check(has(idle, "spawned=0"), "idle supervisor spawns nothing");
+
+        // Work arrives after the supervisor is running: it must react.
+        {
+            int pout = -1, pin = -1;
+            const pid_t planner =
+                run_agent({"--role", "planner", "--workspace", std::to_string(kPort), "--mock",
+                           "--tasks", "3", "--requirement", "late work"},
+                          &pout, &pin);
+            ::close(pin);
+            const std::string text = read_all(pout);
+            check(has(text, "posted=3"), "late planner posted three tasks");
+            int pstatus = 0;
+            waitpid(planner, &pstatus, 0);
         }
-        check(saw_worker, "continuous supervisor has live workers");
+        const std::string spawned = read_until(out, "spawned=2", 15000);
+        check(has(spawned, "spawned=2"), "supervisor starts workers for late work");
+
+        // Wait for the board to drain.
+        bool drained = false;
+        for (int i = 0; i < 50 && !drained; ++i) {
+            const std::string verify_script = make_verify_script(d, kPort);
+            int vout = -1, vin = -1;
+            const pid_t verify = run_script(verify_script, &vout, &vin);
+            ::close(vin);
+            const std::string text = read_all(vout);
+            int vstatus = 0;
+            waitpid(verify, &vstatus, 0);
+            drained = has(text, "s1=2") && has(text, "s2=2") && has(text, "s3=2");
+            if (!drained)
+                usleep(200000);
+        }
+        check(drained, "late tasks completed");
+        check(count_workers(kPort) == 0, "idle workers are reaped");
+
         ::kill(supervisor, SIGTERM);
         int status = 0;
         waitpid(supervisor, &status, 0);
         ::close(out);
-        usleep(1000000); // PDEATHSIG + terminate grace
+        usleep(500000);
         check(count_workers(kPort) == 0, "no worker outlives a stopped supervisor");
 
         ::close(host_in);
         waitpid(host, &status, 0);
     }
 
+
+    // ── crash takeover: the host dies, the supervisor reconnects ──
+    {
+        constexpr std::uint64_t kPort = 8958;
+        setenv("AURA_SUPERVISOR_MEM_FREE_MB", "512", 1);
+        setenv("AURA_SUPERVISOR_CPU_FREE_PCT", "20", 1);
+        setenv("AURA_SUPERVISOR_CPUS", "4", 1);
+        const std::string host_script = make_host_script(d, kPort);
+        const std::string sock = default_socket_path(kPort);
+        int host_a_out = -1, host_a_in = -1;
+        const pid_t host_a = run_script(host_script, &host_a_out, &host_a_in);
+        check(host_a > 0, "fork first host");
+        check(wait_socket(sock), "first host socket appeared");
+        check(has(read_until(host_a_out, "host-ready", 10000), "host-ready"), "first host started");
+        unsetenv("AURA_SUPERVISOR_MEM_FREE_MB");
+        unsetenv("AURA_SUPERVISOR_CPU_FREE_PCT");
+        unsetenv("AURA_SUPERVISOR_CPUS");
+
+        int out = -1, in = -1;
+        const pid_t supervisor =
+            run_agent({"--role", "supervisor", "--workspace", std::to_string(kPort), "--mock",
+                       "--spawn", "--interval-ms", "100", "--drain-ms", "1000"},
+                      &out, &in);
+        ::close(in);
+        (void)read_until(out, "supervisor-desired=", 5000);
+
+        // A hard kill leaves the socket behind; the take-over must work.
+        ::kill(host_a, SIGKILL);
+        int status = 0;
+        waitpid(host_a, &status, 0);
+        ::close(host_a_out);
+        ::close(host_a_in);
+        usleep(200000);
+
+        setenv("AURA_SUPERVISOR_MEM_FREE_MB", "512", 1);
+        setenv("AURA_SUPERVISOR_CPU_FREE_PCT", "20", 1);
+        setenv("AURA_SUPERVISOR_CPUS", "4", 1);
+        int host_b_out = -1, host_b_in = -1;
+        const pid_t host_b = run_script(host_script, &host_b_out, &host_b_in);
+        check(host_b > 0, "fork second host");
+        // No wait_socket: the stale node may make it appear before bind.
+        check(has(read_until(host_b_out, "host-ready", 10000), "host-ready"),
+              "second host took over the stale socket");
+        unsetenv("AURA_SUPERVISOR_MEM_FREE_MB");
+        unsetenv("AURA_SUPERVISOR_CPU_FREE_PCT");
+        unsetenv("AURA_SUPERVISOR_CPUS");
+
+        {
+            int pout = -1, pin = -1;
+            const pid_t planner =
+                run_agent({"--role", "planner", "--workspace", std::to_string(kPort), "--mock",
+                           "--tasks", "2", "--requirement", "after crash"},
+                          &pout, &pin);
+            ::close(pin);
+            const std::string text = read_all(pout);
+            check(has(text, "posted=2"), "planner posted after the crash");
+            int pstatus = 0;
+            waitpid(planner, &pstatus, 0);
+        }
+
+        bool drained = false;
+        for (int i = 0; i < 50 && !drained; ++i) {
+            const std::string verify_script = make_verify_script(d, kPort);
+            int vout = -1, vin = -1;
+            const pid_t verify = run_script(verify_script, &vout, &vin);
+            ::close(vin);
+            const std::string text = read_all(vout);
+            int vstatus = 0;
+            waitpid(verify, &vstatus, 0);
+            drained = has(text, "s1=2") && has(text, "s2=2");
+            if (!drained)
+                usleep(200000);
+        }
+        check(drained, "tasks completed after the host restart");
+
+        ::kill(supervisor, SIGTERM);
+        waitpid(supervisor, &status, 0);
+        const std::string sup_text = read_all(out);
+        check(has(sup_text, "host query failed") || has(sup_text, "supervisor-reconnect-wait="),
+              "supervisor retried the dead host");
+        check(count_workers(kPort) == 0, "restart leaves no worker behind");
+
+        ::close(host_b_in);
+        waitpid(host_b, &status, 0);
+    }
     if (g_failed == 0)
         std::printf("test_bus_agent_spawn: all checks passed\n");
     return g_failed == 0 ? 0 : 1;

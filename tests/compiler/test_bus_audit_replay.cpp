@@ -675,13 +675,13 @@ int main() {
             return 1;
         check(setenv("XDG_RUNTIME_DIR", dir, 1) == 0, "setenv XDG_RUNTIME_DIR");
         const std::string d(dir);
-        const std::string sock = default_socket_path(8942);
         check(write_file(d + "/replay.aura", kReplayScript), "write replay script");
 
         int out_fd = -1, in_fd = -1;
         const pid_t pid = run_script(d + "/replay.aura", &out_fd, &in_fd);
         check(pid > 0, "fork the replay host");
-        check(wait_socket(sock), "the replay socket appeared");
+        // The replay script may finish and unhost before a poll sees the
+        // socket node; the `ready` line is the host's own handshake.
         check(has(read_until(out_fd, "ready", 20000), "ready"), "the replay host is ready");
         const std::string out = read_until(out_fd, "DONE", 20000);
         check(has(out, "keep=ok"), "the legitimate candidate is kept");

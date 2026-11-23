@@ -1220,7 +1220,7 @@ inline constexpr SubHelp4935 kSubHelp4935[] = {
      "\n"
      "  --workspace N, --path PATH, --lease-ms N, --tasks N\n"
      "  --contract, --requirement TEXT, --prompt FILE, --mock, --preset P\n"
-     "  --spawn, --spawn-once, --interval-ms N, --spawn-batch N\n"
+     "  --spawn, --spawn-once, --interval-ms N, --spawn-batch N, --drain-ms N\n"
      "\n"
      "The supervisor asks the host for its real CPU/memory slack; the\n"
      "host decides the worker count (no fixed cap) and audits it.\n"

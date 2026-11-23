@@ -265,4 +265,13 @@ canary 拒绝)、`test_bus_closed_loop_e2e`(#5382,三进程正常闭环 + 五类
 - 进程安全：子进程 `PR_SET_PDEATHSIG(SIGTERM)`，监督者崩溃不留孤儿；SIGINT/SIGTERM 停止拉新并转发 SIGTERM，5s 后 SIGKILL；PID 表用 `waitpid(WNOHANG)` 回收。
 - 审计：`SupervisorPlan`(48) 仍是决策（version=desired，result=0..3）；`SupervisorSpawn`(49) 记录本轮 started 数（result）与 spawn 后 live 数（version）；`SupervisorShrink`(50) 记录计划收缩数。`SupervisorNote` 帧只写审计，不回包。
 - 真实 worker 需要 `--prompt FILE`；`--mock` 仍确定性、无网络、无密钥。
-- 已交付的 worker 是一次性 drain 循环：没有任务就退出，监督者按间隔补拉。空闲且无任务时会有进程 churn；生产上应用任务到达驱动或后续 worker keepalive 单优化（本单不做）。
+- worker 仍是一次性 drain 循环：没有任务就退出。监督者的 work-driven 目标（#5423）保证没活时不会补拉，任务到达才拉起，因此空闲不 churn。
+
+### 生产化：work-driven、崩溃接管、reconnect、drain(#5423)
+
+- **work-driven**：`bus:supervise` 的第 6 个返回值是 `open-tasks`（看板未认领数）。监督者目标 = `min(容量, alive + open-tasks)`，没活不拉，任务到达才补；空闲不再 churn。
+- **host 崩溃接管**：`Server::listen_at` 对 socket 旁的 `.lock` 取 `flock(LOCK_EX|LOCK_NB)`。活 host 持有锁；崩溃后内核释放锁，新 host 探测旧 socket：连接成功=活 host，拒绝；`ECONNREFUSED/ENOENT`=陈旧，先 unlink 再 bind；非 socket 文件不删。`owns_path_` 保证 bind 失败/退出的 Server 不会误删别人的 socket。
+- **reconnect**：查询失败或 EOF 后关闭会话，指数退避 1s→30s 重连；子进程保留。只有 `attach rejected`（role/workspace/schema 等）才 fatal 退出。
+- **graceful drain**：`--drain-ms`（默认 10000）；SIGTERM 后停止拉新，先等活跃 worker 完成，超时才 SIGTERM（5s 宽限）→ SIGKILL。
+- **可调策略**：`AURA_SUPERVISOR_RESERVE_MB`、`AURA_SUPERVISOR_PER_WORKER_MB`、`AURA_SUPERVISOR_PER_WORKER_CPU_PCT`；0/非法值回退默认，不会关闭上限。
+- **CI**：`test_bus_repro` 的 ctest 工作目录固定为源码根，bus ctest 串行 31/31。回归：`test_bus_agent_spawn` 覆盖空闲 0 spawn、任务到达拉起、SIGKILL host 接管+重连、SIGTERM 无遗留 worker。

@@ -79,6 +79,9 @@ public:
     [[nodiscard]] bool get(std::uint64_t id, Task* out) const;
     // The oldest open task (the claim(0) candidate), without claiming.
     [[nodiscard]] bool next_open(Task* out) const;
+    // #5422: the open tasks, for a supervisor that only starts workers
+    // when there is work. Claimed tasks are not counted.
+    [[nodiscard]] std::size_t open_count() const;
     [[nodiscard]] std::vector<Task> list() const;
     [[nodiscard]] bool has_leases() const;
     [[nodiscard]] std::size_t size() const { return tasks_.size(); }

@@ -392,6 +392,9 @@ struct SupervisorReplyBody {
     std::uint64_t cpu_free_pct = 0; // idle share of the machine (0-100)
     std::uint64_t mem_free_mb = 0;  // MemAvailable at decision time
     std::uint64_t reason = 3;       // 0 ok, 1 CPU, 2 memory, 3 insufficient
+    // #5422: the board's open tasks. A supervisor starts workers only
+    // for work; capacity alone must not spawn an idle loop.
+    std::uint64_t open_tasks = 0;
 };
 
 // #5422: the supervisor's spawn accounting. spawned/stopped are the
@@ -945,6 +948,11 @@ private:
     std::size_t image_bytes_ = kBusDefaultImageBytes;
     std::uint64_t workspace_id_ = 0;
     int listen_fd_ = -1;
+    // #5422: the cross-process host lock and socket ownership. A crash
+    // leaves a socket path behind; the next host must be able to take it
+    // over without ever unlinking a live host's socket.
+    int lock_fd_ = -1;
+    bool owns_path_ = false;
     // Single-peer path (accept_one/wait_disconnect) state.
     int conn_fd_ = -1;
     std::uint64_t session_ = 0;

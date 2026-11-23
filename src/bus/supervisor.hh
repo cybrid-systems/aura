@@ -51,6 +51,12 @@ SupervisorPlan plan_workers(const SupervisorPolicy& policy, const SupervisorCapa
 // platforms the plan is empty and *why says so.
 bool measure_capacity(SupervisorCapacity* out, std::string* why);
 
+// #5422: the policy knobs a production host can tune without a rebuild:
+// AURA_SUPERVISOR_RESERVE_MB, AURA_SUPERVISOR_PER_WORKER_MB and
+// AURA_SUPERVISOR_PER_WORKER_CPU_PCT. Invalid/zero values keep the
+// defaults, so a bad env never disables the bound.
+SupervisorPolicy supervisor_policy_from_env();
+
 } // namespace aura::bus
 
 #endif

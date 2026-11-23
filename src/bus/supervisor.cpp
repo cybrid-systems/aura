@@ -116,6 +116,18 @@ SupervisorPlan plan_workers(const SupervisorPolicy& policy, const SupervisorCapa
     return plan;
 }
 
+SupervisorPolicy supervisor_policy_from_env() {
+    SupervisorPolicy policy{};
+    std::uint64_t value = 0;
+    if (env_u64("AURA_SUPERVISOR_RESERVE_MB", &value))
+        policy.reserve_mb = value;
+    if (env_u64("AURA_SUPERVISOR_PER_WORKER_MB", &value) && value > 0)
+        policy.per_worker_mb = value;
+    if (env_u64("AURA_SUPERVISOR_PER_WORKER_CPU_PCT", &value) && value > 0)
+        policy.per_worker_cpu_pct = value;
+    return policy;
+}
+
 bool measure_capacity(SupervisorCapacity* out, std::string* why) {
     SupervisorCapacity capacity{};
     bool ok = true;
