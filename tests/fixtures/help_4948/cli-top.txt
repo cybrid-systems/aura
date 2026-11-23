@@ -10,6 +10,7 @@ Commands:
   run    run the project entry with its aura.toml preset
   test   run tests/*.aura against tests/*.golden
   repl   interactive REPL with hot reload
+  agent  attach a planner/worker/supervisor bus peer
   bus-repro re-run a bus KEEP's admission decision from its repro package
   evo    inspect a project's evolution worldline
   lsp    language server on stdio (see docs/editor.md)
