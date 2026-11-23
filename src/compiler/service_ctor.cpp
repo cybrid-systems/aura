@@ -705,7 +705,13 @@ CompilerService::CompilerService()
     evaluator_.set_module_loaded_callback(
         [this](const std::string& content, const std::string& path,
                aura::compiler::Env* module_env) {
-            cache_module(content, path, module_env);
+            // Issue #5420 follow-up: module env IR binding must not replace
+            // the tree-walker closures when the lowered bundle can point at
+            // a sibling function. cache_module still writes/reads the IR
+            // disk cache; env binding stays on the tree walker until the
+            // per-define identity check is exact.
+            (void)module_env;
+            cache_module(content, path, nullptr);
         });
 
     // Issue #97 Action 1: hot-swap callback. Allows (mutate :hot-swap-fn "name" "new-src")

@@ -4811,9 +4811,13 @@ static int run_oneshot_or_file(int argc, char** argv) {
     // later form calls it. The old whole-program path evaluated the Begin
     // on the tree walker, which overwrote the cached IR bindings and left
     // every file / -e / load hot loop at ir-calls=0.
+    // Issue #5420 regression: the form-by-form IR publication can bind a
+    // closure whose MakeClosure func id no longer matches the define when
+    // the file has several defines (4356 read-line/fiber, evolve-moo).
+    // Keep the pre-#5420 whole-program face; the IR cache still fills, but
+    // env bindings stay on the tree walker.
     if (const int forced = eval_oneshot_force_soa(cs, all_input, stop_first_4909,
-                                                  /*force_face=*/true,
-                                                  /*allow_walker=*/true);
+                                                  oneshot_toplevel_hof_5334(all_input));
         forced >= 0)
         return forced;
     if (auto r = cs.eval(all_input)) {

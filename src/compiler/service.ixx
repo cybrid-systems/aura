@@ -6985,6 +6985,36 @@ public:
         binding->bound_closure = *result;
         binding->closure_id = types::as_closure_id(*result);
 
+        // Issue #5420: a cached sibling lowering can leave MakeClosure
+        // pointing at a different function than this define's lambda, so
+        // executing __top__ returns a foreign closure (observed as
+        // evo-opt -> evo-int, arity 1 vs 3). Bind only when the returned
+        // closure's parameter list matches the lowered define; otherwise
+        // leave the tree-walker closure that eval_flat installed.
+        std::size_t expected_params = std::numeric_limits<std::size_t>::max();
+        for (const auto& fn : ir_mod.functions) {
+            if (fn.name == name) {
+                expected_params = fn.params.size();
+                break;
+            }
+        }
+        if (expected_params == std::numeric_limits<std::size_t>::max())
+            return false;
+        {
+            bool params_match = false;
+            binding->interpreter->walk_runtime_closures(
+                [&](std::uint64_t cid, IRClosure& cl) {
+                    if (cid != binding->closure_id)
+                        return;
+                    const bool right_fn =
+                        cl.func_id < ir_mod.functions.size() &&
+                        ir_mod.functions[cl.func_id].name == name;
+                    params_match = right_fn && cl.params.size() == expected_params;
+                });
+            if (!params_match)
+                return false;
+        }
+
         // Publish, then retire (never retire first): a concurrent body that
         // resolves this define's top_env cell holds whatever closure id the
         // CELL publishes at that instant, and it may then park on
