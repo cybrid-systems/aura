@@ -108,6 +108,7 @@
 - **被拒绝的附着只结束该连接**(#5383):未知角色、workspace 不符、schema/uid
   不符、握手半途 EOF 等拒绝会关闭该连接并继续 accept,不停服务循环;只有
   unhost/监听失效才退出。一个配置错误的对端不会瘫痪整条总线。
+- **任务审计时间线**（#5405）：`bus:task-audit session task-id`（或 `bus:audit-filter` 的可选 task 参数）按任务过滤发布、认领、续约、重派、批准、契约、配额、完成/失败事件，顺序与审计日志一致；回放仍走 #5392。
 - **配额与熔断**（#5403）：`bus:budget-charge` 上报 token/墙钟/失败次数，`bus:budget-report` 读任务账本（task 0 读全局）。任务超限即失败该任务；全局超限失败所有已认领任务并拒绝新 claim（`global budget exhausted`）。默认值有界：任务 2M token / 1h / 3 次失败，全局 20M / 24h / 20 次；`AURA_BUS_TASK_*` / `AURA_BUS_GLOBAL_*` 可覆盖。
 - **验收契约**（#5402）：`bus:contract` 给 open 任务挂 test-ref + metric-floor（指纹绑定字段），任务随即变为需批准；`bus:approve` 批准后 worker 才能 claim；`bus:contract-evidence` 上报 tests-passed/metric，`bus:complete` 只有在契约批准、测试通过且指标达到底线时才放行。
 - **任务看板**（#5399/#5404）：`bus:post-task` / `bus:claim` / `bus:heartbeat` / `bus:complete` / `bus:fail` / `bus:task-status`；`bus:approve` 是人工批准点（decision 0 请求、1 批准、2 拒绝，pending 超时即拒绝）。任务有 id、父任务、契约引用（ref）、持有者、租约代次和到期时间；同一任务同一时刻只有一个有效租约，双 claim 被拒（`task-claimed`），非持有者心跳/完成被拒（`task-not-owner`）。租约到期后任务回到 open，其他对端可认领；干净 `bus:detach` 立即释放，崩溃（EOF）则等到租约到期。任务事件写入 channel 6，并追加到套接字旁的 `.tasks` 检查点；`bus:unhost`/`bus:host` 重启后从检查点恢复未完成任务。

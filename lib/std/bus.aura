@@ -14,7 +14,7 @@
         bus:hotspots bus:diff-worldlines
         bus:constraints
         bus:install-constraint bus:rollback-constraints
-        bus:audit-filter
+        bus:audit-filter bus:task-audit
         bus:trial bus:keep bus:rollback bus:grant bus:revoke bus:audit
         bus:publish-source bus:bind-evidence bus:evidence bus:canary-confirm
         bus:candidate-digest bus:source-field bus:grant-activate
@@ -408,10 +408,18 @@
 (define (bus:audit session worldline)
   (bus-call "audit" session worldline))
 
-; (bus:audit-filter session worldline actor since-seq) filters the same log;
-; 0 means "all" for worldline/actor, 1 starts at the first event.
-(define (bus:audit-filter session worldline actor since-seq)
-  (bus-call "audit" session worldline actor since-seq))
+; (bus:audit-filter session worldline actor since-seq [task-id]) filters
+; the same log; 0 means "all" for worldline/actor, 1 starts at the first
+; event, and a nonzero task id keeps the task/approval/contract/budget
+; events for that task (#5405).
+(define (bus:audit-filter session worldline actor since-seq . task-id)
+  (bus-call "audit" session worldline actor since-seq
+            (if (pair? task-id) (car task-id) 0)))
+
+; (bus:task-audit session task-id) -> (ok count truncated events)
+; The task's own timeline, in audit order.
+(define (bus:task-audit session task-id)
+  (bus-call "audit" session 0 0 1 task-id))
 
 ; Agent-facing help: verbs, capabilities and failure codes.
 (define (bus:help)
@@ -440,7 +448,7 @@
     "round: (bus:round-open session) -> (ok round-id phase); (bus:round-state session) -> (ok phase round-id worldline opened sealed reason); (bus:round-budget session) -> (ok wall-ms cooldown-ms max-rounds version); the admission round state machine\n"
     "degrade: (bus:degradation-state session) -> (ok version samples alerts last-change min-samples drift limit calm keys); (bus:degrade-install session min-samples alpha drift limit calm down-keys up-keys) / (bus:degrade-rollback session) -> (ok version); the host's degradation detector\n"
     "slo: (bus:slo session) -> (ok frames frame-cpu-ns p99-cpu-ns publishes publish-cpu-ns attaches attach-cpu-ns catchups catchup-max); (bus:capacity-plan session) -> (ok rounds low remaining-metrics remaining-cc remaining-patches remaining-worldlines remaining-nodes committed-bytes image-bytes); the bus's own overhead and the room left\n"
-    "tasks: (bus:post-task session parent ref [flags]) -> (ok id state owner epoch deadline parent ref); (bus:claim session lease-ms [task-id]) claims the oldest open task (or the named one) atomically; (bus:heartbeat session task-id lease-ms) renews; (bus:complete session task-id ref) / (bus:fail session task-id ref) finish; (bus:task-status session task-id) reads state (0 open, 1 claimed, 2 done, 3 failed) and open-count; channel 6 carries the task events\n"
+    "tasks: (bus:post-task session parent ref [flags]) -> (ok id state owner epoch deadline parent ref); (bus:claim session lease-ms [task-id]) claims the oldest open task (or the named one) atomically; (bus:heartbeat session task-id lease-ms) renews; (bus:complete session task-id ref) / (bus:fail session task-id ref) finish; (bus:task-status session task-id) reads state (0 open, 1 claimed, 2 done, 3 failed) and open-count; (bus:task-audit session task-id) reads that task's audit timeline; channel 6 carries the task events\n"
     "approve: (bus:approve session object decision timeout-ms) -> (ok object state deadline); decision 0 request, 1 approve, 2 deny, 3 query; a pending object times out to denied; needs approve; a task posted with flags bit 0 cannot be claimed until approved\n"
     "contract: (bus:contract session task-id test-ref metric-floor) -> (ok task fingerprint state ...); (bus:contract-status session task-id); (bus:contract-evidence session task-id tests-passed metric); the contract gates the claim and requires passing tests + metric floor before complete\n"
     "budget: (bus:budget-report session [task-id]) -> (ok task tokens token-limit wall-ms wall-limit failures failure-limit flags); (bus:budget-charge session task-id tokens [wall-ms] [failures]); exceeding a limit trips the task or the global ledger and fails closed\n"

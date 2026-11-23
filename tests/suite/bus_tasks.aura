@@ -25,6 +25,9 @@
   (check= 2 (list-ref st 2))
   (check= 9 (list-ref st 7))
   (check (bus:ok? (bus:query s 6 0 0)))
+  (define timeline (bus:task-audit s id))
+  (check (bus:ok? timeline))
+  (check (> (list-ref timeline 1) 0))
   (bus:detach s)
   (check (bus:ok? (bus:unhost 8979))))
 

@@ -1715,6 +1715,17 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
                     continue;
                 if (request.actor != 0 && e.token != request.actor)
                     continue;
+                // #5405: task-filtered timeline. The task events carry the
+                // task id in detail; the range is the task/approval/
+                // contract/budget family.
+                if (request.reserved != 0) {
+                    const auto kind = static_cast<std::uint16_t>(e.kind);
+                    const bool task_event =
+                        kind >= static_cast<std::uint16_t>(AuditKind::TaskPost) &&
+                        kind <= static_cast<std::uint16_t>(AuditKind::BudgetExceeded);
+                    if (!task_event || e.detail != request.reserved)
+                        continue;
+                }
                 events.push_back({seq, &e});
             }
             constexpr std::size_t kMaxEvents = 20;
@@ -2908,7 +2919,7 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
                     ApprovalRecord pending{};
                     approvals_.request(req.task, root_token, 0, round_now_ms(), &pending, &why);
                     record_audit(AuditKind::ApprovalRequest, root_token, 0, req.task);
-                    record_audit(AuditKind::ContractCreate, root_token, 0, contract.fingerprint);
+                    record_audit(AuditKind::ContractCreate, root_token, 0, req.task);
                     reply.state = static_cast<std::uint64_t>(ApprovalState::Pending);
                 }
             } else if (req.op == 1) {
