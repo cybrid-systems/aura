@@ -76,6 +76,7 @@ extern "C" int aura_production_defaults_active_probe() noexcept;
 #include "core/runtime_config.hh"
 #include <atomic>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
@@ -367,6 +368,14 @@ inline void record_hotpath_invariant_hit_sampled() noexcept {
     return cached.load(std::memory_order_relaxed);
 }
 
+// Issue #5408: name a failing hot contract before the abort. Kept out of the
+// macros so clang-tidy does not diagnose the fprintf at every expansion site
+// (cert-err33-c / cppcoreguidelines-pro-type-vararg).
+inline void emit_hot_contract_failure(const char* file, int line, const char* expr) noexcept {
+    // NOLINTNEXTLINE(cert-err33-c, cppcoreguidelines-pro-type-vararg)
+    std::fprintf(stderr, "aura: hot contract failed at %s:%d: %s\n", file, line, expr);
+}
+
 } // namespace aura::core::cpp26
 
 // ── Issue #2142 / #2435: AURA_HOT_* macros (see file header policy) ─────
@@ -402,9 +411,7 @@ inline void record_hotpath_invariant_hit_sampled() noexcept {
         if (!(expr)) {                                                                             \
             ::aura::core::cpp26::observe_hot_contract_false();                                     \
             ::aura::core::cpp26::record_hotpath_contract_harden_trap();                            \
-            /* Name the invariant: a silent abort is not actionable. */                            \
-            std::fprintf(stderr, "aura: hot contract failed at %s:%d: %s\n", __FILE__, __LINE__,   \
-                         #expr);                                                                   \
+            ::aura::core::cpp26::emit_hot_contract_failure(__FILE__, __LINE__, #expr);             \
             std::abort();                                                                          \
         }                                                                                          \
     } while (0)
@@ -424,9 +431,7 @@ inline void record_hotpath_invariant_hit_sampled() noexcept {
             if (!(expr)) {                                                                         \
                 ::aura::core::cpp26::observe_hot_contract_false();                                 \
                 ::aura::core::cpp26::record_hotpath_contract_harden_trap();                        \
-                /* Name the invariant: a silent abort is not actionable. */                        \
-                std::fprintf(stderr, "aura: hot contract failed at %s:%d: %s\n", __FILE__,         \
-                             __LINE__, #expr);                                                     \
+                ::aura::core::cpp26::emit_hot_contract_failure(__FILE__, __LINE__, #expr);         \
                 std::abort();                                                                      \
             }                                                                                      \
         }                                                                                          \
@@ -473,9 +478,7 @@ inline void record_hotpath_invariant_hit_sampled() noexcept {
         if (!(expr)) [[unlikely]] {                                                                \
             ::aura::core::cpp26::observe_hot_contract_false();                                     \
             ::aura::core::cpp26::record_hotpath_contract_harden_trap();                            \
-            /* Name the invariant: a silent abort is not actionable. */                            \
-            std::fprintf(stderr, "aura: hot contract failed at %s:%d: %s\n", __FILE__, __LINE__,   \
-                         #expr);                                                                   \
+            ::aura::core::cpp26::emit_hot_contract_failure(__FILE__, __LINE__, #expr);             \
             std::abort();                                                                          \
         }                                                                                          \
     } while (0)
@@ -485,9 +488,7 @@ inline void record_hotpath_invariant_hit_sampled() noexcept {
         if (!(expr)) [[unlikely]] {                                                                \
             ::aura::core::cpp26::observe_hot_contract_false();                                     \
             ::aura::core::cpp26::record_hotpath_contract_harden_trap();                            \
-            /* Name the invariant: a silent abort is not actionable. */                            \
-            std::fprintf(stderr, "aura: hot contract failed at %s:%d: %s\n", __FILE__, __LINE__,   \
-                         #expr);                                                                   \
+            ::aura::core::cpp26::emit_hot_contract_failure(__FILE__, __LINE__, #expr);             \
             std::abort();                                                                          \
         }                                                                                          \
     } while (0)
