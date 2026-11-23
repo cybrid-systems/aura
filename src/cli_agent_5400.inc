@@ -38,6 +38,11 @@ struct Options {
     std::string prompt;
     bool mock = false;
     std::string preset = "dev";
+    // #5422: the supervisor's execution layer.
+    bool spawn = false;
+    bool spawn_once = false;
+    std::uint64_t interval_ms = 1000;
+    std::uint64_t spawn_batch = 4;
 };
 
 inline constexpr std::string_view kUsage5400 =
@@ -56,10 +61,15 @@ inline constexpr std::string_view kUsage5400 =
     "  --prompt FILE      role prompt file (real LLM mode)\n"
     "  --mock             deterministic mock model; no network, no key\n"
     "  --preset P         sandbox preset (default dev)\n"
+    "  --spawn            supervisor: start/stop worker processes\n"
+    "  --spawn-once       supervisor: one spawn cycle, wait, exit (CI)\n"
+    "  --interval-ms N    supervisor spawn loop interval (default 1000)\n"
+    "  --spawn-batch N    max workers started per cycle (default 4)\n"
     "\n"
     "Roles: 4 planner posts tasks, 5 worker claims/executes them,\n"
     "6 supervisor asks the host how many workers its real CPU/memory\n"
-    "slack holds (no fixed cap) and prints the audited decision.\n";
+    "slack holds (no fixed cap). With --spawn it also starts the workers\n"
+    "and audits spawn/shrink decisions.\n";
 
 inline bool parse_u64_5400(std::string_view s, std::uint64_t* out) {
     if (s.empty())
@@ -160,6 +170,29 @@ inline bool parse_5400(int argc, char** argv, Options* out, bool* help, std::str
         } else if (a == "--preset") {
             if (!value("--preset", &out->preset))
                 return false;
+        } else if (a == "--spawn") {
+            out->spawn = true;
+        } else if (a == "--spawn-once") {
+            out->spawn = true;
+            out->spawn_once = true;
+        } else if (a == "--interval-ms") {
+            std::string v;
+            if (!value("--interval-ms", &v))
+                return false;
+            if (!parse_u64_5400(v, &out->interval_ms) || out->interval_ms < 50 ||
+                out->interval_ms > 3600000) {
+                *error = "--interval-ms must be between 50 and 3600000";
+                return false;
+            }
+        } else if (a == "--spawn-batch") {
+            std::string v;
+            if (!value("--spawn-batch", &v))
+                return false;
+            if (!parse_u64_5400(v, &out->spawn_batch) || out->spawn_batch == 0 ||
+                out->spawn_batch > 64) {
+                *error = "--spawn-batch must be between 1 and 64";
+                return false;
+            }
         } else {
             *error = std::string("unknown option '") + std::string(a) + "'";
             return false;
@@ -176,6 +209,14 @@ inline bool parse_5400(int argc, char** argv, Options* out, bool* help, std::str
                  "'; expected planner, worker or supervisor (roles 4/5/6)";
         return false;
     }
+    if (out->spawn && out->role != "supervisor") {
+        *error = "--spawn is only valid with --role supervisor";
+        return false;
+    }
+    if (out->spawn && !out->mock && out->prompt.empty()) {
+        *error = "spawned workers need --prompt FILE (or use --mock)";
+        return false;
+    }
     if (!out->mock && out->role != "supervisor" && out->prompt.empty()) {
         *error = "a real planner/worker run needs --prompt FILE (or use --mock)";
         return false;
@@ -186,6 +227,233 @@ inline bool parse_5400(int argc, char** argv, Options* out, bool* help, std::str
     }
     return true;
 }
+
+// #5422: the supervisor's execution layer. The plan comes from the host
+// (bus:supervise); this loop owns the worker processes. It is opt-in
+// (--spawn) and defaults to one-shot only in tests (--spawn-once).
+namespace spawn_5422 {
+
+inline volatile std::sig_atomic_t g_stop = 0;
+
+inline void on_signal(int) {
+    g_stop = 1;
+}
+
+inline bool query_plan(aura::bus::Attach& att, aura::bus::SupervisorReplyBody* out,
+                       std::string* why) {
+    aura::bus::SupervisorQueryBody req{};
+    if (!aura::bus::send_frame(
+            att.sock, aura::bus::FrameType::SupervisorQuery, att.session,
+            {reinterpret_cast<const std::byte*>(&req), sizeof(req)})) {
+        *why = "supervise query send failed";
+        return false;
+    }
+    aura::bus::FrameHeader hdr{};
+    std::vector<std::byte> body(aura::bus::kBusMaxControlFrame);
+    aura::bus::TransportError err;
+    if (!aura::bus::recv_frame(att.sock, &hdr, std::span<std::byte>(body), &err)) {
+        *why = err.message.empty() ? "supervise query reply lost" : err.message;
+        return false;
+    }
+    if (hdr.type == static_cast<std::uint16_t>(aura::bus::FrameType::Error)) {
+        aura::bus::ErrorBody eb{};
+        std::memcpy(&eb, body.data(), std::min(sizeof(eb), body.size()));
+        *why = eb.message;
+        return false;
+    }
+    if (hdr.len < sizeof(aura::bus::SupervisorReplyBody)) {
+        *why = "malformed supervise reply";
+        return false;
+    }
+    std::memcpy(out, body.data(), sizeof(*out));
+    return true;
+}
+
+inline bool send_note(aura::bus::Attach& att, std::uint64_t spawned, std::uint64_t stopped,
+                      std::uint64_t alive) {
+    aura::bus::SupervisorNoteBody note{};
+    note.spawned = spawned;
+    note.stopped = stopped;
+    note.alive = alive;
+    return aura::bus::send_frame(
+        att.sock, aura::bus::FrameType::SupervisorNote, att.session,
+        {reinterpret_cast<const std::byte*>(&note), sizeof(note)});
+}
+
+inline void reap(std::vector<pid_t>* children) {
+    for (auto it = children->begin(); it != children->end();) {
+        int status = 0;
+        const pid_t r = ::waitpid(*it, &status, WNOHANG);
+        if (r == *it || (r == -1 && errno == ECHILD))
+            it = children->erase(it);
+        else
+            ++it;
+    }
+}
+
+inline pid_t spawn_worker(const Options& opts, const std::string& self, std::string* why) {
+    const pid_t pid = ::fork();
+    if (pid < 0) {
+        *why = std::string("fork: ") + std::strerror(errno);
+        return -1;
+    }
+    if (pid == 0) {
+#ifdef __linux__
+        // The worker must not outlive a killed supervisor.
+        (void)::prctl(PR_SET_PDEATHSIG, SIGTERM);
+#endif
+        std::vector<std::string> args;
+        args.push_back(self);
+        args.push_back("agent");
+        args.push_back("--role");
+        args.push_back("worker");
+        args.push_back("--workspace");
+        args.push_back(std::to_string(opts.workspace));
+        if (!opts.path.empty()) {
+            args.push_back("--path");
+            args.push_back(opts.path);
+        }
+        args.push_back("--lease-ms");
+        args.push_back(std::to_string(opts.lease_ms));
+        args.push_back("--preset");
+        args.push_back(opts.preset);
+        if (!opts.requirement.empty()) {
+            args.push_back("--requirement");
+            args.push_back(opts.requirement);
+        }
+        if (opts.mock) {
+            args.push_back("--mock");
+        } else {
+            args.push_back("--prompt");
+            args.push_back(opts.prompt);
+        }
+        std::vector<char*> argv;
+        argv.reserve(args.size() + 1);
+        for (auto& a : args)
+            argv.push_back(a.data());
+        argv.push_back(nullptr);
+        ::execv(self.c_str(), argv.data());
+        _exit(127);
+    }
+    return pid;
+}
+
+inline void terminate_children(std::vector<pid_t>* children) {
+    for (const pid_t pid : *children)
+        ::kill(pid, SIGTERM);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (!children->empty() && std::chrono::steady_clock::now() < deadline) {
+        reap(children);
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    for (const pid_t pid : *children)
+        ::kill(pid, SIGKILL);
+    for (const pid_t pid : *children) {
+        int status = 0;
+        ::waitpid(pid, &status, 0);
+    }
+    children->clear();
+}
+
+inline void wait_children(std::vector<pid_t>* children) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+    while (!children->empty() && std::chrono::steady_clock::now() < deadline) {
+        reap(children);
+        if (!children->empty())
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    if (!children->empty())
+        terminate_children(children);
+}
+
+inline int run(const Options& opts, int* exit_code) {
+    *exit_code = 1;
+    std::signal(SIGINT, on_signal);
+    std::signal(SIGTERM, on_signal);
+
+    const std::string path =
+        opts.path.empty() ? aura::bus::default_socket_path(opts.workspace) : opts.path;
+    aura::bus::Attach att;
+    aura::bus::TransportError err;
+    aura::bus::Client client;
+    if (!client.connect_to(path, opts.workspace, 6, 255, &att, &err)) {
+        std::println(std::cerr, "error: supervisor attach failed: {}", err.message);
+        return 1;
+    }
+    const std::string self = ::aura::compiler::paths::resolve_self_executable(nullptr);
+    if (self.empty()) {
+        std::println(std::cerr, "error: cannot resolve the aura executable for workers");
+        return 1;
+    }
+
+    std::vector<pid_t> children;
+    std::uint64_t total_spawned = 0;
+    std::uint64_t last_desired = ~std::uint64_t{0};
+    bool query_ok = true;
+    while (!g_stop) {
+        reap(&children);
+        aura::bus::SupervisorReplyBody plan{};
+        std::string why;
+        if (!query_plan(att, &plan, &why)) {
+            std::println(std::cerr, "error: supervise query failed: {}", why);
+            query_ok = false;
+            break;
+        }
+        const std::uint64_t alive = children.size();
+        std::uint64_t spawned = 0;
+        std::uint64_t stopped = 0;
+        if (plan.workers > alive) {
+            const std::uint64_t want =
+                std::min<std::uint64_t>(plan.workers - alive, opts.spawn_batch);
+            for (std::uint64_t i = 0; i < want; ++i) {
+                std::string spawn_why;
+                const pid_t pid = spawn_worker(opts, self, &spawn_why);
+                if (pid < 0) {
+                    std::println(std::cerr, "error: cannot spawn worker: {}", spawn_why);
+                    break;
+                }
+                children.push_back(pid);
+                ++spawned;
+                ++total_spawned;
+            }
+        } else if (plan.workers < alive && plan.workers < last_desired) {
+            // A shrink is a decision, not a kill: active workers finish
+            // their task and exit; the supervisor stops replacing them.
+            stopped = alive - plan.workers;
+        }
+        if (spawned > 0 || stopped > 0) {
+            if (!send_note(att, spawned, stopped, children.size()))
+                std::println(std::cerr, "warning: supervisor note was not delivered");
+        }
+        std::println(
+            "supervisor-desired={} alive={} spawned={} stopped={} cpu-free-pct={} mem-free-mb={} "
+            "reason={}",
+            plan.workers, children.size(), spawned, stopped, plan.cpu_free_pct, plan.mem_free_mb,
+            plan.reason);
+        std::fflush(stdout);
+        last_desired = plan.workers;
+        if (opts.spawn_once)
+            break;
+        for (std::uint64_t waited = 0; waited < opts.interval_ms && !g_stop; waited += 100) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            reap(&children);
+        }
+    }
+
+    if (!opts.spawn_once)
+        terminate_children(&children);
+    else
+        wait_children(&children);
+
+    std::println("supervisor-done spawned={} alive={}", total_spawned, children.size());
+    std::fflush(stdout);
+    if (g_stop)
+        std::println("supervisor-stopped=1");
+    *exit_code = query_ok ? 0 : 1;
+    return *exit_code;
+}
+
+} // namespace spawn_5422
 
 } // namespace agent_cli_5400
 
@@ -206,6 +474,12 @@ agent_argv_5400(int argc, char** argv, int* exit_code) {
     if (help) {
         std::print("{}", kUsage5400);
         *exit_code = 0;
+        return std::nullopt;
+    }
+    // #5422: the supervisor owns worker processes; it does not run the
+    // Aura runner itself. --spawn is opt-in.
+    if (opts.spawn) {
+        (void)spawn_5422::run(opts, exit_code);
         return std::nullopt;
     }
     const auto runner = runner_5400();

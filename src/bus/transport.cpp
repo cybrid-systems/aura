@@ -1578,6 +1578,18 @@ bool Server::supervisor_query(SupervisorReplyBody* out, std::string* why) {
     return true;
 }
 
+// #5422: the supervisor's spawn accounting. The spawn/shrink events are
+// separate from the plan: the plan says what fits, the note says what the
+// supervisor did about it. Both carry the live child count in version.
+void Server::supervisor_note(const SupervisorNoteBody& note) {
+    if (note.spawned > 0)
+        audit_.add_constraint(AuditKind::SupervisorSpawn, root_token_, 0, note.spawned, note.alive,
+                              "supervise:spawn");
+    if (note.stopped > 0)
+        audit_.add_constraint(AuditKind::SupervisorShrink, root_token_, 0, note.stopped, note.alive,
+                              "supervise:shrink");
+}
+
 // #5394: the detector saw a sustained degradation. While an
 // observation runs, the degradation belongs to the candidate under
 // observation: it is rolled back. Otherwise it is a signal: the host
@@ -2666,6 +2678,18 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
             }
             send_frame(conn_fd, FrameType::Credit, session,
                        {reinterpret_cast<const std::byte*>(&reply), sizeof(reply)});
+            break;
+        }
+        case FrameType::SupervisorNote: {
+            // #5422: the supervisor reports what it did with the plan.
+            // Write-only: the reply is the audit trail, not a frame.
+            if (header.len < sizeof(SupervisorNoteBody))
+                break;
+            SupervisorNoteBody note{};
+            std::memcpy(&note, body.data(), sizeof(note));
+            if (!require(kCapRead, 0, 0))
+                break;
+            supervisor_note(note);
             break;
         }
         case FrameType::Grant: {

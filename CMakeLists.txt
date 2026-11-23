@@ -2129,6 +2129,14 @@ target_link_libraries(test_bus_agents_e2e PRIVATE aura-bus)
 aura_strict_test_warnings(tests/compiler/test_bus_agents_e2e.cpp)
 add_test(NAME test_bus_agents_e2e_5406 COMMAND ./test_bus_agents_e2e)
 
+# Issue #5422: the supervisor's --spawn execution layer and its audit.
+add_executable(test_bus_agent_spawn tests/compiler/test_bus_agent_spawn.cpp)
+target_include_directories(test_bus_agent_spawn PRIVATE src)
+target_compile_features(test_bus_agent_spawn PUBLIC cxx_std_26)
+target_link_libraries(test_bus_agent_spawn PRIVATE aura-bus)
+aura_strict_test_warnings(tests/compiler/test_bus_agent_spawn.cpp)
+add_test(NAME test_bus_agent_spawn_5422 COMMAND ./test_bus_agent_spawn)
+
 # Issue #5404: the approval point and its fail-closed timeout.
 add_executable(test_bus_approval tests/compiler/test_bus_approval.cpp)
 target_include_directories(test_bus_approval PRIVATE src)

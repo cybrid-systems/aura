@@ -120,6 +120,10 @@ enum class FrameType : std::uint16_t {
     // #5400: the supervisor's scaling query. The host measures its
     // own CPU/memory slack and replies with the worker count it fits.
     SupervisorQuery = 44,
+    // #5422: the supervisor's spawn accounting. A note is write-only:
+    // the host audits the workers the supervisor started/stopped and
+    // the live count after the change.
+    SupervisorNote = 45,
 };
 
 enum class RejectReason : std::uint16_t {
@@ -388,6 +392,15 @@ struct SupervisorReplyBody {
     std::uint64_t cpu_free_pct = 0; // idle share of the machine (0-100)
     std::uint64_t mem_free_mb = 0;  // MemAvailable at decision time
     std::uint64_t reason = 3;       // 0 ok, 1 CPU, 2 memory, 3 insufficient
+};
+
+// #5422: the supervisor's spawn accounting. spawned/stopped are the
+// changes this cycle; alive is the live child count after them.
+struct SupervisorNoteBody {
+    std::uint64_t spawned = 0;
+    std::uint64_t stopped = 0;
+    std::uint64_t alive = 0;
+    std::uint64_t reserved = 0;
 };
 
 struct DegradeKeyStateBody {
@@ -809,6 +822,8 @@ public:
     // #5400: measure the host's own slack and record the scaling
     // decision. No fixed worker cap: the machine's slack is the bound.
     bool supervisor_query(SupervisorReplyBody* out, std::string* why);
+    // #5422: audit the supervisor's spawn/shrink accounting.
+    void supervisor_note(const SupervisorNoteBody& note);
     // #5394: the degradation detector. The host watches the configured
     // metrics and opens a round when a degradation is sustained.
     void set_degrade_config(const DegradeConfig& config) { degrade_.configure(config); }

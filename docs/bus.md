@@ -255,3 +255,14 @@ canary 拒绝)、`test_bus_closed_loop_e2e`(#5382,三进程正常闭环 + 五类
 - **mock**：`--mock` 用确定性的 `mock:<task-id>:<requirement>` 作为答案，不访问网络、不需要密钥，CI 只走 mock。
 - **监督者**：`bus:supervise` 让宿主按**自己的**实际余量算 worker 数（`/proc/meminfo` 的 MemAvailable、`/proc/stat` 的空闲 CPU），不设固定上限；余量不足时给 0 并写审计。决策是 `SupervisorPlan`(48) 审计事件：`version` 是可行的 worker 数，`result` 是原因码（0 有余量、1 CPU 受限、2 内存受限、3 不足一个 worker）。测试可用 `AURA_SUPERVISOR_MEM_FREE_MB` / `AURA_SUPERVISOR_CPU_FREE_PCT` / `AURA_SUPERVISOR_CPUS` 夹具固定容量。
 - **e2e**：`test_bus_agents_e2e` 用一个宿主、一个 planner、四个 mock worker 跑完契约批准 → claim → 完成 → 契约门，并注入四条故障：worker 中途被杀（租约到期后他人认领）、宿主重启（任务板恢复）、配额超限（熔断、任务失败关闭）、批准超时（默认拒绝、不得开工）；审计回放无完整性发现。
+
+### 监督者执行层 --spawn(#5422)
+
+`bus:supervise` 给决策，`--spawn` 让监督者自己执行它。
+
+- `aura agent --role supervisor --spawn`：附着为 role 6，按 `--interval-ms`（默认 1000）循环查询宿主计划；`desired > alive` 时补拉 `aura agent --role worker`，`desired < alive` 时只停止补拉、不杀正在干活的 worker（让租约自然 drain）。没有固定总量上限，只有单轮速率 `--spawn-batch`（默认 4）防 fork 风暴。
+- `--spawn-once`：只跑一轮决策+补拉，等子进程退出后结束，CI 用。
+- 进程安全：子进程 `PR_SET_PDEATHSIG(SIGTERM)`，监督者崩溃不留孤儿；SIGINT/SIGTERM 停止拉新并转发 SIGTERM，5s 后 SIGKILL；PID 表用 `waitpid(WNOHANG)` 回收。
+- 审计：`SupervisorPlan`(48) 仍是决策（version=desired，result=0..3）；`SupervisorSpawn`(49) 记录本轮 started 数（result）与 spawn 后 live 数（version）；`SupervisorShrink`(50) 记录计划收缩数。`SupervisorNote` 帧只写审计，不回包。
+- 真实 worker 需要 `--prompt FILE`；`--mock` 仍确定性、无网络、无密钥。
+- 已交付的 worker 是一次性 drain 循环：没有任务就退出，监督者按间隔补拉。空闲且无任务时会有进程 churn；生产上应用任务到达驱动或后续 worker keepalive 单优化（本单不做）。

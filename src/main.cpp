@@ -1,5 +1,14 @@
 #include "core/runtime_config.hh"
+#include <chrono>
+#include <csignal>
 #include <cstdlib>
+#include <cstring>
+#include <thread>
+#include <sys/wait.h>
+#if defined(__linux__)
+#include <sys/prctl.h>
+#endif
+#include "bus/transport.hh"        // #5422: the supervisor's spawn loop
 #include "../lib/aura_value_abi.h" // #4502: single encoding source
 #define AURA_ABI_STR2(x) #x
 #define AURA_ABI_STR(x) AURA_ABI_STR2(x)
@@ -1211,9 +1220,12 @@ inline constexpr SubHelp4935 kSubHelp4935[] = {
      "\n"
      "  --workspace N, --path PATH, --lease-ms N, --tasks N\n"
      "  --contract, --requirement TEXT, --prompt FILE, --mock, --preset P\n"
+     "  --spawn, --spawn-once, --interval-ms N, --spawn-batch N\n"
      "\n"
      "The supervisor asks the host for its real CPU/memory slack; the\n"
-     "host decides the worker count (no fixed cap) and audits it.\n"},
+     "host decides the worker count (no fixed cap) and audits it.\n"
+     "With --spawn it also starts/waits for the worker processes and\n"
+     "audits each spawn/shrink cycle.\n"},
     {"bus-repro", "re-run a bus KEEP's admission decision from its repro package",
      "usage: aura bus-repro FILE [--json]\n"
      "\n"

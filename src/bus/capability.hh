@@ -223,6 +223,10 @@ enum class AuditKind : std::uint16_t {
     // worker count that fits, result the limiting reason (0 ok,
     // 1 CPU, 2 memory, 3 insufficient).
     SupervisorPlan = 48,
+    // #5422: the supervisor actually started/stopped workers. result is
+    // the count in this cycle, version the live count after it.
+    SupervisorSpawn = 49,
+    SupervisorShrink = 50,
 };
 
 struct AuditEvent {
