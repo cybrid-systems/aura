@@ -182,6 +182,13 @@ void TaskBoard::apply(const TaskRecord& event) {
             it->second.deadline_ms = 0;
             break;
         }
+        case TaskEventKind::Update: {
+            const auto it = tasks_.find(event.task_id);
+            if (it == tasks_.end())
+                break;
+            it->second.flags = event.flags;
+            break;
+        }
     }
 }
 
@@ -445,6 +452,40 @@ bool TaskBoard::release(std::uint64_t actor, std::uint64_t task_id, Task* out, T
     task.state = TaskState::Open;
     task.owner = 0;
     task.deadline_ms = 0;
+    if (out)
+        *out = task;
+    if (event)
+        *event = record;
+    return true;
+}
+
+bool TaskBoard::set_flags(std::uint64_t task_id, std::uint64_t flags, Task* out, TaskRecord* event,
+                          std::string* why) {
+    const auto it = tasks_.find(task_id);
+    if (it == tasks_.end()) {
+        if (why)
+            *why = "task-unknown";
+        return false;
+    }
+    Task& task = it->second;
+    if (task.state != TaskState::Open) {
+        if (why)
+            *why = task_state_reason(task.state);
+        return false;
+    }
+    TaskRecord record{};
+    record.task_id = task.id;
+    record.parent = task.parent;
+    record.kind = static_cast<std::uint64_t>(TaskEventKind::Update);
+    record.actor = 0;
+    record.ref = task.ref;
+    record.flags = flags;
+    if (!persist(record)) {
+        if (why)
+            *why = "task checkpoint write failed";
+        return false;
+    }
+    task.flags = flags;
     if (out)
         *out = task;
     if (event)

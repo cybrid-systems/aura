@@ -13,6 +13,7 @@
 #include "bus/capability.hh"
 #include "bus/channel.hh"
 #include "bus/constraint.hh"
+#include "bus/contract.hh"
 #include "bus/degrade.hh"
 #include "bus/gate.hh"
 #include "bus/image.hh"
@@ -108,6 +109,9 @@ enum class FrameType : std::uint16_t {
     // #5404: request/approve/deny an object (a task/contract id).
     ApprovalAction = 38,
     ApprovalReply = 39,
+    // #5402: create/query a contract and record its terminal evidence.
+    ContractAction = 40,
+    ContractReply = 41,
 };
 
 enum class RejectReason : std::uint16_t {
@@ -438,6 +442,29 @@ struct ApprovalReplyBody {
     char reason[32] = {};
 };
 
+// #5402: op 0 create, 1 status, 2 evidence.
+struct ContractRequestBody {
+    std::uint64_t op = 0;
+    std::uint64_t task = 0;
+    std::uint64_t test_ref = 0;
+    std::uint64_t metric_floor = 0;
+    std::uint64_t tests_passed = 0;
+    std::uint64_t metric = 0;
+    std::uint64_t reserved = 0;
+};
+
+struct ContractReplyBody {
+    std::uint64_t task = 0;
+    std::uint64_t fingerprint = 0;
+    std::uint64_t state = 0; // ApprovalState
+    std::uint64_t test_ref = 0;
+    std::uint64_t metric_floor = 0;
+    std::uint64_t tests_passed = 0;
+    std::uint64_t metric = 0;
+    std::uint64_t has_evidence = 0;
+    char reason[32] = {};
+};
+
 // #5397: the reproduction package of one worldline. It carries
 // everything the admission decision was made from, so the decision can
 // be re-run offline and must land on the same verdict.
@@ -486,6 +513,8 @@ static_assert(sizeof(TaskRequestBody) == 56);
 static_assert(sizeof(TaskReplyBody) == 96);
 static_assert(sizeof(ApprovalRequestBody) == 32);
 static_assert(sizeof(ApprovalReplyBody) == 64);
+static_assert(sizeof(ContractRequestBody) == 56);
+static_assert(sizeof(ContractReplyBody) == 96);
 
 struct TransportError {
     int code = 0; // errno or RejectReason
@@ -909,6 +938,8 @@ private:
     TaskBoard tasks_{};
     // #5404: task/scoped-contract approvals.
     ApprovalBoard approvals_{};
+    // #5402: executable acceptance contracts.
+    ContractBoard contracts_{};
     std::string task_checkpoint_path_;
     // #5394: the degradation detector.
     DegradeDetector degrade_{};

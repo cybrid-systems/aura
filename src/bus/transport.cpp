@@ -1286,6 +1286,9 @@ void Server::commit_task_event(const TaskRecord& event) {
         case TaskEventKind::Requeue:
             kind = AuditKind::TaskExpire;
             break;
+        case TaskEventKind::Update:
+            kind = AuditKind::TaskUpdate;
+            break;
     }
     record_audit(kind, event.actor, 0, event.task_id);
     if (image_base_ == nullptr)
@@ -2784,6 +2787,91 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
             reply_loan(installed);
             break;
         }
+        case FrameType::ContractAction: {
+            // #5402: create (0), query (1) or record terminal evidence (2).
+            if (header.len < sizeof(ContractRequestBody)) {
+                deny(EINVAL, "malformed contract request");
+                break;
+            }
+            ContractRequestBody req{};
+            std::memcpy(&req, body.data(), sizeof(req));
+            Contract contract{};
+            ContractReplyBody reply{};
+            std::string why;
+            bool ok = false;
+            if (req.op == 0) {
+                if (!require(kCapApprove, 0, 0))
+                    break;
+                Task task{};
+                if (!tasks_.get(req.task, &task)) {
+                    deny(ENOENT, "task-unknown");
+                    break;
+                }
+                if (task.state != TaskState::Open) {
+                    deny(EBUSY, "task is not open for a contract");
+                    break;
+                }
+                ok = contracts_.create(req.task, req.test_ref, req.metric_floor, &contract, &why);
+                if (ok) {
+                    TaskRecord event{};
+                    ok = tasks_.set_flags(req.task, task.flags | kTaskNeedsApproval, &task, &event,
+                                          &why);
+                    if (ok)
+                        commit_task_event(event);
+                }
+                if (ok) {
+                    ApprovalRecord pending{};
+                    approvals_.request(req.task, root_token, 0, round_now_ms(), &pending, &why);
+                    record_audit(AuditKind::ApprovalRequest, root_token, 0, req.task);
+                    record_audit(AuditKind::ContractCreate, root_token, 0, contract.fingerprint);
+                    reply.state = static_cast<std::uint64_t>(ApprovalState::Pending);
+                }
+            } else if (req.op == 1) {
+                if (!require(kCapRead, 0, 0))
+                    break;
+                ok = contracts_.get(req.task, &contract);
+                if (!ok)
+                    why = "contract is missing";
+                if (ok) {
+                    ApprovalRecord approval{};
+                    if (approvals_.get(req.task, &approval))
+                        reply.state = static_cast<std::uint64_t>(approval.state);
+                    else
+                        reply.state = static_cast<std::uint64_t>(ApprovalState::Pending);
+                }
+            } else if (req.op == 2) {
+                if (!require(kCapPublish, 0, 0))
+                    break;
+                Task task{};
+                if (!tasks_.get(req.task, &task)) {
+                    deny(ENOENT, "task-unknown");
+                    break;
+                }
+                if (task.state != TaskState::Claimed || task.owner != root_token) {
+                    deny(EPERM, "contract evidence must come from the task holder");
+                    break;
+                }
+                ok = contracts_.evidence(req.task, req.tests_passed, req.metric, &contract, &why);
+                if (ok)
+                    record_audit(AuditKind::ContractEvidence, root_token, 0, req.task);
+            } else {
+                why = "unknown contract op";
+            }
+            if (!ok) {
+                deny(why == "contract is missing" ? ENOENT : EINVAL, why);
+                break;
+            }
+            reply.task = req.task;
+            reply.fingerprint = contract.fingerprint;
+            reply.test_ref = contract.test_ref;
+            reply.metric_floor = contract.metric_floor;
+            reply.tests_passed = contract.tests_passed;
+            reply.metric = contract.metric;
+            reply.has_evidence = contract.has_evidence ? 1 : 0;
+            send_frame(conn_fd, FrameType::ContractReply, session,
+                       {reinterpret_cast<const std::byte*>(&reply), sizeof(reply)});
+            break;
+        }
         case FrameType::ApprovalAction: {
             // #5404: request (0), approve (1) or deny (2) an object.
             if (header.len < sizeof(ApprovalRequestBody)) {
@@ -2904,10 +2992,24 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
                     ok = tasks_.heartbeat(root_token, req.task_id, req.lease_ms, now_ms, &task,
                                           &event, &why);
                     break;
-                case 3:
+                case 3: {
+                    // #5402: a contract task can only complete when the
+                    // contract is approved and its evidence is satisfied.
+                    Contract contract{};
+                    if (contracts_.get(req.task_id, &contract)) {
+                        ApprovalRecord approval{};
+                        if (!approvals_.get(req.task_id, &approval) ||
+                            approval.state != ApprovalState::Approved) {
+                            why = "contract-unapproved";
+                            break;
+                        }
+                        if (!contracts_.satisfied(req.task_id, &why))
+                            break;
+                    }
                     ok = tasks_.complete(root_token, req.task_id, req.ref, now_ms, &task, &event,
                                          &why);
                     break;
+                }
                 case 4:
                     ok = tasks_.fail(root_token, req.task_id, req.ref, now_ms, &task, &event, &why);
                     break;

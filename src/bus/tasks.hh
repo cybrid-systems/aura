@@ -68,6 +68,9 @@ public:
     // release). The holder must match.
     bool release(std::uint64_t actor, std::uint64_t task_id, Task* out, TaskRecord* event,
                  std::string* why);
+    // #5402: update the flags of an open task (e.g. contract approval).
+    bool set_flags(std::uint64_t task_id, std::uint64_t flags, Task* out, TaskRecord* event,
+                   std::string* why);
 
     // Requeue every claim whose deadline passed. Appends one Expire
     // event per task to *events.

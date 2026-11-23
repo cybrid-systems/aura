@@ -25,6 +25,7 @@
         bus:slo bus:capacity-plan
         bus:post-task bus:claim bus:heartbeat bus:complete bus:fail
         bus:task-status bus:approve
+        bus:contract bus:contract-status bus:contract-evidence
         bus:status bus:code bus:message bus:ok? bus:help
         bus:attach? bus:error? bus:record?)
 
@@ -310,6 +311,27 @@
 (define (bus:approve session object decision timeout-ms)
   (bus-call "approve" session object decision timeout-ms))
 
+; ── v0.3.3 验收契约(#5402) ───────────────────────────────────
+; (bus:contract session task-id test-ref metric-floor)
+; -> (ok task fingerprint state test-ref floor tests metric has-evidence)
+; Attach an executable acceptance contract to an open task. The task
+; then needs an approval before it can be claimed; the coordinator
+; creates a pending approval object keyed by the task id.
+(define (bus:contract session task-id test-ref metric-floor)
+  (bus-call "contract" session task-id test-ref metric-floor))
+
+; (bus:contract-status session task-id) -> (ok task fingerprint state ...)
+; state is the approval state (0 pending, 1 approved, 2 denied, 3 timeout).
+(define (bus:contract-status session task-id)
+  (bus-call "contract-status" session task-id))
+
+; (bus:contract-evidence session task-id tests-passed metric)
+; -> (ok task fingerprint state ...)
+; The task holder reports the terminal evidence; a task cannot complete
+; until the tests passed and the metric reached the floor.
+(define (bus:contract-evidence session task-id tests-passed metric)
+  (bus-call "contract-evidence" session task-id tests-passed metric))
+
 ; (bus:claim session lease-ms [task-id]) -> (ok id state owner epoch deadline parent ref)
 ; Atomically claim a specific task, or the oldest open one when task-id
 ; is omitted/0. A second claim while the lease is live is refused
@@ -403,6 +425,7 @@
     "slo: (bus:slo session) -> (ok frames frame-cpu-ns p99-cpu-ns publishes publish-cpu-ns attaches attach-cpu-ns catchups catchup-max); (bus:capacity-plan session) -> (ok rounds low remaining-metrics remaining-cc remaining-patches remaining-worldlines remaining-nodes committed-bytes image-bytes); the bus's own overhead and the room left\n"
     "tasks: (bus:post-task session parent ref [flags]) -> (ok id state owner epoch deadline parent ref); (bus:claim session lease-ms [task-id]) claims the oldest open task (or the named one) atomically; (bus:heartbeat session task-id lease-ms) renews; (bus:complete session task-id ref) / (bus:fail session task-id ref) finish; (bus:task-status session task-id) reads state (0 open, 1 claimed, 2 done, 3 failed) and open-count; channel 6 carries the task events\n"
     "approve: (bus:approve session object decision timeout-ms) -> (ok object state deadline); decision 0 request, 1 approve, 2 deny, 3 query; a pending object times out to denied; needs approve; a task posted with flags bit 0 cannot be claimed until approved\n"
+    "contract: (bus:contract session task-id test-ref metric-floor) -> (ok task fingerprint state ...); (bus:contract-status session task-id); (bus:contract-evidence session task-id tests-passed metric); the contract gates the claim and requires passing tests + metric floor before complete\n"
     "failures: (error code message); codes: schema-mismatch, seals-missing, loan-exhausted, image-full, validation-failed, permission, unregistered-id, transport-failed\n"))
 
 (define (bus:status record) (car record))

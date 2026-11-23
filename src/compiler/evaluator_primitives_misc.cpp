@@ -884,6 +884,48 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                                     });
             };
 
+            // #5402: contract create/status/evidence.
+            const auto contract_call = [&](std::uint64_t contract_op, std::uint64_t task,
+                                           std::uint64_t test_ref, std::uint64_t metric_floor,
+                                           std::uint64_t tests_passed,
+                                           std::uint64_t metric) -> EvalValue {
+                aura::bus::ContractRequestBody req{};
+                req.op = contract_op;
+                req.task = task;
+                req.test_ref = test_ref;
+                req.metric_floor = metric_floor;
+                req.tests_passed = tests_passed;
+                req.metric = metric;
+                if (!aura::bus::send_frame(att.sock, aura::bus::FrameType::ContractAction,
+                                           att.session,
+                                           {reinterpret_cast<const std::byte*>(&req), sizeof(req)}))
+                    return bus_error(ev, "transport-failed", "contract send failed");
+                aura::bus::FrameHeader hdr{};
+                std::vector<std::byte> body(aura::bus::kBusMaxControlFrame);
+                if (!recv_reply(att.sock, &hdr, &body))
+                    return bus_error(ev, "transport-failed", "contract reply lost");
+                if (hdr.type == static_cast<std::uint16_t>(aura::bus::FrameType::Error)) {
+                    aura::bus::ErrorBody eb{};
+                    std::memcpy(&eb, body.data(), std::min(sizeof(eb), body.size()));
+                    return bus_error(ev, eb.code == EPERM ? "permission" : "validation-failed",
+                                     eb.message);
+                }
+                if (hdr.type != static_cast<std::uint16_t>(aura::bus::FrameType::ContractReply) ||
+                    hdr.len < sizeof(aura::bus::ContractReplyBody))
+                    return bus_error(ev, "validation-failed", "malformed contract reply");
+                aura::bus::ContractReplyBody reply{};
+                std::memcpy(&reply, body.data(), sizeof(reply));
+                return bus_list(ev, {bus_string(ev, "ok"),
+                                     make_int(static_cast<std::int64_t>(reply.task)),
+                                     make_int(static_cast<std::int64_t>(reply.fingerprint)),
+                                     make_int(static_cast<std::int64_t>(reply.state)),
+                                     make_int(static_cast<std::int64_t>(reply.test_ref)),
+                                     make_int(static_cast<std::int64_t>(reply.metric_floor)),
+                                     make_int(static_cast<std::int64_t>(reply.tests_passed)),
+                                     make_int(static_cast<std::int64_t>(reply.metric)),
+                                     make_int(static_cast<std::int64_t>(reply.has_evidence))});
+            };
+
             if (op == "subscribe") {
                 std::int64_t channel = 0;
                 if (a.size() < 3 || !bus_int(a[2], &channel))
@@ -1092,6 +1134,34 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                                      make_int(static_cast<std::int64_t>(reply.state)),
                                      make_int(static_cast<std::int64_t>(reply.deadline_ms)),
                                      make_int(static_cast<std::int64_t>(reply.actor))});
+            }
+
+            // #5402: executable acceptance contracts.
+            if (op == "contract") {
+                std::int64_t task = 0, test_ref = 0, floor = 0;
+                if (a.size() < 5 || !bus_int(a[2], &task) || !bus_int(a[3], &test_ref) ||
+                    !bus_int(a[4], &floor))
+                    return bus_error(ev, "validation-failed",
+                                     "contract needs task, test ref and metric floor");
+                return contract_call(0, static_cast<std::uint64_t>(task),
+                                     static_cast<std::uint64_t>(test_ref),
+                                     static_cast<std::uint64_t>(floor), 0, 0);
+            }
+            if (op == "contract-status") {
+                std::int64_t task = 0;
+                if (a.size() < 3 || !bus_int(a[2], &task))
+                    return bus_error(ev, "validation-failed", "contract-status needs a task");
+                return contract_call(1, static_cast<std::uint64_t>(task), 0, 0, 0, 0);
+            }
+            if (op == "contract-evidence") {
+                std::int64_t task = 0, tests = 0, metric = 0;
+                if (a.size() < 5 || !bus_int(a[2], &task) || !bus_int(a[3], &tests) ||
+                    !bus_int(a[4], &metric))
+                    return bus_error(ev, "validation-failed",
+                                     "contract-evidence needs task, tests and metric");
+                return contract_call(2, static_cast<std::uint64_t>(task), 0, 0,
+                                     static_cast<std::uint64_t>(tests),
+                                     static_cast<std::uint64_t>(metric));
             }
 
             if (op == "publish-metric") {

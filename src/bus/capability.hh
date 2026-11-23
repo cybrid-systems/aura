@@ -210,6 +210,12 @@ enum class AuditKind : std::uint16_t {
     ApprovalGrant = 39,
     ApprovalDeny = 40,
     ApprovalTimeout = 41,
+    // #5402: acceptance contracts and their terminal evidence.
+    ContractCreate = 42,
+    ContractEvidence = 43,
+    ContractReject = 44,
+    // #5402: a task flag update (e.g. the contract approval gate).
+    TaskUpdate = 45,
 };
 
 struct AuditEvent {

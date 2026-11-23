@@ -120,7 +120,7 @@ namespace {
                     std::memcpy(&t, image.data() + at, std::min<std::uint64_t>(element, sizeof(t)));
                     if (t.task_id == 0)
                         return fail("task record has no task id");
-                    if (t.kind > static_cast<std::uint64_t>(TaskEventKind::Requeue))
+                    if (t.kind > static_cast<std::uint64_t>(TaskEventKind::Update))
                         return fail("task event kind outside the domain");
                     if (t.parent != 0 && t.parent >= t.task_id)
                         return fail("task parent does not point to an earlier task");

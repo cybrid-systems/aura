@@ -218,6 +218,7 @@ enum class TaskEventKind : std::uint64_t {
     Release = 5,   // the holder/disconnect returned the task
     Expire = 6,    // the lease ran out; the task is open again
     Requeue = 7,   // a coordinator requeued a claimed task
+    Update = 8,    // flags changed without touching the state
 };
 
 enum class TaskState : std::uint64_t {
