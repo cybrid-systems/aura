@@ -923,8 +923,7 @@ static bool ir_user_arity_bad(const aura::ir::IRFunction& func, std::size_t got)
 // OpArg (#5222); the interpreter hands the callee a user-args vector in
 // the same shape: named parameters followed by one pair-list rest slot.
 static std::vector<EvalValue> ir_pack_rest_args(const aura::ir::IRFunction& func,
-                                                std::span<const EvalValue> args,
-                                                Evaluator* ev) {
+                                                std::span<const EvalValue> args, Evaluator* ev) {
     std::vector<EvalValue> out(args.begin(), args.end());
     if (!func.variadic || func.arg_count == 0)
         return out;
@@ -1208,8 +1207,7 @@ EvalResult IRInterpreter::call_closure(std::uint64_t closure_id, std::span<const
     // Issue #5421: the IR interpreter used to pass a dotted-rest slot the
     // argument as-is. Bind the trailing actual arguments as a pair list,
     // exactly like the tree walker and the #5222 JIT path.
-    std::vector<EvalValue> user_args =
-        ir_pack_rest_args(callee_func, args, context_.evaluator);
+    std::vector<EvalValue> user_args = ir_pack_rest_args(callee_func, args, context_.evaluator);
     std::vector<EvalValue> all_args;
     all_args.reserve(closure.env.size() + user_args.size());
     for (auto& ev : closure.env)
@@ -2560,8 +2558,8 @@ namespace {
 
                     // Issue #5421: direct IR calls need the same dotted-rest
                     // packing as call_closure / the JIT.
-                    auto user_args = ir_pack_rest_args(callee_func, call_args,
-                                                       st.context.evaluator);
+                    auto user_args =
+                        ir_pack_rest_args(callee_func, call_args, st.context.evaluator);
                     std::vector<EvalValue> all_args;
                     for (auto& ev : closure.env)
                         all_args.push_back(ev);
@@ -2858,8 +2856,8 @@ namespace {
                     if (auto arity = ir_user_arity_diag(&instr, callee_func, apply_args.size(),
                                                         st.context.evaluator))
                         return IrFlow::ret_eval(std::unexpected(std::move(*arity)));
-                    auto user_args = ir_pack_rest_args(callee_func, apply_args,
-                                                       st.context.evaluator);
+                    auto user_args =
+                        ir_pack_rest_args(callee_func, apply_args, st.context.evaluator);
                     std::vector<EvalValue> all_args;
                     for (auto& ev : closure.env)
                         all_args.push_back(ev);

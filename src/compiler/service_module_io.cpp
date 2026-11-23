@@ -164,8 +164,7 @@ void CompilerService::cache_module(const std::string& content, const std::string
                     if (skip || id >= f.size())
                         return;
                     auto nv = f.get(id);
-                    if (nv.tag == aura::ast::NodeTag::Let ||
-                        nv.tag == aura::ast::NodeTag::LetRec) {
+                    if (nv.tag == aura::ast::NodeTag::Let || nv.tag == aura::ast::NodeTag::LetRec) {
                         auto nm = std::string(p.resolve(nv.sym_id));
                         if (!nv.children.empty())
                             walk(nv.child(0));
