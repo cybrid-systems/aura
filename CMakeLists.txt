@@ -2121,6 +2121,14 @@ target_link_libraries(test_bus_supervisor PRIVATE aura-bus)
 aura_strict_test_warnings(tests/compiler/test_bus_supervisor.cpp)
 add_test(NAME test_bus_supervisor_5400 COMMAND ./test_bus_supervisor)
 
+# Issue #5406: the multi-agent e2e lane (mock LLM) and its four fault paths.
+add_executable(test_bus_agents_e2e tests/compiler/test_bus_agents_e2e.cpp)
+target_include_directories(test_bus_agents_e2e PRIVATE src)
+target_compile_features(test_bus_agents_e2e PUBLIC cxx_std_26)
+target_link_libraries(test_bus_agents_e2e PRIVATE aura-bus)
+aura_strict_test_warnings(tests/compiler/test_bus_agents_e2e.cpp)
+add_test(NAME test_bus_agents_e2e_5406 COMMAND ./test_bus_agents_e2e)
+
 # Issue #5404: the approval point and its fail-closed timeout.
 add_executable(test_bus_approval tests/compiler/test_bus_approval.cpp)
 target_include_directories(test_bus_approval PRIVATE src)
