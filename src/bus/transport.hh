@@ -21,6 +21,7 @@
 #include "bus/replay.hh"
 #include "bus/round.hh"
 #include "bus/slo.hh"
+#include "bus/supervisor.hh"
 #include "bus/tasks.hh"
 
 #include <array>
@@ -116,6 +117,9 @@ enum class FrameType : std::uint16_t {
     // #5403: task/global budget charge and report.
     BudgetAction = 42,
     BudgetReply = 43,
+    // #5400: the supervisor's scaling query. The host measures its
+    // own CPU/memory slack and replies with the worker count it fits.
+    SupervisorQuery = 44,
 };
 
 enum class RejectReason : std::uint16_t {
@@ -371,6 +375,19 @@ struct SloReplyBody {
     std::uint64_t image_bytes = 0;
     std::uint64_t loans = 0;   // the loans the peers hold
     std::uint64_t pending = 0; // the trials that are still pending
+};
+
+// #5400: the supervisor plan. A read-only query: the caller asks,
+// the host measures and audits the decision.
+struct SupervisorQueryBody {
+    std::uint64_t reserved = 0;
+};
+
+struct SupervisorReplyBody {
+    std::uint64_t workers = 0;      // the workers the slack holds now
+    std::uint64_t cpu_free_pct = 0; // idle share of the machine (0-100)
+    std::uint64_t mem_free_mb = 0;  // MemAvailable at decision time
+    std::uint64_t reason = 3;       // 0 ok, 1 CPU, 2 memory, 3 insufficient
 };
 
 struct DegradeKeyStateBody {
@@ -789,6 +806,9 @@ public:
     [[nodiscard]] CapacityPlan capacity_plan() const;
     // The performance counters or the capacity plan.
     bool slo_query(std::uint64_t kind, SloReplyBody* out, std::string* why);
+    // #5400: measure the host's own slack and record the scaling
+    // decision. No fixed worker cap: the machine's slack is the bound.
+    bool supervisor_query(SupervisorReplyBody* out, std::string* why);
     // #5394: the degradation detector. The host watches the configured
     // metrics and opens a round when a degradation is sustained.
     void set_degrade_config(const DegradeConfig& config) { degrade_.configure(config); }

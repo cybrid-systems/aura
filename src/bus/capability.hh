@@ -219,6 +219,10 @@ enum class AuditKind : std::uint16_t {
     // #5403: budget usage and the circuit breaker.
     BudgetCharge = 46,
     BudgetExceeded = 47,
+    // #5400: one supervisor scaling decision. version carries the
+    // worker count that fits, result the limiting reason (0 ok,
+    // 1 CPU, 2 memory, 3 insufficient).
+    SupervisorPlan = 48,
 };
 
 struct AuditEvent {

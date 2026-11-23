@@ -951,6 +951,9 @@ static std::string project_channel_4913() {
 // Issue #5397: `aura bus-repro FILE` — re-run a KEEP's admission
 // decision from its reproduction package, offline.
 #include "cli_bus_repro_5397.inc"
+// Issue #5400: `aura agent` — a bus peer runner for planner/worker/
+// supervisor, with a deterministic mock model for CI.
+#include "cli_agent_5400.inc"
 // Issue #5263: the formatter is included first — the language server's
 // formatting handlers call cli_fmt_5263::reindent() directly (one C++
 // interface, no shell out, no new Aura primitive).
@@ -1199,6 +1202,18 @@ inline constexpr SubHelp4935 kSubHelp4935[] = {
      "\n"
      "Commands inside: :load FILE, :reload FILE, :ws, :worldline, :snapshot,\n"
      ":restore ID, :help\n"},
+    {"agent", "attach a planner/worker/supervisor bus peer",
+     "usage: aura agent --role planner|worker|supervisor [options]\n"
+     "\n"
+     "Attach the bus peer runner (lib/std/bus_agent_cli.aura) as role\n"
+     "4 planner, 5 worker or 6 supervisor. A worker claims a task,\n"
+     "calls the model (or --mock), heartbeats and completes/fails.\n"
+     "\n"
+     "  --workspace N, --path PATH, --lease-ms N, --tasks N\n"
+     "  --contract, --requirement TEXT, --prompt FILE, --mock, --preset P\n"
+     "\n"
+     "The supervisor asks the host for its real CPU/memory slack; the\n"
+     "host decides the worker count (no fixed cap) and audits it.\n"},
     {"bus-repro", "re-run a bus KEEP's admission decision from its repro package",
      "usage: aura bus-repro FILE [--json]\n"
      "\n"
@@ -1437,6 +1452,14 @@ static std::optional<int> front_door_4913(int& argc, char**& argv) {
                          "hint: 'aura --help' lists the commands; 'aura {}.aura' runs a file", sub);
             return 1;
         }
+    }
+    if (sub == "agent") {
+        int code = 0;
+        auto args = agent_argv_5400(argc, argv, &code);
+        if (!args)
+            return code;
+        rewrite(std::move(*args));
+        return std::nullopt;
     }
     if (sub == "new")
         return aura_new_4913(argc, argv);

@@ -22,7 +22,7 @@
         bus:audit-replay bus:audit-evo bus:defines bus:repro bus:source-read
         bus:round-open bus:round-state bus:round-budget
         bus:degradation-state bus:degrade-install bus:degrade-rollback
-        bus:slo bus:capacity-plan
+        bus:slo bus:capacity-plan bus:supervise
         bus:post-task bus:claim bus:heartbeat bus:complete bus:fail
         bus:task-status bus:approve
         bus:contract bus:contract-status bus:contract-evidence
@@ -394,6 +394,15 @@
 (define (bus:capacity-plan session)
   (bus-call "capacity-plan" session))
 
+; (bus:supervise session) -> (ok workers cpu-free-pct mem-free-mb reason)
+; The host measures its own CPU/memory slack and decides how many
+; workers fit. There is no fixed worker cap; the machine is the bound.
+; reason: 0 room, 1 CPU-bound, 2 memory-bound, 3 not enough slack for
+; one worker. Each call is audited as a SupervisorPlan event (the
+; worker count in version, the reason code in result).
+(define (bus:supervise session)
+  (bus-call "supervise" session))
+
 ; (bus:grant session bits channels loans expires worldline [task-id]) -> (ok token)
 ; A task-scoped grant carries the task id; the worker may only open,
 ; keep and roll back that task's trial (#5401).
@@ -425,7 +434,7 @@
 (define (bus:help)
   (string-append
     "std/bus (v0.3.3) — local tool bus\n"
-    "host: (bus:host workspace [image-bytes] [path]) -> (ok path workspace); the workspace owner hosts; roles 1 perf / 2 harness / 3 maintainer\n"
+    "host: (bus:host workspace [image-bytes] [path]) -> (ok path workspace); the workspace owner hosts; roles 1 perf / 2 harness / 3 maintainer / 4 planner / 5 worker / 6 supervisor\n"
     "unhost: (bus:unhost workspace); host?: (bus:host? workspace) -> (ok 0|1)\n"
     "attach: (bus:attach path workspace role caps channels) -> (ok session size caps)\n"
     "detach: (bus:detach session)\n"
@@ -448,6 +457,7 @@
     "round: (bus:round-open session) -> (ok round-id phase); (bus:round-state session) -> (ok phase round-id worldline opened sealed reason); (bus:round-budget session) -> (ok wall-ms cooldown-ms max-rounds version); the admission round state machine\n"
     "degrade: (bus:degradation-state session) -> (ok version samples alerts last-change min-samples drift limit calm keys); (bus:degrade-install session min-samples alpha drift limit calm down-keys up-keys) / (bus:degrade-rollback session) -> (ok version); the host's degradation detector\n"
     "slo: (bus:slo session) -> (ok frames frame-cpu-ns p99-cpu-ns publishes publish-cpu-ns attaches attach-cpu-ns catchups catchup-max); (bus:capacity-plan session) -> (ok rounds low remaining-metrics remaining-cc remaining-patches remaining-worldlines remaining-nodes committed-bytes image-bytes); the bus's own overhead and the room left\n"
+    "supervise: (bus:supervise session) -> (ok workers cpu-free-pct mem-free-mb reason); the host measures its own slack; no fixed worker cap; the decision is audited\n"
     "tasks: (bus:post-task session parent ref [flags]) -> (ok id state owner epoch deadline parent ref); (bus:claim session lease-ms [task-id]) claims the oldest open task (or the named one) atomically; (bus:heartbeat session task-id lease-ms) renews; (bus:complete session task-id ref) / (bus:fail session task-id ref) finish; (bus:task-status session task-id) reads state (0 open, 1 claimed, 2 done, 3 failed) and open-count; (bus:task-audit session task-id) reads that task's audit timeline; channel 6 carries the task events\n"
     "approve: (bus:approve session object decision timeout-ms) -> (ok object state deadline); decision 0 request, 1 approve, 2 deny, 3 query; a pending object times out to denied; needs approve; a task posted with flags bit 0 cannot be claimed until approved\n"
     "contract: (bus:contract session task-id test-ref metric-floor) -> (ok task fingerprint state ...); (bus:contract-status session task-id); (bus:contract-evidence session task-id tests-passed metric); the contract gates the claim and requires passing tests + metric floor before complete\n"

@@ -1873,7 +1873,8 @@ add_library(aura-bus STATIC src/bus/image.cpp src/bus/image_schema.cpp src/bus/t
                                  src/bus/capability.cpp src/bus/channel.cpp src/bus/constraint.cpp
                                  src/bus/query.cpp src/bus/host.cpp src/bus/gate.cpp src/bus/replay.cpp
                                  src/bus/round.cpp src/bus/degrade.cpp src/bus/slo.cpp src/bus/tasks.cpp
-                                 src/bus/approval.cpp src/bus/contract.cpp src/bus/budget.cpp)
+                                 src/bus/approval.cpp src/bus/contract.cpp src/bus/budget.cpp
+                                 src/bus/supervisor.cpp)
 target_include_directories(aura-bus PUBLIC ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(aura PRIVATE aura-bus)
 # Issue #5127/#5122: evaluator_primitives_misc.cpp's bus-call bridge
@@ -2111,6 +2112,14 @@ target_compile_features(test_bus_tasks PUBLIC cxx_std_26)
 target_link_libraries(test_bus_tasks PRIVATE aura-bus)
 aura_strict_test_warnings(tests/compiler/test_bus_tasks.cpp)
 add_test(NAME test_bus_tasks_5399 COMMAND ./test_bus_tasks)
+
+# Issue #5400: the supervisor's scaling decision from real/fixture slack.
+add_executable(test_bus_supervisor tests/compiler/test_bus_supervisor.cpp)
+target_include_directories(test_bus_supervisor PRIVATE src)
+target_compile_features(test_bus_supervisor PUBLIC cxx_std_26)
+target_link_libraries(test_bus_supervisor PRIVATE aura-bus)
+aura_strict_test_warnings(tests/compiler/test_bus_supervisor.cpp)
+add_test(NAME test_bus_supervisor_5400 COMMAND ./test_bus_supervisor)
 
 # Issue #5404: the approval point and its fail-closed timeout.
 add_executable(test_bus_approval tests/compiler/test_bus_approval.cpp)

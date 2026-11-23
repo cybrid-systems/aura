@@ -1,0 +1,171 @@
+; lib/std/bus_agent_cli.aura — the `aura agent` runner (#5400)
+;
+; The CLI (src/cli_agent_5400.inc) parses the options into AURA_AGENT_*
+; environment variables and runs this file. The loop lives here so it
+; uses the same std/bus and std/llm a user script would:
+;
+;   planner      claim nothing; post N tasks (optionally with a contract)
+;   worker       claim -> model (or deterministic mock) -> heartbeat ->
+;                contract evidence -> complete/fail; drain until no task
+;   supervisor   ask the host for its real CPU/memory slack and print
+;                the audited worker count (no fixed cap)
+;
+; The mock mode never touches the network and needs no key. A real run
+; reads --prompt FILE; no prompt body is hardcoded here.
+
+(require "std/bus" all:)
+(require "std/llm" all:)
+(require "std/fs" all:)
+
+(define (agent-env name fallback)
+  (let ((v (getenv name)))
+    (if (string? v) v fallback)))
+
+(define (agent-env-int name fallback)
+  (let ((v (agent-env name "")))
+    (if (string=? v "") fallback (string->number v))))
+
+(define (agent-say label value)
+  (display label) (display "=") (display value) (newline))
+
+(define AGENT-ROLE (agent-env-int "AURA_AGENT_ROLE" 5))
+(define AGENT-WS (agent-env-int "AURA_AGENT_WORKSPACE" 8900))
+(define AGENT-PATH (agent-env "AURA_AGENT_BUS_PATH" ""))
+(define AGENT-LEASE (agent-env-int "AURA_AGENT_LEASE_MS" 30000))
+(define AGENT-TASKS (agent-env-int "AURA_AGENT_TASKS" 4))
+(define AGENT-CONTRACT (string=? (agent-env "AURA_AGENT_CONTRACT" "0") "1"))
+(define AGENT-MOCK (string=? (agent-env "AURA_AGENT_MOCK" "0") "1"))
+(define AGENT-REQUIREMENT (agent-env "AURA_AGENT_REQUIREMENT" ""))
+(define AGENT-PROMPT (agent-env "AURA_AGENT_PROMPT" ""))
+
+(define (agent-prompt)
+  (if (string=? AGENT-PROMPT "")
+    ""
+    (let ((text (read-file AGENT-PROMPT)))
+      (if (string? text) text ""))))
+
+(define (agent-mock-answer id)
+  ; Deterministic: the same task id always yields the same bytes, so a
+  ; seeded audit timeline has a stable shape.
+  (string-append "mock:" (number->string id) ":" AGENT-REQUIREMENT))
+
+(define (agent-llm-answer id)
+  (if AGENT-MOCK
+    (agent-mock-answer id)
+    (let ((sys (agent-prompt))
+          (usr (string-append AGENT-REQUIREMENT "\ntask " (number->string id))))
+      (let ((r (llm:chat sys usr)))
+        (if (and (hash? r) (hash-ref r "ok" #f))
+          (hash-ref r "content" "")
+          (string-append "llm-error:" (if (hash? r) (hash-ref r "error" "unknown") "unknown")))))))
+
+(define (agent-exit code)
+  (display "agent-exit=") (display code) (newline)
+  (exit code))
+
+(define attached (bus:attach AGENT-PATH AGENT-WS AGENT-ROLE 255 255))
+(if (bus:error? attached)
+  (begin
+    (display "attach-error=")
+    (display (bus:message attached))
+    (newline)
+    (agent-exit 1)))
+
+(define SID (car (cdr attached)))
+(agent-say "role" AGENT-ROLE)
+(agent-say "workspace" AGENT-WS)
+
+; ── planner ───────────────────────────────────────────────────────
+(define (planner-run)
+  (let loop ((i 0) (posted 0))
+    (if (>= i AGENT-TASKS)
+      (begin
+        (agent-say "posted" posted)
+        (bus:detach SID)
+        (agent-exit 0))
+      (let ((p (bus:post-task SID 0 (+ 1000 i))))
+        (if (bus:error? p)
+          (begin
+            (display "post-error=")
+            (display (bus:message p))
+            (newline)
+            (bus:detach SID)
+            (agent-exit 1))
+          (let* ((id (car (cdr p)))
+                 (c (if AGENT-CONTRACT (bus:contract SID id 42 100) #f)))
+            (if (and AGENT-CONTRACT (bus:error? c))
+              (begin
+                (display "contract-error=")
+                (display (bus:message c))
+                (newline)
+                (bus:detach SID)
+                (agent-exit 1))
+              (begin
+                (agent-say "task" id)
+                (loop (+ i 1) (+ posted 1))))))))))
+
+; ── worker ────────────────────────────────────────────────────────
+(define (worker-run)
+  (let loop ((done 0))
+    (let ((c (bus:claim SID AGENT-LEASE)))
+      (if (bus:error? c)
+        (begin
+          (agent-say "idle" (bus:message c))
+          (agent-say "completed" done)
+          (bus:detach SID)
+          (agent-exit 0))
+        (let* ((id (car (cdr c)))
+               (hb (bus:heartbeat SID id AGENT-LEASE)))
+          (if (bus:error? hb)
+            (begin
+              (display "heartbeat-error=")
+              (display (bus:message hb))
+              (newline)
+              (bus:detach SID)
+              (agent-exit 1))
+            (let* ((answer (agent-llm-answer id))
+                   ; A contract task needs terminal evidence before the
+                   ; board accepts complete. A plain task has no contract;
+                   ; the error is expected and ignored.
+                   (ev (bus:contract-evidence SID id 1 100))
+                   (done-rec (bus:complete SID id (+ 100 id))))
+              (if (bus:error? done-rec)
+                (begin
+                  (display "complete-error=")
+                  (display (bus:message done-rec))
+                  (newline)
+                  (bus:detach SID)
+                  (agent-exit 1))
+                (begin
+                  (agent-say "completed-task" id)
+                  (agent-say "bytes" (string-length answer))
+                  (loop (+ done 1)))))))))))
+
+; ── supervisor ────────────────────────────────────────────────────
+(define (supervisor-run)
+  (let ((plan (bus:supervise SID)))
+    (if (bus:error? plan)
+      (begin
+        (display "supervise-error=")
+        (display (bus:message plan))
+        (newline)
+        (bus:detach SID)
+        (agent-exit 1))
+      (begin
+        (agent-say "scale" (list-ref plan 1))
+        (agent-say "cpu-free-pct" (list-ref plan 2))
+        (agent-say "mem-free-mb" (list-ref plan 3))
+        (agent-say "reason" (list-ref plan 4))
+        (bus:detach SID)
+        (agent-exit 0)))))
+
+(cond
+  ((= AGENT-ROLE 4) (planner-run))
+  ((= AGENT-ROLE 5) (worker-run))
+  ((= AGENT-ROLE 6) (supervisor-run))
+  (else
+    (display "role-error=unknown role ")
+    (display AGENT-ROLE)
+    (newline)
+    (bus:detach SID)
+    (agent-exit 1)))

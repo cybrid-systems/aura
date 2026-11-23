@@ -1,0 +1,54 @@
+; #5400: the multi-agent bus surface. Planner/worker/supervisor
+; attach with their own role ids while an unknown role is still
+; refused (the host keeps serving). The supervisor asks the host for
+; its real slack; the decision is auditable.
+(require "std/test" all:)
+(require "std/bus" all:)
+(test-file "bus_agents.aura")
+
+(test-case "agent roles attach and unknown is refused" (hash "issue" 5400 "tags" "bus")
+  (define h (bus:host 8975))
+  (check (bus:ok? h))
+  (define p (bus:attach "" 8975 4 255 255))
+  (define w (bus:attach "" 8975 5 255 255))
+  (define s (bus:attach "" 8975 6 255 255))
+  (check (bus:ok? p))
+  (check (bus:ok? w))
+  (check (bus:ok? s))
+  (define bad (bus:attach "" 8975 9 255 255))
+  (check (bus:error? bad))
+  ; The host still serves a legal peer after the refusal (#5383).
+  (define after (bus:attach "" 8975 5 255 255))
+  (check (bus:ok? after))
+  (bus:detach (car (cdr after)))
+  (bus:detach (car (cdr s)))
+  (bus:detach (car (cdr w)))
+  (bus:detach (car (cdr p)))
+  (check (bus:ok? (bus:unhost 8975))))
+
+(test-case "supervisor plan is queryable and audited" (hash "issue" 5400 "tags" "bus")
+  (define h (bus:host 8976))
+  (check (bus:ok? h))
+  (define a (bus:attach "" 8976 6 255 255))
+  (check (bus:ok? a))
+  (define s (car (cdr a)))
+  (define plan (bus:supervise s))
+  (check (bus:ok? plan))
+  (check (>= (list-ref plan 1) 0))
+  (check (<= 0 (list-ref plan 2) 100))
+  (check (>= (list-ref plan 3) 0))
+  (check (<= 0 (list-ref plan 4) 3))
+  ; The decision is in the audit log: kind 48, worker count in version,
+  ; reason in result.
+  (define audit (bus:audit-filter s 0 0 1))
+  (check (bus:ok? audit))
+  (define rows (list-ref audit 3))
+  (define found #f)
+  (for-each
+    (lambda (r)
+      (if (and (= (list-ref r 0) 48) (= (list-ref r 4) (list-ref plan 1)))
+        (set! found #t)))
+    rows)
+  (check found)
+  (bus:detach s)
+  (check (bus:ok? (bus:unhost 8976))))

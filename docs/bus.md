@@ -28,7 +28,7 @@
 
 - 位：`read`、`publish`、`trial`、`keep`、`rollback`、`grant`、`constraint-write`、`approve`。订阅、查询和审计读取不是新位，它们是 `read` 加频道掩码。
 - 每个能力还带频道掩码、workspace、可选 loan 配额、到期代次、worldline 作用域和 task 作用域。派生只能缩小，不能加位、加频道、放宽配额/到期/作用域，也不能换 workspace；task 作用域只能收窄到一个任务，不能改到另一个任务。
-- 附着时按工作区允许策略授予请求的子集；角色（perf/harness/maintainer）只是提示，未知角色默认拒绝。
+- 附着时按工作区允许策略授予请求的子集；角色（perf/harness/maintainer/planner/worker/supervisor）只是提示，未知角色默认拒绝。
 - 只有持有 `grant` 的会话才能再授权，且形成派生树；撤销祖先会递归失效。
 - `keep` / `rollback` 只作用于本会话开的 trial，或能力显式 scoped 到的 worldline；`keep` 还要求该 trial 的 loan 尚未归还。
 - 会话结束：名下 pending trial 全部按 rollback 处理并写审计，未提交 loan 收回。
@@ -89,8 +89,9 @@
   4096 条，超出保底的空间在五频道间均分（#5387）；用尽仍是硬错误。
 - `(bus:unhost workspace)` 停止服务、收回线程、unlink 套接字;
   `(bus:host? workspace)` → `(ok 0|1)`。
-- 角色约定:`1` perf、`2` harness、`3` maintainer、`0` 通用。宿主策略允许这四个
-  角色请求能力子集;未知角色拒绝。沙箱预设取自 `AURA_SANDBOX`(ci 去
+- 角色约定:`1` perf、`2` harness、`3` maintainer、`4` planner、`5` worker、
+  `6` supervisor、`0` 通用。宿主策略允许这些角色请求能力子集;角色名只是提示,
+  不放宽能力(仍按预设与 grant 衰减);未知角色拒绝。沙箱预设取自 `AURA_SANDBOX`(ci 去
   constraint-write,prod 再去 grant),附着时裁剪。
 - 内置可安装约束名(注册表,默认不安装——约束由专家下发,不内置生效):
   `allow-small`(new-value ≤ 100,#5127 测试契约)与 `value-fits-immediate`
@@ -244,3 +245,13 @@ canary 拒绝)、`test_bus_closed_loop_e2e`(#5382,三进程正常闭环 + 五类
 - **已知边界**：规则安装者是**运行时**属性，不进映像；宿主重启后重建约束集时这份归属信息丢失，保护集的保护只在一个宿主生命周期内成立。
 - 宿主环境变量：`AURA_BUS_PEER_FRAMES`（持续帧率，帧/秒，默认 1000）、`AURA_BUS_PEER_BURST`（令牌桶深度，默认 20000）、`AURA_BUS_PEER_HELLO_MS`（握手超时，默认 10000）、`AURA_BUS_PEER_CONSTRAINT_CHANGES`（约束写入配额，默认 16/窗口）、`AURA_BUS_PEER_CONSTRAINT_WINDOW_MS`（约束写入窗口，默认 1000ms）。
 - 审计新增：`RateLimited`(29)、`GrantLimited`(30)。
+
+### v0.3.3 planner/worker 与监督者伸缩(#5400)
+
+多智能体对端的运行器在 Aura 本体里，提示词与角色编排留给后续仓库。
+
+- **角色**：新增 `4 planner`、`5 worker`、`6 supervisor`。角色仍只是附着提示，能力按预设与 grant 衰减；未知角色照旧拒绝，宿主继续服务（#5383）。
+- **`aura agent`**：解析 `--role planner|worker|supervisor`、`--workspace`、`--path`、`--lease-ms`、`--tasks`、`--contract`、`--requirement`、`--prompt`、`--mock`、`--preset`，再运行 `lib/std/bus_agent_cli.aura`。planner 发任务（可挂契约）；worker 循环 claim → `llm:chat`（或 mock）→ heartbeat → contract evidence → complete/fail，直到没有 open 任务；supervisor 查询伸缩决策。CLI 本身不写提示词正文，真实运行用 `--prompt FILE`。
+- **mock**：`--mock` 用确定性的 `mock:<task-id>:<requirement>` 作为答案，不访问网络、不需要密钥，CI 只走 mock。
+- **监督者**：`bus:supervise` 让宿主按**自己的**实际余量算 worker 数（`/proc/meminfo` 的 MemAvailable、`/proc/stat` 的空闲 CPU），不设固定上限；余量不足时给 0 并写审计。决策是 `SupervisorPlan`(48) 审计事件：`version` 是可行的 worker 数，`result` 是原因码（0 有余量、1 CPU 受限、2 内存受限、3 不足一个 worker）。测试可用 `AURA_SUPERVISOR_MEM_FREE_MB` / `AURA_SUPERVISOR_CPU_FREE_PCT` / `AURA_SUPERVISOR_CPUS` 夹具固定容量。
+- **e2e**：`test_bus_agents_e2e` 用一个宿主、一个 planner、四个 mock worker 跑完契约批准 → claim → 完成 → 契约门，并注入四条故障：worker 中途被杀（租约到期后他人认领）、宿主重启（任务板恢复）、配额超限（熔断、任务失败关闭）、批准超时（默认拒绝、不得开工）；审计回放无完整性发现。

@@ -34,6 +34,11 @@ inline constexpr std::uint32_t kRoleGeneric = 0;
 inline constexpr std::uint32_t kRolePerf = 1;
 inline constexpr std::uint32_t kRoleHarness = 2;
 inline constexpr std::uint32_t kRoleMaintainer = 3;
+// #5400: the multi-agent roles. Like the tool roles they are hints at
+// attach; the workspace policy still decides and unknown roles are denied.
+inline constexpr std::uint32_t kRolePlanner = 4;
+inline constexpr std::uint32_t kRoleWorker = 5;
+inline constexpr std::uint32_t kRoleSupervisor = 6;
 
 struct HostOptions {
     std::uint64_t workspace = 0;

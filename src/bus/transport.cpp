@@ -1553,6 +1553,31 @@ bool Server::slo_query(std::uint64_t kind, SloReplyBody* out, std::string* why) 
     return true;
 }
 
+// #5400: the supervisor's decision. The host measures its own slack;
+// a test fixture may pin the capacity through the AURA_SUPERVISOR_*
+// environment. Every decision lands in the audit log (kind
+// SupervisorPlan: version = workers, result = the limiting reason) so
+// a supervisor can be asked what it decided and why.
+bool Server::supervisor_query(SupervisorReplyBody* out, std::string* why) {
+    SupervisorCapacity capacity{};
+    if (!measure_capacity(&capacity, why))
+        return false;
+    const SupervisorPlan plan = plan_workers(SupervisorPolicy{}, capacity);
+    SupervisorReplyBody reply{};
+    reply.workers = plan.workers;
+    reply.cpu_free_pct = capacity.cpu_free_pct;
+    reply.mem_free_mb = capacity.mem_free_mb;
+    reply.reason = plan.reason;
+    const char* reason = plan.reason == 0   ? "room"
+                         : plan.reason == 1 ? "cpu-bound"
+                         : plan.reason == 2 ? "memory-bound"
+                                            : "insufficient-slack";
+    audit_.add_constraint(AuditKind::SupervisorPlan, root_token_, 0, plan.reason, plan.workers,
+                          std::string("supervise:") + reason);
+    *out = reply;
+    return true;
+}
+
 // #5394: the detector saw a sustained degradation. While an
 // observation runs, the degradation belongs to the candidate under
 // observation: it is rolled back. Otherwise it is a signal: the host
@@ -2620,6 +2645,23 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
             std::string why;
             if (!slo_query(request.kind, &reply, &why)) {
                 deny(EINVAL, "slo: " + why);
+                break;
+            }
+            send_frame(conn_fd, FrameType::Credit, session,
+                       {reinterpret_cast<const std::byte*>(&reply), sizeof(reply)});
+            break;
+        }
+        case FrameType::SupervisorQuery: {
+            // #5400: the host's own slack, not the peer's claim. The
+            // decision is audited; a read capability is enough.
+            if (header.len < sizeof(SupervisorQueryBody))
+                break;
+            if (!require(kCapRead, 0, 0))
+                break;
+            SupervisorReplyBody reply{};
+            std::string why;
+            if (!supervisor_query(&reply, &why)) {
+                deny(EINVAL, "supervise: " + why);
                 break;
             }
             send_frame(conn_fd, FrameType::Credit, session,

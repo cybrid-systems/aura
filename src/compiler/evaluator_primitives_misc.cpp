@@ -928,15 +928,19 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                     return bus_error(ev, "validation-failed", "malformed contract reply");
                 aura::bus::ContractReplyBody reply{};
                 std::memcpy(&reply, body.data(), sizeof(reply));
-                return bus_list(ev, {bus_string(ev, "ok"),
-                                     make_int(static_cast<std::int64_t>(reply.task)),
-                                     make_int(static_cast<std::int64_t>(reply.fingerprint)),
-                                     make_int(static_cast<std::int64_t>(reply.state)),
-                                     make_int(static_cast<std::int64_t>(reply.test_ref)),
-                                     make_int(static_cast<std::int64_t>(reply.metric_floor)),
-                                     make_int(static_cast<std::int64_t>(reply.tests_passed)),
-                                     make_int(static_cast<std::int64_t>(reply.metric)),
-                                     make_int(static_cast<std::int64_t>(reply.has_evidence))});
+                // #5400: the contract fingerprint is a full 64-bit FNV
+                // hash; a fixnum is 62-bit. Keep the low 62 bits in the
+                // list surface (the board keeps the full value).
+                return bus_list(
+                    ev,
+                    {bus_string(ev, "ok"), make_int(static_cast<std::int64_t>(reply.task)),
+                     make_int(static_cast<std::int64_t>(reply.fingerprint & 0x3fffffffffffffffull)),
+                     make_int(static_cast<std::int64_t>(reply.state)),
+                     make_int(static_cast<std::int64_t>(reply.test_ref)),
+                     make_int(static_cast<std::int64_t>(reply.metric_floor)),
+                     make_int(static_cast<std::int64_t>(reply.tests_passed)),
+                     make_int(static_cast<std::int64_t>(reply.metric)),
+                     make_int(static_cast<std::int64_t>(reply.has_evidence))});
             };
 
             // #5403: task/global budget report/charge.
@@ -1902,6 +1906,41 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                 std::memcpy(&reply, body.data(), sizeof(reply));
                 return bus_list(
                     ev, {bus_string(ev, "ok"), make_int(static_cast<std::int64_t>(reply.version))});
+            }
+
+            // #5400: the supervisor's scaling query. The host measures
+            // its own slack; the reply is the worker count it fits.
+            if (op == "supervise") {
+                std::int64_t sid = 0;
+                if (a.size() < 2 || !bus_int(a[1], &sid))
+                    return bus_error(ev, "validation-failed", "supervise needs a session id");
+                const auto sit = g_bus_sessions.find(sid);
+                if (sit == g_bus_sessions.end())
+                    return bus_error(ev, "unregistered-id", "unknown session");
+                auto& att = sit->second->att;
+                aura::bus::SupervisorQueryBody req{};
+                if (!aura::bus::send_frame(att.sock, aura::bus::FrameType::SupervisorQuery,
+                                           att.session,
+                                           {reinterpret_cast<const std::byte*>(&req), sizeof(req)}))
+                    return bus_error(ev, "transport-failed", "supervise query send failed");
+                aura::bus::FrameHeader hdr{};
+                std::vector<std::byte> body(aura::bus::kBusMaxControlFrame);
+                if (!recv_reply(att.sock, &hdr, &body))
+                    return bus_error(ev, "transport-failed", "supervise query reply lost");
+                if (hdr.type == static_cast<std::uint16_t>(aura::bus::FrameType::Error)) {
+                    aura::bus::ErrorBody eb{};
+                    std::memcpy(&eb, body.data(), std::min(sizeof(eb), body.size()));
+                    return bus_error(ev, "permission", eb.message);
+                }
+                if (hdr.len < sizeof(aura::bus::SupervisorReplyBody))
+                    return bus_error(ev, "validation-failed", "malformed supervise reply");
+                aura::bus::SupervisorReplyBody reply{};
+                std::memcpy(&reply, body.data(), sizeof(reply));
+                return bus_list(ev, {bus_string(ev, "ok"),
+                                     make_int(static_cast<std::int64_t>(reply.workers)),
+                                     make_int(static_cast<std::int64_t>(reply.cpu_free_pct)),
+                                     make_int(static_cast<std::int64_t>(reply.mem_free_mb)),
+                                     make_int(static_cast<std::int64_t>(reply.reason))});
             }
 
             // #5395: the bus's own performance counters and the

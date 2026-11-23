@@ -212,7 +212,11 @@ bool host_start(const HostOptions& opts, std::string* path_out, std::string* why
     // generic role, each capped at the full capability set; the sandbox
     // preset clamps at attach (ci drops constraint-write, prod grant).
     WorkspacePolicy policy;
-    for (const std::uint32_t role : {kRoleGeneric, kRolePerf, kRoleHarness, kRoleMaintainer})
+    // #5400: planner/worker/supervisor are workspace roles too. Their
+    // capabilities are the same preset subset; the role name never widens
+    // the grant.
+    for (const std::uint32_t role : {kRoleGeneric, kRolePerf, kRoleHarness, kRoleMaintainer,
+                                     kRolePlanner, kRoleWorker, kRoleSupervisor})
         policy.allow(role, Capability{kCapAll, 0xFF, opts.workspace, 0, 0, 0});
     host->server.set_policy(policy, opts.preset);
     // Built-in rule names peers may install under constraint-write
