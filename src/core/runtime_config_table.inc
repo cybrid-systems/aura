@@ -91,6 +91,7 @@ AURA_CONFIG_ENTRY(AURA_JIT_OSR_N, "AURA_JIT_OSR_N", Integer, "", "Loop trip coun
 AURA_CONFIG_ENTRY(AURA_JIT_PROLOGUE_WORD, "AURA_JIT_PROLOGUE_WORD", Text, "", "Prologue word expected by the JIT guard.")
 AURA_CONFIG_ENTRY(AURA_JIT_REUSE_LOWERING, "AURA_JIT_REUSE_LOWERING", Flag, "", "Reuse lowered IR across JIT compilations.")
 AURA_CONFIG_ENTRY(AURA_JIT_SR, "AURA_JIT_SR", Flag, "", "Enable the JIT superword/vector path.")
+AURA_CONFIG_ENTRY(AURA_PERF_MAP, "AURA_PERF_MAP", Flag, "0", "Write /tmp/perf-<pid>.map entries for JIT-compiled Lisp functions (Issue #5409).")
 AURA_CONFIG_ENTRY(AURA_JOIN_FAIL_ACTION, "AURA_JOIN_FAIL_ACTION", Text, "", "Action on join failure: abort|warn.")
 AURA_CONFIG_ENTRY(AURA_KEEP_GOING, "AURA_KEEP_GOING", Flag, "", "Continue past errors (keep-going mode).")
 AURA_CONFIG_ENTRY(AURA_LAYERED_COERCION_DIVERGE_HARD, "AURA_LAYERED_COERCION_DIVERGE_HARD", Flag, "", "Hard-fail when layered coercion paths diverge.")

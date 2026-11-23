@@ -21,6 +21,7 @@
 #include "core/lifetime_pin.hh"  // Issue #3023: post-join linear_roots unpin
 #include "core/fiber_context.hh" // Issue #4716: per-fiber evaluator execution context
 #include "core/ownership.hh"     // Issue #4936: immortal<T>
+#include "observability/aura_probes.hh" // Issue #5409: USDT fiber probes
 
 #include <sys/mman.h>
 #include <cassert> // Issue #354 / #2200: assert for yield-during-boundary check
@@ -1672,6 +1673,7 @@ void Fiber::release_checkpoint_storage() noexcept {
 // When the fiber yields (or finishes), control returns here.
 
 void Fiber::resume() {
+    ::aura::observability::SdtFiberResume sdt_resume;
     auto* wctx = g_worker_ctx;
     if (!wctx) {
         std::fprintf(stderr, "fiber[%lu]: resume called with no worker context\n",
@@ -2000,6 +2002,7 @@ std::uint64_t Fiber::yield_while_mutation_held_total() noexcept {
 // re-enqueue or wait depending on the fiber's state.
 
 void Fiber::yield() {
+    ::aura::observability::SdtFiberYield sdt_yield;
     auto* wctx = g_worker_ctx;
     if (!wctx) {
         std::fprintf(stderr, "fiber: yield called with no worker context\n");
@@ -2055,6 +2058,7 @@ void Fiber::yield() {
 // ── yield(YieldReason) — yield with reason ────────────
 
 void Fiber::yield(YieldReason reason) {
+    ::aura::observability::SdtFiberYield sdt_yield;
     auto* wctx = g_worker_ctx;
     if (!wctx) {
         std::fprintf(stderr, "fiber: yield called with no worker context\n");

@@ -8,6 +8,7 @@
 #include "compiler/lock_order_audit.h" // Issue #2354: rank audit
 #include "runtime_production_abi.h"    // Issue #3476: Ready weld
 #include "steal_safety.h"              // Issue #3950: Ready residual-zero
+#include "observability/aura_probes.hh" // Issue #5409: USDT fiber__spawn
 #include <cstring>
 #include <unistd.h>
 #include "core/ownership.hh" // Issue #4936: NoCopy
@@ -317,6 +318,7 @@ int Scheduler::fifo_lane_worker() noexcept {
 }
 
 Fiber* Scheduler::spawn(Fiber::Func func, size_t stack_size, bool fifo_start) {
+    ::aura::observability::SdtFiberSpawn sdt_spawn;
     // Issue #1579 / #1618: process-wide fiber quota via ResourceQuotaManager
     // before spawn (misbehaving agent isolation). Returns nullptr when
     // fibers dimension is exceeded. Paired release in on_fiber_done.

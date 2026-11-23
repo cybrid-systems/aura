@@ -19,6 +19,7 @@ module;
 #include "fiber_result_roots.hh"   // Issue #4710: fiber:join result roots
 #include "codec_inflight_roots.hh" // Issue #5294: decode roots while a payload is built
 #include "tw_plain_park.h"         // Issue #5274: certified park across a blocking wait
+#include "observability/aura_probes.hh" // Issue #5409: USDT channel probes
 
 #include <pthread.h>
 #include <unistd.h>
@@ -819,6 +820,7 @@ namespace {
     std::optional<ChannelMessage> channel_recv_cooperative(ChannelView& ch,
                                                            aura::serve::Fiber* fiber,
                                                            bool* cancelled_out = nullptr) {
+        ::aura::observability::SdtChannelWait sdt_wait;
         const void* key = ch.key;
         for (;;) {
             // Issue #4708: cancellation safepoint -- this is one of the
@@ -896,6 +898,7 @@ namespace {
     // channel) or a receiver is posted (rendezvous).
     bool channel_send_cooperative(ChannelView& ch, ChannelMessage msg, aura::serve::Fiber* fiber,
                                   bool* cancelled_out = nullptr) {
+        ::aura::observability::SdtChannelWait sdt_wait;
         const void* key = ch.key;
         for (;;) {
             // Issue #4708: cancellation safepoint (see

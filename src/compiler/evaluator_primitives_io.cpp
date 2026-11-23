@@ -33,6 +33,7 @@ module;
 #include "primitives_detail.h"
 #include "primitives_meta.h"
 #include "security_capabilities.h"
+#include "observability/aura_probes.hh" // Issue #5409: USDT http_post probes
 #include "tenant_host_path.hh"        // #3802 tenant FS path-prefix
 #include "tenant_exec_fs_jail.hh"     // #4413 landlock + stat emulation
 #include "core/provenance_tracker.hh" // #3802 MT active
@@ -1014,6 +1015,7 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
         });
 
     ev.defer_std_host_prim("http-post", [&ev](std::span<const EvalValue> a) -> EvalValue {
+        ::aura::observability::SdtHttpPost sdt_post;
         if (a.size() < 2 || !types::is_string(a[0]) || !types::is_string(a[1]))
             return make_void();
         // Issue #1077: bounds-check before string_heap_ index.

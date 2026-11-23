@@ -15,6 +15,7 @@ module;
 #include "core/ownership.hh"         // #4936 unique_c_ptr
 #include "compiler/chunk_io.hh"      // #4936 std::array file chunks
 #include "compiler/module_search.hh" // #5258: shared require search path
+#include "observability/aura_probes.hh" // Issue #5409: USDT require_eval probes
 
 #include "core/runtime_config.hh"
 module aura.compiler.evaluator;
@@ -612,6 +613,7 @@ Env* Evaluator::create_loaded_module_env(ast::ASTArena& mod_arena, ast::StringPo
 }
 
 types::EvalValue Evaluator::load_module_file(const std::string& path) {
+    ::aura::observability::SdtRequireEval sdt_require;
     // Issue #5374: phase timing for the module load. A top-level require
     // is hoisted before the first user form, so an in-program clock
     // (monotonic-ms) can never see it — the cost only shows up as "the

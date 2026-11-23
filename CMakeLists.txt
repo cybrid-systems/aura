@@ -4,6 +4,22 @@ cmake_minimum_required(VERSION 4.5)
 # toolchain image provides CMake 4.5.0; older local CMake cannot configure.
 project(aura LANGUAGES CXX C SPDX_LICENSE "Apache-2.0")
 
+# Issue #5409: release/nightly/CI builds must keep a frame pointer so external
+# perf -g and eBPF ustack() can walk native stacks. Debug/sanitizer presets
+# already pass -fno-omit-frame-pointer; this makes the production face match.
+# The leaf-frame-pointer flag is x86-specific; probe it so arm64/other GCC
+# targets do not fail configure. Probe-only builds can disable with
+# -DAURA_FRAME_POINTERS=OFF.
+option(AURA_FRAME_POINTERS "Keep frame pointers in release builds (Issue #5409)" ON)
+if(AURA_FRAME_POINTERS AND CMAKE_BUILD_TYPE MATCHES "Release|RelWithDebInfo|MinSizeRel")
+    add_compile_options(-fno-omit-frame-pointer)
+    include(CheckCXXCompilerFlag)
+    check_cxx_compiler_flag("-mno-omit-leaf-frame-pointer" AURA_HAVE_NO_OMIT_LEAF_FP)
+    if(AURA_HAVE_NO_OMIT_LEAF_FP AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|amd64|AMD64|i.86")
+        add_compile_options(-mno-omit-leaf-frame-pointer)
+    endif()
+endif()
+
 # Issue #5202: make fast linking a property of the CMake build, not only of
 # build.py. Raw cmake / presets / dist.yml previously fell back to ld.bfd.
 # The probe is required: GCC 16's libatomic_asneeded.so breaks some mold.
@@ -263,6 +279,8 @@ target_sources(aura PRIVATE
     src/core/mutation_impl.cpp
     src/core/type_impl.cpp
     src/core/fiber_context.cpp
+    # Issue #5409: /tmp/perf-<pid>.map for external perf/FlameGraph.
+    src/observability/perf_map.cpp
     src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
     src/compiler/value_impl.cpp
     # Issue #1559: present_batch / draw_batch engine (header-based, non-module).
@@ -533,17 +551,19 @@ if(LLVM_FOUND)
     # handful of public dynamic symbols are visible and we get just
     # hex addresses, not source locations. Cost: ~5-10% binary size,
     # worth it for a Debug build with crash diagnostics.
-    # macOS note: the crash handler is already #if'd to Linux-only
-    # (execinfo.h + dladdr), and macOS ld uses -export_dynamic instead
-    # of -rdynamic. Skip on Apple to avoid an "unknown option" link error.
-    if(NOT APPLE)
-        target_link_options(aura PRIVATE -rdynamic)
-    endif()
 else()
     message(STATUS "LLVM JIT: disabled (not found)")
     target_sources(aura PRIVATE src/compiler/aura_jit.cpp src/compiler/aura_jit_runtime.cpp)
     set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
     set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
+endif()
+
+# Issue #5409: export the interpreter / runtime symbols even when LLVM is not
+# found. The crash handler and external profilers (perf, eBPF) need the ELF
+# symbol table, and JIT frames follow the same convention. macOS uses
+# -export_dynamic instead.
+if(NOT APPLE)
+    target_link_options(aura PRIVATE -rdynamic)
 endif()
 
 # libgit2 for in-process Git operations (faster + safer than popen)

@@ -9,6 +9,7 @@
 #include "jit_assumptions.hh"     // Issue #4600: prologue word gate + deopt-storm policy
 #include "typed_mutation_audit.h" // Issue #1882: sample JIT hotpath into TypedMutationAudit
 #include "core/ownership.hh"      // #4936 unique_file / immortal<T>
+#include "observability/perf_map.hh" // #5409: /tmp/perf-<pid>.map
 
 // Issue #4600 §5: stable slot address for direct defuse-word loads
 // (defined extern "C" in aura_jit_runtime.cpp; declared early because the
@@ -6747,6 +6748,12 @@ ScalarFn AuraJIT::compile(const FlatFunction& fn) {
     // for AOT access via compile_to_llvm_ir / compile_to_object_file.
     // The impl's compile() now keeps a copy of the optimized module
     // in impl_->last_module_ for the AOT entry points to consume.
+    // Issue #5409: publish the native Lisp name to the standard perf map.
+    // The lookup address is stable for this compiled body; redefine/hot-swap
+    // appends a new entry at its new address.
+    if (result)
+        observability::perf_map_note_jit(reinterpret_cast<const void*>(result), 4096,
+                                         fn.name ? fn.name : "anonymous");
     return result;
 }
 

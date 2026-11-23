@@ -2,6 +2,7 @@
 #include "gc_coordinator.h"
 #include "scheduler.h"
 #include "core/gc_hooks.h"
+#include "observability/aura_probes.hh" // Issue #5409: USDT gc probes
 
 import std;
 namespace aura::serve {
@@ -93,6 +94,7 @@ void GCCollector::collect_roots(GCRootSet& out) {
 // ── collect — full GC cycle ────────────────────────────
 
 bool GCCollector::collect() {
+    ::aura::observability::SdtGcCollect sdt_gc;
     if (!gc_in_progress_.load(std::memory_order_acquire))
         return false;
 
