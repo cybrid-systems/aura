@@ -747,6 +747,19 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                     opts.peer_quota.constraint_changes_per_window = std::strtoull(pc, nullptr, 10);
                 if (const char* cw = ::getenv("AURA_BUS_PEER_CONSTRAINT_WINDOW_MS"))
                     opts.peer_quota.constraint_window_ms = std::strtoull(cw, nullptr, 10);
+                // #5403: task/global token, wall-clock and failure budgets.
+                if (const char* v = ::getenv("AURA_BUS_TASK_TOKEN_LIMIT"))
+                    opts.budget.task.token_limit = std::strtoull(v, nullptr, 10);
+                if (const char* v = ::getenv("AURA_BUS_TASK_WALL_MS"))
+                    opts.budget.task.wall_limit_ms = std::strtoull(v, nullptr, 10);
+                if (const char* v = ::getenv("AURA_BUS_TASK_FAILURE_LIMIT"))
+                    opts.budget.task.failure_limit = std::strtoull(v, nullptr, 10);
+                if (const char* v = ::getenv("AURA_BUS_GLOBAL_TOKEN_LIMIT"))
+                    opts.budget.global.token_limit = std::strtoull(v, nullptr, 10);
+                if (const char* v = ::getenv("AURA_BUS_GLOBAL_WALL_MS"))
+                    opts.budget.global.wall_limit_ms = std::strtoull(v, nullptr, 10);
+                if (const char* v = ::getenv("AURA_BUS_GLOBAL_FAILURE_LIMIT"))
+                    opts.budget.global.failure_limit = std::strtoull(v, nullptr, 10);
                 // #5393: the round budget — the wall clock a round may
                 // take, the cooldown between two rounds and the round
                 // cap.
@@ -924,6 +937,46 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                                      make_int(static_cast<std::int64_t>(reply.tests_passed)),
                                      make_int(static_cast<std::int64_t>(reply.metric)),
                                      make_int(static_cast<std::int64_t>(reply.has_evidence))});
+            };
+
+            // #5403: task/global budget report/charge.
+            const auto budget_call = [&](std::uint64_t budget_op, std::uint64_t task,
+                                         std::uint64_t tokens, std::uint64_t wall_ms,
+                                         std::uint64_t failures) -> EvalValue {
+                aura::bus::BudgetRequestBody req{};
+                req.op = budget_op;
+                req.task = task;
+                req.tokens = tokens;
+                req.wall_ms = wall_ms;
+                req.failures = failures;
+                if (!aura::bus::send_frame(att.sock, aura::bus::FrameType::BudgetAction,
+                                           att.session,
+                                           {reinterpret_cast<const std::byte*>(&req), sizeof(req)}))
+                    return bus_error(ev, "transport-failed", "budget send failed");
+                aura::bus::FrameHeader hdr{};
+                std::vector<std::byte> body(aura::bus::kBusMaxControlFrame);
+                if (!recv_reply(att.sock, &hdr, &body))
+                    return bus_error(ev, "transport-failed", "budget reply lost");
+                if (hdr.type == static_cast<std::uint16_t>(aura::bus::FrameType::Error)) {
+                    aura::bus::ErrorBody eb{};
+                    std::memcpy(&eb, body.data(), std::min(sizeof(eb), body.size()));
+                    return bus_error(ev, eb.code == EPERM ? "permission" : "validation-failed",
+                                     eb.message);
+                }
+                if (hdr.type != static_cast<std::uint16_t>(aura::bus::FrameType::BudgetReply) ||
+                    hdr.len < sizeof(aura::bus::BudgetReplyBody))
+                    return bus_error(ev, "validation-failed", "malformed budget reply");
+                aura::bus::BudgetReplyBody reply{};
+                std::memcpy(&reply, body.data(), sizeof(reply));
+                return bus_list(ev, {bus_string(ev, "ok"),
+                                     make_int(static_cast<std::int64_t>(reply.task)),
+                                     make_int(static_cast<std::int64_t>(reply.tokens)),
+                                     make_int(static_cast<std::int64_t>(reply.token_limit)),
+                                     make_int(static_cast<std::int64_t>(reply.wall_ms)),
+                                     make_int(static_cast<std::int64_t>(reply.wall_limit_ms)),
+                                     make_int(static_cast<std::int64_t>(reply.failures)),
+                                     make_int(static_cast<std::int64_t>(reply.failure_limit)),
+                                     make_int(static_cast<std::int64_t>(reply.flags))});
             };
 
             if (op == "subscribe") {
@@ -1162,6 +1215,28 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                 return contract_call(2, static_cast<std::uint64_t>(task), 0, 0,
                                      static_cast<std::uint64_t>(tests),
                                      static_cast<std::uint64_t>(metric));
+            }
+
+            // #5403: task/global budgets.
+            if (op == "budget-report") {
+                std::int64_t task = 0;
+                if (a.size() >= 3 && !bus_int(a[2], &task))
+                    return bus_error(ev, "validation-failed",
+                                     "budget-report task must be an integer");
+                return budget_call(0, static_cast<std::uint64_t>(task), 0, 0, 0);
+            }
+            if (op == "budget-charge") {
+                std::int64_t task = 0, tokens = 0, wall = 0, failures = 0;
+                if (a.size() < 4 || !bus_int(a[2], &task) || !bus_int(a[3], &tokens))
+                    return bus_error(ev, "validation-failed",
+                                     "budget-charge needs task and tokens");
+                if (a.size() >= 5 && !bus_int(a[4], &wall))
+                    return bus_error(ev, "validation-failed", "budget wall must be an integer");
+                if (a.size() >= 6 && !bus_int(a[5], &failures))
+                    return bus_error(ev, "validation-failed", "budget failures must be an integer");
+                return budget_call(
+                    1, static_cast<std::uint64_t>(task), static_cast<std::uint64_t>(tokens),
+                    static_cast<std::uint64_t>(wall), static_cast<std::uint64_t>(failures));
             }
 
             if (op == "publish-metric") {

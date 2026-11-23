@@ -216,6 +216,9 @@ enum class AuditKind : std::uint16_t {
     ContractReject = 44,
     // #5402: a task flag update (e.g. the contract approval gate).
     TaskUpdate = 45,
+    // #5403: budget usage and the circuit breaker.
+    BudgetCharge = 46,
+    BudgetExceeded = 47,
 };
 
 struct AuditEvent {

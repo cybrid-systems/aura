@@ -26,6 +26,7 @@
         bus:post-task bus:claim bus:heartbeat bus:complete bus:fail
         bus:task-status bus:approve
         bus:contract bus:contract-status bus:contract-evidence
+        bus:budget-report bus:budget-charge
         bus:status bus:code bus:message bus:ok? bus:help
         bus:attach? bus:error? bus:record?)
 
@@ -332,6 +333,22 @@
 (define (bus:contract-evidence session task-id tests-passed metric)
   (bus-call "contract-evidence" session task-id tests-passed metric))
 
+; ── v0.3.3 配额与熔断(#5403) ─────────────────────────────────
+; (bus:budget-report session [task-id]) -> (ok task tokens token-limit
+;   wall-ms wall-limit failures failure-limit flags)
+; task-id 0 reports the global ledger; flags bit 0 means tripped,
+; bit 1 means the global ledger is tripped.
+(define (bus:budget-report session . task-id)
+  (bus-call "budget-report" session (if (pair? task-id) (car task-id) 0)))
+
+; (bus:budget-charge session task-id tokens [wall-ms] [failures])
+; The holder reports consumption. Exceeding any limit trips the task
+; (or the global ledger) and fails it closed.
+(define (bus:budget-charge session task-id tokens . rest)
+  (let ((wall (if (pair? rest) (car rest) 0))
+        (failures (if (and (pair? rest) (pair? (cdr rest))) (car (cdr rest)) 0)))
+    (bus-call "budget-charge" session task-id tokens wall failures)))
+
 ; (bus:claim session lease-ms [task-id]) -> (ok id state owner epoch deadline parent ref)
 ; Atomically claim a specific task, or the oldest open one when task-id
 ; is omitted/0. A second claim while the lease is live is refused
@@ -426,6 +443,7 @@
     "tasks: (bus:post-task session parent ref [flags]) -> (ok id state owner epoch deadline parent ref); (bus:claim session lease-ms [task-id]) claims the oldest open task (or the named one) atomically; (bus:heartbeat session task-id lease-ms) renews; (bus:complete session task-id ref) / (bus:fail session task-id ref) finish; (bus:task-status session task-id) reads state (0 open, 1 claimed, 2 done, 3 failed) and open-count; channel 6 carries the task events\n"
     "approve: (bus:approve session object decision timeout-ms) -> (ok object state deadline); decision 0 request, 1 approve, 2 deny, 3 query; a pending object times out to denied; needs approve; a task posted with flags bit 0 cannot be claimed until approved\n"
     "contract: (bus:contract session task-id test-ref metric-floor) -> (ok task fingerprint state ...); (bus:contract-status session task-id); (bus:contract-evidence session task-id tests-passed metric); the contract gates the claim and requires passing tests + metric floor before complete\n"
+    "budget: (bus:budget-report session [task-id]) -> (ok task tokens token-limit wall-ms wall-limit failures failure-limit flags); (bus:budget-charge session task-id tokens [wall-ms] [failures]); exceeding a limit trips the task or the global ledger and fails closed\n"
     "failures: (error code message); codes: schema-mismatch, seals-missing, loan-exhausted, image-full, validation-failed, permission, unregistered-id, transport-failed\n"))
 
 (define (bus:status record) (car record))

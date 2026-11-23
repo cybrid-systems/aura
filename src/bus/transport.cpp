@@ -2787,6 +2787,91 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
             reply_loan(installed);
             break;
         }
+        case FrameType::BudgetAction: {
+            // #5403: report (0) or charge (1) a task/global budget.
+            if (header.len < sizeof(BudgetRequestBody)) {
+                deny(EINVAL, "malformed budget request");
+                break;
+            }
+            BudgetRequestBody req{};
+            std::memcpy(&req, body.data(), sizeof(req));
+            BudgetUsage usage{};
+            BudgetReplyBody reply{};
+            std::string why;
+            if (req.op == 0) {
+                if (!require(kCapRead, 0, 0))
+                    break;
+                if (req.task == 0)
+                    (void)budget_.global_report(&usage);
+                else
+                    (void)budget_.report(req.task, &usage);
+                reply.task = req.task;
+            } else if (req.op == 1) {
+                if (!require(kCapPublish, 0, 0))
+                    break;
+                Task task{};
+                if (!tasks_.get(req.task, &task)) {
+                    deny(ENOENT, "task-unknown");
+                    break;
+                }
+                if (task.state != TaskState::Claimed || task.owner != root_token) {
+                    deny(EPERM, "budget charge must come from the task holder");
+                    break;
+                }
+                BudgetUsage global{};
+                const bool ok = budget_.charge(req.task, req.tokens, req.wall_ms, req.failures,
+                                               round_now_ms(), &usage, &global, &why);
+                if (!ok) {
+                    record_audit(AuditKind::BudgetExceeded, root_token, 0, req.task);
+                    // Fail the offending task; a global trip stops every
+                    // claimed task and refuses new claims.
+                    if (global.tripped) {
+                        for (const Task& listed : tasks_.list()) {
+                            if (listed.state != TaskState::Claimed)
+                                continue;
+                            Task failed{};
+                            TaskRecord event{};
+                            std::string fwhy;
+                            if (tasks_.fail(listed.owner, listed.id, 0, round_now_ms(), &failed,
+                                            &event, &fwhy))
+                                commit_task_event(event);
+                        }
+                    } else {
+                        Task failed{};
+                        TaskRecord event{};
+                        std::string fwhy;
+                        if (tasks_.fail(task.owner, task.id, 0, round_now_ms(), &failed, &event,
+                                        &fwhy))
+                            commit_task_event(event);
+                    }
+                    deny(EBUSY, why);
+                    break;
+                }
+                record_audit(AuditKind::BudgetCharge, root_token, 0, req.task);
+                reply.task = req.task;
+            } else {
+                deny(EINVAL, "unknown budget op");
+                break;
+            }
+            if (usage.tripped)
+                reply.flags |= 1;
+            if (budget_.global_tripped())
+                reply.flags |= 2;
+            reply.tokens = usage.tokens;
+            reply.token_limit = req.task == 0 ? budget_.policy().global.token_limit
+                                              : budget_.policy().task.token_limit;
+            reply.wall_ms = usage.wall_ms;
+            reply.wall_limit_ms = req.task == 0 ? budget_.policy().global.wall_limit_ms
+                                                : budget_.policy().task.wall_limit_ms;
+            reply.failures = usage.failures;
+            reply.failure_limit = req.task == 0 ? budget_.policy().global.failure_limit
+                                                : budget_.policy().task.failure_limit;
+            const std::size_t n = std::min(usage.reason.size(), sizeof(reply.reason) - 1);
+            std::memcpy(reply.reason, usage.reason.data(), n);
+            send_frame(conn_fd, FrameType::BudgetReply, session,
+                       {reinterpret_cast<const std::byte*>(&reply), sizeof(reply)});
+            break;
+        }
         case FrameType::ContractAction: {
             // #5402: create (0), query (1) or record terminal evidence (2).
             if (header.len < sizeof(ContractRequestBody)) {
@@ -2960,6 +3045,11 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
                     }
                     break;
                 case 1: {
+                    // #5403: a tripped global budget refuses every claim.
+                    if (budget_.global_tripped()) {
+                        why = "global budget exhausted";
+                        break;
+                    }
                     // #5404: resolve the claim candidate first, then refuse
                     // an unapproved approval-gated task without claiming it.
                     Task candidate{};
@@ -2986,6 +3076,8 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
                     }
                     ok = tasks_.claim(root_token, candidate.id, req.lease_ms, now_ms, &task, &event,
                                       &why);
+                    if (ok)
+                        budget_.start(candidate.id, now_ms);
                     break;
                 }
                 case 2:

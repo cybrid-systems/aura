@@ -10,6 +10,7 @@
 #define AURA_BUS_TRANSPORT_HH
 
 #include "bus/approval.hh"
+#include "bus/budget.hh"
 #include "bus/capability.hh"
 #include "bus/channel.hh"
 #include "bus/constraint.hh"
@@ -112,6 +113,9 @@ enum class FrameType : std::uint16_t {
     // #5402: create/query a contract and record its terminal evidence.
     ContractAction = 40,
     ContractReply = 41,
+    // #5403: task/global budget charge and report.
+    BudgetAction = 42,
+    BudgetReply = 43,
 };
 
 enum class RejectReason : std::uint16_t {
@@ -465,6 +469,28 @@ struct ContractReplyBody {
     char reason[32] = {};
 };
 
+// #5403: op 0 report (task 0 = global), 1 charge.
+struct BudgetRequestBody {
+    std::uint64_t op = 0;
+    std::uint64_t task = 0;
+    std::uint64_t tokens = 0;
+    std::uint64_t wall_ms = 0;
+    std::uint64_t failures = 0;
+    std::uint64_t reserved = 0;
+};
+
+struct BudgetReplyBody {
+    std::uint64_t task = 0;
+    std::uint64_t tokens = 0;
+    std::uint64_t token_limit = 0;
+    std::uint64_t wall_ms = 0;
+    std::uint64_t wall_limit_ms = 0;
+    std::uint64_t failures = 0;
+    std::uint64_t failure_limit = 0;
+    std::uint64_t flags = 0; // bit 0 tripped, bit 1 global tripped
+    char reason[48] = {};
+};
+
 // #5397: the reproduction package of one worldline. It carries
 // everything the admission decision was made from, so the decision can
 // be re-run offline and must land on the same verdict.
@@ -515,6 +541,8 @@ static_assert(sizeof(ApprovalRequestBody) == 32);
 static_assert(sizeof(ApprovalReplyBody) == 64);
 static_assert(sizeof(ContractRequestBody) == 56);
 static_assert(sizeof(ContractReplyBody) == 96);
+static_assert(sizeof(BudgetRequestBody) == 48);
+static_assert(sizeof(BudgetReplyBody) == 112);
 
 struct TransportError {
     int code = 0; // errno or RejectReason
@@ -753,6 +781,9 @@ public:
     void set_task_checkpoint_path(const std::string& path) { task_checkpoint_path_ = path; }
     bool task_resume(std::string* why);
     [[nodiscard]] const TaskBoard& task_board() const { return tasks_; }
+    // #5403: task/global budget limits. The defaults are bounded.
+    void set_budget_policy(const BudgetPolicy& policy) { budget_.configure(policy); }
+    [[nodiscard]] const BudgetLedger& budget() const { return budget_; }
     // #5395: the bus's own performance counters and capacity plan.
     [[nodiscard]] const SloCounters& slo() const { return slo_; }
     [[nodiscard]] CapacityPlan capacity_plan() const;
@@ -940,6 +971,8 @@ private:
     ApprovalBoard approvals_{};
     // #5402: executable acceptance contracts.
     ContractBoard contracts_{};
+    // #5403: task/global budget ledger.
+    BudgetLedger budget_{};
     std::string task_checkpoint_path_;
     // #5394: the degradation detector.
     DegradeDetector degrade_{};

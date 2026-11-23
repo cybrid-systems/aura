@@ -1873,7 +1873,7 @@ add_library(aura-bus STATIC src/bus/image.cpp src/bus/image_schema.cpp src/bus/t
                                  src/bus/capability.cpp src/bus/channel.cpp src/bus/constraint.cpp
                                  src/bus/query.cpp src/bus/host.cpp src/bus/gate.cpp src/bus/replay.cpp
                                  src/bus/round.cpp src/bus/degrade.cpp src/bus/slo.cpp src/bus/tasks.cpp
-                                 src/bus/approval.cpp src/bus/contract.cpp)
+                                 src/bus/approval.cpp src/bus/contract.cpp src/bus/budget.cpp)
 target_include_directories(aura-bus PUBLIC ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(aura PRIVATE aura-bus)
 # Issue #5127/#5122: evaluator_primitives_misc.cpp's bus-call bridge
@@ -2127,6 +2127,14 @@ target_compile_features(test_bus_contract PUBLIC cxx_std_26)
 target_link_libraries(test_bus_contract PRIVATE aura-bus)
 aura_strict_test_warnings(tests/compiler/test_bus_contract.cpp)
 add_test(NAME test_bus_contract_5402 COMMAND ./test_bus_contract)
+
+# Issue #5403: task/global budget quotas and the circuit breaker.
+add_executable(test_bus_budget tests/compiler/test_bus_budget.cpp)
+target_include_directories(test_bus_budget PRIVATE src)
+target_compile_features(test_bus_budget PUBLIC cxx_std_26)
+target_link_libraries(test_bus_budget PRIVATE aura-bus)
+aura_strict_test_warnings(tests/compiler/test_bus_budget.cpp)
+add_test(NAME test_bus_budget_5403 COMMAND ./test_bus_budget)
 
 # Issue #5373: a stale short-circuit name-cache row must not hijack a
 # later form whose pool-local SymId collides; display output was dropped.
