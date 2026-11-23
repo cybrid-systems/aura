@@ -100,8 +100,7 @@ void Evaluator::forget_import_bind_origin(const Env* env) noexcept {
 
 void Evaluator::warn_import_overwrite(Env* env, const std::string& name,
                                       const types::EvalValue& val, std::string_view module_path) {
-    if (env == nullptr || name.empty() || suppress_import_warnings_ ||
-        require_failure_is_diagnostic_)
+    if (env == nullptr || name.empty() || suppress_import_warnings_)
         return;
     const std::string label = primitives_detail::import_module_label(module_path);
     // Bindings are cells. A re-export may be a fresh cell holding the same

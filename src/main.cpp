@@ -4792,6 +4792,10 @@ static int run_oneshot_or_file(int argc, char** argv) {
             cs.sync_soft_export_cells_for_ir();
         }
     }
+    // Issue #5198: suppress import warnings only for the auto-loaded Soft
+    // prelude. The user's own require forms must still report overwrite
+    // warnings (and exit 0) as the public contract says.
+    cs.evaluator().set_suppress_import_warnings(false);
     // #3918 follow-up (CI cheap/medium red): evaluate the whole program in
     // ONE cs.eval pass, matching the --load entry. Per-expression eval
     // split pipeline state across calls and broke fiber:spawn parameter
