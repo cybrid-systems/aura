@@ -4373,153 +4373,150 @@ public:
     // current-source keeps the comments/formatting of every untouched define.
     // The patch is queued before set_child (old body line/col are still
     // live) and committed only after the rebind passes its gates.
-    bool queue_workspace_source_patch_for_define(const std::string& name,
-                                                 const std::string& new_code,
-                                                 aura::ast::NodeId define_node,
-                                                 aura::ast::NodeId old_body_node) {
-        if (!workspace_source_text_valid_ || workspace_source_text_.empty() || !workspace_flat_)
+    bool queue_workspace_source_patch_for_define(const std::string& new_code,
+                                                 aura::ast::NodeId define_node) {
+        if (workspace_source_text_valid_ == false || workspace_source_text_.empty() ||
+            workspace_flat_ == nullptr)
             return false;
-        auto offset_for = [&](std::uint32_t line, std::uint32_t col) -> std::optional<std::size_t> {
+        const auto offset_for = [&](std::uint32_t line,
+                                    std::uint32_t col) -> std::optional<std::size_t> {
             if (line == 0 || col == 0)
                 return std::nullopt;
-            std::size_t off = 0;
-            for (std::uint32_t l = 1; l < line; ++l) {
-                const auto nl = workspace_source_text_.find('\n', off);
-                if (nl == std::string::npos)
+            std::size_t offset = 0;
+            for (std::uint32_t line_index = 1; line_index < line; ++line_index) {
+                const auto newline = workspace_source_text_.find('\n', offset);
+                if (newline == std::string::npos)
                     return std::nullopt;
-                off = nl + 1;
+                offset = newline + 1;
             }
-            off += static_cast<std::size_t>(col - 1);
-            if (off > workspace_source_text_.size())
+            offset += static_cast<std::size_t>(col - 1);
+            if (offset > workspace_source_text_.size())
                 return std::nullopt;
-            return off;
+            return offset;
         };
-        const auto def_v = workspace_flat_->get(define_node);
-        const auto def_start = offset_for(def_v.line, def_v.col);
-        const std::string& src = workspace_source_text_;
-        auto scan_end = [&src](std::size_t start) -> std::optional<std::size_t> {
-            std::size_t i = start;
+        const auto def_view = workspace_flat_->get(define_node);
+        const auto def_start = offset_for(def_view.line, def_view.col);
+        const auto source = std::string_view(workspace_source_text_);
+        const auto scan_end = [source](std::size_t start) -> std::optional<std::size_t> {
+            std::size_t cursor = start;
             int depth = 0;
             bool seen = false;
-            while (i < src.size()) {
-                const char c = src[i];
-                if (c == ';') {
-                    while (i < src.size() && src[i] != '\n')
-                        ++i;
+            while (cursor < source.size()) {
+                const char character = source[cursor];
+                if (character == ';') {
+                    while (cursor < source.size() && source[cursor] != '\n')
+                        ++cursor;
                     continue;
                 }
-                if (c == '#' && i + 1 < src.size() && src[i + 1] == '|') {
-                    i += 2;
-                    while (i + 1 < src.size() && !(src[i] == '|' && src[i + 1] == '#'))
-                        ++i;
-                    i = i + 1 < src.size() ? i + 2 : src.size();
+                if (character == '#' && cursor + 1 < source.size() && source[cursor + 1] == '|') {
+                    cursor += 2;
+                    while (cursor + 1 < source.size() &&
+                           !(source[cursor] == '|' && source[cursor + 1] == '#'))
+                        ++cursor;
+                    cursor = cursor + 1 < source.size() ? cursor + 2 : source.size();
                     continue;
                 }
-                if (c == '"') {
-                    ++i;
-                    while (i < src.size()) {
-                        if (src[i] == '\\') {
-                            i += 2;
+                if (character == '"') {
+                    ++cursor;
+                    while (cursor < source.size()) {
+                        if (source[cursor] == '\\') {
+                            cursor += 2;
                             continue;
                         }
-                        if (src[i] == '"') {
-                            ++i;
+                        if (source[cursor] == '"') {
+                            ++cursor;
                             break;
                         }
-                        ++i;
+                        ++cursor;
                     }
                     seen = true;
                     continue;
                 }
-                if (c == '(' || c == '[' || c == '{') {
+                if (character == '(' || character == '[' || character == '{') {
                     ++depth;
                     seen = true;
-                    ++i;
+                    ++cursor;
                     continue;
                 }
-                if (c == ')' || c == ']' || c == '}') {
-                    if (!seen)
+                if (character == ')' || character == ']' || character == '}') {
+                    if (seen == false)
                         return std::nullopt;
                     if (depth == 0)
-                        return i;
+                        return cursor;
                     --depth;
-                    ++i;
+                    ++cursor;
                     if (depth == 0)
-                        return i;
+                        return cursor;
                     continue;
                 }
-                if (depth == 0 && seen && std::isspace(static_cast<unsigned char>(c)))
-                    return i;
-                if (!std::isspace(static_cast<unsigned char>(c)))
+                if (depth == 0 && seen && std::isspace(static_cast<unsigned char>(character)))
+                    return cursor;
+                if (std::isspace(static_cast<unsigned char>(character)) == false)
                     seen = true;
-                ++i;
+                ++cursor;
             }
             return std::nullopt;
         };
-        auto skip_trivia = [&src](std::size_t i) -> std::size_t {
-            while (i < src.size()) {
-                if (std::isspace(static_cast<unsigned char>(src[i]))) {
-                    ++i;
-                    continue;
-                }
-                if (src[i] == ';') {
-                    while (i < src.size() && src[i] != '\n')
-                        ++i;
-                    continue;
-                }
-                if (src[i] == '#' && i + 1 < src.size() && src[i + 1] == '|') {
-                    i += 2;
-                    while (i + 1 < src.size() && !(src[i] == '|' && src[i + 1] == '#'))
-                        ++i;
-                    i = i + 1 < src.size() ? i + 2 : src.size();
-                    continue;
-                }
-                break;
+        const auto skip_trivia = [source](std::size_t start) -> std::size_t {
+            std::size_t cursor = start;
+            while (cursor < source.size()) {
+                if (std::isspace(static_cast<unsigned char>(source[cursor])))
+                    ++cursor;
+                else if (source[cursor] == ';')
+                    while (cursor < source.size() && source[cursor] != '\n')
+                        ++cursor;
+                else if (source[cursor] == '#' && cursor + 1 < source.size() &&
+                         source[cursor + 1] == '|') {
+                    cursor += 2;
+                    while (cursor + 1 < source.size() &&
+                           !(source[cursor] == '|' && source[cursor + 1] == '#'))
+                        ++cursor;
+                    cursor = cursor + 1 < source.size() ? cursor + 2 : source.size();
+                } else
+                    break;
             }
-            return i;
+            return cursor;
         };
-        if (!def_start)
+        if (def_start.has_value() == false)
             return false;
         // The define node points at the define token; the name span is the
         // declaration token (#5249). The body starts after that token.
-        auto name_start = offset_for(def_v.name_line, def_v.name_col);
-        std::size_t body_start = 0;
-        if (name_start) {
-            std::size_t ne = *name_start;
-            if (ne < src.size() && src[ne] == '(') {
-                const auto e = scan_end(ne);
-                if (!e)
-                    return false;
-                ne = *e;
-            } else {
-                while (ne < src.size()) {
-                    const char c = src[ne];
-                    if (std::isspace(static_cast<unsigned char>(c)) || c == '(' || c == ')' ||
-                        c == ';')
-                        break;
-                    ++ne;
-                }
+        const auto name_start = offset_for(def_view.name_line, def_view.name_col);
+        if (name_start.has_value() == false)
+            return false;
+        std::size_t name_end = *name_start;
+        if (name_end < source.size() && source[name_end] == '(') {
+            const auto name_list_end = scan_end(name_end);
+            if (name_list_end.has_value() == false)
+                return false;
+            name_end = *name_list_end;
+        } else {
+            while (name_end < source.size()) {
+                const char character = source[name_end];
+                if (std::isspace(static_cast<unsigned char>(character)) || character == '(' ||
+                    character == ')' || character == ';')
+                    break;
+                ++name_end;
             }
-            body_start = skip_trivia(ne);
         }
+        const std::size_t body_start = skip_trivia(name_end);
         if (body_start == 0)
             return false;
-        std::size_t nz = 0;
-        while (nz < new_code.size() && std::isspace(static_cast<unsigned char>(new_code[nz])))
-            ++nz;
-        const bool full_define = new_code.compare(nz, 7, "(define") == 0;
+        std::size_t first_nonspace = 0;
+        while (first_nonspace < new_code.size() &&
+               std::isspace(static_cast<unsigned char>(new_code[first_nonspace])))
+            ++first_nonspace;
+        const bool full_define = new_code.compare(first_nonspace, 7, "(define") == 0;
         const auto body_end = scan_end(body_start);
         const auto def_end = full_define ? scan_end(*def_start) : std::nullopt;
-        if (!body_end || (full_define && !def_end))
+        if (body_end.has_value() == false || (full_define && def_end.has_value() == false))
             return false;
         const std::size_t start = full_define ? *def_start : body_start;
         const std::size_t end = full_define ? *def_end : *body_end;
-        if (end <= start || end > src.size())
+        if (end <= start || end > source.size())
             return false;
-        std::string patched = src.substr(0, start) + new_code + src.substr(end);
-        pending_workspace_source_patch_ = std::move(patched);
+        pending_workspace_source_patch_ = source.substr(0, start) + new_code + source.substr(end);
         pending_workspace_source_patch_valid_ = true;
-        (void)name;
         return true;
     }
     bool commit_pending_workspace_source_patch() {

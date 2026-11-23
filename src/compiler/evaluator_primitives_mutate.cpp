@@ -3693,8 +3693,7 @@ RegSplitParts::rebind_link_new_body(Evaluator& ev, aura::ast::FlatAST& flat,
     if (a.size() >= 2 && is_string(a[1])) {
         const auto code_idx = as_string_idx(a[1]);
         if (code_idx < ev.string_heap_.size())
-            (void)ev.queue_workspace_source_patch_for_define(name, ev.string_at(code_idx),
-                                                             old_define, old_value_node);
+            (void)ev.queue_workspace_source_patch_for_define(ev.string_at(code_idx), old_define);
     }
     flat.add_mutation_with_rollback(old_define, "rebind", name, summary, summary,
                                     aura::ast::MutationStatus::Committed,
