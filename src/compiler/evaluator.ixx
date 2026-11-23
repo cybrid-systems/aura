@@ -4410,8 +4410,7 @@ public:
                 }
                 if (c == '#' && i + 1 < src.size() && src[i + 1] == '|') {
                     i += 2;
-                    while (i + 1 < src.size() &&
-                           !(src[i] == '|' && src[i + 1] == '#'))
+                    while (i + 1 < src.size() && !(src[i] == '|' && src[i + 1] == '#'))
                         ++i;
                     i = i + 1 < src.size() ? i + 2 : src.size();
                     continue;

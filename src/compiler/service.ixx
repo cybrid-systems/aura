@@ -6462,8 +6462,7 @@ public:
     // Issue #5420: module envs need the same IR publication as the top
     // env. The cell storage is evaluator-wide; only the binding env differs.
     std::size_t bind_define_value_in_env_at(aura::compiler::Env& env, const std::string& name,
-                                            const types::EvalValue& value,
-                                            bool as_cell = true) {
+                                            const types::EvalValue& value, bool as_cell = true) {
         auto bind_guard = env.lock_bindings_exclusive();
         if (!as_cell) {
             env.bind(name, value);
@@ -6925,8 +6924,7 @@ public:
     }
 
     bool bind_define_env_only_to_env(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
-                                     aura::ast::NodeId expanded_root,
-                                     const std::string& name_str,
+                                     aura::ast::NodeId expanded_root, const std::string& name_str,
                                      aura::compiler::Env& target_env) {
         IrCacheGate ir_gate(ir_cache_gate_); // #4717 shared IR/closure cache
         const auto saved_root = flat.root;
@@ -7002,15 +7000,13 @@ public:
             return false;
         {
             bool params_match = false;
-            binding->interpreter->walk_runtime_closures(
-                [&](std::uint64_t cid, IRClosure& cl) {
-                    if (cid != binding->closure_id)
-                        return;
-                    const bool right_fn =
-                        cl.func_id < ir_mod.functions.size() &&
-                        ir_mod.functions[cl.func_id].name == name;
-                    params_match = right_fn && cl.params.size() == expected_params;
-                });
+            binding->interpreter->walk_runtime_closures([&](std::uint64_t cid, IRClosure& cl) {
+                if (cid != binding->closure_id)
+                    return;
+                const bool right_fn = cl.func_id < ir_mod.functions.size() &&
+                                      ir_mod.functions[cl.func_id].name == name;
+                params_match = right_fn && cl.params.size() == expected_params;
+            });
             if (!params_match)
                 return false;
         }

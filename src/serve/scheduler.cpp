@@ -5,9 +5,9 @@
 #include "aura_platform.h"
 #include "core/gc_hooks.h"
 #include "core/resource_quota.hh"
-#include "compiler/lock_order_audit.h" // Issue #2354: rank audit
-#include "runtime_production_abi.h"    // Issue #3476: Ready weld
-#include "steal_safety.h"              // Issue #3950: Ready residual-zero
+#include "compiler/lock_order_audit.h"  // Issue #2354: rank audit
+#include "runtime_production_abi.h"     // Issue #3476: Ready weld
+#include "steal_safety.h"               // Issue #3950: Ready residual-zero
 #include "observability/aura_probes.hh" // Issue #5409: USDT fiber__spawn
 #include <cstring>
 #include <unistd.h>

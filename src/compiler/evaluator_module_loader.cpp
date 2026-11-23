@@ -12,9 +12,9 @@ module;
 #include "lock_order_audit.h" // Issue #2354: Module rank
 #include "primitives_detail.h"
 #include "security_capabilities.h"
-#include "core/ownership.hh"         // #4936 unique_c_ptr
-#include "compiler/chunk_io.hh"      // #4936 std::array file chunks
-#include "compiler/module_search.hh" // #5258: shared require search path
+#include "core/ownership.hh"            // #4936 unique_c_ptr
+#include "compiler/chunk_io.hh"         // #4936 std::array file chunks
+#include "compiler/module_search.hh"    // #5258: shared require search path
 #include "observability/aura_probes.hh" // Issue #5409: USDT require_eval probes
 
 #include "core/runtime_config.hh"

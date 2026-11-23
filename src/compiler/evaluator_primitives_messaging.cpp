@@ -15,10 +15,10 @@ module;
 #include "serve/parallel_orch.h"
 #include "observability_metrics.h"
 #include "hash_meta.h"
-#include "channel_id.hh"           // Issue #4854: tagged channel ids for GC reclaim
-#include "fiber_result_roots.hh"   // Issue #4710: fiber:join result roots
-#include "codec_inflight_roots.hh" // Issue #5294: decode roots while a payload is built
-#include "tw_plain_park.h"         // Issue #5274: certified park across a blocking wait
+#include "channel_id.hh"                // Issue #4854: tagged channel ids for GC reclaim
+#include "fiber_result_roots.hh"        // Issue #4710: fiber:join result roots
+#include "codec_inflight_roots.hh"      // Issue #5294: decode roots while a payload is built
+#include "tw_plain_park.h"              // Issue #5274: certified park across a blocking wait
 #include "observability/aura_probes.hh" // Issue #5409: USDT channel probes
 
 #include <pthread.h>

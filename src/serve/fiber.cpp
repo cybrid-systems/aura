@@ -17,10 +17,10 @@
 #include "runtime_production_abi.h"           // Issue #3325: production multi-worker latch
 #include "steal_safety.h"                     // Issue #3826: Ready residual sticky gate
 #include "aura_platform.h"
-#include "core/gc_hooks.h"       // Issue #1364
-#include "core/lifetime_pin.hh"  // Issue #3023: post-join linear_roots unpin
-#include "core/fiber_context.hh" // Issue #4716: per-fiber evaluator execution context
-#include "core/ownership.hh"     // Issue #4936: immortal<T>
+#include "core/gc_hooks.h"              // Issue #1364
+#include "core/lifetime_pin.hh"         // Issue #3023: post-join linear_roots unpin
+#include "core/fiber_context.hh"        // Issue #4716: per-fiber evaluator execution context
+#include "core/ownership.hh"            // Issue #4936: immortal<T>
 #include "observability/aura_probes.hh" // Issue #5409: USDT fiber probes
 
 #include <sys/mman.h>

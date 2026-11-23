@@ -3629,8 +3629,7 @@ static int eval_oneshot_force_soa(aura::compiler::CompilerService& cs, const std
                 // exact #4865 face (their bodies must see live top-level
                 // cells; the walker shortcut is what gives them that).
                 const bool wrap_begin = !allow_walker && !value_define && !form.empty() &&
-                                        form[0] == '(' &&
-                                        !form_head_is_definitional_4893(form) &&
+                                        form[0] == '(' && !form_head_is_definitional_4893(form) &&
                                         !is_toplevel_hof_5334(form) &&
                                         !form_builds_closure_or_task_4892(form);
                 constexpr std::string_view kBeginPrefix4892 = "(begin ";

@@ -6,9 +6,9 @@
 #include "aura_jit_bridge.h"
 #include "aot_mangle.h"
 #include "jit_typed_mutation_stats.h"
-#include "jit_assumptions.hh"     // Issue #4600: prologue word gate + deopt-storm policy
-#include "typed_mutation_audit.h" // Issue #1882: sample JIT hotpath into TypedMutationAudit
-#include "core/ownership.hh"      // #4936 unique_file / immortal<T>
+#include "jit_assumptions.hh"        // Issue #4600: prologue word gate + deopt-storm policy
+#include "typed_mutation_audit.h"    // Issue #1882: sample JIT hotpath into TypedMutationAudit
+#include "core/ownership.hh"         // #4936 unique_file / immortal<T>
 #include "observability/perf_map.hh" // #5409: /tmp/perf-<pid>.map
 
 // Issue #4600 §5: stable slot address for direct defuse-word loads

@@ -34,10 +34,10 @@ module;
 #include "primitives_meta.h"
 #include "security_capabilities.h"
 #include "observability/aura_probes.hh" // Issue #5409: USDT http_post probes
-#include "tenant_host_path.hh"        // #3802 tenant FS path-prefix
-#include "tenant_exec_fs_jail.hh"     // #4413 landlock + stat emulation
-#include "core/provenance_tracker.hh" // #3802 MT active
-#include "core/sandbox.hh"            // #4561 production fd-owner face
+#include "tenant_host_path.hh"          // #3802 tenant FS path-prefix
+#include "tenant_exec_fs_jail.hh"       // #4413 landlock + stat emulation
+#include "core/provenance_tracker.hh"   // #3802 MT active
+#include "core/sandbox.hh"              // #4561 production fd-owner face
 #include "core/arena_auto_policy_stats.h"
 #include "core/gap_buffer.hh"
 #include "core/lifetime_pin.hh" // g_lifetime_pin_stats() for owner-transition counts
