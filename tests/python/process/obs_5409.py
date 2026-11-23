@@ -10,12 +10,12 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
-import sys
 
 sys.path.insert(0, str(ROOT / "tests" / "python"))
 from _aura_harness import AURA_BIN  # noqa: E402

@@ -279,8 +279,6 @@ target_sources(aura PRIVATE
     src/core/mutation_impl.cpp
     src/core/type_impl.cpp
     src/core/fiber_context.cpp
-    # Issue #5409: /tmp/perf-<pid>.map for external perf/FlameGraph.
-    src/observability/perf_map.cpp
     src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
     src/compiler/value_impl.cpp
     # Issue #1559: present_batch / draw_batch engine (header-based, non-module).
