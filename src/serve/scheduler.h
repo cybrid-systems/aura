@@ -75,6 +75,14 @@ public:
     // Stop all workers and the event loop
     void stop();
 
+    // Issue #5444: wake a blocked IO loop so its next iteration recomputes
+    // the epoll timeout. A timed park armed while run() is already inside
+    // epoll_wait is invisible to the nearest-deadline scan (it runs once per
+    // iteration), so the sleeper waited for the idle tick instead of its
+    // deadline. The kick rides the offload-completion eventfd the loop
+    // already polls; draining it on an empty queue is a no-op. Any thread.
+    void wake_io_loop() noexcept;
+
     // Issue #4726: the idle auto-stop ("all fibers done, no spawn for ~3s →
     // self-destruct") is a SERVE-lifecycle convenience: it exists so a
     // scheduler nobody stops does not hang an embedder. A producer that OWNS

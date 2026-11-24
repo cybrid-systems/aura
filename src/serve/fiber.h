@@ -209,6 +209,12 @@ inline constexpr std::uint64_t kUnsetTenant = ~std::uint64_t{0};
 // Forward declare (full type in scheduler.h) — used by Fiber owner back-pointer.
 class Scheduler;
 
+// Issue #5444: a timed park armed from a worker thread must wake an IO loop
+// that is already blocked in epoll_wait with a timeout computed before that
+// deadline existed (the nearest-deadline scan runs once per loop iteration).
+// Defined in scheduler.cpp; a no-op while no scheduler loop is installed.
+void wake_scheduler_for_park_deadline() noexcept;
+
 // Issue #3369: forward declare (full type in multi_fiber_mailbox.h) —
 // used by Fiber::mailbox_ back-pointer so the steal-complete strong def
 // can walk pending held_ref messages under the mailbox mutex without
@@ -907,6 +913,11 @@ public:
         park_deadline_ns_.store(static_cast<std::uint64_t>(now_ns) +
                                     static_cast<std::uint64_t>(timeout_ms) * 1000000ULL,
                                 std::memory_order_release);
+        // Issue #5444: the IO loop looks for the nearest deadline once per
+        // iteration, before it blocks. A deadline armed while it is already
+        // inside epoll_wait is invisible until that wait returns, so the
+        // sleeper woke at the idle tick (about 1 s) instead of on time.
+        wake_scheduler_for_park_deadline();
     }
     std::uint64_t park_deadline_ns() const {
         return park_deadline_ns_.load(std::memory_order_acquire);

@@ -527,12 +527,25 @@ void Scheduler::stop() {
     // timeout whenever the loop was already parked: ~1000 ms per call.
     // Kick the loop through the offload completion eventfd it already
     // polls; drain_offload_completions() on an empty queue is a no-op.
+    wake_io_loop();
+}
+
+void Scheduler::wake_io_loop() noexcept {
 #if AURA_HAVE_EPOLL
     if (offload_completion_fd_ >= 0) {
         const std::uint64_t one = 1;
         (void)::write(offload_completion_fd_, &one, sizeof(one));
     }
 #endif
+}
+
+// Issue #5444: Fiber::set_park_deadline_ms arms a deadline on a worker while
+// the IO thread may already be blocked in epoll_wait with a timeout computed
+// before that deadline existed. Kick the loop so its next iteration sees the
+// deadline. Without a scheduler loop (thread backend) there is nothing to wake.
+void wake_scheduler_for_park_deadline() noexcept {
+    if (g_scheduler != nullptr)
+        g_scheduler->wake_io_loop();
 }
 
 // ── register_event_fiber ─────────────────────────────

@@ -128,7 +128,7 @@ A stem (no `.` in the last component) matches the end, `/`, `.`, or `_`.
 - std/portfolio: `lib/std/portfolio.aura`
 - lang/module: `src/compiler/evaluator_module_loader.cpp`, `src/compiler/evaluator_primitives_module.cpp`, `src/core/module_boundary.ixx`
 - lang/parser: `src/parser/`, `src/compiler/diag.ixx`, `src/compiler/evaluator_primitives_diagnostic.cpp`
-- runtime/fiber: `src/serve/fiber`, `src/serve/scheduler.cpp`, `src/core/fiber_context`, `src/compiler/fiber`, `src/compiler/evaluator_fiber`, `src/compiler/evaluator_primitives_fiber`, `src/compiler/evaluator_primitives_messaging.cpp`
+- runtime/fiber: `src/serve/fiber`, `src/serve/scheduler.cpp`, `src/serve/scheduler.h`, `src/core/fiber_context`, `src/compiler/fiber`, `src/compiler/evaluator_fiber`, `src/compiler/evaluator_primitives_fiber`, `src/compiler/evaluator_primitives_messaging.cpp`
 - runtime/orch: `src/orch/`, `lib/std/orch.aura`
 - runtime/workspace: `src/core/workspace`, `src/compiler/evaluator_workspace`, `src/compiler/evaluator_primitives_workspace`, `src/compiler/evaluator_primitives_query_workspace`, `lib/std/query-workspace.aura`
 - typecheck oracle: `src/compiler/evaluator_primitives_eval.cpp`, `src/compiler/evaluator_typecheck.cpp`, `src/compiler/service_typecheck.cpp`, `src/compiler/reg_split_parts_decl.inc`

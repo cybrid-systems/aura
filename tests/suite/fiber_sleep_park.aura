@@ -38,4 +38,24 @@
   (check= #t (fiber:sleep 3500))
   (check (>= (- (monotonic-ms) t0) 3400)))
 
+(test-case "a lone parked sleep wakes on time" (hash "issue" 5444)
+  ; the IO loop computes its epoll timeout once per iteration. A deadline
+  ; armed while it was already blocked waited for the 1 s idle tick: a
+  ; spawned fiber's first sleep, a sleep after a yield, and the main
+  ; fiber's sleep right after a join all answered after about 1000 ms.
+  (define (sleeper) (fiber:sleep 40) 'slept)
+  (define (within-700 t0)
+    (let ((ms (- (monotonic-ms) t0)))
+      (check (>= ms 35))
+      (check (< ms 700))))
+  (let ((t0 (monotonic-ms)))
+    (check= 'slept (fiber:join (fiber:spawn sleeper)))
+    (within-700 t0))
+  (let ((t0 (monotonic-ms)))
+    (check= 'slept (fiber:join (fiber:spawn (lambda () (fiber:yield) (sleeper)))))
+    (within-700 t0))
+  (let ((t0 (monotonic-ms)))
+    (check= #t (fiber:sleep 40))
+    (within-700 t0)))
+
 (test-finish)

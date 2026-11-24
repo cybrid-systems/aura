@@ -512,6 +512,7 @@ HOMES: tuple[Home, ...] = (
         roots=(
             "src/serve/fiber",
             "src/serve/scheduler.cpp",
+            "src/serve/scheduler.h",
             "src/core/fiber_context",
             "src/compiler/fiber",
             "src/compiler/evaluator_fiber",
