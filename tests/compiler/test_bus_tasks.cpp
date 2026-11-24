@@ -363,6 +363,9 @@ int main() {
     check(has(read_until(host_out, "unhosted", 10000), "unhosted"), "host unhosted with gates");
     check(::write(host_in, "host\n", 5) == 5, "send host with gates");
     check(has(read_until(host_out, "hosted", 10000), "hosted"), "host rehosted with gates");
+    // The unhost may stop the coordinator before its Disconnect frame is
+    // served; the explicit 900 ms lease then expires shortly after.
+    usleep(1200000);
     check(::write(host_in, "gates\n", 6) == 6, "send gates");
     const std::string gates =
         read_until(host_out, "gates-complete=", 10000) + read_until(host_out, "\n", 10000);

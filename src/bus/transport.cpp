@@ -1452,6 +1452,19 @@ bool Server::gates_resume(std::string* why) {
                               "gate-resume: the gate checkpoint is unreadable; failing closed");
         return true;
     }
+    // A fresh task board has no gated objects: an orphaned ledger from a
+    // deleted .tasks must not attach stale contracts to new task ids.
+    if (tasks_.size() == 0) {
+        if (::ftruncate(::fileno(f), static_cast<off_t>(sizeof(header))) != 0) {
+            if (why)
+                *why = "gate checkpoint truncate failed";
+            std::fclose(f);
+            return false;
+        }
+        std::fseek(f, 0, SEEK_END);
+        gate_checkpoint_ = f;
+        return true;
+    }
     long valid_end = static_cast<long>(sizeof(header));
     while (true) {
         GateCheckpointRecord record{};
