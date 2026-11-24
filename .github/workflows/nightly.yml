@@ -49,6 +49,33 @@ jobs:
         ninja -C build -j 4 test_fiber_guard_hardening
         ./build/test_fiber_guard_hardening
 
+  # #5429/#5430: LLVM SpecJIT test + AST hotpath bench on arm64. The
+  # hotpath AC is allocation-based (platform-independent); the arm64
+  # timing is recorded in the log for the #398 platform comparison.
+  spec-jit-hotpath-arm64:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    container:
+      image: ghcr.io/cybrid-systems/aura-ci:latest
+    steps:
+    - uses: actions/checkout@v7
+
+    - uses: ./.github/actions/ci-krb5
+
+    - name: Install Python CI deps
+      run: pip install --break-system-packages -r requirements-dev.txt
+
+    - name: Build and run spec-JIT + AST hotpath (#5429/#5430)
+      env:
+        AURA_DEBUG_LEVEL: "1"
+      run: |
+        cmake -S . -B build -G Ninja -Wno-author \
+          -Werror=experimental -Wpolicy -Wdeprecated -Wstrict -Wnon-target-directive \
+          -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+        ninja -C build -j 4 ast_hotpath_bench test_spec_jit
+        ./build/ast_hotpath_bench
+        ./build/test_spec_jit
+
   # Issue #2931: steal×mutate×GC×mailbox chaos soak as nightly hard gate.
   # Fail-closed: residual_defer_after_exit without matching clears,
   # resume_fence_fail / ticket-mismatch hard surplus, residual_defer_steal

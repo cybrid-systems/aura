@@ -92,6 +92,9 @@ def _test_binary_has_source(name: str) -> bool:
     # 5. tests/<NAME>.cpp
     if (tests / f"{name}.cpp").is_file():
         return True
+    # C++ benches promoted into the CI issue lane (#5430).
+    if (tests / "bench" / f"{name}.cpp").is_file():
+        return True
     # Bundle drivers (tests/bundles/test_issues_*_main.cpp)
     if (tests / "bundles" / f"{name}_main.cpp").is_file():
         return True
@@ -156,6 +159,7 @@ def _discover_test_issue_binaries_all() -> list[str]:
                 "test_compact_sweep_batch",
                 "test_gc_batch",
                 "test_arena_defrag_concurrent",
+                "ast_hotpath_bench",
             }
         ):
             # Drop build/ leftovers whose sources were deleted/relocated.

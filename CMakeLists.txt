@@ -2993,6 +2993,13 @@ add_custom_target(all_test_issue_targets ALL)
 # Issue #5147: the same-body rebind suite is created above, before this
 # aggregate exists. Attach it here.
 add_dependencies(all_test_issue_targets test_rebind_same_body)
+# #5429/#5430: the long-red LLVM spec-JIT test and the ast hotpath bench
+# join the issue farm so they are built/run on every main push (and the
+# nightly arm64 job records the platform-specific #398 timing).
+if(LLVM_FOUND)
+    add_dependencies(all_test_issue_targets test_spec_jit)
+endif()
+add_dependencies(all_test_issue_targets ast_hotpath_bench)
 # Issue #5148: created above, before this aggregate exists.
 add_dependencies(all_test_issue_targets test_restore_forward_ref)
 # Issue #3374 (was previously above — moved here so the add_dependencies
