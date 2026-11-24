@@ -3240,6 +3240,7 @@ namespace aura::compiler {
 // cannot stall Evaluator teardown.
 void Evaluator::drain_thread_fibers() noexcept {
     // Registry state from the primitives_detail anonymous namespace.
+    using primitives_detail::fiber_cancel_request;
     using primitives_detail::g_thread_fiber_dtor_abandon_total;
     using primitives_detail::g_thread_fiber_dtor_join_total;
     using primitives_detail::s_fiber_results;
@@ -3251,6 +3252,15 @@ void Evaluator::drain_thread_fibers() noexcept {
         std::vector<std::pair<std::int64_t, std::thread>> mine;
         {
             std::scoped_lock<std::mutex> lock(s_thread_fiber_threads_mtx);
+            // Exit/destruction must stop the bodies, not just detach them:
+            // a detached fiber still touches the evaluator while std::exit
+            // tears its static state down. Arm cooperative cancellation for
+            // every CLI fiber this evaluator owns; the joined loop below
+            // then gets a clean body exit at its next safepoint.
+            for (const auto& entry : s_thread_fiber_threads) {
+                if (entry.second.first == static_cast<const void*>(this))
+                    fiber_cancel_request(entry.first);
+            }
             for (auto it = s_thread_fiber_threads.begin(); it != s_thread_fiber_threads.end();) {
                 if (it->second.first == static_cast<const void*>(this)) {
                     mine.emplace_back(it->first, std::move(it->second.second));
@@ -3260,7 +3270,14 @@ void Evaluator::drain_thread_fibers() noexcept {
                 }
             }
         }
+        s_fiber_results_cv.notify_all();
         for (auto& [fid, worker] : mine) {
+            // (exit) can run inside a fiber body. Joining self is invalid;
+            // detach the caller and let the process exit finish it.
+            if (worker.get_id() == std::this_thread::get_id()) {
+                worker.detach();
+                continue;
+            }
             const bool ready = [fid] {
                 std::unique_lock<std::mutex> lock(s_fiber_results_mtx);
                 return s_fiber_results_cv.wait_for(lock, std::chrono::milliseconds(2000), [fid] {

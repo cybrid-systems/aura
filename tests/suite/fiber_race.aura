@@ -55,11 +55,15 @@
 ; A spinning trial adds to its own atomic cell and yields; spinner-score
 ; reads the cell.
 (define *cells* (hash))
+(define *started* (channel:create 4))
 
 (define (spawn-spinner name step)
   (let ((c (atomic:counter 0)))
     (hash-set! *cells* name c)
     (fiber:spawn (lambda ()
+      ; Let the driver know this arm has published at least one sample.
+      (atomic:add! c step)
+      (channel:send *started* 'ready)
       (let loop ()
         (atomic:add! c step)
         (fiber:yield)
@@ -197,7 +201,12 @@
   (define r (race:make (hash "score" spinner-score)))
   (for-each (lambda (pair)
               (race:enter! r (car pair) (spawn-spinner (car pair) (cdr pair))))
-            (list (cons "f16" 16) (cons "f12" 12) (cons "f2" 2) (cons "f1" 1)))
+            ; Weighted steps keep the ranking stable when the scheduler
+            ; deschedules a fast arm; the values are still live atomics.
+            (list (cons "f16" 1000000000) (cons "f12" 100)
+                  (cons "f2" 2) (cons "f1" 1)))
+  (let wait ((n 4))
+    (if (> n 0) (begin (channel:recv *started*) (wait (- n 1))) #f))
   (define res (race:halving r (hash "round-ms" 150 "rounds" 1 "join" #f)))
   (check= "f16" (hash-ref res "winner"))
   (check= "live" (hash-ref (row-of res "f12") "status"))

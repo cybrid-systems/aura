@@ -795,6 +795,12 @@ void RegSplitParts::register_exit_primitive(PrimRegistrar add, Evaluator& ev) {
         // state down -> double free / SIGSEGV on the worker thread.
         // Stop+join the workers BEFORE the exit phase starts.
         ev.quiesce_before_exit();
+        // Issue #5413: a hard exit does not unwind the evaluator either.
+        // CLI fiber bodies live on joinable std::threads registered for
+        // ~Evaluator; if one is still registered when static destruction
+        // destroys that registry, std::thread::~thread() calls
+        // std::terminate -> SIGABRT. Join (or bounded-detach) them first.
+        ev.drain_thread_fibers();
         std::exit(code);
     });
 }
