@@ -8781,16 +8781,19 @@ Evaluator::FlatStep Evaluator::eval_flat_on_set(EvalFlatCursor& cur, const aura:
     // Use stable index instead of pointer (cells_ may reallocate).
     // Reuse the last resolution for this (flat, site, env) while the
     // top binding generation, binding count and cell heap size agree.
+    // A local call Env's address can be reused after the call returns, so
+    // only a *top-resolved* name is cached across calls. A site whose name
+    // is shadowed locally stays on the exact lookup. The high-frequency
+    // runner globals resolve to top_ even when read from a function body.
     const auto top_gen = top_bind_gen_.load(std::memory_order_relaxed);
-    const auto bind_n = eval_env.bindings_symid().size();
+    const auto top_bind_n = top_env().bindings_symid().size();
     const auto cells_n = cells_.size();
     const auto flat_gen = f->generation();
     SetCellSite5066* set_site = nullptr;
     for (std::size_t i = 0; i < 16; ++i) {
         SetCellSite5066& s = tls_set_cell_5066[i];
-        if (s.flat == f && s.sym == v.sym_id && s.env == &eval_env &&
-            s.top_gen == top_gen && s.bind_n == bind_n && s.cells_n == cells_n &&
-            s.flat_gen == flat_gen) {
+        if (s.flat == f && s.sym == v.sym_id && s.top_gen == top_gen &&
+            s.bind_n == top_bind_n && s.cells_n == cells_n && s.flat_gen == flat_gen) {
             set_site = &s;
             break;
         }
@@ -8801,15 +8804,18 @@ Evaluator::FlatStep Evaluator::eval_flat_on_set(EvalFlatCursor& cur, const aura:
     } else {
         cell_idx = eval_env.lookup_cell_index(name);
         if (cell_idx && *cell_idx < cells_n) {
-            SetCellSite5066& s = tls_set_cell_5066[tls_set_cell_next_5066++ & 15u];
-            s.flat = f;
-            s.sym = v.sym_id;
-            s.env = &eval_env;
-            s.top_gen = top_gen;
-            s.bind_n = bind_n;
-            s.cells_n = cells_n;
-            s.flat_gen = flat_gen;
-            s.cell = *cell_idx;
+            const auto top_cell = top_env().lookup_cell_index(name);
+            if (top_cell && *top_cell == *cell_idx) {
+                SetCellSite5066& s = tls_set_cell_5066[tls_set_cell_next_5066++ & 15u];
+                s.flat = f;
+                s.sym = v.sym_id;
+                s.env = &top_env();
+                s.top_gen = top_gen;
+                s.bind_n = top_bind_n;
+                s.cells_n = cells_n;
+                s.flat_gen = flat_gen;
+                s.cell = *cell_idx;
+            }
         }
     }
     if (cell_idx) {
