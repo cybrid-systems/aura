@@ -1,0 +1,70 @@
+; Issue #5418 — llm:chat multimodal content parts (image_url)
+; Run: ./build/aura tests/suite/llm_multimodal.aura
+; Offline: the request builder and every refusal path, no LLM_API_KEY needed.
+(require "std/test" all:)
+(require "std/llm" all:)
+(require "std/string" all:)
+
+(test-file "llm_multimodal.aura")
+
+(define (mm-user-content body)
+  (let* ((msgs (hash-ref (json-parse body) "messages"))
+         (user (car (cdr msgs))))
+    (hash-ref user "content")))
+
+(test-case "parts predicate and plain text request" (hash "issue" 5418 "tags" (list "llm" "multimodal"))
+  (check (llm:parts? (list (llm:text-part "hi"))))
+  (check (not (llm:parts? "hi")))
+  (let ((body (llm:chat-request "sys" "hello")))
+    (check= "hello" (mm-user-content body))))
+
+(test-case "image_url parts become an OpenAI content array" (hash "issue" 5418 "tags" (list "llm" "multimodal"))
+  (let* ((parts (list (llm:text-part "describe")
+                      (llm:image-part "data:image/png;base64,AAAA")))
+         (body (llm:chat-request "sys" parts))
+         (content (mm-user-content body)))
+    (check (pair? content))
+    (check= "text" (hash-ref (car content) "type"))
+    (check= "describe" (hash-ref (car content) "text"))
+    (check= "image_url" (hash-ref (car (cdr content)) "type"))
+    (check= "data:image/png;base64,AAAA"
+            (hash-ref (hash-ref (car (cdr content)) "image_url") "url"))))
+
+(test-case "text parts are sanitized and injection is refused" (hash "issue" 5418 "tags" (list "llm" "multimodal"))
+  (let ((r (llm:chat-vision "sys"
+                            (list (hash "type" "text" "text" "<|im_start|>x")))))
+    (check (not (hash-ref r "ok" #t)))
+    (check= "injection-blocked" (hash-ref r "error"))))
+
+(test-case "unsupported image type and URL are readable errors" (hash "issue" 5418 "tags" (list "llm" "multimodal"))
+  (let ((r (llm:chat-vision "sys"
+                            (list (hash "type" "text" "text" "ok")
+                                  (hash "type" "image_url"
+                                        "image_url"
+                                        (hash "url" "data:image/tiff;base64,AAAA"))))))
+    (check= "unsupported-image-type" (hash-ref r "error")))
+  (let ((r (llm:chat-vision "sys"
+                            (list (hash "type" "image_url"
+                                        "image_url"
+                                        (hash "url" "ftp://example.com/a.png"))))))
+    (check= "unsupported-image-url" (hash-ref r "error"))))
+
+(test-case "a malformed part is bad-content" (hash "issue" 5418 "tags" (list "llm" "multimodal"))
+  (let ((r (llm:chat-vision "sys" (list (hash "type" "text")))))
+    (check= "bad-content" (hash-ref r "error"))))
+
+(test-case "a data URL over the 10 MB image budget is refused" (hash "issue" 5418 "tags" (list "llm" "multimodal"))
+  (let ((r (llm:chat-vision "sys"
+                            (list (llm:image-part
+                                    (string-append "data:image/png;base64,"
+                                                   (string-repeat "A" 14000001)))))))
+    (check= "image-too-large" (hash-ref r "error"))))
+
+; #5268 behavior stays: empty content with reasoning_content is truncated,
+; not a generic no-content.
+(test-case "reasoning-only responses stay truncated" (hash "issue" 5418 "tags" (list "llm" "multimodal"))
+  (let ((r (llm:parse-response
+             "{\"choices\":[{\"finish_reason\":\"length\",\"message\":{\"content\":\"\",\"reasoning_content\":\"thinking\"}}]}")))
+    (check= "truncated/finish=length" (hash-ref r "error"))))
+
+(test-finish)

@@ -16,9 +16,11 @@
         llm:parse-response llm:extract-content
         llm:sanitize-prompt llm:injection-risk?
         llm:call-stats llm:call-stats-reset!
-        llm:chat)
+        llm:text-part llm:image-part llm:parts? llm:chat-request
+        llm:chat llm:chat-vision)
 
 (require "std/string" all:)
+(require "std/secret" all:)
 ; #3919: http-post is a deferred host prim. Requiring std/llm installs
 ; http-* (ensure_std_host_prims, same mask as std/net). Sandbox without
 ; a network grant skips that install so this module still loads.
@@ -201,6 +203,75 @@
       (hash-ref r "content" "")
       "")))
 
+; ── Multimodal content parts (#5418) ───────────────────────────
+; A user content part is a hash:
+;   (hash "type" "text" "text" "...")
+;   (hash "type" "image_url" "image_url" (hash "url" "data:image/png;base64,..."))
+; The image URL is a data URL (PNG/JPEG/GIF/WEBP) or an http(s) URL.
+; MiniMax documents a 10 MB per-image ceiling; base64 carries 4/3 of the
+; binary size, so the data-URL text ceiling is 14,000,000 characters.
+
+(define *llm-image-data-max* 14000000)
+
+(define (llm:text-part text)
+  (hash "type" "text" "text" text))
+
+(define (llm:image-part url)
+  (hash "type" "image_url" "image_url" (hash "url" url)))
+
+(define (llm:parts? x)
+  (and (pair? x)
+       (hash? (car x))
+       (string? (hash-ref (car x) "type" #f))))
+
+; #t when the URL is acceptable, else an error hash. A readable error matters:
+; the caller sees "image-too-large", not a protocol rejection from the model.
+(define (llm-image-url-error url)
+  (cond
+    ((not (llm-nonempty-string? url))
+     (hash "ok" #f "error" "bad-image-url"))
+    ((string-prefix? url "data:")
+     (let ((lower (string-downcase url)))
+       (cond
+         ((not (or (string-prefix? lower "data:image/png;base64,")
+                   (string-prefix? lower "data:image/jpeg;base64,")
+                   (string-prefix? lower "data:image/jpg;base64,")
+                   (string-prefix? lower "data:image/gif;base64,")
+                   (string-prefix? lower "data:image/webp;base64,")))
+          (hash "ok" #f "error" "unsupported-image-type"))
+         ((> (string-length url) *llm-image-data-max*)
+          (hash "ok" #f "error" "image-too-large"))
+         (else #t))))
+    ((or (string-prefix? url "https://")
+         (string-prefix? url "http://"))
+     #t)
+    (else (hash "ok" #f "error" "unsupported-image-url"))))
+
+(define (llm-normalize-parts parts)
+  (let loop ((xs parts) (acc '()))
+    (if (null? xs)
+      (hash "ok" #t "parts" (reverse acc))
+      (let ((p (car xs)))
+        (cond
+          ((not (hash? p)) (hash "ok" #f "error" "bad-content"))
+          ((equal? (hash-ref p "type" #f) "text")
+           (let ((s (hash-ref p "text" #f)))
+             (cond
+               ((not (string? s)) (hash "ok" #f "error" "bad-content"))
+               ((llm:injection-risk? s)
+                (hash "ok" #f "error" "injection-blocked"))
+               (else
+                (loop (cdr xs)
+                      (cons (llm:text-part (llm:sanitize-prompt s)) acc))))))
+          ((equal? (hash-ref p "type" #f) "image_url")
+           (let* ((iu (hash-ref p "image_url" #f))
+                  (url (if (hash? iu) (hash-ref iu "url" #f) #f))
+                  (e (llm-image-url-error url)))
+             (if (hash? e)
+               e
+               (loop (cdr xs) (cons (llm:image-part url) acc)))))
+          (else (hash "ok" #f "error" "bad-content")))))))
+
 ; ── Call surfaces ──────────────────────────────────────────────
 
 ; Issue #2735: after set-code / heavy require, free-vars on the
@@ -285,6 +356,26 @@
 (define (llm-http-error-text e)
   (if (llm-nonempty-string? e) e "no-http-post"))
 
+; #5417: the secret store is the durable source. LLM_API_KEY remains a
+; compatibility import path and is read only when the store has no value.
+; Neither path writes the key into a log or an error message.
+(define (llm-api-key)
+  (let* ((store (try (secret:default-store) (catch (e) #f)))
+         (name-env (try (getenv "AURA_LLM_SECRET_NAME") (catch (e) #f)))
+         (name (if (and (string? name-env) (> (string-length name-env) 0))
+                 name-env
+                 "llm-api-key"))
+         (h (if (hash? store) (secret:get store name) #f))
+         (from-store (if (and (hash? h) (secret:handle-name? h))
+                       (secret:use-raw h (lambda (v) v))
+                       #f)))
+    (if (and (string? from-store) (> (string-length from-store) 0))
+      from-store
+      (let ((legacy (try (getenv "LLM_API_KEY") (catch (e) #f))))
+        (if (and (string? legacy) (> (string-length legacy) 0))
+          legacy
+          "")))))
+
 (define (aura-llm-call body . rest)
   (cond
     ((not (string? body)) "bad-arg")
@@ -318,12 +409,11 @@
          (begin
            (try (llm-stat-bump! "rate-limited") (catch (e) #f))
            "rate-limited")
-         (let ((key (getenv "LLM_API_KEY"))
+         (let ((key (llm-api-key))
                (clean (llm:sanitize-prompt body)))
-         ; #4504: under an armed sandbox the fenced getenv returns an error
-         ; value — degrade to the no-key path instead of propagating.
-         ; #5293: that degrade, a missing key, and an empty key are no-key.
-         (if (or (not key) (error? key) (= (string-length key) 0))
+         ; #4504/#5293: an unavailable store, a missing key and an empty
+         ; key all degrade to the no-key path; no value is echoed.
+         (if (or (not (string? key)) (= (string-length key) 0))
              (begin
                (try (llm-stat-bump! "no-key") (catch (e) #f))
                "")
@@ -360,6 +450,78 @@
     (begin (llm-stat-bump! "fail") "bad-arg")
     (aura-llm-call body)))
 
+; ── Request body and response finishing ─────────────────────────
+
+(define (llm-model-default)
+  (let ((model-env (try (getenv "LLM_MODEL") (catch (e) #f))))
+    (if (and (string? model-env) (> (string-length model-env) 0))
+      model-env
+      "deepseek-chat")))
+
+(define (llm-build-request system-content user-content extra)
+  (let* ((model (llm-model-default))
+         (body (hash "model" model
+                     "messages"
+                     (list (hash "role" "system" "content" system-content)
+                           (hash "role" "user" "content" user-content)))))
+    (llm-merge-extra! body extra)))
+
+; Pure request builder (#5418): a string user-content stays a string; a
+; parts list becomes the OpenAI-compatible content array. No network call.
+(define (llm:chat-request system-prompt user-content . rest)
+  (let* ((parts (llm-split-rest rest))
+         (extra (car parts))
+         (sys (llm:sanitize-prompt (if (string? system-prompt) system-prompt "")))
+         (usr (if (string? user-content)
+                (llm:sanitize-prompt user-content)
+                user-content)))
+    (json-encode (llm-build-request sys usr extra))))
+
+(define (llm-finish-raw raw)
+  (cond
+    ((equal? raw "rate-limited")
+     (hash "ok" #f "error" "rate-limited" "content" ""))
+    ((equal? raw "injection-blocked")
+     (hash "ok" #f "error" "injection-blocked" "content" ""))
+    ((equal? raw "bad-arg")
+     (hash "ok" #f "error" "bad-arg" "content" ""))
+    ; #5287: aura-llm-call still returns the "no-http-post" sentinel
+    ; (#3919). When http-post was never installed, that sentinel is the
+    ; sandbox with no network grant — name the grant. A bound http-post
+    ; that still failed keeps the sentinel.
+    ((equal? raw "no-http-post")
+     (hash "ok" #f
+           "error"
+           (if (try (procedure? http-post) (catch (e) #f))
+             "no-http-post"
+             "sandbox has not granted network: pass --grant net or --grant network, or set AURA_SANDBOX=off in a controlled environment")
+           "content" ""))
+    ((and (string? raw) (string-prefix? raw "http-post:"))
+     (hash "ok" #f "error" raw "content" ""))
+    ((and (string? raw) (string-prefix? raw "http-get:"))
+     (hash "ok" #f "error" raw "content" ""))
+    ((equal? raw "")
+     (hash "ok" #f "error" "empty" "content" ""))
+    ; #5293: parse-ok still counts the parse. success is the call
+    ; that came back with content.
+    (else
+     (let ((parsed (llm:parse-response raw)))
+       (if (and (hash? parsed) (hash-ref parsed "ok" #f))
+         (llm-stat-bump! "success")
+         #f)
+       parsed))))
+
+(define (llm-chat-call system-content user-content rest)
+  (let* ((parts (llm-split-rest rest))
+         (extra (car parts))
+         (explicit (cdr parts))
+         (timeout (llm-resolve-timeout explicit extra))
+         (body (json-encode (llm-build-request system-content user-content extra)))
+         (raw (if (llm-positive-number? timeout)
+                (aura-llm-call body timeout)
+                (aura-llm-call body))))
+    (llm-finish-raw raw)))
+
 ; (llm:chat system user)
 ; (llm:chat system user timeout-seconds)
 ; (llm:chat system user extra)
@@ -368,62 +530,40 @@
 ; (max_tokens, reasoning_effort, …). A "timeout" entry is the transport
 ; budget and is not sent. LLM_TIMEOUT is the env default; an explicit
 ; number wins. http-post still applies AURA_HTTP_TIMEOUT when neither is set.
+; #5418: user may also be a parts list, in which case it goes through
+; llm:chat-vision and is sent as an OpenAI-compatible content array.
 (define (llm:chat system-prompt user-prompt . rest)
-  (if (llm:injection-risk? (if (string? user-prompt) user-prompt ""))
-    (begin
-      (llm-stat-bump! "injection-blocked")
-      (hash "ok" #f "error" "injection-blocked" "content" ""))
-    (let* ((sys (llm:sanitize-prompt (if (string? system-prompt) system-prompt "")))
-           (usr (llm:sanitize-prompt (if (string? user-prompt) user-prompt "")))
-           (parts (llm-split-rest rest))
-           (extra (car parts))
-           (explicit (cdr parts))
-           (model-env (try (getenv "LLM_MODEL") (catch (e) #f)))
-           (model (if (and (string? model-env) (> (string-length model-env) 0))
-                    model-env
-                    "deepseek-chat"))
-           (body-hash (hash "model" model
-                            "messages"
-                            (list (hash "role" "system" "content" sys)
-                                  (hash "role" "user" "content" usr))))
-           (merged (llm-merge-extra! body-hash extra))
-           (timeout (llm-resolve-timeout explicit extra))
-           (body (json-encode merged))
-           (raw (if (llm-positive-number? timeout)
-                  (aura-llm-call body timeout)
-                  (aura-llm-call body))))
-      (cond
-        ((equal? raw "rate-limited")
-         (hash "ok" #f "error" "rate-limited" "content" ""))
-        ((equal? raw "injection-blocked")
+  (cond
+    ((string? user-prompt)
+     (if (llm:injection-risk? user-prompt)
+       (begin
+         (llm-stat-bump! "injection-blocked")
          (hash "ok" #f "error" "injection-blocked" "content" ""))
-        ((equal? raw "bad-arg")
-         (hash "ok" #f "error" "bad-arg" "content" ""))
-        ; #5287: aura-llm-call still returns the "no-http-post" sentinel
-        ; (#3919). When http-post was never installed, that sentinel is the
-        ; sandbox with no network grant — name the grant. A bound http-post
-        ; that still failed keeps the sentinel.
-        ((equal? raw "no-http-post")
-         (hash "ok" #f
-               "error"
-               (if (try (procedure? http-post) (catch (e) #f))
-                 "no-http-post"
-                 "sandbox has not granted network: pass --grant net or --grant network, or set AURA_SANDBOX=off in a controlled environment")
-               "content" ""))
-        ((and (string? raw) (string-prefix? raw "http-post:"))
-         (hash "ok" #f "error" raw "content" ""))
-        ((and (string? raw) (string-prefix? raw "http-get:"))
-         (hash "ok" #f "error" raw "content" ""))
-        ((equal? raw "")
-         (hash "ok" #f "error" "empty" "content" ""))
-        ; #5293: parse-ok still counts the parse. success is the call
-        ; that came back with content.
-        (else
-         (let ((parsed (llm:parse-response raw)))
-           (if (and (hash? parsed) (hash-ref parsed "ok" #f))
-             (llm-stat-bump! "success")
-             #f)
-           parsed))))))
+       (llm-chat-call (llm:sanitize-prompt (if (string? system-prompt) system-prompt ""))
+                      (llm:sanitize-prompt user-prompt)
+                      rest)))
+    ((pair? user-prompt)
+     (apply llm:chat-vision system-prompt user-prompt rest))
+    (else
+     (hash "ok" #f "error" "bad-arg" "content" ""))))
+
+; #5418: the same call surface with an OpenAI-compatible content array.
+; System text is sanitized; text parts are sanitized; an image part is
+; validated before any bytes leave the process.
+(define (llm:chat-vision system-prompt parts . rest)
+  (let ((checked (llm-normalize-parts parts)))
+    (if (not (hash-ref checked "ok" #f))
+      (begin
+        (if (equal? (hash-ref checked "error" "") "injection-blocked")
+          (llm-stat-bump! "injection-blocked")
+          #f)
+        (hash "ok" #f
+              "error" (hash-ref checked "error" "bad-content")
+              "content" ""))
+      (llm-chat-call (llm:sanitize-prompt (if (string? system-prompt) system-prompt ""))
+                     (hash-ref checked "parts")
+                     rest))))
+
 
 (define (aura-verify code)
   (if (set-code code)

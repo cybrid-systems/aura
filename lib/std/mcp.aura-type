@@ -1,0 +1,6 @@
+mcp:client: Any -> Any
+mcp:initialize: Any -> Any
+mcp:list-tools: Any -> Any
+mcp:call-tool: Any Any Any -> Any
+mcp:tool-names: Any -> Any
+mcp:help: -> Any

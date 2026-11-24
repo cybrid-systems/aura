@@ -2,7 +2,7 @@
 
 # Standard library index (generated)
 
-**117** modules in `lib/std/`. Load: `(require "std/name" all:)`.
+**119** modules in `lib/std/`. Load: `(require "std/name" all:)`.
 
 | Module | Exports | Description |
 |--------|---------|-------------|
@@ -67,9 +67,10 @@
 | `std/kir` | `kir-name` `kir-head` `kir-items` `kir-find` `kir-ty` `kir-params` `kir-body` `kir-ret` … (+19) | kir.aura — 类型化 kernel IR（Issue #4802 第二阶段） |
 | `std/lazy` | `delay` `force` `promise?` `make-promise` | lib/std/lazy.aura — R7RS (scheme lazy) (Issue #5005) |
 | `std/list` | `foldr` `foldl` `map` `for-each` `member?` `zip` `zip3` `take` … (+32) | Aura standard list library |
-| `std/llm` | `aura-llm-call` `aura-verify` `llm:rate-limit-set!` `llm:rate-limit-remaining` `llm:call-sandboxed` `llm:register-template` `llm:list-templates` `llm:apply-template` … (+7) | Aura std/llm — LLM 交互模块 (Issue #929 + #1551 production safety) |
+| `std/llm` | `aura-llm-call` `aura-verify` `llm:rate-limit-set!` `llm:rate-limit-remaining` `llm:call-sandboxed` `llm:register-template` `llm:list-templates` `llm:apply-template` … (+12) | Aura std/llm — LLM 交互模块 (Issue #929 + #1551 production safety) |
 | `std/math` | `;` `Constants` `pi` `e` `phi` `tau` `Basic` `square` … (+53) | Aura standard math library |
 | `std/maybe` | `maybe?` `maybe-ref` `maybe-default` `map-maybe` `filter-maybe` | maybe.aura — Maybe/Option type |
+| `std/mcp` | `mcp:client` `mcp:initialize` `mcp:list-tools` `mcp:call-tool` `mcp:tool-names` `mcp:help` | lib/std/mcp — a Model Context Protocol client over stdio (#5416) |
 | `std/moead` | `moead:make` `moead:ask` `moead:tell!` `moead:run!` `moead:front` `moead:weights` `moead:report` `moead:help` … (+2) | lib/std/moead.aura — Issue #4940 (v0.2 P1): MOEA/D as the main |
 | `std/mutate` | `mutate:summary` `mutate:by-operator` `mutate:last-info` `mutate:operator-count` `mutate:rolled-back?` `mutate:rollback-rate` `mutate:boundary-depth` `mutate:boundary-safe?` … (+13) | — |
 | `std/mutation-atomic` | `typed-mutate-atomic-all` | lib/std/mutation-atomic.aura — Issue #1442 convenience over (typed-mutate-atomic) |
@@ -100,6 +101,7 @@
 | `std/safe-refactor` | `safe-refactor:with-snapshot` `safe-refactor:replace-fn` `safe-refactor:check-and-apply` `safe-refactor:rollback` `safe-refactor:contract-pre` `safe-refactor:contract-post` `safe-refactor:last-gate` | lib/std/safe-refactor.aura — verification-gated refactoring |
 | `std/schedule` | `schedule:make` `schedule:open` `schedule:on-due!` `schedule:after` `schedule:at` `schedule:cancel` `schedule:pending` `schedule:timers` … (+2) | lib/std/schedule.aura — timers and a persistable schedule (#5414) |
 | `std/search` | `search:init` `search:step` `search:batch` `search:run` `search:pending` `search:best` `search:best-score` `search:export` … (+7) | lib/std/search.aura — one search protocol over the program space (#5007) |
+| `std/secret` | `secret:store` `secret:default-store` `secret:get` `secret:handle-name?` `secret:put!` `secret:import-file!` `secret:import-env!` `secret:use` … (+6) | lib/std/secret — a minimal-disclosure credential store (#5417) |
 | `std/set` | `set` `set?` `set-copy` `set-clear!` `set-adjoin` `set-adjoin!` `set-delete` `set-delete!` … (+37) | lib/std/set.aura — SRFI-113 sets on the unified hash table (Issue #5003) |
 | `std/socket` | `tcp-connect` `tcp-send` `tcp-recv` `tcp-close` `tcp-listen` `tcp-local-port` `tcp-accept` `tcp-accept-timeout` | socket.aura — TCP socket library (client + server) |
 | `std/sort` | `list-sort` `list-stable-sort` `list-sort!` `list-stable-sort!` `vector-sort` `vector-stable-sort` `vector-sort!` `vector-stable-sort!` … (+3) | lib/std/sort.aura — SRFI-132 sorting (Issue #5003) |

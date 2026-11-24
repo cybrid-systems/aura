@@ -12,4 +12,9 @@ llm:sanitize-prompt: Any -> Any
 llm:injection-risk?: Any -> Any
 llm:call-stats: -> Any
 llm:call-stats-reset!: -> Any
+llm:text-part: Any -> Any
+llm:image-part: Any -> Any
+llm:parts?: Any -> Any
+llm:chat-request: Any Any -> Any
+llm:chat-vision: Any Any -> Any
 llm:chat: Any Any -> Any

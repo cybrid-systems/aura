@@ -1,0 +1,52 @@
+; Issue #5416 — std/mcp stdio client (list and call)
+; Run: ./build/aura tests/suite/mcp.aura
+(require "std/test" all:)
+(require "std/mcp" all:)
+(require "std/string" all:)
+(require "std/list" all:)
+
+(test-file "mcp.aura")
+
+(define mcp-fixture "python3 tests/fixtures/mcp_tool_server.py")
+(define mcp-client (mcp:client mcp-fixture 20))
+
+(define (mcp-first-text result)
+  (let* ((content (if (hash? result) (hash-ref result "content" '()) '()))
+         (first (if (pair? content) (car content) #f)))
+    (if (and (hash? first) (string? (hash-ref first "text" #f)))
+      (hash-ref first "text")
+      "")))
+
+(test-case "initialize returns the fixture server info" (hash "issue" 5416 "tags" (list "mcp"))
+  (let ((r (mcp:initialize mcp-client)))
+    (check (hash-ref r "ok" #f))
+    (check (hash? (hash-ref r "result" #f)))
+    (check= "aura-mcp-fixture"
+            (hash-ref (hash-ref (hash-ref r "result") "serverInfo") "name"))))
+
+(test-case "tools/list exposes echo and add" (hash "issue" 5416 "tags" (list "mcp"))
+  (let* ((r (mcp:list-tools mcp-client))
+         (names (mcp:tool-names (hash-ref r "tools" '()))))
+    (check (hash-ref r "ok" #f))
+    (check (member? "echo" names))
+    (check (member? "add" names))))
+
+(test-case "tools/call echo and add return content" (hash "issue" 5416 "tags" (list "mcp"))
+  (let ((r (mcp:call-tool mcp-client "echo" (hash "text" "hello"))))
+    (check (hash-ref r "ok" #f))
+    (check (string-contains? (mcp-first-text (hash-ref r "result")) "hello")))
+  (let ((r (mcp:call-tool mcp-client "add" (hash "a" 20 "b" 22))))
+    (check (hash-ref r "ok" #f))
+    (check= "42" (mcp-first-text (hash-ref r "result")))))
+
+(test-case "an unknown tool is an error, not a capability" (hash "issue" 5416 "tags" (list "mcp"))
+  (let ((r (mcp:call-tool mcp-client "nope" (hash))))
+    (check (not (hash-ref r "ok" #t)))
+    (check (string-contains? (hash-ref r "error" "") "unknown tool"))))
+
+(test-case "bad clients and arguments are refused before a process" (hash "issue" 5416 "tags" (list "mcp"))
+  (check= "bad-client" (hash-ref (mcp:list-tools (hash)) "error"))
+  (check= "bad-tool-name" (hash-ref (mcp:call-tool mcp-client "" (hash)) "error"))
+  (check= "bad-arguments" (hash-ref (mcp:call-tool mcp-client "echo" "x") "error")))
+
+(test-finish)

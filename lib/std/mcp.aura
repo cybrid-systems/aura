@@ -1,0 +1,189 @@
+; lib/std/mcp — a Model Context Protocol client over stdio (#5416)
+;
+; The transport is one short-lived child process per call: initialize,
+; notifications/initialized, then tools/list or tools/call, with the
+; request stream on stdin and newline-delimited JSON-RPC replies on
+; stdout. This is the MCP stdio transport, scoped to the list/call MVP.
+;
+; Tool descriptions and results are ingested data (Bastion): this module
+; returns plain strings/hashes and never turns them into a capability,
+; a --grant or a task permission. The child runs under the caller's
+; exec grant; its own network/file access is the child's business, not
+; authority borrowed from Aura.
+;
+; Import: (require "std/mcp" all:)
+
+(export mcp:client mcp:initialize mcp:list-tools mcp:call-tool
+        mcp:tool-names mcp:help)
+
+(require "std/string" all:)
+(require "std/json" all:)
+(require "std/process" all:)
+(require "std/io" all:)
+
+(define *mcp-protocol-version* "2024-11-05")
+
+(define (mcp:help)
+  "std/mcp: (mcp:client CMD [TIMEOUT-S]) -> client; (mcp:list-tools c); (mcp:call-tool c name args)")
+
+(define (mcp:client command . rest)
+  (let ((timeout (if (and (pair? rest) (number? (car rest)) (> (car rest) 0))
+                   (car rest)
+                   15)))
+    (if (and (string? command) (> (string-length command) 0))
+      (hash "kind" "mcp-client" "command" command "timeout" timeout)
+      (hash "kind" "mcp-client-error" "error" "bad-command"))))
+
+(define (mcp-client? c)
+  (and (hash? c) (equal? (hash-ref c "kind" #f) "mcp-client")))
+
+; ── JSON-RPC messages ──────────────────────────────────────────
+
+(define (mcp-jsonl msgs)
+  (apply string-append
+         (map (lambda (m) (string-append (json-encode m) "\n")) msgs)))
+
+(define (mcp-init-messages)
+  (list (hash "jsonrpc" "2.0"
+              "id" 1
+              "method" "initialize"
+              "params" (hash "protocolVersion" *mcp-protocol-version*
+                             "capabilities" (hash)
+                             "clientInfo" (hash "name" "aura-mcp"
+                                                "version" "0.3.3")))
+        (hash "jsonrpc" "2.0"
+              "method" "notifications/initialized")))
+
+; ── one-shot transport ─────────────────────────────────────────
+
+(define (mcp-run c messages)
+  (let* ((cmd (hash-ref c "command"))
+         (timeout (hash-ref c "timeout" 15))
+         (dir (try (command-output "mktemp -d /tmp/aura-mcp.XXXXXX") (catch (e) #f))))
+    (cond
+      ((not (mcp-client? c)) (hash "ok" #f "error" "bad-client"))
+      ((not (string? dir)) (hash "ok" #f "error" "mcp-exec-unavailable"))
+      (else
+       (let* ((dir (string-trim dir))
+              (req (string-append dir "/request.jsonl"))
+              (resp (string-append dir "/response.jsonl"))
+              (err (string-append dir "/stderr.txt"))
+              (runner (string-append dir "/run.sh"))
+              (body (mcp-jsonl messages))
+              (script (string-append
+                        "#!/bin/sh\nexec timeout " (number->string timeout)
+                        "s " cmd " < " req " > " resp " 2> " err "\n"))
+              (w1 (try (file-write req body) (catch (e) #f)))
+              (w2 (try (file-write runner script) (catch (e) #f)))
+              (rc (if (and (not (error? w1)) (not (error? w2)))
+                    (try (shell (string-append "sh " runner)) (catch (e) -1))
+                    -1))
+              (out (try (read-file resp) (catch (e) #f))))
+         (try (shell (string-append "rm -rf " dir)) (catch (e) #f))
+         (cond
+           ((not (string? out))
+            (hash "ok" #f "error" "mcp-server-failed" "exit" rc))
+           (else
+            (hash "ok" #t "lines" out "exit" rc))))))))
+
+; ── reply decoding ─────────────────────────────────────────────
+
+(define (mcp-parse-lines text)
+  (let ((rows (string-split text "\n")))
+    (let loop ((xs rows) (acc '()))
+      (if (null? xs)
+        (reverse acc)
+        (let* ((line (string-trim (car xs)))
+               (v (if (> (string-length line) 0)
+                    (try (json-parse line) (catch (e) #f))
+                    #f)))
+          (loop (cdr xs) (if (hash? v) (cons v acc) acc)))))))
+
+(define (mcp-find-id replies id)
+  (let loop ((xs replies))
+    (cond ((null? xs) #f)
+          ((equal? (hash-ref (car xs) "id" #f) id) (car xs))
+          (else (loop (cdr xs))))))
+
+(define (mcp-error-of reply)
+  (let ((e (if (hash? reply) (hash-ref reply "error" #f) #f)))
+    (if (hash? e)
+      (let ((msg (hash-ref e "message" #f)))
+        (if (string? msg) msg "mcp-error"))
+      "mcp-error")))
+
+(define (mcp-session c messages)
+  (let ((r (mcp-run c messages)))
+    (if (not (hash-ref r "ok" #f))
+      r
+      (let ((replies (mcp-parse-lines (hash-ref r "lines" ""))))
+        (let ((init (mcp-find-id replies 1)))
+          (if (not (hash? init))
+            (hash "ok" #f "error" "mcp-initialize-failed")
+            (hash "ok" #t "responses" replies "init" init)))))))
+
+; ── public surface ─────────────────────────────────────────────
+
+(define (mcp:initialize c)
+  (if (not (mcp-client? c))
+    (hash "ok" #f "error" "bad-client")
+    (let ((s (mcp-session c (mcp-init-messages))))
+      (if (not (hash-ref s "ok" #f))
+        s
+        (let ((init (hash-ref s "init")))
+          (if (hash-ref init "error" #f)
+            (hash "ok" #f "error" (mcp-error-of init))
+            (hash "ok" #t "result" (hash-ref init "result" (hash)))))))))
+
+(define (mcp:list-tools c)
+  (if (not (mcp-client? c))
+    (hash "ok" #f "error" "bad-client")
+    (let* ((msgs (append (mcp-init-messages)
+                         (list (hash "jsonrpc" "2.0" "id" 2
+                                     "method" "tools/list"
+                                     "params" (hash)))))
+           (s (mcp-session c msgs)))
+      (if (not (hash-ref s "ok" #f))
+        s
+        (let ((reply (mcp-find-id (hash-ref s "responses") 2)))
+          (if (not (hash? reply))
+            (hash "ok" #f "error" "mcp-list-failed")
+            (if (hash-ref reply "error" #f)
+              (hash "ok" #f "error" (mcp-error-of reply))
+              (let* ((result (hash-ref reply "result" (hash)))
+                     (tools (if (hash? result)
+                              (hash-ref result "tools" '())
+                              '())))
+                (hash "ok" #t "tools" tools)))))))))
+
+(define (mcp:call-tool c name args)
+  (cond
+    ((not (mcp-client? c)) (hash "ok" #f "error" "bad-client"))
+    ((not (and (string? name) (> (string-length name) 0)))
+     (hash "ok" #f "error" "bad-tool-name"))
+    ((not (hash? args)) (hash "ok" #f "error" "bad-arguments"))
+    (else
+     (let* ((msgs (append (mcp-init-messages)
+                          (list (hash "jsonrpc" "2.0" "id" 3
+                                      "method" "tools/call"
+                                      "params" (hash "name" name
+                                                     "arguments" args)))))
+            (s (mcp-session c msgs)))
+       (if (not (hash-ref s "ok" #f))
+         s
+         (let ((reply (mcp-find-id (hash-ref s "responses") 3)))
+           (if (not (hash? reply))
+             (hash "ok" #f "error" "mcp-call-failed")
+             (if (hash-ref reply "error" #f)
+               (hash "ok" #f "error" (mcp-error-of reply))
+               (hash "ok" #t "result" (hash-ref reply "result" (hash)))))))))))
+
+(define (mcp:tool-names tools)
+  (if (not (pair? tools))
+    '()
+    (let loop ((xs tools) (acc '()))
+      (if (null? xs)
+        (reverse acc)
+        (let ((n (if (hash? (car xs)) (hash-ref (car xs) "name" #f) #f)))
+          (loop (cdr xs) (if (string? n) (cons n acc) acc)))))))
+
