@@ -10151,6 +10151,11 @@ Evaluator::FlatStep Evaluator::eval_flat_on_literalint_literalfloat_literalstrin
         default:
             return FlatStep::fall();
     }
+    // The empty string is the immortal heap slot 0. Check before the
+    // per-SymId intern cache: a prelude/workspace intern may have cached a
+    // different empty slot, and returning that would reintroduce #5431.
+    if (p->resolve(v.sym_id).empty())
+        return FlatStep::ret(make_string(0));
     // Issue #3401: happy-path string intern. std::string
     // construction + push_string_heap (#4543) on first use only.
     // Issue #3457: lookup by v.sym_id (dense), not hashed

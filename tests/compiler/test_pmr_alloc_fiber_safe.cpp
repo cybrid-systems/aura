@@ -61,6 +61,7 @@ using aura::compiler::types::is_float;
 using aura::compiler::types::is_int;
 using aura::compiler::types::is_pair;
 using aura::compiler::types::is_string;
+using aura::compiler::types::as_string_idx;
 using aura::compiler::types::make_int;
 using aura::test::g_failed;
 using aura::test::g_passed;
@@ -766,6 +767,23 @@ static void ac4608_string_heap_reclaim() {
           "4608 AC3: the string heap owns the free list");
     CHECK(heap.find("invalidate_cp_index_locked") != std::string::npos,
           "4608 AC3: a reused slot drops its cached code-point index");
+
+    // Issue #5431: the empty string is immutable and has exactly one heap
+    // representation, slot 0 (minted at construction, never reclaimed). It
+    // must not be a fresh empty slot that a later reclaim can recycle into
+    // unrelated text. Covers both the tree-walker literal and a define call
+    // that can dispatch through the IR cache.
+    {
+        CompilerService cs;
+        auto& ev5431 = cs.evaluator();
+        auto lit = cs.eval(std::string(2, '"'));
+        CHECK(lit && is_string(*lit) && ev5431.string_at(as_string_idx(*lit)).empty(),
+              "5431: the empty literal stays empty");
+        auto call_src = std::string("(begin (define (empty-5431) ") + std::string(2, '"') + ") (empty-5431))";
+        auto call = cs.eval(call_src);
+        CHECK(call && is_string(*call) && ev5431.string_at(as_string_idx(*call)).empty(),
+              "5431: an empty function result stays empty");
+    }
 }
 
 // ── Issue #4613: the file-mode reclaim frees the vector->list pairs,

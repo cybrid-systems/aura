@@ -1660,6 +1660,18 @@ namespace {
                     locals[ops[0]] = val;
                     break;
                 }
+                // A string literal that is the empty string is immutable and
+                // has exactly one representation in the evaluator heap: slot 0
+                // (minted at evaluator construction, never reclaimed). Sharing
+                // it avoids minting a fresh reclaimable empty slot for every
+                // evaluation; a reclaim/GC between the mint and the use could
+                // otherwise recycle that slot and turn the value into arbitrary
+                // later text (#5431).
+                if (pool_idx < st.module.string_pool.size() &&
+                    st.module.string_pool[pool_idx].empty()) {
+                    locals[ops[0]] = make_string(0);
+                    break;
+                }
                 if (auto cit = st.const_string_cache.find(pool_idx);
                     cit != st.const_string_cache.end()) {
                     // Issue #4608: the reclaim may have released the
