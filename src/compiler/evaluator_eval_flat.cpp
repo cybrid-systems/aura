@@ -6172,6 +6172,24 @@ namespace {
     // also gates self-TCO frame reuse.
     std::atomic<std::uint64_t> g_cell_store_gen_5066{1};
 
+    // #5433 follow-up: the set! cell-index lookup was the remaining
+    // double-digit runner hotspot. A set! site resolves the same name in
+    // the same Env every iteration; top_bind_gen_, the binding count and
+    // the cell heap size invalidate the entry when a define, shadow or
+    // heap reset can change the answer.
+    struct SetCellSite5066 {
+        const aura::ast::FlatAST* flat = nullptr;
+        aura::ast::SymId sym = aura::ast::INVALID_SYM;
+        const Env* env = nullptr;
+        std::uint64_t top_gen = 0;
+        std::uint64_t bind_n = 0;
+        std::uint64_t cells_n = 0;
+        std::uint16_t flat_gen = 0;
+        std::uint64_t cell = 0;
+    };
+    thread_local SetCellSite5066 tls_set_cell_5066[16];
+    thread_local std::uint32_t tls_set_cell_next_5066 = 0;
+
     thread_local FastISite tls_fast_i_5066[16];
     thread_local int tls_fast_i_n_5066 = 0;
     thread_local const aura::ast::FlatAST* tls_fast_flat_5066 = nullptr;
@@ -8760,8 +8778,40 @@ Evaluator::FlatStep Evaluator::eval_flat_on_set(EvalFlatCursor& cur, const aura:
     if (primitives_detail::t_fiber_cow_overlay_depth != 0 &&
         primitives_detail::fiber_cow_overlay_capture_set(*this, name, *val, eval_env))
         return FlatStep::ret(*val);
-    // Use stable index instead of pointer (cells_ may reallocate)
-    auto cell_idx = eval_env.lookup_cell_index(std::string(name));
+    // Use stable index instead of pointer (cells_ may reallocate).
+    // Reuse the last resolution for this (flat, site, env) while the
+    // top binding generation, binding count and cell heap size agree.
+    const auto top_gen = top_bind_gen_.load(std::memory_order_relaxed);
+    const auto bind_n = eval_env.bindings_symid().size();
+    const auto cells_n = cells_.size();
+    const auto flat_gen = f->generation();
+    SetCellSite5066* set_site = nullptr;
+    for (std::size_t i = 0; i < 16; ++i) {
+        SetCellSite5066& s = tls_set_cell_5066[i];
+        if (s.flat == f && s.sym == v.sym_id && s.env == &eval_env &&
+            s.top_gen == top_gen && s.bind_n == bind_n && s.cells_n == cells_n &&
+            s.flat_gen == flat_gen) {
+            set_site = &s;
+            break;
+        }
+    }
+    std::optional<std::uint64_t> cell_idx;
+    if (set_site) {
+        cell_idx = set_site->cell;
+    } else {
+        cell_idx = eval_env.lookup_cell_index(name);
+        if (cell_idx && *cell_idx < cells_n) {
+            SetCellSite5066& s = tls_set_cell_5066[tls_set_cell_next_5066++ & 15u];
+            s.flat = f;
+            s.sym = v.sym_id;
+            s.env = &eval_env;
+            s.top_gen = top_gen;
+            s.bind_n = bind_n;
+            s.cells_n = cells_n;
+            s.flat_gen = flat_gen;
+            s.cell = *cell_idx;
+        }
+    }
     if (cell_idx) {
         if (*cell_idx < cells_.size())
             store_cell_value(*cell_idx, *val);

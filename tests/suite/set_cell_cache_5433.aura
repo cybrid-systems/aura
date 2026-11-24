@@ -1,0 +1,37 @@
+;; expect: set-cache-ok
+;; #5433 follow-up: a cached set! cell index must invalidate on a top
+;; redefinition, a local shadow, and must keep named-let loops correct.
+(require "std/string")
+
+(define hits 0)
+(define (bump) (set! hits (+ hits 1)))
+(bump)
+(bump)
+(set! hits 10)
+(bump)
+
+(define top-x 1)
+(define (shadow)
+  (let ((top-x 5))
+    (set! top-x 7)
+    top-x))
+(define local (shadow))
+(set! top-x 9)
+
+(define (named n acc)
+  (let loop ((i 0) (s acc))
+    (if (>= i n) s (loop (+ i 1) (+ s 1)))))
+(define total (named 100 0))
+
+(if (and (= hits 11) (= local 7) (= top-x 9) (= total 100))
+  (display "set-cache-ok\n")
+  (begin
+    (display "set-cache-fail hits=")
+    (display hits)
+    (display " local=")
+    (display local)
+    (display " top-x=")
+    (display top-x)
+    (display " total=")
+    (display total)
+    (newline)))
