@@ -441,6 +441,32 @@ namespace {
         cli_body_lock_publish_takeover();
     }
 
+    // Issue #5435: the commit lock serializes whole evals. A second eval
+    // rebinds the workspace under the suspended one ("stale node id"), so a
+    // session exec keeps the lock across its own (fiber:sleep). On a
+    // scheduler fiber a blocking lock() then pins the one worker thread that
+    // can wake the parked holder: under Soft serve-async a top-level sleep
+    // in one session hung every other session's exec, and its own reply.
+    // Try, park briefly, try again: the worker stays free for the holder.
+    // OS threads keep the blocking acquire above.
+    void cli_body_lock_acquire_without_pinning_worker(std::unique_lock<std::mutex>& lock) {
+        // Issue #4728: a contender is published for the whole wait, so a
+        // yielding body knows a takeover can actually land.
+        s_cli_commit_waiters.fetch_add(1, std::memory_order_acq_rel);
+        auto pause = std::chrono::milliseconds(1);
+        while (!lock.try_lock()) {
+            auto* self = aura::serve::g_current_fiber;
+            self->set_state(aura::serve::FiberState::Waiting);
+            self->set_park_deadline_ms(static_cast<int>(pause.count()));
+            aura::serve::Fiber::yield(aura::serve::YieldReason::Explicit);
+            self->clear_park_deadline();
+            self->set_state(aura::serve::FiberState::Running);
+            pause = std::min(pause * 2, std::chrono::milliseconds(10));
+        }
+        s_cli_commit_waiters.fetch_sub(1, std::memory_order_acq_rel);
+        cli_body_lock_publish_takeover();
+    }
+
     // Issue #4699: release the body mutex across a cooperative yield.
     //
     // wait_for_takeover is true in the CLI thread backend (no scheduler to
@@ -1001,8 +1027,12 @@ namespace {
         if (s_tls_cli_body_lock() && s_tls_cli_body_lock()->owns_lock())
             return nullptr;
         auto lk = std::make_unique<std::unique_lock<std::mutex>>(s_cli_commit_mtx, std::defer_lock);
-        // Issue #4699: tracked acquire (takeover publish).
-        cli_body_lock_acquire(*lk);
+        // Issue #4699: tracked acquire (takeover publish). Issue #5435: a
+        // scheduler fiber must not pin its worker on a parked holder.
+        if (aura::serve::g_current_fiber != nullptr && channel_can_park_fiber())
+            cli_body_lock_acquire_without_pinning_worker(*lk);
+        else
+            cli_body_lock_acquire(*lk);
         s_tls_cli_body_lock() = lk.get();
         // The C hook hands ownership to cli_main_body_lock_release_impl.
         return lk.release();

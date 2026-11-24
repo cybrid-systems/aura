@@ -282,6 +282,11 @@ CASES = (
         "reg_eval_async.TestIssue4880.test_serve_async_results",
     ),
     (
+        5435,
+        "test_other_session_answers_after_top_level_sleep",
+        "reg_eval_async.TestTopLevelSleep5435.test_other_session_answers_after_top_level_sleep",
+    ),
+    (
         4893,
         "test_hygienic_macro_toplevel_call",
         "reg_soa_macros.TestForceSoaDirectMacros4893.test_hygienic_macro_toplevel_call",
