@@ -433,6 +433,21 @@ HOMES: tuple[Home, ...] = (
         ),
     ),
     _h(
+        "std/webhook",
+        "aura",
+        "tests/suite/webhook.aura",
+        ("std/webhook", "webhook:route!", "webhook:make", "webhook", "inbound http"),
+        tag="webhook",
+        requires=("std/webhook",),
+        body="(check (hash? (webhook:make (hash))))",
+        roots=("lib/std/webhook.aura",),
+        note=(
+            "The inbound HTTP/webhook server (#5415): routes, the authentication hook (writes "
+            "refused by default), the body limit, concurrency, audit, and the boundary with "
+            "the health listener."
+        ),
+    ),
+    _h(
         "std/portfolio",
         "aura",
         "tests/suite/portfolio_select_4945.aura",

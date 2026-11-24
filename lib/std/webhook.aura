@@ -1,0 +1,623 @@
+; lib/std/webhook.aura — an inbound HTTP/webhook server (#5415)
+;
+; A personal runtime has to receive callbacks: a webhook from a service, a
+; POST from a script. The health listener (--health-port / AURA_HTTP_PORT,
+; src/serve/http_health.h) is not that: it answers /healthz, /readyz and
+; /metrics on every interface with no authentication. This module is the
+; application-facing counterpart, written in Aura over the tcp-* transport:
+;
+;   - one listener, 127.0.0.1 by default, never the health port;
+;   - explicit routes (path + methods), a body-size limit, a bounded number
+;     of in-flight requests;
+;   - an explicit authentication hook. With no hook, reads (GET, HEAD,
+;     OPTIONS) pass and every write (POST, PUT, PATCH, DELETE) is refused
+;     401: a route that must take anonymous writes says so ("public" #t);
+;   - each request is handled on its own fiber, so the accept loop keeps
+;     serving while a handler works; the server fiber and the handlers
+;     sleep between steps, so (fiber:cancel) reaches them;
+;   - status counters are atomic and the per-request audit trail is
+;     queryable.
+;
+; Import: (require "std/webhook" all:)
+;
+;   (require "std/net" all:)                    ; or any net-granting require
+;   (define s (webhook:make (hash "auth" (webhook:token-auth token))))
+;   (webhook:route! s "/hook" (list "POST")
+;     (lambda (req) (hash "status" 200 "body" "ok" "headers" (hash "Content-Type" "text/plain"))))
+;   (webhook:start! s)
+;   (webhook:port s)             ; the bound port (0 asked for an ephemeral one)
+;   (webhook:stats s) (webhook:audit s 10)
+;   (webhook:stop! s)
+;
+; A request is (hash "method" "path" "query" "headers" "body" "content-length"):
+; path has no query string, headers is keyed by lower-case name. A handler
+; answers a string (200, text/plain) or (hash "status" N "body" S "headers"
+; (hash "Name" "value")); an error it raises is answered 500.
+;
+; What it is not: a web framework. One request per connection (Connection:
+; close), no TLS, no chunked bodies (501), no multipart or form decoding,
+; and a body is UTF-8 text — the transport decodes bytes into a string, so
+; binary payloads are not preserved. Put a reverse proxy in front for TLS.
+;
+; Needs the network effect (--grant net). Without it webhook:start! refuses
+; by name ("could not listen on ...: effect-denied: network not granted
+; ... op=tcp-listen") on the default Restricted face, and under
+; AURA_SANDBOX=strict the (require) itself fails.
+;
+; Where it runs: the thread backend (aura file, --load, --serve). Under
+; --serve-async the tcp-* primitives block the scheduler's worker thread,
+; so a request costs the transport's 10 s receive timeout. Stop the server
+; (webhook:stop!) before the process exits: a server fiber that outlives
+; the evaluator is detached at teardown (docs/stdlib/webhook.md).
+;
+; Nothing is shared between threads except atomics and channels: the server
+; fiber alone owns the audit trail and answers queries through the control
+; channel, handlers report through channels (deep-copied), and the caller
+; reads counters with atomic loads (docs/stdlib/fiber-spawn.md).
+
+(export webhook:make webhook:route! webhook:start! webhook:stop! webhook:port
+        webhook:stats webhook:audit webhook:token-auth webhook:help)
+
+(require "std/socket" all:)
+(require "std/string" all:)
+(require "std/list" all:)
+
+;; ── small helpers ─────────────────────────────────────────────
+
+; A missing key and an explicit () read the same.
+(define (wh-opt h k d)
+  (if (hash? h)
+    (let ((v (hash-ref h k ())))
+      (if (null? v) d v))
+    d))
+
+; (integer? 3.0) is #t, so a count goes through floor first.
+(define (wh-int v d)
+  (cond ((and (integer? v) (not (inexact? v))) v)
+        ((number? v) (inexact->exact (floor v)))
+        (else d)))
+
+(define (wh-keep n cap)
+  (if (or (not (number? n)) (< n 0) (> n cap))
+    cap
+    n))
+
+; string-length counts code points; Content-Length counts UTF-8 bytes.
+(define (wh-bytes s)
+  (let loop ((i 0) (n (string-length s)) (bytes 0))
+    (if (>= i n)
+      bytes
+      (let ((c (string-ref s i)))
+        (loop (+ i 1) n
+              (+ bytes (cond ((< c 128) 1) ((< c 2048) 2) ((< c 65536) 3) (else 4))))))))
+
+; The code-point index that follows the first nbytes UTF-8 bytes of s.
+(define (wh-index-at-bytes s nbytes)
+  (let loop ((i 0) (n (string-length s)) (bytes 0))
+    (if (or (>= i n) (>= bytes nbytes))
+      i
+      (let ((c (string-ref s i)))
+        (loop (+ i 1) n
+              (+ bytes (cond ((< c 128) 1) ((< c 2048) 2) ((< c 65536) 3) (else 4))))))))
+
+; Send all of text. tcp-send may send partially and answers bytes; the next
+; piece starts at the code point that follows those bytes.
+(define (wh-send-all! sock text)
+  (let ((total (wh-bytes text)))
+    (let loop ((sent 0))
+      (if (>= sent total)
+        total
+        (let ((n (try (tcp-send sock (substring text (wh-index-at-bytes text sent)
+                                                (string-length text)))
+                      (catch (e) -1))))
+          (if (and (number? n) (> n 0))
+            (loop (+ sent n))
+            -1))))))
+
+(define (wh-first xs n)
+  (if (or (not (number? n)) (< n 0))
+    (list)
+    (let loop ((xs xs) (n n) (acc (list)))
+      (if (or (null? xs) (<= n 0))
+        (reverse acc)
+        (loop (cdr xs) (- n 1) (cons (car xs) acc))))))
+
+; Wait up to ms for a message on a channel the caller owns.
+(define (wh-await ch ms)
+  (let ((deadline (+ (monotonic-ms) ms)))
+    (let loop ()
+      (let ((msg (channel:try-recv ch)))
+        (if msg
+          msg
+          (if (< (monotonic-ms) deadline)
+            (begin (fiber:sleep 1) (loop))
+            #f))))))
+
+;; ── HTTP pieces ───────────────────────────────────────────────
+
+; The ops listener's paths: never routed here, refused as routes.
+(define wh-reserved (list "/healthz" "/readyz" "/metrics"))
+
+; Methods that pass an authenticating server with no credentials. A write
+; needs the hook's verdict, or a route that said "public" #t.
+(define wh-reads (list "GET" "HEAD" "OPTIONS"))
+
+(define (wh-reason status)
+  (cond ((= status 100) "Continue")
+        ((= status 200) "OK")
+        ((= status 201) "Created")
+        ((= status 202) "Accepted")
+        ((= status 204) "No Content")
+        ((= status 400) "Bad Request")
+        ((= status 401) "Unauthorized")
+        ((= status 403) "Forbidden")
+        ((= status 404) "Not Found")
+        ((= status 405) "Method Not Allowed")
+        ((= status 408) "Request Timeout")
+        ((= status 413) "Payload Too Large")
+        ((= status 431) "Request Header Fields Too Large")
+        ((= status 500) "Internal Server Error")
+        ((= status 501) "Not Implemented")
+        ((= status 503) "Service Unavailable")
+        (else "Response")))
+
+(define (wh-response status body . rest)
+  (let ((headers (if (and (pair? rest) (hash? (car rest))) (car rest) (hash))))
+    (hash "status" status "body" body "headers" headers)))
+
+(define (wh-header req name)
+  (hash-ref (hash-ref req "headers" (hash)) name ""))
+
+; "Bearer <token>" against the expected token. Every code point is compared
+; before the verdict, so the answer time does not reveal where two tokens
+; first differ.
+(define (wh-bearer-matches? header expected)
+  (and (string? header)
+       (string-prefix? header "Bearer ")
+       (let ((token (string-drop header 7)))
+         (and (= (string-length token) (string-length expected))
+              (let loop ((i 0) (n (string-length expected)) (differs #f))
+                (if (>= i n)
+                  (not differs)
+                  (loop (+ i 1) n (or differs (not (= (string-ref token i)
+                                                       (string-ref expected i)))))))))))
+
+(define (webhook:token-auth expected)
+  ; → the hook: (lambda (req)) → #t | #f
+  (if (not (string? expected))
+    (error "webhook:token-auth: expected must be a string")
+    (lambda (req)
+      (wh-bearer-matches? (wh-header req "authorization") expected))))
+
+; The request head: request line + headers. → the request hash, or #f.
+(define (wh-parse-head head)
+  (let* ((lines (string-split head "\r\n"))
+         (first (if (pair? lines) (string-split (car lines) " ") (list))))
+    (if (or (not (= 3 (length first))) (not (string-prefix? (car (cdr (cdr first))) "HTTP/")))
+      #f
+      (let* ((target (car (cdr first)))
+             (q (string-index target "?" 0))
+             (headers (let loop ((ls (cdr lines)) (h (hash)))
+                        (if (null? ls)
+                          h
+                          (let ((colon (string-index (car ls) ":" 0)))
+                            (loop (cdr ls)
+                                  (if (> colon 0)
+                                    (let ((name (string-downcase
+                                                  (string-trim (substring (car ls) 0 colon)))))
+                                      (hash-set h name
+                                                (let ((prior (hash-ref h name #f)))
+                                                  (if (string? prior)
+                                                    (string-append prior ", "
+                                                                   (string-trim (substring (car ls) (+ colon 1)
+                                                                                           (string-length (car ls)))))
+                                                    (string-trim (substring (car ls) (+ colon 1)
+                                                                            (string-length (car ls))))))))
+                                    h)))))))
+        (hash "method" (car first)
+              "path" (if (>= q 0) (substring target 0 q) target)
+              "query" (if (>= q 0) (string-drop target (+ q 1)) "")
+              "headers" headers
+              "body" ""
+              "content-length" 0)))))
+
+; Read one request. → the request hash, a response hash for a request this
+; server refuses to parse or size, or #f when the peer sent nothing.
+(define (wh-read! s sock)
+  (let loop ((acc ""))
+    (let* ((end (string-index acc "\r\n\r\n" 0)))
+      (if (>= end 0)
+        (let* ((head (substring acc 0 end))
+               (rest (string-drop acc (+ end 4)))
+               (req (wh-parse-head head)))
+          (if (hash? req)
+            (wh-read-body! s sock req rest)
+            (wh-response 400 "malformed request\n")))
+        (if (> (wh-bytes acc) (hash-ref s "max-header"))
+          (wh-response 431 "request header too large\n")
+          (let ((chunk (tcp-recv sock 4096)))
+            (if (string? chunk)
+              (loop (string-append acc chunk))
+              (if (= (string-length acc) 0)
+                #f
+                (wh-response 400 "malformed request\n")))))))))
+
+; Read the body the head announced. → the request, or a refusal response.
+(define (wh-read-body! s sock req rest)
+  (let* ((length (wh-int (try (string->number (wh-header req "content-length"))
+                              (catch (e) #f))
+                        0))
+         (encoding (wh-header req "transfer-encoding")))
+    (cond
+      ((not (= (string-length encoding) 0))
+       (wh-response 501 "transfer-encoding is not supported: send Content-Length\n"))
+      ((or (< length 0) (> length (hash-ref s "max-body")))
+       (wh-response 413 "payload too large\n"))
+      (else
+       ; a client that waits for a go-ahead (curl on a large body) gets it
+       (if (string-contains? (wh-header req "expect") "100-continue")
+         (wh-send-all! sock "HTTP/1.1 100 Continue\r\n\r\n")
+         #f)
+       (let loop ((body rest))
+         (if (>= (wh-bytes body) length)
+           (begin
+             (hash-set! req "body" body)
+             (hash-set! req "content-length" length)
+             req)
+           (let ((chunk (tcp-recv sock 65536)))
+             (if (string? chunk)
+               (loop (string-append body chunk))
+              (wh-response 400 "short body\n")))))))))
+
+; Write one response and close nothing: the caller closes the socket.
+(define (wh-respond! sock resp head-only)
+  (let* ((status (hash-ref resp "status" 200))
+         (body (if (string? (hash-ref resp "body" #f)) (hash-ref resp "body") ""))
+         (headers (if (hash? (hash-ref resp "headers" #f)) (hash-ref resp "headers") (hash)))
+         (extra (let loop ((ks (hash-keys headers)) (acc ""))
+                  (if (null? ks)
+                    acc
+                    (loop (cdr ks)
+                          (let ((v (wh-opt headers (car ks) "")))
+                            (string-append acc (car ks) ": "
+                                           (if (string? v) v (format "~a" v)) "\r\n"))))))
+         (type (if (string? (hash-ref headers "Content-Type" #f))
+                 ""
+                 "Content-Type: text/plain; charset=utf-8\r\n"))
+         (sent (wh-send-all! sock
+                             (string-append "HTTP/1.1 " (number->string status) " "
+                                            (wh-reason status) "\r\n"
+                                            type
+                                            "Content-Length: " (number->string (wh-bytes body)) "\r\n"
+                                            "Connection: close\r\n"
+                                            extra
+                                            "\r\n"))))
+    (if (< sent 0)
+      -1
+      (if head-only
+        0
+        (wh-send-all! sock body)))))
+
+;; ── the server ────────────────────────────────────────────────
+
+; The ops port as this process sees it: AURA_HTTP_PORT when it is set.
+(define (wh-health-port)
+  (let ((env (try (getenv "AURA_HTTP_PORT") (catch (e) #f))))
+    (if (string? env)
+      (let ((n (try (string->number (string-trim env)) (catch (e) #f))))
+        (if (number? n) (inexact->exact (floor n)) -1))
+      -1)))
+
+; opts: "host" ("127.0.0.1"), "port" (0 = ephemeral), "auth" (lambda (req) ...),
+; "max-body" bytes (65536), "max-header" bytes (16384), "max-inflight" (16),
+; "health-port" (the ops port to refuse; default AURA_HTTP_PORT).
+(define (webhook:make opts)
+  (let* ((o (if (hash? opts) opts (hash)))
+         (port (max 0 (wh-int (wh-opt o "port" 0) 0)))
+         (health (wh-int (wh-opt o "health-port" (wh-health-port)) -1))
+         (auth (wh-opt o "auth" #f)))
+    (if (and (>= health 0) (= port health))
+      (error (string-append "webhook:make: port " (number->string port)
+                            " is the health port (--health-port / AURA_HTTP_PORT): "
+                            "a webhook server never shares the ops listener"))
+      (hash "routes" (list)
+            "host" (let ((h (wh-opt o "host" "127.0.0.1"))) (if (string? h) h "127.0.0.1"))
+            "port" port
+            "auth" (if (procedure? auth) auth #f)
+            "max-body" (max 0 (wh-int (wh-opt o "max-body" 65536) 65536))
+            "max-header" (max 256 (wh-int (wh-opt o "max-header" 16384) 16384))
+            "max-inflight" (max 1 (wh-int (wh-opt o "max-inflight" 16) 16))
+            "listener" #f
+            "bound" 0
+            "loop" #f
+            "ctl" (channel:create 64)
+            "audit-ch" (channel:create 1024)
+            "audit" (list)
+            "seq" (atomic:counter 0)
+            "running" (atomic:counter 0)
+            "stat-total" (atomic:counter 0)
+            "stat-ok" (atomic:counter 0)
+            "stat-denied" (atomic:counter 0)
+            "stat-rejected" (atomic:counter 0)
+            "stat-failed" (atomic:counter 0)
+            "stat-busy" (atomic:counter 0)
+            "stat-inflight" (atomic:counter 0)))))
+
+(define (wh-running? s) (> (atomic:counter-value (hash-ref s "running")) 0))
+
+(define (wh-counter s name) (atomic:counter-value (hash-ref s name)))
+
+; (webhook:route! s "/path" (list "POST") handler [opts]) → the route.
+; opts: "public" #t (anonymous writes allowed on this route), "auth" (a
+; hook for this route). Routes are fixed once the server started.
+(define (webhook:route! s path methods handler . rest)
+  (cond
+    ((wh-running? s)
+     (error "webhook:route!: routes are fixed once the server started"))
+    ((or (not (string? path)) (not (string-prefix? path "/"))
+         (not (pair? methods)) (not (procedure? handler)))
+     (error "webhook:route!: usage: (webhook:route! s \"/path\" (list \"POST\") handler [opts])"))
+    ((member path wh-reserved)
+     (error (string-append "webhook:route!: " path
+                           " belongs to the health server and is never routed")))
+    (else
+     (let* ((o (if (and (pair? rest) (hash? (car rest))) (car rest) (hash)))
+            (auth (wh-opt o "auth" #f))
+            (route (hash "path" path
+                         "methods" (map (lambda (m)
+                                          (if (string? m)
+                                            (string-upcase m)
+                                            (error "webhook:route!: methods must be strings")))
+                                        methods)
+                         "handler" handler
+                         "public" (if (wh-opt o "public" #f) #t #f)
+                         "auth" (if (procedure? auth) auth #f))))
+       (hash-set! s "routes" (append (hash-ref s "routes") (list route)))
+       route))))
+
+(define (webhook:port s) (hash-ref s "bound"))
+
+; Start the accept fiber. → s. Listening needs the network effect; a
+; refusal (or a port in use) is reported, nothing runs.
+(define (webhook:start! s)
+  (if (wh-running? s)
+    s
+    (let ((l (try (tcp-listen (hash-ref s "port") (hash-ref s "host")) (catch (e) e))))
+      (if (not (number? l))
+        (error (string-append "webhook:start!: could not listen on "
+                              (hash-ref s "host") ":" (number->string (hash-ref s "port"))
+                              (if (string? l) (string-append ": " l) "")))
+        (begin
+          (hash-set! s "listener" l)
+          (hash-set! s "bound" (tcp-local-port l))
+          (atomic:add! (hash-ref s "running") 1)
+          (hash-set! s "loop" (fiber:spawn (wh-serve s)))
+          s)))))
+
+;; ── one request ───────────────────────────────────────────────
+
+(define (wh-find-route s path)
+  ; std/list find returns the element itself, () when nothing matches.
+  (let ((hit (find (lambda (r) (string=? (hash-ref r "path") path))
+                   (hash-ref s "routes"))))
+    (if (null? hit) #f hit)))
+
+; → #t (allowed), #f (401), a response hash (the hook's own answer), or
+; anything else (403).
+(define (wh-authorize s route req)
+  (cond
+    ; the route's own hook decides
+    ((hash-ref route "auth") (try ((hash-ref route "auth") req) (catch (e) #f)))
+    ; a route that said "public" #t takes anonymous requests, hook or not
+    ((hash-ref route "public") #t)
+    ; the server's hook decides
+    ((hash-ref s "auth") (try ((hash-ref s "auth") req) (catch (e) #f)))
+    ; no hook anywhere: reads pass, writes are refused
+    ((member (hash-ref req "method") wh-reads) #t)
+    (else #f)))
+
+; A route that takes GET takes HEAD too: same handler, no body on the wire.
+(define (wh-method-ok? route method)
+  (or (member method (hash-ref route "methods"))
+      (and (string=? method "HEAD") (member "GET" (hash-ref route "methods")))))
+
+(define (wh-call route req)
+  (let ((r (try ((hash-ref route "handler") req) (catch (e) 'failed))))
+    (cond
+      ((eq? r 'failed) (wh-response 500 "handler failed\n"))
+      ((string? r) (wh-response 200 r))
+      ((hash? r) (wh-response (if (number? (hash-ref r "status" #f))
+                                (wh-int (hash-ref r "status") 200)
+                                200)
+                              (if (string? (hash-ref r "body" #f)) (hash-ref r "body") "")
+                              (if (hash? (hash-ref r "headers" #f)) (hash-ref r "headers") (hash))))
+      (else (wh-response 200 (format "~a" r))))))
+
+(define (wh-dispatch s req)
+  (let ((route (wh-find-route s (hash-ref req "path"))))
+    (cond
+      ((member (hash-ref req "path") wh-reserved)
+       (wh-response 404 "not found\n"))
+      ((not route)
+       (wh-response 404 "not found\n"))
+      ((not (wh-method-ok? route (hash-ref req "method")))
+       (wh-response 405 "method not allowed\n"
+                    (hash "Allow" (wh-join (hash-ref route "methods") ", "))))
+      (else
+       (let ((verdict (wh-authorize s route req)))
+         (cond ((eq? verdict #t) (wh-call route req))
+               ((eq? verdict #f)
+                (wh-response 401 "unauthorized\n" (hash "WWW-Authenticate" "Bearer")))
+               ((hash? verdict) verdict)
+               (else (wh-response 403 "forbidden\n"))))))))
+
+(define (wh-join xs sep)
+  (cond ((null? xs) "")
+        ((null? (cdr xs)) (car xs))
+        (else (string-append (car xs) sep (wh-join (cdr xs) sep)))))
+
+; The status class a finished request counts under.
+(define (wh-class status)
+  (cond ((< status 300) "stat-ok")
+        ((or (= status 401) (= status 403)) "stat-denied")
+        ((< status 500) "stat-rejected")
+        (else "stat-failed")))
+
+; One accepted connection: read, dispatch, answer, account for it.
+(define (wh-connection s sock)
+  (lambda ()
+    (atomic:add! (hash-ref s "stat-inflight") 1)
+    (let ((t0 (monotonic-ms)))
+      ; got: #f (the peer sent nothing), a request hash, or a response hash
+      ; for a request this server refuses to parse or size.
+      (let* ((got (try (wh-read! s sock) (catch (e) #f)))
+             (req (if (and (hash? got) (hash-ref got "method" #f)) got (hash)))
+             (resp (cond ((not (hash? got)) #f)
+                         ((hash-ref got "method" #f)
+                          (try (wh-dispatch s got)
+                               (catch (e) (wh-response 500 "handler failed\n"))))
+                         (else got))))
+        (if resp
+          (begin
+            (try (wh-respond! sock resp (string=? (wh-opt req "method" "") "HEAD"))
+                 (catch (e) #f))
+            (atomic:add! (hash-ref s (wh-class (hash-ref resp "status" 200))) 1)
+            ; the audit trail belongs to the server fiber; a message is a copy
+            (if (wh-running? s)
+              (try
+                (begin
+                  (atomic:add! (hash-ref s "seq") 1)
+                  (channel:send (hash-ref s "audit-ch")
+                                (hash "id" (wh-counter s "seq")
+                                      "method" (wh-opt req "method" "")
+                                      "path" (wh-opt req "path" "")
+                                      "status" (hash-ref resp "status" 200)
+                                      "ms" (- (monotonic-ms) t0)
+                                      "bytes" (wh-opt req "content-length" 0))))
+                (catch (e) #f))
+              #f))
+          #f))
+      (try (tcp-close sock) (catch (e) #f)))
+    (atomic:add! (hash-ref s "stat-inflight") -1)))
+
+;; ── the server fiber ──────────────────────────────────────────
+
+; Take the audit records and control messages waiting for the server fiber.
+; st is this fiber's own state: the audit trail and a pending stop.
+(define (wh-drain! s st)
+  (let pull-audit ()
+    (let ((rec (channel:try-recv (hash-ref s "audit-ch"))))
+      (if (hash? rec)
+        (begin
+          (hash-set! st "audit" (wh-first (cons rec (hash-ref st "audit")) 256))
+          (pull-audit))
+        #f)))
+  (let pull-ctl ()
+    (let ((msg (channel:try-recv (hash-ref s "ctl"))))
+      (if (pair? msg)
+        (begin
+          (cond
+            ((eq? (car msg) 'close)
+             (try (tcp-close (hash-ref s "listener")) (catch (e) #f))
+             (channel:send (car (cdr msg)) (list 'closed)))
+            ((eq? (car msg) 'audit)
+             (channel:send (car (cdr msg))
+                           (wh-first (hash-ref st "audit") (wh-int (car (cdr (cdr msg))) 256))))
+            ((eq? (car msg) 'stop)
+             (hash-set! st "stop" (car (cdr msg))))
+            (else #f))
+          (pull-ctl))
+        #f))))
+
+(define (wh-serve s)
+  (lambda ()
+    (let ((st (hash "audit" (list) "stop" #f)))
+      (let loop ()
+        (wh-drain! s st)
+        (if (hash-ref st "stop")
+          (begin
+            (channel:send (hash-ref st "stop") (hash-ref st "audit"))
+            #t)
+          (begin
+            (let ((c (try (tcp-accept-timeout (hash-ref s "listener") 0) (catch (e) #f))))
+              (if (number? c)
+                (begin
+                  (atomic:add! (hash-ref s "stat-total") 1)
+                  (if (< (wh-counter s "stat-inflight") (hash-ref s "max-inflight"))
+                    (let ((fid (try (fiber:spawn (wh-connection s c)) (catch (e) #f))))
+                      (if fid
+                        #f
+                        (begin
+                          (wh-safe-reply c 503)
+                          (atomic:add! (hash-ref s "stat-busy") 1))))
+                    (begin
+                      (wh-safe-reply c 503)
+                      (atomic:add! (hash-ref s "stat-busy") 1))))
+                #f))
+            ; the sleep is the cancellation safepoint and the polling pace
+            (fiber:sleep 5)
+            (loop)))))))
+
+(define (wh-safe-reply c status)
+  (try (wh-respond! c (wh-response status "server busy\n") #f) (catch (e) #f))
+  (try (tcp-close c) (catch (e) #f)))
+
+; Stop the server: close the listener first (no new request), let the
+; requests in flight finish, then stop the server fiber and keep its audit
+; trail. → #t, or #f when the server was not running. A request that is
+; stuck in a handler without a safepoint is waited for, not killed.
+(define (webhook:stop! s)
+  (if (not (wh-running? s))
+    #f
+    (begin
+      (let ((reply (channel:create 1)))
+        (channel:send (hash-ref s "ctl") (list 'close reply))
+        (if (wh-await reply 5000)
+          ; the server fiber is gone (cancelled by hand): close it ourselves
+          (try (tcp-close (hash-ref s "listener")) (catch (e) #f))
+          #f))
+      (let loop ((waited 0))
+        (if (and (> (wh-counter s "stat-inflight") 0) (< waited 15000))
+          (begin (fiber:sleep 5) (loop (+ waited 5)))
+          #f))
+      (let ((reply (channel:create 1)))
+        (channel:send (hash-ref s "ctl") (list 'stop reply))
+        (let ((final (wh-await reply 5000)))
+          (if (pair? final)
+            (hash-set! s "audit" final)
+            #f)))
+      (atomic:add! (hash-ref s "running") -1)
+      #t)))
+
+; Counters since the server was made, plus the port and the routes.
+(define (webhook:stats s)
+  (hash "port" (webhook:port s)
+        "running" (wh-running? s)
+        "routes" (length (hash-ref s "routes"))
+        "requests" (wh-counter s "stat-total")
+        "ok" (wh-counter s "stat-ok")
+        "denied" (wh-counter s "stat-denied")
+        "rejected" (wh-counter s "stat-rejected")
+        "failed" (wh-counter s "stat-failed")
+        "busy" (wh-counter s "stat-busy")
+        "inflight" (wh-counter s "stat-inflight")))
+
+; The last n audit records (default 16, newest first; 256 are kept), each
+; (hash "id" "method" "path" "status" "ms" "bytes").
+(define (webhook:audit s . rest)
+  (let ((n (if (and (pair? rest) (number? (car rest))) (wh-int (car rest) 16) 16)))
+    (if (not (wh-running? s))
+      (wh-first (hash-ref s "audit") n)
+      (let ((reply (channel:create 1)))
+        (channel:send (hash-ref s "ctl") (list 'audit reply n))
+        (let ((rows (wh-await reply 5000)))
+          (if (pair? rows) rows (list)))))))
+
+(define (webhook:help)
+  (string-append
+   "std/webhook (#5415)\n"
+   "  (webhook:make (hash [\"host\" \"127.0.0.1\"] [\"port\" 0] [\"auth\" hook] [\"max-body\" N]))\n"
+   "  (webhook:route! s \"/path\" (list \"POST\") handler [(hash \"public\" #t)])\n"
+   "  (webhook:start! s) (webhook:port s) (webhook:stop! s)\n"
+   "  (webhook:stats s) (webhook:audit s [n]) (webhook:token-auth \"token\")\n"
+   "  no auth hook: reads pass, writes are 401 unless the route is \"public\"\n"))

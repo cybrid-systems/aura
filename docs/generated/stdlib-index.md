@@ -2,7 +2,7 @@
 
 # Standard library index (generated)
 
-**116** modules in `lib/std/`. Load: `(require "std/name" all:)`.
+**117** modules in `lib/std/`. Load: `(require "std/name" all:)`.
 
 | Module | Exports | Description |
 |--------|---------|-------------|
@@ -121,6 +121,7 @@
 | `std/vector-math` | `vec:map` `vec:zip` `vec:fold` `vec:sum` `vec:prod` `vec:mean` `vec:dot` `vec:norm` … (+26) | lib/std/vector-math.aura — Numerical vector operations |
 | `std/vector` | `vector?` `make-vector` `vector-length` `vector-ref` `vector-set!` `vector->list` `list->vector` `vector-fill!` … (+16) | lib/std/vector.aura — SRFI-133 vector library (Issue #5003) |
 | `std/verify` | `verify-output` | verify.aura — Output-verified code checking |
+| `std/webhook` | `webhook:make` `webhook:route!` `webhook:start!` `webhook:stop!` `webhook:port` `webhook:stats` `webhook:audit` `webhook:token-auth` … (+1) | lib/std/webhook.aura — an inbound HTTP/webhook server (#5415) |
 | `std/workspace` | `ws:merge-symbols` `ws:diff` `ws:snapshot-current` `ws:list-snapshots` `ws:rollback-latest` `ws:memory-pressure` `ws:current-stats` `ws:state` | lib/std/workspace.aura — Workspace utilities (Issue #563 / #4274) |
 
 ## Engine primitives (#1552)

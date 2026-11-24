@@ -95,6 +95,7 @@ Append there. Names `std/iter` re-exports are the `std/list` contract. Names
 | std/edit-search | `tests/suite/edit_search.aura` | `std/edit-search`, `edit-search:run`, `stage gate` |
 | std/race | `tests/suite/fiber_race.aura` | `std/race`, `race:halving`, `fiber race` |
 | std/schedule | `tests/suite/schedule.aura` | `std/schedule`, `schedule:after`, `timer` |
+| std/webhook | `tests/suite/webhook.aura` | `std/webhook`, `webhook:route!`, `webhook` |
 | std/portfolio | `tests/suite/portfolio_select_4945.aura` | `std/portfolio`, `portfolio:run` |
 | lang/module | `tests/suite/module.aura` | `lang/module`, `overwrite warning` |
 | lang/parser | `tests/suite/paren_semi_comment_5199.aura` | `unclosed list`, `(;` |
@@ -123,6 +124,7 @@ A stem (no `.` in the last component) matches the end, `/`, `.`, or `_`.
 - std/edit-search: `lib/std/edit-search.aura`
 - std/race: `lib/std/race.aura`
 - std/schedule: `lib/std/schedule.aura`
+- std/webhook: `lib/std/webhook.aura`
 - std/portfolio: `lib/std/portfolio.aura`
 - lang/module: `src/compiler/evaluator_module_loader.cpp`, `src/compiler/evaluator_primitives_module.cpp`, `src/core/module_boundary.ixx`
 - lang/parser: `src/parser/`, `src/compiler/diag.ixx`, `src/compiler/evaluator_primitives_diagnostic.cpp`

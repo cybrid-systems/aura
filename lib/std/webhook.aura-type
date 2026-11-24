@@ -1,0 +1,9 @@
+webhook:token-auth: Any -> Any
+webhook:make: Any -> Any
+webhook:route!: Any Any Any Any Any -> Any
+webhook:port: Any -> Any
+webhook:start!: Any -> Any
+webhook:stop!: Any -> Bool
+webhook:stats: Any -> Any
+webhook:audit: Any Any -> Any
+webhook:help:  -> String

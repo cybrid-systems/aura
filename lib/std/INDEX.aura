@@ -129,6 +129,9 @@
     (list "schedule"
       (list "Timers over (fiber:sleep ms) and a directory of alarm files that survives a restart (#5414)"
             "(require \"std/schedule\" all:)(schedule:after s 60000 thunk)"))
+    (list "webhook"
+      (list "Inbound HTTP/webhook server: routes, body limit, auth hook (writes refused by default), audit; never the health port (#5415)"
+            "(require \"std/webhook\" all:)(webhook:route! s \"/hook\" (list \"POST\") handler)"))
     ; ── Legacy swarm surfaces (#5007): importable, NOT recommended. ──
     ; Use std/search for the same algorithms through search:step. pso/abc/
     ; fss/ant keep their module names for one release; boids is coupling

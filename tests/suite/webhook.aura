@@ -1,0 +1,303 @@
+; tests/suite/webhook.aura — Issue #5415
+; std/webhook: an inbound HTTP server in Aura over the tcp-* transport.
+; The client is a raw socket in the same process (the transport decodes
+; bytes into a string, so these requests are ASCII).
+
+(require "std/test" all:)
+(require "std/webhook" all:)
+(require "std/string" all:)
+
+(test-file "webhook.aura")
+
+(define (wh-split-head text)
+  ; → (status-line headers-block body)
+  (let ((end (string-index text "\r\n\r\n" 0)))
+    (if (< end 0)
+      (list text "" "")
+      (list (substring text 0 end)
+            ""
+            (string-drop text (+ end 4))))))
+
+; One request on a fresh connection; the server answers one request per
+; connection and closes it. → the whole response, "" when nothing listened.
+(define (http port method path . rest)
+  (let* ((body (if (and (pair? rest) (string? (car rest))) (car rest) ""))
+         (headers (if (and (pair? rest) (string? (car rest))) (cdr rest) rest))
+         (c (tcp-connect "127.0.0.1" port)))
+    (if (not (number? c))
+      ""
+      (begin
+        (tcp-send c (string-append method " " path " HTTP/1.1\r\n"
+                                   "Host: 127.0.0.1\r\n"
+                                   "Content-Length: " (number->string (string-length body)) "\r\n"
+                                   (apply string-append
+                                          (map (lambda (h) (string-append h "\r\n")) headers))
+                                   "\r\n"
+                                   body))
+        (let loop ((acc ""))
+          (let ((chunk (tcp-recv c 65536)))
+            (if (string? chunk)
+              (loop (string-append acc chunk))
+              (begin (tcp-close c) acc))))))))
+
+; Whatever bytes are sent, read to the end of the connection.
+(define (raw port text)
+  (let ((c (tcp-connect "127.0.0.1" port)))
+    (if (not (number? c))
+      ""
+      (begin
+        (tcp-send c text)
+        (let loop ((acc ""))
+          (let ((chunk (tcp-recv c 65536)))
+            (if (string? chunk)
+              (loop (string-append acc chunk))
+              (begin (tcp-close c) acc))))))))
+
+(define (status-of resp)
+  (let ((line (if (string=? resp "") "" (car (string-split resp "\r\n")))))
+    (if (string-prefix? line "HTTP/1.1 ")
+      (try (string->number (car (cdr (string-split line " "))))
+           (catch (e) #f))
+      #f)))
+
+(define (body-of resp)
+  (let ((end (string-index resp "\r\n\r\n" 0)))
+    (if (< end 0) "" (string-drop resp (+ end 4)))))
+
+(define (header-of resp name)
+  ; the first header line that starts with name (case-insensitive)
+  (let loop ((ls (cdr (string-split (car (wh-split-head resp)) "\r\n"))))
+    (cond ((null? ls) #f)
+          ((string-prefix? (string-downcase (car ls))
+                           (string-append (string-downcase name) ":"))
+           (string-trim (string-drop (car ls) (+ 1 (string-length name)))))
+          (else (loop (cdr ls))))))
+
+(define (counter s name) (hash-ref (webhook:stats s) name))
+
+(define token "s3cret-token")
+
+; A server with routes for the cases; `hits` counts handler runs.
+(define hits 0)
+
+(define (bump! n) (set! hits (+ hits n)))
+
+(define (echo req)
+  (bump! 1)
+  (hash "status" 201
+        "body" (string-append "got:" (hash-ref req "body"))
+        "headers" (hash "Content-Type" "text/x-echo" "X-Trace" "7")))
+
+(define (standard-server)
+  (let ((s (webhook:make (hash "auth" (webhook:token-auth token)))))
+    (webhook:route! s "/hook" (list "POST") echo)
+    (webhook:route! s "/items" (list "GET")
+                    (lambda (req) (string-append "query=" (hash-ref req "query"))))
+    (webhook:route! s "/pub" (list "POST") (lambda (req) "public") (hash "public" #t))
+    (webhook:route! s "/boom" (list "GET") (lambda (req) (error "kaboom")))
+    (webhook:route! s "/slow" (list "GET") (lambda (req) (fiber:sleep 400) "slow"))
+    s))
+
+(define (bearer) (string-append "Authorization: Bearer " token))
+
+(test-case "an authenticated POST reaches the handler with its body" (hash "issue" 5415)
+  (set! hits 0)
+  (let* ((s (standard-server)))
+    (webhook:start! s)
+    (let* ((port (webhook:port s))
+           (resp (http port "POST" "/hook?src=test" "{\"a\":1}" (bearer)))
+           (req-status (status-of resp)))
+      (check (and (number? port) (> port 0)))
+      (check= 201 req-status)
+      (check (string=? "got:{\"a\":1}" (body-of resp)))
+      (check= "text/x-echo" (header-of resp "Content-Type"))
+      (check= "7" (header-of resp "X-Trace"))
+      (check= 1 hits)
+      ; the audit trail and the counters saw the same request
+      (check= 1 (counter s "ok"))
+      (check= 1 (counter s "requests"))
+      (let ((audit (webhook:audit s 1)))
+        (check= 1 (length audit))
+        (check= "POST" (hash-ref (car audit) "method"))
+        (check= "/hook" (hash-ref (car audit) "path"))
+        (check= 201 (hash-ref (car audit) "status"))
+        (check= 7 (hash-ref (car audit) "bytes"))
+        (check (number? (hash-ref (car audit) "ms"))))
+      (check= #t (webhook:stop! s)))))
+
+(test-case "a write without credentials is refused and the handler never runs"
+          (hash "issue" 5415)
+  (set! hits 0)
+  (let ((s (standard-server)))
+    (webhook:start! s)
+    (let ((port (webhook:port s)))
+      (check= 401 (status-of (http port "POST" "/hook" "x")))
+      (check= 401 (status-of (http port "POST" "/hook" "x" "Authorization: Bearer wrong")))
+      ; a bare token is not the Bearer scheme
+      (check= 401 (status-of (http port "POST" "/hook" "x" "Authorization: s3cret-token")))
+      (check= 0 hits)
+      (check= 3 (counter s "denied"))
+      (webhook:stop! s))))
+
+(test-case "with no authentication hook reads pass and writes are refused" (hash "issue" 5415)
+  (set! hits 0)
+  (let ((s (webhook:make (hash))))
+    (webhook:route! s "/items" (list "GET") (lambda (req) "items"))
+    (webhook:route! s "/hook" (list "POST") echo)
+    (webhook:route! s "/open" (list "POST") (lambda (req) "open")
+                    (hash "public" #t))
+    (webhook:start! s)
+    (let ((port (webhook:port s)))
+      (check= 200 (status-of (http port "GET" "/items" "")))
+      (check= 401 (status-of (http port "POST" "/hook" "x")))
+      ; the route that said "public" #t takes the anonymous write
+      (check= 200 (status-of (http port "POST" "/open" "x")))
+      (check= 0 hits)
+      (webhook:stop! s))))
+
+(test-case "a route's own hook decides; a server hook can answer with a response"
+          (hash "issue" 5415)
+  (set! hits 0)
+  (let ((s (webhook:make (hash "auth" (lambda (req)
+                                        (if (string=? (hash-ref req "path") "/limited")
+                                          (hash "status" 429 "body" "later\n"
+                                                "headers" (hash "Retry-After" "9"))
+                                          #t))))))
+    (webhook:route! s "/limited" (list "GET") (lambda (req) "never"))
+    (webhook:route! s "/echo" (list "POST") echo)
+    (webhook:route! s "/strict" (list "POST") echo
+                    (hash "auth" (lambda (req) 'not-a-verdict)))
+    (webhook:start! s)
+    (let ((port (webhook:port s)))
+      (let ((resp (http port "GET" "/limited" "")))
+        (check= 429 (status-of resp))
+        (check= "9" (header-of resp "Retry-After")))
+      ; the hook admitted /echo: the handler ran
+      (check= 201 (status-of (http port "POST" "/echo" "x")))
+      (check= 1 hits)
+      ; a route hook that answers anything but #t / #f / a response is a 403
+      (check= 403 (status-of (http port "POST" "/strict" "x")))
+      (check= 1 hits)
+      (webhook:stop! s))))
+
+(test-case "the health paths are never routes and never reach a handler" (hash "issue" 5415)
+  (set! hits 0)
+  (let ((s (webhook:make (hash))))
+    (check= "webhook:route!: /healthz belongs to the health server and is never routed"
+            (try (webhook:route! s "/healthz" (list "GET") echo) (catch (e) e)))
+    (check= "webhook:route!: /readyz belongs to the health server and is never routed"
+            (try (webhook:route! s "/readyz" (list "GET") echo) (catch (e) e)))
+    (check= "webhook:route!: /metrics belongs to the health server and is never routed"
+            (try (webhook:route! s "/metrics" (list "GET") echo) (catch (e) e)))
+    (webhook:start! s)
+    (let ((port (webhook:port s)))
+      (check= 404 (status-of (http port "GET" "/healthz" "")))
+      (check= 404 (status-of (http port "GET" "/metrics" "")))
+      (check= 0 hits))
+    (webhook:stop! s)))
+
+(test-case "the server never shares the health port" (hash "issue" 5415)
+  (check= "webhook:make: port 8080 is the health port (--health-port / AURA_HTTP_PORT): a webhook server never shares the ops listener"
+          (try (webhook:make (hash "port" 8080 "health-port" 8080)) (catch (e) e)))
+  ; a different port is fine, and so is asking for an ephemeral one
+  (check (hash? (webhook:make (hash "port" 8081 "health-port" 8080))))
+  (check (hash? (webhook:make (hash "health-port" 8080)))))
+
+(test-case "an oversized body is refused as soon as its head is read" (hash "issue" 5415)
+  (set! hits 0)
+  (let ((s (webhook:make (hash "max-body" 1024))))
+    (webhook:route! s "/hook" (list "POST") echo (hash "public" #t))
+    (webhook:start! s)
+    (let ((port (webhook:port s)))
+      ; only the head is sent: the limit is decided from Content-Length
+      (check= 413 (status-of (raw port "POST /hook HTTP/1.1\r\nHost: x\r\nContent-Length: 70000\r\n\r\n")))
+      (check= 0 hits)
+      (check= 1 (counter s "rejected")))
+    (webhook:stop! s)))
+
+(test-case "what the server does not parse is refused by name" (hash "issue" 5415)
+  (let ((s (webhook:make (hash))))
+    (webhook:route! s "/hook" (list "POST") echo (hash "public" #t))
+    (webhook:start! s)
+    (let ((port (webhook:port s)))
+      ; chunked bodies are not supported
+      (check= 501 (status-of (http port "POST" "/hook" "x" "Transfer-Encoding: chunked")))
+      ; a request line that is not HTTP
+      (check= 400 (status-of (raw port "GARBAGE\r\n\r\n")))
+      ; an unknown path and a method the route does not take
+      (check= 404 (status-of (http port "GET" "/nowhere" "")))
+      (check= 405 (status-of (http port "GET" "/hook" "")))
+      (check= "POST" (header-of (http port "GET" "/hook" "") "Allow")))
+    (webhook:stop! s)))
+
+(test-case "a handler that raises is answered 500" (hash "issue" 5415)
+  (let ((s (standard-server)))
+    (webhook:start! s)
+    (let ((port (webhook:port s)))
+      (check= 500 (status-of (http port "GET" "/boom" "" (bearer))))
+    (webhook:stop! s))))
+
+(test-case "GET and HEAD share a handler; Expect: 100-continue gets its go-ahead"
+          (hash "issue" 5415)
+  (let ((s (webhook:make (hash))))
+    (webhook:route! s "/hook" (list "POST") echo (hash "public" #t))
+    (webhook:route! s "/items" (list "GET") (lambda (req) "items"))
+    (webhook:start! s)
+    (let ((port (webhook:port s)))
+      (let ((resp (http port "HEAD" "/items" "")))
+        (check= 200 (status-of resp))
+        (check (string=? "" (body-of resp)))
+        (check= "5" (header-of resp "Content-Length")))
+      (check (string-prefix? (http port "POST" "/hook" "abc" "Expect: 100-continue")
+                             "HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 201 Created"))
+      (check (string=? "got:abc" (body-of (http port "POST" "/hook" "abc"))))
+    (webhook:stop! s))))
+
+(test-case "the accept loop keeps serving while a handler is busy" (hash "issue" 5415)
+  (let ((s (standard-server)))
+    (webhook:start! s)
+    (let* ((port (webhook:port s))
+           (t0 (monotonic-ms))
+           (slow (fiber:spawn (lambda () (http port "GET" "/slow" "" (bearer)))))
+           (fast (begin (fiber:sleep 50)
+                        (status-of (http port "GET" "/items" "" (bearer)))))
+           (fast-ms (- (monotonic-ms) t0))
+           (slow-status (status-of (fiber:join slow))))
+      (check= 200 fast)
+      ; the fast request was answered while the slow handler was still asleep
+      (check (< fast-ms 380))
+      (check= 200 slow-status))
+    (webhook:stop! s)))
+
+(test-case "stop closes the listener; the audit trail stays readable" (hash "issue" 5415)
+  (let ((s (standard-server)))
+    (webhook:start! s)
+    (let ((port (webhook:port s)))
+      (http port "GET" "/items" "" (bearer))
+      (http port "GET" "/nope" "" (bearer))
+      (check= "webhook:route!: routes are fixed once the server started"
+              (try (webhook:route! s "/late" (list "GET") (lambda (req) "late"))
+                   (catch (e) e)))
+      (check= #t (webhook:stop! s))
+      ; nothing listens any more
+      (check (string=? "" (http port "GET" "/items" "" (bearer))))
+      (check (not (webhook:stop! s)))
+      (check (not (hash-ref (webhook:stats s) "running")))
+      ; the trail the server fiber kept is handed over by stop
+      (let ((audit (webhook:audit s 4)))
+        (check= 2 (length audit))
+        (check= "/nope" (hash-ref (car audit) "path"))
+        (check= "/items" (hash-ref (car (cdr audit)) "path")))
+      ; routes may be added again for the next start
+      (check (hash? (webhook:route! s "/later" (list "GET") (lambda (req) "later")))))))
+
+(test-case "a bad route or server option is refused by name" (hash "issue" 5415)
+  (let ((s (webhook:make (hash))))
+    (check (string-prefix? (try (webhook:route! s "hook" (list "POST") echo) (catch (e) e))
+                           "webhook:route!: usage:"))
+    (check (string-prefix? (try (webhook:route! s "/hook" (list "POST") 5) (catch (e) e))
+                           "webhook:route!: usage:"))
+    (check= "webhook:token-auth: expected must be a string"
+            (try (webhook:token-auth 5) (catch (e) e)))))
+
+(test-finish)
