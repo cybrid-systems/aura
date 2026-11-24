@@ -237,7 +237,7 @@ struct DensenessBodyLockWaitGuard {
 struct CliMainEvalBodyLock {
     // kParkForFiber: take the lock through g_cli_main_body_lock_acquire_parking
     // (Issue #5435); on a plain thread it is the blocking acquire.
-    enum Acquire { kBlocking, kParkForFiber };
+    enum Acquire : std::uint8_t { kBlocking, kParkForFiber };
 
     void* lock = nullptr;
     explicit CliMainEvalBodyLock(Acquire acquire = kBlocking) {
