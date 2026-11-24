@@ -284,6 +284,100 @@ namespace {
     std::atomic<std::uint64_t> g_thread_fiber_dtor_join_total{0};
     std::atomic<std::uint64_t> g_thread_fiber_dtor_abandon_total{0};
 
+    // Issue #5446: a thread fiber whose body has exited but that nobody
+    // joins. Before: its registry entry (a joinable std::thread, stack still
+    // mapped) and its result root stayed until fiber:join or ~Evaluator,
+    // about 104 kB of RSS per fiber, so a fire-and-forget server (one fiber
+    // per request) grew without bound. The exiting thread now names itself in
+    // the per-Evaluator queue below; the next fiber:spawn / fiber:join /
+    // drain of that Evaluator joins the thread and releases the spawn-time
+    // body pin. Only the result is kept for a later join, bounded like the
+    // #4854 repeat-join cache: past the cap the oldest unjoined result is
+    // dropped and its fiber:join answers void, as for any unknown id.
+    inline constexpr std::size_t kFiberUnjoinedReadyCap = 1024;
+    // guarded by s_thread_fiber_threads_mtx
+    std::unordered_map<const void*, std::deque<std::int64_t>> s_thread_fiber_exited;
+    // guarded by s_fiber_results_mtx
+    std::unordered_map<const void*, std::deque<std::int64_t>> s_fiber_unjoined_order;
+
+    void note_thread_fiber_exited(const void* owner, std::int64_t fid) noexcept {
+        try {
+            std::scoped_lock<std::mutex> lock(s_thread_fiber_threads_mtx);
+            s_thread_fiber_exited[owner].push_back(fid);
+        } catch (...) {
+            // [SILENCE-PRIM-#5446] best-effort at thread exit: without the
+            // note the fiber is reclaimed by its join or by the drain.
+        }
+    }
+
+    void reap_exited_thread_fibers(Evaluator& ev) noexcept {
+        void* owner = static_cast<void*>(&ev);
+        try {
+            for (;;) {
+                std::int64_t fid = 0;
+                std::thread worker;
+                {
+                    std::scoped_lock<std::mutex> lock(s_thread_fiber_threads_mtx);
+                    auto qit = s_thread_fiber_exited.find(owner);
+                    if (qit == s_thread_fiber_exited.end())
+                        return;
+                    auto& exited = qit->second;
+                    while (!exited.empty() && fid == 0) {
+                        const std::int64_t candidate = exited.front();
+                        exited.pop_front();
+                        auto it = s_thread_fiber_threads.find(candidate);
+                        if (it == s_thread_fiber_threads.end())
+                            continue; // joined or drained already
+                        worker = std::move(it->second.second);
+                        s_thread_fiber_threads.erase(it);
+                        fid = candidate;
+                    }
+                    if (exited.empty())
+                        s_thread_fiber_exited.erase(qit);
+                }
+                if (fid == 0)
+                    return;
+                if (worker.joinable())
+                    worker.join(); // the body has exited: back once the thread is gone
+                // The body ran, so the pin taken at spawn is no longer
+                // needed (idempotent: a later fiber:join releases again).
+                aura_fiber_release_pending_body(owner, static_cast<std::uint64_t>(fid));
+                ev.arm_file_heap_reclaim_trigger();
+                std::scoped_lock<std::mutex> lock(s_fiber_results_mtx);
+                auto& order = s_fiber_unjoined_order[owner];
+                order.push_back(fid);
+                while (order.size() > kFiberUnjoinedReadyCap) {
+                    s_fiber_results.erase(order.front());
+                    order.pop_front();
+                }
+            }
+        } catch (...) {
+            // [SILENCE-PRIM-#5446] the thread is joined at this point; a
+            // fiber whose bookkeeping failed keeps its result root until
+            // its join or the drain, as before.
+        }
+    }
+
+    // Issue #5446: an Evaluator that goes away takes the bookkeeping of its
+    // unjoined fibers with it: their results are roots into its heaps.
+    void forget_unjoined_fiber_results(const void* owner) noexcept {
+        try {
+            {
+                std::scoped_lock<std::mutex> lock(s_thread_fiber_threads_mtx);
+                s_thread_fiber_exited.erase(owner);
+            }
+            std::scoped_lock<std::mutex> lock(s_fiber_results_mtx);
+            auto oit = s_fiber_unjoined_order.find(owner);
+            if (oit == s_fiber_unjoined_order.end())
+                return;
+            for (const auto fid : oit->second)
+                s_fiber_results.erase(fid);
+            s_fiber_unjoined_order.erase(oit);
+        } catch (...) {
+            // [SILENCE-PRIM-#5446] teardown is best-effort.
+        }
+    }
+
     // Issue #2738 -> #4717: this was the WHOLE-BODY serialization mutex for
     // CLI thread-fallback fibers (they share one Evaluator). Issue #4717
     // removed that: bodies run concurrently, and the state they touch is
@@ -2009,6 +2103,9 @@ void RegSplitParts::register_messaging_fiber_spawn_primitive(PrimRegistrar add, 
             ev.bump_capability_denial();
             return ev.make_refusal_error("capability denied: fiber required");
         }
+        // Issue #5446: reclaim the threads of this Evaluator's finished
+        // fibers; a fire-and-forget spawn is where nobody else would.
+        reap_exited_thread_fibers(ev);
         auto cid = as_closure_id(a[0]);
         auto result_ptr = std::make_shared<std::optional<EvalValue>>();
         // Issue #1291 (P0): shared atomic holds the real fiber id.
@@ -2232,13 +2329,18 @@ void RegSplitParts::register_messaging_fiber_spawn_primitive(PrimRegistrar add, 
                 // either sees this counter and stands down, or this body sees
                 // the sweep gate and waits (see aura_fiber_body_enter).
                 s_thread_fiber_threads.emplace(
-                    fid, std::make_pair(static_cast<const void*>(&ev), std::thread([run_body]() {
-                                            CliFiberBodyPermit permit;
-                                            aura_fiber_body_enter();
-                                            run_body();
-                                            aura_fiber_body_exit();
-                                            (void)permit;
-                                        })));
+                    fid, std::make_pair(
+                             static_cast<const void*>(&ev),
+                             std::thread([run_body, owner = static_cast<const void*>(&ev), fid]() {
+                                 CliFiberBodyPermit permit;
+                                 aura_fiber_body_enter();
+                                 run_body();
+                                 aura_fiber_body_exit();
+                                 // Issue #5446: the body is gone. Name this fiber so
+                                 // its thread is joined without a fiber:join.
+                                 note_thread_fiber_exited(owner, fid);
+                                 (void)permit;
+                             })));
             }
             return make_int(fid);
         }
@@ -2519,6 +2621,9 @@ void RegSplitParts::register_messaging_fiber_join_primitive(PrimRegistrar add, E
         if (a.empty() || !is_int(a[0]))
             return make_bool(false);
         auto fid = static_cast<int64_t>(as_int(a[0]));
+        // Issue #5446: reclaim finished threads first; a target that already
+        // exited is joined here and only its result waits below.
+        reap_exited_thread_fibers(ev);
 
         // Issue #4839 / #4872: an already-joined fid (or one that can never be
         // published) answers at once; see fiber_join_cached_result.
@@ -3291,14 +3396,19 @@ namespace aura::compiler {
 void Evaluator::drain_thread_fibers() noexcept {
     // Registry state from the primitives_detail anonymous namespace.
     using primitives_detail::fiber_cancel_request;
+    using primitives_detail::forget_unjoined_fiber_results;
     using primitives_detail::g_thread_fiber_dtor_abandon_total;
     using primitives_detail::g_thread_fiber_dtor_join_total;
+    using primitives_detail::reap_exited_thread_fibers;
     using primitives_detail::s_fiber_results;
     using primitives_detail::s_fiber_results_cv;
     using primitives_detail::s_fiber_results_mtx;
     using primitives_detail::s_thread_fiber_threads;
     using primitives_detail::s_thread_fiber_threads_mtx;
     try {
+        // Issue #5446: threads whose body already exited join at once; only
+        // live bodies reach the bounded wait below.
+        reap_exited_thread_fibers(*this);
         std::vector<std::pair<std::int64_t, std::thread>> mine;
         {
             std::scoped_lock<std::mutex> lock(s_thread_fiber_threads_mtx);
@@ -3339,6 +3449,12 @@ void Evaluator::drain_thread_fibers() noexcept {
                 continue;
             if (ready) {
                 worker.join();
+                // Issue #5446: nobody can join it any more, and a result is a
+                // root into the heaps this teardown is about to free.
+                {
+                    std::scoped_lock<std::mutex> lock(s_fiber_results_mtx);
+                    s_fiber_results.erase(fid);
+                }
                 g_thread_fiber_dtor_join_total.fetch_add(1, std::memory_order_relaxed);
             } else {
                 // Degenerate body (infinite loop / blocked >2s): detach so
@@ -3352,6 +3468,7 @@ void Evaluator::drain_thread_fibers() noexcept {
                 worker.detach();
             }
         }
+        forget_unjoined_fiber_results(static_cast<const void*>(this));
     } catch (const std::system_error&) {
         // [SILENCE-PRIM-#4936] Best-effort: thread join/detach or cv wait
         // failed — never propagate out of ~Evaluator (noexcept).

@@ -259,11 +259,17 @@
          (target (max keep (quotient (+ (length live) 1) 2))))
     (race-cut-names! r (map race-name (skip target live)))))
 
-; "join" #t (default): wait for the arms still live and report their
-; results. #f leaves them running (status "live") for the caller to join.
+; "join" #t (default): wait for the arms still live and for the arms that
+; finished on their own, and report their results. #f leaves the live ones
+; running (status "live") for the caller to join.
+; Issue #5446: an arm whose score reported done is no longer live, so the
+; default join used to skip it: its fiber was never joined here and its row
+; read value #f.
 (define (race-finish! r o)
   (if (race-opt o "join" #t)
-    (for-each (lambda (a) (race-await! r a)) (race-live r))
+    (for-each (lambda (a) (race-await! r a))
+              (filter (lambda (a) (member (hash-ref a "status") (list "live" "done")))
+                      (hash-ref r "arms")))
     #f)
   (race:result r))
 

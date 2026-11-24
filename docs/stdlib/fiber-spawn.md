@@ -161,6 +161,14 @@ Hosts should still prefer explicit `fiber:join` (or sequential `let*`
 spawn+join per the binding discipline above); the dtor drain is a safety
 net for abandoned fibers, not a substitute for joining.
 
+Issue #5446: a body that has exited is reclaimed without a `fiber:join`. The
+next `fiber:spawn` / `fiber:join` (or the drain) of the same Evaluator joins
+its thread and releases the pin taken on its body closure at spawn; before,
+both stayed until a join or `~Evaluator`, about 104 kB of RSS per fiber, so
+a server with one fiber per request grew without bound. Only the result is
+kept for a later join — the most recent 1024 per Evaluator, like the
+repeat-join cache; older ones answer void, as any unknown id.
+
 ## Sequential-yield surrogate
 
 When spawn is capability-denied or a host deliberately avoids OS threads,

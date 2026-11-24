@@ -216,4 +216,18 @@
   (reclaim! r)
   (check= "cancelled" (hash-ref (race:join r "f16") "status")))
 
+(test-case "the default join also joins arms that finished on their own" (hash "issue" 5446)
+  (set! *round* 0)
+  (define r
+    (race:make (hash "score" (lambda (name) (hash "score" 1 "done" #t))
+                     "sleep" (lambda (ms) #f))))
+  (race:enter! r "a" (fiber:spawn (lambda () 'finished-a)))
+  (race:enter! r "b" (fiber:spawn (lambda () 'finished-b)))
+  (define res (race:halving r (hash "round-ms" 10 "rounds" 1)))
+  ; both arms reported done: the default join used to skip them, so their
+  ; fibers were never joined and their rows read value #f
+  (check= 'finished-a (hash-ref (row-of res "a") "value"))
+  (check= 'finished-b (hash-ref (row-of res "b") "value"))
+  (check= "ok" (hash-ref (row-of res "a") "status")))
+
 (test-finish)

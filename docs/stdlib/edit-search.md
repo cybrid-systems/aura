@@ -146,9 +146,10 @@ Budget accounting is `std/portfolio`'s shape. `(race:result r)` carries
 `budget-ms`, `spent-ms`, and `arms` as `(name mean n)` rows like a
 `portfolio:run` with `ucb` / `thompson` allocation. A cut arm cannot win.
 
-`"join"` (default `#t`) waits for the arms still live and reports their
-results; `#f` leaves them running for `(race:join r name)`. `(race:cancel r
-name)` stops one arm and reclaims its fiber.
+`"join"` (default `#t`) waits for the arms still live and for the arms that
+finished on their own, and reports their results; `#f` leaves the live ones
+running for `(race:join r name)`. `(race:cancel r name)` stops one arm and
+reclaims its fiber.
 
 Cancellation is cooperative ([fiber-cancel.md](fiber-cancel.md)): a trial
 must reach a safepoint (`fiber:yield`, a channel, a join) to observe it. A

@@ -64,4 +64,22 @@
   (check= usage (try (fiber:sleep 86400001) (catch (e) e)))
   (check= usage (try (fiber:sleep) (catch (e) e))))
 
+(test-case "finished fibers nobody joined are reclaimed, bounded, and still join" (hash "issue" 5446)
+  ; The thread of a finished body used to stay registered until fiber:join
+  ; or ~Evaluator, about 104 kB each: one fiber per request grew without
+  ; bound. It is joined by the next spawn / join; only the result waits,
+  ; the most recent 1024 per Evaluator.
+  (define first (fiber:spawn (lambda () 'first)))
+  (let loop ((i 0))
+    (if (< i 1500) (begin (fiber:spawn (lambda () 'done)) (loop (+ i 1))) #f))
+  (fiber:sleep 100)
+  ; past the cap the oldest unjoined result is gone: an unknown id answers void
+  (check (null? (fiber:join first)))
+  ; a fiber that finished before a later spawn is answered with its value
+  (define late (fiber:spawn (lambda () (fiber:sleep 30) 'late)))
+  (fiber:sleep 80)
+  (define other (fiber:spawn (lambda () 'other)))
+  (check= 'late (fiber:join late))
+  (check= 'other (fiber:join other)))
+
 (test-finish)
