@@ -9254,21 +9254,26 @@ Evaluator::FlatStep Evaluator::eval_flat_on_define(EvalFlatCursor& cur,
         // pool (set-code / eval-current walking a workspace).
         // bind_symid mirrors the name through pool_, so re-key
         // back to this define's pool first.
-        if (p)
-            me.set_pool(p);
-        // Issue #4715 AC2 deliberately does NOT capture a
-        // brand-new define here: a file-mode top-level define
-        // must stay bound in the shared env (capturing it would
-        // unbind the name the moment the overlay is dropped).
-        // A private NEW binding is the workspace / EDSL face
-        // (mutate :overlay-define + bind_define_value_in_env).
+        // Issue #5471: the re-key and the bind are one step. On the
+        // shared top env a fiber body's eval-current re-keys top_ onto
+        // the workspace pool between the two: the mirror was built
+        // through that pool, where the SymId resolves to no name, and
+        // the body's next set_pool rebuilt bindings_symid_ from the
+        // string mirror without this binding. The next read of the name
+        // answered "unbound variable". The guard is empty on a private
+        // frame.
         auto ci = alloc_cell(*vv);
         if (types::is_void(*vv))
             note_cell_nil_assigned(ci); // Issue #4789
-        if (v.sym_id != aura::ast::INVALID_SYM)
-            me.bind_symid(v.sym_id, make_cell(ci));
-        else
-            me.bind(std::string(name), make_cell(ci));
+        {
+            auto bind_guard = me.lock_bindings_exclusive();
+            if (p)
+                me.set_pool(p);
+            if (v.sym_id != aura::ast::INVALID_SYM)
+                me.bind_symid(v.sym_id, make_cell(ci));
+            else
+                me.bind(std::string(name), make_cell(ci));
+        }
         if (is_closure(*vv)) {
             name_live_closure(as_closure_id(*vv), name);
             // Issue #4779: retire the generation before the
@@ -9281,14 +9286,21 @@ Evaluator::FlatStep Evaluator::eval_flat_on_define(EvalFlatCursor& cur,
 
     // Lambda: pre-bind void cell, eval, commit or roll back.
     auto ci = alloc_cell(make_void());
-    if (v.sym_id != aura::ast::INVALID_SYM)
-        me.bind_symid(v.sym_id, make_cell(ci));
-    else
-        me.bind(std::string(name), make_cell(ci));
+    {
+        // Issue #5471: same one-step re-key and bind as above.
+        auto bind_guard = me.lock_bindings_exclusive();
+        if (p)
+            me.set_pool(p);
+        if (v.sym_id != aura::ast::INVALID_SYM)
+            me.bind_symid(v.sym_id, make_cell(ci));
+        else
+            me.bind(std::string(name), make_cell(ci));
+    }
     auto vv = eval_flat(*f, *p, val_id, eval_env);
     if (!vv) {
         // Issue #4546: unbind by this define's SymId only
         // under its own pool.
+        auto bind_guard = me.lock_bindings_exclusive();
         if (p)
             me.set_pool(p);
         // Roll back so name is unbound (not void cell).
