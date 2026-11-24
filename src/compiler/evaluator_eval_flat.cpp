@@ -26,6 +26,7 @@ module;
 #include "core/densify_consistency_report.h"  // Issue #4125: densify_in_flight_for (eval-keyed)
 #include "compiler/mark_all_owner_clear.hh"   // Issue #4360: snapshot restore clears IR owners
 #include "compiler/user_arity.hh"             // Issue #4467: call-site procedure arity
+#include "compiler/define_source.hh"          // Issue #5438: canonical define source
 #include "compiler/type_feedback.h"           // Issue #4568: tree-walker lattices
 #include "compiler/env_frame_arena.hh"        // Issue #5057: catchable arena exhaustion
 #include "compiler/cct_probe.hh"              // Issue #5122: live calling-context samples
@@ -3961,12 +3962,8 @@ EvalResult Evaluator::eval_flat_apply_mutate_rebind(std::span<const types::EvalV
     // the pre-batch body, so the following eval-current specialised the
     // identity back over the new closure.
     if (update_function_source_fn_) {
-        std::string body_src = string_at(code_idx);
-        if (body_src.find("(define ") != 0 && body_src.find("(define\t") != 0 &&
-            body_src.find("(define\n") != 0) {
-            body_src = "(define " + name + " " + body_src + ")";
-        }
-        update_function_source_fn_(name, body_src);
+        // Issue #5438: one wrapper for every publisher of a rebind body.
+        update_function_source_fn_(name, canonical_define_source(name, string_at(code_idx)));
     }
     // Issue #3918: public mutate:rebind marks IR dirty so the next
     // eval("(f x)") / (begin (f x)) relowers from the live body.
@@ -15782,133 +15779,54 @@ bool Evaluator::queue_workspace_source_patch_for_define(const std::string& new_c
     if (workspace_source_text_valid_ == false || workspace_source_text_.empty() ||
         workspace_flat_ == nullptr)
         return false;
-    const auto offset_for = [&](std::uint32_t line,
-                                std::uint32_t col) -> std::optional<std::size_t> {
-        if (line == 0 || col == 0)
-            return std::nullopt;
-        std::size_t offset = 0;
-        for (std::uint32_t line_index = 1; line_index < line; ++line_index) {
-            const auto newline = workspace_source_text_.find('\n', offset);
-            if (newline == std::string::npos)
-                return std::nullopt;
-            offset = newline + 1;
-        }
-        offset += static_cast<std::size_t>(col - 1);
-        if (offset > workspace_source_text_.size())
-            return std::nullopt;
-        return offset;
-    };
-    const auto def_view = workspace_flat_->get(define_node);
-    const auto def_start = offset_for(def_view.line, def_view.col);
-    if (def_start.has_value() == false)
-        return false;
-    const auto source = std::string_view(workspace_source_text_);
-    const auto scan_end = [source](std::size_t start) -> std::optional<std::size_t> {
-        std::size_t cursor = start;
-        int depth = 0;
-        bool seen = false;
-        while (cursor < source.size()) {
-            const char character = source[cursor];
-            if (character == ';') {
-                while (cursor < source.size() && source[cursor] != '\n')
-                    ++cursor;
-                continue;
-            }
-            if (character == '#' && cursor + 1 < source.size() && source[cursor + 1] == '|') {
-                cursor += 2;
-                while (cursor + 1 < source.size() &&
-                       !(source[cursor] == '|' && source[cursor + 1] == '#'))
-                    ++cursor;
-                cursor = cursor + 1 < source.size() ? cursor + 2 : source.size();
-                continue;
-            }
-            if (character == '"') {
-                ++cursor;
-                while (cursor < source.size()) {
-                    if (source[cursor] == '\\') {
-                        cursor += 2;
-                        continue;
-                    }
-                    if (source[cursor] == '"') {
-                        ++cursor;
-                        break;
-                    }
-                    ++cursor;
-                }
-                seen = true;
-                continue;
-            }
-            if (character == '(' || character == '[' || character == '{') {
-                ++depth;
-                seen = true;
-                ++cursor;
-                continue;
-            }
-            if (character == ')' || character == ']' || character == '}') {
-                if (seen == false)
-                    return std::nullopt;
-                if (depth == 0)
-                    return cursor;
-                --depth;
-                ++cursor;
-                if (depth == 0)
-                    return cursor;
-                continue;
-            }
-            if (depth == 0 && seen && std::isspace(static_cast<unsigned char>(character)))
-                return cursor;
-            if (std::isspace(static_cast<unsigned char>(character)) == false)
-                seen = true;
-            ++cursor;
-        }
-        return std::nullopt;
-    };
-    // Define nodes carry the position of the `define` token (set_loc uses
-    // the head token), not the opening paren. Step back over whitespace to
-    // the form's `(` so the whole define can be replaced. Replacing only the
-    // body is wrong for shorthand (define (f x) ...) nodes: name_line/name_col
-    // point at the name token inside the params list, so a body scan would
-    // land on the first parameter.
-    std::size_t form_start = *def_start;
-    if (form_start >= source.size() || source[form_start] != '(') {
-        std::size_t back = form_start;
-        while (back > 0 && std::isspace(static_cast<unsigned char>(source[back - 1])))
-            --back;
-        if (back == 0 || source[back - 1] != '(')
-            return false;
-        form_start = back - 1;
-    }
-    const auto form_end = scan_end(form_start);
-    if (form_end.has_value() == false)
-        return false;
     const auto sym = workspace_flat_->sym_id(define_node);
     if (sym == aura::ast::INVALID_SYM)
         return false;
     const std::string name(workspace_pool_->resolve(sym));
     if (name.empty())
         return false;
-    std::size_t first_nonspace = 0;
-    while (first_nonspace < new_code.size() &&
-           std::isspace(static_cast<unsigned char>(new_code[first_nonspace])))
-        ++first_nonspace;
-    const bool full_define = new_code.compare(first_nonspace, 7, "(define") == 0;
-    std::string replacement;
-    if (full_define) {
-        replacement = new_code;
-    } else {
-        // A bare rebind value replaces the define's value, not a sugar body.
-        // Mirror update_function_source_fn_'s canonical wrapper so a lambda
-        // stays semantically `(define name (lambda ...))`.
-        replacement.reserve(new_code.size() + name.size() + 10);
-        replacement = "(define ";
-        replacement += name;
-        replacement += ' ';
-        replacement += new_code;
-        replacement += ')';
+    const std::string_view source(workspace_source_text_);
+    // Issue #5438: the form is found by name in the current text. A node's
+    // line/col was stamped when the text was last parsed, and every earlier
+    // patch moved what follows it: after a rebind that changed the line
+    // count, the next rebind of a later define replaced whatever sat at the
+    // stale offset, and the :preserve export lost a define. The position is
+    // a tie-break only, for a name that is defined more than once: the form
+    // nearest it wins.
+    const auto forms = source_define_forms(source, name);
+    if (forms.empty())
+        return false;
+    std::pair<std::size_t, std::size_t> span = forms.front();
+    if (forms.size() > 1) {
+        const auto def_view = workspace_flat_->get(define_node);
+        if (def_view.line == 0 || def_view.col == 0)
+            return false;
+        std::size_t line_start = 0;
+        bool found = true;
+        for (std::uint32_t line_index = 1; line_index < def_view.line; ++line_index) {
+            const auto newline = source.find('\n', line_start);
+            if (newline == std::string_view::npos) {
+                found = false;
+                break;
+            }
+            line_start = newline + 1;
+        }
+        if (!found)
+            return false;
+        const std::size_t hint = line_start + static_cast<std::size_t>(def_view.col - 1);
+        const auto distance = [hint](const std::pair<std::size_t, std::size_t>& form) {
+            return form.first > hint ? form.first - hint : hint - form.first;
+        };
+        span = *std::min_element(forms.begin(), forms.end(),
+                                 [&distance](const auto& lhs, const auto& rhs) {
+                                     return distance(lhs) < distance(rhs);
+                                 });
     }
-    pending_workspace_source_patch_.assign(source.substr(0, form_start));
-    pending_workspace_source_patch_ += replacement;
-    pending_workspace_source_patch_ += source.substr(*form_end);
+    // A bare rebind value replaces the define's value, not a sugar body:
+    // the canonical wrapper keeps a lambda `(define name (lambda ...))`.
+    pending_workspace_source_patch_.assign(source.substr(0, span.first));
+    pending_workspace_source_patch_ += canonical_define_source(name, new_code);
+    pending_workspace_source_patch_ += source.substr(span.second);
     pending_workspace_source_patch_valid_ = true;
     return true;
 }

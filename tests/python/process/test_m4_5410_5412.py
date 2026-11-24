@@ -17,6 +17,16 @@ CASES = (
         "test_untouched_comments_and_layout_survive",
         "m4_5412.SourceFidelity.test_untouched_comments_and_layout_survive",
     ),
+    (
+        5438,
+        "test_second_rebind_after_a_line_count_change",
+        "m4_5412.RebindSourcePatch5438.test_second_rebind_after_a_line_count_change",
+    ),
+    (
+        5438,
+        "test_body_ending_in_a_line_comment_reads_back",
+        "m4_5412.RebindSourcePatch5438.test_body_ending_in_a_line_comment_reads_back",
+    ),
 )
 
 

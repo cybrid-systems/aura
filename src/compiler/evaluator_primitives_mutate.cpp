@@ -28,6 +28,7 @@ module;
 #include "compiler/mutation_hold_budget.h" // Issue #3480: inbody poll + force-release counters
 #include "compiler/mutate_type_gate.hh"    // Issue #4357: light rebind stays off under hard gate
 #include "compiler/evo_log_4910.hh"        // Issue #4910: evolution log (worldline)
+#include "compiler/define_source.hh"       // Issue #5438: canonical define source
 #include "compiler/aura_snapshot_abi.hh"   // Issue #5237: single-source C ABI snapshots
 
 #include "core/runtime_config.hh"
@@ -3758,13 +3759,8 @@ void RegSplitParts::rebind_propagate_and_source(Evaluator& ev, aura::ast::FlatAS
     // cascade so full re-lower / cascade never parses multi-define install
     // text under this name (sibling lambdas would steal the #0 body).
     if (ev.update_function_source_fn_) {
-        std::string body_src = ev.string_at(code_idx);
-        // Bare lambda / expr → wrap as (define name …). Full define form kept.
-        if (body_src.find("(define ") != 0 && body_src.find("(define\t") != 0 &&
-            body_src.find("(define\n") != 0) {
-            body_src = "(define " + name + " " + body_src + ")";
-        }
-        ev.update_function_source_fn_(name, body_src);
+        // Issue #5438: one wrapper for every publisher of a rebind body.
+        ev.update_function_source_fn_(name, canonical_define_source(name, ev.string_at(code_idx)));
     }
 }
 
