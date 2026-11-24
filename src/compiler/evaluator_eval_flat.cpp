@@ -8792,8 +8792,8 @@ Evaluator::FlatStep Evaluator::eval_flat_on_set(EvalFlatCursor& cur, const aura:
     SetCellSite5066* set_site = nullptr;
     for (std::size_t i = 0; i < 16; ++i) {
         SetCellSite5066& s = tls_set_cell_5066[i];
-        if (s.flat == f && s.sym == v.sym_id && s.top_gen == top_gen &&
-            s.bind_n == top_bind_n && s.cells_n == cells_n && s.flat_gen == flat_gen) {
+        if (s.flat == f && s.sym == v.sym_id && s.top_gen == top_gen && s.bind_n == top_bind_n &&
+            s.cells_n == cells_n && s.flat_gen == flat_gen) {
             set_site = &s;
             break;
         }
