@@ -54,6 +54,7 @@ using aura::compiler::CompilerService;
 using aura::compiler::types::as_bool;
 using aura::compiler::types::as_float;
 using aura::compiler::types::as_int;
+using aura::compiler::types::as_string_idx;
 using aura::compiler::types::EvalValue;
 using aura::compiler::types::is_bool;
 using aura::compiler::types::is_error;
@@ -61,7 +62,6 @@ using aura::compiler::types::is_float;
 using aura::compiler::types::is_int;
 using aura::compiler::types::is_pair;
 using aura::compiler::types::is_string;
-using aura::compiler::types::as_string_idx;
 using aura::compiler::types::make_int;
 using aura::test::g_failed;
 using aura::test::g_passed;
@@ -779,7 +779,8 @@ static void ac4608_string_heap_reclaim() {
         auto lit = cs.eval(std::string(2, '"'));
         CHECK(lit && is_string(*lit) && ev5431.string_at(as_string_idx(*lit)).empty(),
               "5431: the empty literal stays empty");
-        auto call_src = std::string("(begin (define (empty-5431) ") + std::string(2, '"') + ") (empty-5431))";
+        auto call_src =
+            std::string("(begin (define (empty-5431) ") + std::string(2, '"') + ") (empty-5431))";
         auto call = cs.eval(call_src);
         CHECK(call && is_string(*call) && ev5431.string_at(as_string_idx(*call)).empty(),
               "5431: an empty function result stays empty");
