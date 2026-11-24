@@ -1561,21 +1561,54 @@ static std::size_t sweep_unreachable_channels_4854(ChannelVec& channels, FreeVec
     return dying.size(); // Channel dtors run here, outside the registry lock
 }
 
+// Issue #5433: the mark is called once per live value. Its state used to
+// travel as 20 separate arguments, which the compiler spilled and rebuilt
+// at every call (about 20% of reclaim self time in the live runner). One
+// context reference keeps the hot loop to a single argument.
+struct FileModeMarkContext {
+    std::vector<EvalValue>& work;
+    std::vector<std::uint8_t>& seen_pair;
+    std::vector<std::uint8_t>& seen_vec;
+    std::vector<std::uint8_t>& seen_hash;
+    std::vector<std::uint8_t>& seen_ev_cell;
+    std::vector<std::uint8_t>& seen_err;
+    std::unordered_set<std::uint64_t>& seen_ir;
+    std::unordered_set<std::uint64_t>& live_tw;
+    const Evaluator::FileModeReclaimView& view;
+    const std::pmr::vector<Pair>& pairs;
+    const std::vector<std::vector<EvalValue>>& vector_heap;
+    const std::pmr::vector<EvalValue>& cells;
+    const std::vector<EvalValue>& error_values;
+    std::vector<std::uint8_t>& seen_opaque;
+    std::span<const std::uint32_t> opaque_gen;
+    std::vector<std::uint8_t>& seen_string;
+    std::vector<std::uint8_t>& seen_float;
+    std::unordered_set<std::int64_t>& live_channel_ids;
+};
+
 // Issue #4459: file-mode mark of one EvalValue. Pushes children. Cycles
 // stop at the per-heap seen sets. IR cell ids and evaluator cell ids share
 // the make_cell tag; a seen id follows both heaps. False IR retention is
 // bounded by cells_.size() (prelude), not by the allocation loop.
-static void file_reclaim_mark_value(
-    const EvalValue v, std::vector<EvalValue>& work, std::vector<std::uint8_t>& seen_pair,
-    std::vector<std::uint8_t>& seen_vec, std::vector<std::uint8_t>& seen_hash,
-    std::vector<std::uint8_t>& seen_ev_cell, std::vector<std::uint8_t>& seen_err,
-    std::unordered_set<std::uint64_t>& seen_ir, std::unordered_set<std::uint64_t>& live_tw,
-    const Evaluator::FileModeReclaimView& view, const std::pmr::vector<Pair>& pairs,
-    const std::vector<std::vector<EvalValue>>& vector_heap,
-    const std::pmr::vector<EvalValue>& cells, const std::vector<EvalValue>& error_values,
-    std::vector<std::uint8_t>& seen_opaque, std::span<const std::uint32_t> opaque_gen,
-    std::vector<std::uint8_t>& seen_string, std::vector<std::uint8_t>& seen_float,
-    std::unordered_set<std::int64_t>& live_channel_ids) {
+static void file_reclaim_mark_value(const EvalValue v, FileModeMarkContext& ctx) {
+    auto& work = ctx.work;
+    auto& seen_pair = ctx.seen_pair;
+    auto& seen_vec = ctx.seen_vec;
+    auto& seen_hash = ctx.seen_hash;
+    auto& seen_ev_cell = ctx.seen_ev_cell;
+    auto& seen_err = ctx.seen_err;
+    auto& seen_ir = ctx.seen_ir;
+    auto& live_tw = ctx.live_tw;
+    const auto& view = ctx.view;
+    const auto& pairs = ctx.pairs;
+    const auto& vector_heap = ctx.vector_heap;
+    const auto& cells = ctx.cells;
+    const auto& error_values = ctx.error_values;
+    auto& seen_opaque = ctx.seen_opaque;
+    const auto opaque_gen = ctx.opaque_gen;
+    auto& seen_string = ctx.seen_string;
+    auto& seen_float = ctx.seen_float;
+    auto& live_channel_ids = ctx.live_channel_ids;
     // Issue #4854: a tagged channel id is an owner of that channel slot.
     note_channel_id_4854(v, live_channel_ids);
     // Issue #4608: a string value is a slot index into string_heap_.
@@ -1760,17 +1793,26 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
     std::vector<EvalValue> roots;
     {
         std::scoped_lock lock(alloc_storage_lock_);
-        roots.reserve(cells_.size());
+        roots.reserve(cells_.size() + 4096);
         for (const auto& c : cells_)
             roots.push_back(c);
     }
     auto push_env = [&](const Env& e) {
         // Issue #4717: e may be the shared top env, appended by another body.
         auto bind_guard = e.lock_bindings_shared();
-        for (const auto& b : e.bindings())
-            roots.push_back(b.second);
-        for (const auto& b : e.bindings_symid())
-            roots.push_back(b.second);
+        // Issue #5433: bindings_ and bindings_symid_ mirror each other;
+        // mark one array when the lengths agree, both only on a desync.
+        const auto named = e.bindings();
+        const auto sym = e.bindings_symid();
+        if (named.size() == sym.size()) {
+            for (const auto& b : sym)
+                roots.push_back(b.second);
+        } else {
+            for (const auto& b : named)
+                roots.push_back(b.second);
+            for (const auto& b : sym)
+                roots.push_back(b.second);
+        }
     };
     push_env(top_env());
     if (require_inject_env_)
@@ -2011,10 +2053,16 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
             frame_scanned[id] = 1;
             live_frame[id] = 1;
             const EnvFrame& fr = env_frames_[id];
-            for (const auto& b : fr.bindings_)
-                work.push_back(b.second);
-            for (const auto& b : fr.bindings_symid_)
-                work.push_back(b.second);
+            // Issue #5433: aligned mirrors need one walk, not two.
+            if (fr.bindings_.size() == fr.bindings_symid_.size()) {
+                for (const auto& b : fr.bindings_symid_)
+                    work.push_back(b.second);
+            } else {
+                for (const auto& b : fr.bindings_)
+                    work.push_back(b.second);
+                for (const auto& b : fr.bindings_symid_)
+                    work.push_back(b.second);
+            }
             const EnvId parent = fr.parent_id;
             if (parent != NULL_ENV_ID && static_cast<std::size_t>(parent) < n_frames &&
                 !frame_scanned[parent])
@@ -2022,16 +2070,17 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
         }
     };
     absorb(pending_frames);
+    FileModeMarkContext mark_ctx{
+        work,          seen_pair,   seen_vec,   seen_hash,   seen_ev_cell, seen_err,
+        seen_ir,       live_tw,     view,       pairs_,      vector_heap_, cells_,
+        error_values_, seen_opaque, opaque_gen, seen_string, seen_float,   live_channel_ids};
     {
         std::size_t traced = 0;
         for (int guard = 0; guard < 1000000; ++guard) {
             {
                 std::scoped_lock hash_lock(hash_tables_mtx_);
                 while (traced < work.size()) {
-                    file_reclaim_mark_value(work[traced++], work, seen_pair, seen_vec, seen_hash,
-                                            seen_ev_cell, seen_err, seen_ir, live_tw, view, pairs_,
-                                            vector_heap_, cells_, error_values_, seen_opaque,
-                                            opaque_gen, seen_string, seen_float, live_channel_ids);
+                    file_reclaim_mark_value(work[traced++], mark_ctx);
                 }
             }
             std::vector<EnvId> more;
@@ -2378,15 +2427,23 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
     std::unordered_set<std::uint64_t> seen_ir;
     std::unordered_set<std::uint64_t> live_tw;
     std::vector<EvalValue> work;
-    work.reserve(held.size() + 64);
+    work.reserve(held.size() + 4096);
 
     auto push_env = [&](const Env& e) {
         // Issue #4717: e may be the shared top env, appended by another body.
         auto bind_guard = e.lock_bindings_shared();
-        for (const auto& b : e.bindings())
-            work.push_back(b.second);
-        for (const auto& b : e.bindings_symid())
-            work.push_back(b.second);
+        // Issue #5433: mirror arrays; one walk when aligned.
+        const auto named = e.bindings();
+        const auto sym = e.bindings_symid();
+        if (named.size() == sym.size()) {
+            for (const auto& b : sym)
+                work.push_back(b.second);
+        } else {
+            for (const auto& b : named)
+                work.push_back(b.second);
+            for (const auto& b : sym)
+                work.push_back(b.second);
+        }
     };
     std::vector<EnvId> pending;
     auto note_frame = [&](EnvId id) {
@@ -2419,10 +2476,15 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
             if (const auto& snap = cur->cap_snapshot()) {
                 int sh = 0;
                 for (auto sp = snap; sp && sh < 32; sp = sp->parent, ++sh) {
-                    for (const auto& b : sp->bindings_)
-                        work.push_back(b.second);
-                    for (const auto& b : sp->bindings_symid_)
-                        work.push_back(b.second);
+                    if (sp->bindings_.size() == sp->bindings_symid_.size()) {
+                        for (const auto& b : sp->bindings_symid_)
+                            work.push_back(b.second);
+                    } else {
+                        for (const auto& b : sp->bindings_)
+                            work.push_back(b.second);
+                        for (const auto& b : sp->bindings_symid_)
+                            work.push_back(b.second);
+                    }
                     note_frame(sp->source_frame);
                     note_frame(sp->parent_id);
                 }
@@ -2570,10 +2632,16 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
             frame_scanned[id] = 1;
             live_frame[id] = 1;
             const EnvFrame& fr = env_frames_[id];
-            for (const auto& b : fr.bindings_)
-                work.push_back(b.second);
-            for (const auto& b : fr.bindings_symid_)
-                work.push_back(b.second);
+            // Issue #5433: aligned mirrors need one walk, not two.
+            if (fr.bindings_.size() == fr.bindings_symid_.size()) {
+                for (const auto& b : fr.bindings_symid_)
+                    work.push_back(b.second);
+            } else {
+                for (const auto& b : fr.bindings_)
+                    work.push_back(b.second);
+                for (const auto& b : fr.bindings_symid_)
+                    work.push_back(b.second);
+            }
             const EnvId parent = fr.parent_id;
             if (parent != NULL_ENV_ID && static_cast<std::size_t>(parent) < n_frames &&
                 !frame_scanned[parent])
@@ -2594,6 +2662,10 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
     }
 
     FileModeReclaimView view;
+    FileModeMarkContext mark_ctx{
+        work,          seen_pair,   seen_vec,   seen_hash,   seen_ev_cell, seen_err,
+        seen_ir,       live_tw,     view,       pairs_,      vector_heap_, cells_,
+        error_values_, seen_opaque, opaque_gen, seen_string, seen_float,   live_channel_ids};
     std::unordered_set<std::uint64_t> expanded;
     std::size_t traced = 0;
     // Issue #4613: the hash-table slot snapshot (the table pointer per
@@ -2612,10 +2684,7 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
                 hash_snapshot_taken = true;
             }
             while (traced < work.size()) {
-                file_reclaim_mark_value(work[traced++], work, seen_pair, seen_vec, seen_hash,
-                                        seen_ev_cell, seen_err, seen_ir, live_tw, view, pairs_,
-                                        vector_heap_, cells_, error_values_, seen_opaque,
-                                        opaque_gen, seen_string, seen_float, live_channel_ids);
+                file_reclaim_mark_value(work[traced++], mark_ctx);
             }
         }
         std::vector<EnvId> more;
