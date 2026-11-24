@@ -27,6 +27,8 @@ aura::messaging::DensenessBodyUnlockFn aura::messaging::g_denseness_body_unlock_
 aura::messaging::DensenessBodyRelockFn aura::messaging::g_denseness_body_relock_after_wait =
     nullptr;
 aura::messaging::CliMainBodyLockAcquireFn aura::messaging::g_cli_main_body_lock_acquire = nullptr;
+aura::messaging::CliMainBodyLockAcquireFn aura::messaging::g_cli_main_body_lock_acquire_parking =
+    nullptr;
 aura::messaging::CliMainBodyLockReleaseFn aura::messaging::g_cli_main_body_lock_release = nullptr;
 // Issue #4722: CLI thread-backend body identity (0 outside a body).
 aura::messaging::CliBodyFiberIdFn aura::messaging::g_cli_body_fiber_id = nullptr;

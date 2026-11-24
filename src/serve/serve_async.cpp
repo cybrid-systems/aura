@@ -1036,15 +1036,16 @@ namespace {
                     }
                     try {
                         // Issue #5435: take the commit lock BEFORE the capture
-                        // window opens. The lock serializes whole execs (a second
-                        // eval rebinds the workspace under a suspended one), and a
-                        // session exec keeps it across its own (fiber:sleep). A
-                        // waiting exec that parked inside the window held a dup of
-                        // the running exec's capture pipe: its drain never saw EOF,
-                        // the join pinned the one worker, and neither session
-                        // answered. On a scheduler fiber the acquire parks instead
-                        // of blocking (cli_main_body_lock_acquire_impl).
-                        aura::messaging::CliMainEvalBodyLock exec_body_lock;
+                        // window opens, parked for on this session fiber. The
+                        // lock serializes whole execs (a second eval rebinds the
+                        // workspace under a suspended one), and a session exec
+                        // keeps it across its own (fiber:sleep). A waiting exec
+                        // that blocked inside the window pinned the one Soft
+                        // worker and held a dup of the running exec's capture
+                        // pipe: its drain never saw EOF, and neither session
+                        // answered.
+                        aura::messaging::CliMainEvalBodyLock exec_body_lock(
+                            aura::messaging::CliMainEvalBodyLock::kParkForFiber);
                         auto captured = capture_stdout_during([&] {
                             return detail::eval_top_level_forms(
                                 split.forms,
@@ -1205,9 +1206,10 @@ namespace {
                     continue;
                 }
                 try {
-                    // Issue #5435: the commit lock before the capture window, as
-                    // in the named-session loop above.
-                    aura::messaging::CliMainEvalBodyLock exec_body_lock;
+                    // Issue #5435: the commit lock before the capture window,
+                    // parked for, as in the named-session loop above.
+                    aura::messaging::CliMainEvalBodyLock exec_body_lock(
+                        aura::messaging::CliMainEvalBodyLock::kParkForFiber);
                     auto captured = capture_stdout_during([&] {
                         return detail::eval_top_level_forms(
                             split.forms,

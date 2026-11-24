@@ -159,6 +159,10 @@ using CliMainBodyLockAcquireFn = void* (*)();
 using CliMainBodyLockReleaseFn = void (*)(void*);
 extern CliMainBodyLockAcquireFn g_cli_main_body_lock_acquire;
 extern CliMainBodyLockReleaseFn g_cli_main_body_lock_release;
+// Issue #5435: the same lock for a scheduler fiber that must not pin its
+// worker on a parked holder (the serve-async session loops): the acquire
+// parks with a short deadline and tries again. Null = not wired.
+extern CliMainBodyLockAcquireFn g_cli_main_body_lock_acquire_parking;
 
 // Issue #4722: identity of the fiber body running on this thread for the
 // CLI thread backend (fiber:spawn without a scheduler). Scheduler fibers
@@ -231,10 +235,17 @@ struct DensenessBodyLockWaitGuard {
 // eval, destroyed before ~CompilerService drains thread fibers (the
 // workers must be able to acquire the body mutex in order to finish).
 struct CliMainEvalBodyLock {
+    // kParkForFiber: take the lock through g_cli_main_body_lock_acquire_parking
+    // (Issue #5435); on a plain thread it is the blocking acquire.
+    enum Acquire { kBlocking, kParkForFiber };
+
     void* lock = nullptr;
-    CliMainEvalBodyLock() {
-        if (g_cli_main_body_lock_acquire)
-            lock = g_cli_main_body_lock_acquire();
+    explicit CliMainEvalBodyLock(Acquire acquire = kBlocking) {
+        const CliMainBodyLockAcquireFn hook = acquire == kParkForFiber
+                                                  ? g_cli_main_body_lock_acquire_parking
+                                                  : g_cli_main_body_lock_acquire;
+        if (hook)
+            lock = hook();
     }
     ~CliMainEvalBodyLock() {
         if (lock && g_cli_main_body_lock_release)

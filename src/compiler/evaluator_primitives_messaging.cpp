@@ -441,31 +441,6 @@ namespace {
         cli_body_lock_publish_takeover();
     }
 
-    // Issue #5435: the commit lock serializes whole evals. A second eval
-    // rebinds the workspace under the suspended one ("stale node id"), so a
-    // session exec keeps the lock across its own (fiber:sleep). On a
-    // scheduler fiber a blocking lock() then pins the one worker thread that
-    // can wake the parked holder: under Soft serve-async a top-level sleep
-    // in one session hung every other session's exec, and its own reply.
-    // Try, park briefly, try again: the worker stays free for the holder.
-    // OS threads keep the blocking acquire above.
-    void cli_body_lock_acquire_without_pinning_worker(std::unique_lock<std::mutex>& lock) {
-        // Issue #4728: a contender is published for the whole wait, so a
-        // yielding body knows a takeover can actually land.
-        s_cli_commit_waiters.fetch_add(1, std::memory_order_acq_rel);
-        auto pause = std::chrono::milliseconds(1);
-        while (!lock.try_lock()) {
-            auto* self = aura::serve::g_current_fiber;
-            self->set_state(aura::serve::FiberState::Waiting);
-            self->set_park_deadline_ms(static_cast<int>(pause.count()));
-            aura::serve::Fiber::yield(aura::serve::YieldReason::Explicit);
-            self->clear_park_deadline();
-            self->set_state(aura::serve::FiberState::Running);
-            pause = std::min(pause * 2, std::chrono::milliseconds(10));
-        }
-        s_cli_commit_waiters.fetch_sub(1, std::memory_order_acq_rel);
-        cli_body_lock_publish_takeover();
-    }
 
     // Issue #4699: release the body mutex across a cooperative yield.
     //
@@ -1013,13 +988,51 @@ namespace {
         }
     }
 
+    // Issue #5435: the commit lock serializes whole evals. A second eval
+    // rebinds the workspace under the suspended one ("stale node id"), so a
+    // session exec keeps the lock across its own (fiber:sleep). A session
+    // fiber that then blocks in lock() pins the one Soft worker that can
+    // wake the parked holder: a top-level sleep in one session hung every
+    // other session's exec, and its own reply. A session fiber parks with a
+    // short deadline instead and tries again: the worker stays free for the
+    // holder.
+    //
+    // Only the serve-async session loops use this; they park at their top
+    // level anyway. Fiber bodies keep the blocking acquire: parking them
+    // multiplies deadline wakes, and every resume runs the evaluator's
+    // resume-refresh on a worker while another one may be evaluating (the
+    // chaos soak of test_mailbox_fiber_batch crashed with 64 fibers calling
+    // eval concurrently).
+    void cli_body_lock_acquire_parking_fiber(std::unique_lock<std::mutex>& lock) {
+        // Issue #4176: read the fiber ONCE, before any yield. g_current_fiber
+        // is thread_local and a park may resume the fiber on another worker.
+        auto* self = aura::serve::g_current_fiber;
+        if (self == nullptr || !channel_can_park_fiber()) {
+            cli_body_lock_acquire(lock);
+            return;
+        }
+        // Issue #4728: a contender is published for the whole wait, so a
+        // yielding body knows a takeover can actually land.
+        s_cli_commit_waiters.fetch_add(1, std::memory_order_acq_rel);
+        auto pause = std::chrono::milliseconds(5);
+        while (!lock.try_lock()) {
+            self->set_state(aura::serve::FiberState::Waiting);
+            self->set_park_deadline_ms(static_cast<int>(pause.count()));
+            aura::serve::Fiber::yield(aura::serve::YieldReason::Explicit);
+            self->clear_park_deadline();
+            self->set_state(aura::serve::FiberState::Running);
+            pause = std::min(pause * 2, std::chrono::milliseconds(50));
+        }
+        s_cli_commit_waiters.fetch_sub(1, std::memory_order_acq_rel);
+        cli_body_lock_publish_takeover();
+    }
     // Issue #4356: CLI main does not run inside complete_fiber, so it never
     // took s_cli_commit_mtx. read-line then pushed string_heap_
     // while a thread fiber mutated the same Evaluator. Acquire publishes
     // this unique_lock in the TLS slot the join / denseness wait hooks
     // already unlock. A thread that already holds the lock (the fiber
     // body, or an outer guard) gets nullptr and must not lock again.
-    void* cli_main_body_lock_acquire_impl() {
+    void* cli_main_body_lock_acquire_with(void (*acquire)(std::unique_lock<std::mutex>&)) {
         // Issue #4887/#4888: an offload worker evaluates a private service;
         // the parked submitting fiber holds s_cli_commit_mtx for its whole eval.
         if (aura::messaging::offload_private_eval_active())
@@ -1027,15 +1040,20 @@ namespace {
         if (s_tls_cli_body_lock() && s_tls_cli_body_lock()->owns_lock())
             return nullptr;
         auto lk = std::make_unique<std::unique_lock<std::mutex>>(s_cli_commit_mtx, std::defer_lock);
-        // Issue #4699: tracked acquire (takeover publish). Issue #5435: a
-        // scheduler fiber must not pin its worker on a parked holder.
-        if (aura::serve::g_current_fiber != nullptr && channel_can_park_fiber())
-            cli_body_lock_acquire_without_pinning_worker(*lk);
-        else
-            cli_body_lock_acquire(*lk);
+        (*acquire)(*lk);
         s_tls_cli_body_lock() = lk.get();
         // The C hook hands ownership to cli_main_body_lock_release_impl.
         return lk.release();
+    }
+
+    void* cli_main_body_lock_acquire_impl() {
+        // Issue #4699: tracked acquire (takeover publish).
+        return cli_main_body_lock_acquire_with(&cli_body_lock_acquire);
+    }
+
+    // Issue #5435: the session-loop form, parked for on a session fiber.
+    void* cli_main_body_lock_acquire_parking_impl() {
+        return cli_main_body_lock_acquire_with(&cli_body_lock_acquire_parking_fiber);
     }
 
     void cli_main_body_lock_release_impl(void* p) {
@@ -1052,6 +1070,8 @@ namespace {
         aura::messaging::g_denseness_body_unlock_for_wait = &denseness_body_unlock_hook;
         aura::messaging::g_denseness_body_relock_after_wait = &denseness_body_relock_hook;
         aura::messaging::g_cli_main_body_lock_acquire = &cli_main_body_lock_acquire_impl;
+        aura::messaging::g_cli_main_body_lock_acquire_parking =
+            &cli_main_body_lock_acquire_parking_impl;
         aura::messaging::g_cli_main_body_lock_release = &cli_main_body_lock_release_impl;
         // Issue #4722: name the thread-backend body to orch recv/reply
         // (#4061 reply gate) — scheduler fibers use g_current_fiber.
