@@ -161,6 +161,14 @@ Hosts should still prefer explicit `fiber:join` (or sequential `let*`
 spawn+join per the binding discipline above); the dtor drain is a safety
 net for abandoned fibers, not a substitute for joining.
 
+Issue #5436: a detached body keeps evaluating, and the teardown frees the
+heaps under it — a CLI program that ended with a CPU-bound fiber crashed
+(`double free or corruption`, SIGSEGV). When the process is exiting — a
+CLI run returning, `(exit code)` — the drain now ends the process at that
+point with the status the run had decided on, instead of continuing the
+teardown. A host that destroys an evaluator mid-process keeps the bounded
+detach above and must not let a body outlive it.
+
 Issue #5446: a body that has exited is reclaimed without a `fiber:join`. The
 next `fiber:spawn` / `fiber:join` (or the drain) of the same Evaluator joins
 its thread and releases the pin taken on its body closure at spawn; before,

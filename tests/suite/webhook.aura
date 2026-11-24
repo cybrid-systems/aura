@@ -300,4 +300,60 @@
     (check= "webhook:token-auth: expected must be a string"
             (try (webhook:token-auth 5) (catch (e) e)))))
 
+; Wait until a request is in flight.
+(define (wait-inflight s)
+  (let loop ((k 0))
+    (if (and (< k 400) (= (counter s "inflight") 0)) (begin (fiber:sleep 5) (loop (+ k 1))) #f)))
+
+; Wait until no request is in flight.
+(define (wait-idle s)
+  (let loop ((k 0))
+    (if (and (< k 1000) (> (counter s "inflight") 0)) (begin (fiber:sleep 10) (loop (+ k 1))) #f)))
+
+(test-case "stop cancels a handler that is still running" (hash "issue" 5436)
+  ; the handler sleeps between steps, so the cancel reaches it: stop!
+  ; answers #t with no handler left
+  (let* ((s (webhook:make (hash "port" 0 "drain-ms" 200 "cancel-ms" 3000)))
+         (port 0)
+         (client #f))
+    (webhook:route! s "/forever" (list "GET")
+                    (lambda (req) (let loop () (fiber:sleep 50) (loop)))
+                    (hash "public" #t))
+    (webhook:start! s)
+    (set! port (webhook:port s))
+    (set! client
+          (fiber:spawn (lambda ()
+                         (raw port "GET /forever HTTP/1.1\r\nHost: x\r\n\r\n"))))
+    (wait-inflight s)
+    (let ((t0 (monotonic-ms)))
+      (check= #t (webhook:stop! s))
+      (check (< (- (monotonic-ms) t0) 2500))
+      (check= 0 (counter s "inflight")))
+    (fiber:join client)))
+
+(test-case "stop refuses while a handler cannot be cancelled" (hash "issue" 5436)
+  ; a body with no safepoint cannot be interrupted: stop! used to answer #t
+  ; with that handler still running
+  (let* ((s (webhook:make (hash "port" 0 "drain-ms" 100 "cancel-ms" 100)))
+         (port 0)
+         (client #f))
+    (webhook:route! s "/cpu" (list "GET")
+                    ; about two seconds of arithmetic, no safepoint
+                    (lambda (req) (let loop ((i 0)) (if (< i 2000000) (loop (+ i 1)) "done")))
+                    (hash "public" #t))
+    (webhook:start! s)
+    (set! port (webhook:port s))
+    (set! client
+          (fiber:spawn (lambda ()
+                         (raw port "GET /cpu HTTP/1.1\r\nHost: x\r\n\r\n"))))
+    (wait-inflight s)
+    (let ((answer (try (webhook:stop! s) (catch (e) e))))
+      (check (not (eq? answer #t)))
+      (check (string-contains? (format "~a" answer) "1 handler(s) still running"))
+      (check= 1 (counter s "inflight")))
+    ; the suite process must not end with the handler alive
+    (wait-idle s)
+    (check= 0 (counter s "inflight"))
+    (fiber:join client)))
+
 (test-finish)

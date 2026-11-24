@@ -310,7 +310,10 @@
 
 ; opts: "host" ("127.0.0.1"), "port" (0 = ephemeral), "auth" (lambda (req) ...),
 ; "max-body" bytes (65536), "max-header" bytes (16384), "max-inflight" (16),
-; "health-port" (the ops port to refuse; default AURA_HTTP_PORT).
+; "health-port" (the ops port to refuse; default AURA_HTTP_PORT),
+; "drain-ms" (15000): how long webhook:stop! lets the requests in flight
+; finish before it cancels them; "cancel-ms" (5000): how long it then
+; waits for a cancelled handler to reach its next safepoint.
 (define (webhook:make opts)
   (let* ((o (if (hash? opts) opts (hash)))
          (port (max 0 (wh-int (wh-opt o "port" 0) 0)))
@@ -327,6 +330,9 @@
             "max-body" (max 0 (wh-int (wh-opt o "max-body" 65536) 65536))
             "max-header" (max 256 (wh-int (wh-opt o "max-header" 16384) 16384))
             "max-inflight" (max 1 (wh-int (wh-opt o "max-inflight" 16) 16))
+            "drain-ms" (max 0 (wh-int (wh-opt o "drain-ms" 15000) 15000))
+            "cancel-ms" (max 0 (wh-int (wh-opt o "cancel-ms" 5000) 5000))
+            "exit-ch" (channel:create 1024)
             "listener" #f
             "bound" 0
             "loop" #f
@@ -388,6 +394,10 @@
                               (hash-ref s "host") ":" (number->string (hash-ref s "port"))
                               (if (string? l) (string-append ": " l) "")))
         (begin
+          ; a fresh control plane per run: nothing the previous server left
+          (hash-set! s "ctl" (channel:create 64))
+          (hash-set! s "audit-ch" (channel:create 1024))
+          (hash-set! s "exit-ch" (channel:create 1024))
           (hash-set! s "listener" l)
           (hash-set! s "bound" (tcp-local-port l))
           (atomic:add! (hash-ref s "running") 1)
@@ -422,7 +432,11 @@
       (and (string=? method "HEAD") (member "GET" (hash-ref route "methods")))))
 
 (define (wh-call route req)
-  (let ((r (try ((hash-ref route "handler") req) (catch (e) 'failed))))
+  ; Issue #5436: a handler cancelled by webhook:stop! re-raises its
+  ; condition, so the request is abandoned (wh-connection) and not answered
+  ; 500.
+  (let ((r (try ((hash-ref route "handler") req)
+                (catch (e) (if (wh-cancelled? e) (error (format "~a" e)) 'failed)))))
     (cond
       ((eq? r 'failed) (wh-response 500 "handler failed\n"))
       ((string? r) (wh-response 200 r))
@@ -474,8 +488,15 @@
              (req (if (and (hash? got) (hash-ref got "method" #f)) got (hash)))
              (resp (cond ((not (hash? got)) #f)
                          ((hash-ref got "method" #f)
-                          (try (wh-dispatch s got)
-                               (catch (e) (wh-response 500 "handler failed\n"))))
+                          (let ((answer
+                                 (try (wh-dispatch s got)
+                                      (catch (e)
+                                        ; Issue #5436: a handler cancelled by
+                                        ; webhook:stop! answers nothing
+                                        (if (wh-cancelled? e)
+                                          'cancelled
+                                          (wh-response 500 "handler failed\n"))))))
+                            (if (eq? answer 'cancelled) #f answer)))
                          (else got))))
         (if resp
           (begin
@@ -498,12 +519,22 @@
               #f))
           #f))
       (try (tcp-close sock) (catch (e) #f)))
+    ; the server fiber drops this handler from its in-flight list
+    (if (wh-running? s)
+      (try (channel:send (hash-ref s "exit-ch") 'exit) (catch (e) #f))
+      #f)
     (atomic:add! (hash-ref s "stat-inflight") -1)))
 
 ;; ── the server fiber ──────────────────────────────────────────
 
-; Take the audit records and control messages waiting for the server fiber.
-; st is this fiber's own state: the audit trail and a pending stop.
+; The cancel condition of a cancelled fiber (fiber-cancel.md), as the
+; sleeping primitive raises it or as a re-raised error value.
+(define (wh-cancelled? e)
+  (string-prefix? (format "~a" e) "fiber-cancelled"))
+
+; Take the audit records, the handler exits and the control messages
+; waiting for the server fiber. st is this fiber's own state: the audit
+; trail, the handlers in flight and a pending stop.
 (define (wh-drain! s st)
   (let pull-audit ()
     (let ((rec (channel:try-recv (hash-ref s "audit-ch"))))
@@ -512,6 +543,16 @@
           (hash-set! st "audit" (wh-first (cons rec (hash-ref st "audit")) 256))
           (pull-audit))
         #f)))
+  ; Issue #5436: one exit retires one in-flight handler; which one does not
+  ; matter, stop! cancels every handler still listed.
+  (let pull-exit ()
+    (if (eq? (channel:try-recv (hash-ref s "exit-ch")) 'exit)
+      (begin
+        (if (pair? (hash-ref st "live"))
+          (hash-set! st "live" (cdr (hash-ref st "live")))
+          #f)
+        (pull-exit))
+      #f))
   (let pull-ctl ()
     (let ((msg (channel:try-recv (hash-ref s "ctl"))))
       (if (pair? msg)
@@ -531,12 +572,14 @@
 
 (define (wh-serve s)
   (lambda ()
-    (let ((st (hash "audit" (list) "stop" #f)))
+    (let ((st (hash "audit" (list) "live" (list) "stop" #f)))
       (let loop ()
         (wh-drain! s st)
         (if (hash-ref st "stop")
           (begin
-            (channel:send (hash-ref st "stop") (hash-ref st "audit"))
+            (channel:send (hash-ref st "stop")
+                          (hash "audit" (hash-ref st "audit")
+                                "live" (hash-ref st "live")))
             #t)
           (begin
             (let ((c (try (tcp-accept-timeout (hash-ref s "listener") 0) (catch (e) #f))))
@@ -545,6 +588,9 @@
                   (atomic:add! (hash-ref s "stat-total") 1)
                   (if (< (wh-counter s "stat-inflight") (hash-ref s "max-inflight"))
                     (let ((fid (try (fiber:spawn (wh-connection s c)) (catch (e) #f))))
+                      (if fid
+                        (hash-set! st "live" (cons fid (hash-ref st "live")))
+                        #f)
                       (if fid
                         #f
                         (begin
@@ -563,9 +609,11 @@
   (try (tcp-close c) (catch (e) #f)))
 
 ; Stop the server: close the listener first (no new request), let the
-; requests in flight finish, then stop the server fiber and keep its audit
-; trail. → #t, or #f when the server was not running. A request that is
-; stuck in a handler without a safepoint is waited for, not killed.
+; requests in flight finish ("drain-ms"), cancel the handlers still running
+; and wait for them to reach their safepoint ("cancel-ms"), then stop the
+; server fiber and keep its audit trail. → #t once no handler runs; #f when
+; the server was not running; an error when a handler would not stop (a
+; body that never reaches a safepoint cannot be cancelled).
 (define (webhook:stop! s)
   (if (not (wh-running? s))
     #f
@@ -576,18 +624,36 @@
           ; the server fiber is gone (cancelled by hand): close it ourselves
           (try (tcp-close (hash-ref s "listener")) (catch (e) #f))
           #f))
-      (let loop ((waited 0))
-        (if (and (> (wh-counter s "stat-inflight") 0) (< waited 15000))
-          (begin (fiber:sleep 5) (loop (+ waited 5)))
-          #f))
-      (let ((reply (channel:create 1)))
-        (channel:send (hash-ref s "ctl") (list 'stop reply))
-        (let ((final (wh-await reply 5000)))
-          (if (pair? final)
-            (hash-set! s "audit" final)
-            #f)))
-      (atomic:add! (hash-ref s "running") -1)
-      #t)))
+      (wh-wait-idle s (hash-ref s "drain-ms"))
+      (let* ((reply (channel:create 1))
+             (final (begin
+                      (channel:send (hash-ref s "ctl") (list 'stop reply))
+                      (wh-await reply 5000)))
+             (live (if (hash? final) (hash-ref final "live" (list)) (list))))
+        (if (hash? final)
+          (hash-set! s "audit" (hash-ref final "audit" (list)))
+          #f)
+        ; Issue #5436: the handlers still in flight are cancelled and waited
+        ; for. stop! used to give up after the drain window and answer #t
+        ; with a handler still running: the process then tore the evaluator
+        ; down under it (crash at exit).
+        (for-each (lambda (fid) (try (fiber:cancel fid) (catch (e) #f))) live)
+        (wh-wait-idle s (hash-ref s "cancel-ms"))
+        (atomic:add! (hash-ref s "running") -1)
+        (let ((left (wh-counter s "stat-inflight")))
+          (if (= left 0)
+            #t
+            (error (string-append "webhook:stop!: " (number->string left)
+                                  " handler(s) still running: a handler that never "
+                                  "reaches a safepoint cannot be cancelled"))))))))
+
+; Sleep in slices until no request is in flight or `ms` has passed.
+(define (wh-wait-idle s ms)
+  (let ((deadline (+ (monotonic-ms) ms)))
+    (let loop ()
+      (if (and (> (wh-counter s "stat-inflight") 0) (< (monotonic-ms) deadline))
+        (begin (fiber:sleep 5) (loop))
+        #f))))
 
 ; Counters since the server was made, plus the port and the routes.
 (define (webhook:stats s)

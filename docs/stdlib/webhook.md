@@ -78,11 +78,19 @@ secret store, not in source or environment (#5417).
 - **Cancellable.** The server fiber sleeps between polls and every handler
   sleeps in its own waits, so `fiber:cancel` reaches them at the next
   safepoint. `(webhook:stop! s)` is the orderly form: it closes the
-  listener first (no new request), lets the requests in flight finish,
-  stops the server fiber, and keeps the audit trail for `webhook:audit`.
+  listener first (no new request), lets the requests in flight finish
+  (`"drain-ms"`), cancels the handlers still running and waits for them to
+  reach their safepoint (`"cancel-ms"`), stops the server fiber, and keeps
+  the audit trail for `webhook:audit`. It answers `#t` only once no
+  handler runs; a handler that never reaches a safepoint (a CPU-bound body)
+  cannot be cancelled, and `stop!` then raises
+  `webhook:stop!: N handler(s) still running` instead of answering `#t`
+  with it alive (Issue #5436). A request cancelled this way is closed
+  without a response.
 - **Limits** (`webhook:make`): `"max-body"` bytes (65536) — `413` as soon
   as the head announces more; `"max-header"` bytes (16384) — `431`;
-  `"max-inflight"` (16).
+  `"max-inflight"` (16); `"drain-ms"` (15000) and `"cancel-ms"` (5000),
+  the two windows of `webhook:stop!`.
 - **Not supported:** `Transfer-Encoding: chunked` (`501`), multipart or
   form decoding, TLS, keep-alive. `Expect: 100-continue` gets its go-ahead.
 
@@ -123,7 +131,10 @@ out.
 - **Stop the server before the process exits.** A server fiber that
   outlives the evaluator is detached at teardown and then touches freed
   state: measured as a `SIGSEGV` in `StringPool::intern_epoch` after the
-  `[fiber:drain]` warning. `webhook:stop!` joins it.
+  `[fiber:drain]` warning. `webhook:stop!` joins it. A handler it could not
+  cancel is a different matter: the runtime ends the process itself at
+  that point, with the status the run had decided on, rather than tearing
+  the evaluator down under it ([fiber-spawn.md](fiber-spawn.md)).
 - Needs the network effect (`--grant net`). On the default Restricted face
   `webhook:start!` answers `could not listen on ...: effect-denied:
   network not granted ... op=tcp-listen`; under `AURA_SANDBOX=strict` the

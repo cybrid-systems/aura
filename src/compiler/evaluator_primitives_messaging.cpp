@@ -7,6 +7,7 @@ module;
 #include "prim_registrar_scaffold.hh" // #5414: register_prim + PrimSpec (fiber:sleep)
 #include "core/diag_print.hh"         // #4936 eprintln_nothrow
 #include "messaging_bridge.h"
+#include "compiler/process_exit.hh" // Issue #5436: exit status for the drain
 
 #include "security_capabilities.h"
 #include "core/fiber_context.hh" // Issue #4716: fiber-local execution context
@@ -3387,6 +3388,25 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
 
 namespace aura::compiler {
 
+namespace {
+
+    // The status a CLI run decided on, -1 while none is pending (process_exit.hh).
+    // Function-local: it is read while other statics may already be destroyed.
+    std::atomic<int>& process_exit_status() noexcept {
+        static std::atomic<int> pending{-1};
+        return pending;
+    }
+
+} // namespace
+
+extern "C" void aura_note_process_exit(int code) noexcept {
+    process_exit_status().store(code, std::memory_order_release);
+}
+
+extern "C" int aura_pending_process_exit() noexcept {
+    return process_exit_status().load(std::memory_order_acquire);
+}
+
 // Issue #3394: join this Evaluator's outstanding thread-fiber workers
 // before ~Evaluator proceeds to arena/workspace teardown (the fiber:spawn
 // fallback captured `this` by reference). Bounded + best-effort, same
@@ -3431,6 +3451,7 @@ void Evaluator::drain_thread_fibers() noexcept {
             }
         }
         s_fiber_results_cv.notify_all();
+        std::size_t abandoned = 0;
         for (auto& [fid, worker] : mine) {
             // (exit) can run inside a fiber body. Joining self is invalid;
             // detach the caller and let the process exit finish it.
@@ -3460,6 +3481,7 @@ void Evaluator::drain_thread_fibers() noexcept {
                 // Degenerate body (infinite loop / blocked >2s): detach so
                 // teardown stays bounded. Residual risk limited to this
                 // path, surfaced via WARN + abandon counter.
+                ++abandoned;
                 g_thread_fiber_dtor_abandon_total.fetch_add(1, std::memory_order_relaxed);
                 ::aura::core::eprintln_nothrow(
                     "[fiber:drain] WARN: thread-fiber {} not ready after "
@@ -3469,6 +3491,16 @@ void Evaluator::drain_thread_fibers() noexcept {
             }
         }
         forget_unjoined_fiber_results(static_cast<const void*>(this));
+        // Issue #5436: a detached body keeps evaluating against the heaps
+        // this teardown is about to free (measured: "double free or
+        // corruption", SIGSEGV in std::vector<EvalValue>::push_back). When
+        // the process is exiting there is nothing left to tear down: end it
+        // now, with the status the run decided on, before anything is freed.
+        const int exit_code = aura_pending_process_exit();
+        if (abandoned != 0 && exit_code >= 0) {
+            std::fflush(nullptr);
+            std::_Exit(exit_code);
+        }
     } catch (const std::system_error&) {
         // [SILENCE-PRIM-#4936] Best-effort: thread join/detach or cv wait
         // failed — never propagate out of ~Evaluator (noexcept).

@@ -14,6 +14,7 @@
 #define AURA_ABI_STR(x) AURA_ABI_STR2(x)
 #include "compiler/aura_jit.h"
 #include "compiler/messaging_bridge.h"
+#include "compiler/process_exit.hh" // Issue #5436: exit status for the fiber drain
 #include "compiler/runtime_shared.h"
 #include "compiler/observability_snapshot.h"
 #include "compiler/observability_metrics.h"
@@ -4614,7 +4615,11 @@ static void recover_oneshot_eval_error(aura::compiler::CompilerService& cs,
     }
 }
 
-static int run_oneshot_or_file(int argc, char** argv) {
+// Issue #5436: the status is a CliExitStatus so that `return rc;` notes it
+// while the service is still alive. A fiber body still running when the
+// service is destroyed then ends the process with that status instead of
+// tearing the evaluator down under it.
+static aura::compiler::CliExitStatus run_oneshot_or_file(int argc, char** argv) {
     // ── Normal REPL / pipe / file / -e mode ─────────────────────
     // Issue #2767: denseness span runners (Aether/Hephaestus/Hermes)
     // hit two footguns that look like product bugs:

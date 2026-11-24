@@ -7,6 +7,7 @@ module;
 #include "compiler/locked_string_heap.hh" // Issue #4717: StringPoolView
 #include "primitives_detail.h"
 #include "runtime_shared.h"
+#include "compiler/process_exit.hh"        // Issue #5436: exit status for the drain
 #include "float_repr.hh"                   // Issue #4468
 #include "compiler/generic_error_words.hh" // #4936 B4 constexpr error tokens
 #include "core/sandbox.hh"                 // Issue #5175: JIT pair face for apply
@@ -800,6 +801,10 @@ void RegSplitParts::register_exit_primitive(PrimRegistrar add, Evaluator& ev) {
         // ~Evaluator; if one is still registered when static destruction
         // destroys that registry, std::thread::~thread() calls
         // std::terminate -> SIGABRT. Join (or bounded-detach) them first.
+        // Issue #5436: a body the drain has to abandon keeps evaluating
+        // while std::exit runs static destruction. Note the status first:
+        // the drain then ends the process itself (std::_Exit) instead.
+        ::aura_note_process_exit(code);
         ev.drain_thread_fibers();
         std::exit(code);
     });

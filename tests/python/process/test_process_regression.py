@@ -13,6 +13,7 @@ PROCESS_TIER = "fast"
 PROCESS_TIMEOUT = 300
 PARTS = (
     "reg_fiber_cow",
+    "reg_fiber_exit",
     "reg_orch_pipeline",
     "reg_hygienic_macro",
     "reg_eval_retain",
@@ -285,6 +286,26 @@ CASES = (
         5435,
         "test_other_session_answers_after_top_level_sleep",
         "reg_eval_async.TestTopLevelSleep5435.test_other_session_answers_after_top_level_sleep",
+    ),
+    (
+        5436,
+        "test_program_end_exits_with_its_status",
+        "reg_fiber_exit.StuckBodyExit.test_program_end_exits_with_its_status",
+    ),
+    (
+        5436,
+        "test_exit_keeps_its_code",
+        "reg_fiber_exit.StuckBodyExit.test_exit_keeps_its_code",
+    ),
+    (
+        5436,
+        "test_uncaught_error_keeps_its_status",
+        "reg_fiber_exit.StuckBodyExit.test_uncaught_error_keeps_its_status",
+    ),
+    (
+        5436,
+        "test_webhook_handler_outliving_stop",
+        "reg_fiber_exit.StuckBodyExit.test_webhook_handler_outliving_stop",
     ),
     (
         4893,
