@@ -1,0 +1,6 @@
+; Issue #5437: a variadic define called with a closure argument but without
+; all of its named arguments is an arity error on every pipeline, reported
+; at the call. The IR define bridge used to run the body with a named
+; parameter unbound.
+(define (k a b . xs) a)
+(k (lambda (x) x))

@@ -1,0 +1,11 @@
+; Issue #5437: a variadic define called with a closure argument binds its
+; rest parameter as a list on every pipeline. On the IR faces (force-soa,
+; the REPL) the define bridge bound the rest symbol by position: (f g 1 2 3)
+; answered 1 and (h g 1 2 3) answered (1 2), with no arity check.
+(define (f g . xs) (g xs))
+(define (h g a . xs) (g a xs))
+(display (f list 1 2 3)) (newline)
+(display (f (lambda (x) x) 1 2 3)) (newline)
+(display (h list 1 2 3)) (newline)
+(display (h (lambda (a xs) (list a xs)) 1 2 3)) (newline)
+(display (f (lambda (x) (null? x)))) (newline)

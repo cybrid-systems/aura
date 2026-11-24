@@ -1,0 +1,5 @@
+; Issue #5437: a fixed-arity define called with a closure argument and a
+; surplus argument is an arity error on every pipeline. The IR define
+; bridge used to drop the surplus argument silently.
+(define (j a) a)
+(j (lambda (x) x) 1)

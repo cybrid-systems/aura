@@ -2,6 +2,7 @@
 // moved out of the module interface (#5242). Move-only: the body is unchanged.
 
 module;
+#include "compiler/user_arity.hh" // Issue #5437: arity channel of the define bridge
 
 module aura.compiler.service;
 
@@ -215,13 +216,39 @@ CompilerService::dispatch_ir_define_closure(aura::compiler::ClosureId cid,
                 // Copy the params too: func_it->second is a cache row
                 // that a sibling thread may rewrite once the gate drops.
                 auto params = func_it->second[0].params;
+                // Issue #5437: a variadic define keeps its rest symbol as
+                // the last param. Binding by position handed it only the
+                // first extra argument and dropped the others, with no
+                // arity check. Bind like the tree walker: the named
+                // parameters, then the rest list.
+                const bool variadic = func_it->second[0].variadic;
+                const std::size_t named =
+                    variadic && !params.empty() ? params.size() - 1 : params.size();
+                if (user_arity_mismatch(params.size(), variadic, args.size())) {
+                    // The bridge drops diagnostics; the parked text is what
+                    // eval_flat reports at the call site (#4467).
+                    set_pending_user_arity(
+                        user_arity_message(name, params.size(), variadic, args.size()));
+                    return std::nullopt;
+                }
                 if (ir_gate.owns_lock())
                     unlock_ir_gate_(ir_gate);
                 aura::compiler::Env ne(&evaluator_.top_env());
                 ne.set_primitives(&evaluator_.primitives());
                 ne.set_pool(pool_sp.get());
-                for (std::size_t i = 0; i < params.size() && i < args.size(); ++i)
+                for (std::size_t i = 0; i < named; ++i)
                     ne.bind(params[i], args[i]);
+                if (variadic) {
+                    // Issue #4733: mint_pair holds alloc_storage_lock_ across
+                    // the size+append+index.
+                    types::EvalValue rest = types::make_void();
+                    for (std::size_t i = args.size(); i > named; --i) {
+                        const auto pid =
+                            evaluator_.mint_pair(args[i - 1], rest, /*check_quota=*/false);
+                        rest = types::make_pair(pid);
+                    }
+                    ne.bind(params[named], rest);
+                }
                 auto r = evaluator_.eval_flat(*const_cast<aura::ast::FlatAST*>(flat_sp.get()),
                                               *const_cast<aura::ast::StringPool*>(pool_sp.get()),
                                               body_id, ne);
