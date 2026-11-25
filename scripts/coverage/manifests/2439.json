@@ -17,7 +17,7 @@
       "path": "src/core/ast_impl.cpp",
       "contains": [
         "FlatAST::apply_verification_dirty_bits",
-        "fetch_or(reasons",
+        "verification_dirty_.fetch_or(id, reasons",
         "newly_set = static_cast<std::uint8_t>(reasons & ~prev)"
       ]
     },
@@ -40,7 +40,7 @@
       "path": "src/core/ast_impl.cpp",
       "contains": [
         "FlatAST::apply_verify_dirty_bits",
-        "fetch_or(verify_reasons",
+        "verify_dirty_.fetch_or(id, verify_reasons",
         "newly_set = static_cast<std::uint8_t>(verify_reasons & ~prev)"
       ]
     },

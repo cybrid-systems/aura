@@ -72,6 +72,17 @@ public:
 
     [[nodiscard]] size_type size() const noexcept { return store_.size(); }
     [[nodiscard]] bool empty() const noexcept { return store_.empty(); }
+    // Compatibility view for the (unused) *_view() span accessors. It is
+    // the COW store, not the mirror: do not read it concurrently with a
+    // writer — new code should use operator[] (the atomic mirror).
+    [[nodiscard]] const T* data() const noexcept { return store_.data(); }
+    [[nodiscard]] size_type capacity() const noexcept { return store_.capacity(); }
+    void reserve(size_type n) { store_.reserve(n); }
+    // Snapshot copy source: the COW store (mirror values are mirrored on
+    // every write, so under the writer's lock this equals the live column).
+    [[nodiscard]] const typename store_type::base_type& view() const noexcept {
+        return store_.view();
+    }
 
     // Read-only: the mirror is the only element storage a reader touches.
     [[nodiscard]] T operator[](size_type i) const noexcept {
@@ -97,6 +108,18 @@ public:
             return *this;
         }
         Ref& operator=(const Ref& o) noexcept { return *this = static_cast<T>(o); }
+        Ref& operator|=(T v) noexcept {
+            const T prev = col_->mirror_[i_].fetch_or(v, std::memory_order_acq_rel);
+            col_->store_[i_] = static_cast<T>(prev | v);
+            return *this;
+        }
+        Ref& operator&=(T v) noexcept {
+            const T prev = col_->mirror_[i_].load(std::memory_order_acquire);
+            const T next = static_cast<T>(prev & v);
+            col_->store_[i_] = next;
+            col_->mirror_[i_].store(next, std::memory_order_release);
+            return *this;
+        }
 
     private:
         AtomicTrackedColumn* col_;
@@ -106,6 +129,24 @@ public:
     [[nodiscard]] Ref at(size_type i) { return Ref(*this, i); }
     [[nodiscard]] Ref front() noexcept { return Ref(*this, 0); }
     [[nodiscard]] Ref back() noexcept { return Ref(*this, size() - 1); }
+
+    // Direct cell operations for writers that used std::atomic_ref on the
+    // old vector. The mirror is the atomic of record; the store keeps the
+    // COW image/dirty semantics.
+    [[nodiscard]] T load(size_type i,
+                         std::memory_order order = std::memory_order_acquire) const noexcept {
+        return mirror_[i].load(order);
+    }
+    void store(size_type i, T v, std::memory_order order = std::memory_order_release) noexcept {
+        store_[i] = v; // marks the chunk dirty
+        mirror_[i].store(v, order);
+    }
+    [[nodiscard]] T fetch_or(size_type i, T v,
+                             std::memory_order order = std::memory_order_acq_rel) noexcept {
+        const T prev = mirror_[i].fetch_or(v, order);
+        store_[i] = static_cast<T>(prev | v);
+        return prev;
+    }
 
     void push_back(T v) {
         store_.push_back(v);

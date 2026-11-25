@@ -35,8 +35,8 @@
       "ac": "AC2",
       "path": "src/core/ast_impl.cpp",
       "contains": [
-        "fetch_or(reasons",
-        "fetch_or(verify_reasons"
+        "verification_dirty_.fetch_or(id, reasons",
+        "verify_dirty_.fetch_or(id, verify_reasons"
       ]
     },
     {

@@ -18,7 +18,7 @@
       "path": "src/core/ast_impl.cpp",
       "contains": [
         "FlatAST::apply_macro_dirty_bits",
-        "fetch_or(reasons",
+        "macro_dirty_.fetch_or(id, reasons",
         "newly_set = static_cast<std::uint8_t>(reasons & ~prev)"
       ]
     },

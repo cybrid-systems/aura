@@ -18,7 +18,7 @@
       "path": "src/core/ast_impl.cpp",
       "contains": [
         "FlatAST::clear_macro_dirty_all",
-        "std::atomic_ref<std::uint8_t>(b).store(0"
+        "macro_dirty_.store(i, 0"
       ]
     },
     {

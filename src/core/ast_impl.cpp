@@ -540,8 +540,7 @@ void FlatAST::apply_verify_dirty_bits(NodeId id, std::uint8_t verify_reasons) {
         if (id >= verify_dirty_.size())
             verify_dirty_.resize(id + 1, 0);
         // Issue #2440: atomic fetch_or (prev bits → newly_set).
-        const auto prev = std::atomic_ref<std::uint8_t>(verify_dirty_[id])
-                              .fetch_or(verify_reasons, std::memory_order_acq_rel);
+        const auto prev = verify_dirty_.fetch_or(id, verify_reasons, std::memory_order_acq_rel);
         newly_set = static_cast<std::uint8_t>(verify_reasons & ~prev);
     }
     if (newly_set & kAssertionDirty)
@@ -563,8 +562,7 @@ void FlatAST::apply_verification_dirty_bits(NodeId id, std::uint8_t reasons) {
         if (id >= verification_dirty_.size())
             verification_dirty_.resize(id + 1, 0);
         // Issue #2440: atomic fetch_or for newly_set metrics.
-        const auto prev = std::atomic_ref<std::uint8_t>(verification_dirty_[id])
-                              .fetch_or(reasons, std::memory_order_acq_rel);
+        const auto prev = verification_dirty_.fetch_or(id, reasons, std::memory_order_acq_rel);
         newly_set = static_cast<std::uint8_t>(reasons & ~prev);
     }
     if (newly_set & kCoverageFeedbackDirty)
@@ -603,17 +601,16 @@ void FlatAST::mark_dirty_verification_upward(NodeId id) {
 void FlatAST::clear_verification_dirty(NodeId id) {
     std::unique_lock<std::shared_mutex> wlock(dirty_column_mtx_.mutable_get());
     if (id < verification_dirty_.size())
-        std::atomic_ref<std::uint8_t>(verification_dirty_[id]).store(0, std::memory_order_release);
+        verification_dirty_.store(id, 0, std::memory_order_release);
 }
 
 // --- FlatAST::clear_verification_dirty_for ---
 void FlatAST::clear_verification_dirty_for(NodeId id, std::uint8_t verify_mask) {
     std::unique_lock<std::shared_mutex> wlock(dirty_column_mtx_.mutable_get());
     if (id < verification_dirty_.size()) {
-        auto& cell = verification_dirty_[id];
-        auto cur = std::atomic_ref<std::uint8_t>(cell).load(std::memory_order_relaxed);
-        std::atomic_ref<std::uint8_t>(cell).store(static_cast<std::uint8_t>(cur & ~verify_mask),
-                                                  std::memory_order_release);
+        const auto cur = verification_dirty_.load(id, std::memory_order_relaxed);
+        verification_dirty_.store(id, static_cast<std::uint8_t>(cur & ~verify_mask),
+                                  std::memory_order_release);
     }
 }
 
@@ -627,8 +624,7 @@ void FlatAST::apply_macro_dirty_bits(NodeId id, std::uint8_t reasons) {
         if (id >= macro_dirty_.size())
             macro_dirty_.resize(id + 1, 0);
         // Issue #2441: atomic fetch_or (prev bits → newly_set).
-        const auto prev = std::atomic_ref<std::uint8_t>(macro_dirty_[id])
-                              .fetch_or(reasons, std::memory_order_acq_rel);
+        const auto prev = macro_dirty_.fetch_or(id, reasons, std::memory_order_acq_rel);
         newly_set = static_cast<std::uint8_t>(reasons & ~prev);
     }
     if (newly_set & kMacroExpansion)
@@ -641,8 +637,8 @@ void FlatAST::apply_macro_dirty_bits(NodeId id, std::uint8_t reasons) {
 // --- FlatAST::clear_macro_dirty_all ---
 void FlatAST::clear_macro_dirty_all() noexcept {
     std::unique_lock<std::shared_mutex> wlock(dirty_column_mtx_.mutable_get());
-    for (auto& b : macro_dirty_)
-        std::atomic_ref<std::uint8_t>(b).store(0, std::memory_order_relaxed);
+    for (std::size_t i = 0; i < macro_dirty_.size(); ++i)
+        macro_dirty_.store(i, 0, std::memory_order_relaxed);
 }
 
 // --- FlatAST::apply_ppa_dirty_bits ---
@@ -789,8 +785,12 @@ bool FlatAST::has_dirty_subtree(NodeId id) const {
 
 // --- FlatAST::clear_all_dirty ---
 void FlatAST::clear_all_dirty() {
-    std::fill(dirty_.begin(), dirty_.end(), 0);
-    std::fill(ppa_dirty_.begin(), ppa_dirty_.end(), 0);
+    // Issue #5476: the dirty columns are atomically readable now; clear
+    // every cell through the mirror instead of a raw vector fill.
+    for (std::size_t i = 0; i < dirty_.size(); ++i)
+        dirty_.store(i, 0, std::memory_order_relaxed);
+    for (std::size_t i = 0; i < ppa_dirty_.size(); ++i)
+        ppa_dirty_.store(i, 0, std::memory_order_relaxed);
     // DO NOT clear value_cache_ here! The value cache persists across
     // eval-current calls so that non-dirty subtrees keep their cached
     // results. Only mark_dirty() (called on mutation) clears individual

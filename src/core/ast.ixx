@@ -1563,22 +1563,21 @@ private:
         // Issue #437 / #2440: reset verify_dirty_ alongside ppa_dirty_
         // (slot recycle; exclusive ownership of this node).
         if (id < verify_dirty_.size())
-            std::atomic_ref<std::uint8_t>(verify_dirty_[id]).store(0, std::memory_order_relaxed);
+            verify_dirty_[id] = 0;
         // Issue #469 / #2440: reset verification_dirty_ alongside the
         // other dirty columns. Populated by
         // apply_verification_dirty_bits (from
         // (verify:parse-coverage-feedback) /
         // (verify:parse-assert-failure)).
         if (id < verification_dirty_.size())
-            std::atomic_ref<std::uint8_t>(verification_dirty_[id])
-                .store(0, std::memory_order_relaxed);
+            verification_dirty_[id] = 0;
         // Issue #290 / #2441: reset macro_dirty_ alongside the other
         // dirty columns. Populated by apply_macro_dirty_bits
         // (called from clone_macro_body for newly expanded
         // subtrees and from self-evolution loops that touch
         // macro-introduced nodes).
         if (id < macro_dirty_.size())
-            std::atomic_ref<std::uint8_t>(macro_dirty_[id]).store(0, std::memory_order_relaxed);
+            macro_dirty_[id] = 0;
         error_kind_[id] = 0;
         if (id < value_cache_.size())
             value_cache_[id] = kNotCached;
@@ -2213,10 +2212,10 @@ public:
     // mark_dirty under StructuralMutationGuard cannot deadlock.
     // LOCK ORDER if combined with structural: structural → dirty_column.
     mutable OwnedSharedMutex dirty_column_mtx_;
-    cow::TrackedColumn<std::uint8_t> dirty_;
+    cow::AtomicTrackedColumn<std::uint8_t> dirty_;
     // Issue #277: per-node PPA dirty bitmask (orthogonal to DirtyReason
     // which is full at 8 bits). OR'd with kPpaHintDirty on dirty_ when set.
-    cow::TrackedColumn<std::uint8_t> ppa_dirty_;
+    cow::AtomicTrackedColumn<std::uint8_t> ppa_dirty_;
     // Issue #437: per-node verification dirty bitmask (orthogonal to
     // DirtyReason which is full at 8 bits). Bit definitions:
     //   0x01 = Assertion (assertion failed)
@@ -2227,7 +2226,7 @@ public:
     // is_dirty() callers still see "this node needs work".
     // Issue #2440: mutable so const accessors can atomic_ref load;
     // concurrent RMW under dirty_column_mtx_ + atomic_ref (#2439/#2440).
-    mutable cow::TrackedColumn<std::uint8_t> verify_dirty_;
+    mutable cow::AtomicTrackedColumn<std::uint8_t> verify_dirty_;
     // Issue #469: verification_dirty_ column. Mirrors
     // verify_dirty_'s pattern; populated by
     // apply_verification_dirty_bits (called from
@@ -2236,7 +2235,7 @@ public:
     //   kCoverageFeedbackDirty = 0x01
     //   kAssertFailureDirty = 0x02
     // Issue #2440: mutable for atomic_ref in const readers.
-    mutable cow::TrackedColumn<std::uint8_t> verification_dirty_;
+    mutable cow::AtomicTrackedColumn<std::uint8_t> verification_dirty_;
     // Issue #290: macro_dirty_ column. Mirrors
     // verification_dirty_'s pattern; populated by
     // apply_macro_dirty_bits (called from clone_macro_body
@@ -2249,7 +2248,7 @@ public:
     //                            node)
     // Issue #2441: mutable for atomic_ref in const readers;
     // concurrent RMW under dirty_column_mtx_ + fetch_or.
-    mutable cow::TrackedColumn<std::uint8_t> macro_dirty_;
+    mutable cow::AtomicTrackedColumn<std::uint8_t> macro_dirty_;
     // Issue #339: per-node occurrence-narrowing staleness
     // column. When a mutation affects a predicate or a
     cow::TrackedColumn<std::uint32_t> type_id_;
@@ -3062,7 +3061,7 @@ public:
         std::shared_lock<std::shared_mutex> rlock(dirty_column_mtx_.mutable_get());
         if (id >= verify_dirty_.size())
             return 0;
-        return std::atomic_ref<std::uint8_t>(verify_dirty_[id]).load(std::memory_order_acquire);
+        return verify_dirty_[id];
     }
     // Issue #469: verification_dirty_ accessor is defined
     // later in this file (after apply_verification_dirty_bits
@@ -3480,8 +3479,7 @@ public:
         std::shared_lock<std::shared_mutex> rlock(dirty_column_mtx_.mutable_get());
         if (id >= verification_dirty_.size())
             return 0;
-        return std::atomic_ref<std::uint8_t>(verification_dirty_[id])
-            .load(std::memory_order_acquire);
+        return verification_dirty_[id];
     }
     // Issue #469 / #2439 / #2440: apply verification-dirty bits.
     // Mirrors apply_verify_dirty_bits; exclusive resize + atomic fetch_or.
@@ -3688,7 +3686,7 @@ public:
         std::shared_lock<std::shared_mutex> rlock(dirty_column_mtx_.mutable_get());
         if (id >= macro_dirty_.size())
             return 0;
-        return std::atomic_ref<std::uint8_t>(macro_dirty_[id]).load(std::memory_order_acquire);
+        return macro_dirty_[id];
     }
     // Issue #290 / #2441: apply macro-dirty bits to a node. Called from
     // clone_macro_body after a hygienic macro expansion
@@ -3715,7 +3713,7 @@ public:
         std::shared_lock<std::shared_mutex> rlock(dirty_column_mtx_.mutable_get());
         std::size_t n = 0;
         for (std::size_t i = 0; i < macro_dirty_.size(); ++i) {
-            if (std::atomic_ref<std::uint8_t>(macro_dirty_[i]).load(std::memory_order_relaxed) != 0)
+            if (macro_dirty_[i] != 0)
                 ++n;
         }
         return n;
@@ -3728,7 +3726,7 @@ public:
         const std::size_t lim = n < macro_dirty_.size() ? n : macro_dirty_.size();
         out.resize(lim);
         for (std::size_t i = 0; i < lim; ++i) {
-            out[i] = std::atomic_ref<std::uint8_t>(macro_dirty_[i]).load(std::memory_order_acquire);
+            out[i] = macro_dirty_[i];
         }
     }
     void restore_macro_dirty_prefix(const std::vector<std::uint8_t>& snap) {
@@ -3736,8 +3734,7 @@ public:
         const std::size_t lim =
             snap.size() < macro_dirty_.size() ? snap.size() : macro_dirty_.size();
         for (std::size_t i = 0; i < lim; ++i) {
-            std::atomic_ref<std::uint8_t>(macro_dirty_[i])
-                .store(snap[i], std::memory_order_release);
+            macro_dirty_[i] = snap[i];
         }
     }
 
@@ -10360,13 +10357,10 @@ public:
                 {
                     std::unique_lock<std::shared_mutex> wlock(dirty_column_mtx_.mutable_get());
                     if (id < macro_dirty_.size()) {
-                        auto& cell = macro_dirty_[id];
-                        auto cur =
-                            std::atomic_ref<std::uint8_t>(cell).load(std::memory_order_relaxed);
+                        const auto cur = macro_dirty_.load(id, std::memory_order_relaxed);
                         if ((cur & kExpansion) != 0)
-                            std::atomic_ref<std::uint8_t>(cell).store(
-                                static_cast<std::uint8_t>(cur & ~kExpansion),
-                                std::memory_order_release);
+                            macro_dirty_.store(id, static_cast<std::uint8_t>(cur & ~kExpansion),
+                                               std::memory_order_release);
                     }
                 }
                 ++unstampped;
