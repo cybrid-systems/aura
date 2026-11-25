@@ -146,22 +146,24 @@ namespace aura::compiler {
 // pre-#4772 eager unparse stored.
 const std::string& Evaluator::snapshot_source_at(std::size_t id) {
     static const std::string kEmpty;
-    if (id >= snapshot_sources_.size())
+    if (!snapshot_exists(id))
         return kEmpty;
-    if (id < snapshot_flats_.size()) {
-        auto& fs = snapshot_flats_[id];
+    const std::size_t index = snapshot_local_index(id);
+    if (index < snapshot_flats_.size()) {
+        auto& fs = snapshot_flats_[index];
         if (fs.source_lazy && fs.flat && fs.pool) {
             try {
                 auto flat = aura::ast::FlatAST::materialize(fs.flat);
                 auto pool = aura::ast::StringPool::materialize(fs.pool);
-                snapshot_sources_[id] = aura::ast::unparse_to_string(*flat, *pool, flat->root, {});
+                snapshot_sources_[index] =
+                    aura::ast::unparse_to_string(*flat, *pool, flat->root, {});
                 ++ast_snapshot_lazy_source_builds_total_;
                 // Every entry sharing this image has the same content.
                 for (std::size_t j = 0; j < snapshot_flats_.size() && j < snapshot_sources_.size();
                      ++j) {
-                    if (j != id && snapshot_flats_[j].source_lazy &&
+                    if (j != index && snapshot_flats_[j].source_lazy &&
                         snapshot_flats_[j].flat == fs.flat) {
-                        snapshot_sources_[j] = snapshot_sources_[id];
+                        snapshot_sources_[j] = snapshot_sources_[index];
                         snapshot_flats_[j].source_lazy = false;
                     }
                 }
@@ -172,7 +174,25 @@ const std::string& Evaluator::snapshot_source_at(std::size_t id) {
             }
         }
     }
-    return snapshot_sources_[id];
+    return snapshot_sources_[index];
+}
+
+// Issue #5462: a long mutate:snapshot loop used to append one source slot,
+// one name and one flat record per call forever. Drop the oldest entries
+// in one batch (ids stay external and never renumber); the images they
+// reference are released with the records, not materialized into source.
+void Evaluator::trim_ast_snapshot_entries() {
+    constexpr std::size_t kBatchSlack = 32;
+    if (snapshot_sources_.size() <= kMaxAstSnapshotEntries + kBatchSlack)
+        return;
+    const std::size_t drop = snapshot_sources_.size() - kMaxAstSnapshotEntries;
+    snapshot_sources_.erase(snapshot_sources_.begin(),
+                            snapshot_sources_.begin() + static_cast<std::ptrdiff_t>(drop));
+    snapshot_names_.erase(snapshot_names_.begin(),
+                          snapshot_names_.begin() + static_cast<std::ptrdiff_t>(drop));
+    snapshot_flats_.erase(snapshot_flats_.begin(),
+                          snapshot_flats_.begin() + static_cast<std::ptrdiff_t>(drop));
+    snapshot_base_id_ += drop;
 }
 
 void Evaluator::trim_ast_snapshot_images() {
@@ -206,7 +226,7 @@ void Evaluator::trim_ast_snapshot_images() {
             auto& s = snapshot_flats_[i];
             if (s.has_flat && s.flat.get() == oldest) {
                 if (s.source_lazy)
-                    (void)snapshot_source_at(i);
+                    (void)snapshot_source_at(snapshot_id_at(i));
                 dropped_w = s.flat->weight();
                 s.flat.reset();
                 s.pool.reset();
@@ -464,7 +484,8 @@ void RegSplitParts::ast_restore_capture(Evaluator& ev, AstRestoreState& state,
     // — one integer compare instead of a full unparse.
     // mark_dirty_upward's note_subtree_content_write keeps
     // the cells sound for every guard-window content change.
-    const auto& snap_entry = ev.snapshot_flats_[state.id];
+    const auto& snap_entry =
+        ev.snapshot_flats_[ev.snapshot_local_index(state.id)]; // Issue #5462: external id
     // Issue #4729: audit identity of the discarded records
     // (ids >= the snapshot's own counter — the log is a
     // monotonic append, so everything from there on is the
@@ -544,7 +565,8 @@ void RegSplitParts::ast_restore_capture(Evaluator& ev, AstRestoreState& state,
 void RegSplitParts::ast_restore_publish(Evaluator& ev, AstRestoreState& state,
                                         AstRestoreCapture& cap,
                                         const std::function<void()>& destroy_defuse_index) {
-    const auto& snap_entry = ev.snapshot_flats_[state.id];
+    const auto& snap_entry =
+        ev.snapshot_flats_[ev.snapshot_local_index(state.id)]; // Issue #5462: external id
     const std::shared_ptr<FlatSnapshotDefineStamps>& stamps = cap.stamps;
     const bool have_stamps = cap.have_stamps;
     const bool dep_graph_synced_pre = state.dep_graph_synced_pre;
@@ -857,11 +879,12 @@ void RegSplitParts::ast_restore_finalize(Evaluator& ev, AstRestoreState& state) 
     // at snapshot time (#2918).
     // Issue #4772: a lazy entry has no text yet — drop the stale
     // stamp instead (current-source unparses on demand).
-    if (id < ev.snapshot_sources_.size()) {
-        if (id < ev.snapshot_flats_.size() && ev.snapshot_flats_[id].source_lazy)
+    if (ev.snapshot_exists(id)) {
+        const auto index = ev.snapshot_local_index(id);
+        if (index < ev.snapshot_flats_.size() && ev.snapshot_flats_[index].source_lazy)
             ev.invalidate_workspace_source_text();
         else
-            ev.note_workspace_source_text(ev.snapshot_sources_[id]);
+            ev.note_workspace_source_text(ev.snapshot_sources_[index]);
     }
     // Issue #5149: Workspace is released. Install the restored bodies
     // into the live cells before the caller runs them. A free function
@@ -935,8 +958,11 @@ EvalValue RegSplitParts::ast_restore_source_fallback(Evaluator& ev, std::size_t 
     // Issue #5251: the snapshot counter names the suffix this fallback
     // discards, so the per-mutation ROLLBACK rows match the main path.
     std::uint64_t snap_next = 0;
-    if (id < ev.snapshot_flats_.size() && ev.snapshot_flats_[id].flat)
-        snap_next = ev.snapshot_flats_[id].flat->shell->next_mutation_id();
+    if (ev.snapshot_exists(id)) {
+        const auto index = ev.snapshot_local_index(id);
+        if (index < ev.snapshot_flats_.size() && ev.snapshot_flats_[index].flat)
+            snap_next = ev.snapshot_flats_[index].flat->shell->next_mutation_id();
+    }
     auto result = (*set_fn)({make_string(source_idx)});
     // Issue #4400: set-code already returned the effect-deny string.
     // Surface it. Parse merr pairs stay #f.
@@ -1171,10 +1197,11 @@ void RegSplitParts::register_ast_snapshot_primitive(PrimRegistrar add, Evaluator
             if (source_lazy)
                 ++ev.ast_snapshot_lazy_source_total_;
 
-            auto id = ev.snapshot_sources_.size();
+            const auto id = ev.snapshot_next_id(); // Issue #5462: external id
             ev.snapshot_sources_.push_back(std::move(source));
             ev.snapshot_names_.push_back(name);
             ev.snapshot_flats_.push_back(std::move(fs));
+            ev.trim_ast_snapshot_entries();
             // Issue #4271: drop oldest deep FlatAST copies when over cap.
             // Source strings remain so ast:restore can fall back to set-code;
             // snapshot ids stay stable (no renumber). Issue #4772: the cap
@@ -1381,13 +1408,14 @@ void RegSplitParts::register_ast_introspection_primitives(PrimRegistrar add, Eva
     //   → ((id "name") ...)  list of (snapshot-id . name) pairs
     ObservabilityPrims::register_stats_impl("ast:list-snapshots", [&ev](const auto&) -> EvalValue {
         EvalValue result = make_void();
-        for (int i = static_cast<int>(ev.snapshot_sources_.size()) - 1; i >= 0; --i) {
+        for (int i = static_cast<int>(ev.snapshot_count()) - 1; i >= 0; --i) {
+            const auto id = ev.snapshot_id_at(static_cast<std::size_t>(i));
             auto name_idx =
-                ev.string_heap_.mint(ev.snapshot_names_[i].empty() ? std::format("snapshot-{}", i)
+                ev.string_heap_.mint(ev.snapshot_names_[i].empty() ? std::format("snapshot-{}", id)
                                                                    : ev.snapshot_names_[i]);
             // Pair: (id . name)
             auto entry_pair = ev.pairs_.size();
-            ev.pairs_.push_back({make_int(i), make_string(name_idx)});
+            ev.pairs_.push_back({make_int(static_cast<std::int64_t>(id)), make_string(name_idx)});
             // Cons with result list
             auto cons_pair = ev.pairs_.size();
             ev.pairs_.push_back({make_pair(entry_pair), result});
@@ -1434,8 +1462,9 @@ void RegSplitParts::register_ast_restore_primitive(PrimRegistrar add_in, Evaluat
             if (a.empty() || !is_int(a[0]))
                 return make_bool(false);
             auto id = static_cast<std::size_t>(as_int(a[0]));
-            if (id >= ev.snapshot_sources_.size())
+            if (!ev.snapshot_exists(id))
                 return make_bool(false);
+            const std::size_t snap_index = ev.snapshot_local_index(id);
 
             // Issue #4400: the direct copy assigns the snapshot flat with no
             // dispatch effect. Pay Mutate once, before cache clears and before
@@ -1443,10 +1472,10 @@ void RegSplitParts::register_ast_restore_primitive(PrimRegistrar add_in, Evaluat
             // Deny returns the effect-deny error and does not fall through to
             // set-code. The source fallback is gated inside set-code (a second
             // check here would consume a single-use grant twice).
-            const bool can_direct = id < ev.snapshot_flats_.size() &&
-                                    ev.snapshot_flats_[id].has_flat &&
-                                    ev.snapshot_flats_[id].flat && ev.snapshot_flats_[id].pool &&
-                                    ev.workspace_flat_ && ev.workspace_pool_;
+            const bool can_direct =
+                snap_index < ev.snapshot_flats_.size() && ev.snapshot_flats_[snap_index].has_flat &&
+                ev.snapshot_flats_[snap_index].flat && ev.snapshot_flats_[snap_index].pool &&
+                ev.workspace_flat_ && ev.workspace_pool_;
             if (can_direct) {
                 const std::string_view ast_restore_op = "mw:restore";
                 if (!ev.require_effect(aura::compiler::security::kEffectMutate, ast_restore_op, 0,
@@ -1504,7 +1533,7 @@ void RegSplitParts::register_ast_restore_primitive(PrimRegistrar add_in, Evaluat
                         // workspace (every unchanged define's edges are then
                         // already recorded). Sampled before the swap replaces
                         // the log.
-                        const auto& snap_entry = ev.snapshot_flats_[id];
+                        const auto& snap_entry = ev.snapshot_flats_[snap_index];
                         ev.workspace_flat_->assign_from_image(snap_entry.flat);
                         ev.workspace_pool_->assign_from_image(snap_entry.pool);
                         RegSplitParts::ast_restore_publish(ev, state, cap, destroy_defuse_index);
@@ -1542,12 +1571,12 @@ void RegSplitParts::register_ast_diff_primitive(PrimRegistrar add, Evaluator& ev
         std::size_t id = 0;
         if (a.empty() || !is_int(a[0])) {
             // Default to most recent snapshot
-            if (ev.snapshot_sources_.empty())
+            if (ev.snapshot_count() == 0)
                 return make_void();
-            id = ev.snapshot_sources_.size() - 1;
+            id = ev.snapshot_next_id() - 1;
         } else {
             id = static_cast<std::size_t>(as_int(a[0]));
-            if (id >= ev.snapshot_sources_.size())
+            if (!ev.snapshot_exists(id))
                 return make_void();
         }
 

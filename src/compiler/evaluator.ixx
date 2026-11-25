@@ -8252,6 +8252,11 @@ private:
     std::vector<std::string>
         snapshot_sources_; // source code per snapshot (for ast:diff + source-fallback restore)
     std::vector<std::string> snapshot_names_; // optional names
+    // Issue #5462: snapshot ids are external (snapshot_base_id_ + local
+    // index). The oldest entries are dropped from all three tables, so a
+    // long snapshot loop has a real bound instead of an append-only pair
+    // of id arrays. Retained ids never renumber.
+    std::size_t snapshot_base_id_ = 0;
 
     // Direct FlatAST snapshots (Issue #107 part 6). Each entry owns
     // a deep copy of the workspace's FlatAST and StringPool at the
@@ -8310,6 +8315,24 @@ private:
     // Issue #4772: the snapshot's workspace source text. Builds it from the
     // image on first use when the capture deferred the unparse.
     const std::string& snapshot_source_at(std::size_t id);
+    // Issue #5462: bounded snapshot table. The id is external; old ids
+    // below snapshot_base_id_ are evicted (restore/diff report them as
+    // unknown) and all three tables stay at the entry cap.
+    static constexpr std::size_t kMaxAstSnapshotEntries = 256;
+    [[nodiscard]] bool snapshot_exists(std::size_t id) const noexcept {
+        return id >= snapshot_base_id_ && id - snapshot_base_id_ < snapshot_sources_.size();
+    }
+    [[nodiscard]] std::size_t snapshot_local_index(std::size_t id) const noexcept {
+        return id - snapshot_base_id_;
+    }
+    [[nodiscard]] std::size_t snapshot_next_id() const noexcept {
+        return snapshot_base_id_ + snapshot_sources_.size();
+    }
+    [[nodiscard]] std::size_t snapshot_count() const noexcept { return snapshot_sources_.size(); }
+    [[nodiscard]] std::size_t snapshot_id_at(std::size_t index) const noexcept {
+        return snapshot_base_id_ + index;
+    }
+    void trim_ast_snapshot_entries();
     // Issue #4772: #4271 retention over images. Each distinct image weighs
     // the share of its chunks it owns (a set-code capture = 1 deep copy, a
     // delta capture ~0). Drop the oldest distinct image while the summed
@@ -11282,6 +11305,10 @@ public:
                 w += s.flat->weight();
         return static_cast<std::size_t>(std::ceil(w - 1e-9));
     }
+    // Issue #5462: number of retained snapshot entries (bounded window).
+    [[nodiscard]] std::size_t ast_snapshot_entry_count() const noexcept {
+        return snapshot_sources_.size();
+    }
     [[nodiscard]] std::size_t ast_snapshot_image_count() const noexcept {
         // Issue #4598 residual: count DISTINCT frozen copies, not entries.
         // Phase 3 shares one frozen copy across any number of share-hit
@@ -11329,20 +11356,26 @@ public:
     // Issue #4772: test oracle — the live workspace equals snapshot `id`'s
     // image column-for-column (false when the entry holds no image).
     [[nodiscard]] bool workspace_equals_snapshot_image(std::size_t id) const {
-        if (id >= snapshot_flats_.size() || !snapshot_flats_[id].has_flat || !workspace_flat_ ||
-            !workspace_pool_)
+        if (!snapshot_exists(id))
             return false;
-        return workspace_flat_->content_equals_image(*snapshot_flats_[id].flat) &&
-               workspace_pool_->equals_image(*snapshot_flats_[id].pool);
+        const auto index = snapshot_local_index(id);
+        if (index >= snapshot_flats_.size() || !snapshot_flats_[index].has_flat ||
+            !workspace_flat_ || !workspace_pool_)
+            return false;
+        return workspace_flat_->content_equals_image(*snapshot_flats_[index].flat) &&
+               workspace_pool_->equals_image(*snapshot_flats_[index].pool);
     }
     // Issue #4772: debug — mirrored columns of the live flat that differ from
     // snapshot `id`'s image ("pool" when the pool differs).
     [[nodiscard]] std::string snapshot_image_diff(std::size_t id) const {
-        if (id >= snapshot_flats_.size() || !snapshot_flats_[id].has_flat || !workspace_flat_ ||
-            !workspace_pool_)
+        if (!snapshot_exists(id))
             return "no-image";
-        auto out = workspace_flat_->image_diff_columns(*snapshot_flats_[id].flat);
-        if (!workspace_pool_->equals_image(*snapshot_flats_[id].pool))
+        const auto index = snapshot_local_index(id);
+        if (index >= snapshot_flats_.size() || !snapshot_flats_[index].has_flat ||
+            !workspace_flat_ || !workspace_pool_)
+            return "no-image";
+        auto out = workspace_flat_->image_diff_columns(*snapshot_flats_[index].flat);
+        if (!workspace_pool_->equals_image(*snapshot_flats_[index].pool))
             out += "pool";
         return out;
     }

@@ -449,7 +449,7 @@ void RegSplitParts::register_workspace_snapshot_primitives(PrimRegistrar add, Ev
             Evaluator::WorkspaceUniqueIfNeeded wlock(ev);
             if (is_int(a[0])) {
                 const auto id = static_cast<std::size_t>(as_int(a[0]));
-                if (id >= ev.snapshot_sources_.size()) {
+                if (!ev.snapshot_exists(id)) {
                     err_kind = "not-found";
                     err_msg = "workspace:rollback-to: snapshot id out of range";
                 } else {
@@ -483,7 +483,7 @@ void RegSplitParts::register_workspace_snapshot_primitives(PrimRegistrar add, Ev
                             err_msg = "workspace:rollback-to: name matched but "
                                       "snapshot_sources_ shorter (vector pair drift)";
                         } else {
-                            resolved = i;
+                            resolved = ev.snapshot_id_at(i);
                         }
                         break;
                     }
@@ -495,9 +495,10 @@ void RegSplitParts::register_workspace_snapshot_primitives(PrimRegistrar add, Ev
                             try {
                                 const auto id = static_cast<std::size_t>(
                                     std::stoull(target.substr(prefix.size())));
-                                if (id < sources_n) {
+                                if (ev.snapshot_exists(id)) {
                                     resolved = id;
-                                } else if (diverged && id < names_n) {
+                                } else if (diverged && id >= ev.snapshot_base_id_ &&
+                                           id - ev.snapshot_base_id_ < names_n) {
                                     err_kind = "concurrent-delete";
                                     err_msg = "workspace:rollback-to: snapshot-N "
                                               "beyond sources_ size (vector pair drift)";

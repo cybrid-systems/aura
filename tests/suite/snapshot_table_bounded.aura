@@ -1,0 +1,45 @@
+;; Issue #5462: a long (mutate :snapshot) loop must keep a bounded
+;; source/name/flat table. The oldest entries are evicted; their ids are
+;; reported as unknown, while the newest snapshot still restores.
+
+(define fails 0)
+(define (check pred msg)
+  (if pred
+      #t
+      (begin (set! fails (+ fails 1)) (display (format "FAIL ~a\n" msg)))))
+
+;; ~50 KB workspace: 500 defines.
+(set-code
+ (let loop ((i 0) (acc ""))
+   (if (< i 500)
+       (loop (+ i 1)
+             (string-append acc "(define (fn" (number->string i) " x) (+ x "
+                            (number->string i) "))\n"))
+       acc)))
+(eval-current)
+
+(define (snap n)
+  (let loop ((i 0))
+    (if (< i n)
+        (begin (mutate :snapshot "tick") (loop (+ i 1)))
+        #f)))
+(define (entries)
+  (hash-ref (engine:metrics "query:workspace-snapshot-stats") "ast-snapshot-entries" -1))
+
+(snap 300)
+(define e300 (entries))
+(check (and (>= e300 1) (<= e300 288)) (format "300 snapshots bounded: ~a" e300))
+
+(snap 2700)
+(define e3000 (entries))
+(check (and (>= e3000 1) (<= e3000 288)) (format "3000 snapshots bounded: ~a" e3000))
+
+;; The oldest id is evicted, so restoring it fails; the newest restores.
+(check (not (mutate :restore 0)) "evicted snapshot id is unknown")
+(define latest (car (car (stats:get "ast:list-snapshots"))))
+(check (>= latest 0) "list-snapshots returns retained ids")
+(check (mutate :restore latest) "newest snapshot restores")
+
+(if (> fails 0)
+    (error "snapshot table bounded regression")
+    (begin (display "snapshot table bounded ok") (newline)))

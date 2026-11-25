@@ -1237,6 +1237,9 @@ void register_query_obs_mid_checkpoint_parts(PrimRegistrar add, std::pmr::vector
                       static_cast<std::int64_t>(ev->ast_snapshot_lazy_source_builds_total()));
             insert_kv("ast-snapshot-images",
                       static_cast<std::int64_t>(ev->ast_snapshot_image_count()));
+            // Issue #5462: retained snapshot entry table (bounded window).
+            insert_kv("ast-snapshot-entries",
+                      static_cast<std::int64_t>(ev->ast_snapshot_entry_count()));
             insert_kv("schema-2966", 2966);
             insert_kv("issue-2966", 2966);
             return insert_kv.finish();

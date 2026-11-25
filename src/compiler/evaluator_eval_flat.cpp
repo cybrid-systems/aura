@@ -15328,11 +15328,13 @@ std::int64_t Evaluator::capture_workspace_snapshot_under_lock(std::string_view n
         fs.has_flat = false;
     }
     fs.restore_epoch = ast_restore_epoch_; // Issue #4782
-    auto id = snapshot_sources_.size();
+    const auto id = snapshot_next_id();    // Issue #5462: external id
     snapshot_sources_.push_back(source);
     snapshot_names_.push_back(std::string(name));
     snapshot_flats_.push_back(std::move(fs));
-    // Issue #4271 / #4772: same retention bound as ast:snapshot.
+    // Issue #4271 / #4772 / #5462: bound the entry table first, then the
+    // images it references.
+    trim_ast_snapshot_entries();
     trim_ast_snapshot_images();
     return static_cast<std::int64_t>(id);
 }
@@ -15762,8 +15764,7 @@ void Evaluator::rebind_workspace_defines_on_switch() noexcept {
 }
 
 bool Evaluator::restore_workspace_snapshot_under_lock(std::size_t id) noexcept {
-    if (id >= snapshot_sources_.size() || workspace_read_only_ || !workspace_flat_ ||
-        !workspace_pool_)
+    if (!snapshot_exists(id) || workspace_read_only_ || !workspace_flat_ || !workspace_pool_)
         return false;
     last_set_code_error_kind_.clear();
     last_set_code_error_msg_.clear();
@@ -15772,12 +15773,13 @@ bool Evaluator::restore_workspace_snapshot_under_lock(std::size_t id) noexcept {
     // so the #159 clean-workspace gate sees no dirty bits — drop the cached
     // typecheck report/status too.
     invalidate_typecheck_report_cache();
-    if (id < snapshot_flats_.size() && snapshot_flats_[id].has_flat && snapshot_flats_[id].flat &&
-        snapshot_flats_[id].pool) {
+    const auto snap_index = snapshot_local_index(id);
+    if (snap_index < snapshot_flats_.size() && snapshot_flats_[snap_index].has_flat &&
+        snapshot_flats_[snap_index].flat && snapshot_flats_[snap_index].pool) {
         try {
             // Issue #4772: delta assign from the structural-sharing image.
-            workspace_flat_->assign_from_image(snapshot_flats_[id].flat);
-            workspace_pool_->assign_from_image(snapshot_flats_[id].pool);
+            workspace_flat_->assign_from_image(snapshot_flats_[snap_index].flat);
+            workspace_pool_->assign_from_image(snapshot_flats_[snap_index].pool);
             // No recycle_dead_nodes(): see the ast:restore primitive (#4772).
             update_shared_tree_root();
             last_post_restore_report_ = workspace_flat_->validate_post_restore();
