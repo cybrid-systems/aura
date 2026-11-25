@@ -109,11 +109,21 @@
   (let loop ((done 0))
     (let ((c (bus:claim SID AGENT-LEASE)))
       (if (bus:error? c)
-        (begin
-          (agent-say "idle" (bus:message c))
-          (agent-say "completed" done)
-          (bus:detach SID)
-          (agent-exit 0))
+        (let ((why (bus:message c)))
+          ; #5439: only an empty board is idle. A board whose open tasks
+          ; are all blocked (contract/gate/budget/permission/transport)
+          ; must not look like a clean drain, or the supervisor sees a
+          ; healthy zero-exit worker and the work never happens.
+          (if (string=? why "task-none-open")
+            (begin
+              (agent-say "idle" why)
+              (agent-say "completed" done)
+              (bus:detach SID)
+              (agent-exit 0))
+            (begin
+              (display "claim-error=") (display why) (newline)
+              (bus:detach SID)
+              (agent-exit 1))))
         (let* ((id (car (cdr c)))
                (hb (bus:heartbeat SID id AGENT-LEASE)))
           (if (bus:error? hb)

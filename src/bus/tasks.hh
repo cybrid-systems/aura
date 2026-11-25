@@ -79,6 +79,10 @@ public:
     [[nodiscard]] bool get(std::uint64_t id, Task* out) const;
     // The oldest open task (the claim(0) candidate), without claiming.
     [[nodiscard]] bool next_open(Task* out) const;
+    // #5439: every open task in id order. A no-id claim walks this list
+    // and skips the candidates its gates refuse instead of stopping at
+    // the first blocked one.
+    [[nodiscard]] std::vector<Task> open_tasks() const;
     // #5422: the open tasks, for a supervisor that only starts workers
     // when there is work. Claimed tasks are not counted.
     [[nodiscard]] std::size_t open_count() const;

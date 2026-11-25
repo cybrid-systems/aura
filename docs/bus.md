@@ -112,7 +112,7 @@
 - **任务审计时间线**（#5405）：`bus:task-audit session task-id`（或 `bus:audit-filter` 的可选 task 参数）按任务过滤发布、认领、续约、重派、批准、契约、配额、完成/失败事件，顺序与审计日志一致；回放仍走 #5392。
 - **配额与熔断**（#5403）：`bus:budget-charge` 上报 token/墙钟/失败次数，`bus:budget-report` 读任务账本（task 0 读全局）。任务超限即失败该任务；全局超限失败所有已认领任务并拒绝新 claim（`global budget exhausted`）。默认值有界：任务 2M token / 1h / 3 次失败，全局 20M / 24h / 20 次；`AURA_BUS_TASK_*` / `AURA_BUS_GLOBAL_*` 可覆盖。
 - **验收契约**（#5402）：`bus:contract` 给 open 任务挂 test-ref + metric-floor（指纹绑定字段），任务随即变为需批准；`bus:approve` 批准后 worker 才能 claim；`bus:contract-evidence` 上报 tests-passed/metric，`bus:complete` 只有在契约批准、测试通过且指标达到底线时才放行。
-- **任务看板**（#5399/#5404）：`bus:post-task` / `bus:claim` / `bus:heartbeat` / `bus:complete` / `bus:fail` / `bus:task-status`；`bus:approve` 是人工批准点（decision 0 请求、1 批准、2 拒绝，pending 超时即拒绝）。任务有 id、父任务、契约引用（ref）、持有者、租约代次和到期时间；同一任务同一时刻只有一个有效租约，双 claim 被拒（`task-claimed`），非持有者心跳/完成被拒（`task-not-owner`）。租约到期后任务回到 open，其他对端可认领；干净 `bus:detach` 立即释放，崩溃（EOF）则等到租约到期。任务事件写入 channel 6，并追加到套接字旁的 `.tasks` 检查点；契约、批准与预算账本追加到旁的 `.tasks.gates`，`bus:unhost`/`bus:host` 重启后一起重放。若任务恢复而 `.tasks.gates` 丢失，恢复出来的任务**fail-closed**：claim/complete 都被拒绝，直到 planner 重新下发契约/预算，避免门在重启后静默放行。
+- **任务看板**（#5399/#5404）：`bus:post-task` / `bus:claim` / `bus:heartbeat` / `bus:complete` / `bus:fail` / `bus:task-status`；`bus:approve` 是人工批准点（decision 0 请求、1 批准、2 拒绝，pending 超时即拒绝）。任务有 id、父任务、契约引用（ref）、持有者、租约代次和到期时间；同一任务同一时刻只有一个有效租约，双 claim 被拒（`task-claimed`），非持有者心跳/完成被拒（`task-not-owner`）。租约到期后任务回到 open，其他对端可认领；干净 `bus:detach` 立即释放，崩溃（EOF）则等到租约到期。任务事件写入 channel 6，并追加到套接字旁的 `.tasks` 检查点；契约、批准与预算账本追加到旁的 `.tasks.gates`，`bus:unhost`/`bus:host` 重启后一起重放。若任务恢复而 `.tasks.gates` 丢失，恢复出来的任务**fail-closed**：claim/complete 都被拒绝，直到 planner 重新下发契约/预算，避免门在重启后静默放行。不带 id 的 `bus:claim` 按 id 顺序遍历所有 open 任务，跳过被契约批准/门账本拒绝的候选；全部不可认领时返回 `task-none-claimable`，与空板的 `task-none-open` 区分（#5439）。
 - 宿主进程自己也可以 `bus:attach` 成为对端(同进程经套接字,统一路径)。
 - **映像跨会话持久**(#5128 完成线):一条总线一份映像。首个对端附着时创建并
   封印映像,之后每个对端拿到同一个 memfd 的新映射——前一个工具提交的 CCT /
@@ -265,7 +265,7 @@ canary 拒绝)、`test_bus_closed_loop_e2e`(#5382,三进程正常闭环 + 五类
 - 进程安全：子进程 `PR_SET_PDEATHSIG(SIGTERM)`，监督者崩溃不留孤儿；SIGINT/SIGTERM 停止拉新并转发 SIGTERM，5s 后 SIGKILL；PID 表用 `waitpid(WNOHANG)` 回收。
 - 审计：`SupervisorPlan`(48) 仍是决策（version=desired，result=0..3）；`SupervisorSpawn`(49) 记录本轮 started 数（result）与 spawn 后 live 数（version）；`SupervisorShrink`(50) 记录计划收缩数。`SupervisorNote` 帧只写审计，不回包。
 - 真实 worker 需要 `--prompt FILE`；`--mock` 仍确定性、无网络、无密钥。
-- worker 仍是一次性 drain 循环：没有任务就退出。监督者的 work-driven 目标（#5423）保证没活时不会补拉，任务到达才拉起，因此空闲不 churn。
+- worker 仍是一次性 drain 循环：空板（`task-none-open`）才按 idle 退出 0；契约/门账本/预算/权限/传输错误一律 `claim-error=...` 退出非零，不再把不可认领的看板伪装成干净收工（#5439）。监督者的 work-driven 目标（#5423）保证没活时不会补拉，任务到达才拉起，因此空闲不 churn。
 
 ### 生产化：work-driven、崩溃接管、reconnect、drain(#5423)
 

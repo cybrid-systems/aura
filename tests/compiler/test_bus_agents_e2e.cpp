@@ -487,6 +487,38 @@ int main() {
         waitpid(claim, &status, 0);
     }
 
+    // ── fault 5 (#5439): a blocked board never looks idle ──
+    // Task 8's approval timed out above; it stays open but unclaimable.
+    // A worker must report the blocked board and exit non-zero, and a
+    // no-id claim must skip task 8 once a normal task arrives.
+    {
+        int out = -1, in = -1;
+        const pid_t worker = run_worker(8920, &out, &in);
+        ::close(in);
+        const std::string text = read_all(out);
+        check(has(text, "claim-error=task-none-claimable"),
+              "a blocked board is not reported as idle");
+        int status = 0;
+        waitpid(worker, &status, 0);
+        check(WIFEXITED(status) && WEXITSTATUS(status) != 0,
+              "a worker that cannot claim exits non-zero");
+    }
+    check(::write(host_in, "post\n", 5) == 5, "post task 9");
+    {
+        const std::string posted =
+            read_until(host_out, "posted=", 10000) + read_until(host_out, "\n", 10000);
+        check(has(posted, "posted=9"), "task 9 posted after the blocked task");
+    }
+    {
+        int out = -1, in = -1;
+        const pid_t worker = run_worker(8920, &out, &in);
+        ::close(in);
+        const std::string text = read_all(out);
+        check(has(text, "completed-task=9"), "worker skipped task 8 and completed task 9");
+        int status = 0;
+        waitpid(worker, &status, 0);
+    }
+
     check(::write(host_in, "quit\n", 5) == 5, "quit host");
     const std::string tail = read_all(host_out);
     int status = 0;

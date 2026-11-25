@@ -3516,35 +3516,74 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
                     }
                     // #5404: resolve the claim candidate first, then refuse
                     // an unapproved approval-gated task without claiming it.
-                    Task candidate{};
-                    bool have = req.task_id != 0 ? tasks_.get(req.task_id, &candidate)
-                                                 : tasks_.next_open(&candidate);
-                    if (!have) {
-                        why = req.task_id != 0 ? "task-unknown" : "task-none-open";
-                        break;
-                    }
-                    if (gates_lost_ && restored_tasks_.count(candidate.id) != 0) {
-                        why = "gate-state-lost: the contract/budget ledger was lost with the host "
-                              "restart";
-                        break;
-                    }
-                    if ((candidate.flags & kTaskNeedsApproval) != 0) {
+                    // #5439: a named claim reports that refusal, but a no-id
+                    // claim walks every open task in id order and skips a
+                    // blocked candidate, so one denied/pending/gate-lost
+                    // task cannot wedge the whole board.
+                    const auto claim_refusal = [&](const Task& candidate, std::string* refusal) {
+                        if (gates_lost_ && restored_tasks_.count(candidate.id) != 0) {
+                            *refusal = "gate-state-lost: the contract/budget ledger was lost with "
+                                       "the host restart";
+                            return true;
+                        }
+                        if ((candidate.flags & kTaskNeedsApproval) == 0)
+                            return false;
                         ApprovalRecord approval{};
                         const bool known = approvals_.get(candidate.id, &approval);
-                        if (!known || approval.state != ApprovalState::Approved) {
-                            if (!known)
-                                why = "contract-unapproved";
-                            else if (approval.state == ApprovalState::Pending)
-                                why = "contract-approval-pending";
-                            else if (approval.state == ApprovalState::Timeout)
-                                why = "contract-approval-timeout";
-                            else
-                                why = "contract-denied";
+                        if (known && approval.state == ApprovalState::Approved)
+                            return false;
+                        if (!known)
+                            *refusal = "contract-unapproved";
+                        else if (approval.state == ApprovalState::Pending)
+                            *refusal = "contract-approval-pending";
+                        else if (approval.state == ApprovalState::Timeout)
+                            *refusal = "contract-approval-timeout";
+                        else
+                            *refusal = "contract-denied";
+                        return true;
+                    };
+                    Task candidate{};
+                    bool have = false;
+                    if (req.task_id != 0) {
+                        have = tasks_.get(req.task_id, &candidate);
+                        if (!have) {
+                            why = "task-unknown";
+                            break;
+                        }
+                        std::string refusal;
+                        if (claim_refusal(candidate, &refusal)) {
+                            why = refusal;
+                            break;
+                        }
+                    } else {
+                        auto open = tasks_.open_tasks();
+                        if (open.empty()) {
+                            why = "task-none-open";
+                            break;
+                        }
+                        for (const auto& cand : open) {
+                            std::string refusal;
+                            if (claim_refusal(cand, &refusal))
+                                continue;
+                            why.clear();
+                            if (tasks_.claim(root_token, cand.id, req.lease_ms, now_ms, &task,
+                                             &event, &why)) {
+                                candidate = cand;
+                                have = true;
+                                break;
+                            }
+                            if (why == "task checkpoint write failed")
+                                break;
+                        }
+                        if (!have) {
+                            if (why != "task checkpoint write failed")
+                                why = "task-none-claimable";
                             break;
                         }
                     }
-                    ok = tasks_.claim(root_token, candidate.id, req.lease_ms, now_ms, &task, &event,
-                                      &why);
+                    ok = req.task_id != 0 ? tasks_.claim(root_token, candidate.id, req.lease_ms,
+                                                         now_ms, &task, &event, &why)
+                                          : true;
                     if (ok) {
                         budget_.start(candidate.id, now_ms);
                         BudgetUsage started{};
@@ -3614,6 +3653,8 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
                     code = EPERM;
                 else if (why == "task-unknown" || why == "task-none-open")
                     code = ENOENT;
+                else if (why == "task-none-claimable")
+                    code = EBUSY;
                 else if (why == "task-claimed" || why == "task-done" || why == "task-failed")
                     code = EBUSY;
                 deny(code, why);

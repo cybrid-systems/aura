@@ -539,6 +539,16 @@ bool TaskBoard::next_open(Task* out) const {
     return false;
 }
 
+std::vector<Task> TaskBoard::open_tasks() const {
+    std::vector<Task> out;
+    for (const auto& [id, task] : tasks_) {
+        (void)id;
+        if (task.state == TaskState::Open)
+            out.push_back(task);
+    }
+    return out;
+}
+
 std::size_t TaskBoard::open_count() const {
     std::size_t n = 0;
     for (const auto& [id, task] : tasks_) {
