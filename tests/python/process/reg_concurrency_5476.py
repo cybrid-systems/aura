@@ -107,6 +107,9 @@ class Concurrency5476(unittest.TestCase):
         self.assertIn("cow::AtomicTrackedColumn<std::uint16_t> node_gen_;", ast)
         for col in ("dirty_", "ppa_dirty_", "verify_dirty_", "verification_dirty_", "macro_dirty_"):
             self.assertIn(f"cow::AtomicTrackedColumn<std::uint8_t> {col};", ast)
+        self.assertIn("cow::AtomicTrackedColumn<NodeTag> tag_;", ast)
+        for col in ("type_id_", "type_cache_gen_", "type_cache_binding_gen_", "schema_cache_"):
+            self.assertIn(f"cow::AtomicTrackedColumn<std::uint32_t> {col};", ast)
         atomic = read("src/core/atomic_column.hh")
         self.assertIn("std::deque<std::atomic<T>> mirror_;", atomic)
         self.assertIn("memory_order_acquire", atomic)

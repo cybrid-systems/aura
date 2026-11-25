@@ -77,6 +77,7 @@ public:
     // writer — new code should use operator[] (the atomic mirror).
     [[nodiscard]] const T* data() const noexcept { return store_.data(); }
     [[nodiscard]] size_type capacity() const noexcept { return store_.capacity(); }
+    [[nodiscard]] auto get_allocator() const { return store_.get_allocator(); }
     void reserve(size_type n) { store_.reserve(n); }
     // Snapshot copy source: the COW store (mirror values are mirrored on
     // every write, so under the writer's lock this equals the live column).

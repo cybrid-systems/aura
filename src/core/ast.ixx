@@ -2071,7 +2071,7 @@ public:
     // structural_mtx_ as documented in FlatAST #2413 — not every
     // column access takes flatast_mutex_. Do not assume lock-free
     // concurrent add_node vs tag_[id] (reallocation race).
-    cow::TrackedColumn<NodeTag> tag_;
+    cow::AtomicTrackedColumn<NodeTag> tag_;
     cow::TrackedColumn<std::int64_t> int_val_;
     cow::TrackedColumn<double> float_val_;
     cow::TrackedColumn<SymId> sym_id_;
@@ -2251,7 +2251,7 @@ public:
     mutable cow::AtomicTrackedColumn<std::uint8_t> macro_dirty_;
     // Issue #339: per-node occurrence-narrowing staleness
     // column. When a mutation affects a predicate or a
-    cow::TrackedColumn<std::uint32_t> type_id_;
+    cow::AtomicTrackedColumn<std::uint32_t> type_id_;
     // Issue #412: per-node type cache generation. Parallel to
     // type_id_; stores the type_cache_generation_ at the time
     // the cache entry was populated. On cache hit, the
@@ -2264,7 +2264,7 @@ public:
     // a polymorphic type that still has TYPE_VAR children but
     // the binding structure didn't change). 0 = no cache
     // entry yet (matches type_id_ == 0 semantics).
-    cow::TrackedColumn<std::uint32_t> type_cache_gen_;
+    cow::AtomicTrackedColumn<std::uint32_t> type_cache_gen_;
     // Issue #412 follow-up #1: per-binding generation
     // column. Parallel to type_cache_gen_; stores the
     // gen of THE SPECIFIC BINDING the cache entry is
@@ -2278,7 +2278,7 @@ public:
     // matches → entry is fresh. This is finer-grained
     // than the global gen alone (which over-invalidates
     // when a different binding mutates).
-    cow::TrackedColumn<std::uint32_t> type_cache_binding_gen_;
+    cow::AtomicTrackedColumn<std::uint32_t> type_cache_binding_gen_;
     // Issue #390: per-node schema cache column.
     // Parallel to type_id_; stores the pre-computed
     // type for nodes whose schema was determined by
@@ -2286,7 +2286,7 @@ public:
     // schema (the type checker will infer normally).
     // Non-zero = the type checker can use this as a
     // cache hit signal (avoids re-inference).
-    cow::TrackedColumn<std::uint32_t> schema_cache_;
+    cow::AtomicTrackedColumn<std::uint32_t> schema_cache_;
     // Issue #412 follow-up #1: per-binding generation
     // map. SymId → uint32_t. Each binding has its own
     // gen counter that bumps only when THAT binding's
@@ -3109,7 +3109,7 @@ public:
         if (is_free_slot(id))
             return;
         define_index_sync_4682_(id);
-        const auto tag = static_cast<std::uint32_t>(tag_[id]);
+        const auto tag = static_cast<std::uint32_t>(static_cast<NodeTag>(tag_[id]));
         const std::size_t ar = children_[id].size();
         const auto packed = pack_tag_arity_node_key(tag, ar);
         if (id >= tag_arity_node_key_.size())
@@ -3158,7 +3158,7 @@ public:
                 define_index_sym_of_4682_[id] = sym_id_[id];
                 define_index_4682_[sym_id_[id]].push_back(id);
             }
-            const auto tag = static_cast<std::uint32_t>(tag_[id]);
+            const auto tag = static_cast<std::uint32_t>(static_cast<NodeTag>(tag_[id]));
             const std::size_t ar = children_[id].size();
             const TagArityKey key{tag, static_cast<std::uint16_t>(ar),
                                   static_cast<std::uint16_t>(ar)};
@@ -5438,8 +5438,6 @@ public:
     std::uint32_t name_line(NodeId node) const { return name_line_[node]; }
     std::uint32_t name_col(NodeId node) const { return name_col_[node]; }
 
-    // Direct field access (for mutation)
-    NodeTag& tag(NodeId id) { return tag_[id]; }
     // Issue #4598: counted tag write for the mutation apply path
     // (ast_impl set-tag). The raw accessor above serves read-only call
     // sites; every live tag transition must go through here so the
