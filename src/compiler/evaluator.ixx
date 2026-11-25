@@ -3089,10 +3089,12 @@ public:
 
     // Issue #5472: the service's mutation lock, taken BEFORE workspace_mtx_ by
     // the outermost MutationBoundaryGuard and by WorkspaceUniqueIfNeeded.
-    // enter returns an owning handle whose destruction releases the lock, or
-    // null when this thread already holds it (a host typed_mutate, a nested
-    // scope). Without a CompilerService the fn is null and nothing is taken.
-    using MutationLockHandle = std::shared_ptr<void>;
+    // enter returns the ordered lock itself: its destruction releases it. An
+    // empty lock (default constructed) means this thread already holds it (a
+    // host typed_mutate, a nested scope) and nothing is released for it. Both
+    // callers are noexcept, so this path allocates nothing. Without a
+    // CompilerService the fn is null and nothing is taken.
+    using MutationLockHandle = aura::compiler::lock_order::OrderedUniqueLock<std::shared_mutex>;
     void set_mutation_lock_enter_fn(std::function<MutationLockHandle()> fn) {
         mutation_lock_enter_fn_ = std::move(fn);
     }

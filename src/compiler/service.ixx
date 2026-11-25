@@ -12931,7 +12931,7 @@ public:
         using lock_order::Level;
         using lock_order::OrderedUniqueLock;
         if (lock_order::is_held(Level::Mutate))
-            return nullptr;
+            return {};
         bool locked = false;
         if (::aura_process_mutation_boundary_held_count() > 0) {
             locked = mutate_mtx_.try_lock();
@@ -12968,11 +12968,10 @@ public:
             }
         }
         sync_lock_order_metrics_();
-        if (locked) {
-            return std::make_shared<OrderedUniqueLock<std::shared_mutex>>(
-                mutate_mtx_, Level::Mutate, std::adopt_lock_t{});
-        }
-        return std::make_shared<OrderedUniqueLock<std::shared_mutex>>(mutate_mtx_, Level::Mutate);
+        if (locked)
+            return OrderedUniqueLock<std::shared_mutex>(mutate_mtx_, Level::Mutate,
+                                                        std::adopt_lock_t{});
+        return OrderedUniqueLock<std::shared_mutex>(mutate_mtx_, Level::Mutate);
     }
 
     // Issue #1526: remap IRClosure::env_id through compact_env_frames remap table.

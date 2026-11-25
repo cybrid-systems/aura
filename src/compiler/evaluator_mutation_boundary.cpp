@@ -4824,7 +4824,7 @@ void Evaluator::MutationBoundaryGuard::force_release_hold_after_cancel_() noexce
     }
     // Issue #5472: the peer that takes the freed workspace must not wait
     // for a mutation lock this body no longer uses.
-    mutate_lock_.reset();
+    mutate_lock_.release();
     // Issue #4407: C-ABI lock_workspace_shared/unique under this Guard only
     // bumps workspace_lock_adopt_depth_tls and lock_order. The unlock above
     // freed workspace_mtx_; those layers must drop on this thread or
