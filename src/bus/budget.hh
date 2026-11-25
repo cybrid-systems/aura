@@ -66,6 +66,8 @@ public:
             tasks_[task] = usage;
     }
     [[nodiscard]] const std::map<std::uint64_t, BudgetUsage>& all_tasks() const { return tasks_; }
+    // #5460: the task left the retention window; drop its usage.
+    void forget(std::uint64_t task) { tasks_.erase(task); }
 
 private:
     bool check(const BudgetLimits& limits, BudgetUsage* usage, std::uint64_t now_ms,

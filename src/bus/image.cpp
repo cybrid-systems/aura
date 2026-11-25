@@ -81,8 +81,9 @@ namespace {
     // Parent indexes must point strictly backwards, so a cycle is
     // structurally impossible and the walk is bounded by the record count.
     template <typename ParentFn>
-    bool backwards_parents(std::uint64_t count, ParentFn parent_of, std::uint64_t sentinel) {
-        for (std::uint64_t i = 0; i < count; ++i) {
+    bool backwards_parents(std::uint64_t from, std::uint64_t count, ParentFn parent_of,
+                           std::uint64_t sentinel) {
+        for (std::uint64_t i = from; i < count; ++i) {
             const std::uint64_t p = parent_of(i);
             if (p == sentinel)
                 continue;
@@ -94,7 +95,12 @@ namespace {
 
 } // namespace
 
-ImageCheck validate_image(std::span<const std::byte> image) {
+ImageCheck validate_image(std::span<const std::byte> image, ImageDigestCache* cache) {
+    // #5460: start from the prefixes this reader already verified. The
+    // cache is copied and only published after the whole image validates.
+    ImageDigestCache next{};
+    if (cache != nullptr)
+        next = *cache;
     if (image.size() < kImageHeaderSize)
         return {ImageStatus::Truncated, "image is smaller than the 256-byte header"};
     const ImageHeader h = load_header(image);
@@ -133,6 +139,19 @@ ImageCheck validate_image(std::span<const std::byte> image) {
     // not include it, so a pre-v0.3.3 reader sees an unknown section
     // and skips it (below) while a current reader validates it.
     bool seen[static_cast<std::size_t>(SectionKind::Tasks) + 1] = {};
+    // Only skip records when this exact prefix/element layout was
+    // validated before and the section has not been rewritten.
+    const auto cached_count = [&](const SectionEntry& e) -> std::uint64_t {
+        if (cache == nullptr || e.kind > static_cast<std::uint32_t>(SectionKind::Tasks))
+            return 0;
+        const ImageDigestCache::SectionPrefix& p = next.sections[e.kind];
+        if (!p.valid || p.offset != e.offset || p.element_size != e.element_size ||
+            p.generation > e.generation || p.count > e.count || p.length > e.length)
+            return 0;
+        if (p.length == e.length && p.digest != e.digest)
+            return 0;
+        return p.count;
+    };
     std::uint64_t total_records = 0;
     for (std::uint32_t i = 0; i < h.section_count; ++i) {
         const SectionEntry e = load_section_entry(image, i);
@@ -204,7 +223,7 @@ ImageCheck validate_image(std::span<const std::byte> image) {
     if (strings.present) {
         const std::uint64_t reserved =
             (kStringSlotsReserved * sizeof(StringTableEntry) + 7) & ~7ull;
-        for (std::uint64_t i = 0; i < strings.count; ++i) {
+        for (std::uint64_t i = cached_count(strings.entry); i < strings.count; ++i) {
             const StringTableEntry s = load_at<StringTableEntry>(
                 image, strings.entry.offset + i * strings.entry.element_size);
             if (s.off % 8 != 0 || s.off < reserved ||
@@ -217,7 +236,7 @@ ImageCheck validate_image(std::span<const std::byte> image) {
     if (symbols.present) {
         if (!strings.present)
             return {ImageStatus::BadIndex, "symbol table without a string table"};
-        for (std::uint64_t i = 0; i < symbols.count; ++i) {
+        for (std::uint64_t i = cached_count(symbols.entry); i < symbols.count; ++i) {
             const SymbolEntry s =
                 load_at<SymbolEntry>(image, symbols.entry.offset + i * symbols.entry.element_size);
             if (!in_bounds(s.name_off, s.name_len, strings.entry.length))
@@ -227,7 +246,7 @@ ImageCheck validate_image(std::span<const std::byte> image) {
 
     // ── Nodes: index edges only ─────────────────────────────────
     if (nodes.present) {
-        for (std::uint64_t i = 0; i < nodes.count; ++i) {
+        for (std::uint64_t i = cached_count(nodes.entry); i < nodes.count; ++i) {
             const NodeRecord n =
                 load_at<NodeRecord>(image, nodes.entry.offset + i * nodes.entry.element_size);
             const auto bad_edge = [&](std::uint64_t v) {
@@ -242,7 +261,7 @@ ImageCheck validate_image(std::span<const std::byte> image) {
 
     // ── Patches: immediate bit 63 clear, indexes in range ───────
     if (patches.present) {
-        for (std::uint64_t i = 0; i < patches.count; ++i) {
+        for (std::uint64_t i = cached_count(patches.entry); i < patches.count; ++i) {
             const PatchRecord p =
                 load_at<PatchRecord>(image, patches.entry.offset + i * patches.entry.element_size);
             if ((p.new_value >> 63) != 0)
@@ -262,7 +281,7 @@ ImageCheck validate_image(std::span<const std::byte> image) {
 
     // ── Metrics: immediate bit 63 clear, key in the symbol table ─
     if (metrics.present) {
-        for (std::uint64_t i = 0; i < metrics.count; ++i) {
+        for (std::uint64_t i = cached_count(metrics.entry); i < metrics.count; ++i) {
             const MetricRecord m =
                 load_at<MetricRecord>(image, metrics.entry.offset + i * metrics.entry.element_size);
             if ((m.value >> 63) != 0)
@@ -277,7 +296,7 @@ ImageCheck validate_image(std::span<const std::byte> image) {
 
     // ── CCT: mid low 62 bits, backward parents (acyclic, bounded) ─
     if (cct.present) {
-        for (std::uint64_t i = 0; i < cct.count; ++i) {
+        for (std::uint64_t i = cached_count(cct.entry); i < cct.count; ++i) {
             const CctRecord c =
                 load_at<CctRecord>(image, cct.entry.offset + i * cct.entry.element_size);
             if ((c.mid_lo >> 62) != 0)
@@ -288,13 +307,13 @@ ImageCheck validate_image(std::span<const std::byte> image) {
         const auto parent = [&](std::uint64_t i) {
             return load_at<CctRecord>(image, cct.entry.offset + i * cct.entry.element_size).parent;
         };
-        if (!backwards_parents(cct.count, parent, kImageNoParent))
+        if (!backwards_parents(cached_count(cct.entry), cct.count, parent, kImageNoParent))
             return {ImageStatus::BadCycle, "CCT parent does not point backwards"};
     }
 
     // ── Worldlines: backward parents, state domain, patch range ──
     if (worldlines.present) {
-        for (std::uint64_t i = 0; i < worldlines.count; ++i) {
+        for (std::uint64_t i = cached_count(worldlines.entry); i < worldlines.count; ++i) {
             WorldlineRecord w{};
             std::memcpy(&w,
                         image.data() + worldlines.entry.offset + i * worldlines.entry.element_size,
@@ -324,15 +343,22 @@ ImageCheck validate_image(std::span<const std::byte> image) {
                         std::min<std::uint64_t>(worldlines.entry.element_size, sizeof(w)));
             return w.parent;
         };
-        if (!backwards_parents(worldlines.count, parent, kImageNoParent))
+        if (!backwards_parents(cached_count(worldlines.entry), worldlines.count, parent,
+                               kImageNoParent))
             return {ImageStatus::BadCycle, "worldline parent does not point backwards"};
     }
 
     // ── Audit: append-only sequence, committed generations only ──
     const SectionView audit = view_section(image, h, SectionKind::Audit);
     if (audit.present) {
-        std::uint64_t prev = 0;
-        for (std::uint64_t i = 0; i < audit.count; ++i) {
+        const std::uint64_t audit_start = cached_count(audit.entry);
+        std::uint64_t prev =
+            audit_start > 0
+                ? load_at<AuditRecord>(image, audit.entry.offset +
+                                                  (audit_start - 1) * audit.entry.element_size)
+                      .seq
+                : 0;
+        for (std::uint64_t i = audit_start; i < audit.count; ++i) {
             const AuditRecord a =
                 load_at<AuditRecord>(image, audit.entry.offset + i * audit.entry.element_size);
             if (i > 0 && a.seq <= prev)
@@ -353,15 +379,50 @@ ImageCheck validate_image(std::span<const std::byte> image) {
             return {ImageStatus::BadBounds, "constraint object outside the section"};
     }
 
-    // Committed section bytes are immutable in that generation.
+    // Committed section bytes are immutable in that generation. When a
+    // verified prefix is cached, continue its FNV over the appended bytes
+    // instead of hashing the whole history again (#5460).
     for (std::uint32_t i = 0; i < h.section_count; ++i) {
         const SectionEntry e = load_section_entry(image, i);
         if (e.kind > static_cast<std::uint32_t>(SectionKind::Tasks))
             continue;
-        if (static_cast<SectionKind>(e.kind) == SectionKind::Staging)
+        const auto kind = static_cast<SectionKind>(e.kind);
+        if (kind == SectionKind::Staging)
             continue;
-        if (fnv_section(image, e.offset, e.length) != e.digest)
+        bool verified = false;
+        if (cache != nullptr) {
+            const ImageDigestCache::SectionPrefix& p = next.sections[e.kind];
+            if (p.valid && p.offset == e.offset && p.length <= e.length &&
+                p.generation <= e.generation) {
+                const std::uint64_t candidate =
+                    p.length == e.length
+                        ? p.digest
+                        : fnv_continue(image, e.offset + p.length, e.length - p.length, p.digest);
+                verified = candidate == e.digest;
+            }
+        }
+        if (!verified && fnv_section(image, e.offset, e.length) != e.digest)
             return {ImageStatus::BadDigest, "committed section bytes changed in place"};
+        ImageDigestCache::SectionPrefix& p = next.sections[e.kind];
+        p.valid = true;
+        p.offset = e.offset;
+        p.length = e.length;
+        p.generation = e.generation;
+        p.digest = e.digest;
+        p.element_size = e.element_size;
+        p.count = (is_record_section(kind) || kind == SectionKind::StringTable ||
+                   kind == SectionKind::SymbolTable)
+                      ? e.count
+                      : 0;
+    }
+    if (cache != nullptr) {
+        // A section that disappeared must not leave a trusted prefix for
+        // a later image that happens to reuse its slot.
+        for (std::size_t k = 0; k < next.sections.size(); ++k) {
+            if (!seen[k])
+                next.sections[k] = {};
+        }
+        *cache = next;
     }
 
     return {ImageStatus::Ok, ""};

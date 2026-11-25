@@ -38,6 +38,8 @@ public:
     bool satisfied(std::uint64_t task, std::string* why) const;
     // #5427: re-apply a persisted contract (checkpoint replay).
     void restore(const Contract& contract) { contracts_[contract.task] = contract; }
+    // #5460: the task left the retention window; drop its contract.
+    void forget(std::uint64_t task) { contracts_.erase(task); }
     [[nodiscard]] const std::map<std::uint64_t, Contract>& all() const { return contracts_; }
 
 private:

@@ -50,5 +50,11 @@ jobs:
       # the attach cost, all in CPU time.
       run: python3 tests/bench/bus_slo.py --check
 
+    - name: The bus under history (#5460)
+      # A long task board and a long metrics channel: the task path must
+      # not scale with finished tasks, and an attach must only pay for
+      # the records committed since the previous attach.
+      run: python3 tests/bench/bus_history.py --check
+
     - name: The bus soak (#5395)
       run: python3 tests/bench/bus_soak.py --hours "${{ github.event.inputs.hours || '24' }}" --check

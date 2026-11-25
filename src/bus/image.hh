@@ -10,6 +10,7 @@
 
 #include "bus/image_format.hh"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -158,9 +159,29 @@ bool read_record(const std::byte* record, std::uint64_t element_size, T* out) {
     return true;
 }
 
+// #5460: a per-image validation cursor. Sections are append-only and
+// commit a new generation before their length advances, so a reader that
+// already validated a section prefix can continue from its digest and
+// record count instead of rehashing/re-walking the whole history on every
+// attach. The cache holds only fields this reader itself verified.
+struct ImageDigestCache {
+    struct SectionPrefix {
+        bool valid = false;
+        std::uint64_t offset = 0;
+        std::uint64_t length = 0;
+        std::uint64_t generation = 0;
+        std::uint64_t digest = 0;
+        std::uint64_t count = 0;
+        std::uint32_t element_size = 0;
+    };
+    std::array<SectionPrefix, static_cast<std::size_t>(SectionKind::Tasks) + 1> sections{};
+};
+
 // Validate every header field, directory entry, known section and
-// cross-section index. Safe on an untrusted mapping of any size.
-ImageCheck validate_image(std::span<const std::byte> image);
+// cross-section index. Safe on an untrusted mapping of any size. When
+// cache is non-null, verified section prefixes are reused and only the
+// appended bytes/records are checked.
+ImageCheck validate_image(std::span<const std::byte> image, ImageDigestCache* cache = nullptr);
 
 // FNV-1a 64 over the committed prefix, for golden comparisons.
 std::uint64_t committed_digest(std::span<const std::byte> image);

@@ -18,6 +18,9 @@
 #include <chrono>
 #include <cstring>
 #include <deque>
+#include <map>
+#include <mutex>
+#include <utility>
 #include <vector>
 
 #include <fcntl.h>
@@ -37,6 +40,13 @@ namespace {
     constexpr std::uint64_t kSealMask = F_SEAL_SHRINK | F_SEAL_GROW;
 
     std::atomic<std::uint64_t> g_session_counter{0};
+
+    // #5460: per-process attach validation cursors, keyed by the image
+    // memfd. A process that attaches repeatedly to the same bus only
+    // hashes/walks the sections' appended tail.
+    std::mutex g_image_cache_mutex;
+    std::map<std::pair<std::uint64_t, std::uint64_t>, ImageDigestCache> g_image_caches;
+    constexpr std::size_t kImageCacheEntries = 32;
 
     int memfd_create_cloexec(const char* name, unsigned flags) {
         return static_cast<int>(syscall(SYS_memfd_create, name, flags));
@@ -624,7 +634,8 @@ bool Server::handshake(int conn_fd, const HelloBody& hello, const BuildFn& build
             return false;
         }
     }
-    const ImageCheck check = validate_image({static_cast<const std::byte*>(base), bytes});
+    const ImageCheck check =
+        validate_image({static_cast<const std::byte*>(base), bytes}, &image_digest_cache_);
     if (!check.ok()) {
         ::munmap(base, bytes);
         ::close(image_fd);
@@ -1370,6 +1381,9 @@ bool Server::task_resume(std::string* why) {
     }
     if (!gates_resume(why))
         return false;
+    // #5460: the resume replay applied the terminal window; drop the gate
+    // records of every task it pruned before any peer can claim.
+    reap_task_retention();
     task_expire();
     return true;
 }
@@ -1522,6 +1536,10 @@ bool Server::gates_resume(std::string* why) {
             break;
         switch (static_cast<GateRecordKind>(record.kind)) {
             case GateRecordKind::Contract: {
+                // #5460: the task left its bounded window; the record is
+                // stale and can never gate a live task again.
+                if (!tasks_.get(record.a, nullptr))
+                    break;
                 Contract contract{};
                 contract.task = record.a;
                 contract.test_ref = record.b;
@@ -1549,6 +1567,8 @@ bool Server::gates_resume(std::string* why) {
                 break;
             }
             case GateRecordKind::Budget: {
+                if (record.a != 0 && !tasks_.get(record.a, nullptr))
+                    break;
                 BudgetUsage usage{};
                 usage.tokens = record.b;
                 usage.wall_ms = record.c;
@@ -1562,7 +1582,8 @@ bool Server::gates_resume(std::string* why) {
             }
             case GateRecordKind::Lost: {
                 if (record.a != 0) {
-                    lost_gates_[record.a] = 1;
+                    if (tasks_.get(record.a, nullptr))
+                        lost_gates_[record.a] = 1;
                     break;
                 }
                 // Legacy v1 marker: it named no task. Delay it until the
@@ -1609,6 +1630,9 @@ bool Server::gates_resume(std::string* why) {
             std::fflush(gate_checkpoint_) != 0)
             return false;
     }
+    // #5460: drop the stale tail left by tasks the retention window
+    // compacted away (and any append-only history beyond live gates).
+    gate_compact();
     return true;
 }
 
@@ -1690,6 +1714,113 @@ void Server::gate_clear_lost(std::uint64_t task) {
     record_audit(AuditKind::GateResume, 0, 0, task);
 }
 
+void Server::reap_task_retention() {
+    std::vector<std::uint64_t> pruned;
+    const std::size_t count = tasks_.take_pruned(&pruned);
+    const bool compacted = tasks_.take_compacted();
+    if (count == 0 && !compacted)
+        return;
+    for (const std::uint64_t task : pruned) {
+        approvals_.forget(task);
+        contracts_.forget(task);
+        budget_.forget(task);
+        lost_gates_.erase(task);
+    }
+    // The task checkpoint only rewrites itself once per bounded batch;
+    // compact the gate ledger at the same point so both stay bounded.
+    if (compacted)
+        gate_compact();
+}
+
+void Server::gate_compact() {
+    if (gate_checkpoint_ == nullptr)
+        return;
+    const std::string temp = gate_checkpoint_path_ + ".compact";
+    std::FILE* out = std::fopen(temp.c_str(), "w+b");
+    if (out == nullptr)
+        return;
+    GateCheckpointHeader header{};
+    std::memcpy(header.magic, kGateCheckpointMagic, sizeof(header.magic));
+    header.version = kGateCheckpointVersion;
+    bool ok = std::fwrite(&header, sizeof(header), 1, out) == 1;
+    std::uint64_t records = 0;
+    const auto put = [&](const GateCheckpointRecord& record) {
+        if (!ok)
+            return;
+        if (std::fwrite(&record, sizeof(record), 1, out) != 1)
+            ok = false;
+        else
+            ++records;
+    };
+    for (const auto& [task, contract] : contracts_.all()) {
+        (void)task;
+        GateCheckpointRecord record{};
+        record.kind = static_cast<std::uint64_t>(GateRecordKind::Contract);
+        record.a = contract.task;
+        record.b = contract.test_ref;
+        record.c = contract.metric_floor;
+        record.d = contract.fingerprint;
+        record.e = contract.tests_passed;
+        record.f = contract.metric;
+        record.g = contract.has_evidence ? 1 : 0;
+        put(record);
+    }
+    for (const auto& [object, approval] : approvals_.all()) {
+        (void)object;
+        GateCheckpointRecord record{};
+        record.kind = static_cast<std::uint64_t>(GateRecordKind::Approval);
+        record.a = approval.object;
+        record.b = static_cast<std::uint64_t>(approval.state);
+        record.c = approval.deadline_ms;
+        record.d = approval.actor;
+        record.e = approval.decided_ms;
+        put(record);
+    }
+    BudgetUsage global{};
+    (void)budget_.global_report(&global);
+    const auto put_budget = [&](std::uint64_t task, const BudgetUsage& usage) {
+        GateCheckpointRecord record{};
+        record.kind = static_cast<std::uint64_t>(GateRecordKind::Budget);
+        record.a = task;
+        record.b = usage.tokens;
+        record.c = usage.wall_ms;
+        record.d = usage.failures;
+        record.e = usage.started_ms;
+        record.f = usage.tripped ? 1 : 0;
+        put(record);
+    };
+    put_budget(0, global);
+    for (const auto& [task, usage] : budget_.all_tasks())
+        put_budget(task, usage);
+    for (const auto& [task, lost] : lost_gates_) {
+        (void)lost;
+        GateCheckpointRecord record{};
+        record.kind = static_cast<std::uint64_t>(GateRecordKind::Lost);
+        record.a = task;
+        put(record);
+    }
+    if (ok && (std::fflush(out) != 0 || ::fsync(::fileno(out)) != 0))
+        ok = false;
+    if (std::fclose(out) != 0)
+        ok = false;
+    if (!ok) {
+        (void)std::remove(temp.c_str());
+        return;
+    }
+    std::fclose(gate_checkpoint_);
+    gate_checkpoint_ = nullptr;
+    if (std::rename(temp.c_str(), gate_checkpoint_path_.c_str()) != 0) {
+        (void)std::remove(temp.c_str());
+        gate_checkpoint_ = std::fopen(gate_checkpoint_path_.c_str(), "r+b");
+        if (gate_checkpoint_ != nullptr)
+            std::fseek(gate_checkpoint_, 0, SEEK_END);
+        return;
+    }
+    gate_checkpoint_ = std::fopen(gate_checkpoint_path_.c_str(), "r+b");
+    if (gate_checkpoint_ != nullptr)
+        std::fseek(gate_checkpoint_, 0, SEEK_END);
+}
+
 void Server::commit_task_event(const TaskRecord& event) {
     AuditKind kind = AuditKind::TaskPost;
     switch (static_cast<TaskEventKind>(event.kind)) {
@@ -1740,6 +1871,7 @@ void Server::commit_task_event(const TaskRecord& event) {
         generation_ = gen;
         notify_peers(0);
     }
+    reap_task_retention();
 }
 
 void Server::task_expire() {
@@ -1761,8 +1893,8 @@ void Server::approval_expire() {
 }
 
 void Server::task_release_owner(std::uint64_t owner) {
-    for (const Task& task : tasks_.list()) {
-        if (task.state != TaskState::Claimed || task.owner != owner)
+    for (const Task& task : tasks_.claimed_tasks()) {
+        if (task.owner != owner)
             continue;
         Task released{};
         TaskRecord event{};
@@ -3424,9 +3556,7 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
                     // Fail the offending task; a global trip stops every
                     // claimed task and refuses new claims.
                     if (global.tripped) {
-                        for (const Task& listed : tasks_.list()) {
-                            if (listed.state != TaskState::Claimed)
-                                continue;
+                        for (const Task& listed : tasks_.claimed_tasks()) {
                             Task failed{};
                             TaskRecord event{};
                             std::string fwhy;
@@ -3803,12 +3933,8 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
             reply.deadline_ms = task.deadline_ms;
             reply.parent = task.parent;
             reply.ref = task.ref;
-            if (req.op == 5) {
-                for (const Task& listed : tasks_.list()) {
-                    if (listed.state == TaskState::Open)
-                        ++reply.count;
-                }
-            }
+            if (req.op == 5)
+                reply.count = tasks_.open_count();
             send_frame(conn_fd, FrameType::TaskReply, session,
                        {reinterpret_cast<const std::byte*>(&reply), sizeof(reply)});
             break;
@@ -4256,7 +4382,18 @@ bool Client::connect_to(const std::string& path, std::uint64_t workspace_id, std
     }
     const auto view = std::span<const std::byte>(static_cast<const std::byte*>(base),
                                                  static_cast<std::size_t>(ok.image_size));
-    const ImageCheck check = validate_image(view);
+    // #5460: continue from the prefixes this process validated before.
+    ImageDigestCache cache{};
+    std::pair<std::uint64_t, std::uint64_t> cache_key{0, 0};
+    struct stat st{};
+    if (::fstat(image_fd, &st) == 0) {
+        cache_key = {static_cast<std::uint64_t>(st.st_dev), static_cast<std::uint64_t>(st.st_ino)};
+        std::lock_guard lock(g_image_cache_mutex);
+        const auto found = g_image_caches.find(cache_key);
+        if (found != g_image_caches.end())
+            cache = found->second;
+    }
+    const ImageCheck check = validate_image(view, &cache);
     if (!check.ok()) {
         ::munmap(base, ok.image_size);
         ::close(image_fd);
@@ -4273,6 +4410,12 @@ bool Client::connect_to(const std::string& path, std::uint64_t workspace_id, std
     out->size = static_cast<std::size_t>(ok.image_size);
     out->session = ok.session;
     out->caps = ok.caps;
+    if (cache_key != std::pair<std::uint64_t, std::uint64_t>{0, 0}) {
+        std::lock_guard lock(g_image_cache_mutex);
+        if (g_image_caches.size() >= kImageCacheEntries)
+            g_image_caches.erase(g_image_caches.begin());
+        g_image_caches[cache_key] = cache;
+    }
     return true;
 }
 

@@ -918,6 +918,10 @@ private:
     // #5404: the approval board and its expiry sweep.
     void approval_expire();
     [[nodiscard]] const ApprovalBoard& approvals() const { return approvals_; }
+    // #5460: drop the gate state of tasks the retention window pruned
+    // and rewrite the gate ledger alongside a compacted task checkpoint.
+    void reap_task_retention();
+    void gate_compact();
     // Return every task a cleanly detaching session still holds.
     void task_release_owner(std::uint64_t owner);
     // Re-project a record without rewriting the state it carries.
@@ -1025,6 +1029,9 @@ private:
     std::string round_checkpoint_path_;
     // #5399: the task board and its checkpoint.
     TaskBoard tasks_{};
+    // #5460: the last validated section prefix per kind, so a re-attach
+    // hashes and walks only the bytes committed since then.
+    ImageDigestCache image_digest_cache_{};
     // #5404: task/scoped-contract approvals.
     ApprovalBoard approvals_{};
     // #5402: executable acceptance contracts.

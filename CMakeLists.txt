@@ -2133,6 +2133,14 @@ target_link_libraries(test_bus_tasks PRIVATE aura-bus)
 aura_strict_test_warnings(tests/compiler/test_bus_tasks.cpp)
 add_test(NAME test_bus_tasks_5399 COMMAND ./test_bus_tasks)
 
+# Issue #5460: bounded task/approval windows and compact checkpoints.
+add_executable(test_bus_retention tests/compiler/test_bus_retention.cpp)
+target_include_directories(test_bus_retention PRIVATE src)
+target_compile_features(test_bus_retention PUBLIC cxx_std_26)
+target_link_libraries(test_bus_retention PRIVATE aura-bus)
+aura_strict_test_warnings(tests/compiler/test_bus_retention.cpp)
+add_test(NAME test_bus_retention_5460 COMMAND ./test_bus_retention)
+
 # Issue #5400: the supervisor's scaling decision from real/fixture slack.
 add_executable(test_bus_supervisor tests/compiler/test_bus_supervisor.cpp)
 target_include_directories(test_bus_supervisor PRIVATE src)

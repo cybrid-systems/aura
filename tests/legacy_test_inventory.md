@@ -18,8 +18,8 @@ This file is not the decision tree for a new test. Ask `python3 tests/run.py hom
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 959 | Preferred destination suites |
-| **Total scanned** | **959** | |
+| `tests/core/test_*.cpp` | 960 | Preferred destination suites |
+| **Total scanned** | **960** | |
 
 ### Related artifacts
 
@@ -35,7 +35,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
-| `arena_compaction` | Arena / compaction / GC | 0 | 0 | 96 | 96 | P0 — well-contained, batch drivers already exist |
+| `arena_compaction` | Arena / compaction / GC | 0 | 0 | 97 | 97 | P0 — well-contained, batch drivers already exist |
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 284 | 284 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 118 | 118 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 33 | 33 | P1 — small, already partially batched |
@@ -312,6 +312,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_bus_multi_peer.cpp`
 - `tests/compiler/test_bus_multi_target.cpp`
 - `tests/compiler/test_bus_repro.cpp`
+- `tests/compiler/test_bus_retention.cpp`
 - `tests/compiler/test_bus_round_orchestration.cpp`
 - `tests/compiler/test_bus_slo.cpp`
 - `tests/compiler/test_bus_stat_gate.cpp`
@@ -1181,13 +1182,13 @@ Suggested order starts with well-contained groups (per #1957) and leverages exis
 
 Files listed as ``location/name`` with issue id and one-line summary.
 
-### `arena_compaction` — Arena / compaction / GC (96)
+### `arena_compaction` — Arena / compaction / GC (97)
 
 **Target:** tests/core/ (extend compact/gc family; see test_arena_batch / test_hotpath_matrix_batch)
 
 **Priority:** P0 — well-contained, batch drivers already exist
 
-#### domain/ (96)
+#### domain/ (97)
 
 - `tests/compiler/test_adt_match_exhaust_post_mutate_reliability.cpp` (—) [domain_suite, theme_compiler] — test_adt_match_exhaust_post_mutate_reliability.cpp — Issue #612:
 - `tests/orch/test_agent_name_table_isolation.cpp` (—) [large, domain_suite, theme_orch] — AC1: source cites #2078; no process-static OrchAgentNameTable;
@@ -1208,6 +1209,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_ast_column_compaction_closed_loop.cpp` (—) [domain_suite, theme_compiler] — Issue #261/#405/#414/#416 (#1978 renamed): issue# moved from filename to header.
 - `tests/orch/test_bare_bp_resolve.cpp` (—) [domain_suite, theme_orch] — tests/orch/test_bare_bp_resolve_3179.cpp
 - `tests/compiler/test_bidirectional_annotation.cpp` (—) [large, domain_suite, theme_compiler] — tests/test_bidirectional_annotation.cpp — Issue #1413: True
+- `tests/compiler/test_bus_retention.cpp` (—) [domain_suite, theme_compiler] — Issue #5460: the task and approval boards keep a bounded terminal
 - `tests/compiler/test_closure_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — test_closure_batch.cpp
 - `tests/core/test_compact_nodes_provenance_schema_remap.cpp` (—) [domain_suite, theme_core] — Agent closed-loop tracking.
 - `tests/compiler/test_compact_policy.cpp` (—) [domain_suite, theme_compiler] — AC1: Table-driven pure compute_compact_policy (fixture → mode)
