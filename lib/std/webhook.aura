@@ -596,6 +596,26 @@
           (pull-ctl))
         #f))))
 
+; Issue #5451: one accepted connection per 5 ms capped the server at
+; ~170 req/s and let a burst overflow the small listen backlog. Admit one
+; connection: count it, then run its handler or refuse it when busy.
+(define (wh-admit! s st c)
+  (atomic:add! (hash-ref s "stat-total") 1)
+  (if (< (wh-counter s "stat-inflight") (hash-ref s "max-inflight"))
+    (let ((fid (try (fiber:spawn (wh-connection s c)) (catch (e) #f))))
+      (if fid
+        (hash-set! st "live" (cons fid (hash-ref st "live")))
+        (begin
+          (wh-safe-reply s c 503)
+          (atomic:add! (hash-ref s "stat-busy") 1))))
+    (begin
+      (wh-safe-reply s c 503)
+      (atomic:add! (hash-ref s "stat-busy") 1))))
+
+; Draining the queue before sleeping is what removes the fixed accept delay.
+; The cap keeps a continuous flood from starving wh-drain! (audit / stop).
+(define wh-accept-batch-max 256)
+
 (define (wh-serve s)
   (lambda ()
     (let ((st (hash "audit" (list) "live" (list) "stop" #f)))
@@ -608,26 +628,18 @@
                                 "live" (hash-ref st "live")))
             #t)
           (begin
-            (let ((c (try (tcp-accept-timeout (hash-ref s "listener") 0) (catch (e) #f))))
-              (if (number? c)
-                (begin
-                  (atomic:add! (hash-ref s "stat-total") 1)
-                  (if (< (wh-counter s "stat-inflight") (hash-ref s "max-inflight"))
-                    (let ((fid (try (fiber:spawn (wh-connection s c)) (catch (e) #f))))
-                      (if fid
-                        (hash-set! st "live" (cons fid (hash-ref st "live")))
-                        #f)
-                      (if fid
-                        #f
-                        (begin
-                          (wh-safe-reply s c 503)
-                          (atomic:add! (hash-ref s "stat-busy") 1))))
-                    (begin
-                      (wh-safe-reply s c 503)
-                      (atomic:add! (hash-ref s "stat-busy") 1))))
-                #f))
-            ; the sleep is the cancellation safepoint and the polling pace
-            (fiber:sleep 5)
+            ; Accept until EAGAIN (or the batch cap): a burst no longer pays
+            ; one 5 ms tick per connection.
+            (let accept-batch ((n 0))
+              (if (>= n wh-accept-batch-max)
+                #f
+                (let ((c (try (tcp-accept-timeout (hash-ref s "listener") 0)
+                              (catch (e) #f))))
+                  (if (number? c)
+                    (begin (wh-admit! s st c) (accept-batch (+ n 1)))
+                    #f))))
+            ; the sleep is the cancellation safepoint and the idle poll pace
+            (fiber:sleep 1)
             (loop)))))))
 
 (define (wh-safe-reply s c status)

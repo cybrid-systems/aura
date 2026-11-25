@@ -74,7 +74,9 @@ secret store, not in source or environment (#5417).
 - **Each request is handled on its own fiber.** The server fiber only
   accepts and accounts; the accept loop keeps serving while a handler
   works, up to `"max-inflight"` (16) at a time; beyond that a connection is
-  answered `503` at once.
+  answered `503` at once. The accept loop drains every ready connection
+  before its 1 ms idle tick (#5451), so a burst does not pay one tick per
+  connection; the listener's backlog is the kernel maximum (`SOMAXCONN`).
 - **Cancellable.** The server fiber sleeps between polls and every handler
   sleeps in its own waits, so `fiber:cancel` reaches them at the next
   safepoint. `(webhook:stop! s)` is the orderly form: it closes the
@@ -180,4 +182,5 @@ handler sleeps; `stop` closes the listener and keeps the audit trail. For
 #5450: 16 half-sent request heads each time out with a complete `408` and
 free their in-flight slots (a following normal request is `200`); a head
 with `Content-Length` but no body answers `408`; a busy `503` is readable to
-its body.
+its body. For #5451: a 200-connection burst is accepted and answered `200`
+without a reset (the old 5 ms tick and backlog 16 stalled the tail).

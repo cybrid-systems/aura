@@ -1445,7 +1445,10 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             ::close(fd);
             return make_void();
         }
-        if (::listen(fd, 16) < 0) {
+        // Issue #5451: the old fixed backlog of 16 overflowed on a burst
+        // of webhook callbacks and the client saw a reset. Let the kernel's
+        // configured maximum queue pending handshakes instead.
+        if (::listen(fd, SOMAXCONN) < 0) {
             ::close(fd);
             return make_void();
         }

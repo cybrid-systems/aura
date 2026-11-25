@@ -445,4 +445,35 @@
     (fiber:join client)
     (check= #t (webhook:stop! s))))
 
+; Issue #5451: drain the accept queue before sleeping; SOMAXCONN backlog.
+(test-case "a 200-connection burst is accepted without resets" (hash "issue" 5451)
+  (let* ((s (webhook:make (hash "port" 0 "max-inflight" 256 "read-timeout-ms" 5000)))
+         (port 0)
+         (conns (list))
+         (t0 0))
+    (webhook:route! s "/ok" (list "GET") (lambda (req) "ok") (hash "public" #t))
+    (webhook:start! s)
+    (set! port (webhook:port s))
+    (set! t0 (monotonic-ms))
+    (let loop ((i 0))
+      (if (< i 200)
+        (let ((c (tcp-connect "127.0.0.1" port)))
+          (if (number? c)
+            (begin
+              (tcp-send c "GET /ok HTTP/1.1\r\nHost: x\r\n\r\n")
+              (set! conns (cons c conns))))
+          (loop (+ i 1)))
+        #f))
+    (check= 200 (length conns))
+    ; every connection gets its response; the old 5 ms tick + backlog 16
+    ; stalled the tail and reset the overflow
+    (for-each (lambda (c)
+                (let ((resp (read-all c)))
+                  (check= 200 (status-of resp))
+                  (check= "ok" (body-of resp))
+                  (tcp-close c)))
+              conns)
+    (check (< (- (monotonic-ms) t0) 5000))
+    (check= #t (webhook:stop! s))))
+
 (test-finish)
