@@ -102,6 +102,13 @@ class Concurrency5476(unittest.TestCase):
             "the tier worker must snapshot stats_ under the queue lock",
         )
 
+        ast = read("src/core/ast.ixx")
+        self.assertIn("core/atomic_column.hh", ast)
+        self.assertIn("cow::AtomicTrackedColumn<std::uint16_t> node_gen_;", ast)
+        atomic = read("src/core/atomic_column.hh")
+        self.assertIn("std::deque<std::atomic<T>> mirror_;", atomic)
+        self.assertIn("memory_order_acquire", atomic)
+
         mem = read("src/compiler/evaluator_primitives_memory.cpp")
         self.assertIn("heap_sizes_snapshot", mem)
         self.assertIn("sizes.strings", mem)

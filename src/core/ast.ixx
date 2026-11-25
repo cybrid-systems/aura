@@ -27,7 +27,8 @@ module;
 #include <utility>
 #include <vector>
 #include "core/persistent_child_vector.hh"
-#include "core/cow_column.hh" // Issue #4772: chunk-tracked COW columns
+#include "core/atomic_column.hh" // Issue #5476: atomically readable node metadata
+#include "core/cow_column.hh"    // Issue #4772: chunk-tracked COW columns
 #include "core/cpp26_contract_stats.h"
 #include "core/provenance_tracker.hh"   // #2125: maybe_stamp_stable_ref_isolation_tenant
 #include "core/flatast_restamp.hh"      // FlatAST decomp step 1: RestampPolicy SSOT
@@ -2572,7 +2573,9 @@ public:
     // (unit flats, Soft). Rebirth restarts generation_/wrap/cow, so
     // is_valid compares this against the ref's install_id_at_capture.
     std::uint32_t install_id_ = 0;
-    cow::TrackedColumn<std::uint16_t> node_gen_;
+    // Issue #5476: atomically readable; readers use the stable-address
+    // mirror, writes still mark the COW dirty chunk for image capture.
+    cow::AtomicTrackedColumn<std::uint16_t> node_gen_;
     // Issue #261: free-list of recycled NodeId slots. Slots on the
     // free list have node_gen_[id] == 0 (tombstone). add_node()
     // pops from here before bump-appending new slots.
@@ -7972,7 +7975,14 @@ public:
             wire_append_pod(buf, count);
             if (!col.empty()) {
                 using Value = typename std::remove_reference_t<decltype(col)>::value_type;
-                wire_append_bytes(buf, col.data(), col.size() * sizeof(Value));
+                if constexpr (requires { col.snapshot(); }) {
+                    // Issue #5476: the atomic column has no contiguous live
+                    // buffer; serialize a contiguous snapshot.
+                    auto tmp = col.snapshot();
+                    wire_append_bytes(buf, tmp.data(), tmp.size() * sizeof(Value));
+                } else {
+                    wire_append_bytes(buf, col.data(), col.size() * sizeof(Value));
+                }
             }
         };
         // 19 SoA columns + 2 children columns (per-node count +
@@ -8086,17 +8096,28 @@ public:
             std::memcpy(&count, &buf[pos], 4);
             pos += 4;
             col.resize(count);
-            // Issue #219: GapBuffer's `data()` is not contiguous
-            // when the gap is in the middle. compact() moves the
-            // gap to the end so data() returns a contiguous
-            // pointer. For pmr::vector this is a no-op (the
-            // compiler optimizes it away for trivial types).
-            if constexpr (requires { col.compact(); }) {
-                col.compact();
-            }
-            if (count > 0) {
-                std::memcpy(col.data(), &buf[pos], count * sizeof(T));
-                pos += count * sizeof(T);
+            if constexpr (requires { col.assign_from_raw(static_cast<const T*>(nullptr), 0); }) {
+                // Issue #5476: the atomic column restores through a
+                // contiguous temporary (its live storage is chunked).
+                std::vector<T> tmp(count);
+                if (count > 0) {
+                    std::memcpy(tmp.data(), &buf[pos], count * sizeof(T));
+                    pos += count * sizeof(T);
+                }
+                col.assign_from_raw(tmp.data(), count);
+            } else {
+                // Issue #219: GapBuffer's `data()` is not contiguous
+                // when the gap is in the middle. compact() moves the
+                // gap to the end so data() returns a contiguous
+                // pointer. For pmr::vector this is a no-op (the
+                // compiler optimizes it away for trivial types).
+                if constexpr (requires { col.compact(); }) {
+                    col.compact();
+                }
+                if (count > 0) {
+                    std::memcpy(col.data(), &buf[pos], count * sizeof(T));
+                    pos += count * sizeof(T);
+                }
             }
         };
         read_column(ast.tag_);
