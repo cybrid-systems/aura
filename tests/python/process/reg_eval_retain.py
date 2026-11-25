@@ -31,6 +31,7 @@ Acceptance covered here:
 from __future__ import annotations
 
 import os
+import platform
 import re
 import subprocess
 import sys
@@ -142,6 +143,12 @@ _BIG_LAMBDA_EVAL_BODY = "(let ((c (eval '(lambda (x) (+ x " + _NUMBERS + "))))) 
 _SMALL_LAMBDA_BUDGET_KB = 13200  # 1200 KB/batch over 11 post-warmup batches
 _BIG_LAMBDA_BUDGET_KB = 27500  # 2500 KB/batch over 11 post-warmup batches
 _BIG_LAMBDA_BATCH_BUDGET_KB = 8192
+# arm64 glibc uses 16 KB pages/arena chunks, so one batch's VmRSS high-water
+# moves in multi-MB steps (observed 8192-8392 KB on the CI runner) while the
+# program is not retained. The 11-batch aggregate budget above is what
+# detects the pre-#4859 linear shape (~9.5 MB/batch => >100 MB), so the
+# per-batch guard only needs to catch a single huge jump here.
+_BIG_LAMBDA_BATCH_BUDGET_ARM64_KB = 12288
 
 
 def _render(body: str, size: int) -> str:
@@ -230,12 +237,16 @@ class TestIssue4859EvalProgramOwnership(unittest.TestCase):
         )
         # The pre-fix shape was LINEAR: every batch grew by ~9-10 MB. A
         # single batch must not grow by more than the budget either. The
-        # budget is inclusive: on arm64 glibc the allocator's high-water can
-        # land exactly on the 8192 KB rung (16384-byte chunk ladder), while
-        # a single retained program batch was 9-10 MB and still fails.
+        # budget is inclusive, and arm64 gets a wider one: 16 KB-page arenas
+        # move VmRSS by ~8 MB per batch without retaining the program (see
+        # the constant's note; the aggregate budget still catches linear
+        # retention).
+        batch_budget = _BIG_LAMBDA_BATCH_BUDGET_KB
+        if platform.machine() in {"aarch64", "arm64"}:
+            batch_budget = _BIG_LAMBDA_BATCH_BUDGET_ARM64_KB
         self.assertLessEqual(
             worst,
-            _BIG_LAMBDA_BATCH_BUDGET_KB,
+            batch_budget,
             f"#4859: one batch grew {worst} KB (limit "
             f"{_BIG_LAMBDA_BATCH_BUDGET_KB} KB, start {start} KB, deltas "
             f"{deltas}) — the growth looks linear.",
