@@ -7,9 +7,14 @@ callback.
 
 ## Store
 
-- Default path: `$AURA_SECRET_STORE`, else `$HOME/.aura/secrets`.
+- Default path: `$AURA_SECRET_STORE`, else `$HOME/.aura/secrets`. With
+  neither set there is no fallback: `secret:default-store` returns
+  `bad-store-path` (and `std/llm` falls back to `LLM_API_KEY`).
 - The directory is `0700`; each value is a `0600` file named
-  `<name>.secret` and holds the value base64-encoded.
+  `<name>.secret` and holds the value base64-encoded. A read also checks
+  that both are owned by the current uid; a wrong mode or owner is
+  `secret-unavailable`, never a value. The check uses `stat`, so an
+  exec-denied sandbox also fails closed as unavailable.
 - A name is `[A-Za-z0-9._-]+` and may not start with `.`; a store path is
   restricted to `[A-Za-z0-9/._-]+`, so neither can inject a shell word.
 - No exported handle contains the value. Printing a handle prints its
@@ -28,7 +33,9 @@ callback.
 `secret:use` returns the callback's result, masking a string result with
 `***` so an accidental return cannot print the value. A module that must
 hand the value to a transport uses `secret:use-raw` explicitly. A missing
-value, a sandbox without `io-read`, or an unreadable file returns
+value, a sandbox without `io-read` (or without the exec needed for the
+`stat` ownership check), an unreadable file, a directory that is not
+`0700`, or a file that is not `0600` returns
 `(hash "ok" #f "error" "secret-unavailable")`; the file's contents are
 never part of an error. `secret:list`, `secret:exists?` and
 `secret:audit` are read-only queries; audit records hold the name, the
@@ -61,11 +68,11 @@ overrides the name.
 
 ## Sandbox
 
-Reading a secret is a file read: it needs `io-read` like any other
-`read-file`. Provisioning (`put!`, `import-*`) also creates the directory
-and fixes its mode, so it needs `exec` and `write`; this is an admin
-operation, not something a request handler does. Denial yields
-`secret-unavailable`, not the value.
+Reading a secret is a file read plus a metadata check: it needs
+`io-read` and `exec` (for `stat`). Provisioning (`put!`, `import-*`) also
+creates the directory and fixes its mode, so it needs `exec` and `write`;
+this is an admin operation, not something a request handler does. Denial
+yields `secret-unavailable`, not the value.
 
 ## Non-goals
 
