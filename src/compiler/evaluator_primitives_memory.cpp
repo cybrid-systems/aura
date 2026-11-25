@@ -656,11 +656,13 @@ void RegSplitParts::register_memory_gc_lifecycle_primitives(
                     }
                 }
             }
+            // Issue #5476: the heap sizes come from one lock-held
+            // snapshot, not five racing size() reads.
+            const auto sizes = ev.heap_sizes_snapshot();
             auto result = std::format(
                 "string:{}/pairs:{}/cells:{}/err:{}/hash:{}/vec:{}/opq:{}/cls:{}/root:{}",
-                ev.string_heap_.size(), ev.pairs_.size(), ev.cells_.size(), ev.error_values_.size(),
-                g_hash_tables.size(), ev.vector_heap_.size(), ev.opaque_heap_.size(), closure_count,
-                root_count);
+                sizes.strings, sizes.pairs, sizes.cells, sizes.errors, g_hash_tables.size(),
+                sizes.vectors, sizes.opaque, closure_count, root_count);
             auto sidx = ev.string_heap_.mint(result);
             return types::make_string(sidx);
         });

@@ -102,6 +102,10 @@ class Concurrency5476(unittest.TestCase):
             "the tier worker must snapshot stats_ under the queue lock",
         )
 
+        mem = read("src/compiler/evaluator_primitives_memory.cpp")
+        self.assertIn("heap_sizes_snapshot", mem)
+        self.assertIn("sizes.strings", mem)
+
         ws = read("src/compiler/evaluator_workspace_tree.cpp")
         ck = ws.find("bool Evaluator::save_panic_checkpoint()")
         self.assertGreaterEqual(ck, 0)

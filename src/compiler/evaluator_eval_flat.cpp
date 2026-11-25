@@ -15767,6 +15767,22 @@ void Evaluator::rebind_workspace_defines_on_switch() noexcept {
 // mutation boundary while eval-current/(load ...)/query readers move it
 // on another fiber. The strings own heap buffers, so every access goes
 // through the mutex; take_* move the fields out under the lock.
+Evaluator::HeapSizes Evaluator::heap_sizes_snapshot() const {
+    // string_heap_ is internally synchronized; read it outside the storage
+    // lock so the two locks never nest. The pmr vectors are only grown
+    // under alloc_storage_lock_, so one lock gives a consistent snapshot.
+    const std::size_t strings = string_heap_.size();
+    std::scoped_lock lock(alloc_storage_lock_);
+    HeapSizes s;
+    s.strings = strings;
+    s.pairs = pairs_.size();
+    s.cells = cells_.size();
+    s.errors = error_values_.size();
+    s.vectors = vector_heap_.size();
+    s.opaque = opaque_heap_.size();
+    return s;
+}
+
 void Evaluator::set_set_code_error(std::string kind, std::string msg) {
     std::scoped_lock lock(set_code_error_mtx_);
     last_set_code_error_kind_ = std::move(kind);

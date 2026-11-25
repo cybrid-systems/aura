@@ -7236,6 +7236,18 @@ public:
     // (load ...) and the query primitives on other fibers; the two
     // strings are heap buffers, so an unsynchronized move vs assign is a
     // use-after-free. All access goes through these methods.
+    // Issue #5476: one consistent snapshot of the append-only heaps. The
+    // individual size() reads raced a concurrent push_back/realloc; the
+    // diagnostics/query faces take all of them under alloc_storage_lock_.
+    struct HeapSizes {
+        std::size_t strings = 0;
+        std::size_t pairs = 0;
+        std::size_t cells = 0;
+        std::size_t errors = 0;
+        std::size_t vectors = 0;
+        std::size_t opaque = 0;
+    };
+    [[nodiscard]] HeapSizes heap_sizes_snapshot() const;
     void set_set_code_error(std::string kind, std::string msg);
     void clear_set_code_error();
     [[nodiscard]] std::optional<std::string> take_set_code_error_msg();
