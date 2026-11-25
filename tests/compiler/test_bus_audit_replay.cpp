@@ -652,6 +652,46 @@ int main() {
         check(node.worldline == control || node.worldline == admitted,
               "the row names a worldline of the round");
         check(node.trial_seq != 0, "the row carries the trial sequence");
+        // The audit pages: 20 rows from the cursor, each page saying
+        // whether more follow, until the window is drained. A filter
+        // pages the same way over its own matches.
+        {
+            const auto audit_page = [&](std::uint64_t since, std::uint64_t worldline) {
+                AuditQueryBody query{};
+                query.worldline = worldline;
+                query.since_seq = since;
+                check(send_frame(att.sock, FrameType::AuditQuery, att.session,
+                                 {reinterpret_cast<const std::byte*>(&query), sizeof(query)}),
+                      "audit query");
+                check(recv_frame(att.sock, &hdr, body, &err), "audit query reply");
+                check(hdr.type == static_cast<std::uint16_t>(FrameType::Credit) &&
+                          hdr.len >= sizeof(AuditReply),
+                      "the audit query answers");
+                AuditReply head{};
+                std::memcpy(&head, body.data(), sizeof(head));
+                // An unfiltered page is consecutive from its cursor.
+                const std::uint64_t first_seq = worldline == 0 ? (since == 0 ? 1 : since) : 0;
+                for (std::uint64_t i = 0; i < head.count && first_seq != 0; ++i) {
+                    AuditWire row{};
+                    std::memcpy(&row, body.data() + sizeof(head) + i * sizeof(row), sizeof(row));
+                    check(row.seq == first_seq + i, "an audit row carries the next sequence");
+                }
+                return head;
+            };
+            // More events than one page holds: every trial adds one.
+            for (std::uint64_t i = 0; i < 30; ++i)
+                (void)open_trial();
+            const AuditReply first = audit_page(0, 0);
+            check(first.count == 20 && first.truncated == 1,
+                  "the first audit page is full and says more follow");
+            const AuditReply second = audit_page(21, 0);
+            check(second.count > 0 && second.truncated == 0, "the second page holds the rest");
+            const AuditReply third = audit_page(21 + second.count, 0);
+            check(third.count == 0 && third.truncated == 0, "a cursor at the end is an empty page");
+            const AuditReply scoped = audit_page(0, control);
+            check(scoped.count == 3 && scoped.truncated == 0,
+                  "a worldline filter pages over its own events");
+        }
         att.close_all();
         std::uint64_t out[4] = {0, 0, 0, 0};
         check(::read(result[0], out, sizeof(out)) == static_cast<ssize_t>(sizeof(out)),

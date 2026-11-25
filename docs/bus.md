@@ -176,6 +176,7 @@ canary 拒绝)、`test_bus_closed_loop_e2e`(#5382,三进程正常闭环 + 五类
 - 失败是 `(error code message)`，不是 `#f`；`bus:ok?` / `bus:code` / `bus:message` 读取。错误码含 `schema-mismatch`、`seals-missing`、`loan-exhausted`、`image-full`、`validation-failed`、`permission`、`unregistered-id`、`transport-failed`。
 
 `(api-reference)` 现在也列出这些动词、所需能力和失败码。审计有两个面：控制面日志（带原因，供 `bus:audit`）和映像审计节（只追加，供映射方直接遍历）。控制面日志保留最近 4096 条事件，超出按 1024 条一批淘汰，所以没有映像审计节的宿主也不会随 publish 数增长 (#5459)；`bus:audit` 的 count/truncated 反映这个有界窗口。
+`bus:audit` 翻页从 `since-seq` 起读：凑满一页（20 行）再多读到一条匹配就停，多出的那条就是 `truncated`，不再每页扫完整个窗口。
 
 ### v0.3.2 统计准入(#5391)
 

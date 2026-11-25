@@ -2477,18 +2477,20 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
             std::memcpy(&request, body.data(), sizeof(request));
             if (!require(kCapRead, 0, 0))
                 break;
-            struct Selected {
-                std::uint64_t seq = 0;
-                const AuditEvent* event = nullptr;
-            };
-            std::vector<Selected> events;
+            constexpr std::size_t kMaxEvents = 20;
+            // The page starts at the cursor and stops one match past its
+            // last row: that extra match is what says "truncated". Every
+            // page used to walk the whole window and keep every match.
             const auto& all = audit_.events();
-            events.reserve(all.size());
-            for (std::size_t i = 0; i < all.size(); ++i) {
+            // `since_seq` is 1-based; 0 starts at the oldest retained event.
+            std::size_t from =
+                request.since_seq == 0 ? 0 : static_cast<std::size_t>(request.since_seq - 1);
+            from = std::min(from, all.size());
+            std::array<std::pair<std::uint64_t, const AuditEvent*>, kMaxEvents + 1> page{};
+            std::size_t found = 0;
+            for (std::size_t i = from; i < all.size() && found <= kMaxEvents; ++i) {
                 const std::uint64_t seq = static_cast<std::uint64_t>(i) + 1;
                 const AuditEvent& e = all[i];
-                if (request.since_seq != 0 && seq < request.since_seq)
-                    continue;
                 if (request.worldline != 0 && e.worldline != request.worldline)
                     continue;
                 if (request.actor != 0 && e.token != request.actor)
@@ -2504,25 +2506,24 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
                     if (!task_event || e.detail != request.reserved)
                         continue;
                 }
-                events.push_back({seq, &e});
+                page[found++] = {seq, &e};
             }
-            constexpr std::size_t kMaxEvents = 20;
-            const std::size_t count = std::min(events.size(), kMaxEvents);
+            const std::size_t count = std::min(found, kMaxEvents);
             std::vector<std::byte> out(sizeof(AuditReply) + count * sizeof(AuditWire));
             AuditReply reply{};
             reply.count = count;
-            reply.truncated = events.size() > count ? 1 : 0;
+            reply.truncated = found > count ? 1 : 0;
             std::memcpy(out.data(), &reply, sizeof(reply));
             for (std::size_t i = 0; i < count; ++i) {
                 AuditWire wire{};
-                const AuditEvent& e = *events[i].event;
+                const AuditEvent& e = *page[i].second;
                 wire.kind = static_cast<std::uint64_t>(e.kind);
                 wire.token = e.token;
                 wire.worldline = e.worldline;
                 wire.result = e.result;
                 wire.version = e.constraint_version;
                 wire.timestamp_ms = e.timestamp_ms;
-                wire.seq = events[i].seq;
+                wire.seq = page[i].first;
                 const std::size_t n = std::min(e.reason.size(), sizeof(wire.reason) - 1);
                 std::memcpy(wire.reason, e.reason.data(), n);
                 std::memcpy(out.data() + sizeof(reply) + i * sizeof(AuditWire), &wire,
@@ -2555,6 +2556,18 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
             const std::size_t reason_len =
                 std::min(report.first_reason.size(), sizeof(reply.first_reason) - 1);
             std::memcpy(reply.first_reason, report.first_reason.data(), reason_len);
+            // The reason of the KEEP (or the trial) event: the first one in
+            // the log that names the worldline, found in a single walk.
+            std::array<const AuditEvent*, 16> reason_of{};
+            for (const AuditEvent& event : audit_.events()) {
+                if (event.kind != AuditKind::Keep && event.kind != AuditKind::Rollback &&
+                    event.kind != AuditKind::CanaryRevert && event.kind != AuditKind::Trial)
+                    continue;
+                for (std::size_t i = 0; i < n; ++i) {
+                    if (report.nodes[i].worldline == event.worldline && reason_of[i] == nullptr)
+                        reason_of[i] = &event;
+                }
+            }
             std::vector<std::byte> out(sizeof(reply) + n * sizeof(AuditReplayNode));
             std::memcpy(out.data(), &reply, sizeof(reply));
             for (std::size_t i = 0; i < n; ++i) {
@@ -2569,18 +2582,10 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
                 wire.constraint = node.constraint;
                 wire.reproduced = node.reproduced;
                 wire.fingerprint = node.fingerprint;
-                // The reason of the KEEP (or the trial) event, and the
-                // evidence the verdict was made from.
-                for (const AuditEvent& event : audit_.events()) {
-                    if (event.worldline != node.worldline)
-                        continue;
-                    if (event.kind != AuditKind::Keep && event.kind != AuditKind::Rollback &&
-                        event.kind != AuditKind::CanaryRevert && event.kind != AuditKind::Trial)
-                        continue;
-                    wire.timestamp_ms = event.timestamp_ms;
-                    const std::size_t len = std::min(event.reason.size(), sizeof(wire.reason) - 1);
-                    std::memcpy(wire.reason, event.reason.data(), len);
-                    break;
+                if (const AuditEvent* event = reason_of[i]) {
+                    wire.timestamp_ms = event->timestamp_ms;
+                    const std::size_t len = std::min(event->reason.size(), sizeof(wire.reason) - 1);
+                    std::memcpy(wire.reason, event->reason.data(), len);
                 }
                 const auto eit = evidence_.find(node.worldline);
                 if (eit != evidence_.end()) {
