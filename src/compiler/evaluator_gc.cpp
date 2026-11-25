@@ -2279,7 +2279,7 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
         const auto mints_at_mark = file_heap_allocs_since_reclaim_.load(std::memory_order_relaxed);
         file_heap_allocs_since_reclaim_.store(0, std::memory_order_relaxed);
         // Issue #4474: the mark just walked the heap — scale the next
-        // reclaim triggers from the reachable set (live/32, clamped).
+        // reclaim triggers from the reachable set (live/16, clamped).
         // Issue #4608: the live string slots count too — the string
         // heap is part of the walked heap now.
         // Issue #4613: the live hash tables count too - the hash table
@@ -2319,13 +2319,13 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
 // mark just walked. The mark is a full-heap pass (seen_* vectors sized
 // by the heap), so firing it every 128 allocations costs O(live) per
 // alloc on large heaps — the #4474 measurements showed 1.7–2.8x on
-// alloc-heavy loops. live/32 keeps the amortized mark cost ~3% of the
+// alloc-heavy loops. live/16 keeps one mark per live/16 allocations;
 // live set; the 128 floor preserves the #4459 small-heap cadence.
 // Issue #4474 third reopen: the old fixed 32768 cap froze the window
 // above ~1M live objects, so the mark amortized over at most 32768
 // allocations and per-alloc cost grew linearly with the live heap
 // again (~3x at 3M live cells). The clamp is now heap-proportional —
-// reclaim_trigger_ceiling_for = max(32768, live/4) — which the live/32
+// reclaim_trigger_ceiling_for = max(32768, live/4) — which the live/16
 // scaling itself never reaches; it only bounds the burst escalation
 // below, so garbage between reclaims grows with the heap (bounded at
 // ~live/4) while the amortized mark cost per allocation stays ~32.
@@ -2894,7 +2894,7 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
         const auto mints_at_mark = file_heap_allocs_since_reclaim_.load(std::memory_order_relaxed);
         file_heap_allocs_since_reclaim_.store(0, std::memory_order_relaxed);
         // Issue #4474: the mark just walked the heap — scale the next
-        // reclaim triggers from the reachable set (live/32, clamped).
+        // reclaim triggers from the reachable set (live/16, clamped).
         // Issue #4608: the live string slots count too — the string
         // heap is part of the walked heap now.
         // Issue #4613: the live hash tables count too - the hash table

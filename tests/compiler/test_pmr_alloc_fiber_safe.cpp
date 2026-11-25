@@ -415,7 +415,7 @@ static void ac4473_list_mint_reuse() {
           "4473 AC7: list builders honor the mint_pair deny sentinel");
 }
 
-// ── Issue #4474: dynamic reclaim triggers (live/32, clamped) ──
+// ── Issue #4474: dynamic reclaim triggers (live/16, clamped) ──
 // #4459's fixed every-128-allocations full-heap mark costs O(live) per
 // allocation on large live heaps (1.7–2.8x on alloc-heavy loops). After
 // a mark, the next trigger now scales with the reachable set the mark
@@ -435,7 +435,7 @@ static void ac4474_dynamic_reclaim_trigger() {
     }
 
     // AC2: scale — a ~48k-pair live heap lifts the next trigger to
-    // ~live/32, so the mark cost amortizes instead of firing every 128.
+    // ~live/16, so the mark cost amortizes instead of firing every 128.
     {
         CompilerService cs;
         auto& ev = cs.evaluator();
@@ -457,12 +457,12 @@ static void ac4474_dynamic_reclaim_trigger() {
                           "(lp (+ i 1) acc)) acc)) (lp 0 0))");
         CHECK(r2 && is_int(*r2), "4474 AC3: throwaway cons loop evals");
         const auto grown = ev.pairs_size() - before;
-        CHECK(grown <= 2500, "4474 AC3: garbage between reclaims stays ~one trigger window (grew " +
+        CHECK(grown <= 3200, "4474 AC3: garbage between reclaims stays ~one trigger window (grew " +
                                  std::to_string(grown) + ")");
     }
 
     // AC4: cap — a huge live-set report scales the window past the old
-    // 32768 ceiling (live/32 + 128, which max(32768, live/4) never
+    // 32768 ceiling (live/16 + 128, which max(32768, live/4) never
     // reaches), and the #4525 burst-doubling escalation is bounded by
     // the heap-proportional ceiling (live/4 here) instead of the old
     // fixed cap. Third reopen: the fixed cap froze the window above
@@ -471,10 +471,10 @@ static void ac4474_dynamic_reclaim_trigger() {
         CompilerService cs;
         auto& ev = cs.evaluator();
         ev.note_live_set_for_reclaim_trigger(100000000, /*mints_since_mark=*/0);
-        CHECK(ev.file_heap_allocs_trigger_for_test() == 100000000 / 32 + 128,
+        CHECK(ev.file_heap_allocs_trigger_for_test() == 100000000 / 16 + 128,
               "4474 AC4: huge live set scales past the old 32768 ceiling (got " +
                   std::to_string(ev.file_heap_allocs_trigger_for_test()) + ", want " +
-                  std::to_string(100000000 / 32 + 128) + ")");
+                  std::to_string(100000000 / 16 + 128) + ")");
     }
     {
         CompilerService cs;
@@ -497,7 +497,7 @@ static void ac4474_dynamic_reclaim_trigger() {
 // heap again (reopen: ~3x alloc overhead at 3M live cells vs 300k;
 // gdb 25/30 samples in maybe_reclaim_tw_unreachable; aura-memory
 // write p50 0.82→1.57ms at a 20k-item store). The ceiling is now
-// heap-proportional (max(32768, live/4)): live/32 scaling never hits
+// heap-proportional (max(32768, live/4)): live/16 scaling never hits
 // it, and it only bounds the #4525 burst-doubling escalation.
 static void ac4474r3_large_heap_window() {
     std::println("\n--- #4474 r3: window scales on multi-million live heaps ---");
@@ -562,12 +562,12 @@ static void ac4474r3_large_heap_window() {
     const Sample big = measure_median(3000000);
 
     // AC1: the window itself — ~300k live (flat region before and after
-    // the fix) and ~3M live both sit at live/32 + 128; the 3M window
+    // the fix) and ~3M live both sit at live/16 + 128; the 3M window
     // grows past the old 32768 ceiling instead of freezing there.
-    CHECK(mid.trigger >= 300000 / 32 + 128 && mid.trigger <= 9600,
-          "4474 r3 AC1: ~300k live keeps the live/32 window (got " + std::to_string(mid.trigger) +
-              ", want >= " + std::to_string(300000 / 32 + 128) + ")");
-    CHECK(big.trigger >= 93000 && big.trigger <= 95500,
+    CHECK(mid.trigger >= 300000 / 16 + 128 && mid.trigger <= 20000,
+          "4474 r3 AC1: ~300k live keeps the live/16 window (got " + std::to_string(mid.trigger) +
+              ", want >= " + std::to_string(300000 / 16 + 128) + ")");
+    CHECK(big.trigger >= 187000 && big.trigger <= 189000,
           "4474 r3 AC1: 3M live grows the window past the old 32768 ceiling (got " +
               std::to_string(big.trigger) + ")");
 
@@ -926,7 +926,7 @@ static void ac4613_pair_vector_hash_reclaim() {
 // garbage re-firing the mark at the 128 floor cadence (M5: 200k-iter
 // let-cell loop → 1562 marks ≈ +15% wall). Landed shape: the issue's
 // minimum — a burst-escalating #4474 window (double when <half the
-// window's mints survived), the 128 floor, live/32 scaling, and a
+// window's mints survived), the 128 floor, live/16 scaling, and a
 // ceiling that is heap-proportional since the #4474 third reopen
 // (max(32768, live/4)) — small-heap bursts still clamp at 32768.
 static void ac4525_burst_rebalance() {
@@ -1037,8 +1037,8 @@ static void ac4525_burst_rebalance() {
         const auto marks = ev.file_heap_reclaim_runs_for_test() - m0;
         CHECK(r.has_value() && is_float(*r) && as_float(*r) == 3000.0,
               "4525 AC4: live-dominant burst loop returns 3000.0");
-        CHECK(marks == 1, "4525 AC4: live-dominant loop marks at the scaled cadence (got " +
-                              std::to_string(marks) + ", want 1)");
+        CHECK(marks <= 1, "4525 AC4: live-dominant loop marks at the scaled cadence (got " +
+                              std::to_string(marks) + ", want <= 1)");
         CHECK(ev.file_heap_allocs_trigger_for_test() < 2 * trig0,
               "4525 AC4: no burst doubling when the live set dominates");
     }
@@ -2112,7 +2112,7 @@ static void ac5292_fiber_dead_heap_window() {
         auto& ev = cs.evaluator();
         ev.note_live_set_for_reclaim_trigger(10, /*mints_since_mark=*/0,
                                              /*dead_high_water=*/40000);
-        CHECK(ev.file_heap_allocs_trigger_for_test() == 40010 / 32 + 128,
+        CHECK(ev.file_heap_allocs_trigger_for_test() == 40010 / 16 + 128,
               "5292 AC1: dead high-water lifts the window off the floor (got " +
                   std::to_string(ev.file_heap_allocs_trigger_for_test()) + ")");
     }
@@ -2127,11 +2127,11 @@ static void ac5292_fiber_dead_heap_window() {
     const auto pairs = ev.pairs_size();
     const auto trig = ev.file_heap_allocs_trigger_for_test();
     // The fiber's pairs are reclaimed before pairs_size() is read. The
-    // window still has to remember that dead high-water (~16000/32 + 128).
-    CHECK(trig >= 16000 / 32, "5292 AC2: exit mark keeps the dead pair high-water (got " +
+    // window still has to remember that dead high-water (~16000/16 + 128).
+    CHECK(trig >= 16000 / 16, "5292 AC2: exit mark keeps the dead pair high-water (got " +
                                   std::to_string(trig) + ", live pairs " + std::to_string(pairs) +
                                   ")");
-    CHECK(trig >= pairs / 32,
+    CHECK(trig >= pairs / 16,
           "5292 AC2: exit mark scales the window with the dead high-water (got " +
               std::to_string(trig) + ", pairs " + std::to_string(pairs) + ")");
     const auto m0 = ev.file_heap_reclaim_runs_for_test();

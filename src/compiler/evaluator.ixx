@@ -6017,19 +6017,25 @@ public:
     // window.
     static constexpr std::uint32_t kReclaimTriggerFloor = 128;
     // Issue #4474 (third reopen): a fixed 32768 cap froze the window
-    // above ~1.04M live objects (where live/32 + 128 reaches 32768),
+    // above ~0.52M live objects (where live/16 + 128 reaches 32768),
     // so every O(live) full-heap mark amortized over at most 32768
     // allocations and the per-allocation cost went back to growing
     // linearly with the live heap (aura-memory: ~3x alloc overhead at
     // 3M live cells vs 300k; gdb 25/30 samples in
     // maybe_reclaim_tw_unreachable). The cap is now heap-proportional
-    // — max(32768, live/4) — which the live/32 scaling itself never
-    // reaches (live/4 >= live/32 + 128 for live > ~585): it only
+    // — max(32768, live/4) — which the live/16 scaling itself never
+    // reaches (live/4 >= live/16 + 128 for live > ~171): it only
     // bounds the #4525 burst-doubling escalation. Garbage between
     // reclaims now grows with the heap instead of the amortization
     // breaking — the usual proportional-trigger trade-off.
     static constexpr std::uint32_t kReclaimTriggerCeiling = 32768;
-    static constexpr std::uint32_t kReclaimTriggerDivisor = 32;
+    // Issue #5433: the live runner and the game both allocate fast
+    // enough that live/32 still spends ~34% of the game tick in the
+    // mark. live/16 doubles the window: check-play's 600-tick
+    // drive went 172.7s -> 106.1s (watchdog 192.3s -> 123.5s)
+    // with the same p99 and first-wish budget. The heap-scaled
+    // ceiling below still bounds garbage at live/4.
+    static constexpr std::uint32_t kReclaimTriggerDivisor = 16;
     // Issue #4613: the reclaim window counts allocation units of this
     // size (a pair is two EvalValues = 16 bytes). A mint that costs
     // more memory charges the window proportionally, so the window
@@ -6051,7 +6057,7 @@ public:
             std::numeric_limits<std::uint32_t>::max());
     }
     // Scale the next reclaim triggers from the live set the mark just
-    // walked (live/32, clamped to the window) so a large live heap
+    // walked (live/16, clamped to the window) so a large live heap
     // amortizes the full-heap mark instead of paying it every 128
     // allocations. Skipped reclaims reset both triggers to the floor.
     // Issue #5292: `dead_high_water` is the free pair/vector/string/cell
@@ -6075,7 +6081,7 @@ public:
                  reclaim_trigger_ceiling_for(live_objects) &&
              file_heap_allocs_trigger_ >= kReclaimTriggerFloor &&
              file_heap_allocs_trigger_ <= reclaim_trigger_ceiling_for(live_objects));
-    // The dynamic trigger (live/32 from the last mark) — read by the IR
+    // The dynamic trigger (live/16 from the last mark) — read by the IR
     // dispatch reclaim checks. Upper bound is heap-scaled at the writer
     // (note_live_set pins it against the live set it just walked), so
     // the reader-side post pins the floor only.
@@ -9849,7 +9855,7 @@ private:
     std::atomic<std::uint32_t> tw_closure_allocs_{0};
     // Issue #4474: dynamic reclaim triggers — after a mark, the next
     // reclaim fires after allocations proportional to the live set the
-    // mark found (live/32, floored at 128, capped by the heap-scaled
+    // mark found (live/16, floored at 128, capped by the heap-scaled
     // ceiling max(32768, live/4) — see note_live_set_for_reclaim_trigger
     // and reclaim_trigger_ceiling_for), so a large live heap amortizes
     // the full-heap mark instead of paying it every 128 allocations.
