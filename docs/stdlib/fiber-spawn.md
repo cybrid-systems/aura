@@ -153,6 +153,19 @@ names must not crash or leave names unbound.
    precondition aborts and a SIGSEGV in the tag/arity index under a
    four-body rebind storm). It takes `lock_workspace_shared` for the read
    now, adopting any hold this thread already has.
+10. **No workspace access between two boundaries (#5475).** Two steps that
+    read the workspace ran after their boundary had ended, with no lock:
+    the tail of `set-code` (its boundary ends once the new workspace is
+    installed — it must, before the revive path, #3618 CI — and the define
+    re-bind, the revive re-parse and the epoch stamps follow), and the
+    IR closure install that `mutate:rebind` does after its cascade drain.
+    A peer fiber's rebind on the same FlatAST / StringPool raced both: an
+    `intern` spinning with the pool lock held, a rebind dying on a torn
+    FlatAST (TSan: `specialize_workspace_lambdas_via_ir` vs
+    `force_align_subtree_gen`). Each now takes the eval-current shape,
+    `WorkspaceUniqueIfNeeded(ev, /*eval_current_pin=*/true)`: the mutation
+    lock, the exclusive workspace lock, and the pin that fail-closes a
+    nested mutate.
 
 ```scheme
 ;; Concurrent dual rebind (distinct names) — both should apply or one waits

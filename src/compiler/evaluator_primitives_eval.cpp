@@ -841,6 +841,16 @@ void RegSplitParts::register_set_code_primitive(PrimRegistrar add, Evaluator& ev
                     return *install_r;
             } // ~MutationBoundaryGuard (may abort-restore empty enter snapshot
               // onto the replacement flat under production — #3618 CI)
+            // Issue #5475: everything below touches the new workspace — the
+            // revive re-parse, the define re-bind, the epoch stamps — and ran
+            // with no lock. A peer fiber's mutate:rebind on the same FlatAST
+            // / StringPool raced it: an intern spinning forever with the pool
+            // lock held (the peer then blocks on it), a rebind dying on a
+            // torn FlatAST. The Guard above must end before this (#3618 CI),
+            // so take the eval-current shape instead: the mutation lock, the
+            // exclusive workspace lock, and the pin that fail-closes a
+            // nested mutate.
+            Evaluator::WorkspaceUniqueIfNeeded post_guard_lock(ev, /*eval_current_pin=*/true);
             // If root has no children after Guard, enter snapshot was applied
             // to the new flat — re-bind from authoritative set-code source.
             if (ev.workspace_flat_ && ev.workspace_pool_ &&
@@ -1634,23 +1644,7 @@ void RegSplitParts::register_eval_current_primitive(PrimRegistrar add, Evaluator
         // Issue #2686: exclusive workspace lock for full eval (serializes
         // concurrent fiber rebind+eval on CLI). Adopts outer Guard unique.
         // Nested mutate under this lock fails closed via TLS.
-        Evaluator::WorkspaceUniqueIfNeeded eval_ulock(ev);
-        struct EvalCurrentExclusiveTls {
-            bool owns = false;
-            explicit EvalCurrentExclusiveTls(bool o)
-                : owns(o) {
-                if (owns)
-                    Evaluator::note_eval_current_shared_enter();
-            }
-            EvalCurrentExclusiveTls(const EvalCurrentExclusiveTls&) = delete;
-            EvalCurrentExclusiveTls& operator=(const EvalCurrentExclusiveTls&) = delete;
-            EvalCurrentExclusiveTls(EvalCurrentExclusiveTls&&) = delete;
-            EvalCurrentExclusiveTls& operator=(EvalCurrentExclusiveTls&&) = delete;
-            ~EvalCurrentExclusiveTls() {
-                if (owns)
-                    Evaluator::note_eval_current_shared_exit();
-            }
-        } tls_hold(eval_ulock.owns_unique_lock());
+        Evaluator::WorkspaceUniqueIfNeeded eval_ulock(ev, /*eval_current_pin=*/true);
 
         if (!ev.workspace_flat_ || !ev.workspace_pool_)
             return make_void();

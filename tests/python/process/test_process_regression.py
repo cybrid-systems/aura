@@ -14,6 +14,7 @@ PROCESS_TIMEOUT = 300
 PARTS = (
     "reg_fiber_cow",
     "reg_fiber_exit",
+    "reg_concurrent_rebind",
     "reg_orch_pipeline",
     "reg_hygienic_macro",
     "reg_eval_retain",
@@ -286,6 +287,21 @@ CASES = (
         5435,
         "test_other_session_answers_after_top_level_sleep",
         "reg_eval_async.TestTopLevelSleep5435.test_other_session_answers_after_top_level_sleep",
+    ),
+    (
+        5472,
+        "test_add_path_rebind_next_to_a_cascade_drain",
+        "reg_concurrent_rebind.ConcurrentRebind.test_add_path_rebind_next_to_a_cascade_drain",
+    ),
+    (
+        5473,
+        "test_rebind_and_eval_current_storm",
+        "reg_concurrent_rebind.ConcurrentRebind.test_rebind_and_eval_current_storm",
+    ),
+    (
+        5475,
+        "test_set_code_reload_next_to_a_rebind",
+        "reg_concurrent_rebind.ConcurrentRebind.test_set_code_reload_next_to_a_rebind",
     ),
     (
         5436,

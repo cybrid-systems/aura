@@ -6650,6 +6650,14 @@ EvalValue RegSplitParts::mutate_wrapper_commit(Evaluator& ev, const MakeErrorVal
     // the drain, then drop the arm. Failure paths disarm inside
     // the body, so this stays quiet and does not specialise a
     // rolled-back define.
+    // Issue #5475: the install reads the workspace FlatAST, and it runs
+    // after the outermost Guard is gone. With no lock a peer fiber's
+    // rebind on the same tree raced it (TSan:
+    // specialize_workspace_lambdas_via_ir vs force_align_subtree_gen), so
+    // take the eval-current shape for it: the mutation lock, the exclusive
+    // workspace lock, and the pin that fail-closes a nested mutate. A
+    // nested call adopts the boundary it runs in.
+    Evaluator::WorkspaceUniqueIfNeeded reinstall_lock(ev, /*eval_current_pin=*/true);
     if (ev.rebind_light_path()) {
         const std::string focus = ev.rebind_light_focus();
         std::vector<std::string> callers;
