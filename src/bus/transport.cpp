@@ -352,6 +352,57 @@ bool recv_frame(int fd, FrameHeader* header, std::span<std::byte> body, Transpor
     return true;
 }
 
+bool recv_frame_buffered(int fd, FrameBuffer& buffer, FrameHeader* header,
+                         std::span<std::byte> body, TransportError* error) {
+    // The buffer holds one largest frame and whatever a read overtakes of
+    // the next: a read never takes more than the buffer has room for, so
+    // the rest stays queued on the socket.
+    constexpr std::size_t kBufferBytes = sizeof(FrameHeader) + kBusMaxControlFrame;
+    if (buffer.bytes.size() < kBufferBytes)
+        buffer.bytes.resize(kBufferBytes);
+    int failure = 0;
+    const auto fill = [&](std::size_t need) {
+        while (buffer.len < need && failure == 0) {
+            std::vector<int> fds;
+            const ssize_t n = recv_msg(fd, buffer.bytes.data() + buffer.len,
+                                       buffer.bytes.size() - buffer.len, &fds);
+            for (const int f : fds)
+                ::close(f); // unexpected ancillary data on a control frame
+            if (n == 0)
+                failure = EPIPE;
+            else if (n < 0)
+                failure = errno;
+            else
+                buffer.len += static_cast<std::size_t>(n);
+        }
+        return buffer.len >= need;
+    };
+    if (!fill(sizeof(FrameHeader))) {
+        if (error)
+            *error = {failure, "peer disconnected"};
+        return false;
+    }
+    std::memcpy(header, buffer.bytes.data(), sizeof(*header));
+    if (header->len > kBusMaxControlFrame || header->len > body.size()) {
+        if (error)
+            *error = {EMSGSIZE, "control frame body too large"};
+        return false;
+    }
+    const std::size_t frame_bytes = sizeof(FrameHeader) + header->len;
+    if (!fill(frame_bytes)) {
+        if (error)
+            *error = {failure, "short control frame"};
+        return false;
+    }
+    if (header->len != 0)
+        std::memcpy(body.data(), buffer.bytes.data() + sizeof(FrameHeader), header->len);
+    // What was read past this frame is the head of the next one.
+    buffer.len -= frame_bytes;
+    if (buffer.len != 0)
+        std::memmove(buffer.bytes.data(), buffer.bytes.data() + frame_bytes, buffer.len);
+    return true;
+}
+
 Server::~Server() {
     if (gate_checkpoint_ != nullptr) {
         std::fclose(gate_checkpoint_);

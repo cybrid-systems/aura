@@ -672,6 +672,20 @@ struct PeerSession {
 bool send_frame(int fd, FrameType type, std::uint64_t session, std::span<const std::byte> body);
 bool recv_frame(int fd, FrameHeader* header, std::span<std::byte> body, TransportError* error);
 
+// A session's reply buffer. One recvmsg takes a reply's header and as
+// much of its body as is queued; what the read overtakes of the next
+// frame waits here, so a reply costs one syscall instead of a header
+// read and a body read.
+struct FrameBuffer {
+    std::vector<std::byte> bytes;
+    std::size_t len = 0; // the bytes at the head of `bytes` not handed out yet
+};
+
+// recv_frame over a session buffer: the surplus of a read stays buffered
+// for the next call, and a frame that arrives in pieces is assembled.
+bool recv_frame_buffered(int fd, FrameBuffer& buffer, FrameHeader* header,
+                         std::span<std::byte> body, TransportError* error);
+
 // Coordinator side: listen, accept peers, handshake, hand out the
 // sealed image, and serve every attached session until stop (#5377).
 // #5396: the quotas a session must respect. The defaults are

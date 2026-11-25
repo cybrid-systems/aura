@@ -80,6 +80,8 @@ namespace {
 
     struct BusSessionState {
         aura::bus::Attach att;
+        // The session's reply buffer: one recvmsg takes a reply whole.
+        aura::bus::FrameBuffer replies;
         // The workspace AST this session projects. Kept because a file-mode
         // eval clears current_flat between top-level forms.
         aura::ast::FlatAST* flat = nullptr;
@@ -507,7 +509,7 @@ EvalValue bus_publish_record(Evaluator& ev, BusSessionState& state, int channel,
     aura::bus::FrameHeader hdr{};
     std::vector<std::byte> body(aura::bus::kBusMaxControlFrame);
     aura::bus::TransportError err;
-    if (!aura::bus::recv_frame(att.sock, &hdr, body, &err))
+    if (!aura::bus::recv_frame_buffered(att.sock, state.replies, &hdr, body, &err))
         return bus_error(ev, "transport-failed", "reserve reply lost");
     if (hdr.type == static_cast<std::uint16_t>(aura::bus::FrameType::Error)) {
         aura::bus::ErrorBody eb{};
@@ -525,7 +527,7 @@ EvalValue bus_publish_record(Evaluator& ev, BusSessionState& state, int channel,
     if (!aura::bus::send_frame(att.sock, aura::bus::FrameType::Publish, att.session,
                                {reinterpret_cast<const std::byte*>(&pub), sizeof(pub)}))
         return bus_error(ev, "transport-failed", "publish send failed");
-    if (!aura::bus::recv_frame(att.sock, &hdr, body, &err))
+    if (!aura::bus::recv_frame_buffered(att.sock, state.replies, &hdr, body, &err))
         return bus_error(ev, "transport-failed", "publish reply lost");
     if (hdr.type == static_cast<std::uint16_t>(aura::bus::FrameType::Error)) {
         aura::bus::ErrorBody eb{};
@@ -601,11 +603,6 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                 return aura::bus::send_frame(
                     fd, type, session_id,
                     {reinterpret_cast<const std::byte*>(&loan), sizeof(loan)});
-            };
-            const auto recv_reply = [&](int fd, aura::bus::FrameHeader* header,
-                                        std::vector<std::byte>* body) {
-                aura::bus::TransportError err;
-                return aura::bus::recv_frame(fd, header, *body, &err);
             };
 
             if (op == "attach") {
@@ -853,6 +850,15 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                 return bus_error(ev, "unregistered-id", "unknown session");
             auto& att = state->att;
 
+            // One recvmsg takes a whole reply; what the read overtakes of
+            // the next frame waits in the session's buffer.
+            const auto recv_reply = [&](aura::bus::FrameHeader* header,
+                                        std::vector<std::byte>* body) {
+                aura::bus::TransportError err;
+                return aura::bus::recv_frame_buffered(att.sock, state->replies, header, *body,
+                                                      &err);
+            };
+
             // #5399: one task-board verb. The reply is a TaskReplyBody;
             // a task refusal maps its errno-style code to the bus error
             // vocabulary and keeps the precise reason in the message.
@@ -871,7 +877,7 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                     return bus_error(ev, "transport-failed", "task send failed");
                 aura::bus::FrameHeader hdr{};
                 std::vector<std::byte> body(aura::bus::kBusMaxControlFrame);
-                if (!recv_reply(att.sock, &hdr, &body))
+                if (!recv_reply(&hdr, &body))
                     return bus_error(ev, "transport-failed", "task reply lost");
                 if (hdr.type == static_cast<std::uint16_t>(aura::bus::FrameType::Error)) {
                     aura::bus::ErrorBody eb{};
@@ -919,7 +925,7 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                     return bus_error(ev, "transport-failed", "contract send failed");
                 aura::bus::FrameHeader hdr{};
                 std::vector<std::byte> body(aura::bus::kBusMaxControlFrame);
-                if (!recv_reply(att.sock, &hdr, &body))
+                if (!recv_reply(&hdr, &body))
                     return bus_error(ev, "transport-failed", "contract reply lost");
                 if (hdr.type == static_cast<std::uint16_t>(aura::bus::FrameType::Error)) {
                     aura::bus::ErrorBody eb{};
@@ -963,7 +969,7 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                     return bus_error(ev, "transport-failed", "budget send failed");
                 aura::bus::FrameHeader hdr{};
                 std::vector<std::byte> body(aura::bus::kBusMaxControlFrame);
-                if (!recv_reply(att.sock, &hdr, &body))
+                if (!recv_reply(&hdr, &body))
                     return bus_error(ev, "transport-failed", "budget reply lost");
                 if (hdr.type == static_cast<std::uint16_t>(aura::bus::FrameType::Error)) {
                     aura::bus::ErrorBody eb{};
@@ -997,7 +1003,7 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                     return bus_error(ev, "transport-failed", "subscribe send failed");
                 aura::bus::FrameHeader hdr{};
                 std::vector<std::byte> body(aura::bus::kBusMaxControlFrame);
-                if (!recv_reply(att.sock, &hdr, &body))
+                if (!recv_reply(&hdr, &body))
                     return bus_error(ev, "transport-failed", "subscribe reply lost");
                 if (hdr.type == static_cast<std::uint16_t>(aura::bus::FrameType::Error)) {
                     aura::bus::ErrorBody eb{};
@@ -1031,7 +1037,7 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                     return bus_error(ev, "transport-failed", "query send failed");
                 aura::bus::FrameHeader hdr{};
                 std::vector<std::byte> body(aura::bus::kBusMaxControlFrame);
-                if (!recv_reply(att.sock, &hdr, &body))
+                if (!recv_reply(&hdr, &body))
                     return bus_error(ev, "transport-failed", "query reply lost");
                 if (hdr.type == static_cast<std::uint16_t>(aura::bus::FrameType::Error)) {
                     aura::bus::ErrorBody eb{};
@@ -1177,7 +1183,7 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                     return bus_error(ev, "transport-failed", "approve send failed");
                 aura::bus::FrameHeader hdr{};
                 std::vector<std::byte> body(aura::bus::kBusMaxControlFrame);
-                if (!recv_reply(att.sock, &hdr, &body))
+                if (!recv_reply(&hdr, &body))
                     return bus_error(ev, "transport-failed", "approve reply lost");
                 if (hdr.type == static_cast<std::uint16_t>(aura::bus::FrameType::Error)) {
                     aura::bus::ErrorBody eb{};
@@ -1258,7 +1264,7 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                     return bus_error(ev, "transport-failed", "reserve send failed");
                 aura::bus::FrameHeader hdr{};
                 std::vector<std::byte> body(aura::bus::kBusMaxControlFrame);
-                if (!recv_reply(att.sock, &hdr, &body))
+                if (!recv_reply(&hdr, &body))
                     return bus_error(ev, "transport-failed", "reserve reply lost");
                 if (hdr.type == static_cast<std::uint16_t>(aura::bus::FrameType::Error)) {
                     aura::bus::ErrorBody eb{};
@@ -1280,7 +1286,7 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                 pub.length = sizeof(m);
                 if (!send_loan(att.sock, att.session, aura::bus::FrameType::Publish, pub))
                     return bus_error(ev, "transport-failed", "publish send failed");
-                if (!recv_reply(att.sock, &hdr, &body))
+                if (!recv_reply(&hdr, &body))
                     return bus_error(ev, "transport-failed", "publish reply lost");
                 if (hdr.type == static_cast<std::uint16_t>(aura::bus::FrameType::Error)) {
                     aura::bus::ErrorBody eb{};
@@ -1309,7 +1315,7 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                     return bus_error(ev, "transport-failed", "trial send failed");
                 aura::bus::FrameHeader hdr{};
                 std::vector<std::byte> body(aura::bus::kBusMaxControlFrame);
-                if (!recv_reply(att.sock, &hdr, &body))
+                if (!recv_reply(&hdr, &body))
                     return bus_error(ev, "transport-failed", "trial reply lost");
                 if (hdr.type == static_cast<std::uint16_t>(aura::bus::FrameType::Error)) {
                     aura::bus::ErrorBody eb{};
@@ -1341,7 +1347,7 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                     return bus_error(ev, "transport-failed", "worldline send failed");
                 aura::bus::FrameHeader hdr{};
                 std::vector<std::byte> body(aura::bus::kBusMaxControlFrame);
-                if (!recv_reply(att.sock, &hdr, &body))
+                if (!recv_reply(&hdr, &body))
                     return bus_error(ev, "transport-failed", "worldline reply lost");
                 if (hdr.type == static_cast<std::uint16_t>(aura::bus::FrameType::Error)) {
                     aura::bus::ErrorBody eb{};
@@ -1390,7 +1396,7 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                     return bus_error(ev, "transport-failed", "grant send failed");
                 aura::bus::FrameHeader hdr{};
                 std::vector<std::byte> body(aura::bus::kBusMaxControlFrame);
-                if (!recv_reply(att.sock, &hdr, &body))
+                if (!recv_reply(&hdr, &body))
                     return bus_error(ev, "transport-failed", "grant reply lost");
                 if (hdr.type == static_cast<std::uint16_t>(aura::bus::FrameType::Error)) {
                     aura::bus::ErrorBody eb{};
@@ -1417,7 +1423,7 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                     return bus_error(ev, "transport-failed", "grant activate send failed");
                 aura::bus::FrameHeader hdr{};
                 std::vector<std::byte> body(aura::bus::kBusMaxControlFrame);
-                if (!recv_reply(att.sock, &hdr, &body))
+                if (!recv_reply(&hdr, &body))
                     return bus_error(ev, "transport-failed", "grant activate reply lost");
                 if (hdr.type == static_cast<std::uint16_t>(aura::bus::FrameType::Error)) {
                     aura::bus::ErrorBody eb{};
@@ -1443,7 +1449,7 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                     return bus_error(ev, "transport-failed", "revoke send failed");
                 aura::bus::FrameHeader hdr{};
                 std::vector<std::byte> body(aura::bus::kBusMaxControlFrame);
-                if (!recv_reply(att.sock, &hdr, &body))
+                if (!recv_reply(&hdr, &body))
                     return bus_error(ev, "transport-failed", "revoke reply lost");
                 if (hdr.type == static_cast<std::uint16_t>(aura::bus::FrameType::Error)) {
                     aura::bus::ErrorBody eb{};
@@ -1473,7 +1479,7 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                     return bus_error(ev, "transport-failed", "audit send failed");
                 aura::bus::FrameHeader hdr{};
                 std::vector<std::byte> body(aura::bus::kBusMaxControlFrame);
-                if (!recv_reply(att.sock, &hdr, &body))
+                if (!recv_reply(&hdr, &body))
                     return bus_error(ev, "transport-failed", "audit reply lost");
                 if (hdr.type == static_cast<std::uint16_t>(aura::bus::FrameType::Error)) {
                     aura::bus::ErrorBody eb{};
@@ -1526,7 +1532,7 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                     return bus_error(ev, "transport-failed", "define query send failed");
                 aura::bus::FrameHeader hdr{};
                 std::vector<std::byte> body(aura::bus::kBusMaxControlFrame);
-                if (!recv_reply(att.sock, &hdr, &body))
+                if (!recv_reply(&hdr, &body))
                     return bus_error(ev, "transport-failed", "define query reply lost");
                 if (hdr.type == static_cast<std::uint16_t>(aura::bus::FrameType::Error)) {
                     aura::bus::ErrorBody eb{};
@@ -1575,7 +1581,7 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                     return bus_error(ev, "transport-failed", "source read send failed");
                 aura::bus::FrameHeader hdr{};
                 std::vector<std::byte> body(aura::bus::kBusMaxControlFrame);
-                if (!recv_reply(att.sock, &hdr, &body))
+                if (!recv_reply(&hdr, &body))
                     return bus_error(ev, "transport-failed", "source read reply lost");
                 if (hdr.type == static_cast<std::uint16_t>(aura::bus::FrameType::Error)) {
                     aura::bus::ErrorBody eb{};
@@ -1609,7 +1615,7 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                     return bus_error(ev, "transport-failed", "repro query send failed");
                 aura::bus::FrameHeader hdr{};
                 std::vector<std::byte> body(aura::bus::kBusMaxControlFrame);
-                if (!recv_reply(att.sock, &hdr, &body))
+                if (!recv_reply(&hdr, &body))
                     return bus_error(ev, "transport-failed", "repro query reply lost");
                 if (hdr.type == static_cast<std::uint16_t>(aura::bus::FrameType::Error)) {
                     aura::bus::ErrorBody eb{};
@@ -1744,7 +1750,7 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                     return bus_error(ev, "transport-failed", "round request send failed");
                 aura::bus::FrameHeader hdr{};
                 std::vector<std::byte> body(aura::bus::kBusMaxControlFrame);
-                if (!recv_reply(att.sock, &hdr, &body))
+                if (!recv_reply(&hdr, &body))
                     return bus_error(ev, "transport-failed", "round reply lost");
                 if (hdr.type == static_cast<std::uint16_t>(aura::bus::FrameType::Error)) {
                     aura::bus::ErrorBody eb{};
@@ -1793,7 +1799,7 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                         return bus_error(ev, "transport-failed", "degrade query send failed");
                     aura::bus::FrameHeader hdr{};
                     std::vector<std::byte> body(aura::bus::kBusMaxControlFrame);
-                    if (!recv_reply(att.sock, &hdr, &body))
+                    if (!recv_reply(&hdr, &body))
                         return bus_error(ev, "transport-failed", "degrade query reply lost");
                     if (hdr.type == static_cast<std::uint16_t>(aura::bus::FrameType::Error)) {
                         aura::bus::ErrorBody eb{};
@@ -1897,7 +1903,7 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                 }
                 aura::bus::FrameHeader hdr{};
                 std::vector<std::byte> body(aura::bus::kBusMaxControlFrame);
-                if (!recv_reply(att.sock, &hdr, &body))
+                if (!recv_reply(&hdr, &body))
                     return bus_error(ev, "transport-failed", "degrade config reply lost");
                 if (hdr.type == static_cast<std::uint16_t>(aura::bus::FrameType::Error)) {
                     aura::bus::ErrorBody eb{};
@@ -1929,7 +1935,7 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                     return bus_error(ev, "transport-failed", "supervise query send failed");
                 aura::bus::FrameHeader hdr{};
                 std::vector<std::byte> body(aura::bus::kBusMaxControlFrame);
-                if (!recv_reply(att.sock, &hdr, &body))
+                if (!recv_reply(&hdr, &body))
                     return bus_error(ev, "transport-failed", "supervise query reply lost");
                 if (hdr.type == static_cast<std::uint16_t>(aura::bus::FrameType::Error)) {
                     aura::bus::ErrorBody eb{};
@@ -1965,7 +1971,7 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                     return bus_error(ev, "transport-failed", "slo query send failed");
                 aura::bus::FrameHeader hdr{};
                 std::vector<std::byte> body(aura::bus::kBusMaxControlFrame);
-                if (!recv_reply(att.sock, &hdr, &body))
+                if (!recv_reply(&hdr, &body))
                     return bus_error(ev, "transport-failed", "slo query reply lost");
                 if (hdr.type == static_cast<std::uint16_t>(aura::bus::FrameType::Error)) {
                     aura::bus::ErrorBody eb{};
@@ -2021,7 +2027,7 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                     return bus_error(ev, "transport-failed", "audit replay send failed");
                 aura::bus::FrameHeader hdr{};
                 std::vector<std::byte> body(aura::bus::kBusMaxControlFrame);
-                if (!recv_reply(att.sock, &hdr, &body))
+                if (!recv_reply(&hdr, &body))
                     return bus_error(ev, "transport-failed", "audit replay reply lost");
                 if (hdr.type == static_cast<std::uint16_t>(aura::bus::FrameType::Error)) {
                     aura::bus::ErrorBody eb{};
@@ -2198,7 +2204,7 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                     return bus_error(ev, "transport-failed", "source publish send failed");
                 aura::bus::FrameHeader hdr{};
                 std::vector<std::byte> body(aura::bus::kBusMaxControlFrame);
-                if (!recv_reply(att.sock, &hdr, &body))
+                if (!recv_reply(&hdr, &body))
                     return bus_error(ev, "transport-failed", "source publish reply lost");
                 if (hdr.type == static_cast<std::uint16_t>(aura::bus::FrameType::Error)) {
                     aura::bus::ErrorBody eb{};
@@ -2237,7 +2243,7 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                     return bus_error(ev, "transport-failed", "evidence bind send failed");
                 aura::bus::FrameHeader hdr{};
                 std::vector<std::byte> body(aura::bus::kBusMaxControlFrame);
-                if (!recv_reply(att.sock, &hdr, &body))
+                if (!recv_reply(&hdr, &body))
                     return bus_error(ev, "transport-failed", "evidence bind reply lost");
                 if (hdr.type == static_cast<std::uint16_t>(aura::bus::FrameType::Error)) {
                     aura::bus::ErrorBody eb{};
@@ -2341,7 +2347,7 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                     return bus_error(ev, "transport-failed", "gate bind send failed");
                 aura::bus::FrameHeader hdr{};
                 std::vector<std::byte> body(aura::bus::kBusMaxControlFrame);
-                if (!recv_reply(att.sock, &hdr, &body))
+                if (!recv_reply(&hdr, &body))
                     return bus_error(ev, "transport-failed", "gate bind reply lost");
                 if (hdr.type == static_cast<std::uint16_t>(aura::bus::FrameType::Error)) {
                     aura::bus::ErrorBody eb{};
@@ -2406,7 +2412,7 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                     return bus_error(ev, "transport-failed", "candidate digest send failed");
                 aura::bus::FrameHeader hdr{};
                 std::vector<std::byte> body(aura::bus::kBusMaxControlFrame);
-                if (!recv_reply(att.sock, &hdr, &body))
+                if (!recv_reply(&hdr, &body))
                     return bus_error(ev, "transport-failed", "candidate digest reply lost");
                 if (hdr.type == static_cast<std::uint16_t>(aura::bus::FrameType::Error)) {
                     aura::bus::ErrorBody eb{};
@@ -2432,7 +2438,7 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                     return bus_error(ev, "transport-failed", "canary confirm send failed");
                 aura::bus::FrameHeader hdr{};
                 std::vector<std::byte> body(aura::bus::kBusMaxControlFrame);
-                if (!recv_reply(att.sock, &hdr, &body))
+                if (!recv_reply(&hdr, &body))
                     return bus_error(ev, "transport-failed", "canary confirm reply lost");
                 if (hdr.type == static_cast<std::uint16_t>(aura::bus::FrameType::Error)) {
                     aura::bus::ErrorBody eb{};
@@ -2843,7 +2849,7 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                     return bus_error(ev, "transport-failed", "constraint install send failed");
                 aura::bus::FrameHeader hdr{};
                 std::vector<std::byte> reply(aura::bus::kBusMaxControlFrame);
-                if (!recv_reply(att.sock, &hdr, &reply))
+                if (!recv_reply(&hdr, &reply))
                     return bus_error(ev, "transport-failed", "constraint install reply lost");
                 if (hdr.type == static_cast<std::uint16_t>(aura::bus::FrameType::Error)) {
                     aura::bus::ErrorBody eb{};
@@ -2865,7 +2871,7 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                     return bus_error(ev, "transport-failed", "constraint rollback send failed");
                 aura::bus::FrameHeader hdr{};
                 std::vector<std::byte> reply(aura::bus::kBusMaxControlFrame);
-                if (!recv_reply(att.sock, &hdr, &reply))
+                if (!recv_reply(&hdr, &reply))
                     return bus_error(ev, "transport-failed", "constraint rollback reply lost");
                 if (hdr.type == static_cast<std::uint16_t>(aura::bus::FrameType::Error)) {
                     aura::bus::ErrorBody eb{};

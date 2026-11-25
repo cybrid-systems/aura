@@ -1,14 +1,17 @@
 // Issue #5123: local bus transport — handshake, SCM_RIGHTS image, seals,
 // loan cap and peer-death reclaim. No capabilities or channel semantics.
 
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <fcntl.h>
 #include <sys/mman.h>
+#include <sys/socket.h>
 #include <sys/syscall.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -404,6 +407,78 @@ int main() {
         check(WIFEXITED(status) && WEXITSTATUS(status) == 0, "read-only server observed denials");
         ::close(ready[0]);
         ::unlink(path.c_str());
+    }
+
+    // ── A session's reply buffer ────────────────────────────────
+    // One recvmsg takes a reply whole; what the read overtakes of the
+    // next frame waits in the buffer, and a frame that arrives in pieces
+    // is assembled.
+    {
+        int pair[2];
+        check(::socketpair(AF_UNIX, SOCK_STREAM, 0, pair) == 0, "a reply socket pair");
+        FrameBuffer buffer;
+        FrameHeader hdr{};
+        std::vector<std::byte> body(kBusMaxControlFrame);
+        TransportError err{};
+        const auto frame = [&](std::uint64_t channel, std::uint64_t offset) {
+            LoanBody loan{};
+            loan.channel = channel;
+            loan.offset = offset;
+            FrameHeader h{};
+            h.len = sizeof(loan);
+            h.type = static_cast<std::uint16_t>(FrameType::Credit);
+            std::vector<std::byte> out(sizeof(h) + sizeof(loan));
+            std::memcpy(out.data(), &h, sizeof(h));
+            std::memcpy(out.data() + sizeof(h), &loan, sizeof(loan));
+            return out;
+        };
+        const auto send_all = [&](const std::vector<std::byte>& bytes) {
+            return ::send(pair[1], bytes.data(), bytes.size(), MSG_NOSIGNAL) ==
+                   static_cast<ssize_t>(bytes.size());
+        };
+        const auto is_reply = [&](std::uint64_t channel, std::uint64_t offset) {
+            LoanBody loan{};
+            std::memcpy(&loan, body.data(), sizeof(loan));
+            return hdr.type == static_cast<std::uint16_t>(FrameType::Credit) &&
+                   hdr.len == sizeof(loan) && loan.channel == channel && loan.offset == offset;
+        };
+
+        // Two replies in one write: one read takes both, and the second
+        // is handed out from the buffer.
+        std::vector<std::byte> wire = frame(1, 11);
+        const std::vector<std::byte> next = frame(2, 22);
+        wire.insert(wire.end(), next.begin(), next.end());
+        check(send_all(wire), "two replies in one write");
+        check(recv_frame_buffered(pair[0], buffer, &hdr, body, &err), "the first reply is read");
+        check(is_reply(1, 11), "the first reply is whole");
+        check(buffer.len == next.size(), "the read kept the second reply");
+        check(recv_frame_buffered(pair[0], buffer, &hdr, body, &err),
+              "the second reply is read from the buffer");
+        check(is_reply(2, 22), "the second reply is whole");
+        check(buffer.len == 0, "the buffer drains");
+
+        // A reply in three pieces, each sent after the reader had time to
+        // take the one before: the pieces are assembled.
+        wire = frame(3, 33);
+        std::thread writer([&] {
+            std::size_t at = 0;
+            for (const std::size_t piece : {std::size_t{7}, std::size_t{20}}) {
+                (void)::send(pair[1], wire.data() + at, piece, MSG_NOSIGNAL);
+                at += piece;
+                std::this_thread::sleep_for(std::chrono::milliseconds(80));
+            }
+            (void)::send(pair[1], wire.data() + at, wire.size() - at, MSG_NOSIGNAL);
+        });
+        check(recv_frame_buffered(pair[0], buffer, &hdr, body, &err),
+              "the piecemeal reply is read");
+        check(is_reply(3, 33), "the piecemeal reply is whole");
+        writer.join();
+
+        // The far end closing is a transport failure, not a frame.
+        ::close(pair[1]);
+        check(!recv_frame_buffered(pair[0], buffer, &hdr, body, &err), "EOF ends the replies");
+        check(err.code == EPIPE, "EOF reports EPIPE");
+        ::close(pair[0]);
     }
 
     if (g_failed == 0)
