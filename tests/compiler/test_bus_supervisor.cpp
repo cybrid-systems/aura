@@ -5,6 +5,7 @@
 
 #include "bus/supervisor.hh"
 
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 
@@ -93,6 +94,27 @@ int main() {
         unsetenv("AURA_SUPERVISOR_RESERVE_MB");
         unsetenv("AURA_SUPERVISOR_PER_WORKER_MB");
         unsetenv("AURA_SUPERVISOR_PER_WORKER_CPU_PCT");
+    }
+
+    // #5457: a real /proc/stat sample must not sleep on the coordinator
+    // thread. 50 calls with only the memory fixture pinned used to take
+    // 50 x 20 ms; the cached/delta sampler is microseconds.
+    {
+        check(::setenv("AURA_SUPERVISOR_MEM_FREE_MB", "900", 1) == 0, "set mem fixture for timing");
+        unsetenv("AURA_SUPERVISOR_CPU_FREE_PCT");
+        unsetenv("AURA_SUPERVISOR_CPUS");
+        SupervisorCapacity capacity{};
+        std::string why;
+        const auto t0 = std::chrono::steady_clock::now();
+        for (int i = 0; i < 50; ++i)
+            check(measure_capacity(&capacity, &why), "measure_capacity without CPU fixture");
+        const auto ns = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::steady_clock::now() - t0)
+                            .count();
+        check(ns < 500, "50 CPU samples do not sleep 20 ms each");
+        check(capacity.cpu_free_pct <= 100, "sampled CPU percentage is a share");
+        check(capacity.cpus > 0, "sampled CPU count is positive");
+        unsetenv("AURA_SUPERVISOR_MEM_FREE_MB");
     }
 
     if (g_failed == 0)

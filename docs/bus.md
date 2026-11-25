@@ -275,4 +275,5 @@ canary 拒绝)、`test_bus_closed_loop_e2e`(#5382,三进程正常闭环 + 五类
 - **reconnect**：查询失败或 EOF 后关闭会话，指数退避 1s→30s 重连；子进程保留。只有 `attach rejected`（role/workspace/schema 等）才 fatal 退出。
 - **graceful drain**：`--drain-ms`（默认 10000）；SIGTERM 后停止拉新，先等活跃 worker 完成，超时才 SIGTERM（5s 宽限）→ SIGKILL。
 - **可调策略**：`AURA_SUPERVISOR_RESERVE_MB`、`AURA_SUPERVISOR_PER_WORKER_MB`、`AURA_SUPERVISOR_PER_WORKER_CPU_PCT`；0/非法值回退默认，不会关闭上限。
+- **非阻塞容量采样**：`bus:supervise` 的空闲 CPU 用进程级上一次 `/proc/stat` 样本到现在的差值计算，100 ms 内的连续调用直接复用；首次采样用 1 分钟 loadavg，不 sleep。协调者线程不再被 20 ms 的二次采样冻住 (#5457)。
 - **CI**：`test_bus_repro` 的 ctest 工作目录固定为源码根，bus ctest 串行 31/31。回归：`test_bus_agent_spawn` 覆盖空闲 0 spawn、任务到达拉起、SIGKILL host 接管+重连、SIGTERM 无遗留 worker。

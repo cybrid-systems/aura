@@ -6,7 +6,7 @@
 #include <fstream>
 #include <sstream>
 #include <string>
-#include <thread>
+#include <mutex>
 #include <chrono>
 
 #include <unistd.h>
@@ -73,20 +73,67 @@ namespace {
         return false;
     }
 
+    // Issue #5457: measure_cpu used to read /proc/stat, sleep 20 ms and read
+    // it again. That ran on the coordinator's only poll thread, so every
+    // bus:supervise froze every peer for 20 ms. Keep one process-wide sample
+    // and derive the idle share from the delta since that sample; calls
+    // within 100 ms reuse the percentage instead of sampling again, so a
+    // tight supervisor loop never blocks the coordinator.
+    struct CpuSample {
+        std::uint64_t idle = 0;
+        std::uint64_t total = 0;
+        std::uint64_t free_pct = 100;
+        std::uint64_t cpus = 1;
+        bool have = false;
+        std::chrono::steady_clock::time_point at{};
+    };
+
+    CpuSample g_cpu_sample{};
+    std::mutex g_cpu_sample_mutex;
+
     bool measure_cpu(std::uint64_t* free_pct, std::uint64_t* cpus) {
-        std::uint64_t idle0 = 0, total0 = 0, idle1 = 0, total1 = 0;
-        if (!read_cpu_times(&idle0, &total0))
-            return false;
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
-        if (!read_cpu_times(&idle1, &total1))
-            return false;
-        const std::uint64_t total = total1 - total0;
-        const std::uint64_t idle = idle1 - idle0;
-        if (total == 0)
-            return false;
-        *free_pct = std::min<std::uint64_t>(100, (idle * 100) / total);
+        std::scoped_lock lock(g_cpu_sample_mutex);
+        const auto now = std::chrono::steady_clock::now();
+        if (g_cpu_sample.have && now - g_cpu_sample.at < std::chrono::milliseconds(100)) {
+            *free_pct = g_cpu_sample.free_pct;
+            *cpus = g_cpu_sample.cpus;
+            return true;
+        }
+        std::uint64_t idle = 0, total = 0;
+        if (!read_cpu_times(&idle, &total)) {
+            if (!g_cpu_sample.have)
+                return false;
+            *free_pct = g_cpu_sample.free_pct;
+            *cpus = g_cpu_sample.cpus;
+            return true;
+        }
         const long n = ::sysconf(_SC_NPROCESSORS_ONLN);
-        *cpus = n > 0 ? static_cast<std::uint64_t>(n) : 1;
+        std::uint64_t pct = 100;
+        if (g_cpu_sample.have && total > g_cpu_sample.total && idle >= g_cpu_sample.idle) {
+            const std::uint64_t dtotal = total - g_cpu_sample.total;
+            const std::uint64_t didle = idle - g_cpu_sample.idle;
+            pct = std::min<std::uint64_t>(100, (didle * 100) / dtotal);
+        } else if (n > 0) {
+            // First sample: the 1-minute load average is current enough and
+            // costs no sleep; the next sample after 100 ms uses the delta.
+            double load[1] = {0.0};
+            if (::getloadavg(load, 1) == 1) {
+                const double busy_pct = load[0] * 100.0 / static_cast<double>(n);
+                pct = busy_pct >= 100.0 ? 0 : 100 - static_cast<std::uint64_t>(busy_pct);
+            } else if (total > 0) {
+                pct = std::min<std::uint64_t>(100, (idle * 100) / total);
+            }
+        } else if (total > 0) {
+            pct = std::min<std::uint64_t>(100, (idle * 100) / total);
+        }
+        g_cpu_sample.idle = idle;
+        g_cpu_sample.total = total;
+        g_cpu_sample.free_pct = pct;
+        g_cpu_sample.cpus = n > 0 ? static_cast<std::uint64_t>(n) : 1;
+        g_cpu_sample.at = now;
+        g_cpu_sample.have = true;
+        *free_pct = pct;
+        *cpus = g_cpu_sample.cpus;
         return true;
     }
 
