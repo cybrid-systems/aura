@@ -124,6 +124,12 @@ struct TrialRecord {
     // #5381: observation mode — kept=true but the live apply is under a
     // canary window; seal confirms Kept, a revert rolls back to Rolled.
     bool canary = false;
+    // The patches channel window a trial could have written to: the
+    // committed count when it opened and when it settled (0 = still open).
+    // A patch is only published under a pending trial, so a trial's
+    // records lie inside its window.
+    std::uint32_t patch_begin = 0;
+    std::uint32_t patch_end = 0;
     // #5401: the task this trial belongs to (0 = unscoped). A capability
     // scoped to a task may only open/keep/rollback that task's trial.
     std::uint64_t task = 0;
@@ -134,16 +140,18 @@ struct TrialRecord {
 class WorldlineLedger {
 public:
     std::uint64_t open_trial(std::uint64_t owner, std::uint64_t workspace,
-                             std::uint64_t base_generation = 0, std::uint64_t task = 0);
+                             std::uint64_t base_generation = 0, std::uint64_t task = 0,
+                             std::uint32_t patch_begin = 0);
     bool keep(std::uint64_t id, std::uint64_t owner, const Capability& caps, std::string* why,
-              bool applied_live = false);
-    bool rollback(std::uint64_t id, std::uint64_t owner, const Capability& caps, std::string* why);
+              bool applied_live = false, std::uint32_t patch_end = 0);
+    bool rollback(std::uint64_t id, std::uint64_t owner, const Capability& caps, std::string* why,
+                  std::uint32_t patch_end = 0);
     void release_loan(std::uint64_t id);
     const TrialRecord* find(std::uint64_t id) const;
     // #5395: the trials that are still pending (the soak lane watches
     // this number for a residue).
     std::size_t pending_count() const;
-    std::vector<std::uint64_t> end_session(std::uint64_t owner);
+    std::vector<std::uint64_t> end_session(std::uint64_t owner, std::uint32_t patch_end = 0);
 
     // #5381: canary transitions. enter_canary requires a kept, applied
     // trial; seal_canary ends observation as Kept; revert_canary rolls

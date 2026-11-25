@@ -952,6 +952,9 @@ private:
     std::uint64_t candidate_content_digest(std::uint64_t worldline) const;
     // #5378: collect the trial's committed patch records from the image.
     std::vector<PatchRecord> trial_patches(std::uint64_t worldline) const;
+    // The committed record count of the patches channel (0 without an
+    // image): the ledger stamps a trial's patch window with it.
+    std::uint32_t patches_committed() const;
     // #5381: canary bookkeeping on the coordinator thread.
     void canary_on_keep(std::uint64_t worldline);
     void canary_seal(std::uint64_t worldline, std::uint64_t token);

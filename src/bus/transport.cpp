@@ -1032,7 +1032,18 @@ std::vector<PatchRecord> Server::trial_patches(std::uint64_t worldline) const {
     if (!channel_view({image_base_, image_size_}, Channel::Patches, &view))
         return out;
     const std::uint64_t elem = view.element_size != 0 ? view.element_size : sizeof(PatchRecord);
-    for (std::uint64_t i = 0; i < view.count; ++i) {
+    // A patch is only published under a pending trial, so a trial's
+    // records lie between the committed counts of its open and its
+    // settle; the rest of the channel is other trials' history. A
+    // worldline the ledger does not know keeps the whole-channel read.
+    std::uint64_t from = 0;
+    std::uint64_t to = view.count;
+    if (const TrialRecord* trial = worldlines_.find(worldline)) {
+        from = std::min<std::uint64_t>(trial->patch_begin, view.count);
+        if (!trial->pending)
+            to = std::min<std::uint64_t>(trial->patch_end, view.count);
+    }
+    for (std::uint64_t i = from; i < to; ++i) {
         PatchRecord p{};
         std::memcpy(&p, image_base_ + view.offset + i * elem,
                     static_cast<std::size_t>(std::min<std::uint64_t>(elem, sizeof(p))));
@@ -1040,6 +1051,15 @@ std::vector<PatchRecord> Server::trial_patches(std::uint64_t worldline) const {
             out.push_back(p);
     }
     return out;
+}
+
+std::uint32_t Server::patches_committed() const {
+    if (image_base_ == nullptr)
+        return 0;
+    ChannelView view{};
+    if (!channel_view({image_base_, image_size_}, Channel::Patches, &view))
+        return 0;
+    return static_cast<std::uint32_t>(std::min<std::uint64_t>(view.count, kImageMaxRecords));
 }
 
 std::uint64_t Server::candidate_digest(std::uint64_t worldline) const {
@@ -2071,7 +2091,7 @@ void Server::round_roll(std::string_view reason) {
             caps.channels = ~0ull;
             caps.workspace = workspace_id_;
             std::string why;
-            if (worldlines_.rollback(worldline, trial->owner, caps, &why)) {
+            if (worldlines_.rollback(worldline, trial->owner, caps, &why, patches_committed())) {
                 record_audit(AuditKind::Rollback, trial->owner, worldline);
                 project_worldline(worldline, WorldlineState::Rolled, ConstraintResult::None);
             }
@@ -2779,8 +2799,8 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
             }
             // #5378: bind the trial to the live workspace generation it
             // starts from; KEEP rejects a stale baseline.
-            const std::uint64_t id =
-                worldlines_.open_trial(root_token, workspace_id_, workspace_gen_, loan.worldline);
+            const std::uint64_t id = worldlines_.open_trial(
+                root_token, workspace_id_, workspace_gen_, loan.worldline, patches_committed());
             record_audit(AuditKind::Trial, root_token, id);
             // #5393: the trial joins the round when one is running.
             round_note_trial(id, session);
@@ -3046,7 +3066,8 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
             std::string why;
             bool ok = false;
             if (keep) {
-                ok = worldlines_.keep(loan.worldline, root_token, caps, &why, applied_live);
+                ok = worldlines_.keep(loan.worldline, root_token, caps, &why, applied_live,
+                                      patches_committed());
             } else if (canary_worldline_ == loan.worldline) {
                 // #5381: rolling back the active canary restores the
                 // pre-observation snapshot (judge-initiated revert).
@@ -3068,7 +3089,8 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
                     note_negative_keep(loan.worldline);
                 }
             } else {
-                ok = worldlines_.rollback(loan.worldline, root_token, caps, &why);
+                ok = worldlines_.rollback(loan.worldline, root_token, caps, &why,
+                                          patches_committed());
             }
             if (!ok) {
                 deny(EPERM, why);
@@ -4056,7 +4078,7 @@ bool Server::handle_frame(PeerSession& peer, const FrameHeader& header,
 void Server::finish_session(PeerSession& peer) {
     // #5396: the per-session counters die with the session.
     constraint_windows_.erase(peer.session);
-    for (std::uint64_t id : worldlines_.end_session(peer.root_token)) {
+    for (std::uint64_t id : worldlines_.end_session(peer.root_token, patches_committed())) {
         record_audit(AuditKind::Rollback, peer.root_token, id);
         project_worldline(id, WorldlineState::Rolled, ConstraintResult::None);
     }
@@ -4083,7 +4105,7 @@ bool Server::wait_disconnect(TransportError* error) {
     FrameHeader header{};
     std::vector<std::byte> body(kBusMaxControlFrame);
     const auto finish = [&]() {
-        for (std::uint64_t id : worldlines_.end_session(root_token_)) {
+        for (std::uint64_t id : worldlines_.end_session(root_token_, patches_committed())) {
             record_audit(AuditKind::Rollback, root_token_, id);
             project_worldline(id, WorldlineState::Rolled, ConstraintResult::None);
         }

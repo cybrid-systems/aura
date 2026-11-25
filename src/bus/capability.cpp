@@ -317,13 +317,15 @@ bool CapabilityTable::revoked(std::uint64_t token) const {
 }
 
 std::uint64_t WorldlineLedger::open_trial(std::uint64_t owner, std::uint64_t workspace,
-                                          std::uint64_t base_generation, std::uint64_t task) {
+                                          std::uint64_t base_generation, std::uint64_t task,
+                                          std::uint32_t patch_begin) {
     TrialRecord rec{};
     rec.id = next_id_++;
     rec.owner = owner;
     rec.workspace = workspace;
     rec.base_generation = base_generation;
     rec.task = task;
+    rec.patch_begin = patch_begin;
     rec.pending = true;
     rec.loan_outstanding = true;
     records_.push_back(rec);
@@ -353,7 +355,7 @@ const TrialRecord* WorldlineLedger::find(std::uint64_t id) const {
 }
 
 bool WorldlineLedger::keep(std::uint64_t id, std::uint64_t owner, const Capability& caps,
-                           std::string* why, bool applied_live) {
+                           std::string* why, bool applied_live, std::uint32_t patch_end) {
     const auto fail = [&](const char* text) {
         if (why)
             *why = text;
@@ -377,12 +379,13 @@ bool WorldlineLedger::keep(std::uint64_t id, std::uint64_t owner, const Capabili
     rec->pending = false;
     rec->kept = true;
     rec->applied_live = applied_live;
+    rec->patch_end = patch_end;
     pending_.erase({rec->owner, id});
     return true;
 }
 
 bool WorldlineLedger::rollback(std::uint64_t id, std::uint64_t owner, const Capability& caps,
-                               std::string* why) {
+                               std::string* why, std::uint32_t patch_end) {
     const auto fail = [&](const char* text) {
         if (why)
             *why = text;
@@ -403,6 +406,7 @@ bool WorldlineLedger::rollback(std::uint64_t id, std::uint64_t owner, const Capa
         return fail("worldline is not pending");
     rec->pending = false;
     rec->rolled_back = true;
+    rec->patch_end = patch_end;
     pending_.erase({rec->owner, id});
     return true;
 }
@@ -491,13 +495,15 @@ bool WorldlineLedger::revert_canary(std::uint64_t id, std::string* why) {
     return true;
 }
 
-std::vector<std::uint64_t> WorldlineLedger::end_session(std::uint64_t owner) {
+std::vector<std::uint64_t> WorldlineLedger::end_session(std::uint64_t owner,
+                                                        std::uint32_t patch_end) {
     std::vector<std::uint64_t> rolled;
     // The settled trials leave the pending set as they are walked.
     for (auto it = pending_.lower_bound({owner, 0}); it != pending_.end() && it->first == owner;) {
         TrialRecord& rec = records_[static_cast<std::size_t>(it->second - 1)];
         rec.pending = false;
         rec.rolled_back = true;
+        rec.patch_end = patch_end;
         rolled.push_back(rec.id);
         it = pending_.erase(it);
     }

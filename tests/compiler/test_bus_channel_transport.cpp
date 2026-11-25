@@ -352,6 +352,88 @@ int main() {
     }
     reserve(3, sizeof(PatchRecord), &offset);
 
+    // A trial's patches are the ones committed while it was pending: the
+    // digest of a settled trial takes no patch that names it afterwards,
+    // and a later trial takes none of the earlier one's records.
+    {
+        const auto loan_roundtrip = [&](FrameType type, const LoanBody& loan, LoanBody* out) {
+            check(send_frame(att.sock, type, att.session,
+                             {reinterpret_cast<const std::byte*>(&loan), sizeof(loan)}),
+                  "loan frame");
+            FrameHeader hdr{};
+            std::vector<std::byte> reply(kBusMaxControlFrame);
+            check(recv_frame(att.sock, &hdr, reply, &err), "loan reply");
+            check(hdr.type == static_cast<std::uint16_t>(FrameType::Credit) &&
+                      hdr.len >= sizeof(*out),
+                  "the loan reply is a credit");
+            std::memcpy(out, reply.data(), sizeof(*out));
+        };
+        const auto trial_patch = [&](std::uint64_t worldline, std::uint64_t value) {
+            std::uint64_t at = 0;
+            reserve(3, sizeof(PatchRecord), &at);
+            PatchRecord patch{};
+            patch.node = kImageNoIndex;
+            patch.field_offset = 8;
+            patch.new_value = value;
+            patch.worldline = worldline;
+            put(base, at, patch);
+            LoanBody body{};
+            body.channel = 3;
+            body.offset = at;
+            body.length = sizeof(patch);
+            body.worldline = worldline;
+            check(send_frame(att.sock, FrameType::Publish, att.session,
+                             {reinterpret_cast<const std::byte*>(&body), sizeof(body)}),
+                  "publish a trial's patch");
+            check(read_channel_reply(att.sock, &view, &err), "the trial patch reply");
+            return patch;
+        };
+        const auto digest_of = [](const PatchRecord& patch) {
+            std::uint64_t h = 14695981039346656037ull;
+            const auto* bytes = reinterpret_cast<const std::byte*>(&patch);
+            for (std::size_t i = 0; i < sizeof(patch); ++i) {
+                h ^= std::to_integer<std::uint64_t>(bytes[i]);
+                h *= 1099511628211ull;
+            }
+            return h & ((1ull << 62) - 1);
+        };
+        const auto digest = [&](std::uint64_t worldline) {
+            LoanBody query{};
+            query.channel = 1;
+            query.worldline = worldline;
+            LoanBody reply{};
+            loan_roundtrip(FrameType::CandidateDigest, query, &reply);
+            return reply.offset;
+        };
+
+        LoanBody open{};
+        open.channel = 3;
+        LoanBody first{};
+        loan_roundtrip(FrameType::Trial, open, &first);
+        const PatchRecord p1 = trial_patch(first.worldline, 11);
+        LoanBody close = open;
+        close.worldline = first.worldline;
+        LoanBody closed{};
+        loan_roundtrip(FrameType::Rollback, close, &closed);
+        LoanBody second{};
+        loan_roundtrip(FrameType::Trial, open, &second);
+        check(second.worldline != first.worldline, "the second trial is a new worldline");
+        const PatchRecord p2 = trial_patch(second.worldline, 22);
+        // A patch that names the settled trial arrives afterwards.
+        std::uint64_t late_at = 0;
+        reserve(3, sizeof(PatchRecord), &late_at);
+        PatchRecord late{};
+        late.node = kImageNoIndex;
+        late.field_offset = 8;
+        late.new_value = 33;
+        late.worldline = first.worldline;
+        put(base, late_at, late);
+        publish(3, late_at, sizeof(late), &view);
+        check(digest(first.worldline) == digest_of(p1),
+              "a settled trial's digest keeps only its own patches");
+        check(digest(second.worldline) == digest_of(p2), "a later trial sees only its own patch");
+    }
+
     // Audit is mirrored into the image audit section (#5122/#5126): the
     // coordinator appends only in even committed generations, and the
     // section digest keeps the whole image valid.
