@@ -171,6 +171,26 @@ namespace {
     thread_local int g_evo_depth_4910 = 0;
 } // namespace
 
+// Issue #5473: the evolution-log step reads the live workspace (the target
+// define's source, the mutation id) on the calling fiber, outside the
+// mutation boundary. Unlocked, that read raced a peer fiber's rebind
+// mid-parse, mid-recycle and mid-typecheck (TSan: is_free_slot / unparse vs
+// add_node / recycle_dead_nodes / set_type). Hold the shared workspace lock
+// for the read; lock_workspace_shared adopts any hold this thread already
+// has (a Guard, the eval-current pin, a prior shared read).
+namespace {
+    struct WorkspaceRead5473 {
+        Evaluator& ev;
+        explicit WorkspaceRead5473(Evaluator& e) noexcept
+            : ev(e) {
+            ev.lock_workspace_shared();
+        }
+        ~WorkspaceRead5473() { ev.unlock_workspace_shared(); }
+        WorkspaceRead5473(const WorkspaceRead5473&) = delete;
+        WorkspaceRead5473& operator=(const WorkspaceRead5473&) = delete;
+    };
+} // namespace
+
 namespace {
 
     using StableNodeRef = aura::ast::FlatAST::StableNodeRef;
@@ -11488,6 +11508,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                                                     : std::string();
             };
             auto define_src = [&ev](std::string_view name) -> std::string {
+                WorkspaceRead5473 workspace_read(ev); // Issue #5473
                 auto* flat = ev.workspace_flat_;
                 auto* pool = ev.workspace_pool_;
                 if (!flat || !pool || name.empty())
@@ -11516,6 +11537,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             // Issue #5251: ids are handed out as next_mutation_id_++, so a
             // single-record call records exactly the id read before it.
             auto mutation_counter = [&ev]() -> std::uint64_t {
+                WorkspaceRead5473 workspace_read(ev); // Issue #5473
                 return ev.workspace_flat_ ? ev.workspace_flat_->next_mutation_id() : 0;
             };
             const std::uint64_t mut_before = mutation_counter();

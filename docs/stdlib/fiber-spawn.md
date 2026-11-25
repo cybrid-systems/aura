@@ -145,6 +145,14 @@ names must not crash or leave names unbound.
    A thread that already holds the lock (typed_mutate) is adopted. Not
    covered: a RegionExclusive admit (concurrent by design) and the
    heap-slot auto-guard of `hash-set!` (never needs the lock).
+9. **The evolution-log step reads under the shared workspace lock
+   (#5473).** The trace around every `mutate:*` reads the target define's
+   source and the mutation id on the calling fiber, before the boundary is
+   entered; unlocked it raced a peer fiber's rebind (TSan: `is_free_slot` /
+   unparse vs `add_node` / `recycle_dead_nodes` / `set_type`; FlatAST
+   precondition aborts and a SIGSEGV in the tag/arity index under a
+   four-body rebind storm). It takes `lock_workspace_shared` for the read
+   now, adopting any hold this thread already has.
 
 ```scheme
 ;; Concurrent dual rebind (distinct names) — both should apply or one waits
