@@ -247,6 +247,96 @@ const char* kWorkerC = R"AURA(
 (display "C-DONE") (newline)
 )AURA";
 
+// #5440: a fresh board with one open task, then the host stops so the
+// test can remove the gate ledger.
+const char* kGateSeed = R"AURA(
+(require "std/bus" all:)
+(define h (bus:host 8904))
+(display "seed-host=") (display (bus:ok? h)) (newline)
+(define s (car (cdr (bus:attach "" 8904 0 255 255))))
+(define t (bus:post-task s 0 1))
+(display "seed-task=") (display (list-ref t 1)) (newline)
+(bus:detach s)
+(display "seed-unhost=") (display (bus:ok? (bus:unhost 8904))) (newline)
+)AURA";
+
+// The first restart after the ledger loss: claim 1 fails closed, then a
+// re-issued contract + approval recovers it. Task 2 is posted while the
+// host is in the lost state and must survive the next restart.
+const char* kGateReissue = R"AURA(
+(require "std/bus" all:)
+(define (show label value) (display label) (display "=") (display value) (display "|") (newline))
+(define h (bus:host 8904))
+(show "reissue-host" (bus:ok? h))
+(define s (car (cdr (bus:attach "" 8904 0 255 255))))
+(define lost (bus:claim s 5000 1))
+(show "lost-claim" (bus:message lost))
+(define c (bus:contract s 1 42 100))
+(show "reissue-contract" (car c))
+(define ap (bus:approve s 1 1 0))
+(show "reissue-approve" (car ap))
+(define after (bus:claim s 5000 1))
+(show "recovered-claim" (if (bus:ok? after) (list-ref after 1) (bus:message after)))
+(define ev (bus:contract-evidence s 1 1 100))
+(show "recovered-evidence" (car ev))
+(define done (bus:complete s 1 7))
+(show "recovered-complete" (car done))
+(define t2 (bus:post-task s 0 2))
+(show "new-task" (list-ref t2 1))
+(bus:detach s)
+(show "reissue-unhost" (bus:ok? (bus:unhost 8904)))
+)AURA";
+
+// #5440: a global budget trip persisted with a low limit, then a host
+// started with a much higher limit must clear it at startup.
+const char* kBudgetSeed = R"AURA(
+(require "std/bus" all:)
+(define (show label value) (display label) (display "=") (display value) (display "|") (newline))
+(define h (bus:host 8906))
+(define s (car (cdr (bus:attach "" 8906 0 255 255))))
+(define t (bus:post-task s 0 1))
+(show "budget-seed-task" (list-ref t 1))
+(define c (bus:claim s 60000 1))
+(show "budget-seed-claim" (bus:ok? c))
+(define ch (bus:budget-charge s 1 11))
+(show "budget-seed-charge" (bus:message ch))
+(define r (bus:budget-report s 0))
+(show "budget-seed-flags" (list-ref r 8))
+(bus:detach s)
+(show "budget-seed-unhost" (bus:ok? (bus:unhost 8906)))
+)AURA";
+
+const char* kBudgetRecover = R"AURA(
+(require "std/bus" all:)
+(define (show label value) (display label) (display "=") (display value) (display "|") (newline))
+(define h (bus:host 8906))
+(define s (car (cdr (bus:attach "" 8906 0 255 255))))
+(define t (bus:post-task s 0 2))
+(define c (bus:claim s 60000 (list-ref t 1)))
+(show "budget-recover-claim" (if (bus:ok? c) (list-ref c 1) (bus:message c)))
+(define r (bus:budget-report s 0))
+(show "budget-recover-flags" (list-ref r 8))
+(bus:detach s)
+(show "budget-recover-unhost" (bus:ok? (bus:unhost 8906)))
+)AURA";
+
+// The normal restart after recovery: task 2 (posted while the ledger was
+// lost) and a task posted now must both be claimable, not gate-state-lost.
+const char* kGateRestart = R"AURA(
+(require "std/bus" all:)
+(define (show label value) (display label) (display "=") (display value) (display "|") (newline))
+(define h (bus:host 8904))
+(display "restart-host=") (display (bus:ok? h)) (newline)
+(define s (car (cdr (bus:attach "" 8904 0 255 255))))
+(define c2 (bus:claim s 5000 2))
+(show "new-task-claim" (if (bus:ok? c2) (list-ref c2 1) (bus:message c2)))
+(define t3 (bus:post-task s 0 3))
+(define c3 (bus:claim s 5000 (list-ref t3 1)))
+(show "post-restart-claim" (if (bus:ok? c3) (list-ref c3 1) (bus:message c3)))
+(bus:detach s)
+(show "restart-unhost" (bus:ok? (bus:unhost 8904)))
+)AURA";
+
 } // namespace
 
 int main() {
@@ -263,6 +353,11 @@ int main() {
     check(write_file(d + "/a.aura", kWorkerA), "write worker A");
     check(write_file(d + "/b.aura", kWorkerB), "write worker B");
     check(write_file(d + "/c.aura", kWorkerC), "write worker C");
+    check(write_file(d + "/gate-seed.aura", kGateSeed), "write gate seed");
+    check(write_file(d + "/gate-reissue.aura", kGateReissue), "write gate reissue");
+    check(write_file(d + "/gate-restart.aura", kGateRestart), "write gate restart");
+    check(write_file(d + "/budget-seed.aura", kBudgetSeed), "write budget seed");
+    check(write_file(d + "/budget-recover.aura", kBudgetRecover), "write budget recover");
 
     int host_out = -1, host_in = -1;
     const pid_t host = run_script(d + "/host.aura", &host_out, &host_in);
@@ -394,6 +489,67 @@ int main() {
     check(has(host_out_text, "host-quit"), "host quit cleanly");
     struct stat st{};
     check(::stat(sock.c_str(), &st) != 0, "socket unlinked");
+
+    // ── #5440: lost gates recover, and the loss does not spread ──
+    const auto run_once = [&](const char* name) {
+        int out = -1, in = -1;
+        const pid_t pid = run_script(d + "/" + name, &out, &in);
+        if (pid <= 0)
+            return std::string();
+        ::close(in);
+        std::string text = read_all(out);
+        int status = 0;
+        waitpid(pid, &status, 0);
+        return text;
+    };
+    {
+        const std::string seed = run_once("gate-seed.aura");
+        check(has(seed, "seed-task=1"), "the seed board has task 1");
+        const std::string gate_sock = default_socket_path(8904);
+        check(::unlink((gate_sock + ".tasks.gates").c_str()) == 0,
+              "the gate ledger was removed before the restart");
+    }
+    {
+        const std::string text = run_once("gate-reissue.aura");
+        if (!has(text, "lost-claim=gate-state-lost"))
+            std::printf("GATE-REISSUE-OUT:[%s]\n", text.c_str());
+        check(has(text, "lost-claim=gate-state-lost"),
+              "a restored task fails closed while its gates are lost");
+        check(has(text, "reissue-contract=ok"), "the contract can be re-issued");
+        check(has(text, "reissue-approve=ok"), "the re-issued contract can be approved");
+        check(has(text, "recovered-claim=1"), "the recovered task is claimable again");
+        check(has(text, "recovered-evidence=ok"), "the recovered task records evidence");
+        check(has(text, "recovered-complete=ok"), "the recovered task completes");
+        check(has(text, "new-task=2"), "task 2 is posted in the recovered host");
+    }
+    {
+        const std::string text = run_once("gate-restart.aura");
+        if (!has(text, "new-task-claim=2"))
+            std::printf("GATE-RESTART-OUT:[%s]\n", text.c_str());
+        check(has(text, "new-task-claim=2"),
+              "task 2 survived the next restart without gate-state-lost");
+        check(has(text, "post-restart-claim=3"),
+              "a task posted after recovery is claimable after a restart");
+    }
+
+    // ── #5440: raising the global budget clears a persisted trip ──
+    {
+        check(setenv("AURA_BUS_GLOBAL_TOKEN_LIMIT", "10", 1) == 0, "set low global limit");
+        const std::string seed = run_once("budget-seed.aura");
+        if (!has(seed, "budget-seed-charge=global token budget exceeded"))
+            std::printf("BUDGET-SEED-OUT:[%s]\n", seed.c_str());
+        check(has(seed, "budget-seed-charge=global token budget exceeded"),
+              "the low global limit trips on a charge");
+        check(has(seed, "budget-seed-flags=3"), "the global trip is reported");
+        check(setenv("AURA_BUS_GLOBAL_TOKEN_LIMIT", "100000", 1) == 0, "raise the global limit");
+        const std::string text = run_once("budget-recover.aura");
+        if (!has(text, "budget-recover-claim=2"))
+            std::printf("BUDGET-RECOVER-OUT:[%s]\n", text.c_str());
+        check(has(text, "budget-recover-claim=2"),
+              "raising the global limit clears the persisted trip");
+        check(has(text, "budget-recover-flags=0"), "the recovered global ledger is clean");
+        unsetenv("AURA_BUS_GLOBAL_TOKEN_LIMIT");
+    }
 
     if (g_failed == 0)
         std::printf("test_bus_tasks: all checks passed\n");

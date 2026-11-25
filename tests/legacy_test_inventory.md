@@ -1,7 +1,7 @@
 # Legacy test inventory
 
 **Issue:** [#1957](https://github.com/cybrid-systems/aura/issues/1957)
-**Generated:** 2026-11-23 by `scripts/tools/inventory_legacy_tests.py`
+**Generated:** 2026-11-25 by `scripts/tools/inventory_legacy_tests.py`
 **Status:** generated inventory, not the how-to-add-a-test policy. Policy is tests/HOMES.md. Re-run this script after consolidations.
 
 ## Purpose
@@ -2146,7 +2146,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_bus_agent_spawn.cpp` (—) [domain_suite, theme_compiler] — Issue #5422: the supervisor's execution layer. The host's plan comes
 - `tests/compiler/test_bus_approval.cpp` (—) [small, domain_suite, theme_compiler] — Issue #5404: the human approval point. A pending object has a
 - `tests/compiler/test_bus_audit_replay.cpp` (—) [large, domain_suite, theme_compiler] — Issue #5392: audit replay and deterministic reproduction.
-- `tests/compiler/test_bus_budget.cpp` (—) [small, domain_suite, theme_compiler] — Issue #5403: task/global token, wall-clock and failure budgets.
+- `tests/compiler/test_bus_budget.cpp` (—) [domain_suite, theme_compiler] — Issue #5403: task/global token, wall-clock and failure budgets.
 - `tests/compiler/test_bus_constraint_defaults.cpp` (—) [domain_suite, theme_compiler] — Issue #5401: target-allowlist and metric-floor-bound are fail-closed.
 - `tests/compiler/test_bus_constraints.cpp` (—) [domain_suite, theme_compiler] — Issue #5126: constraint gate on KEEP, versioned sets, audit.
 - `tests/compiler/test_bus_constraints_subset.cpp` (—) [domain_suite, theme_compiler] — Issue #5380: bus constraint executable minimal safe subset, aligned

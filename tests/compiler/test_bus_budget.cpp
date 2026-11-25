@@ -68,6 +68,44 @@ int main() {
           "a global token overrun trips the global ledger");
     check(global_ledger.global_tripped(), "the global ledger reports tripped");
 
+    // #5440: a restored global trip is re-evaluated against the policy
+    // the new host was started with; raising the limit clears it.
+    BudgetLedger restored;
+    BudgetPolicy low{};
+    low.task = {100, 1000, 10};
+    low.global = {10, 1000, 10};
+    restored.configure(low);
+    BudgetUsage old_global{};
+    old_global.tokens = 11;
+    old_global.started_ms = 100;
+    old_global.tripped = true;
+    old_global.reason = "budget exceeded (restored from the checkpoint)";
+    restored.restore(0, old_global);
+    check(restored.global_tripped(), "the restored global ledger starts tripped");
+    BudgetPolicy raised{};
+    raised.task = {100, 1000, 10};
+    raised.global = {100, 1000, 10};
+    restored.configure(raised);
+    restored.reconcile(100);
+    check(!restored.global_tripped(), "raising the global limit clears the trip");
+    check(restored.charge(9, 1, 0, 0, 100, &task, &global, &why),
+          "the raised global limit admits a charge");
+
+    // #5440: the global wall clock is a rolling window, not a permanent
+    // lifetime trip; a long uptime starts a fresh window on the next charge.
+    BudgetLedger rolling;
+    BudgetPolicy rp{};
+    rp.task = {1000, 1000, 10};
+    rp.global = {1000, 50, 10};
+    rolling.configure(rp);
+    rolling.start(1, 1000);
+    check(rolling.charge(1, 1, 0, 0, 1050, &task, &global, &why),
+          "a charge inside the global window passes");
+    check(rolling.charge(1, 1, 0, 0, 1101, &task, &global, &why),
+          "an expired global window rolls instead of tripping");
+    check(!rolling.global_tripped(), "the rolled global window is clean");
+    check(global.tokens == 1, "the rolled window counts only the new charge");
+
     if (g_failed == 0)
         std::printf("test_bus_budget: all checks passed\n");
     return g_failed == 0 ? 0 : 1;

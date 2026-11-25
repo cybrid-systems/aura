@@ -821,9 +821,9 @@ public:
     // #5427: false when a restored task's gate state (contract/approval/
     // budget) could not be recovered; every completion/claim on a
     // restored task then fails closed.
-    [[nodiscard]] bool gates_lost() const { return gates_lost_; }
+    [[nodiscard]] bool gates_lost() const { return !lost_gates_.empty(); }
     // #5403: task/global budget limits. The defaults are bounded.
-    void set_budget_policy(const BudgetPolicy& policy) { budget_.configure(policy); }
+    void set_budget_policy(const BudgetPolicy& policy);
     [[nodiscard]] const BudgetLedger& budget() const { return budget_; }
     // #5395: the bus's own performance counters and capacity plan.
     [[nodiscard]] const SloCounters& slo() const { return slo_; }
@@ -1036,9 +1036,12 @@ private:
     // task checkpoint. One append-only record stream, replayed on start.
     std::FILE* gate_checkpoint_ = nullptr;
     std::string gate_checkpoint_path_;
-    bool gates_lost_ = false;
-    std::unordered_map<std::uint64_t, std::uint8_t> restored_tasks_{};
+    // #5440: the per-task fail-closed set. A Lost record names its task;
+    // re-issuing its gates appends a Recovered record and erases the id.
+    std::unordered_map<std::uint64_t, std::uint8_t> lost_gates_{};
     bool gates_resume(std::string* why);
+    void gate_mark_lost_all();
+    void gate_clear_lost(std::uint64_t task);
     bool gate_persist_contract(const Contract& contract);
     bool gate_persist_approval(const ApprovalRecord& record);
     bool gate_persist_budget(std::uint64_t task, const BudgetUsage& usage);

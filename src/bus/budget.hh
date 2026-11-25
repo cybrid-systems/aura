@@ -53,6 +53,10 @@ public:
     }
     [[nodiscard]] bool global_tripped() const { return global_.tripped; }
     [[nodiscard]] std::uint64_t task_started(std::uint64_t task) const;
+    // #5440: re-evaluate the restored usage against the current policy.
+    // A raised limit clears a trip it no longer justifies, and an expired
+    // global wall-clock window rolls to now instead of tripping forever.
+    void reconcile(std::uint64_t now_ms);
     // #5427: re-apply persisted usage (checkpoint replay). task 0 is the
     // global ledger.
     void restore(std::uint64_t task, const BudgetUsage& usage) {
@@ -66,6 +70,10 @@ public:
 private:
     bool check(const BudgetLimits& limits, BudgetUsage* usage, std::uint64_t now_ms,
                std::string* why, const char* scope);
+    [[nodiscard]] bool over_limit(const BudgetLimits& limits, const BudgetUsage& usage,
+                                  std::uint64_t now_ms, const char* scope) const;
+    void reevaluate(const BudgetLimits& limits, BudgetUsage* usage, std::uint64_t now_ms,
+                    bool global);
     BudgetPolicy policy_{};
     std::map<std::uint64_t, BudgetUsage> tasks_;
     BudgetUsage global_{};

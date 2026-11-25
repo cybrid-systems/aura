@@ -1351,6 +1351,14 @@ namespace {
 // The board is authoritative in memory; every event is mirrored into
 // the tasks channel (best effort) and the checkpoint next to the
 // socket (durable across a host restart).
+void Server::set_budget_policy(const BudgetPolicy& policy) {
+    budget_.configure(policy);
+    // #5440: re-evaluate the replayed usage. Raising AURA_BUS_GLOBAL_*
+    // (or a task limit) must clear a trip the new policy no longer
+    // justifies, and an expired global wall window must roll.
+    budget_.reconcile(round_now_ms());
+}
+
 bool Server::task_resume(std::string* why) {
     if (task_checkpoint_path_.empty())
         return true;
@@ -1370,7 +1378,8 @@ bool Server::task_resume(std::string* why) {
 // persist beside the task checkpoint as an append-only record stream;
 // a restart replays them with the task board. If the stream is missing
 // while tasks were restored, the gates are unknowable: the host keeps
-// `gates_lost_` and refuses to claim or complete a restored task.
+// the per-task `lost_gates_` set and refuses to claim or complete a task
+// whose gates could not be recovered.
 namespace {
     constexpr char kGateCheckpointMagic[8] = {'A', 'U', 'R', 'A', 'G', 'A', 'T', 'E'};
     constexpr std::uint32_t kGateCheckpointVersion = 1;
@@ -1392,16 +1401,39 @@ namespace {
         Budget = 3,
         // The gate ledger was missing while tasks were restored: a
         // durable fail-closed marker so a second restart does not see an
-        // empty-but-valid file and silently re-open the gates.
+        // empty-but-valid file and silently re-open the gates. `a` names
+        // the task (0 is the legacy all-tasks marker).
         Lost = 4,
+        // #5440: the task's gates were re-issued; replace its Lost marker
+        // so the next restart does not fail it closed again.
+        Recovered = 5,
+        // #5440: a legacy all-tasks Lost marker was expanded into per-task
+        // markers. Its presence tells later replays to ignore the legacy
+        // marker instead of failing every new task closed again.
+        LegacyConsumed = 6,
     };
 } // namespace
 
 bool Server::gates_resume(std::string* why) {
     gate_checkpoint_path_ = task_checkpoint_path_ + ".gates";
-    const auto remember_restored = [this]() {
-        for (const Task& task : tasks_.list())
-            restored_tasks_[task.id] = 1;
+    // #5440: the Lost marker is per task. A missing ledger marks only the
+    // tasks restored at this moment; a later task (or a task whose gates
+    // were re-issued) is not swept into the next restart.
+    const auto mark_lost = [this](std::FILE* f) {
+        const auto tasks = tasks_.list();
+        for (const Task& task : tasks) {
+            lost_gates_[task.id] = 1;
+            GateCheckpointRecord marker{};
+            marker.kind = static_cast<std::uint64_t>(GateRecordKind::Lost);
+            marker.a = task.id;
+            if (f != nullptr &&
+                (std::fwrite(&marker, sizeof(marker), 1, f) != 1 || std::fflush(f) != 0))
+                return false;
+        }
+        if (!tasks.empty())
+            audit_.add_constraint(AuditKind::GateResume, 0, 0, 0, 0,
+                                  "gate-resume: the gate checkpoint was missing; failing closed");
+        return true;
     };
     std::FILE* f = std::fopen(gate_checkpoint_path_.c_str(), "r+b");
     if (f == nullptr) {
@@ -1422,15 +1454,12 @@ bool Server::gates_resume(std::string* why) {
         std::fwrite(&header, sizeof(header), 1, f);
         std::fflush(f);
         gate_checkpoint_ = f;
-        remember_restored();
-        if (!restored_tasks_.empty()) {
-            gates_lost_ = true;
-            GateCheckpointRecord marker{};
-            marker.kind = static_cast<std::uint64_t>(GateRecordKind::Lost);
-            std::fwrite(&marker, sizeof(marker), 1, f);
-            std::fflush(f);
-            audit_.add_constraint(AuditKind::GateResume, 0, 0, 0, 0,
-                                  "gate-resume: the gate checkpoint was missing; failing closed");
+        if (!mark_lost(f)) {
+            if (why)
+                *why = "gate checkpoint marker write failed";
+            std::fclose(f);
+            gate_checkpoint_ = nullptr;
+            return false;
         }
         return true;
     }
@@ -1443,11 +1472,30 @@ bool Server::gates_resume(std::string* why) {
                      std::memcmp(header.magic, kGateCheckpointMagic, sizeof(header.magic)) == 0 &&
                      header.version == kGateCheckpointVersion;
     if (!header_ok) {
-        // A corrupt/foreign ledger is not silently treated as empty.
+        // A corrupt/foreign ledger is not silently treated as empty. Keep
+        // the fail-closed state, but replace the unreadable file with a
+        // valid one carrying per-task Lost markers so the next restart can
+        // still recover tasks individually.
         std::fclose(f);
-        gate_checkpoint_ = nullptr;
-        gates_lost_ = true;
-        remember_restored();
+        f = std::fopen(gate_checkpoint_path_.c_str(), "w+b");
+        if (f == nullptr) {
+            if (why)
+                *why = std::string("gate checkpoint recreate failed: ") + std::strerror(errno);
+            return false;
+        }
+        GateCheckpointHeader header{};
+        std::memcpy(header.magic, kGateCheckpointMagic, sizeof(header.magic));
+        header.version = kGateCheckpointVersion;
+        std::fwrite(&header, sizeof(header), 1, f);
+        std::fflush(f);
+        gate_checkpoint_ = f;
+        if (!mark_lost(f)) {
+            if (why)
+                *why = "gate checkpoint marker write failed";
+            std::fclose(f);
+            gate_checkpoint_ = nullptr;
+            return false;
+        }
         audit_.add_constraint(AuditKind::GateResume, 0, 0, 0, 0,
                               "gate-resume: the gate checkpoint is unreadable; failing closed");
         return true;
@@ -1466,6 +1514,8 @@ bool Server::gates_resume(std::string* why) {
         return true;
     }
     long valid_end = static_cast<long>(sizeof(header));
+    bool legacy_lost = false;
+    bool legacy_consumed = false;
     while (true) {
         GateCheckpointRecord record{};
         if (std::fread(&record, sizeof(record), 1, f) != 1)
@@ -1481,6 +1531,11 @@ bool Server::gates_resume(std::string* why) {
                 contract.metric = record.f;
                 contract.has_evidence = record.g != 0;
                 contracts_.restore(contract);
+                // A contract persisted after a Lost marker is the re-issued
+                // gate state itself. Clear the marker even when the crash
+                // happened before the Recovered record landed; the approval
+                // check still gates the claim.
+                lost_gates_.erase(contract.task);
                 break;
             }
             case GateRecordKind::Approval: {
@@ -1505,8 +1560,23 @@ bool Server::gates_resume(std::string* why) {
                 budget_.restore(record.a, usage);
                 break;
             }
-            case GateRecordKind::Lost:
-                gates_lost_ = true;
+            case GateRecordKind::Lost: {
+                if (record.a != 0) {
+                    lost_gates_[record.a] = 1;
+                    break;
+                }
+                // Legacy v1 marker: it named no task. Delay it until the
+                // whole ledger is read; a later LegacyConsumed record says
+                // this marker was already expanded into per-task markers.
+                legacy_lost = true;
+                break;
+            }
+            case GateRecordKind::Recovered:
+                lost_gates_.erase(record.a);
+                break;
+            case GateRecordKind::LegacyConsumed:
+                legacy_lost = false;
+                legacy_consumed = true;
                 break;
             default:
                 break;
@@ -1521,7 +1591,24 @@ bool Server::gates_resume(std::string* why) {
     }
     std::fseek(f, 0, SEEK_END);
     gate_checkpoint_ = f;
-    remember_restored();
+    if (legacy_lost && !legacy_consumed) {
+        // One-time migration of an old all-tasks marker. Expand it into
+        // per-task markers and disable it for later replays.
+        const auto tasks = tasks_.list();
+        for (const Task& task : tasks) {
+            lost_gates_[task.id] = 1;
+            GateCheckpointRecord marker{};
+            marker.kind = static_cast<std::uint64_t>(GateRecordKind::Lost);
+            marker.a = task.id;
+            if (std::fwrite(&marker, sizeof(marker), 1, gate_checkpoint_) != 1)
+                return false;
+        }
+        GateCheckpointRecord consumed{};
+        consumed.kind = static_cast<std::uint64_t>(GateRecordKind::LegacyConsumed);
+        if (std::fwrite(&consumed, sizeof(consumed), 1, gate_checkpoint_) != 1 ||
+            std::fflush(gate_checkpoint_) != 0)
+            return false;
+    }
     return true;
 }
 
@@ -1539,7 +1626,7 @@ bool Server::gate_persist_contract(const Contract& contract) {
     record.g = contract.has_evidence ? 1 : 0;
     if (std::fwrite(&record, sizeof(record), 1, gate_checkpoint_) != 1 ||
         std::fflush(gate_checkpoint_) != 0) {
-        gates_lost_ = true;
+        gate_mark_lost_all();
         return false;
     }
     return true;
@@ -1557,7 +1644,7 @@ bool Server::gate_persist_approval(const ApprovalRecord& approval) {
     record.e = approval.decided_ms;
     if (std::fwrite(&record, sizeof(record), 1, gate_checkpoint_) != 1 ||
         std::fflush(gate_checkpoint_) != 0) {
-        gates_lost_ = true;
+        gate_mark_lost_all();
         return false;
     }
     return true;
@@ -1576,10 +1663,31 @@ bool Server::gate_persist_budget(std::uint64_t task, const BudgetUsage& usage) {
     record.f = usage.tripped ? 1 : 0;
     if (std::fwrite(&record, sizeof(record), 1, gate_checkpoint_) != 1 ||
         std::fflush(gate_checkpoint_) != 0) {
-        gates_lost_ = true;
+        gate_mark_lost_all();
         return false;
     }
     return true;
+}
+
+void Server::gate_mark_lost_all() {
+    for (const Task& task : tasks_.list())
+        lost_gates_[task.id] = 1;
+}
+
+void Server::gate_clear_lost(std::uint64_t task) {
+    if (lost_gates_.erase(task) == 0)
+        return;
+    if (gate_checkpoint_ != nullptr) {
+        GateCheckpointRecord record{};
+        record.kind = static_cast<std::uint64_t>(GateRecordKind::Recovered);
+        record.a = task;
+        if (std::fwrite(&record, sizeof(record), 1, gate_checkpoint_) != 1 ||
+            std::fflush(gate_checkpoint_) != 0) {
+            lost_gates_[task] = 1;
+            return;
+        }
+    }
+    record_audit(AuditKind::GateResume, 0, 0, task);
 }
 
 void Server::commit_task_event(const TaskRecord& event) {
@@ -3346,8 +3454,9 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
                     break;
                 }
                 ok = contracts_.create(req.task, req.test_ref, req.metric_floor, &contract, &why);
+                bool gates_ok = ok;
                 if (ok)
-                    gate_persist_contract(contract);
+                    gates_ok = gate_persist_contract(contract);
                 if (ok) {
                     TaskRecord event{};
                     ok = tasks_.set_flags(req.task, task.flags | kTaskNeedsApproval, &task, &event,
@@ -3358,18 +3467,23 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
                 if (ok) {
                     ApprovalRecord pending{};
                     approvals_.request(req.task, root_token, 0, round_now_ms(), &pending, &why);
-                    gate_persist_approval(pending);
+                    gates_ok = gate_persist_approval(pending) && gates_ok;
                     record_audit(AuditKind::ApprovalRequest, root_token, 0, req.task);
                     record_audit(AuditKind::ContractCreate, root_token, 0, req.task);
                     reply.state = static_cast<std::uint64_t>(ApprovalState::Pending);
                 }
+                // #5440: a re-issued contract (plus its pending approval)
+                // replaces the task's Lost marker, so the gate state is
+                // known again on this and every later restart.
+                if (ok && gates_ok)
+                    gate_clear_lost(req.task);
             } else if (req.op == 1) {
                 if (!require(kCapRead, 0, 0))
                     break;
                 ok = contracts_.get(req.task, &contract);
                 if (!ok) {
                     why =
-                        gates_lost_ && restored_tasks_.count(req.task) != 0
+                        lost_gates_.count(req.task) != 0
                             ? "contract state was lost with the host restart; reissue the contract"
                             : "contract is missing";
                 }
@@ -3521,7 +3635,7 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
                     // blocked candidate, so one denied/pending/gate-lost
                     // task cannot wedge the whole board.
                     const auto claim_refusal = [&](const Task& candidate, std::string* refusal) {
-                        if (gates_lost_ && restored_tasks_.count(candidate.id) != 0) {
+                        if (lost_gates_.count(candidate.id) != 0) {
                             *refusal = "gate-state-lost: the contract/budget ledger was lost with "
                                        "the host restart";
                             return true;
@@ -3610,7 +3724,7 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
                         why = "task-unknown";
                         break;
                     }
-                    if (gates_lost_ && restored_tasks_.count(req.task_id) != 0) {
+                    if (lost_gates_.count(req.task_id) != 0) {
                         why = "gate-state-lost: the contract/budget ledger was lost with the host "
                               "restart";
                         break;
