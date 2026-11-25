@@ -65,6 +65,15 @@ using aura::test::g_passed;
 
 namespace fs = std::filesystem;
 
+// Issue #5447: a real llm-api-key in the operator's secret store would turn
+// the "without key" assertion below into a network call. Point the process
+// at an empty 0700 directory for the duration of the test.
+static std::string make_empty_secret_store() {
+    char tmpl[] = "/tmp/aura-3919-empty-secrets-XXXXXX";
+    const char* dir = ::mkdtemp(tmpl);
+    return dir ? std::string(dir) : std::string();
+}
+
 static std::string read_file(const char* path) {
     for (const auto& p :
          {std::string(path), std::string("../") + path, std::string("../../") + path}) {
@@ -601,6 +610,11 @@ static void ac3919_2_agent_llm_ask_no_unbound() {
     ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
     ::aura::config::test_setenv("AURA_PIPELINE_STRICT", "0", 1);
     ::aura::config::test_unsetenv("LLM_API_KEY");
+    const auto secret_store = make_empty_secret_store();
+    CHECK(!secret_store.empty(), "AC2: empty secret store");
+    if (secret_store.empty())
+        return;
+    ::aura::config::test_setenv("AURA_SECRET_STORE", secret_store.c_str(), 1);
 
     CompilerService cs;
     CHECK(cs.eval("(require \"std/agent\" all:)").has_value(), "AC2: require std/agent");
@@ -608,6 +622,10 @@ static void ac3919_2_agent_llm_ask_no_unbound() {
     CHECK(eval_bool(cs, "(procedure? llm-ask)"), "AC2: llm-ask bound");
     auto r = cs.eval("(llm-ask \"x\")");
     CHECK(r && is_string(*r) && !is_error(*r), "AC2: llm-ask returns string (empty/no-key)");
+
+    ::aura::config::test_unsetenv("AURA_SECRET_STORE");
+    std::error_code rm_ec;
+    fs::remove_all(secret_store, rm_ec);
 }
 
 static void ac3919_3_sandbox_no_unbound() {

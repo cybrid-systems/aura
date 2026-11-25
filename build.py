@@ -73,6 +73,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -309,6 +310,12 @@ _gate.set_commands(lint=cmd_lint, format_cmd=cmd_format)
 # ═══════════════════════════════════════════════════════════════
 
 
+# Issue #5447: tests must not inherit the operator's llm-api-key from the
+# default secret store. An empty 0700 directory keeps `std/llm` on the
+# no-key path even on a machine that has configured the store.
+_TEST_SECRET_STORE = tempfile.mkdtemp(prefix="aura-test-secret-store-")
+
+
 def _aura_test_env(extra: dict | None = None) -> dict:
     """Env for spawning `./build/aura` under CI / local harnesses.
 
@@ -335,6 +342,9 @@ def _aura_test_env(extra: dict | None = None) -> dict:
     production-default coverage.
     """
     env = os.environ.copy()
+    # Issue #5447: an empty store wins over the operator's real store; an
+    # explicit `extra` entry still overrides this default.
+    env["AURA_SECRET_STORE"] = _TEST_SECRET_STORE
     if not str(env.get("AURA_SANDBOX", "")).strip():
         env["AURA_SANDBOX"] = "off"
     if not str(env.get("AURA_PIPELINE_STRICT", "")).strip():

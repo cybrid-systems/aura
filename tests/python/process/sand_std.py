@@ -25,6 +25,10 @@ sys.path.insert(0, str(ROOT / "tests" / "python"))
 
 from _aura_harness import AURA_BIN  # noqa: E402
 
+# Issue #5447: an empty store keeps the "no key" cases offline even when the
+# operator configured $HOME/.aura/secrets.
+_EMPTY_SECRET_STORE = tempfile.mkdtemp(prefix="aura-llm-empty-secrets-")
+
 PROGRAM = """(display (try (begin (require "std/ffi" all:) (quote ok))
                         (catch (e) (quote denied))))
 (newline)
@@ -71,6 +75,7 @@ def run_llm_program(
     env = {k: v for k, v in os.environ.items() if not k.startswith("AURA_")}
     for key in ("LLM_API_KEY", "LLM_BASE_URL", "LLM_MODEL", "LLM_TIMEOUT"):
         env.pop(key, None)
+    env["AURA_SECRET_STORE"] = _EMPTY_SECRET_STORE
     env["AURA_PATH"] = str(ROOT / "lib")
     if extra:
         env.update(extra)

@@ -3,6 +3,7 @@
 ; Does NOT require LLM_API_KEY (offline unit surface).
 (require "std/test" all:)
 (require "std/llm" all:)
+(require "std/secret" all:)
 (require "std/string" all:)
 (require "std/list" all:)
 
@@ -79,14 +80,20 @@
   (check (equal? (hash-ref ok "content") "(seq ok)")))
 
 ; Issue #5293: no-key and rate-limited exits increment call-stats.
-; A set LLM_API_KEY would leave this process, so those two cases run
-; only when it is unset. Transport failure and a parsed reply are the
-; process check, which clears the env. Parsing a fixture is not a call.
+; A key in LLM_API_KEY or the default secret store would leave this
+; process, so those two cases run only when neither source has one (#5447).
+; Transport failure and a parsed reply are the process check, which clears
+; the env. Parsing a fixture is not a call.
 (test-file "llm_safety.aura")
 
-(test-case "no-key bumps no-key" (hash "issue" 5293 "tags" (list "llm"))
+; Issue #5447: either source counts as a key for the "offline" cases.
+(define (llm-has-key?)
   (let ((key (try (getenv "LLM_API_KEY") (catch (e) #f))))
-    (if (and (string? key) (> (string-length key) 0))
+    (or (and (string? key) (> (string-length key) 0))
+        (secret:exists? (secret:default-store) "llm-api-key"))))
+
+(test-case "no-key bumps no-key" (hash "issue" 5293 "tags" (list "llm"))
+  (if (llm-has-key?)
       #t
       (begin
         (llm:call-stats-reset!)
@@ -99,11 +106,10 @@
         (check= 2 (hash-ref (llm:call-stats) "no-key" 0))
         (check= 0 (hash-ref (llm:call-stats) "fail" 0))
         (check= 0 (hash-ref (llm:call-stats) "rate-limited" 0))
-        (check= 0 (hash-ref (llm:call-stats) "success" 0))))))
+        (check= 0 (hash-ref (llm:call-stats) "success" 0)))))
 
 (test-case "rate-limited bumps rate-limited" (hash "issue" 5293 "tags" (list "llm"))
-  (let ((key (try (getenv "LLM_API_KEY") (catch (e) #f))))
-    (if (and (string? key) (> (string-length key) 0))
+  (if (llm-has-key?)
       #t
       (begin
         (llm:call-stats-reset!)
@@ -117,7 +123,7 @@
         (check= 1 (hash-ref (llm:call-stats) "rate-limited" 0))
         (check= 0 (hash-ref (llm:call-stats) "fail" 0))
         (check= 0 (hash-ref (llm:call-stats) "success" 0))
-        (llm:rate-limit-set! 0)))))
+        (llm:rate-limit-set! 0))))
 
 (test-case "parse-ok is not a completed call" (hash "issue" 5293 "tags" (list "llm"))
   (llm:call-stats-reset!)
