@@ -126,10 +126,41 @@ class Concurrency5476(unittest.TestCase):
             self.assertIn(f"cow::AtomicTrackedColumn<std::uint32_t> {col};", ast)
         atomic = read("src/core/atomic_column.hh")
         self.assertIn("std::deque<std::atomic<T>> mirror_;", atomic)
+        self.assertIn("std::atomic<size_type> mirror_size_{0};", atomic)
         self.assertIn("memory_order_acquire", atomic)
 
         tcstate = read("src/compiler/evaluator_typecheck.cpp")
         self.assertIn("std::scoped_lock state_lock(typecheck_state_mtx_)", tcstate)
+
+        ev = read("src/compiler/evaluator.ixx")
+        # The commit pointer/flag are read by noexcept getters on the boundary
+        # teardown path, so they are atomics rather than mutex-guarded reads.
+        self.assertIn("std::atomic<void*> commit_type_checker_opaque_{nullptr};", ev)
+        self.assertIn("std::atomic<bool> commit_cs_live_{false};", ev)
+        self.assertIn("std::vector<std::string> keyword_table_snapshot() const", ev)
+        self.assertIn("std::vector<std::string> symbol_table_snapshot() const", ev)
+        main = read("src/main.cpp")
+        self.assertIn("cs.evaluator().keyword_table_snapshot()", main)
+        self.assertIn("cs.evaluator().symbol_table_snapshot()", main)
+
+        # TSan then flagged selective_invalidate_bridge_for_impact assigning
+        # pending_impact_func_indices_ while install_lowering_compiler_core_hooks
+        # read it. The set is now published as an immutable shared_ptr snapshot.
+        svc = read("src/compiler/service.ixx")
+        self.assertIn(
+            "std::shared_ptr<const std::unordered_set<std::size_t>> pending_impact_func_indices_;",
+            svc,
+        )
+        self.assertIn("std::scoped_lock impact_lock(impact_func_mtx_)", svc)
+        self.assertIn(
+            "hooks.impact_func_indices = pending_impact_func_indices_;",
+            svc,
+        )
+        low = read("src/compiler/lowering.ixx")
+        self.assertIn(
+            "std::shared_ptr<const std::unordered_set<std::size_t>> impact_func_indices;",
+            low,
+        )
 
         mem = read("src/compiler/evaluator_primitives_memory.cpp")
         self.assertIn("heap_sizes_snapshot", mem)

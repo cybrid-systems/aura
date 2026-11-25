@@ -1265,7 +1265,9 @@ void Evaluator::composite_commit_recheck_exhaustiveness(
     // composite_txn_commit walk.
     ConstraintSystem* cs_ex = nullptr;
     if (commit_type_checker_opaque_)
-        cs_ex = &static_cast<TypeChecker*>(commit_type_checker_opaque_)->constraint_system();
+        cs_ex =
+            &static_cast<TypeChecker*>(commit_type_checker_opaque_.load(std::memory_order_acquire))
+                 ->constraint_system();
     const bool goals =
         cs_ex && (cs_ex->adt_match_goals_size() != 0 || cs_ex->adt_reverify_roots_size() != 0);
     const bool cone = aura::compiler::dirty::type_ir_union_cone_nonempty();
@@ -1338,7 +1340,8 @@ bool Evaluator::composite_commit_required_type_ids(
             filled.push_back({t.index, t.generation});
         };
         auto* tc2983 = commit_type_checker_opaque_
-                           ? static_cast<TypeChecker*>(commit_type_checker_opaque_)
+                           ? static_cast<TypeChecker*>(
+                                 commit_type_checker_opaque_.load(std::memory_order_acquire))
                            : nullptr;
         if (tc2983) {
             for (const auto& t : tc2983->last_occurrence_vars())
@@ -1391,7 +1394,8 @@ void Evaluator::composite_commit_prepare_sdo(
     const bool agent_expected_partial = txn_dirty();
     has_work = false;
     if (commit_type_checker_opaque_) {
-        auto* ctc0 = static_cast<TypeChecker*>(commit_type_checker_opaque_);
+        auto* ctc0 =
+            static_cast<TypeChecker*>(commit_type_checker_opaque_.load(std::memory_order_acquire));
         has_work = ctc0->commit_cs_has_work() || commit_cs_live_;
     } else {
         has_work = commit_cs_live_;
@@ -1513,7 +1517,8 @@ bool Evaluator::composite_commit_full_recover(
         // (fail-closed; no half-solution via Full recover).
         if (commit_type_checker_opaque_ && commit_cs_live_) {
             try {
-                auto* ctc = static_cast<TypeChecker*>(commit_type_checker_opaque_);
+                auto* ctc = static_cast<TypeChecker*>(
+                    commit_type_checker_opaque_.load(std::memory_order_acquire));
                 auto& cs = ctc->constraint_system();
                 if (mutation_id != 0)
                     cs.set_active_mutation_id(mutation_id);
@@ -1646,7 +1651,8 @@ void Evaluator::composite_commit_solve_delta(
         // greenfield-empty when the long-lived CS already holds marks.
         const bool reuse = commit_type_checker_opaque_ && (commit_cs_live_ || has_work);
         if (reuse) {
-            auto* ctc = static_cast<TypeChecker*>(commit_type_checker_opaque_);
+            auto* ctc = static_cast<TypeChecker*>(
+                commit_type_checker_opaque_.load(std::memory_order_acquire));
             cs_ptr = &ctc->constraint_system();
             if (commit_occurrence_vars_opaque_) {
                 auto* occ = static_cast<std::vector<aura::core::TypeId>*>(
@@ -1932,8 +1938,9 @@ bool Evaluator::composite_txn_commit(std::uint64_t mutation_id, std::string_view
     {
         ConstraintSystem* cs_for_drift = nullptr;
         if (commit_type_checker_opaque_) {
-            cs_for_drift =
-                &static_cast<TypeChecker*>(commit_type_checker_opaque_)->constraint_system();
+            cs_for_drift = &static_cast<TypeChecker*>(
+                                commit_type_checker_opaque_.load(std::memory_order_acquire))
+                                ->constraint_system();
         }
         if (cs_for_drift && !cs_for_drift->check_occurrence_refined_consistency()) {
             const bool hard_drift = production_defaults_active() ||
@@ -2030,7 +2037,8 @@ bool Evaluator::composite_txn_commit(std::uint64_t mutation_id, std::string_view
             aura::core::TypeRegistry* reg_req =
                 type_registry_ ? static_cast<aura::core::TypeRegistry*>(type_registry_) : nullptr;
             if (commit_type_checker_opaque_) {
-                auto* ctc = static_cast<TypeChecker*>(commit_type_checker_opaque_);
+                auto* ctc = static_cast<TypeChecker*>(
+                    commit_type_checker_opaque_.load(std::memory_order_acquire));
                 cs_req = &ctc->constraint_system();
             }
             if (!cs_req || !reg_req) {
@@ -2090,7 +2098,8 @@ bool Evaluator::composite_txn_commit(std::uint64_t mutation_id, std::string_view
     // alone stays observe). The unscoped live fill and the proof
     // publisher stay vacuous so the eval license cannot stick false.
     if (cr.blame_ok && require_blame_complete_on_commit() && commit_type_checker_opaque_) {
-        auto* ctc_audit = static_cast<TypeChecker*>(commit_type_checker_opaque_);
+        auto* ctc_audit =
+            static_cast<TypeChecker*>(commit_type_checker_opaque_.load(std::memory_order_acquire));
         const auto& bc_audit = ctc_audit->constraint_system().last_blame_chain();
         const bool occ_nonvacuous = ctc_audit->constraint_system().occurrence_goals_size() > 0;
         const bool mutated = txn_dirty() || ctc_audit->commit_cs_has_work() || occ_nonvacuous;
@@ -2455,7 +2464,8 @@ bool Evaluator::boundary_solve_proof_gate(bool hard_gate, bool linear_ops_presen
     ConstraintSystem* cs_ptr = nullptr;
     std::span<const aura::core::TypeId> occ_span{};
     if (commit_type_checker_opaque_ && commit_cs_live_) {
-        auto* ctc = static_cast<TypeChecker*>(commit_type_checker_opaque_);
+        auto* ctc =
+            static_cast<TypeChecker*>(commit_type_checker_opaque_.load(std::memory_order_acquire));
         cs_ptr = &ctc->constraint_system();
         if (commit_occurrence_vars_opaque_) {
             auto* occ =
@@ -2544,7 +2554,8 @@ bool Evaluator::boundary_solve_proof_gate(bool hard_gate, bool linear_ops_presen
         const bool resync_ok = run_post_mutate_typecheck_no_lock();
         // Re-solve on stashed CS after resync when available.
         if (commit_type_checker_opaque_ && commit_cs_live_) {
-            auto* ctc = static_cast<TypeChecker*>(commit_type_checker_opaque_);
+            auto* ctc = static_cast<TypeChecker*>(
+                commit_type_checker_opaque_.load(std::memory_order_acquire));
             auto& cs2 = ctc->constraint_system();
             std::span<const aura::core::TypeId> occ2{};
             if (commit_occurrence_vars_opaque_) {
@@ -2613,7 +2624,8 @@ bool Evaluator::linear_synth_hard_fail_pending() const noexcept {
     }
     if (commit_type_checker_opaque_ &&
         commit_type_checker_opaque_ != persistent_typechecker_opaque_.get()) {
-        auto* tc = static_cast<const TypeChecker*>(commit_type_checker_opaque_);
+        auto* tc = static_cast<const TypeChecker*>(
+            commit_type_checker_opaque_.load(std::memory_order_acquire));
         if (tc->last_linear_synth_hard_fail())
             return true;
     }
@@ -2638,7 +2650,8 @@ void Evaluator::clear_linear_synth_hard_fail_pending() noexcept {
     }
     if (commit_type_checker_opaque_ &&
         commit_type_checker_opaque_ != persistent_typechecker_opaque_.get()) {
-        static_cast<TypeChecker*>(commit_type_checker_opaque_)->clear_last_linear_synth_hard_fail();
+        static_cast<TypeChecker*>(commit_type_checker_opaque_.load(std::memory_order_acquire))
+            ->clear_last_linear_synth_hard_fail();
     }
     if (guard_infer_engine_opaque_) {
         static_cast<InferenceEngine*>(guard_infer_engine_opaque_.get())
@@ -3310,7 +3323,8 @@ Evaluator::plant_commit_occurrence_preds_for_test(std::span<const std::uint32_t>
         commit_type_checker_opaque_ = tc;
         commit_tc_registry_gen_ = reg_gen;
     }
-    auto* tc = static_cast<TypeChecker*>(commit_type_checker_opaque_);
+    auto* tc =
+        static_cast<TypeChecker*>(commit_type_checker_opaque_.load(std::memory_order_acquire));
     auto& cs = tc->constraint_system();
     for (const auto pred : preds)
         cs.note_occurrence_goal({}, {}, pred, /*mut=*/0, /*epoch=*/0);
@@ -3358,7 +3372,8 @@ void Evaluator::stash_partial_constraint_state(void* type_checker_opaque) noexce
             commit_type_checker_opaque_ = tc;
             commit_tc_registry_gen_ = reg_gen;
         }
-        auto* dst = static_cast<TypeChecker*>(commit_type_checker_opaque_);
+        auto* dst =
+            static_cast<TypeChecker*>(commit_type_checker_opaque_.load(std::memory_order_acquire));
         if (compiler_metrics_)
             dst->set_metrics(compiler_metrics_);
         // Import solve_delta_cs_ (already received engine marks in partial).
@@ -3460,7 +3475,8 @@ void Evaluator::stage_composite_required_unbound_var_for_test() noexcept {
             commit_type_checker_opaque_ = tc;
             commit_tc_registry_gen_ = reg_gen;
         }
-        auto* tc = static_cast<TypeChecker*>(commit_type_checker_opaque_);
+        auto* tc =
+            static_cast<TypeChecker*>(commit_type_checker_opaque_.load(std::memory_order_acquire));
         auto& cs = tc->constraint_system();
         const auto t = cs.fresh_var(); // unbound free var
         typed_audit::CompositeRequiredTypeId rid{t.index, t.generation};
@@ -3492,7 +3508,8 @@ void Evaluator::stage_composite_touched_unbound_for_test() noexcept {
             commit_type_checker_opaque_ = tc;
             commit_tc_registry_gen_ = reg_gen;
         }
-        auto* tc = static_cast<TypeChecker*>(commit_type_checker_opaque_);
+        auto* tc =
+            static_cast<TypeChecker*>(commit_type_checker_opaque_.load(std::memory_order_acquire));
         auto& cs = tc->constraint_system();
         const auto t = cs.fresh_var();
         cs.mark_touched_on_delta(t, /*occurrence_narrow=*/true);
@@ -3529,7 +3546,8 @@ void Evaluator::stage_composite_touched_n_for_test(std::uint32_t n) noexcept {
             commit_type_checker_opaque_ = tc;
             commit_tc_registry_gen_ = reg_gen;
         }
-        auto* tc = static_cast<TypeChecker*>(commit_type_checker_opaque_);
+        auto* tc =
+            static_cast<TypeChecker*>(commit_type_checker_opaque_.load(std::memory_order_acquire));
         auto& cs = tc->constraint_system();
         typed_audit::clear_composite_required_solved();
         if (!commit_occurrence_vars_opaque_)
@@ -3570,7 +3588,8 @@ void Evaluator::stage_composite_required_bound_var_for_test() noexcept {
             commit_type_checker_opaque_ = tc;
             commit_tc_registry_gen_ = reg_gen;
         }
-        auto* tc = static_cast<TypeChecker*>(commit_type_checker_opaque_);
+        auto* tc =
+            static_cast<TypeChecker*>(commit_type_checker_opaque_.load(std::memory_order_acquire));
         auto& cs = tc->constraint_system();
         const auto t = cs.fresh_var();
         cs.add_delta({Constraint::EQUAL, t, reg->int_type()});
@@ -3611,7 +3630,8 @@ void Evaluator::inject_commit_occurrence_drift_for_test() noexcept {
             commit_type_checker_opaque_ = tc;
             commit_tc_registry_gen_ = reg_gen;
         }
-        auto* tc = static_cast<TypeChecker*>(commit_type_checker_opaque_);
+        auto* tc =
+            static_cast<TypeChecker*>(commit_type_checker_opaque_.load(std::memory_order_acquire));
         auto& cs = tc->constraint_system();
         const auto t = cs.fresh_var();
         // Same UF rep (same var `t`), incompatible refined (int vs string).
@@ -3647,7 +3667,8 @@ void Evaluator::inject_commit_cs_type_conflict_for_test() noexcept {
             commit_type_checker_opaque_ = tc;
             commit_tc_registry_gen_ = reg_gen;
         }
-        auto* tc = static_cast<TypeChecker*>(commit_type_checker_opaque_);
+        auto* tc =
+            static_cast<TypeChecker*>(commit_type_checker_opaque_.load(std::memory_order_acquire));
         auto& cs = tc->constraint_system();
         const auto t = cs.fresh_var();
         cs.add_delta({Constraint::EQUAL, t, reg->int_type()});
@@ -3680,7 +3701,8 @@ void Evaluator::inject_commit_cs_truncated_reverify_for_test() noexcept {
             commit_type_checker_opaque_ = tc;
             commit_tc_registry_gen_ = reg_gen;
         }
-        auto* tc = static_cast<TypeChecker*>(commit_type_checker_opaque_);
+        auto* tc =
+            static_cast<TypeChecker*>(commit_type_checker_opaque_.load(std::memory_order_acquire));
         auto& cs = tc->constraint_system();
         // Pin reverify limit low so clean fan-out truncates, and stamp
         // a sticky truncated face so anti-starve full-solve cannot
@@ -3738,7 +3760,8 @@ void Evaluator::inject_commit_cs_incomplete_blame_for_test() noexcept {
             commit_type_checker_opaque_ = tc;
             commit_tc_registry_gen_ = reg_gen;
         }
-        auto* tc = static_cast<TypeChecker*>(commit_type_checker_opaque_);
+        auto* tc =
+            static_cast<TypeChecker*>(commit_type_checker_opaque_.load(std::memory_order_acquire));
         tc->force_last_blame_incomplete_for_test(/*mutation_id=*/2221, /*node=*/1);
         commit_cs_live_ = true;
     } catch (...) {
@@ -3764,7 +3787,8 @@ void Evaluator::inject_commit_cs_complete_blame_for_test() noexcept {
             commit_type_checker_opaque_ = tc;
             commit_tc_registry_gen_ = reg_gen;
         }
-        auto* tc = static_cast<TypeChecker*>(commit_type_checker_opaque_);
+        auto* tc =
+            static_cast<TypeChecker*>(commit_type_checker_opaque_.load(std::memory_order_acquire));
         tc->force_last_blame_complete_for_test(/*mutation_id=*/2221, /*pred=*/7, /*node=*/3);
         commit_cs_live_ = true;
     } catch (...) {
@@ -3796,7 +3820,8 @@ void Evaluator::inject_commit_cs_empty_blame_for_test(bool with_cs_work) noexcep
             commit_type_checker_opaque_ = tc;
             commit_tc_registry_gen_ = reg_gen;
         }
-        auto* tc = static_cast<TypeChecker*>(commit_type_checker_opaque_);
+        auto* tc =
+            static_cast<TypeChecker*>(commit_type_checker_opaque_.load(std::memory_order_acquire));
         tc->force_last_blame_empty_for_test();
         if (with_cs_work) {
             // Touched delta root — commit_cs_has_work() true (mutated face).

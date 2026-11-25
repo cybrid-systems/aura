@@ -2818,6 +2818,18 @@ public:
     CellHeap& cells() { return cells_; }
     std::span<const Pair> pairs() const { return pairs_; }
     std::pmr::vector<Pair>& pairs() { return pairs_; }
+    // Issue #5476: the formatting helpers read these from the main thread
+    // while a fiber body may intern a new :keyword / symbol. The unlocked
+    // span/reference faces race the append; callers that only read take a
+    // locked copy.
+    [[nodiscard]] std::vector<std::string> keyword_table_snapshot() const {
+        std::scoped_lock lock(keyword_table_mtx_);
+        return keyword_table_;
+    }
+    [[nodiscard]] std::vector<std::string> symbol_table_snapshot() const {
+        std::scoped_lock lock(symbol_table_mtx_);
+        return symbol_table_;
+    }
     std::span<const std::string> keyword_table() const { return keyword_table_; }
     std::vector<std::string>& keyword_table() { return keyword_table_; }
     // Issue #4727: symbol atoms (index = as_symbol_idx(make_symbol)).
@@ -20936,13 +20948,17 @@ private:
     // commit_type_checker_opaque_ is a view: it points at the object owned
     // by commit_type_checker_owned_, or aliases the #2220 persistent checker
     // (then commit_type_checker_owned_ is empty).
-    void* commit_type_checker_opaque_ = nullptr;
+    // Issue #5476: written by the post-mutate typecheck on one body and read
+    // by MutationBoundaryGuard's destructor / query primitives on another.
+    // They stay atomic (rather than under a mutex) because the readers are
+    // noexcept getters and include the hot boundary teardown.
+    std::atomic<void*> commit_type_checker_opaque_{nullptr};
     aura::core::opaque_ptr commit_type_checker_owned_;
     std::uint64_t commit_tc_registry_gen_ = 0;
-    bool commit_cs_live_ = false;
+    std::atomic<bool> commit_cs_live_{false};
     // Issue #5476: stash (post-mutate typecheck) and the boundary's
-    // clear run on different bodies and shared these fields; serialize
-    // the pair instead of making every field access atomic.
+    // clear run on different bodies; the lock keeps the wider
+    // stash/clear handshake (occurrence vars, registry gen) serialized.
     mutable std::recursive_mutex typecheck_state_mtx_;
     // Issue #3003 / #3004: type-export authority (default true = pre-#3003).
     // Production: false until persist + Full audit success (#3004).

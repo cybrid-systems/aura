@@ -2,6 +2,7 @@ module;
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -92,7 +93,9 @@ export struct LoweringObservabilityHooks {
     // observability during re-lower of impacted defines.
     void (*on_env_version_resync)() noexcept = nullptr;
     void (*on_quote_lambda_bridge_copy)() noexcept = nullptr;
-    const std::unordered_set<std::size_t>* impact_func_indices = nullptr;
+    // Issue #5476: immutable snapshot, so a concurrent writer in
+    // CompilerService can replace the set without racing this reader.
+    std::shared_ptr<const std::unordered_set<std::size_t>> impact_func_indices;
 };
 
 // ── LoweringState — all mutable lowering state ────────────────

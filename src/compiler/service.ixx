@@ -3327,7 +3327,13 @@ public:
         for (const auto& i : scope.affected_instrs)
             affected_funcs.insert(i.function_index);
 
-        pending_impact_func_indices_ = affected_funcs;
+        {
+            // Issue #5476: publish an immutable snapshot; lowering keeps its own
+            // shared_ptr, so no reader can see a half-assigned hash table.
+            auto snapshot = std::make_shared<const std::unordered_set<std::size_t>>(affected_funcs);
+            std::scoped_lock impact_lock(impact_func_mtx_);
+            pending_impact_func_indices_ = std::move(snapshot);
+        }
 
         const auto current_epoch = bridge_epoch();
         std::uint64_t impacted = 0;
@@ -9495,7 +9501,11 @@ private:
         ir_cache_bridge_;
     // Issue #741: func indices from the latest impact_scope computation,
     // wired into lowering hooks to limit bridge shared_ptr copy scope.
-    std::unordered_set<std::size_t> pending_impact_func_indices_;
+    // Issue #5476: written by selective_invalidate_bridge_for_impact on the
+    // mutation thread, read by install_lowering_compiler_core_hooks; the
+    // shared_ptr snapshot keeps the lowering hook's view immutable.
+    std::mutex impact_func_mtx_;
+    std::shared_ptr<const std::unordered_set<std::size_t>> pending_impact_func_indices_;
     // String pool cached alongside ir_cache_ (same keys).
     std::unordered_map<std::string, std::vector<std::string>, aura::core::TransparentStringHash,
                        std::equal_to<>>
@@ -13496,8 +13506,10 @@ public:
         hooks.on_env_version_resync = &CompilerService::lowering_env_version_resync_trampoline;
         hooks.on_quote_lambda_bridge_copy =
             &CompilerService::lowering_quote_lambda_bridge_trampoline;
-        hooks.impact_func_indices =
-            pending_impact_func_indices_.empty() ? nullptr : &pending_impact_func_indices_;
+        {
+            std::scoped_lock impact_lock(impact_func_mtx_);
+            hooks.impact_func_indices = pending_impact_func_indices_;
+        }
         set_lowering_observability_hooks(hooks);
     }
     void clear_lowering_compiler_core_hooks() noexcept { clear_lowering_observability_hooks(); }

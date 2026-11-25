@@ -158,10 +158,13 @@ static std::string prettify_json(const std::string& compact) {
 // Format helper: format EvalValue with access to string heap
 static std::string fmt_val(const aura::compiler::types::EvalValue& v,
                            aura::compiler::CompilerService& cs) {
-    return aura::compiler::format_value(
-        v, cs.evaluator().primitives().string_heap(), cs.evaluator().pairs(), 0,
-        &cs.evaluator().primitives(), cs.evaluator().keyword_table(), cs.evaluator().vector_heap(),
-        cs.evaluator().symbol_table());
+    // Issue #5476: fiber bodies can append to the keyword/symbol tables while
+    // this prints; take locked copies instead of spans over the live vectors.
+    const auto keywords = cs.evaluator().keyword_table_snapshot();
+    const auto symbols = cs.evaluator().symbol_table_snapshot();
+    return aura::compiler::format_value(v, cs.evaluator().primitives().string_heap(),
+                                        cs.evaluator().pairs(), 0, &cs.evaluator().primitives(),
+                                        keywords, cs.evaluator().vector_heap(), symbols);
 }
 
 // JSON helper: wrap a string value for JSON (escape quotes and backslashes)

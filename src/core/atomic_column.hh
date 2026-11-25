@@ -45,7 +45,8 @@ public:
     }
     AtomicTrackedColumn(AtomicTrackedColumn&& o) noexcept
         : store_(std::move(o.store_))
-        , mirror_(std::move(o.mirror_)) {}
+        , mirror_(std::move(o.mirror_))
+        , mirror_size_(o.mirror_size_.load(std::memory_order_relaxed)) {}
     AtomicTrackedColumn& operator=(const AtomicTrackedColumn& o) {
         if (this != &o) {
             store_ = o.store_;
@@ -70,8 +71,13 @@ public:
         return *this;
     }
 
-    [[nodiscard]] size_type size() const noexcept { return store_.size(); }
-    [[nodiscard]] bool empty() const noexcept { return store_.empty(); }
+    // Readers call size() from tree-walk bodies while a parser/mutation
+    // appends on another fiber; the deque's own size() is not atomic, so the
+    // published counter is the read face (the store remains the image).
+    [[nodiscard]] size_type size() const noexcept {
+        return mirror_size_.load(std::memory_order_acquire);
+    }
+    [[nodiscard]] bool empty() const noexcept { return size() == 0; }
     // Compatibility view for the (unused) *_view() span accessors. It is
     // the COW store, not the mirror: do not read it concurrently with a
     // writer — new code should use operator[] (the atomic mirror).
@@ -152,10 +158,12 @@ public:
     void push_back(T v) {
         store_.push_back(v);
         mirror_.emplace_back(v);
+        mirror_size_.store(mirror_.size(), std::memory_order_release);
     }
     void clear() noexcept {
         store_.clear();
         mirror_.clear();
+        mirror_size_.store(0, std::memory_order_release);
     }
     void resize(size_type n) {
         const auto old = store_.size();
@@ -167,6 +175,7 @@ public:
             while (mirror_.size() > n)
                 mirror_.pop_back();
         }
+        mirror_size_.store(mirror_.size(), std::memory_order_release);
     }
     void resize(size_type n, T v) {
         const auto old = store_.size();
@@ -178,6 +187,7 @@ public:
             while (mirror_.size() > n)
                 mirror_.pop_back();
         }
+        mirror_size_.store(mirror_.size(), std::memory_order_release);
     }
     // Serialization helpers: a contiguous copy of the current values and a
     // raw assign back (the image store is the copy-of-record).
@@ -213,10 +223,12 @@ private:
         const auto& view = store_.view();
         for (const auto& v : view)
             mirror_.emplace_back(v);
+        mirror_size_.store(mirror_.size(), std::memory_order_release);
     }
 
     store_type store_{};
     std::deque<std::atomic<T>> mirror_;
+    std::atomic<size_type> mirror_size_{0};
 };
 
 } // namespace aura::ast::cow
