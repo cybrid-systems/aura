@@ -922,26 +922,30 @@ static bool ir_user_arity_bad(const aura::ir::IRFunction& func, std::size_t got)
 // Issue #5421: dotted-rest packing for the interpreter. The JIT packs in
 // OpArg (#5222); the interpreter hands the callee a user-args vector in
 // the same shape: named parameters followed by one pair-list rest slot.
-static std::vector<EvalValue> ir_pack_rest_args(const aura::ir::IRFunction& func,
-                                                std::span<const EvalValue> args, Evaluator* ev) {
-    std::vector<EvalValue> out(args.begin(), args.end());
+//
+// Issue #5461: a fixed-arity call returns the caller's span unchanged —
+// no vector copy. A variadic call packs into *packed, mints every rest
+// pair through Evaluator::mint_pair, so the pairs go on the reuse
+// freelist and the file-heap reclaim window advances.
+static std::span<const EvalValue> ir_pack_rest_args(const aura::ir::IRFunction& func,
+                                                    std::span<const EvalValue> args, Evaluator* ev,
+                                                    std::vector<EvalValue>* packed) {
     if (!func.variadic || func.arg_count == 0)
-        return out;
+        return args;
+    packed->assign(args.begin(), args.end());
     const std::size_t named = static_cast<std::size_t>(func.arg_count) - 1;
-    if (out.size() > named && ev != nullptr) {
+    if (packed->size() > named && ev != nullptr) {
         EvalValue rest = types::make_void();
-        auto& pairs = ev->pairs();
-        for (std::size_t ri = out.size(); ri > named; --ri) {
-            const auto pid = pairs.size();
-            pairs.push_back({std::move(out[ri - 1]), rest});
+        for (std::size_t ri = packed->size(); ri > named; --ri) {
+            const auto pid = ev->mint_pair((*packed)[ri - 1], rest, /*check_quota=*/false);
             rest = types::make_pair(pid);
         }
-        out.resize(named);
-        out.push_back(rest);
-    } else if (out.size() == named) {
-        out.push_back(types::make_void());
+        packed->resize(named);
+        packed->push_back(rest);
+    } else if (packed->size() == named) {
+        packed->push_back(types::make_void());
     }
-    return out;
+    return *packed;
 }
 
 static SourceLocation ir_call_arity_loc(const IRInstruction* instr, Evaluator* ev) {
@@ -1207,7 +1211,8 @@ EvalResult IRInterpreter::call_closure(std::uint64_t closure_id, std::span<const
     // Issue #5421: the IR interpreter used to pass a dotted-rest slot the
     // argument as-is. Bind the trailing actual arguments as a pair list,
     // exactly like the tree walker and the #5222 JIT path.
-    std::vector<EvalValue> user_args = ir_pack_rest_args(callee_func, args, context_.evaluator);
+    std::vector<EvalValue> packed_args;
+    const auto user_args = ir_pack_rest_args(callee_func, args, context_.evaluator, &packed_args);
     std::vector<EvalValue> all_args;
     all_args.reserve(closure.env.size() + user_args.size());
     for (auto& ev : closure.env)
@@ -1265,7 +1270,8 @@ EvalResult IRInterpreter::execute_function(const IRFunction& func,
     // Issue #4620: frame locals are the function's own slots.
     auto local_count = func.local_count;
     std::vector<EvalValue> locals(local_count, make_void());
-    auto user_args = ir_pack_rest_args(func, args, context_.evaluator);
+    std::vector<EvalValue> packed_args;
+    const auto user_args = ir_pack_rest_args(func, args, context_.evaluator, &packed_args);
     auto result = run_function(func, locals, user_args);
     if (std::holds_alternative<EvalResult>(result))
         return std::get<EvalResult>(std::move(result));
@@ -2570,8 +2576,9 @@ namespace {
 
                     // Issue #5421: direct IR calls need the same dotted-rest
                     // packing as call_closure / the JIT.
-                    auto user_args =
-                        ir_pack_rest_args(callee_func, call_args, st.context.evaluator);
+                    std::vector<EvalValue> packed_args;
+                    const auto user_args = ir_pack_rest_args(callee_func, call_args,
+                                                             st.context.evaluator, &packed_args);
                     std::vector<EvalValue> all_args;
                     for (auto& ev : closure.env)
                         all_args.push_back(ev);
@@ -2868,8 +2875,9 @@ namespace {
                     if (auto arity = ir_user_arity_diag(&instr, callee_func, apply_args.size(),
                                                         st.context.evaluator))
                         return IrFlow::ret_eval(std::unexpected(std::move(*arity)));
-                    auto user_args =
-                        ir_pack_rest_args(callee_func, apply_args, st.context.evaluator);
+                    std::vector<EvalValue> packed_args;
+                    const auto user_args = ir_pack_rest_args(callee_func, apply_args,
+                                                             st.context.evaluator, &packed_args);
                     std::vector<EvalValue> all_args;
                     for (auto& ev : closure.env)
                         all_args.push_back(ev);

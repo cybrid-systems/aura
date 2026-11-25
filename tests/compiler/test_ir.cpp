@@ -515,6 +515,83 @@ bool test_force_soa_keyword_literal_4321() {
     return true;
 }
 
+// Issue #5461: the IR interpreter must mint dotted-rest pairs through
+// Evaluator::mint_pair (reclaimable, locked), not append to pairs_ raw.
+// Two long variadic runs with a gc between must not grow the pair heap;
+// a fixed-arity run must not either.
+bool test_ir_rest_pairs_reclaim_5461() {
+    struct EnvGuard {
+        EnvGuard() {
+            ::aura::config::test_setenv("AURA_PIPELINE_STRICT", "force-soa", 1);
+            ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
+        }
+        ~EnvGuard() {
+            ::aura::config::test_unsetenv("AURA_PIPELINE_STRICT");
+            ::aura::config::test_unsetenv("AURA_SANDBOX");
+            ::aura::config::test_unsetenv("AURA_FORCE_IR");
+        }
+    } guard;
+
+    aura::compiler::CompilerService cs;
+    auto def_rest = cs.eval("(define (ir-rest-5461 a . xs) (car xs))");
+    auto def_run = cs.eval("(define (run-5461 f n) (let loop ((i 0)) (if (< i n) "
+                           "(begin (f 1 2 3 4) (loop (+ i 1))) #f)))");
+    auto def_fixed = cs.eval("(define (ir-fixed-5461 a b c d) a)");
+    if (!def_rest || !def_run || !def_fixed) {
+        std::println(std::cerr, "FAIL: #5461 could not define the reprocedures");
+        return false;
+    }
+    auto rest_val = cs.eval("(ir-rest-5461 1 2 3 4)");
+    auto fixed_val = cs.eval("(ir-fixed-5461 5 6 7 8)");
+    if (!rest_val || !aura::compiler::types::is_int(*rest_val) ||
+        aura::compiler::types::as_int(*rest_val) != 2 || !fixed_val ||
+        !aura::compiler::types::is_int(*fixed_val) ||
+        aura::compiler::types::as_int(*fixed_val) != 5) {
+        std::println(std::cerr, "FAIL: #5461 rest binding changed");
+        return false;
+    }
+    auto pairs_now = [&]() -> std::int64_t {
+        auto r = cs.eval("(begin (gc-heap) (hash-ref (stats:get \"gc-heap-stats\") \"pairs\" -1))");
+        if (!r || !aura::compiler::types::is_int(*r))
+            return -1;
+        return aura::compiler::types::as_int(*r);
+    };
+    auto second = cs.eval("(begin (run-5461 ir-rest-5461 200000) #t)");
+    if (!second) {
+        std::println(std::cerr, "FAIL: #5461 first variadic run");
+        return false;
+    }
+    const std::int64_t first_pairs = pairs_now();
+    auto third = cs.eval("(begin (run-5461 ir-rest-5461 200000) #t)");
+    if (!third) {
+        std::println(std::cerr, "FAIL: #5461 second variadic run");
+        return false;
+    }
+    const std::int64_t second_pairs = pairs_now();
+    // The pre-fix raw push left 600k pairs after the first run; a
+    // bounded heap may still have a large high-water chunk, but it must
+    // not keep growing.
+    if (first_pairs < 0 || second_pairs < 0 || first_pairs > 100000 ||
+        second_pairs > first_pairs + 64) {
+        std::println(std::cerr, "FAIL: #5461 rest pairs grew {} -> {}", first_pairs, second_pairs);
+        return false;
+    }
+    auto fixed = cs.eval("(begin (run-5461 ir-fixed-5461 200000) #t)");
+    if (!fixed) {
+        std::println(std::cerr, "FAIL: #5461 fixed-arity run");
+        return false;
+    }
+    const std::int64_t fixed_pairs = pairs_now();
+    if (fixed_pairs > second_pairs + 64) {
+        std::println(std::cerr, "FAIL: #5461 fixed-arity call minted pairs {} -> {}", second_pairs,
+                     fixed_pairs);
+        return false;
+    }
+    std::println("IR rest pair reclaim (#5461): OK ({} -> {} -> {})", first_pairs, second_pairs,
+                 fixed_pairs);
+    return true;
+}
+
 // ── Issue #4129: character literal reader ──────────────────────
 // Pre-fix, `#` (unless #t/#f/#() lexed as TokenKind::Error and
 // parse_list's error recovery consumed it as a closing ')': every
@@ -1023,6 +1100,8 @@ int main() {
     if (!test_keyword_intern_reuses_table_slot())
         return 1;
     if (!test_force_soa_keyword_literal_4321())
+        return 1;
+    if (!test_ir_rest_pairs_reclaim_5461())
         return 1;
     if (!test_character_literal_4129())
         return 1;
