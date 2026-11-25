@@ -522,6 +522,19 @@ std::vector<std::uint64_t> WorldlineLedger::end_session(std::uint64_t owner) {
     return rolled;
 }
 
+void AuditLog::push(AuditEvent&& event) {
+    events_.push_back(std::move(event));
+    if (sink_)
+        sink_(events_.back());
+    if (events_.size() > kMaxEvents) {
+        // Drop a quarter at a time: a single erase per event at the cap
+        // would move the whole window for every audited publish.
+        const std::size_t keep = kMaxEvents - kMaxEvents / 4;
+        const std::size_t drop = events_.size() - keep;
+        events_.erase(events_.begin(), events_.begin() + static_cast<std::ptrdiff_t>(drop));
+    }
+}
+
 void AuditLog::add(AuditKind kind, std::uint64_t token, std::uint64_t worldline,
                    std::uint64_t detail) {
     AuditEvent event{};
@@ -530,9 +543,7 @@ void AuditLog::add(AuditKind kind, std::uint64_t token, std::uint64_t worldline,
     event.worldline = worldline;
     event.detail = detail;
     event.timestamp_ms = audit_now_ms();
-    events_.push_back(std::move(event));
-    if (sink_)
-        sink_(events_.back());
+    push(std::move(event));
 }
 
 void AuditLog::add_constraint(AuditKind kind, std::uint64_t token, std::uint64_t worldline,
@@ -545,9 +556,7 @@ void AuditLog::add_constraint(AuditKind kind, std::uint64_t token, std::uint64_t
     event.constraint_version = version;
     event.timestamp_ms = audit_now_ms();
     event.reason = std::move(reason);
-    events_.push_back(std::move(event));
-    if (sink_)
-        sink_(events_.back());
+    push(std::move(event));
 }
 
 std::vector<AuditEvent> AuditLog::for_worldline(std::uint64_t worldline) const {

@@ -4,8 +4,11 @@ The bus soak lane (#5395).
 
 A resident host runs rounds while this driver samples the resource
 curves: the host's RSS, its open descriptors, the coordinator's
-committed bytes, the loans the peers hold and the trials that are still
-pending. The curves must be flat — no monotonic growth over the run.
+committed bytes, the loans the peers hold, the trials that are still
+pending and the host's retained audit events. The curves must be flat —
+no monotonic growth over the run. The in-process audit log is a bounded
+window (#5459: `AuditLog::kMaxEvents`, 4096 events); each sample records
+how many it retains, and an overrun is a MISS.
 
 The worker is killed periodically: the coordinator must fail the round
 closed (nothing half-applied), the next round must open, and no
@@ -39,6 +42,9 @@ MAX_FD_GROWTH = 8
 MAX_LOAN_GROWTH = 8
 MAX_PENDING_GROWTH = 8
 MAX_COMMITTED_GROWTH = 8 << 20
+# Keep in step with AuditLog::kMaxEvents (#5459). The retained window is
+# bounded; a sample above this means an unbounded second copy came back.
+AUDIT_WINDOW_EVENTS = 4096
 
 # How often the worker is killed (in rounds).
 KILL_EVERY_ROUNDS = 25
@@ -51,7 +57,7 @@ HOST_SCRIPT = """
 (set-code "(define (score x) (+ x 1))")
 (eval-current)
 (define h (bus:host {workspace} {image_bytes}))
-(define ms (bus:attach "" {workspace} 3 127 255))
+(define ms (bus:attach "" {workspace} 0 255 255))
 (define msid (car (cdr ms)))
 (bus:project-nodes msid)
 (display "ready")
@@ -67,6 +73,12 @@ HOST_SCRIPT = """
       ((string=? l "capacity")
        (define c (bus:capacity-plan msid))
        (display "capacity=") (display c) (display "|") (newline)
+       (loop))
+      ((string=? l "audit")
+       (define a (bus:audit msid 0))
+       (display "audit=")
+       (display (if (bus:ok? a) (list-ref a 1) -1))
+       (display "|") (newline)
        (loop))
       (else (loop)))))
 (bus:unhost {workspace})
@@ -242,6 +254,7 @@ def run(minutes: float, image_bytes: int, workspace: int) -> dict:
                         "pending": slo[11] if len(slo) > 11 else 0,
                         "committed": 0,
                         "room": 0,
+                        "audit_events": 0,
                     }
                 )
                 text = host.ask("capacity", "capacity=", 60.0)
@@ -251,6 +264,13 @@ def run(minutes: float, image_bytes: int, workspace: int) -> dict:
                     # The worldline room left: it shrinks as the rounds
                     # land, and it must never run out mid-round.
                     samples[-1]["room"] = capacity[6] if len(capacity) > 6 else 0
+                audit_text = host.ask("audit", "audit=", 60.0)
+                try:
+                    audit_events = int(audit_text.split("audit=")[-1].split("|", 1)[0])
+                except (ValueError, IndexError):
+                    audit_events = 0
+                if samples:
+                    samples[-1]["audit_events"] = max(0, audit_events)
         worker.kill()
         host.kill()
         return {
@@ -289,6 +309,11 @@ def check(report: dict) -> list[str]:
     committed = _growth(samples, "committed")
     if committed > MAX_COMMITTED_GROWTH:
         problems.append(f"the committed bytes grew {committed} > {MAX_COMMITTED_GROWTH}")
+    audit_events = samples[-1].get("audit_events", 0)
+    if audit_events > AUDIT_WINDOW_EVENTS:
+        problems.append(
+            f"the audit window retained {audit_events} events > {AUDIT_WINDOW_EVENTS} (round {samples[-1]['rounds']})"
+        )
     if report["failures"]:
         problems.append(f"{len(report['failures'])} rounds failed: {report['failures'][:3]}")
     return problems
@@ -316,7 +341,7 @@ def main() -> int:
             print(
                 f"  round {sample['rounds']:>6}: rss {sample['rss']} fds {sample['fds']} "
                 f"loans {sample['loans']} pending {sample['pending']} "
-                f"room {sample['room']}"
+                f"room {sample['room']} audit {sample.get('audit_events', 0)}"
             )
         for problem in problems:
             print(f"  MISS: {problem}")

@@ -221,6 +221,23 @@ int main() {
         check(audit.count(AuditKind::Trial) == 1, "trial audited");
     }
 
+    // ── #5459: the in-process audit log is a bounded window ─────
+    {
+        AuditLog log;
+        const std::size_t extra = AuditLog::kMaxEvents + 2000;
+        for (std::uint64_t i = 0; i < extra; ++i)
+            log.add(AuditKind::Publish, i);
+        check(log.events().size() <= AuditLog::kMaxEvents, "audit log stays bounded");
+        check(!log.events().empty() && log.events().back().token == extra - 1,
+              "the newest audit event is retained");
+        const std::size_t size_after_first = log.events().size();
+        for (std::uint64_t i = 0; i < 1000; ++i)
+            log.add(AuditKind::Publish, extra + i);
+        check(log.events().size() <= AuditLog::kMaxEvents, "audit log stays bounded on append");
+        check(log.events().size() >= size_after_first - AuditLog::kMaxEvents / 4,
+              "audit log drops in batches");
+    }
+
     if (g_failed == 0)
         std::printf("OK: bus capability #5124\n");
     return g_failed == 0 ? 0 : 1;

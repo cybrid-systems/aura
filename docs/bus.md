@@ -169,7 +169,7 @@ canary 拒绝)、`test_bus_closed_loop_e2e`(#5382,三进程正常闭环 + 五类
 - 约束最小安全子集(#5380/#5401):宿主预注册 `pure-define-only`(候选体禁 io/net/socket/ffi/mutate/set!/bus 等副作用算子)、`target-allowlist`、`metric-floor-bound` 三个参数化谓词;`std/contract` 的保护集经 #5317 digest 镜像进 KEEP 前的结构门,触碰受保护 define 一律拒绝。持 constraint-write 的会话才能安装/回滚约束。`target-allowlist` 与 `metric-floor-bound` 默认拒绝:安装源为空/非法即拒绝;前者接受逗号或空格分隔的节点 id 列表,只检查源码载体补丁,后者接受数字底线,低于底线拒绝。
 - 失败是 `(error code message)`，不是 `#f`；`bus:ok?` / `bus:code` / `bus:message` 读取。错误码含 `schema-mismatch`、`seals-missing`、`loan-exhausted`、`image-full`、`validation-failed`、`permission`、`unregistered-id`、`transport-failed`。
 
-`(api-reference)` 现在也列出这些动词、所需能力和失败码。审计有两个面：控制面日志（带原因，供 `bus:audit`）和映像审计节（只追加，供映射方直接遍历）。
+`(api-reference)` 现在也列出这些动词、所需能力和失败码。审计有两个面：控制面日志（带原因，供 `bus:audit`）和映像审计节（只追加，供映射方直接遍历）。控制面日志保留最近 4096 条事件，超出按 1024 条一批淘汰，所以没有映像审计节的宿主也不会随 publish 数增长 (#5459)；`bus:audit` 的 count/truncated 反映这个有界窗口。
 
 ### v0.3.2 统计准入(#5391)
 

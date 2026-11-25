@@ -257,7 +257,16 @@ public:
     std::size_t count(AuditKind kind) const;
     std::vector<AuditEvent> for_worldline(std::uint64_t worldline) const;
 
+    // Issue #5459: the in-process log is a bounded window. A host image
+    // without an audit section has no other copy, so an unbounded vector
+    // grew the resident host by ~113 B per audited frame forever. Keep the
+    // newest window and drop in batches so the common append stays O(1)
+    // amortized.
+    static constexpr std::size_t kMaxEvents = 4096;
+
 private:
+    void push(AuditEvent&& event);
+
     std::vector<AuditEvent> events_;
     Sink sink_;
 };
