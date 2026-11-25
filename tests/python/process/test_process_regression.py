@@ -36,6 +36,7 @@ PARTS = (
     "reg_soa_leak",
     "reg_write_file",
     "reg_resolve",
+    "reg_pipeline_face",
 )
 CASES = (
     (
@@ -477,6 +478,11 @@ CASES = (
         4918,
         "test_miss_is_module_error_with_search_list",
         "reg_resolve.TestRelativeRequire4918.test_miss_is_module_error_with_search_list",
+    ),
+    (
+        5470,
+        "test_default_and_force_soa_faces",
+        "reg_pipeline_face.PipelineFace.test_default_and_force_soa_faces",
     ),
 )
 
