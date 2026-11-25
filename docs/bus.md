@@ -270,7 +270,7 @@ canary 拒绝)、`test_bus_closed_loop_e2e`(#5382,三进程正常闭环 + 五类
 
 ### 生产化：work-driven、崩溃接管、reconnect、drain(#5423)
 
-- **work-driven**：`bus:supervise` 的第 6 个返回值是 `open-tasks`（看板未认领数）。监督者目标 = `min(容量, alive + open-tasks)`，没活不拉，任务到达才补；空闲不再 churn。
+- **work-driven**：`bus:supervise` 的第 6 个返回值是 `open-tasks`（**当前可认领**的 open 任务数；被拒绝/待批准/`gate-state-lost`/全局预算耗尽的 open 任务不算，任务因此不会被反复 fork）。监督者目标 = `min(容量, alive + open-tasks)`，没活不拉，任务到达才补；空闲不再 churn (#5456)。
 - **host 崩溃接管**：`Server::listen_at` 对 socket 旁的 `.lock` 取 `flock(LOCK_EX|LOCK_NB)`。活 host 持有锁；崩溃后内核释放锁，新 host 探测旧 socket：连接成功=活 host，拒绝；`ECONNREFUSED/ENOENT`=陈旧，先 unlink 再 bind；非 socket 文件不删。`owns_path_` 保证 bind 失败/退出的 Server 不会误删别人的 socket。
 - **reconnect**：查询失败或 EOF 后关闭会话，指数退避 1s→30s 重连；子进程保留。只有 `attach rejected`（role/workspace/schema 等）才 fatal 退出。
 - **graceful drain**：`--drain-ms`（默认 10000）；SIGTERM 后停止拉新，先等活跃 worker 完成，超时才 SIGTERM（5s 宽限）→ SIGKILL。

@@ -1042,6 +1042,10 @@ private:
     bool gates_resume(std::string* why);
     void gate_mark_lost_all();
     void gate_clear_lost(std::uint64_t task);
+    // #5456: the claim gate, shared by the supervisor's open-task count so
+    // a blocked task does not keep a worker-spawn target alive.
+    [[nodiscard]] bool claim_refusal(const Task& candidate, std::string* refusal) const;
+    [[nodiscard]] std::size_t claimable_open_count() const;
     bool gate_persist_contract(const Contract& contract);
     bool gate_persist_approval(const ApprovalRecord& record);
     bool gate_persist_budget(std::uint64_t task, const BudgetUsage& usage);

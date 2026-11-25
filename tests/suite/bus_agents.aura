@@ -52,3 +52,26 @@
   (check found)
   (bus:detach s)
   (check (bus:ok? (bus:unhost 8976))))
+
+; #5456: a blocked open task is not work for the supervisor.
+(test-case "supervisor counts only claimable open tasks" (hash "issue" 5456 "tags" "bus")
+  (define ws (+ 20000 (modulo (current-time-ms) 10000)))
+  (define h (bus:host ws))
+  (check (bus:ok? h))
+  (define a (bus:attach "" ws 6 255 255))
+  (check (bus:ok? a))
+  (define s (car (cdr a)))
+  ; approval-gated task: pending, then denied. It stays Open but no worker
+  ; can claim it, so it must not drive spawned workers.
+  (define gated (bus:post-task s 0 77 1))
+  (check (bus:ok? gated))
+  (define gated-id (car (cdr gated)))
+  (check (= 0 (list-ref (bus:supervise s) 5)))
+  (check (bus:ok? (bus:approve s gated-id 2 1000)))
+  (check (= 0 (list-ref (bus:supervise s) 5)))
+  ; one ordinary open task is claimable work
+  (define open (bus:post-task s 0 78 0))
+  (check (bus:ok? open))
+  (check (= 1 (list-ref (bus:supervise s) 5)))
+  (bus:detach s)
+  (check (bus:ok? (bus:unhost ws))))

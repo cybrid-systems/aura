@@ -1965,6 +1965,46 @@ CapacityPlan Server::capacity_plan() const {
     return plan;
 }
 
+// #5456: the same gate the claim op applies. A task that can never be
+// claimed (pending/denied approval, lost gate ledger) must not count as
+// work for the supervisor.
+bool Server::claim_refusal(const Task& candidate, std::string* refusal) const {
+    if (lost_gates_.count(candidate.id) != 0) {
+        if (refusal)
+            *refusal = "gate-state-lost: the contract/budget ledger was lost with the host restart";
+        return true;
+    }
+    if ((candidate.flags & kTaskNeedsApproval) == 0)
+        return false;
+    ApprovalRecord approval{};
+    const bool known = approvals_.get(candidate.id, &approval);
+    if (known && approval.state == ApprovalState::Approved)
+        return false;
+    if (refusal) {
+        if (!known)
+            *refusal = "contract-unapproved";
+        else if (approval.state == ApprovalState::Pending)
+            *refusal = "contract-approval-pending";
+        else if (approval.state == ApprovalState::Timeout)
+            *refusal = "contract-approval-timeout";
+        else
+            *refusal = "contract-denied";
+    }
+    return true;
+}
+
+std::size_t Server::claimable_open_count() const {
+    // #5403: a tripped global budget refuses every claim, so it also makes
+    // every open task unclaimable for the supervisor's target.
+    if (budget_.global_tripped())
+        return 0;
+    std::size_t n = 0;
+    for (const Task& candidate : tasks_.open_tasks())
+        if (!claim_refusal(candidate, nullptr))
+            ++n;
+    return n;
+}
+
 // #5395: the performance counters and the capacity plan.
 bool Server::slo_query(std::uint64_t kind, SloReplyBody* out, std::string* why) {
     SloReplyBody reply{};
@@ -2014,7 +2054,8 @@ bool Server::supervisor_query(SupervisorReplyBody* out, std::string* why) {
     reply.cpu_free_pct = capacity.cpu_free_pct;
     reply.mem_free_mb = capacity.mem_free_mb;
     reply.reason = plan.reason;
-    reply.open_tasks = tasks_.open_count();
+    // #5456: only currently claimable open tasks gate worker spawning.
+    reply.open_tasks = claimable_open_count();
     const char* reason = plan.reason == 0   ? "room"
                          : plan.reason == 1 ? "cpu-bound"
                          : plan.reason == 2 ? "memory-bound"
@@ -3634,28 +3675,6 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
                     // claim walks every open task in id order and skips a
                     // blocked candidate, so one denied/pending/gate-lost
                     // task cannot wedge the whole board.
-                    const auto claim_refusal = [&](const Task& candidate, std::string* refusal) {
-                        if (lost_gates_.count(candidate.id) != 0) {
-                            *refusal = "gate-state-lost: the contract/budget ledger was lost with "
-                                       "the host restart";
-                            return true;
-                        }
-                        if ((candidate.flags & kTaskNeedsApproval) == 0)
-                            return false;
-                        ApprovalRecord approval{};
-                        const bool known = approvals_.get(candidate.id, &approval);
-                        if (known && approval.state == ApprovalState::Approved)
-                            return false;
-                        if (!known)
-                            *refusal = "contract-unapproved";
-                        else if (approval.state == ApprovalState::Pending)
-                            *refusal = "contract-approval-pending";
-                        else if (approval.state == ApprovalState::Timeout)
-                            *refusal = "contract-approval-timeout";
-                        else
-                            *refusal = "contract-denied";
-                        return true;
-                    };
                     Task candidate{};
                     bool have = false;
                     if (req.task_id != 0) {
