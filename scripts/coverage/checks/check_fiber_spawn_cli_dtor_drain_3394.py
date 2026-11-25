@@ -109,8 +109,14 @@ def main() -> int:
     drain_zone = msg[msg.find("void Evaluator::drain_thread_fibers() noexcept {") :]
     must(len(drain_zone) > 0, "AC4: drain definition found")
     must(
-        "wait_for(" in drain_zone and "milliseconds(2000)" in drain_zone,
+        ("wait_until(" in drain_zone or "wait_for(" in drain_zone) and "milliseconds(2000)" in drain_zone,
         "AC4: bounded 2s wait",
+    )
+    # Issue #5463: the bound is one shared absolute deadline, not a fresh
+    # 2s per fiber.
+    must(
+        "drain_deadline" in drain_zone and "wait_until(" in drain_zone,
+        "AC4: one shared drain deadline",
     )
     must(
         "g_thread_fiber_dtor_abandon_total" in drain_zone,

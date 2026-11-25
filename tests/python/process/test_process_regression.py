@@ -304,6 +304,11 @@ CASES = (
         "reg_concurrent_rebind.ConcurrentRebind.test_set_code_reload_next_to_a_rebind",
     ),
     (
+        5463,
+        "test_six_stuck_bodies_share_one_drain_budget",
+        "reg_fiber_exit.StuckBodyExit.test_six_stuck_bodies_share_one_drain_budget",
+    ),
+    (
         5436,
         "test_program_end_exits_with_its_status",
         "reg_fiber_exit.StuckBodyExit.test_program_end_exits_with_its_status",

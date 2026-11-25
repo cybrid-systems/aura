@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tempfile
 import textwrap
+import time
 import unittest
 from pathlib import Path
 
@@ -100,6 +101,23 @@ class StuckBodyExit(unittest.TestCase):
         self.assert_no_crash(run)
         self.assertEqual(run.returncode, 1, run.stderr[-400:])
         self.assertIn("boom", run.stderr)
+
+    def test_six_stuck_bodies_share_one_drain_budget(self) -> None:
+        # Issue #5463: each abandoned body used to wait its own 2s, so six
+        # stuck bodies took ~12s. The drain has one shared absolute deadline.
+        program = """\
+(define (stuck _) (fiber:spawn (lambda () (let loop () (loop)))))
+(for-each stuck '(1 2 3 4 5 6))
+(fiber:sleep 200)
+(exit 3)
+"""
+        started = time.monotonic()
+        run = self.run_program(program, "--load")
+        elapsed = time.monotonic() - started
+        self.assert_no_crash(run)
+        self.assertEqual(run.returncode, 3, run.stderr[-400:])
+        self.assertEqual(run.stderr.count("[fiber:drain] WARN"), 6, run.stderr[-800:])
+        self.assertLess(elapsed, 6.0, f"six stuck fibers took {elapsed:.1f}s")
 
     def test_webhook_handler_outliving_stop(self) -> None:
         run = self.run_program(WEBHOOK_PROGRAM)

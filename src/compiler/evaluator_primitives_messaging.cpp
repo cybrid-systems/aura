@@ -3451,6 +3451,12 @@ void Evaluator::drain_thread_fibers() noexcept {
             }
         }
         s_fiber_results_cv.notify_all();
+        // Issue #5463: one shared budget for the whole drain. Waiting 2s per
+        // body made an exit with N stuck fibers take N*2s. Every body gets
+        // the same absolute deadline; a still-stuck body is detached when
+        // it passes, not after its own private timeout.
+        const auto drain_deadline =
+            std::chrono::steady_clock::now() + std::chrono::milliseconds(2000);
         std::size_t abandoned = 0;
         for (auto& [fid, worker] : mine) {
             // (exit) can run inside a fiber body. Joining self is invalid;
@@ -3459,9 +3465,9 @@ void Evaluator::drain_thread_fibers() noexcept {
                 worker.detach();
                 continue;
             }
-            const bool ready = [fid] {
+            const bool ready = [fid, drain_deadline] {
                 std::unique_lock<std::mutex> lock(s_fiber_results_mtx);
-                return s_fiber_results_cv.wait_for(lock, std::chrono::milliseconds(2000), [fid] {
+                return s_fiber_results_cv.wait_until(lock, drain_deadline, [fid] {
                     auto it = s_fiber_results.find(fid);
                     return it == s_fiber_results.end() || it->second.ready;
                 });
@@ -3484,8 +3490,8 @@ void Evaluator::drain_thread_fibers() noexcept {
                 ++abandoned;
                 g_thread_fiber_dtor_abandon_total.fetch_add(1, std::memory_order_relaxed);
                 ::aura::core::eprintln_nothrow(
-                    "[fiber:drain] WARN: thread-fiber {} not ready after "
-                    "2000ms at ~Evaluator; detaching (stuck body?)",
+                    "[fiber:drain] WARN: thread-fiber {} not ready within the "
+                    "shared 2000ms drain budget at ~Evaluator; detaching (stuck body?)",
                     fid);
                 worker.detach();
             }
