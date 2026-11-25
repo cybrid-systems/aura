@@ -299,11 +299,14 @@ bool Evaluator::save_panic_checkpoint() {
             newly_live = panic_safe_source_.empty();
             panic_safe_source_ = workspace_source_text_;
             panic_safe_string_heap_size_ = string_heap_.size();
+            // Issue #5476: cells_/pairs_ are append-only pmr vectors that
+            // another body grows under this lock; snapshot their sizes here
+            // so a reallocation cannot race the read.
+            panic_safe_cells_size_ = cells_.size();
+            panic_safe_pairs_size_ = pairs_.size();
         }
         if (newly_live)
             aura::gc_hooks::note_panic_checkpoint_live();
-        panic_safe_cells_size_ = cells_.size();
-        panic_safe_pairs_size_ = pairs_.size();
         panic_safe_env_frames_size_ = env_frames_.size();
         // Issue #4717: publish liveness AFTER the source is installed so a
         // body's has_panic_checkpoint() probe (acquire) either sees no
@@ -335,14 +338,15 @@ bool Evaluator::save_panic_checkpoint() {
         newly_live = panic_safe_source_.empty();
         panic_safe_source_ = std::move(src);
         panic_safe_string_heap_size_ = string_heap_.size();
+        // Issue #5476: same size snapshot as the cached-source branch.
+        panic_safe_cells_size_ = cells_.size();
+        panic_safe_pairs_size_ = pairs_.size();
     }
     if (newly_live)
         aura::gc_hooks::note_panic_checkpoint_live();
     // Issue #242 / #1360: snapshot append-only arena sizes so
     // restore_panic_checkpoint can truncate them back (including
     // env_frames_ — append-only EnvId keeps pre-checkpoint ids valid).
-    panic_safe_cells_size_ = cells_.size();
-    panic_safe_pairs_size_ = pairs_.size();
     panic_safe_env_frames_size_ = env_frames_.size();
     // Issue #4717: publish liveness after the source install (see above).
     panic_checkpoint_live_.store(true, std::memory_order_release);

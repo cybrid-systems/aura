@@ -102,6 +102,19 @@ class Concurrency5476(unittest.TestCase):
             "the tier worker must snapshot stats_ under the queue lock",
         )
 
+        ws = read("src/compiler/evaluator_workspace_tree.cpp")
+        ck = ws.find("bool Evaluator::save_panic_checkpoint()")
+        self.assertGreaterEqual(ck, 0)
+        ck_win = ws[ck : ck + 2500]
+        lock_at = ck_win.find("std::scoped_lock alloc_lock(alloc_storage_lock_)")
+        size_at = ck_win.find("panic_safe_cells_size_ = cells_.size()")
+        self.assertGreaterEqual(lock_at, 0)
+        self.assertGreater(
+            size_at,
+            lock_at,
+            "panic-checkpoint size snapshots must sit under the alloc lock",
+        )
+
         arena = read("src/core/arena.ixx")
         cpos = arena.find("LiveCompactResult live_compact(LiveCompactMode mode) noexcept {")
         self.assertGreaterEqual(cpos, 0)
