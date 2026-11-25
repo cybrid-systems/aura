@@ -76,6 +76,11 @@ inline constexpr std::uint64_t kSloWorldlinesPerRound = 1;
 inline constexpr std::uint64_t kSloPatchesPerRound = 2;
 // #5428: one candidate source carrier per round.
 inline constexpr std::uint64_t kSloSourcesPerRound = 1;
+// #5468: a carrier is at most one control frame of text, and its bytes
+// are 8-aligned. Charging the largest aligned carrier per round keeps
+// the estimate conservative: the byte region is a wall of its own, not
+// just the slot count.
+inline constexpr std::uint64_t kSloSourceBytesPerRound = 4096;
 // Below this many rounds the coordinator warns.
 inline constexpr std::uint64_t kSloLowRounds = 8;
 

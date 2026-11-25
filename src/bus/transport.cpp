@@ -2090,7 +2090,11 @@ CapacityPlan Server::capacity_plan() const {
             strings.count < slot_capacity ? slot_capacity - strings.count : 0;
         plan.remaining_source_bytes =
             strings.capacity > strings.length ? strings.capacity - strings.length : 0;
+        // #5468: slots alone overstate the room. The byte region fills
+        // after 16 full-size carriers while 1008 slots remain, so the
+        // bytes must bound the rounds too.
         rounds = std::min(rounds, plan.remaining_source_slots / kSloSourcesPerRound);
+        rounds = std::min(rounds, plan.remaining_source_bytes / kSloSourceBytesPerRound);
     }
     plan.rounds = rounds;
     plan.low = rounds <= kSloLowRounds ? 1 : 0;

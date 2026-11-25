@@ -173,6 +173,40 @@
   (bus:detach s)
   (check (bus:ok? (bus:unhost 8991))))
 
+; #5468: the source byte region is a wall of its own. Full-size
+; carriers fill it in 16 publishes while most of the 1024 slots remain;
+; the plan must report 0 rounds and low=1, not the slot count.
+(test-case "byte-full source table reports no rounds" (hash "issue" 5468 "tags" "bus")
+  (define h (bus:host 8993))
+  (check (bus:ok? h))
+  (define a (bus:attach "" 8993 0 127 255))
+  (check (bus:ok? a))
+  (define s (car (cdr a)))
+  (define before (bus:capacity-plan s))
+  (check (bus:ok? before))
+  ; At most one 4096-byte carrier per round: 16 rounds, not 1024.
+  (check= 16 (list-ref before 1))
+  (check= 0 (list-ref before 2))
+  (check= 65536 (list-ref before 11))
+  (define big (string-repeat "x" 4090))
+  (define accepted
+    (let loop ((i 0))
+      (if (< i 2048)
+          (if (bus:ok? (bus:publish-source s big))
+              (loop (+ i 1))
+              i)
+          i)))
+  ; The byte region is full, the slot array is not: the wall is bytes.
+  (check= 16 accepted)
+  (define after (bus:capacity-plan s))
+  (check (bus:ok? after))
+  (check= 1008 (list-ref after 10))
+  (check= 0 (list-ref after 11))
+  (check= 0 (list-ref after 1))
+  (check= 1 (list-ref after 2))
+  (bus:detach s)
+  (check (bus:ok? (bus:unhost 8993))))
+
 (test-case "unknown channel refusal is uniform" (hash "issue" 5407 "tags" "bus")
   (define h (bus:host 8978))
   (check (bus:ok? h))

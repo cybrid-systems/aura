@@ -387,10 +387,14 @@
 ; (bus:capacity-plan session) -> (ok rounds low remaining-metrics
 ;                                 remaining-cc remaining-patches
 ;                                 remaining-worldlines remaining-nodes
-;                                 committed-bytes image-bytes)
+;                                 committed-bytes image-bytes
+;                                 remaining-source-slots remaining-source-bytes)
 ; The room left in the image and the rounds it still supports. The
 ; channel capacities are a function of the delivered image (#5387), so
-; the plan follows the image.
+; the plan follows the image. The string table is a wall of its own
+; (#5428, #5468): rounds charges one source carrier and its 4 KiB of
+; bytes per round, so a full byte region reports zero rounds even when
+; most slots are free.
 (define (bus:capacity-plan session)
   (bus-call "capacity-plan" session))
 
