@@ -117,6 +117,13 @@ A body is UTF-8 **text**: the transport decodes bytes into a string, so
 binary payloads are not preserved (a `0x00` byte is dropped, invalid
 sequences become replacement characters). JSON webhooks are text.
 
+`Content-Length` is one decimal non-negative integer. A value that is not
+1\*DIGIT (after the optional whitespace HTTP allows around a field value),
+or a repeated `Content-Length`, is answered `400`; it is never treated as
+zero. The body is exactly the announced number of bytes: bytes received
+past it in the same read are discarded (#5453). A body shorter than the
+announcement is `400 short body` (or `408` when the read budget expires).
+
 Body and response lengths use `string-byte-length`, an O(1) count of the
 stored UTF-8 bytes (not the code-point count of `string-length`). The
 request reader collects chunks and concatenates them once, and
@@ -187,4 +194,7 @@ handler sleeps; `stop` closes the listener and keeps the audit trail. For
 free their in-flight slots (a following normal request is `200`); a head
 with `Content-Length` but no body answers `408`; a busy `503` is readable to
 its body. For #5451: a 200-connection burst is accepted and answered `200`
-without a reset (the old 5 ms tick and backlog 16 stalled the tail).
+without a reset (the old 5 ms tick and backlog 16 stalled the tail). For
+#5453: a `Content-Length: 5` request that sends `helloEXTRA` hands the
+handler `hello`; `abc`, `5, 5`, `0x10`, `5 5`, empty, `+5`, `5.0`, `-5`,
+`1e1` and a repeated `Content-Length` are all `400`.

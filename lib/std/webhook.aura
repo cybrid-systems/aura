@@ -238,17 +238,48 @@
                     ((= (string-length acc) 0) #f)
                     (else (wh-refusal 400 "malformed request\n"))))))))))))
 
+; Issue #5453: Content-Length is 1*DIGIT. string->number also accepts
+; +5, 5.0, 0x10 and whitespace; those and a comma-joined duplicate are
+; invalid, not an implicit zero.
+(define (wh-decimal-length s)
+  (if (and (string? s) (> (string-length s) 0))
+    (let loop ((i 0))
+      (if (>= i (string-length s))
+        (try (string->number s) (catch (e) #f))
+        (let ((c (string-ref s i)))
+          (if (and (>= c 48) (<= c 57))
+            (loop (+ i 1))
+            #f))))
+    #f))
+
+; Take at most n UTF-8 bytes from s. The transport decodes bytes into a
+; string, so an overlong body may overshoot Content-Length inside one recv;
+; cut it at a code-point boundary instead of handing the extra bytes on.
+(define (wh-take-bytes s n)
+  (if (or (<= n 0) (<= (string-byte-length s) n))
+    (if (<= n 0) "" s)
+    (let loop ((cs (string->chars s)) (used 0) (acc (list)))
+      (if (null? cs)
+        (chars->string (reverse acc))
+        (let* ((piece (chars->string (list (car cs))))
+               (blen (string-byte-length piece)))
+          (if (> (+ used blen) n)
+            (chars->string (reverse acc))
+            (loop (cdr cs) (+ used blen) (cons (car cs) acc))))))))
+
 ; Read the body the head announced. → the request, or a refusal response.
 ; Issue #5450: the body gets its own total read budget after the head.
 (define (wh-read-body! s sock req rest)
-  (let* ((length (wh-int (try (string->number (wh-header req "content-length"))
-                              (catch (e) #f))
-                        0))
+  (let* ((headers (hash-ref req "headers" (hash)))
+         (raw-length (hash-ref headers "content-length" 'missing))
+         (length (if (eq? raw-length 'missing) 0 (wh-decimal-length raw-length)))
          (encoding (wh-header req "transfer-encoding")))
     (cond
       ((not (= (string-length encoding) 0))
        (wh-refusal 501 "transfer-encoding is not supported: send Content-Length\n"))
-      ((or (< length 0) (> length (hash-ref s "max-body")))
+      ((not (number? length))
+       (wh-refusal 400 "invalid content-length\n"))
+      ((> length (hash-ref s "max-body"))
        (wh-refusal 413 "payload too large\n"))
       (else
        ; a client that waits for a go-ahead (curl on a large body) gets it
@@ -262,12 +293,12 @@
               (start (string-byte-length rest)))
          (if (>= start length)
            (begin
-             (hash-set! req "body" rest)
+             (hash-set! req "body" (wh-take-bytes rest length))
              (hash-set! req "content-length" length)
              req)
            (let loop ((chunks (list rest)) (total start))
              (if (>= total length)
-               (let ((body (apply string-append (reverse chunks))))
+               (let ((body (wh-take-bytes (apply string-append (reverse chunks)) length)))
                  (hash-set! req "body" body)
                  (hash-set! req "content-length" length)
                  req)

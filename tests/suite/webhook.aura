@@ -495,4 +495,49 @@
       (check (number? l))
       (if (number? l) (tcp-close l)))))
 
+; Issue #5453: the body is exactly Content-Length bytes; invalid or
+; duplicated Content-Length is a 400, not an implicit zero.
+(define (echo-cl req)
+  (string-append (number->string (hash-ref req "content-length"))
+                 ":" (hash-ref req "body")))
+
+(test-case "the body is cut to Content-Length" (hash "issue" 5453)
+  (let* ((s (webhook:make (hash "port" 0 "body-timeout-ms" 2000)))
+         (port 0))
+    (webhook:route! s "/len" (list "POST") echo-cl (hash "public" #t))
+    (webhook:start! s)
+    (set! port (webhook:port s))
+    (let ((r (raw port (string-append "POST /len HTTP/1.1\r\nHost: x\r\n"
+                                      "Content-Length: 5\r\n\r\nhelloEXTRA"))))
+      (check= 200 (status-of r))
+      (check= "5:hello" (body-of r)))
+    ; one recv can hold more than the announced body; exactly length remains
+    (let ((r (raw port (string-append "POST /len HTTP/1.1\r\nHost: x\r\n"
+                                      "Content-Length: 0\r\n\r\nhello"))))
+      (check= 200 (status-of r))
+      (check= "0:" (body-of r)))
+    (check= #t (webhook:stop! s))))
+
+(test-case "an invalid Content-Length is 400" (hash "issue" 5453)
+  (let* ((s (webhook:make (hash "port" 0 "body-timeout-ms" 2000)))
+         (port 0))
+    (webhook:route! s "/len" (list "POST") echo-cl (hash "public" #t))
+    (webhook:start! s)
+    (set! port (webhook:port s))
+    (for-each (lambda (v)
+                (let ((r (raw port (string-append "POST /len HTTP/1.1\r\nHost: x\r\n"
+                                                  "Content-Length: " v "\r\n\r\nhello"))))
+                  (check= 400 (status-of r))))
+              (list "abc" "5, 5" "0x10" "5 5" "" "+5" "5.0" "-5" "1e1"))
+    ; repeated headers (same value) are ambiguous and refused
+    (let ((r (raw port (string-append "POST /len HTTP/1.1\r\nHost: x\r\n"
+                                      "Content-Length: 5\r\nContent-Length: 5\r\n\r\nhello"))))
+      (check= 400 (status-of r)))
+    ; an invalid value must not wait for a body that will never be read
+    (let ((t0 (monotonic-ms)))
+      (raw port (string-append "POST /len HTTP/1.1\r\nHost: x\r\n"
+                               "Content-Length: 1e1\r\n\r\n"))
+      (check (< (- (monotonic-ms) t0) 1000)))
+    (check= #t (webhook:stop! s))))
+
 (test-finish)
