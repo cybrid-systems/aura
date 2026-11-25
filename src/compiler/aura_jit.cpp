@@ -5753,8 +5753,11 @@ struct AuraJIT::Impl {
         auto reg = [&](const char* name, void* ptr) {
             auto sym = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(ptr),
                                                     llvm::JITSymbolFlags::Callable);
-            auto pool = jit->getExecutionSession().getSymbolStringPool();
-            auto k = pool->intern(name);
+            // Issue #5461 ubsan-smoke: ExecutionSession::intern delegates to
+            // the EPC pool without materializing a SymbolStringPool
+            // shared_ptr in this TU (the temporary's control block tripped
+            // -fsanitize=vptr at the lambda exit under UBSan).
+            auto k = jit->getExecutionSession().intern(name);
             auto map = llvm::orc::absoluteSymbols({{k, sym}});
             if (auto err = main_dylib->define(std::move(map)))
                 fprintf(stderr, "JIT: failed to define symbol '%s'\n", name);
@@ -6657,8 +6660,7 @@ struct AuraJIT::Impl {
             return;
         auto sym = llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(ptr),
                                                 llvm::JITSymbolFlags::Callable);
-        auto pool = jit->getExecutionSession().getSymbolStringPool();
-        auto k = pool->intern(name);
+        auto k = jit->getExecutionSession().intern(name);
         auto map = llvm::orc::absoluteSymbols({{k, sym}});
         if (auto err = main_dylib->define(std::move(map)))
             fprintf(stderr, "JIT: failed to define symbol '%s'\n", name);
