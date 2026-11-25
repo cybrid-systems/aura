@@ -1115,9 +1115,27 @@ const EvidenceBody* Server::evidence(std::uint64_t worldline) const {
 }
 
 void Server::notify_peers(std::uint64_t except_session) {
+    // The bells go out when the poll turn ends (flush_doorbells): a burst
+    // of commits costs one write per subscribed peer, not one per commit.
+    // A session is left out only when it is the one session that committed.
+    if (!doorbell_pending_) {
+        doorbell_pending_ = true;
+        doorbell_only_ = except_session;
+    } else if (doorbell_only_ != except_session) {
+        doorbell_only_ = 0;
+    }
+}
+
+void Server::flush_doorbells() {
+    if (!doorbell_pending_)
+        return;
+    doorbell_pending_ = false;
     const std::uint64_t one = 1;
     for (const auto& peer : peers_) {
-        if (peer.session == except_session || peer.event_fd < 0)
+        // Only a subscriber waits on its doorbell: a session that never
+        // sent Subscribe would only wake to catch up on nothing it asked
+        // for.
+        if (peer.subscribed == 0 || peer.session == doorbell_only_ || peer.event_fd < 0)
             continue;
         ssize_t ignored = ::write(peer.event_fd, &one, sizeof(one));
         (void)ignored;
@@ -4274,6 +4292,8 @@ void Server::serve(const BuildFn& build) {
                 timeout = static_cast<int>(std::min<std::uint64_t>(delta + 1, 1000));
             }
         }
+        // The commits of the turn that ends here reach the subscribers now.
+        flush_doorbells();
         const int ready = ::poll(pfds.data(), static_cast<nfds_t>(pfds.size()), timeout);
         if (ready < 0) {
             if (errno == EINTR)

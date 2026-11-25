@@ -931,8 +931,10 @@ private:
     // End a session: roll back its pending trials, reclaim its loans,
     // audit Disconnect, close its fds. Never touches other sessions.
     void finish_session(PeerSession& peer);
-    // Ring every other session's doorbell after a committed change.
+    // Note a committed change; the subscribers' doorbells ring when the
+    // poll turn ends, one write per subscribed peer per turn.
     void notify_peers(std::uint64_t except_session);
+    void flush_doorbells();
     // Append one worldline ledger record into the worldlines channel.
     void project_worldline(std::uint64_t id, WorldlineState state, ConstraintResult cr);
     // #5399: append one task event into the tasks channel (best effort)
@@ -1006,6 +1008,9 @@ private:
     std::uint64_t root_token_ = 0;
     // serve() path: the session table and the wake eventfd stop() writes.
     std::vector<PeerSession> peers_;
+    // The doorbells owed for the commits of the current poll turn.
+    bool doorbell_pending_ = false;
+    std::uint64_t doorbell_only_ = 0; // the one session that committed; 0 = several
     int wake_fd_ = -1;
     // #5394: only a stop() request stops the coordinator; the wake
     // bell is just a wakeup.

@@ -62,6 +62,44 @@ bool build_empty_image(std::span<std::byte> img, std::string*) {
     return true;
 }
 
+// One metrics section of eight slots: enough to subscribe to and to
+// publish into (the doorbell checks).
+bool build_metrics_image(std::span<std::byte> img, std::string*) {
+    constexpr std::uint64_t kDir = kImageHeaderSize;
+    constexpr std::uint64_t kMetricsOff = kDir + sizeof(SectionEntry);
+    constexpr std::uint64_t kMetricsSlots = 8;
+    if (img.size() < kMetricsOff + kMetricsSlots * sizeof(MetricRecord))
+        return false;
+    std::memset(img.data(), 0, img.size());
+    ImageHeader h{};
+    std::memcpy(h.magic, kImageMagic, sizeof(h.magic));
+    h.abi_major = kImageAbiMajor;
+    h.abi_minor = kBusAbiMinor;
+    h.endianness = static_cast<std::uint32_t>(kImageEndianMarker);
+    h.header_len = kImageHeaderSize;
+    h.image_size = img.size();
+    const SchemaId id = header_schema_id();
+    std::memcpy(h.schema_id, &id.a, 8);
+    std::memcpy(h.schema_id + 8, &id.b, 8);
+    h.layout_version = 1;
+    h.committed_bytes = kMetricsOff + kMetricsSlots * sizeof(MetricRecord);
+    h.committed_gen = 2;
+    h.section_dir_off = kDir;
+    h.section_count = 1;
+    std::memcpy(img.data(), &h, sizeof(h));
+    SectionEntry e{};
+    e.kind = static_cast<std::uint32_t>(SectionKind::Metrics);
+    e.version = 1;
+    e.offset = kMetricsOff;
+    e.element_size = sizeof(MetricRecord);
+    e.capacity = kMetricsSlots * sizeof(MetricRecord);
+    e.generation = 2;
+    e.fingerprint = section_layout_fingerprint(SectionKind::Metrics);
+    e.digest = 14695981039346656037ull;
+    std::memcpy(img.data() + kDir, &e, sizeof(e));
+    return true;
+}
+
 // A raw connection: the attacker speaks the wire protocol by hand.
 int raw_connect(const std::string& path) {
     const int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
@@ -675,6 +713,124 @@ int main() {
         check(frame_quota, "the frame flood is audited");
         check(rate_limited >= 3, "every quota cut-off is audited");
         check(grant_limited >= 1, "the grant limit is audited");
+    }
+
+    // ── 9. Doorbells reach the subscribers, once per turn ───────
+    // A commit rings the eventfd of the sessions that subscribed and of
+    // nobody else; the commits of one poll turn are one ring.
+    {
+        const std::string bell_path = std::string(dir) + "/bell.sock";
+        Server bells;
+        check(bells.listen_at(bell_path, 1u << 16, kWorkspace, &err), "the doorbell bus listens");
+        WorkspacePolicy policy;
+        policy.allow(0, Capability{kCapAll, 0xFF, kWorkspace, 0, 0, 0});
+        bells.set_policy(policy);
+        std::thread bell_thread([&] { bells.serve(build_metrics_image); });
+        sleep_ms(200);
+
+        // The doorbell's counter, or -1 while it stays silent.
+        const auto bell_count = [](int fd, int timeout_ms) -> long {
+            struct pollfd pfd{fd, POLLIN, 0};
+            if (::poll(&pfd, 1, timeout_ms) <= 0)
+                return -1;
+            std::uint64_t count = 0;
+            if (::read(fd, &count, sizeof(count)) != static_cast<ssize_t>(sizeof(count)))
+                return -1;
+            return static_cast<long>(count);
+        };
+        const auto send_loan_body = [&](Attach& peer, FrameType type, const LoanBody& loan) {
+            check(send_frame(peer.sock, type, peer.session,
+                             {reinterpret_cast<const std::byte*>(&loan), sizeof(loan)}),
+                  "the doorbell frame is sent");
+            FrameHeader hdr{};
+            std::vector<std::byte> reply;
+            check(read_frame(peer.sock, &hdr, &reply, &err) &&
+                      hdr.type == static_cast<std::uint16_t>(FrameType::Credit),
+                  "the doorbell frame is answered");
+        };
+        const auto publish = [&](Attach& peer) {
+            LoanBody reserve{};
+            reserve.channel = 1;
+            reserve.length = sizeof(MetricRecord);
+            check(send_frame(peer.sock, FrameType::Reserve, peer.session,
+                             {reinterpret_cast<const std::byte*>(&reserve), sizeof(reserve)}),
+                  "Reserve");
+            FrameHeader hdr{};
+            std::vector<std::byte> reply;
+            check(read_frame(peer.sock, &hdr, &reply, &err) &&
+                      hdr.type == static_cast<std::uint16_t>(FrameType::Credit),
+                  "Reserve reply");
+            LoanBody granted{};
+            std::memcpy(&granted, reply.data(), sizeof(granted));
+            MetricRecord m{};
+            m.key_sym = kImageNoIndex;
+            m.value = 1;
+            std::memcpy(static_cast<std::byte*>(peer.base) + granted.offset, &m, sizeof(m));
+            LoanBody pub = granted;
+            pub.channel = 1;
+            pub.length = sizeof(m);
+            send_loan_body(peer, FrameType::Publish, pub);
+        };
+
+        Client watcher_client, plain_client, actor_client;
+        Attach watcher{}, plain{}, actor{};
+        check(watcher_client.connect_to(bell_path, kWorkspace, 0, kCapRead, &watcher, &err),
+              "the subscriber attaches");
+        check(plain_client.connect_to(bell_path, kWorkspace, 0, kCapRead, &plain, &err),
+              "the reader that never subscribes attaches");
+        check(actor_client.connect_to(bell_path, kWorkspace, 0, kCapPublish | kCapTrial, &actor,
+                                      &err),
+              "the publisher attaches");
+        LoanBody subscription{};
+        subscription.channel = 1;
+        send_loan_body(watcher, FrameType::Subscribe, subscription);
+
+        publish(actor);
+        check(bell_count(watcher.event, 2000) == 1, "the subscriber's doorbell rings once");
+        check(bell_count(plain.event, 150) < 0, "a session that never subscribed is not rung");
+        check(bell_count(actor.event, 150) < 0, "the publisher is not rung for its own commit");
+
+        // Five trials written back to back are one poll turn: one ring.
+        {
+            std::vector<std::byte> burst;
+            for (int i = 0; i < 5; ++i) {
+                FrameHeader hdr{};
+                hdr.len = sizeof(LoanBody);
+                hdr.type = static_cast<std::uint16_t>(FrameType::Trial);
+                hdr.session = actor.session;
+                const std::size_t at = burst.size();
+                burst.resize(at + sizeof(hdr) + sizeof(LoanBody));
+                std::memcpy(burst.data() + at, &hdr, sizeof(hdr));
+                LoanBody trial{};
+                trial.channel = 1;
+                std::memcpy(burst.data() + at + sizeof(hdr), &trial, sizeof(trial));
+            }
+            check(::send(actor.sock, burst.data(), burst.size(), MSG_NOSIGNAL) ==
+                      static_cast<ssize_t>(burst.size()),
+                  "five trials in one write");
+            for (int i = 0; i < 5; ++i) {
+                FrameHeader hdr{};
+                std::vector<std::byte> reply;
+                check(read_frame(actor.sock, &hdr, &reply, &err) &&
+                          hdr.type == static_cast<std::uint16_t>(FrameType::Credit),
+                      "each trial of the burst is answered");
+            }
+        }
+        check(bell_count(watcher.event, 2000) == 1, "a turn of commits is one ring");
+
+        // The doorbell stops with the subscription.
+        LoanBody unsubscribe{};
+        unsubscribe.channel = 1;
+        send_loan_body(watcher, FrameType::Unsubscribe, unsubscribe);
+        publish(actor);
+        check(bell_count(watcher.event, 150) < 0, "the doorbell stops with the subscription");
+
+        watcher.close_all();
+        plain.close_all();
+        actor.close_all();
+        bells.stop();
+        bell_thread.join();
+        ::unlink(bell_path.c_str());
     }
 
     ::unlink(path.c_str());
