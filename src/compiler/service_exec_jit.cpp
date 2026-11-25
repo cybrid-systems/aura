@@ -181,7 +181,10 @@ namespace {
     // duration of the JIT compile path. Compiles can run
     // concurrently with each other, but a mutate:* must wait
     // for in-flight compiles to drain.
-    std::shared_lock mutate_read(mutate_mtx_);
+    // Issue #5472: the audited form; it adopts a hold this thread already has.
+    lock_order::OrderedSharedLock<std::shared_mutex> mutate_read =
+        lock_order::OrderedSharedLock<std::shared_mutex>::acquire_if_needed(
+            mutate_mtx_, lock_order::Level::Mutate);
 
     // Issue #4600 §8 (phase 4): session lowering memo. A re-run of the
     // identical program text whose own define names have not moved
@@ -317,7 +320,7 @@ namespace {
             // Drop the mutation read lock before the walker runs: a
             // mutation primitive in the program takes mutate_mtx_ in
             // write mode and this thread already holds it in read mode.
-            mutate_read.unlock();
+            mutate_read.release();
             return evaluator_.eval_flat(*flat_ptr, *pool_ptr, expanded_root_4607,
                                         evaluator_.top_env());
         }

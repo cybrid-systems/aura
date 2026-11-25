@@ -29,8 +29,12 @@ CompilerService::try_jit_execute(aura::ir::IRModule& ir_mod,
     // concurrent mutate:* waits for this compile to drain before
     // invalidating. Compiles can run concurrently with each other.
     // Issue #1523: mutate is FIRST in canonical order (shared is fine).
-    lock_order::OrderedSharedLock<std::shared_mutex> mutate_read(mutate_mtx_,
-                                                                 lock_order::Level::Mutate);
+    // Issue #5472: a compile reached from inside a boundary or an
+    // eval-current pin runs on a thread that already holds the lock unique;
+    // a second lock_shared on it is EDEADLK. Adopt that hold.
+    lock_order::OrderedSharedLock<std::shared_mutex> mutate_read =
+        lock_order::OrderedSharedLock<std::shared_mutex>::acquire_if_needed(
+            mutate_mtx_, lock_order::Level::Mutate);
     sync_lock_order_metrics_();
     // Issue #4338: epoch the incoming IR was sampled under (closest
     // capture to the compile loop; a Workspace-rank mutate skips

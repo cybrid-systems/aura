@@ -129,6 +129,22 @@ names must not crash or leave names unbound.
    so `apply_closure` does not race `string_heap_` / env outside the
    workspace lock. Scheduler (`fiber:spawn-backend` = 1) does not use this
    mutex. Denseness dual-rebind still sees both names applied.
+8. **Mutate before Workspace (#5472).** The outermost `MutationBoundaryGuard`
+   (GlobalExclusive) and `WorkspaceUniqueIfNeeded` take the service mutation
+   lock (`CompilerService::mutate_mtx_`) before the workspace lock and hold
+   it through the boundary's exit, cascade drain included. A body can reach
+   that lock under the workspace lock (the IR cache populate of a rebind
+   add-path, set-code's pre-cache, `cache_define`'s redefine invalidate),
+   and the drain takes it first and then waits for the workspace lock in
+   drop-jit-native: with the two orders live at once, two fibers in
+   `mutate:rebind` deadlocked the process (body A held the IR gate and
+   wanted the mutation lock, body B's drain held the mutation lock and
+   wanted the IR gate / the workspace). The order is now Mutate → Workspace
+   → IR cache gate on every such path; `populate_ir_cache_v2_from_workspace`
+   and `unload_module` take the mutation lock before the IR cache gate too.
+   A thread that already holds the lock (typed_mutate) is adopted. Not
+   covered: a RegionExclusive admit (concurrent by design) and the
+   heap-slot auto-guard of `hash-set!` (never needs the lock).
 
 ```scheme
 ;; Concurrent dual rebind (distinct names) — both should apply or one waits

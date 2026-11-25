@@ -3087,6 +3087,15 @@ public:
         return workspace_flat_gen_.load(std::memory_order_acquire);
     }
 
+    // Issue #5472: the service's mutation lock, taken BEFORE workspace_mtx_ by
+    // the outermost MutationBoundaryGuard and by WorkspaceUniqueIfNeeded.
+    // enter returns an owning handle whose destruction releases the lock, or
+    // null when this thread already holds it (a host typed_mutate, a nested
+    // scope). Without a CompilerService the fn is null and nothing is taken.
+    using MutationLockHandle = std::shared_ptr<void>;
+    void set_mutation_lock_enter_fn(std::function<MutationLockHandle()> fn) {
+        mutation_lock_enter_fn_ = std::move(fn);
+    }
     // Issue #1898 / Wave1 B-09: RAII shared pin for workspace_flat_ —
     // holds shared_lock(workspace_mtx_) so set_workspace_flat (#1729 unique)
     // cannot free/swap the pointer while the pin is live. Prefer this
@@ -3155,11 +3164,21 @@ public:
     // g_main_thread_stack on CLI thread-fallback fibers — neither may
     // skip the lock on a concurrent fiber.
     class WorkspaceUniqueIfNeeded {
+        // Issue #5472: the service mutation lock, taken before lock_ and
+        // released after it (declared first, so destroyed last). Null when
+        // the outer hold was adopted.
+        MutationLockHandle mutate_lock_;
         std::unique_lock<std::shared_mutex> lock_;
         bool owns_unique_ = false;
+        bool pin_armed_ = false;
 
     public:
-        explicit WorkspaceUniqueIfNeeded(Evaluator& ev) {
+        // eval_current_pin (#2686): a hold that evaluates workspace code
+        // arms the eval-current pin, so a nested MutationBoundaryGuard on
+        // this thread fails closed (AdmissionRejected:
+        // nested-mutate-under-eval-current) instead of re-locking the
+        // non-recursive workspace_mtx_ (EDEADLK).
+        explicit WorkspaceUniqueIfNeeded(Evaluator& ev, bool eval_current_pin = false) {
             // Guard exclusive (TLS depth, #2738) or an outer (eval-current)
             // unique pin (#5366). eval-current holds workspace_mtx_ and
             // records the pin, but it is not a MutationBoundary, so a nested
@@ -3168,22 +3187,36 @@ public:
             // ("Resource deadlock avoided"). Adopt the outer exclusive hold.
             const bool outer_exclusive =
                 ev.any_active_mutation_boundary() || Evaluator::eval_current_holds_shared_pin();
-            if (!outer_exclusive) {
-                // Issue #4128: stamp the Workspace depth like the canonical
-                // lock_workspace_unique() path. Nested helpers probe
-                // lock_order::is_held(Level::Workspace) to pick their
-                // already-held variant (aura_drop_jit_fn_native_for_define's
-                // ws_held arm); an unstamped hold left that probe false while
-                // this thread already owned the non-recursive shared_mutex, so
-                // (eval-current) → relower_dirty_defines_fn_ →
-                // relower_define_blocks → drop-jit-native re-locked
-                // workspace_mtx_ on the same thread and threw EDEADLK
-                // (std::system_error "Resource deadlock avoided") → SIGABRT
-                // under --serve-async set-code + eval-current.
-                aura::compiler::lock_order::on_acquire(
-                    aura::compiler::lock_order::Level::Workspace);
-                lock_ = std::unique_lock<std::shared_mutex>(ev.workspace_mtx_);
-                owns_unique_ = true;
+            if (outer_exclusive)
+                return;
+            // Issue #5472: Mutate before Workspace. A code path that
+            // holds workspace_mtx_ and then needs mutate_mtx_ (a
+            // rebind's IR cache populate, cache_define's redefine
+            // invalidate) inverts against the post-Guard cascade drain,
+            // which takes mutate_mtx_ first and then waits for
+            // workspace_mtx_ in drop-jit-native: two fiber bodies doing
+            // mutate:rebind deadlocked the process that way. Taking the
+            // mutation lock first makes every later need on this thread
+            // an adopt (lock_order::is_held(Mutate)).
+            if (ev.mutation_lock_enter_fn_)
+                mutate_lock_ = ev.mutation_lock_enter_fn_();
+            // Issue #4128: stamp the Workspace depth like the canonical
+            // lock_workspace_unique() path. Nested helpers probe
+            // lock_order::is_held(Level::Workspace) to pick their
+            // already-held variant (aura_drop_jit_fn_native_for_define's
+            // ws_held arm); an unstamped hold left that probe false while
+            // this thread already owned the non-recursive shared_mutex, so
+            // (eval-current) → relower_dirty_defines_fn_ →
+            // relower_define_blocks → drop-jit-native re-locked
+            // workspace_mtx_ on the same thread and threw EDEADLK
+            // (std::system_error "Resource deadlock avoided") → SIGABRT
+            // under --serve-async set-code + eval-current.
+            aura::compiler::lock_order::on_acquire(aura::compiler::lock_order::Level::Workspace);
+            lock_ = std::unique_lock<std::shared_mutex>(ev.workspace_mtx_);
+            owns_unique_ = true;
+            if (eval_current_pin) {
+                Evaluator::note_eval_current_shared_enter();
+                pin_armed_ = true;
             }
         }
         WorkspaceUniqueIfNeeded(const WorkspaceUniqueIfNeeded&) = delete;
@@ -3192,31 +3225,44 @@ public:
         // move would leave owns_unique_ true in the moved-from object and the
         // dtor would drop a depth it no longer owns (release-imbalance).
         WorkspaceUniqueIfNeeded(WorkspaceUniqueIfNeeded&& o) noexcept
-            : lock_(std::move(o.lock_))
-            , owns_unique_(std::exchange(o.owns_unique_, false)) {}
+            : mutate_lock_(std::move(o.mutate_lock_))
+            , lock_(std::move(o.lock_))
+            , owns_unique_(std::exchange(o.owns_unique_, false))
+            , pin_armed_(std::exchange(o.pin_armed_, false)) {}
         WorkspaceUniqueIfNeeded& operator=(WorkspaceUniqueIfNeeded&& o) noexcept {
             if (this != &o) {
-                if (owns_unique_) {
-                    lock_.unlock();
-                    aura::compiler::lock_order::on_release(
-                        aura::compiler::lock_order::Level::Workspace);
-                }
+                release();
+                mutate_lock_ = std::move(o.mutate_lock_);
                 lock_ = std::move(o.lock_);
                 owns_unique_ = std::exchange(o.owns_unique_, false);
+                pin_armed_ = std::exchange(o.pin_armed_, false);
             }
             return *this;
         }
         // Issue #4128: pair the depth stamp with the mutex release — mirror
         // unlock_workspace_unique() (mutex first, then on_release) so
         // is_held(Level::Workspace) tracks the physical hold for the whole
-        // critical section.
-        ~WorkspaceUniqueIfNeeded() {
+        // critical section. The pin drops after the lock: a Guard ctor that
+        // sees the pin must also see the workspace held.
+        ~WorkspaceUniqueIfNeeded() { release(); }
+
+    private:
+        // The dtor and the move assignment share this (#5472): the mutex
+        // unlock paired with on_release(Level::Workspace), then the pin.
+        void release() noexcept {
             if (owns_unique_) {
+                owns_unique_ = false;
                 lock_.unlock();
                 aura::compiler::lock_order::on_release(
                     aura::compiler::lock_order::Level::Workspace);
             }
+            if (pin_armed_) {
+                pin_armed_ = false;
+                Evaluator::note_eval_current_shared_exit();
+            }
         }
+
+    public:
         [[nodiscard]] bool owns_unique_lock() const noexcept { return owns_unique_; }
     };
     // Observability: process-wide held OR this-thread TLS Guard depth.
@@ -9166,6 +9212,10 @@ private:
     std::function<void(aura::ast::NodeId)> define_impact_scope_fn_ = nullptr;
     std::function<void(const std::string&, const std::string&)> update_function_source_fn_ =
         nullptr;
+    // Issue #5472: the service mutation lock (CompilerService::mutate_mtx_) for
+    // the outermost MutationBoundaryGuard and WorkspaceUniqueIfNeeded; see
+    // set_mutation_lock_enter_fn. Null without a CompilerService.
+    std::function<MutationLockHandle()> mutation_lock_enter_fn_ = nullptr;
     std::atomic<std::uint64_t> precise_define_inval_hits_{0};
     // Issue #2812: define names pending BFS invalidate_function after
     // outermost MutationBoundaryGuard unlocks workspace_mtx_ (avoid
@@ -20391,6 +20441,11 @@ public:
         //   GlobalExclusive: unique_lock(workspace_mtx_) in lock_
         //   RegionExclusive: shared_lock_ on workspace + region_lock_ on shard
         // Nested guards do NOT touch locks (outer owns them).
+        // Issue #5472: the service mutation lock, taken before the workspace
+        // lock and released after it (declared first, so destroyed last).
+        // Null when this thread already held the lock (host typed_mutate),
+        // for a RegionExclusive admit, or for a heap-slot auto-guard.
+        MutationLockHandle mutate_lock_;
         std::unique_lock<std::shared_mutex> lock_;
         std::shared_lock<std::shared_mutex> shared_lock_;
         // Issue #3268: unique_lock is move-only. Move ctor/assign MUST

@@ -5142,6 +5142,16 @@ public:
     }
 
     void populate_ir_cache_v2_from_workspace() {
+        // Issue #5472: Mutate before the IR cache gate. cache_define's
+        // redefine arm calls invalidate_function, which takes mutate_mtx_
+        // first; reached with the gate held and the mutation lock not held,
+        // that is the mirror image of every invalidate_function caller. A
+        // mutation boundary already holds the lock (see the Guard ctor), so
+        // this is an adopt there.
+        using lock_order::Level;
+        using lock_order::OrderedUniqueLock;
+        OrderedUniqueLock<std::shared_mutex> mutate_lock =
+            OrderedUniqueLock<std::shared_mutex>::acquire_if_needed(mutate_mtx_, Level::Mutate);
         IrCacheGate ir_gate(ir_cache_gate_); // #4717 shared IR/closure cache
         auto* ws_flat = evaluator_.workspace_flat();
         auto* ws_pool = evaluator_.workspace_pool();
@@ -5831,6 +5841,12 @@ public:
     // node_dep from the post-unload string graph, mark remaining callers
     // dirty. Soft/Off tear V2 down too (AC3).
     void unload_module(const std::string& name) {
+        // Issue #5472: Mutate before the IR cache gate, the order every
+        // invalidate_function caller uses; the gate used to come first here.
+        using lock_order::Level;
+        using lock_order::OrderedUniqueLock;
+        OrderedUniqueLock<std::shared_mutex> mutate_lock =
+            OrderedUniqueLock<std::shared_mutex>::acquire_if_needed(mutate_mtx_, Level::Mutate);
         IrCacheGate ir_gate(ir_cache_gate_);        // #4717 shared IR/closure cache
         aura::diag::unbind_source_file_flats(name); // Issue #4916
         arena_group_.reset_module(name);
@@ -5840,11 +5856,6 @@ public:
             to_remove = it->second;
             module_functions_.erase(it);
         }
-
-        using lock_order::Level;
-        using lock_order::OrderedUniqueLock;
-        OrderedUniqueLock<std::shared_mutex> mutate_lock =
-            OrderedUniqueLock<std::shared_mutex>::acquire_if_needed(mutate_mtx_, Level::Mutate);
 
         std::unordered_set<std::string> callers_to_dirty;
         {
@@ -10787,7 +10798,9 @@ public:
     void public_invalidate_bridges_for(const std::string& name) {
         using aura::compiler::lock_order::Level;
         using aura::compiler::lock_order::OrderedUniqueLock;
-        OrderedUniqueLock<std::shared_mutex> mutate_guard(mutate_mtx_, Level::Mutate);
+        // Issue #5472: a caller inside a boundary already holds the lock.
+        OrderedUniqueLock<std::shared_mutex> mutate_guard =
+            OrderedUniqueLock<std::shared_mutex>::acquire_if_needed(mutate_mtx_, Level::Mutate);
         sync_lock_order_metrics_();
         invalidate_bridge_for(name);
     }
@@ -12902,6 +12915,65 @@ public:
         metrics_.mutate_mtx_contended_total.store(
             lock_order::g_mutate_mtx_contended_total.load(std::memory_order_relaxed),
             std::memory_order_relaxed);
+    }
+
+    // Issue #5472: the mutation lock for an outermost MutationBoundaryGuard or
+    // a WorkspaceUniqueIfNeeded, taken before workspace_mtx_. A thread that
+    // already holds it (typed_mutate's own acquire, a nested scope) gets a
+    // null handle and the later acquire_if_needed calls adopt.
+    //
+    // Issue #4085 observability: the owner of this lock is a boundary, and a
+    // boundary owns the workspace, so a waiter here is a workspace waiter.
+    // It used to be counted at workspace_mtx_ (waiters_now / peak /
+    // contended / wait ns), which the hold-budget probes and #4085 read; the
+    // wait moved here, the accounting moves with it.
+    [[nodiscard]] Evaluator::MutationLockHandle enter_mutation_lock_5472() noexcept {
+        using lock_order::Level;
+        using lock_order::OrderedUniqueLock;
+        if (lock_order::is_held(Level::Mutate))
+            return nullptr;
+        bool locked = false;
+        if (::aura_process_mutation_boundary_held_count() > 0) {
+            locked = mutate_mtx_.try_lock();
+            if (!locked) {
+                auto& metrics = metrics_;
+                metrics.workspace_mtx_waiters_now.fetch_add(1, std::memory_order_relaxed);
+                auto peak = metrics.workspace_mtx_waiters_peak.load(std::memory_order_relaxed);
+                const auto now_waiters =
+                    metrics.workspace_mtx_waiters_now.load(std::memory_order_relaxed);
+                while (now_waiters > peak &&
+                       !metrics.workspace_mtx_waiters_peak.compare_exchange_weak(
+                           peak, now_waiters, std::memory_order_relaxed)) {
+                }
+                const auto wait_t0 = std::chrono::steady_clock::now();
+                lock_order::g_mutate_mtx_contended_total.fetch_add(1, std::memory_order_relaxed);
+                mutate_mtx_.lock();
+                locked = true;
+                const auto wait_ns =
+                    static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                                   std::chrono::steady_clock::now() - wait_t0)
+                                                   .count());
+                metrics.workspace_mtx_waiters_now.fetch_sub(1, std::memory_order_relaxed);
+                metrics.workspace_mtx_contended_total.fetch_add(1, std::memory_order_relaxed);
+                metrics.workspace_mtx_wait_ns_total.fetch_add(wait_ns, std::memory_order_relaxed);
+                auto prev_max = metrics.workspace_mtx_wait_ns_max.load(std::memory_order_relaxed);
+                while (wait_ns > prev_max &&
+                       !metrics.workspace_mtx_wait_ns_max.compare_exchange_weak(
+                           prev_max, wait_ns, std::memory_order_relaxed)) {
+                }
+                metrics.workspace_closedloop_shared_mutex_contention_total.fetch_add(
+                    1, std::memory_order_relaxed);
+                metrics.workspace_closedloop_shared_mutex_contention_ns_total.fetch_add(
+                    wait_ns, std::memory_order_relaxed);
+            }
+        }
+        sync_lock_order_metrics_();
+        if (locked) {
+            return Evaluator::MutationLockHandle(new OrderedUniqueLock<std::shared_mutex>(
+                mutate_mtx_, Level::Mutate, std::adopt_lock_t{}));
+        }
+        return Evaluator::MutationLockHandle(
+            new OrderedUniqueLock<std::shared_mutex>(mutate_mtx_, Level::Mutate));
     }
 
     // Issue #1526: remap IRClosure::env_id through compact_env_frames remap table.

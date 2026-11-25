@@ -17,6 +17,7 @@
 // Per AuraDomainTests.cmake legacy Phase 1 batch convention.
 // EXCLUDE_FROM_ALL — default build skips; on-demand 'ninja test_mutate_batch'.
 
+#include "compiler/lock_order_audit.h"
 #include "compiler/observability_metrics.h"
 #include "compiler/typed_mutation_audit.h"
 #include "core/sandbox.hh"
@@ -1676,6 +1677,47 @@ static void run_1700_wrap() {
     CHECK(p0.has_value(), "pad0 still evaluates");
 }
 
+// ── Issue #5472 — Mutate before Workspace ──
+// The outermost boundary and eval-current's exclusive pin take the service
+// mutation lock before the workspace lock. A body that reached mutate_mtx_
+// under workspace_mtx_ (a rebind's IR cache populate) inverted against the
+// post-boundary cascade drain, which takes mutate_mtx_ first and then
+// waits for the workspace lock in drop-jit-native: two fibers in
+// mutate:rebind deadlocked the process. Inside each scope this thread holds
+// both ranks, Mutate first; after it neither.
+static void run_5472_mutate_before_workspace() {
+    using aura::compiler::lock_order::is_held;
+    using aura::compiler::lock_order::Level;
+    std::println(
+        "\n--- Issue #5472: boundary and eval-current pin hold Mutate before Workspace ---");
+    CompilerService cs;
+    Evaluator& ev = cs.evaluator();
+    CHECK(!is_held(Level::Mutate) && !is_held(Level::Workspace), "5472: nothing held before");
+    {
+        bool ok = false;
+        auto guard = Evaluator::MutationBoundaryGuard::try_acquire(ev, /*pending=*/1, &ok);
+        CHECK(guard.has_value(), "5472: outermost boundary admitted");
+        CHECK(ok, "5472: boundary entered");
+        CHECK(is_held(Level::Mutate), "5472: the boundary holds the mutation lock");
+        CHECK(is_held(Level::Workspace), "5472: the boundary holds the workspace lock");
+        // A nested boundary on the same thread adopts both.
+        bool nested_ok = false;
+        auto nested = Evaluator::MutationBoundaryGuard::try_acquire(ev, /*pending=*/1, &nested_ok);
+        CHECK(nested.has_value() && nested_ok, "5472: nested boundary admitted");
+        CHECK(is_held(Level::Mutate) && is_held(Level::Workspace), "5472: nested keeps both");
+    }
+    CHECK(!is_held(Level::Mutate), "5472: mutation lock released after the boundary");
+    CHECK(!is_held(Level::Workspace), "5472: workspace lock released after the boundary");
+    {
+        Evaluator::WorkspaceUniqueIfNeeded pin(ev);
+        CHECK(pin.owns_unique_lock(), "5472: eval-current pin owns the workspace lock");
+        CHECK(is_held(Level::Mutate), "5472: the pin holds the mutation lock");
+        CHECK(is_held(Level::Workspace), "5472: the pin holds the workspace lock");
+    }
+    CHECK(!is_held(Level::Mutate), "5472: mutation lock released after the pin");
+    CHECK(!is_held(Level::Workspace), "5472: workspace lock released after the pin");
+}
+
 } // namespace aura_mutate_batch
 
 int main() {
@@ -1709,6 +1751,7 @@ int main() {
     run_1704_sv_guard();
     run_1700_wrap();
     run_4689_rollback_since_id();
+    run_5472_mutate_before_workspace();
     std::println("\n=== Mutate batch: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

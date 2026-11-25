@@ -4414,6 +4414,22 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(
     // waits on the mutex; mailbox push is Backpressure and GC request
     // defers. Soft/Off keeps the same lock — this is not a second gate.
     is_outermost_ = outermost;
+    // Issue #5472: Mutate before Workspace. Every GlobalExclusive boundary
+    // can reach mutate_mtx_ under workspace_mtx_ (the IR cache populate of a
+    // rebind add-path, set-code's pre-cache, cache_define's redefine
+    // invalidate), while the post-unlock cascade drain takes mutate_mtx_
+    // first and then waits for workspace_mtx_ in drop-jit-native. Two fiber
+    // bodies in mutate:rebind deadlocked the process on that inversion. The
+    // outermost boundary takes the service mutation lock first and holds it
+    // through its exit, so each later need on this thread is an adopt and
+    // the drain's order (Mutate, then IR gate, then Workspace) is the only
+    // one left. Not for a heap-slot auto-guard (it never needs the mutation
+    // lock), a RegionExclusive admit (concurrent by design), or the
+    // eval-current pin reject below (it returns before the workspace lock).
+    if (outermost && !Evaluator::eval_current_holds_shared_pin() && !t_heap_auto_guard_admit_4908 &&
+        !(region_key.has_value() && ev_->workspace_region_concurrency_enabled()) &&
+        ev_->mutation_lock_enter_fn_)
+        mutate_lock_ = ev_->mutation_lock_enter_fn_();
     // Issue #3440: persist-reject TLS must not leak across outermost
     // boundaries. A prior production persist-reject that was not
     // consumed would roll back the next successful rebind (#t + old body).
@@ -4806,6 +4822,9 @@ void Evaluator::MutationBoundaryGuard::force_release_hold_after_cancel_() noexce
         lock_.unlock();
         released_physical = true;
     }
+    // Issue #5472: the peer that takes the freed workspace must not wait
+    // for a mutation lock this body no longer uses.
+    mutate_lock_.reset();
     // Issue #4407: C-ABI lock_workspace_shared/unique under this Guard only
     // bumps workspace_lock_adopt_depth_tls and lock_order. The unlock above
     // freed workspace_mtx_; those layers must drop on this thread or
@@ -8116,6 +8135,7 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(MutationBoundaryGuard&& 
     , ev_(o.ev_)
     , owned_flag_(o.owned_flag_)
     , flag_(o.flag_ == &o.owned_flag_ ? &owned_flag_ : o.flag_)
+    , mutate_lock_(std::move(o.mutate_lock_)) // Issue #5472: before the locks, destroyed after
     , lock_(std::move(o.lock_))
     , shared_lock_(std::move(o.shared_lock_))
     // Issue #3268: unique_lock is move-only. Copy would not compile
@@ -8188,6 +8208,7 @@ Evaluator::MutationBoundaryGuard::operator=(MutationBoundaryGuard&& o) noexcept 
         ev_ = o.ev_;
         owned_flag_ = o.owned_flag_;
         flag_ = (o.flag_ == &o.owned_flag_) ? &owned_flag_ : o.flag_;
+        mutate_lock_ = std::move(o.mutate_lock_); // Issue #5472
         lock_ = std::move(o.lock_);
         shared_lock_ = std::move(o.shared_lock_);
         region_lock_ = std::move(o.region_lock_);

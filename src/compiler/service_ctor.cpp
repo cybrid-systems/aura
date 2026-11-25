@@ -279,6 +279,10 @@ CompilerService::CompilerService()
     // Issue #680: precise IR/JIT/bridge invalidation for closure-heavy Defines.
     evaluator_.set_invalidate_function_fn(
         [this](const std::string& name) { this->invalidate_function(name); });
+    // Issue #5472: the outermost MutationBoundaryGuard and WorkspaceUniqueIfNeeded
+    // take mutate_mtx_ before workspace_mtx_ (see enter_mutation_lock_5472).
+    evaluator_.set_mutation_lock_enter_fn(
+        [this]() -> Evaluator::MutationLockHandle { return this->enter_mutation_lock_5472(); });
     evaluator_.set_define_impact_scope_fn(
         [this](aura::ast::NodeId root) { this->run_define_impact_scope(root); });
     // Issue #657: compiler-core incremental hooks (lowering bridge epoch +
