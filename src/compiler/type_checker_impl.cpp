@@ -5030,6 +5030,10 @@ void InferenceEngine::init_primitive_env_part2(TypeId Int, TypeId Bool, TypeId F
     register_primitive("tcp-send", {Dyn, String}, Void, true);
     // Issue #4545: optional maxlen (evaluator_primitives_io reads a[1]).
     register_primitive("tcp-recv", {Dyn, Int}, String, true);
+    // Issue #5450: a total read deadline; answers a string, 'timeout, or ().
+    register_primitive("tcp-recv-timeout", {Dyn, Int, Int}, Dyn);
+    // Issue #5450: shutdown(SHUT_WR) + drain + close for refusal responses.
+    register_primitive("tcp-close-graceful", {Dyn, Int}, Void);
     register_primitive("tcp-close", {Dyn}, Void);
 
     // std/algorithm

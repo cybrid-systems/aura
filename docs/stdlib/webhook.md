@@ -89,8 +89,21 @@ secret store, not in source or environment (#5417).
   without a response.
 - **Limits** (`webhook:make`): `"max-body"` bytes (65536) — `413` as soon
   as the head announces more; `"max-header"` bytes (16384) — `431`;
-  `"max-inflight"` (16); `"drain-ms"` (15000) and `"cancel-ms"` (5000),
-  the two windows of `webhook:stop!`.
+  `"max-inflight"` (16); `"read-timeout-ms"` (2000) — the default total
+  budget for each of the request head and the body, with `"header-timeout-ms"`
+  / `"body-timeout-ms"` overriding it per phase; `"close-drain-ms"` (250)
+  — the shutdown/drain window after a refusal; `"drain-ms"` (15000) and
+  `"cancel-ms"` (5000), the two windows of `webhook:stop!`.
+- **Read deadlines.** A peer that sends a partial head or body and stalls is
+  answered `408 Request Timeout` when its phase budget (`"read-timeout-ms"`,
+  default 2 s; `"header-timeout-ms"` / `"body-timeout-ms"` override it)
+  expires, so it cannot hold an in-flight slot indefinitely. The
+  budget is total for the phase, not per `recv`. A refusal written before the
+  request body was consumed (`408`, `413`, `431`, `501`, `503`) shuts the
+  write side down (`shutdown(SHUT_WR)`), drains/discards the peer's remaining
+  bytes for up to `"close-drain-ms"`, and only then closes, so the client can
+  read the status line and body instead of getting `ECONNRESET` from a close
+  with unread data (#5450).
 - **Not supported:** `Transfer-Encoding: chunked` (`501`), multipart or
   form decoding, TLS, keep-alive. `Expect: 100-continue` gets its go-ahead.
 
@@ -130,10 +143,9 @@ out.
   front of it.
 - **Thread backend only** (`aura file`, `--load`, `--serve`). Under
   `--serve-async` the `tcp-*` primitives block the scheduler's worker
-  thread: measured there, one request costs the transport's 10 s receive
-  timeout, because the worker that must run the handler is held by the
-  client's `tcp-recv`. Use the thread backend until the transport gets a
-  parking receive.
+  thread: a request can hold a worker for its read budget (`"read-timeout-ms"`,
+  2 s by default) because the blocking `tcp-recv-timeout` cannot park.
+  Use the thread backend until the transport gets a parking receive.
 - **Stop the server before the process exits.** A server fiber that
   outlives the evaluator is detached at teardown and then touches freed
   state: measured as a `SIGSEGV` in `StringPool::intern_epoch` after the
@@ -145,9 +157,11 @@ out.
   `webhook:start!` answers `could not listen on ...: effect-denied:
   network not granted ... op=tcp-listen`; under `AURA_SANDBOX=strict` the
   `(require "std/webhook")` itself fails.
-- An oversized request is refused `413` and its connection is closed at
-  once, before the body is read: a client that is still sending may see a
-  reset instead of the status.
+- A refusal is written before the body is read, then the write side is
+  shut down and the peer's remaining bytes are drained/discarded for up to
+  `"close-drain-ms"` (250 ms) before close; a client that is still sending
+  reads the status line and body instead of a reset. A peer that keeps
+  sending past that window is closed anyway.
 
 ## Acceptance evidence
 
@@ -162,4 +176,8 @@ health port is refused; an oversized body is `413` before the handler;
 chunked is `501`, garbage is `400`, unknown path `404`, wrong method `405`
 with `Allow`; a raising handler is `500`; `HEAD` on a `GET` route and
 `Expect: 100-continue`; the accept loop serves a fast request while a slow
-handler sleeps; `stop` closes the listener and keeps the audit trail.
+handler sleeps; `stop` closes the listener and keeps the audit trail. For
+#5450: 16 half-sent request heads each time out with a complete `408` and
+free their in-flight slots (a following normal request is `200`); a head
+with `Content-Length` but no body answers `408`; a busy `503` is readable to
+its body.

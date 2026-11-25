@@ -67,8 +67,9 @@ static void ac1_prims_registered() {
     ::aura::config::test_setenv("AURA_SANDBOX", "off", 1);
     ::aura::config::test_setenv("AURA_PIPELINE_STRICT", "0", 1);
     install_socket_prims(cs);
-    for (const char* name : {"tcp-listen", "tcp-local-port", "tcp-accept", "tcp-accept-timeout",
-                             "tcp-connect", "tcp-send", "tcp-recv", "tcp-close"}) {
+    for (const char* name :
+         {"tcp-listen", "tcp-local-port", "tcp-accept", "tcp-accept-timeout", "tcp-connect",
+          "tcp-send", "tcp-recv", "tcp-close", "tcp-recv-timeout", "tcp-close-graceful"}) {
         CHECK(eval_bool(cs, std::string("(procedure? ") + name + ")"),
               std::string("AC1: procedure? ") + name);
     }

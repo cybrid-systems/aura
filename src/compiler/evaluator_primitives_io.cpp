@@ -22,6 +22,7 @@ module;
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <poll.h>
+#include <chrono>
 #include <fcntl.h>
 #include <dlfcn.h>
 #include <cerrno>
@@ -1584,6 +1585,89 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
         buf.resize(static_cast<std::size_t>(n));
         auto sidx = ev.string_heap_.mint(std::move(buf));
         return types::make_string(sidx);
+    });
+
+    // (tcp-recv-timeout socket maxlen ms) → string | 'timeout | ()
+    // Issue #5450: std/webhook needs a total read budget for the request
+    // head and body. tcp-recv's () conflates EOF with its per-call
+    // SO_RCVTIMEO; poll here gives the caller the budget and 'timeout
+    // distinguishes a deadline from the peer closing.
+    ev.defer_std_host_prim("tcp-recv-timeout", [&ev](std::span<const EvalValue> a) -> EvalValue {
+        if (a.size() < 3 || !types::is_int(a[0]) || !types::is_int(a[2]))
+            return make_void();
+        const auto fd = static_cast<int>(types::as_int(a[0]));
+        if (!minted_fd_tenant_allows(ev, fd, "tcp-recv-timeout"))
+            return make_void();
+        auto maxlen = static_cast<std::size_t>(types::is_int(a[1]) ? types::as_int(a[1]) : 4096);
+        if (maxlen == 0)
+            maxlen = 1;
+        if (maxlen > 65536)
+            maxlen = 65536;
+        auto ms = types::as_int(a[2]);
+        if (ms < 0)
+            ms = 0;
+        if (ms > 3'600'000)
+            ms = 3'600'000;
+        struct pollfd pfd = {fd, POLLIN, 0};
+        const int pr = ::poll(&pfd, 1, static_cast<int>(ms));
+        if (pr == 0)
+            return ev.intern_symbol("timeout");
+        if (pr < 0)
+            return make_void();
+        std::string buf(maxlen, '\0');
+        ssize_t n;
+        {
+            // Issue #5274: the receive can block briefly with live frames.
+            TwPlainPark park_5274;
+            n = ::recv(fd, buf.data(), maxlen, 0);
+        }
+        if (n <= 0)
+            return make_void();
+        buf.resize(static_cast<std::size_t>(n));
+        auto sidx = ev.string_heap_.mint(std::move(buf));
+        return types::make_string(sidx);
+    });
+
+    // (tcp-close-graceful socket grace-ms) → void
+    // Issue #5450: a refusal response (408/413/431/501/503) is written while
+    // request bytes may still sit in the receive buffer; a plain close then
+    // makes the kernel send RST and the client loses the status line/body.
+    // Shut the write side down (FIN after the response), discard the peer's
+    // remaining bytes for at most grace-ms, then close.
+    ev.defer_std_host_prim("tcp-close-graceful", [&ev](std::span<const EvalValue> a) -> EvalValue {
+        if (a.empty() || !types::is_int(a[0]))
+            return make_void();
+        const auto fd = static_cast<int>(types::as_int(a[0]));
+        if (!minted_fd_tenant_allows(ev, fd, "tcp-close-graceful"))
+            return make_void();
+        (void)::shutdown(fd, SHUT_WR);
+        auto grace_ms = (a.size() >= 2 && types::is_int(a[1])) ? types::as_int(a[1]) : 250;
+        if (grace_ms < 0)
+            grace_ms = 0;
+        if (grace_ms > 10'000)
+            grace_ms = 10'000;
+        const auto deadline =
+            std::chrono::steady_clock::now() + std::chrono::milliseconds(grace_ms);
+        char buf[65536];
+        for (;;) {
+            const auto now = std::chrono::steady_clock::now();
+            if (now >= deadline)
+                break;
+            auto left =
+                std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count();
+            if (left < 0)
+                left = 0;
+            struct pollfd pfd = {fd, POLLIN, 0};
+            const int pr = ::poll(&pfd, 1, static_cast<int>(left));
+            if (pr <= 0)
+                break;
+            const ssize_t n = ::recv(fd, buf, sizeof(buf), MSG_DONTWAIT);
+            if (n <= 0)
+                break;
+        }
+        ::close(fd);
+        erase_minted_fd_tenant(ev, fd);
+        return make_void();
     });
 
     ev.defer_std_host_prim("tcp-close", [&ev](std::span<const EvalValue> a) -> EvalValue {

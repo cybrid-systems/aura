@@ -7,6 +7,8 @@
 ;   (tcp-connect host port) → socket-fd | ()
 ;   (tcp-send sock data)    → bytes-sent | -1
 ;   (tcp-recv sock maxlen)  → string | ()
+;   (tcp-recv-timeout sock maxlen ms) → string | 'timeout | ()  ; poll+recv deadline (#5450)
+;   (tcp-close-graceful sock ms) → void  ; shutdown(SHUT_WR), drain, close (#5450)
 ;   (tcp-close sock)        → void   (also closes listeners)
 ;
 ; Server (#2771 multi-host denseness):
@@ -29,11 +31,14 @@
 ; the module cell (#2570 void→prim fallthrough / fill).
 
 (export tcp-connect tcp-send tcp-recv tcp-close
+        tcp-recv-timeout tcp-close-graceful
         tcp-listen tcp-local-port tcp-accept tcp-accept-timeout)
 
 (define tcp-connect tcp-connect)
 (define tcp-send tcp-send)
 (define tcp-recv tcp-recv)
+(define tcp-recv-timeout tcp-recv-timeout)
+(define tcp-close-graceful tcp-close-graceful)
 (define tcp-close tcp-close)
 (define tcp-listen tcp-listen)
 (define tcp-local-port tcp-local-port)

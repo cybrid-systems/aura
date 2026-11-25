@@ -103,7 +103,7 @@
 | `std/search` | `search:init` `search:step` `search:batch` `search:run` `search:pending` `search:best` `search:best-score` `search:export` … (+7) | lib/std/search.aura — one search protocol over the program space (#5007) |
 | `std/secret` | `secret:store` `secret:default-store` `secret:get` `secret:handle-name?` `secret:put!` `secret:import-file!` `secret:import-env!` `secret:use` … (+6) | lib/std/secret — a minimal-disclosure credential store (#5417) |
 | `std/set` | `set` `set?` `set-copy` `set-clear!` `set-adjoin` `set-adjoin!` `set-delete` `set-delete!` … (+37) | lib/std/set.aura — SRFI-113 sets on the unified hash table (Issue #5003) |
-| `std/socket` | `tcp-connect` `tcp-send` `tcp-recv` `tcp-close` `tcp-listen` `tcp-local-port` `tcp-accept` `tcp-accept-timeout` | socket.aura — TCP socket library (client + server) |
+| `std/socket` | `tcp-connect` `tcp-send` `tcp-recv` `tcp-close` `tcp-recv-timeout` `tcp-close-graceful` `tcp-listen` `tcp-local-port` … (+2) | socket.aura — TCP socket library (client + server) |
 | `std/sort` | `list-sort` `list-stable-sort` `list-sort!` `list-stable-sort!` `vector-sort` `vector-stable-sort` `vector-sort!` `vector-stable-sort!` … (+3) | lib/std/sort.aura — SRFI-132 sorting (Issue #5003) |
 | `std/source-diff` | `src:forms` `src:define-map` `src:define-text` `src:diff` `src:diff-text` `src:workspace-source` | lib/std/source-diff.aura — define-level source diff (Issue #5254) |
 | `std/stack` | `make-stack` `stack-push` `stack-pop` `stack-top` `stack-empty?` `stack-length` `stack->list` `list->stack` | stack.aura — LIFO stack (pair-based) |

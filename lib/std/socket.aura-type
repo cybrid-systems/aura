@@ -1,6 +1,8 @@
 tcp-connect: Any Any -> Any
 tcp-send: Any Any ... -> Void
 tcp-recv: Any Any ... -> String
+tcp-recv-timeout: Any Any Any -> Any
+tcp-close-graceful: Any Any -> Void
 tcp-close: Any -> Void
 tcp-listen: Any Any ... -> Any
 tcp-local-port: Any -> Any

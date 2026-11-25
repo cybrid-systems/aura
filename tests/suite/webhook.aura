@@ -40,6 +40,14 @@
               (loop (string-append acc chunk))
               (begin (tcp-close c) acc))))))))
 
+; Read an already-connected socket to the end of the connection.
+(define (read-all c)
+  (let loop ((acc ""))
+    (let ((chunk (tcp-recv c 65536)))
+      (if (string? chunk)
+        (loop (string-append acc chunk))
+        acc))))
+
 ; Whatever bytes are sent, read to the end of the connection.
 (define (raw port text)
   (let ((c (tcp-connect "127.0.0.1" port)))
@@ -374,5 +382,67 @@
     (wait-idle s)
     (check= 0 (counter s "inflight"))
     (fiber:join client)))
+
+; Issue #5450: a request head or body is read under one total budget.
+(test-case "a stalled request head times out and frees its in-flight slot" (hash "issue" 5450)
+  (let* ((s (webhook:make (hash "port" 0 "read-timeout-ms" 200 "close-drain-ms" 100)))
+         (port 0)
+         (conns (list)))
+    (webhook:route! s "/pub" (list "POST") (lambda (req) "ok") (hash "public" #t))
+    (webhook:start! s)
+    (set! port (webhook:port s))
+    ; 16 half-sent heads hold every default in-flight slot
+    (let loop ((i 0))
+      (if (< i 16)
+        (let ((c (tcp-connect "127.0.0.1" port)))
+          (if (number? c)
+            (begin
+              (tcp-send c "POST /pub HTTP/1.1\r\nHost: x\r\n")
+              (set! conns (cons c conns))))
+          (loop (+ i 1)))
+        #f))
+    (check= 16 (length conns))
+    ; past the 200 ms head budget every one is a complete 408, not a reset
+    (fiber:sleep 500)
+    (for-each (lambda (c)
+                (let ((resp (read-all c)))
+                  (check= 408 (status-of resp))
+                  (check (string-contains? resp "request header timeout"))
+                  (tcp-close c)))
+              conns)
+    ; the slots are free again: the next normal request is served
+    (check= 200 (status-of (http port "POST" "/pub" "x")))
+    (check= #t (webhook:stop! s))))
+
+(test-case "a stalled request body answers 408" (hash "issue" 5450)
+  (let* ((s (webhook:make (hash "port" 0 "read-timeout-ms" 200 "close-drain-ms" 100)))
+         (port 0))
+    (webhook:route! s "/pub" (list "POST") (lambda (req) "ok") (hash "public" #t))
+    (webhook:start! s)
+    (set! port (webhook:port s))
+    (let ((resp (raw port (string-append "POST /pub HTTP/1.1\r\nHost: x\r\n"
+                                         "Content-Length: 10\r\n\r\n"))))
+      (check= 408 (status-of resp))
+      (check (string-contains? resp "request body timeout")))
+    (check= #t (webhook:stop! s))))
+
+(test-case "a busy 503 response is readable to its body" (hash "issue" 5450)
+  (let* ((s (webhook:make (hash "port" 0 "max-inflight" 1 "read-timeout-ms" 2000
+                                 "close-drain-ms" 100)))
+         (port 0)
+         (client #f))
+    (webhook:route! s "/slow" (list "GET")
+                    (lambda (req) (fiber:sleep 500) "slow") (hash "public" #t))
+    (webhook:route! s "/pub" (list "GET") (lambda (req) "ok") (hash "public" #t))
+    (webhook:start! s)
+    (set! port (webhook:port s))
+    (set! client (fiber:spawn (lambda ()
+                                (raw port "GET /slow HTTP/1.1\r\nHost: x\r\n\r\n"))))
+    (wait-inflight s)
+    (let ((resp (raw port "GET /pub HTTP/1.1\r\nHost: x\r\n\r\n")))
+      (check= 503 (status-of resp))
+      (check (string-contains? resp "server busy")))
+    (fiber:join client)
+    (check= #t (webhook:stop! s))))
 
 (test-finish)

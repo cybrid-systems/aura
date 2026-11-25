@@ -146,6 +146,15 @@
   (let ((headers (if (and (pair? rest) (hash? (car rest))) (car rest) (hash))))
     (hash "status" status "body" body "headers" headers)))
 
+; Issue #5450: a response produced before the request body is consumed is a
+; refusal. The connection must not be plain-closed with unread bytes in the
+; kernel's receive buffer: that sends RST and the client loses the status
+; line. wh-connection marks it for shutdown/drain-then-close.
+(define (wh-refusal status body)
+  (let ((r (wh-response status body)))
+    (hash-set! r "drain" #t)
+    r))
+
 (define (wh-header req name)
   (hash-ref (hash-ref req "headers" (hash)) name ""))
 
@@ -204,26 +213,33 @@
 
 ; Read one request. → the request hash, a response hash for a request this
 ; server refuses to parse or size, or #f when the peer sent nothing.
+; Issue #5450: the head has one total read budget, not one per recv; a
+; deadline answers 408 with the drain flag so the client can read it.
 (define (wh-read! s sock)
-  (let loop ((acc ""))
-    (let* ((end (string-index acc "\r\n\r\n" 0)))
-      (if (>= end 0)
-        (let* ((head (substring acc 0 end))
-               (rest (string-drop acc (+ end 4)))
-               (req (wh-parse-head head)))
-          (if (hash? req)
-            (wh-read-body! s sock req rest)
-            (wh-response 400 "malformed request\n")))
-        (if (> (string-byte-length acc) (hash-ref s "max-header"))
-          (wh-response 431 "request header too large\n")
-          (let ((chunk (tcp-recv sock 4096)))
-            (if (string? chunk)
-              (loop (string-append acc chunk))
-              (if (= (string-length acc) 0)
-                #f
-                (wh-response 400 "malformed request\n")))))))))
+  (let ((deadline (+ (monotonic-ms) (hash-ref s "header-timeout-ms"))))
+    (let loop ((acc ""))
+      (let* ((end (string-index acc "\r\n\r\n" 0)))
+        (if (>= end 0)
+          (let* ((head (substring acc 0 end))
+                 (rest (string-drop acc (+ end 4)))
+                 (req (wh-parse-head head)))
+            (if (hash? req)
+              (wh-read-body! s sock req rest)
+              (wh-refusal 400 "malformed request\n")))
+          (if (> (string-byte-length acc) (hash-ref s "max-header"))
+            (wh-refusal 431 "request header too large\n")
+            (let ((left (- deadline (monotonic-ms))))
+              (if (<= left 0)
+                (wh-refusal 408 "request header timeout\n")
+                (let ((chunk (tcp-recv-timeout sock 4096 left)))
+                  (cond
+                    ((string? chunk) (loop (string-append acc chunk)))
+                    ((eq? chunk 'timeout) (wh-refusal 408 "request header timeout\n"))
+                    ((= (string-length acc) 0) #f)
+                    (else (wh-refusal 400 "malformed request\n"))))))))))))
 
 ; Read the body the head announced. → the request, or a refusal response.
+; Issue #5450: the body gets its own total read budget after the head.
 (define (wh-read-body! s sock req rest)
   (let* ((length (wh-int (try (string->number (wh-header req "content-length"))
                               (catch (e) #f))
@@ -231,9 +247,9 @@
          (encoding (wh-header req "transfer-encoding")))
     (cond
       ((not (= (string-length encoding) 0))
-       (wh-response 501 "transfer-encoding is not supported: send Content-Length\n"))
+       (wh-refusal 501 "transfer-encoding is not supported: send Content-Length\n"))
       ((or (< length 0) (> length (hash-ref s "max-body")))
-       (wh-response 413 "payload too large\n"))
+       (wh-refusal 413 "payload too large\n"))
       (else
        ; a client that waits for a go-ahead (curl on a large body) gets it
        (if (string-contains? (wh-header req "expect") "100-continue")
@@ -242,7 +258,8 @@
        ; Collect the chunks and concatenate once. The old loop appended
        ; each 64 KiB chunk and re-counted the whole body, which made the
        ; request path quadratic (#5448).
-       (let ((start (string-byte-length rest)))
+       (let* ((deadline (+ (monotonic-ms) (hash-ref s "body-timeout-ms")))
+              (start (string-byte-length rest)))
          (if (>= start length)
            (begin
              (hash-set! req "body" rest)
@@ -254,10 +271,15 @@
                  (hash-set! req "body" body)
                  (hash-set! req "content-length" length)
                  req)
-               (let ((chunk (tcp-recv sock 65536)))
-                 (if (string? chunk)
-                   (loop (cons chunk chunks) (+ total (string-byte-length chunk)))
-                   (wh-response 400 "short body\n")))))))))))
+               (let ((left (- deadline (monotonic-ms))))
+                 (if (<= left 0)
+                   (wh-refusal 408 "request body timeout\n")
+                   (let ((chunk (tcp-recv-timeout sock 65536 left)))
+                     (cond
+                       ((string? chunk)
+                        (loop (cons chunk chunks) (+ total (string-byte-length chunk))))
+                       ((eq? chunk 'timeout) (wh-refusal 408 "request body timeout\n"))
+                       (else (wh-refusal 400 "short body\n"))))))))))))))
 
 ; Write one response and close nothing: the caller closes the socket.
 (define (wh-respond! sock resp head-only)
@@ -300,6 +322,10 @@
 
 ; opts: "host" ("127.0.0.1"), "port" (0 = ephemeral), "auth" (lambda (req) ...),
 ; "max-body" bytes (65536), "max-header" bytes (16384), "max-inflight" (16),
+; "read-timeout-ms" (2000): default total budget for each of the request
+; head and the body (#5450); "header-timeout-ms" / "body-timeout-ms"
+; override it per phase; "close-drain-ms" (250): how long a refusal
+; shutdowns/drains the peer's unread bytes before close (#5450);
 ; "health-port" (the ops port to refuse; default AURA_HTTP_PORT),
 ; "drain-ms" (15000): how long webhook:stop! lets the requests in flight
 ; finish before it cancels them; "cancel-ms" (5000): how long it then
@@ -308,6 +334,7 @@
   (let* ((o (if (hash? opts) opts (hash)))
          (port (max 0 (wh-int (wh-opt o "port" 0) 0)))
          (health (wh-int (wh-opt o "health-port" (wh-health-port)) -1))
+         (read-timeout (max 10 (wh-int (wh-opt o "read-timeout-ms" 2000) 2000)))
          (auth (wh-opt o "auth" #f)))
     (if (and (>= health 0) (= port health))
       (error (string-append "webhook:make: port " (number->string port)
@@ -320,6 +347,10 @@
             "max-body" (max 0 (wh-int (wh-opt o "max-body" 65536) 65536))
             "max-header" (max 256 (wh-int (wh-opt o "max-header" 16384) 16384))
             "max-inflight" (max 1 (wh-int (wh-opt o "max-inflight" 16) 16))
+            "read-timeout-ms" read-timeout
+            "header-timeout-ms" (max 10 (wh-int (wh-opt o "header-timeout-ms" read-timeout) read-timeout))
+            "body-timeout-ms" (max 10 (wh-int (wh-opt o "body-timeout-ms" read-timeout) read-timeout))
+            "close-drain-ms" (max 0 (wh-int (wh-opt o "close-drain-ms" 250) 250))
             "drain-ms" (max 0 (wh-int (wh-opt o "drain-ms" 15000) 15000))
             "cancel-ms" (max 0 (wh-int (wh-opt o "cancel-ms" 5000) 5000))
             "exit-ch" (channel:create 1024)
@@ -508,7 +539,12 @@
                 (catch (e) #f))
               #f))
           #f))
-      (try (tcp-close sock) (catch (e) #f)))
+      ; Issue #5450: a refusal was answered before the request body was
+      ; consumed. Shut the write side down and drain the peer's remaining
+      ; bytes first, so the kernel does not answer the close with RST.
+      (if (and (hash? resp) (hash-ref resp "drain" #f))
+        (try (tcp-close-graceful sock (hash-ref s "close-drain-ms")) (catch (e) #f))
+        (try (tcp-close sock) (catch (e) #f))))
     ; the server fiber drops this handler from its in-flight list
     (if (wh-running? s)
       (try (channel:send (hash-ref s "exit-ch") 'exit) (catch (e) #f))
@@ -584,19 +620,21 @@
                       (if fid
                         #f
                         (begin
-                          (wh-safe-reply c 503)
+                          (wh-safe-reply s c 503)
                           (atomic:add! (hash-ref s "stat-busy") 1))))
                     (begin
-                      (wh-safe-reply c 503)
+                      (wh-safe-reply s c 503)
                       (atomic:add! (hash-ref s "stat-busy") 1))))
                 #f))
             ; the sleep is the cancellation safepoint and the polling pace
             (fiber:sleep 5)
             (loop)))))))
 
-(define (wh-safe-reply c status)
+(define (wh-safe-reply s c status)
   (try (wh-respond! c (wh-response status "server busy\n") #f) (catch (e) #f))
-  (try (tcp-close c) (catch (e) #f)))
+  ; Issue #5450: the 503 path never read the request; drain before close so
+  ; the client can read the status line and body instead of ECONNRESET.
+  (try (tcp-close-graceful c (hash-ref s "close-drain-ms")) (catch (e) #f)))
 
 ; Stop the server: close the listener first (no new request), let the
 ; requests in flight finish ("drain-ms"), cancel the handlers still running
@@ -672,7 +710,8 @@
 (define (webhook:help)
   (string-append
    "std/webhook (#5415)\n"
-   "  (webhook:make (hash [\"host\" \"127.0.0.1\"] [\"port\" 0] [\"auth\" hook] [\"max-body\" N]))\n"
+   "  (webhook:make (hash [\"host\" \"127.0.0.1\"] [\"port\" 0] [\"auth\" hook] [\"max-body\" N]\n"
+   "                       [\"read-timeout-ms\" 2000] [\"close-drain-ms\" 250]))\n"
    "  (webhook:route! s \"/path\" (list \"POST\") handler [(hash \"public\" #t)])\n"
    "  (webhook:start! s) (webhook:port s) (webhook:stop! s)\n"
    "  (webhook:stats s) (webhook:audit s [n]) (webhook:token-auth \"token\")\n"
