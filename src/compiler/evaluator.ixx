@@ -20934,6 +20934,10 @@ private:
     aura::core::opaque_ptr commit_type_checker_owned_;
     std::uint64_t commit_tc_registry_gen_ = 0;
     bool commit_cs_live_ = false;
+    // Issue #5476: stash (post-mutate typecheck) and the boundary's
+    // clear run on different bodies and shared these fields; serialize
+    // the pair instead of making every field access atomic.
+    mutable std::recursive_mutex typecheck_state_mtx_;
     // Issue #3003 / #3004: type-export authority (default true = pre-#3003).
     // Production: false until persist + Full audit success (#3004).
     std::atomic<bool> type_export_authoritative_{true};

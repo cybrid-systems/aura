@@ -122,6 +122,9 @@ class Concurrency5476(unittest.TestCase):
         self.assertIn("std::deque<std::atomic<T>> mirror_;", atomic)
         self.assertIn("memory_order_acquire", atomic)
 
+        tcstate = read("src/compiler/evaluator_typecheck.cpp")
+        self.assertIn("std::scoped_lock state_lock(typecheck_state_mtx_)", tcstate)
+
         mem = read("src/compiler/evaluator_primitives_memory.cpp")
         self.assertIn("heap_sizes_snapshot", mem)
         self.assertIn("sizes.strings", mem)

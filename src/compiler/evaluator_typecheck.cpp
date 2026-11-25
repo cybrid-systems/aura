@@ -2630,6 +2630,7 @@ void Evaluator::note_linear_synth_hard_fail_pending() noexcept {
 }
 
 void Evaluator::clear_linear_synth_hard_fail_pending() noexcept {
+    std::scoped_lock state_lock(typecheck_state_mtx_);
     linear_synth_hard_fail_pending_.store(0, std::memory_order_relaxed);
     if (persistent_typechecker_opaque_) {
         static_cast<TypeChecker*>(persistent_typechecker_opaque_.get())
@@ -3320,6 +3321,7 @@ void Evaluator::stash_partial_constraint_state(void* type_checker_opaque) noexce
     if (!type_checker_opaque)
         return;
     try {
+        std::scoped_lock state_lock(typecheck_state_mtx_);
         auto* src = static_cast<TypeChecker*>(type_checker_opaque);
         auto* reg_raw = ensure_type_registry();
         if (!reg_raw)
