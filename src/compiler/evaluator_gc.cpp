@@ -1586,6 +1586,31 @@ struct FileModeMarkContext {
     std::unordered_set<std::int64_t>& live_channel_ids;
 };
 
+// Issue #5433: a child that is a leaf marks its own slot in place. Pushing
+// strings/floats (the runner's hash keys and numeric values) made the
+// worklist ~16x the live set and paid a full mark dispatch per leaf.
+static inline void file_reclaim_mark_child(const EvalValue v, FileModeMarkContext& ctx) {
+    if (is_string(v)) {
+        const auto idx = as_string_idx(v);
+        if (idx < ctx.seen_string.size())
+            ctx.seen_string[idx] = 1;
+        return;
+    }
+    if (is_float(v)) {
+        const auto idx = as_float_idx(v);
+        if (idx < ctx.seen_float.size())
+            ctx.seen_float[idx] = 1;
+        return;
+    }
+    if (types::is_int(v)) {
+        note_channel_id_4854(v, ctx.live_channel_ids);
+        return;
+    }
+    if (types::is_bool(v) || types::is_void(v) || types::is_unspecified(v))
+        return;
+    ctx.work.push_back(v);
+}
+
 // Issue #4459: file-mode mark of one EvalValue. Pushes children. Cycles
 // stop at the per-heap seen sets. IR cell ids and evaluator cell ids share
 // the make_cell tag; a seen id follows both heaps. False IR retention is
@@ -1634,8 +1659,8 @@ static void file_reclaim_mark_value(const EvalValue v, FileModeMarkContext& ctx)
         const auto id = as_pair_idx(v);
         if (id < seen_pair.size() && !seen_pair[id]) {
             seen_pair[id] = 1;
-            work.push_back(pairs[id].car);
-            work.push_back(pairs[id].cdr);
+            file_reclaim_mark_child(pairs[id].car, ctx);
+            file_reclaim_mark_child(pairs[id].cdr, ctx);
         }
         return;
     }
@@ -1644,7 +1669,7 @@ static void file_reclaim_mark_value(const EvalValue v, FileModeMarkContext& ctx)
         if (id < seen_vec.size() && !seen_vec[id]) {
             seen_vec[id] = 1;
             for (const auto& el : vector_heap[id])
-                work.push_back(el);
+                file_reclaim_mark_child(el, ctx);
         }
         return;
     }
@@ -1664,8 +1689,8 @@ static void file_reclaim_mark_value(const EvalValue v, FileModeMarkContext& ctx)
             // value pair -- it is not part of the live graph.
             if (!::aura::compiler::hash::hash_slot_is_live(meta[i]))
                 continue;
-            work.push_back(EvalValue{keys[i]});
-            work.push_back(EvalValue{vals[i]});
+            file_reclaim_mark_child(EvalValue{keys[i]}, ctx);
+            file_reclaim_mark_child(EvalValue{vals[i]}, ctx);
         }
         return;
     }
@@ -1674,11 +1699,11 @@ static void file_reclaim_mark_value(const EvalValue v, FileModeMarkContext& ctx)
         if (view.live_ir_cells && id < view.live_ir_cells->size() && !(*view.live_ir_cells)[id]) {
             (*view.live_ir_cells)[id] = 1;
             if (id < view.ir_cells.size())
-                work.push_back(view.ir_cells[id]);
+                file_reclaim_mark_child(view.ir_cells[id], ctx);
         }
         if (id < seen_ev_cell.size() && !seen_ev_cell[id]) {
             seen_ev_cell[id] = 1;
-            work.push_back(cells[id]);
+            file_reclaim_mark_child(cells[id], ctx);
         }
         return;
     }
@@ -1690,7 +1715,7 @@ static void file_reclaim_mark_value(const EvalValue v, FileModeMarkContext& ctx)
                     if (view.live_ir)
                         view.live_ir->push_back(id);
                     for (const auto& el : *env)
-                        work.push_back(el);
+                        file_reclaim_mark_child(el, ctx);
                 }
                 return;
             }
@@ -1702,7 +1727,7 @@ static void file_reclaim_mark_value(const EvalValue v, FileModeMarkContext& ctx)
         const auto id = as_error_idx(v);
         if (id < seen_err.size() && !seen_err[id]) {
             seen_err[id] = 1;
-            work.push_back(error_values[id]);
+            file_reclaim_mark_child(error_values[id], ctx);
         }
     }
     // Issue #4597: a reachable opaque marks its slot only when the generation
