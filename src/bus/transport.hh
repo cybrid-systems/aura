@@ -684,8 +684,11 @@ struct PeerQuota {
     // off.
     std::uint64_t frame_rate = 1000;
     // The bucket depth: the frames a session may send back to back.
-    // Sized to fill the delivered image's channels in one go.
+    // When `frame_burst_explicit` is false the server derives the depth
+    // from the delivered image (at least 20000, #5426); when true the
+    // value above is used verbatim (#5469) — including 20000.
     std::uint64_t frame_burst = 20000;
+    bool frame_burst_explicit = false;
     // The handshake deadline.
     std::uint64_t hello_timeout_ms = 10000;
     // The constraint changes a session may make per window.

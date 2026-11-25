@@ -2118,6 +2118,14 @@ target_link_libraries(test_bus_adversarial_peer PRIVATE aura-bus)
 aura_strict_test_warnings(tests/compiler/test_bus_adversarial_peer.cpp)
 add_test(NAME test_bus_adversarial_peer_5396 COMMAND ./test_bus_adversarial_peer)
 
+# Issue #5469: the env-pinned peer burst (20000 is a real value, not "unset").
+add_executable(test_bus_peer_burst_env tests/compiler/test_bus_peer_burst_env.cpp)
+target_include_directories(test_bus_peer_burst_env PRIVATE src)
+target_compile_features(test_bus_peer_burst_env PUBLIC cxx_std_26)
+target_link_libraries(test_bus_peer_burst_env PRIVATE aura-bus)
+aura_strict_test_warnings(tests/compiler/test_bus_peer_burst_env.cpp)
+add_test(NAME test_bus_peer_burst_env_5469 COMMAND ./test_bus_peer_burst_env)
+
 add_executable(test_bus_slo tests/compiler/test_bus_slo.cpp)
 target_include_directories(test_bus_slo PRIVATE src)
 target_compile_features(test_bus_slo PUBLIC cxx_std_26)

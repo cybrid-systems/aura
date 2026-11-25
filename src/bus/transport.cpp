@@ -2259,12 +2259,12 @@ bool Server::allow_frame(PeerSession& peer) {
 // #5426: a bulk publish is two frames per record (Reserve + Publish), so
 // the bucket must hold the delivered image's largest channel to keep the
 // documented "fill the channel in one go" promise. The old fixed 20000
-// was sized for the pre-#5387 4096-record channel. An explicit quota
-// (anything but the default 20000) still wins, so adversarial tests and
-// operators can pin a small bucket.
+// was sized for the pre-#5387 4096-record channel. #5469: an explicit
+// quota wins even when it equals the historical default, so the flag,
+// not a magic value, decides whether to derive.
 std::uint64_t Server::frame_burst_frames() const {
     constexpr std::uint64_t kDefaultBurst = 20000;
-    if (peer_quota_.frame_burst != kDefaultBurst)
+    if (peer_quota_.frame_burst_explicit)
         return peer_quota_.frame_burst;
     if (frame_burst_cache_ != 0)
         return frame_burst_cache_;

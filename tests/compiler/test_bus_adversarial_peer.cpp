@@ -142,6 +142,7 @@ int main() {
     PeerQuota quota;
     quota.frame_rate = 100;
     quota.frame_burst = 64;
+    quota.frame_burst_explicit = true;
     quota.hello_timeout_ms = 400;
     quota.constraint_changes_per_window = 3;
     server.set_peer_quota(quota);

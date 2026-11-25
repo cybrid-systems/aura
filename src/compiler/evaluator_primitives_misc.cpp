@@ -739,8 +739,12 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                 // constraint-change quota.
                 if (const char* pf = ::getenv("AURA_BUS_PEER_FRAMES"))
                     opts.peer_quota.frame_rate = std::strtoull(pf, nullptr, 10);
-                if (const char* pb = ::getenv("AURA_BUS_PEER_BURST"))
+                if (const char* pb = ::getenv("AURA_BUS_PEER_BURST")) {
+                    // #5469: presence, not value, marks the quota as
+                    // pinned; 20000 is a legitimate explicit depth.
                     opts.peer_quota.frame_burst = std::strtoull(pb, nullptr, 10);
+                    opts.peer_quota.frame_burst_explicit = true;
+                }
                 if (const char* ph = ::getenv("AURA_BUS_PEER_HELLO_MS"))
                     opts.peer_quota.hello_timeout_ms = std::strtoull(ph, nullptr, 10);
                 if (const char* pc = ::getenv("AURA_BUS_PEER_CONSTRAINT_CHANGES"))
