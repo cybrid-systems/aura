@@ -82,34 +82,15 @@
     cap
     n))
 
-; string-length counts code points; Content-Length counts UTF-8 bytes.
-(define (wh-bytes s)
-  (let loop ((i 0) (n (string-length s)) (bytes 0))
-    (if (>= i n)
-      bytes
-      (let ((c (string-ref s i)))
-        (loop (+ i 1) n
-              (+ bytes (cond ((< c 128) 1) ((< c 2048) 2) ((< c 65536) 3) (else 4))))))))
-
-; The code-point index that follows the first nbytes UTF-8 bytes of s.
-(define (wh-index-at-bytes s nbytes)
-  (let loop ((i 0) (n (string-length s)) (bytes 0))
-    (if (or (>= i n) (>= bytes nbytes))
-      i
-      (let ((c (string-ref s i)))
-        (loop (+ i 1) n
-              (+ bytes (cond ((< c 128) 1) ((< c 2048) 2) ((< c 65536) 3) (else 4))))))))
-
-; Send all of text. tcp-send may send partially and answers bytes; the next
-; piece starts at the code point that follows those bytes.
+; Send all of text. tcp-send may send partially and answers bytes; the
+; optional third argument resumes from a byte offset, so a retry is O(1)
+; in Aura and does not copy the remaining body (#5448).
 (define (wh-send-all! sock text)
-  (let ((total (wh-bytes text)))
+  (let ((total (string-byte-length text)))
     (let loop ((sent 0))
       (if (>= sent total)
         total
-        (let ((n (try (tcp-send sock (substring text (wh-index-at-bytes text sent)
-                                                (string-length text)))
-                      (catch (e) -1))))
+        (let ((n (try (tcp-send sock text sent) (catch (e) -1))))
           (if (and (number? n) (> n 0))
             (loop (+ sent n))
             -1))))))
@@ -233,7 +214,7 @@
           (if (hash? req)
             (wh-read-body! s sock req rest)
             (wh-response 400 "malformed request\n")))
-        (if (> (wh-bytes acc) (hash-ref s "max-header"))
+        (if (> (string-byte-length acc) (hash-ref s "max-header"))
           (wh-response 431 "request header too large\n")
           (let ((chunk (tcp-recv sock 4096)))
             (if (string? chunk)
@@ -258,16 +239,25 @@
        (if (string-contains? (wh-header req "expect") "100-continue")
          (wh-send-all! sock "HTTP/1.1 100 Continue\r\n\r\n")
          #f)
-       (let loop ((body rest))
-         (if (>= (wh-bytes body) length)
+       ; Collect the chunks and concatenate once. The old loop appended
+       ; each 64 KiB chunk and re-counted the whole body, which made the
+       ; request path quadratic (#5448).
+       (let ((start (string-byte-length rest)))
+         (if (>= start length)
            (begin
-             (hash-set! req "body" body)
+             (hash-set! req "body" rest)
              (hash-set! req "content-length" length)
              req)
-           (let ((chunk (tcp-recv sock 65536)))
-             (if (string? chunk)
-               (loop (string-append body chunk))
-              (wh-response 400 "short body\n")))))))))
+           (let loop ((chunks (list rest)) (total start))
+             (if (>= total length)
+               (let ((body (apply string-append (reverse chunks))))
+                 (hash-set! req "body" body)
+                 (hash-set! req "content-length" length)
+                 req)
+               (let ((chunk (tcp-recv sock 65536)))
+                 (if (string? chunk)
+                   (loop (cons chunk chunks) (+ total (string-byte-length chunk)))
+                   (wh-response 400 "short body\n")))))))))))
 
 ; Write one response and close nothing: the caller closes the socket.
 (define (wh-respond! sock resp head-only)
@@ -288,7 +278,7 @@
                              (string-append "HTTP/1.1 " (number->string status) " "
                                             (wh-reason status) "\r\n"
                                             type
-                                            "Content-Length: " (number->string (wh-bytes body)) "\r\n"
+                                            "Content-Length: " (number->string (string-byte-length body)) "\r\n"
                                             "Connection: close\r\n"
                                             extra
                                             "\r\n"))))

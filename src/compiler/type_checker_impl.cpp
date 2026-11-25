@@ -4662,6 +4662,7 @@ void InferenceEngine::init_primitive_env_part0(TypeId Int, TypeId Bool, TypeId F
     // a fixed pair. Dotted rest: one String required, further args allowed.
     register_primitive("string-append", {String, String}, String, true);
     register_primitive("string-length", {String}, Int);
+    register_primitive("string-byte-length", {String}, Int);
     // Issue #4614: native FNV-1a 64 string hash code.
     register_primitive("string-hash", {String}, Int);
     register_primitive("string-fnv1-32", {String}, Int);
@@ -5025,7 +5026,8 @@ void InferenceEngine::init_primitive_env_part2(TypeId Int, TypeId Bool, TypeId F
     register_primitive("tcp-local-port", {Dyn}, Dyn);
     register_primitive("tcp-accept", {Dyn}, Dyn);
     register_primitive("tcp-accept-timeout", {Dyn, Int}, Dyn);
-    register_primitive("tcp-send", {Dyn, String}, Void);
+    // Issue #5448: optional third arg is the byte offset to send from.
+    register_primitive("tcp-send", {Dyn, String}, Void, true);
     // Issue #4545: optional maxlen (evaluator_primitives_io reads a[1]).
     register_primitive("tcp-recv", {Dyn, Int}, String, true);
     register_primitive("tcp-close", {Dyn}, Void);

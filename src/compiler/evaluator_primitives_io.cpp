@@ -1546,7 +1546,18 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
         if (!minted_fd_tenant_allows(ev, fd, "tcp-send"))
             return types::make_int(-1);
         auto& data = ev.mutable_string_at(sidx);
-        auto sent = ::send(fd, data.data(), data.size(), MSG_NOSIGNAL);
+        // Issue #5448: an optional third argument sends from a byte offset.
+        // A partial send can then resume without a byte-index walk in Aura
+        // or a substring copy of the remaining body.
+        std::int64_t start = 0;
+        if (a.size() >= 3 && types::is_int(a[2]))
+            start = types::as_int(a[2]);
+        if (start < 0)
+            return types::make_int(-1);
+        const auto begin = static_cast<std::size_t>(start);
+        if (begin > data.size())
+            return types::make_int(0);
+        auto sent = ::send(fd, data.data() + begin, data.size() - begin, MSG_NOSIGNAL);
         return types::make_int(static_cast<std::int64_t>(sent));
     });
 

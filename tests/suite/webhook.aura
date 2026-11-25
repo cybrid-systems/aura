@@ -253,6 +253,25 @@
       (check (string=? "got:abc" (body-of (http port "POST" "/hook" "abc"))))
     (webhook:stop! s))))
 
+(test-case "a 128 KiB body and response stay fast" (hash "issue" 5448)
+  ; The old byte-at-a-time length walk + per-chunk append cost ~1.4 s
+  ; here (128 KiB request 609 ms, response ~790 ms). The O(1) byte count
+  ; and one-shot accumulation leave a wide margin on any runner.
+  (let ((s (webhook:make (hash "max-body" 8388608))))
+    (webhook:route! s "/big" (list "POST")
+                    (lambda (req) (hash "status" 200 "body" (hash-ref req "body")))
+                    (hash "public" #t))
+    (webhook:start! s)
+    (let* ((port (webhook:port s))
+           (body (string-repeat "x" 131072))
+           (t0 (monotonic-ms))
+           (resp (http port "POST" "/big" body))
+           (ms (- (monotonic-ms) t0)))
+      (check= 200 (status-of resp))
+      (check= 131072 (string-byte-length (body-of resp)))
+      (check (< ms 1000)))
+    (webhook:stop! s)))
+
 (test-case "the accept loop keeps serving while a handler is busy" (hash "issue" 5415)
   (let ((s (standard-server)))
     (webhook:start! s)

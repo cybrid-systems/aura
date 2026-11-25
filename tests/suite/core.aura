@@ -61,6 +61,12 @@
   (check= "abc" (list->string (list 97 98 99)))
   (check= "100" (number->string 100)))
 
+(test-case "string-byte-length counts UTF-8 bytes" (hash "issue" 5448)
+  (check= 0 (string-byte-length ""))
+  (check= 5 (string-byte-length "hello"))
+  (check= 3 (string-length "é€😀"))
+  (check= 9 (string-byte-length "é€😀")))
+
 (test-case "core:vectors" (hash)
   (check= 3 (vector-length (vector 1 2 3)))
   (check= 20 (vector-ref (vector 10 20 30) 1))

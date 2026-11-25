@@ -12888,6 +12888,14 @@ public:
         std::scoped_lock lock(alloc_storage_lock_);
         return string_heap_.code_point_count(idx);
     }
+    // Issue #5448: UTF-8 byte count is the stored std::string size; O(1)
+    // under the same heap lock. npos when idx is out of range.
+    [[nodiscard]] std::size_t string_heap_byte_length(std::size_t idx) const {
+        std::scoped_lock lock(alloc_storage_lock_);
+        if (idx >= string_heap_.size())
+            return ::aura::compiler::LockedStringHeap::npos;
+        return string_heap_[idx].size();
+    }
     // Issue #4548: substring copies only [start, end) of the slot — the
     // whole source string used to be copied first. False when idx is OOB.
     bool string_heap_code_point_slice(std::size_t idx, std::size_t start, std::size_t end,

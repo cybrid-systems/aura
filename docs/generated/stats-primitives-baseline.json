@@ -1,5 +1,5 @@
 {
-  "count": 461,
+  "count": 462,
   "names": [
     "arena:adaptive-stats",
     "arena:defrag-stats",
@@ -443,6 +443,7 @@
     "string->list",
     "string->number",
     "string-append",
+    "string-byte-length",
     "string-copy",
     "string-downcase",
     "string-fill!",

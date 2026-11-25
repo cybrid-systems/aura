@@ -98,6 +98,12 @@ A body is UTF-8 **text**: the transport decodes bytes into a string, so
 binary payloads are not preserved (a `0x00` byte is dropped, invalid
 sequences become replacement characters). JSON webhooks are text.
 
+Body and response lengths use `string-byte-length`, an O(1) count of the
+stored UTF-8 bytes (not the code-point count of `string-length`). The
+request reader collects chunks and concatenates them once, and
+`tcp-send` can resume from a byte offset, so the request path is linear
+and a 64 KiB body/response stays in milliseconds (#5448).
+
 ### Threads
 
 Nothing is shared between threads except atomics and channels

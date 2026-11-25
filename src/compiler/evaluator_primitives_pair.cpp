@@ -1347,6 +1347,32 @@ void RegSplitParts::register_string_ops(PrimRegistrar add, Evaluator& ev,
         },
         pure_general(1, "(string) -> int",
                      "Number of Unicode code points. An ill-formed byte counts as one."));
+    // Issue #5448: O(1) UTF-8 byte count. Content-Length is bytes, which
+    // string-length deliberately does not report. The stored std::string
+    // size is the byte count; no per-code-point walk.
+    register_prim(
+        add, ev, "string-byte-length",
+        [&ev, &string_heap, &error_values](std::span<const EvalValue> a) {
+            if (a.empty())
+                return make_int(0);
+            std::size_t len = 0;
+            if (is_string(a[0])) {
+                auto idx = as_string_idx(a[0]);
+                if (idx < string_heap.size()) {
+                    if (!ev.inrange_string_tenant_allows(idx, /*required_effects=*/0,
+                                                         "string-byte-length")) {
+                        return ev.make_typed_error(
+                            "string-byte-length: cross-tenant string slot read denied (#4505)",
+                            aura::diag::ErrorKind::EffectDenied);
+                    }
+                    const auto n = ev.string_heap_byte_length(idx);
+                    len = n == ::aura::compiler::LockedStringHeap::npos ? 0 : n;
+                }
+            }
+            return make_int(static_cast<std::int64_t>(len));
+        },
+        pure_general(1, "(string) -> int",
+                     "Number of UTF-8 bytes. An ill-formed byte counts as one."));
     // Issue #4614: native string-hash. Hashing a key in Aura used to cost
     // ~50 us for 8 characters (a string->list fold). The hash table already
     // hashes string keys with FNV-1a 64 over the UTF-8 bytes
