@@ -96,6 +96,8 @@ export import aura.compiler.evaluator_pure;
 import aura.compiler.root_remap_pass; // Issue #2294: RootRemapPass install
 import aura.compiler.type_checker;    // Issue #4310: abort CS high-water on the checkpoint
 
+#include "compiler/cell_heap.hh" // Issue #5476: stable-address atomic cell heap
+
 namespace aura::compiler {
 
 
@@ -2809,8 +2811,11 @@ public:
     // by runtime_resource_ (monotonic arena). Pmr API is a
     // drop-in for std::vector at the call site; iteration /
     // size / push_back / clear all unchanged.
-    std::span<const types::EvalValue> cells() const { return cells_; }
-    std::pmr::vector<types::EvalValue>& cells() { return cells_; }
+    // Issue #5476: CellHeap's const operator[] returns EvalValue and the
+    // non-const one a Ref, so both index/size call patterns keep working
+    // without exposing a reallocating contiguous buffer.
+    const CellHeap& cells() const { return cells_; }
+    CellHeap& cells() { return cells_; }
     std::span<const Pair> pairs() const { return pairs_; }
     std::pmr::vector<Pair>& pairs() { return pairs_; }
     std::span<const std::string> keyword_table() const { return keyword_table_; }
@@ -7877,7 +7882,7 @@ private:
     // initializer (member init order matches declaration
     // order).
     std::pmr::monotonic_buffer_resource runtime_resource_;
-    std::pmr::vector<types::EvalValue> cells_{&runtime_resource_};
+    CellHeap cells_;
     // Issue #4459: dead evaluator cells. The monotonic buffer does not
     // shrink; reuse stops cells_.size() from tracking the loop.
     std::vector<std::size_t> cell_reuse_eval_;

@@ -611,7 +611,9 @@ static void install_lock_and_topcell_hooks_for_eval(aura::compiler::Evaluator* e
             auto* evp = static_cast<aura::compiler::Evaluator*>(e);
             if (idx < 0 || static_cast<std::size_t>(idx) >= evp->cells().size())
                 return 0;
-            return evp->cells()[static_cast<std::size_t>(idx)].val;
+            return static_cast<aura::compiler::types::EvalValue>(
+                       evp->cells()[static_cast<std::size_t>(idx)])
+                .val;
         },
         static_cast<void*>(ev));
     // Issue #4321: JIT keyword literals intern into this evaluator.

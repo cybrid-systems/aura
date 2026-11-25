@@ -7657,7 +7657,7 @@ namespace {
                 return reject();
             const auto ci = as_cell_id(*callee);
             std::scoped_lock lock(owner->cells_storage_mutex());
-            const auto cells = owner->cells();
+            const auto& cells = owner->cells();
             if (ci >= cells.size())
                 return reject();
             callee = cells[ci];

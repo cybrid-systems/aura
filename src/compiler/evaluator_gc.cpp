@@ -194,8 +194,11 @@ std::size_t Evaluator::compact_pairs(const std::vector<bool>& live_mask) {
                     rewrite(b.second);
             }
         }
-        for (auto& c : cells_)
+        for (std::size_t i = 0; i < cells_.size(); ++i) {
+            EvalValue c = cells_[i];
             rewrite(c);
+            cells_[i] = c;
+        }
         for (auto& vec : vector_heap_) {
             for (auto& e : vec)
                 rewrite(e);
@@ -1577,7 +1580,7 @@ struct FileModeMarkContext {
     const Evaluator::FileModeReclaimView& view;
     const std::pmr::vector<Pair>& pairs;
     const std::vector<std::vector<EvalValue>>& vector_heap;
-    const std::pmr::vector<EvalValue>& cells;
+    const CellHeap& cells;
     const std::vector<EvalValue>& error_values;
     std::vector<std::uint8_t>& seen_opaque;
     std::span<const std::uint32_t> opaque_gen;
@@ -1819,8 +1822,8 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
     {
         std::scoped_lock lock(alloc_storage_lock_);
         roots.reserve(cells_.size() + 4096);
-        for (const auto& c : cells_)
-            roots.push_back(c);
+        for (std::size_t i = 0; i < cells_.size(); ++i)
+            roots.push_back(cells_[i]);
     }
     auto push_env = [&](const Env& e) {
         // Issue #4717: e may be the shared top env, appended by another body.

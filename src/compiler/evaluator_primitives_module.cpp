@@ -110,7 +110,7 @@ void Evaluator::warn_import_overwrite(Env* env, const std::string& name,
         if (types::is_cell(v)) {
             const auto ci = types::as_cell_id(v);
             if (ci < cells_.size())
-                return cells_[ci];
+                return types::EvalValue(static_cast<types::EvalValue>(cells_[ci]));
         }
         return v;
     };
@@ -199,7 +199,7 @@ void register_module_primitives(PrimRegistrar add, Evaluator& ev) {
         if (is_cell(*result)) {
             auto ci = as_cell_id(*result);
             if (ci < ev.cells_.size())
-                return ev.cells_[ci];
+                return EvalValue(static_cast<EvalValue>(ev.cells_[ci]));
         }
         return *result;
     });
@@ -288,7 +288,7 @@ void register_module_primitives(PrimRegistrar add, Evaluator& ev) {
             if (is_cell(v)) {
                 const auto ci = as_cell_id(v);
                 if (ci < ev.cells_.size())
-                    return ev.cells_[ci];
+                    return EvalValue(static_cast<EvalValue>(ev.cells_[ci]));
             }
             return v;
         };

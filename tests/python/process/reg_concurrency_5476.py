@@ -102,6 +102,14 @@ class Concurrency5476(unittest.TestCase):
             "the tier worker must snapshot stats_ under the queue lock",
         )
 
+        heap = read("src/compiler/cell_heap.hh")
+        self.assertIn("class CellHeap", heap)
+        self.assertIn("std::array<std::atomic<Block*>, kMaxBlocks> blocks_", heap)
+        self.assertIn("published_.store(i + 1, std::memory_order_release)", heap)
+        ev = read("src/compiler/evaluator.ixx")
+        self.assertIn("CellHeap cells_;", ev)
+        self.assertIn("const CellHeap& cells() const", ev)
+
         ast = read("src/core/ast.ixx")
         self.assertIn("core/atomic_column.hh", ast)
         self.assertIn("cow::AtomicTrackedColumn<std::uint16_t> node_gen_;", ast)
