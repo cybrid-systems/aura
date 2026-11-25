@@ -540,4 +540,32 @@
       (check (< (- (monotonic-ms) t0) 1000)))
     (check= #t (webhook:stop! s))))
 
+; Issue #5454: a response header name/value with CR/LF/NUL is a 500, not
+; a second header line on the wire.
+(test-case "an unsafe response header is refused" (hash "issue" 5454)
+  (let* ((s (webhook:make (hash "port" 0)))
+         (port 0))
+    (webhook:route! s "/echo-hdr" (list "GET")
+                    (lambda (req)
+                      (hash "status" 200 "body" "ok"
+                            "headers" (hash "X-Test"
+                                            (string-append
+                                              (hash-ref (hash-ref req "headers") "x-in" "")
+                                              "\r\nInjected: yes"))))
+                    (hash "public" #t))
+    (webhook:route! s "/badname" (list "GET")
+                    (lambda (req)
+                      (hash "status" 200 "body" "ok"
+                            "headers" (hash "X-Test\r\nInjected" "yes")))
+                    (hash "public" #t))
+    (webhook:start! s)
+    (set! port (webhook:port s))
+    (let ((r (raw port "GET /echo-hdr HTTP/1.1\r\nHost: x\r\nX-In: a\r\n\r\n")))
+      (check= 500 (status-of r))
+      (check (not (string-contains? r "Injected"))))
+    (let ((r (raw port "GET /badname HTTP/1.1\r\nHost: x\r\n\r\n")))
+      (check= 500 (status-of r))
+      (check (not (string-contains? r "Injected"))))
+    (check= #t (webhook:stop! s))))
+
 (test-finish)

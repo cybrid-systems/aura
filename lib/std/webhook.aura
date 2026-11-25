@@ -158,6 +158,43 @@
 (define (wh-header req name)
   (hash-ref (hash-ref req "headers" (hash)) name ""))
 
+; Issue #5454: response header names and values come from the handler (and
+; often from request data it echoes). A CR/LF/NUL there is response
+; splitting, not content. Names must be RFC token characters; values may
+; use HTAB, SP and visible/obs-text bytes, never CTLs or DEL.
+(define (wh-token-char? c)
+  (or (and (>= c 48) (<= c 57))
+      (and (>= c 65) (<= c 90))
+      (and (>= c 97) (<= c 122))
+      (if (member c (list 33 35 36 37 38 39 42 43 45 46 94 95 96 124 126)) #t #f)))
+
+(define (wh-header-name-ok? name)
+  (and (string? name) (> (string-length name) 0)
+       (let loop ((i 0))
+         (if (>= i (string-length name))
+           #t
+           (and (wh-token-char? (string-ref name i)) (loop (+ i 1)))))))
+
+(define (wh-header-value-ok? v)
+  (let ((s (if (string? v) v (format "~a" v))))
+    (let loop ((i 0))
+      (if (>= i (string-length s))
+        #t
+        (let ((c (string-ref s i)))
+          (and (or (= c 9) (and (>= c 32) (not (= c 127))))
+               (loop (+ i 1))))))))
+
+(define (wh-headers-ok? headers)
+  (if (not (hash? headers))
+    #f
+    (let loop ((ks (hash-keys headers)))
+      (if (null? ks)
+        #t
+        (let ((k (car ks)))
+          (if (and (wh-header-name-ok? k) (wh-header-value-ok? (hash-ref headers k)))
+            (loop (cdr ks))
+            #f))))))
+
 ; "Bearer <token>" against the expected token. Every code point is compared
 ; before the verdict, so the answer time does not reveal where two tokens
 ; first differ.
@@ -538,18 +575,21 @@
       ; for a request this server refuses to parse or size.
       (let* ((got (try (wh-read! s sock) (catch (e) #f)))
              (req (if (and (hash? got) (hash-ref got "method" #f)) got (hash)))
-             (resp (cond ((not (hash? got)) #f)
-                         ((hash-ref got "method" #f)
-                          (let ((answer
-                                 (try (wh-dispatch s got)
-                                      (catch (e)
-                                        ; Issue #5436: a handler cancelled by
-                                        ; webhook:stop! answers nothing
-                                        (if (wh-cancelled? e)
-                                          'cancelled
-                                          (wh-response 500 "handler failed\n"))))))
-                            (if (eq? answer 'cancelled) #f answer)))
-                         (else got))))
+             (answer (cond ((not (hash? got)) #f)
+                           ((hash-ref got "method" #f)
+                            (try (wh-dispatch s got)
+                                 (catch (e)
+                                   ; Issue #5436: a handler cancelled by
+                                   ; webhook:stop! answers nothing
+                                   (if (wh-cancelled? e)
+                                     'cancelled
+                                     (wh-response 500 "handler failed\n")))))
+                           (else got)))
+             ; Issue #5454: never put an unsafe name/value on the wire.
+             (resp (if (and (hash? answer)
+                            (not (wh-headers-ok? (hash-ref answer "headers" (hash)))))
+                     (wh-response 500 "invalid response header\n")
+                     answer)))
         (if resp
           (begin
             (try (wh-respond! sock resp (string=? (wh-opt req "method" "") "HEAD"))

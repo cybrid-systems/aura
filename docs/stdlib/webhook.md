@@ -31,6 +31,9 @@ A request is `(hash "method" "path" "query" "headers" "body" "content-length")`:
 `path` has no query string, `query` is the raw query, `headers` is keyed by
 lower-case name. A handler answers a string (200, `text/plain`) or a hash
 with `status`, `body` and `headers`; an error it raises is answered 500.
+Response header names must be RFC token characters and values may not
+contain CR, LF, NUL, other CTLs or DEL; an unsafe name/value is answered
+`500 invalid response header` instead of being written (#5454).
 
 ## Boundary with the health server
 
@@ -197,4 +200,6 @@ its body. For #5451: a 200-connection burst is accepted and answered `200`
 without a reset (the old 5 ms tick and backlog 16 stalled the tail). For
 #5453: a `Content-Length: 5` request that sends `helloEXTRA` hands the
 handler `hello`; `abc`, `5, 5`, `0x10`, `5 5`, empty, `+5`, `5.0`, `-5`,
-`1e1` and a repeated `Content-Length` are all `400`.
+`1e1` and a repeated `Content-Length` are all `400`. For #5454: a
+response header value containing `\r\nInjected: yes`, and a header name
+containing the same, both answer `500` and no `Injected` line is written.
