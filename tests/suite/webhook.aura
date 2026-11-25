@@ -476,4 +476,23 @@
     (check (< (- (monotonic-ms) t0) 5000))
     (check= #t (webhook:stop! s))))
 
+; Issue #5452: the server fiber can be gone before stop!; close the listener
+; ourselves and do not wait for a reply that can never arrive.
+(test-case "stop! closes the listener after the server fiber is gone" (hash "issue" 5452)
+  (let* ((s (webhook:make (hash "port" 0)))
+         (port 0))
+    (webhook:route! s "/ok" (list "GET") (lambda (req) "ok") (hash "public" #t))
+    (webhook:start! s)
+    (set! port (webhook:port s))
+    (fiber:cancel (hash-ref s "loop"))
+    (try (fiber:join (hash-ref s "loop")) (catch (e) #f))
+    (let ((t0 (monotonic-ms)))
+      (check= #t (webhook:stop! s))
+      (check (< (- (monotonic-ms) t0) 2000)))
+    (check (not (hash-ref (webhook:stats s) "running")))
+    ; the port is free again, with no hidden second close of another fd
+    (let ((l (tcp-listen port "127.0.0.1")))
+      (check (number? l))
+      (if (number? l) (tcp-close l)))))
+
 (test-finish)

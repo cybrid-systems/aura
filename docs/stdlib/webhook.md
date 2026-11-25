@@ -88,7 +88,11 @@ secret store, not in source or environment (#5417).
   cannot be cancelled, and `stop!` then raises
   `webhook:stop!: N handler(s) still running` instead of answering `#t`
   with it alive (Issue #5436). A request cancelled this way is closed
-  without a response.
+  without a response. If the server fiber is already gone (cancelled by
+  hand or crashed), `stop!` closes the listener itself after a 500 ms close
+  wait, skips the stop handshake, releases `running`, and lets the same
+  port be listened on again (#5452); the normal path never closes the
+  listener twice.
 - **Limits** (`webhook:make`): `"max-body"` bytes (65536) — `413` as soon
   as the head announces more; `"max-header"` bytes (16384) — `431`;
   `"max-inflight"` (16); `"read-timeout-ms"` (2000) — the default total

@@ -657,35 +657,53 @@
 (define (webhook:stop! s)
   (if (not (wh-running? s))
     #f
-    (begin
-      (let ((reply (channel:create 1)))
-        (channel:send (hash-ref s "ctl") (list 'close reply))
-        (if (wh-await reply 5000)
-          ; the server fiber is gone (cancelled by hand): close it ourselves
-          (try (tcp-close (hash-ref s "listener")) (catch (e) #f))
-          #f))
+    (let* ((close-reply (channel:create 1))
+           (server-alive (begin
+                           (channel:send (hash-ref s "ctl") (list 'close close-reply))
+                           ; the server loop sleeps at most 1 ms between turns;
+                           ; a longer wait than this means the fiber is gone.
+                           (if (wh-await close-reply 500) #t #f))))
+      ; Issue #5452: wh-await true means the server fiber replied and its
+      ; close branch already closed the listener. Always close here only
+      ; when the fiber is gone (cancelled or crashed); the old code had the
+      ; branches reversed and then waited another 5 s for a stop reply that
+      ; could never arrive.
+      (if server-alive
+        #f
+        (try (tcp-close (hash-ref s "listener")) (catch (e) #f)))
       (wh-wait-idle s (hash-ref s "drain-ms"))
-      (let* ((reply (channel:create 1))
-             (final (begin
-                      (channel:send (hash-ref s "ctl") (list 'stop reply))
-                      (wh-await reply 5000)))
-             (live (if (hash? final) (hash-ref final "live" (list)) (list))))
-        (if (hash? final)
-          (hash-set! s "audit" (hash-ref final "audit" (list)))
-          #f)
-        ; Issue #5436: the handlers still in flight are cancelled and waited
-        ; for. stop! used to give up after the drain window and answer #t
-        ; with a handler still running: the process then tore the evaluator
-        ; down under it (crash at exit).
-        (for-each (lambda (fid) (try (fiber:cancel fid) (catch (e) #f))) live)
-        (wh-wait-idle s (hash-ref s "cancel-ms"))
-        (atomic:add! (hash-ref s "running") -1)
-        (let ((left (wh-counter s "stat-inflight")))
-          (if (= left 0)
-            #t
-            (error (string-append "webhook:stop!: " (number->string left)
-                                  " handler(s) still running: a handler that never "
-                                  "reaches a safepoint cannot be cancelled"))))))))
+      (if (not server-alive)
+        ; No server fiber to hand over audit/live or answer 'stop. The
+        ; listener is closed above; account for the handlers and finish.
+        (begin
+          (atomic:add! (hash-ref s "running") -1)
+          (let ((left (wh-counter s "stat-inflight")))
+            (if (= left 0)
+              #t
+              (error (string-append "webhook:stop!: " (number->string left)
+                                    " handler(s) still running: a handler that never "
+                                    "reaches a safepoint cannot be cancelled")))))
+        (let* ((reply (channel:create 1))
+               (final (begin
+                        (channel:send (hash-ref s "ctl") (list 'stop reply))
+                        (wh-await reply 5000)))
+               (live (if (hash? final) (hash-ref final "live" (list)) (list))))
+          (if (hash? final)
+            (hash-set! s "audit" (hash-ref final "audit" (list)))
+            #f)
+          ; Issue #5436: the handlers still in flight are cancelled and waited
+          ; for. stop! used to give up after the drain window and answer #t
+          ; with a handler still running: the process then tore the evaluator
+          ; down under it (crash at exit).
+          (for-each (lambda (fid) (try (fiber:cancel fid) (catch (e) #f))) live)
+          (wh-wait-idle s (hash-ref s "cancel-ms"))
+          (atomic:add! (hash-ref s "running") -1)
+          (let ((left (wh-counter s "stat-inflight")))
+            (if (= left 0)
+              #t
+              (error (string-append "webhook:stop!: " (number->string left)
+                                    " handler(s) still running: a handler that never "
+                                    "reaches a safepoint cannot be cancelled")))))))))
 
 ; Sleep in slices until no request is in flight or `ms` has passed.
 (define (wh-wait-idle s ms)
