@@ -6158,6 +6158,7 @@ public:
             std::unique_ptr<aura::jit::AuraJIT> jit;
             for (;;) {
                 std::unique_ptr<TierJob4682> job;
+                TierStats4682* stats = nullptr;
                 {
                     std::unique_lock<std::mutex> lk(mu_);
                     cv_.wait(lk, [this] { return stop_ || !q_.empty(); });
@@ -6165,6 +6166,9 @@ public:
                         break;
                     job = std::move(q_.front());
                     q_.pop_front();
+                    // Issue #5476: enqueue writes stats_ under mu_; read it
+                    // under the same lock instead of racing the worker.
+                    stats = stats_;
                     busy_ = true;
                 }
                 if (!jit)
@@ -6223,12 +6227,12 @@ public:
                 if (p) {
                     job->slot->fn.store(p, std::memory_order_release);
                     job->slot->state.store(2, std::memory_order_release);
-                    if (stats_)
-                        stats_->compiled.fetch_add(1, std::memory_order_relaxed);
+                    if (stats)
+                        stats->compiled.fetch_add(1, std::memory_order_relaxed);
                 } else {
                     job->slot->state.store(3, std::memory_order_release);
-                    if (stats_)
-                        stats_->failed.fetch_add(1, std::memory_order_relaxed);
+                    if (stats)
+                        stats->failed.fetch_add(1, std::memory_order_relaxed);
                 }
                 {
                     std::scoped_lock<std::mutex> lk(mu_);

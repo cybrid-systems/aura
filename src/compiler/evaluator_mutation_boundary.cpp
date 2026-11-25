@@ -4357,6 +4357,12 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(
     // exception unwind) that skip mark_define_dirty.
     defuse_version_at_enter_ = ev_->defuse_version_.load(std::memory_order_acquire);
     // Issue #2162: dirty-upward is cumulative — snapshot for boundary delta.
+    // Issue #5476: the snapshot reads workspace_flat_ and a counter on it
+    // before this boundary takes the workspace lock; another fiber's
+    // set-code installs a fresh FlatAST under unique. A shared pin keeps
+    // the object alive for the read (adopts an outer hold on this thread);
+    // the boundary's own unique lock follows after the pin is released.
+    ev_->lock_workspace_shared();
     dirty_upward_at_enter_ =
         ev_->workspace_flat_ ? ev_->workspace_flat_->mark_dirty_upward_call_count() : 0;
     // Issue #3637: macro-dirty marker counter snapshot (same cumulative
@@ -4364,6 +4370,7 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(
     // by apply_macro_dirty_bits, #290).
     macro_expansion_dirty_at_enter_ =
         ev_->workspace_flat_ ? ev_->workspace_flat_->macro_expansion_dirty_total() : 0;
+    ev_->unlock_workspace_shared();
     // Issue #236 / #1746 / #3552: thread_local depth counter keyed by
     // (Evaluator::instance_id_, Fiber::id()). The fiber_id key prevents
     // cross-worker hot-swap leaks: when scheduler migrates a Fiber to

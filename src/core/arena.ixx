@@ -5482,7 +5482,13 @@ public:
     // arena (render hotpath / MutationBoundary check is inside
     // ASTArena::live_compact). Returns aggregated result.
     [[nodiscard]] LiveCompactResult live_compact(LiveCompactMode mode) noexcept {
-        std::shared_lock<std::shared_mutex> lock(arenas_mtx_);
+        // Issue #5476: compact mutates each arena's stats (capacity/used/
+        // compaction counters), so it must not run under a shared group
+        // lock: module_stats()/auto_compact_policy_stats() take the same
+        // shared lock and read those plain size_t fields. Unique here
+        // serializes compaction against every group stats reader; the
+        // per-arena compact serial is still inside ASTArena.
+        std::unique_lock<std::shared_mutex> lock(arenas_mtx_);
         LiveCompactResult agg;
         agg.mode = mode;
         for (auto& [_, arena] : arenas_) {

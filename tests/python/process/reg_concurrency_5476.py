@@ -81,6 +81,36 @@ class Concurrency5476(unittest.TestCase):
         self.assertIn("std::atomic<bool> last_linear_synth_hard_fail_", tc)
         self.assertIn("std::atomic<std::uint64_t> last_uncovered_bidirectional_tag_count_", tc)
 
+        boundary = read("src/compiler/evaluator_mutation_boundary.cpp")
+        snap = boundary.find("mark_dirty_upward_call_count()")
+        self.assertGreaterEqual(snap, 0)
+        before = boundary[max(0, snap - 900) : snap]
+        self.assertIn(
+            "lock_workspace_shared();",
+            before,
+            "the boundary-enter dirty snapshot must hold a workspace shared pin",
+        )
+        after = boundary[snap : snap + 900]
+        self.assertIn("unlock_workspace_shared();", after)
+
+        service_ixx = read("src/compiler/service.ixx")
+        run_pos = service_ixx.find("void run_() {")
+        self.assertGreaterEqual(run_pos, 0)
+        self.assertIn(
+            "stats = stats_;",
+            service_ixx[run_pos : run_pos + 1200],
+            "the tier worker must snapshot stats_ under the queue lock",
+        )
+
+        arena = read("src/core/arena.ixx")
+        cpos = arena.find("LiveCompactResult live_compact(LiveCompactMode mode) noexcept {")
+        self.assertGreaterEqual(cpos, 0)
+        self.assertIn(
+            "std::unique_lock<std::shared_mutex> lock(arenas_mtx_)",
+            arena[cpos : cpos + 900],
+            "group live_compact must exclude stats readers",
+        )
+
         if not AURA_BIN.exists():
             self.skipTest(f"{AURA_BIN} not built")
         env = dict(os.environ)
