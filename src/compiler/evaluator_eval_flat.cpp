@@ -15763,11 +15763,44 @@ void Evaluator::rebind_workspace_defines_on_switch() noexcept {
     }
 }
 
+// Issue #5476: set-code writes the pending parse failure inside a
+// mutation boundary while eval-current/(load ...)/query readers move it
+// on another fiber. The strings own heap buffers, so every access goes
+// through the mutex; take_* move the fields out under the lock.
+void Evaluator::set_set_code_error(std::string kind, std::string msg) {
+    std::scoped_lock lock(set_code_error_mtx_);
+    last_set_code_error_kind_ = std::move(kind);
+    last_set_code_error_msg_ = std::move(msg);
+}
+
+void Evaluator::clear_set_code_error() {
+    std::scoped_lock lock(set_code_error_mtx_);
+    last_set_code_error_kind_.clear();
+    last_set_code_error_msg_.clear();
+}
+
+std::optional<std::string> Evaluator::take_set_code_error_msg() {
+    std::scoped_lock lock(set_code_error_mtx_);
+    if (last_set_code_error_kind_.empty())
+        return std::nullopt;
+    return std::move(last_set_code_error_msg_);
+}
+
+std::pair<std::string, std::string> Evaluator::take_set_code_error() {
+    std::scoped_lock lock(set_code_error_mtx_);
+    if (last_set_code_error_kind_.empty())
+        return {};
+    std::string kind = std::move(last_set_code_error_kind_);
+    std::string msg = std::move(last_set_code_error_msg_);
+    last_set_code_error_kind_.clear();
+    last_set_code_error_msg_.clear();
+    return {std::move(kind), std::move(msg)};
+}
+
 bool Evaluator::restore_workspace_snapshot_under_lock(std::size_t id) noexcept {
     if (!snapshot_exists(id) || workspace_read_only_ || !workspace_flat_ || !workspace_pool_)
         return false;
-    last_set_code_error_kind_.clear();
-    last_set_code_error_msg_.clear();
+    clear_set_code_error();
     last_eval_current_result_.reset();
     // Issue #4266 follow-up: snapshot contents are copied into the live flat,
     // so the #159 clean-workspace gate sees no dirty bits — drop the cached

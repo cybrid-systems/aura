@@ -7231,6 +7231,15 @@ public:
     // Issue #5190. Public so module load, Env::bind, and the hash/vector/pair
     // writers can publish a value that just became reachable from a workspace.
     void seal_workspace_value(const types::EvalValue& v);
+    // Issue #5476: the pending set-code/load parse failure. Written by
+    // set-code inside a mutation boundary, read/cleared by eval-current,
+    // (load ...) and the query primitives on other fibers; the two
+    // strings are heap buffers, so an unsynchronized move vs assign is a
+    // use-after-free. All access goes through these methods.
+    void set_set_code_error(std::string kind, std::string msg);
+    void clear_set_code_error();
+    [[nodiscard]] std::optional<std::string> take_set_code_error_msg();
+    [[nodiscard]] std::pair<std::string, std::string> take_set_code_error();
     // Issue #5374: seal a batch of published values in ONE walk. The
     // per-value walk repeated the captured-env-frame walk for every name
     // in the batch (O(n²) for a module export set); one walk over the
@@ -8449,6 +8458,7 @@ private:
     // Stores (kind, message) for structured diagnostic return
     std::string last_set_code_error_kind_;
     std::string last_set_code_error_msg_;
+    mutable std::mutex set_code_error_mtx_;
     // Issue #1381 / #2920: last set-code/load/restore source stamp.
     // SSOT after mutate is FlatAST (unparse via get_workspace_source_fn_ /
     // current-source :workspace). This cache is invalidated on every

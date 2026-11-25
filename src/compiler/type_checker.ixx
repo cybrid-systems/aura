@@ -3309,26 +3309,30 @@ export struct TypeChecker {
     // Counter ownership: linear_synth_* (#2357) = synthesize phase;
     // linear_invariant_fail = post-mutate audit only (no double-count when
     // synth hard-fail forces early exit before audit linear walk).
+    // Issue #5476: the persistent TypeChecker is shared by the eval thread
+    // and fiber bodies (boundary clear / post-mutate typecheck / automatic
+    // typecheck). These flags are plain data today; atomics keep the
+    // read-modify-write well-defined without a lock on the inference path.
     [[nodiscard]] bool last_linear_synth_hard_fail() const noexcept {
-        return last_linear_synth_hard_fail_;
+        return last_linear_synth_hard_fail_.load(std::memory_order_relaxed);
     }
     [[nodiscard]] std::uint64_t last_linear_synth_violation_count() const noexcept {
-        return last_linear_synth_violation_count_;
+        return last_linear_synth_violation_count_.load(std::memory_order_relaxed);
     }
     void clear_last_linear_synth_hard_fail() noexcept {
-        last_linear_synth_hard_fail_ = false;
-        last_linear_synth_violation_count_ = 0;
+        last_linear_synth_hard_fail_.store(false, std::memory_order_relaxed);
+        last_linear_synth_violation_count_.store(0, std::memory_order_relaxed);
     }
     // Issue #3044: sticky uncovered-tag hard-fail from last infer.
     [[nodiscard]] bool last_uncovered_bidirectional_tag_hard_fail() const noexcept {
-        return last_uncovered_bidirectional_tag_hard_fail_;
+        return last_uncovered_bidirectional_tag_hard_fail_.load(std::memory_order_relaxed);
     }
     [[nodiscard]] std::uint64_t last_uncovered_bidirectional_tag_count() const noexcept {
-        return last_uncovered_bidirectional_tag_count_;
+        return last_uncovered_bidirectional_tag_count_.load(std::memory_order_relaxed);
     }
     void clear_last_uncovered_bidirectional_tag() noexcept {
-        last_uncovered_bidirectional_tag_hard_fail_ = false;
-        last_uncovered_bidirectional_tag_count_ = 0;
+        last_uncovered_bidirectional_tag_hard_fail_.store(false, std::memory_order_relaxed);
+        last_uncovered_bidirectional_tag_count_.store(0, std::memory_order_relaxed);
     }
     // Issue #2180 / #2262: solve_delta_cs_ after partial import (commit reuse).
     // True when the long-lived CS has dirty/touched/occurrence work after
@@ -3933,10 +3937,10 @@ public:
     // Issue #2460: last infer_flat_partial dirty ownership re-sim failed.
     bool last_partial_linear_revalidate_fail_ = false;
     // Issue #2514: sticky linear-synth hard-fail from last engine life.
-    bool last_linear_synth_hard_fail_ = false;
-    std::uint64_t last_linear_synth_violation_count_ = 0;
-    bool last_uncovered_bidirectional_tag_hard_fail_ = false;
-    std::uint64_t last_uncovered_bidirectional_tag_count_ = 0;
+    std::atomic<bool> last_linear_synth_hard_fail_{false};
+    std::atomic<std::uint64_t> last_linear_synth_violation_count_{0};
+    std::atomic<bool> last_uncovered_bidirectional_tag_hard_fail_{false};
+    std::atomic<std::uint64_t> last_uncovered_bidirectional_tag_count_{0};
 
     // Issue #283 follow-up #5 / #627: plumb bidirectional flag
     // from CompilerService into per-call InferenceEngine instances.

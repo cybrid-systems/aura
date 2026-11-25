@@ -365,8 +365,7 @@ std::optional<EvalValue> RegSplitParts::set_code_install_workspace(
         // Leave the pending record set so a later eval-current still
         // reports the failure instead of evaluating an empty install.
         const std::string err = format_set_code_parse_error(pr);
-        ev.last_set_code_error_kind_ = "parse";
-        ev.last_set_code_error_msg_ = err;
+        ev.set_set_code_error("parse", err);
         std::atomic_ref<std::uint64_t>(ev.coverage_counters_[5])
             .fetch_sub(1, std::memory_order_relaxed);
         ev.workspace_pool_ = saved_pool;
@@ -775,8 +774,7 @@ void RegSplitParts::register_set_code_primitive(PrimRegistrar add, Evaluator& ev
                     return mev("read-only", "workspace is read-only");
                 }
                 // Clear any previous set-code error and eval-current cache
-                ev.last_set_code_error_kind_.clear();
-                ev.last_set_code_error_msg_.clear();
+                ev.clear_set_code_error();
                 ev.last_eval_current_result_.reset();
                 // Issue #4266 follow-up: the replacement installs a FRESH
                 // FlatAST with no dirty bits, so the #159 clean-workspace gate
@@ -1283,8 +1281,7 @@ void RegSplitParts::register_load_primitive(PrimRegistrar add, Evaluator& ev, Ma
 
         // Fresh workspace state for each load — resetting the pool corrupts
         // existing ev.top_ bindings that reference string indices from the old pool.
-        ev.last_set_code_error_kind_.clear();
-        ev.last_set_code_error_msg_.clear();
+        ev.clear_set_code_error();
         ev.last_eval_current_result_.reset();
         // Issue #4266 follow-up: fresh workspace ⇒ drop the #159 report cache
         // (see invalidate_typecheck_report_cache).
@@ -1335,10 +1332,8 @@ void RegSplitParts::register_load_primitive(PrimRegistrar add, Evaluator& ev, Ma
         destroy_defuse_index();
 
         // Evaluate the workspace AST
-        if (!ev.last_set_code_error_kind_.empty()) {
-            auto msg = std::move(ev.last_set_code_error_msg_);
-            return mev("load", msg);
-        }
+        if (auto pending = ev.take_set_code_error_msg())
+            return mev("load", *pending);
         if (!ev.workspace_flat_ || !ev.workspace_pool_)
             return make_void();
         auto expanded = aura::compiler::macro_expand_all(*ev.workspace_flat_, *ev.workspace_pool_,
@@ -1629,9 +1624,10 @@ void RegSplitParts::register_eval_current_primitive(PrimRegistrar add, Evaluator
         // set-code errors are evaluator-local (not under workspace_mtx_).
         // Issue #5315: a pending parse failure is an error value, not a
         // pair the caller can drop on the way to a later form.
-        if (!ev.last_set_code_error_kind_.empty()) {
-            auto kind = std::move(ev.last_set_code_error_kind_);
-            auto msg = std::move(ev.last_set_code_error_msg_);
+        auto pending = ev.take_set_code_error();
+        if (!pending.first.empty()) {
+            auto kind = std::move(pending.first);
+            auto msg = std::move(pending.second);
             if (kind == "parse") {
                 if (!msg.starts_with("parse-error:"))
                     msg.insert(0, "parse-error: ");
@@ -1851,9 +1847,10 @@ void RegSplitParts::register_eval_current_output_primitive(PrimRegistrar add, Ev
     // Wave1 B-03: same short-pin then unlock pattern as eval-current.
     add(aura::compiler::prim::kEvalCurrentOutput, [&ev, mev](const auto&) {
         // Issue #5315: same catchable pending-parse face as eval-current.
-        if (!ev.last_set_code_error_kind_.empty()) {
-            auto kind = std::move(ev.last_set_code_error_kind_);
-            auto msg = std::move(ev.last_set_code_error_msg_);
+        auto pending = ev.take_set_code_error();
+        if (!pending.first.empty()) {
+            auto kind = std::move(pending.first);
+            auto msg = std::move(pending.second);
             if (kind == "parse") {
                 if (!msg.starts_with("parse-error:"))
                     msg.insert(0, "parse-error: ");

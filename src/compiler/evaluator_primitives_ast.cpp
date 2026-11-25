@@ -1487,8 +1487,7 @@ void RegSplitParts::register_ast_restore_primitive(PrimRegistrar add_in, Evaluat
             }
 
             // Clear any previous restore error / eval cache
-            ev.last_set_code_error_kind_.clear();
-            ev.last_set_code_error_msg_.clear();
+            ev.clear_set_code_error();
             ev.last_eval_current_result_.reset();
             // Issue #4266 follow-up: ast:restore swaps the workspace contents under
             // the live flat, so the #159 clean-workspace gate sees no dirty bits —

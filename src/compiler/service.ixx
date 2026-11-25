@@ -6479,16 +6479,29 @@ public:
             env.bind(name, value);
             return 0;
         }
-        std::scoped_lock<std::recursive_mutex> cells_lock(evaluator_.cells_storage_mutex());
-        auto existing = env.lookup_binding(name);
-        if (existing && types::is_cell(*existing)) {
-            auto ci = types::as_cell_id(*existing);
-            evaluator_.cells()[ci] = value;
-            return ci;
+        // Issue #5476: the cells lock must not be held across env.bind.
+        // bind() seals a workspace value (note_workspace_binding →
+        // seal_workspace_values), whose hash branch takes
+        // hash_tables_mtx_; release_unreachable_hash_tables takes that
+        // mutex first and cells_storage_mutex second, so holding the
+        // cells lock here across bind is a lock-order inversion (ABBA).
+        // The cell index is stable: cells_ is append-only.
+        std::size_t ci = 0;
+        bool fresh = false;
+        {
+            std::scoped_lock<std::recursive_mutex> cells_lock(evaluator_.cells_storage_mutex());
+            auto existing = env.lookup_binding(name);
+            if (existing && types::is_cell(*existing)) {
+                ci = types::as_cell_id(*existing);
+                evaluator_.cells()[ci] = value;
+            } else {
+                ci = evaluator_.cells().size();
+                evaluator_.cells().push_back(value);
+                fresh = true;
+            }
         }
-        auto ci = evaluator_.cells().size();
-        evaluator_.cells().push_back(value);
-        env.bind(name, types::make_cell(ci));
+        if (fresh)
+            env.bind(name, types::make_cell(ci));
         return ci;
     }
 
