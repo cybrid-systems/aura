@@ -307,7 +307,9 @@ bool Evaluator::save_panic_checkpoint() {
         }
         if (newly_live)
             aura::gc_hooks::note_panic_checkpoint_live();
-        panic_safe_env_frames_size_ = env_frames_.size();
+        // Issue #5476: env_frames_ grows under per-shard locks; the
+        // published size is the atomic watermark safe to read.
+        panic_safe_env_frames_size_ = env_frames_published_size_.load(std::memory_order_acquire);
         // Issue #4717: publish liveness AFTER the source is installed so a
         // body's has_panic_checkpoint() probe (acquire) either sees no
         // checkpoint or a fully installed one — never a string mid-write.
@@ -347,7 +349,7 @@ bool Evaluator::save_panic_checkpoint() {
     // Issue #242 / #1360: snapshot append-only arena sizes so
     // restore_panic_checkpoint can truncate them back (including
     // env_frames_ — append-only EnvId keeps pre-checkpoint ids valid).
-    panic_safe_env_frames_size_ = env_frames_.size();
+    panic_safe_env_frames_size_ = env_frames_published_size_.load(std::memory_order_acquire);
     // Issue #4717: publish liveness after the source install (see above).
     panic_checkpoint_live_.store(true, std::memory_order_release);
     // Issue #1489: arm process-wide GC defer for the recovery window

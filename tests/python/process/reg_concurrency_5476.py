@@ -123,6 +123,8 @@ class Concurrency5476(unittest.TestCase):
         self.assertGreaterEqual(ck, 0)
         ck_win = ws[ck : ck + 2500]
         lock_at = ck_win.find("std::scoped_lock alloc_lock(alloc_storage_lock_)")
+        self.assertIn("env_frames_published_size_.load(std::memory_order_acquire)", ck_win)
+        self.assertNotIn("panic_safe_env_frames_size_ = env_frames_.size()", ck_win)
         size_at = ck_win.find("panic_safe_cells_size_ = cells_.size()")
         self.assertGreaterEqual(lock_at, 0)
         self.assertGreater(
