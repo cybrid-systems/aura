@@ -58,7 +58,7 @@ inline constexpr std::string_view kUsage5400 =
     "  --lease-ms N       worker lease in ms (default 30000)\n"
     "  --tasks N          planner: tasks to post (default 4)\n"
     "  --contract         planner: attach an approval-gated contract\n"
-    "  --requirement TEXT planner: the requirement text\n"
+    "  --requirement TEXT planner: the task requirement; worker: the text the answer must cite\n"
     "  --prompt FILE      role prompt file (real LLM mode)\n"
     "  --mock             deterministic mock model; no network, no key\n"
     "  --preset P         sandbox preset (default dev)\n"
@@ -231,8 +231,13 @@ inline bool parse_5400(int argc, char** argv, Options* out, bool* help, std::str
         *error = "a real planner/worker run needs --prompt FILE (or use --mock)";
         return false;
     }
-    if (out->role == "planner" && !out->mock && out->requirement.empty()) {
-        *error = "planner needs --requirement TEXT";
+    if ((out->role == "planner" || out->role == "worker") && !out->mock &&
+        out->requirement.empty()) {
+        *error = "a real planner/worker run needs --requirement TEXT";
+        return false;
+    }
+    if (out->spawn && !out->mock && out->requirement.empty()) {
+        *error = "spawned workers need --requirement TEXT (or use --mock)";
         return false;
     }
     return true;

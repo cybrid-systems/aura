@@ -118,6 +118,65 @@ pid_t run_worker(std::uint64_t workspace, int* out_fd, int* in_fd) {
     return pid;
 }
 
+// `aura agent --role worker --workspace N --prompt FILE --requirement TEXT`
+// with a real LLM endpoint. The secret store is isolated so a developer's
+// ~/.aura key cannot turn the offline failure test into a success.
+pid_t run_worker_real(std::uint64_t workspace, const std::string& prompt,
+                      const std::string& requirement, const std::string& base_url, bool with_key,
+                      const std::string& lease_ms, const std::string& secret_dir, int* out_fd,
+                      int* in_fd) {
+    int out[2], in[2];
+    if (pipe(out) != 0 || pipe(in) != 0)
+        return -1;
+    const pid_t pid = fork();
+    if (pid == 0) {
+        ::close(out[0]);
+        ::close(in[1]);
+        dup2(out[1], STDOUT_FILENO);
+        dup2(out[1], STDERR_FILENO);
+        dup2(in[0], STDIN_FILENO);
+        ::close(out[1]);
+        ::close(in[0]);
+        setenv("AURA_SANDBOX", "off", 1);
+        setenv("AURA_SECRET_STORE", secret_dir.c_str(), 1);
+        setenv("LLM_MODEL", "debug", 1);
+        if (!base_url.empty())
+            setenv("LLM_BASE_URL", base_url.c_str(), 1);
+        if (with_key)
+            setenv("LLM_API_KEY", "x", 1);
+        else
+            unsetenv("LLM_API_KEY");
+        const std::string exe = aura_binary();
+        const std::string ws = std::to_string(workspace);
+        execl(exe.c_str(), "aura", "agent", "--role", "worker", "--workspace", ws.c_str(),
+              "--prompt", prompt.c_str(), "--requirement", requirement.c_str(), "--lease-ms",
+              lease_ms.c_str(), static_cast<char*>(nullptr));
+        _exit(24);
+    }
+    ::close(out[1]);
+    ::close(in[0]);
+    *out_fd = out[0];
+    *in_fd = in[1];
+    return pid;
+}
+
+pid_t run_python_server(const std::string& script, int* out_fd) {
+    int out[2];
+    if (pipe(out) != 0)
+        return -1;
+    const pid_t pid = fork();
+    if (pid == 0) {
+        ::close(out[0]);
+        dup2(out[1], STDOUT_FILENO);
+        ::close(out[1]);
+        execlp("python3", "python3", script.c_str(), static_cast<char*>(nullptr));
+        _exit(24);
+    }
+    ::close(out[1]);
+    *out_fd = out[0];
+    return pid;
+}
+
 std::map<int, std::string> g_pending;
 
 std::string read_until(int fd, const char* marker, int timeout_ms) {
@@ -282,6 +341,70 @@ const char* kTimeoutClaimScript = R"AURA(
 (bus:detach sid)
 )AURA";
 
+// #5441: a slow OpenAI-compatible endpoint. The worker must heartbeat
+// while this sleeps; without renewal its 500 ms lease would expire.
+const char* kSlowChatServer = R"PY(
+import http.server, json, sys, time
+class H(http.server.BaseHTTPRequestHandler):
+    def do_POST(self):
+        n = int(self.headers.get("Content-Length", "0") or 0)
+        if n:
+            self.rfile.read(n)
+        time.sleep(2.0)
+        body = json.dumps({"choices": [{"message": {"content": "port ZRANGEBYSCORE works"}}]}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+    def log_message(self, fmt, *args):
+        return
+s = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+print(s.server_address[1], flush=True)
+s.serve_forever()
+)PY";
+
+const char* kStatus10Script = R"AURA(
+(require "std/bus" all:)
+(define s (car (cdr (bus:attach "" 8920 0 255 255))))
+(display "status10=") (display (list-ref (bus:task-status s 10) 2)) (newline)
+(bus:detach s)
+)AURA";
+
+const char* kStatus11Script = R"AURA(
+(require "std/bus" all:)
+(define s (car (cdr (bus:attach "" 8920 0 255 255))))
+(display "status11=") (display (list-ref (bus:task-status s 11) 2)) (newline)
+(bus:detach s)
+)AURA";
+
+const char* kStatus12Script = R"AURA(
+(require "std/bus" all:)
+(define s (car (cdr (bus:attach "" 8920 0 255 255))))
+(display "status12=") (display (list-ref (bus:task-status s 12) 2)) (newline)
+(bus:detach s)
+)AURA";
+
+const char* kWrongChatServer = R"PY(
+import http.server, json
+class H(http.server.BaseHTTPRequestHandler):
+    def do_POST(self):
+        n = int(self.headers.get("Content-Length", "0") or 0)
+        if n:
+            self.rfile.read(n)
+        body = json.dumps({"choices": [{"message": {"content": "not the requirement"}}]}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+    def log_message(self, fmt, *args):
+        return
+s = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+print(s.server_address[1], flush=True)
+s.serve_forever()
+)PY";
+
 } // namespace
 
 int main() {
@@ -301,6 +424,13 @@ int main() {
     check(write_file(d + "/quota.aura", kQuotaScript), "write quota");
     check(write_file(d + "/timeout-request.aura", kTimeoutRequestScript), "write timeout request");
     check(write_file(d + "/timeout-claim.aura", kTimeoutClaimScript), "write timeout claim");
+    check(write_file(d + "/slow-chat.py", kSlowChatServer), "write slow chat server");
+    check(write_file(d + "/status10.aura", kStatus10Script), "write status10");
+    check(write_file(d + "/status11.aura", kStatus11Script), "write status11");
+    check(write_file(d + "/status12.aura", kStatus12Script), "write status12");
+    check(write_file(d + "/wrong-chat.py", kWrongChatServer), "write wrong chat server");
+    check(write_file(d + "/prompt.txt", "be a careful assistant\n"), "write prompt");
+    check(::mkdir((d + "/secrets").c_str(), 0700) == 0, "make empty secret store");
 
     int host_out = -1, host_in = -1;
     const pid_t host = run_script(d + "/host.aura", &host_out, &host_in);
@@ -517,6 +647,117 @@ int main() {
         check(has(text, "completed-task=9"), "worker skipped task 8 and completed task 9");
         int status = 0;
         waitpid(worker, &status, 0);
+    }
+
+    // ── fault 6 (#5441): an LLM failure fails the task ──
+    check(::write(host_in, "post\n", 5) == 5, "post task 10");
+    check(has(read_until(host_out, "posted=", 10000) + read_until(host_out, "\n", 10000),
+              "posted=10"),
+          "task 10 posted");
+    {
+        int out = -1, in = -1;
+        const pid_t worker =
+            run_worker_real(8920, d + "/prompt.txt", "port ZRANGEBYSCORE", "http://127.0.0.1:9/v1",
+                            false, "30000", d + "/secrets", &out, &in);
+        ::close(in);
+        const std::string text = read_all(out);
+        if (!has(text, "failed-task=10"))
+            std::printf("LLM-FAIL-OUT:[%s]\n", text.c_str());
+        check(has(text, "failed-task=10"), "an LLM failure fails task 10");
+        check(has(text, "reason=llm-error:"), "the failure names the LLM error");
+        int status = 0;
+        waitpid(worker, &status, 0);
+        check(WIFEXITED(status) && WEXITSTATUS(status) != 0,
+              "a worker whose LLM call failed exits non-zero");
+    }
+    {
+        int out = -1, in = -1;
+        const pid_t check_task = run_script(d + "/status10.aura", &out, &in);
+        ::close(in);
+        const std::string text = read_all(out);
+        check(has(text, "status10=3"), "task 10 is failed, not completed");
+        int status = 0;
+        waitpid(check_task, &status, 0);
+    }
+
+    // ── fault 7 (#5441): a slow model call renews the lease ──
+    check(::write(host_in, "post\n", 5) == 5, "post task 11");
+    check(has(read_until(host_out, "posted=", 10000) + read_until(host_out, "\n", 10000),
+              "posted=11"),
+          "task 11 posted");
+    {
+        int server_out = -1;
+        const pid_t server = run_python_server(d + "/slow-chat.py", &server_out);
+        check(server > 0, "slow chat server forked");
+        std::string port = read_until(server_out, "\n", 10000);
+        while (!port.empty() && (port.back() == '\n' || port.back() == '\r'))
+            port.pop_back();
+        check(!port.empty(), "slow chat server reported its port");
+        int out = -1, in = -1;
+        const pid_t worker = run_worker_real(8920, d + "/prompt.txt", "port ZRANGEBYSCORE",
+                                             "http://127.0.0.1:" + port + "/v1", true, "500",
+                                             d + "/secrets", &out, &in);
+        ::close(in);
+        const std::string text = read_all(out);
+        if (!has(text, "completed-task=11"))
+            std::printf("SLOW-LLM-OUT:[%s]\n", text.c_str());
+        check(has(text, "completed-task=11"),
+              "a 2 s model call with a 500 ms lease still completes");
+        check(has(text, "verify=answer-cites:ZRANGEBYSCORE"),
+              "the contract evidence comes from the answer check");
+        int status = 0;
+        waitpid(worker, &status, 0);
+        ::kill(server, SIGTERM);
+        waitpid(server, &status, 0);
+    }
+    {
+        int out = -1, in = -1;
+        const pid_t check_task = run_script(d + "/status11.aura", &out, &in);
+        ::close(in);
+        const std::string text = read_all(out);
+        check(has(text, "status11=2"), "task 11 completed without a lease loss");
+        int status = 0;
+        waitpid(check_task, &status, 0);
+    }
+
+    // ── fault 8 (#5441): an answer that misses the requirement fails ──
+    check(::write(host_in, "post\n", 5) == 5, "post task 12");
+    check(has(read_until(host_out, "posted=", 10000) + read_until(host_out, "\n", 10000),
+              "posted=12"),
+          "task 12 posted");
+    {
+        int server_out = -1;
+        const pid_t server = run_python_server(d + "/wrong-chat.py", &server_out);
+        check(server > 0, "wrong chat server forked");
+        std::string port = read_until(server_out, "\n", 10000);
+        while (!port.empty() && (port.back() == '\n' || port.back() == '\r'))
+            port.pop_back();
+        check(!port.empty(), "wrong chat server reported its port");
+        int out = -1, in = -1;
+        const pid_t worker = run_worker_real(8920, d + "/prompt.txt", "port ZRANGEBYSCORE",
+                                             "http://127.0.0.1:" + port + "/v1", true, "30000",
+                                             d + "/secrets", &out, &in);
+        ::close(in);
+        const std::string text = read_all(out);
+        if (!has(text, "reason=verify:answer-misses"))
+            std::printf("WRONG-LLM-OUT:[%s]\n", text.c_str());
+        check(has(text, "reason=verify:answer-misses:ZRANGEBYSCORE"),
+              "an answer that misses the requirement fails");
+        int status = 0;
+        waitpid(worker, &status, 0);
+        check(WIFEXITED(status) && WEXITSTATUS(status) != 0,
+              "a verification failure exits non-zero");
+        ::kill(server, SIGTERM);
+        waitpid(server, &status, 0);
+    }
+    {
+        int out = -1, in = -1;
+        const pid_t check_task = run_script(d + "/status12.aura", &out, &in);
+        ::close(in);
+        const std::string text = read_all(out);
+        check(has(text, "status12=3"), "task 12 is failed, not completed");
+        int status = 0;
+        waitpid(check_task, &status, 0);
     }
 
     check(::write(host_in, "quit\n", 5) == 5, "quit host");

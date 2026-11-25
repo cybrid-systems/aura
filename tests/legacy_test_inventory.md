@@ -1595,7 +1595,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_aot_bridge_checkpoint_version_steal.cpp` (—) [domain_suite, theme_compiler] — test_aot_bridge_checkpoint_version_steal.cpp — Issue #653 / #3813:
 - `tests/core/test_aura_fiber_rt_embed.cpp` (—) [domain_suite, theme_core] — aura_test_objects, no evaluator, no JIT, no reflect, no stub TU of its own.
 - `tests/serve/test_boundary_yield_steal_metrics.cpp` (—) [domain_suite, theme_serve] — AC1: high-frequency MB yield → yield_mutation_boundary_total + hold_ns
-- `tests/compiler/test_bus_agents_e2e.cpp` (—) [domain_suite, theme_compiler] — Issue #5406: the multi-agent end-to-end lane, mock LLM only.
+- `tests/compiler/test_bus_agents_e2e.cpp` (—) [large, domain_suite, theme_compiler] — Issue #5406: the multi-agent end-to-end lane, mock LLM only.
 - `tests/compiler/test_bus_round_orchestration.cpp` (—) [large, domain_suite, theme_compiler] — Issue #5393: the admission round state machine and its fail-closed
 - `tests/compiler/test_bus_slo.cpp` (—) [domain_suite, theme_compiler] — Issue #5395: the bus's own performance counters and the capacity
 - `tests/compiler/test_bus_supervisor.cpp` (—) [domain_suite, theme_compiler] — Issue #5400: the supervisor's scaling decision. The plan is a pure

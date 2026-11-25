@@ -251,10 +251,11 @@ canary 拒绝)、`test_bus_closed_loop_e2e`(#5382,三进程正常闭环 + 五类
 多智能体对端的运行器在 Aura 本体里，提示词与角色编排留给后续仓库。
 
 - **角色**：新增 `4 planner`、`5 worker`、`6 supervisor`。角色仍只是附着提示，能力按预设与 grant 衰减；未知角色照旧拒绝，宿主继续服务（#5383）。
-- **`aura agent`**：解析 `--role planner|worker|supervisor`、`--workspace`、`--path`、`--lease-ms`、`--tasks`、`--contract`、`--requirement`、`--prompt`、`--mock`、`--preset`，再运行 `lib/std/bus_agent_cli.aura`。planner 发任务（可挂契约）；worker 循环 claim → `llm:chat`（或 mock）→ heartbeat → contract evidence → complete/fail，直到没有 open 任务；supervisor 查询伸缩决策。CLI 本身不写提示词正文，真实运行用 `--prompt FILE`。
-- **mock**：`--mock` 用确定性的 `mock:<task-id>:<requirement>` 作为答案，不访问网络、不需要密钥，CI 只走 mock。
+- **`aura agent`**：解析 `--role planner|worker|supervisor`、`--workspace`、`--path`、`--lease-ms`、`--tasks`、`--contract`、`--requirement`、`--prompt`、`--mock`、`--preset`，再运行 `lib/std/bus_agent_cli.aura`。planner 发任务（可挂契约）；worker 循环 claim → heartbeat → 模型调用（调用期间按租约 1/3 的间隔续租）→ 按 `--requirement` 检查答案 → contract evidence → complete/fail，直到没有 open 任务；supervisor 查询伸缩决策。真实 planner/worker 都需要 `--requirement TEXT`，worker 用它验证答案；CLI 本身不写提示词正文，真实运行用 `--prompt FILE`。
+- **mock**：`--mock` 用确定性的 `mock:<task-id>:<requirement>` 作为答案，不访问网络、不需要密钥，CI 只走 mock。mock worker 会明确打印 `verify=mock-unverified`，声明它没有做真实检查。
+- **failure semantics (#5441)**：`llm-error:*` 走 `bus:fail` 并让 worker 退出非零；真实回答必须命中 `--requirement` 的最长词，否则 `verify:answer-misses:*` 后 fail；`contract-evidence` 的 tests-passed/metric 来自这次检查，不是常量。模型调用期间 heartbeat 续不上时，任务不会 complete。
 - **监督者**：`bus:supervise` 让宿主按**自己的**实际余量算 worker 数（`/proc/meminfo` 的 MemAvailable、`/proc/stat` 的空闲 CPU），不设固定上限；余量不足时给 0 并写审计。决策是 `SupervisorPlan`(48) 审计事件：`version` 是可行的 worker 数，`result` 是原因码（0 有余量、1 CPU 受限、2 内存受限、3 不足一个 worker）。测试可用 `AURA_SUPERVISOR_MEM_FREE_MB` / `AURA_SUPERVISOR_CPU_FREE_PCT` / `AURA_SUPERVISOR_CPUS` 夹具固定容量。
-- **e2e**：`test_bus_agents_e2e` 用一个宿主、一个 planner、四个 mock worker 跑完契约批准 → claim → 完成 → 契约门，并注入四条故障：worker 中途被杀（租约到期后他人认领）、宿主重启（任务板恢复）、配额超限（熔断、任务失败关闭）、批准超时（默认拒绝、不得开工）；审计回放无完整性发现。
+- **e2e**：`test_bus_agents_e2e` 用一个宿主、一个 planner、四个 mock worker 跑完契约批准 → claim → 完成 → 契约门，并注入七条故障：worker 中途被杀（租约到期后他人认领）、宿主重启（任务板恢复）、配额超限（熔断、任务失败关闭）、批准超时（默认拒绝、不得开工）、阻塞看板不冒充 idle、LLM 调用失败必须 fail（任务状态 3、worker 非零）、2 s 慢模型调用在 500 ms 租约下仍能续租并完成；审计回放无完整性发现。
 
 ### 监督者执行层 --spawn(#5422)
 
@@ -264,7 +265,7 @@ canary 拒绝)、`test_bus_closed_loop_e2e`(#5382,三进程正常闭环 + 五类
 - `--spawn-once`：只跑一轮决策+补拉，等子进程退出后结束，CI 用。
 - 进程安全：子进程 `PR_SET_PDEATHSIG(SIGTERM)`，监督者崩溃不留孤儿；SIGINT/SIGTERM 停止拉新并转发 SIGTERM，5s 后 SIGKILL；PID 表用 `waitpid(WNOHANG)` 回收。
 - 审计：`SupervisorPlan`(48) 仍是决策（version=desired，result=0..3）；`SupervisorSpawn`(49) 记录本轮 started 数（result）与 spawn 后 live 数（version）；`SupervisorShrink`(50) 记录计划收缩数。`SupervisorNote` 帧只写审计，不回包。
-- 真实 worker 需要 `--prompt FILE`；`--mock` 仍确定性、无网络、无密钥。
+- 真实 worker 需要 `--prompt FILE` 和 `--requirement TEXT`；`--mock` 仍确定性、无网络、无密钥。
 - worker 仍是一次性 drain 循环：空板（`task-none-open`）才按 idle 退出 0；契约/门账本/预算/权限/传输错误一律 `claim-error=...` 退出非零，不再把不可认领的看板伪装成干净收工（#5439）。监督者的 work-driven 目标（#5423）保证没活时不会补拉，任务到达才拉起，因此空闲不 churn。
 
 ### 生产化：work-driven、崩溃接管、reconnect、drain(#5423)

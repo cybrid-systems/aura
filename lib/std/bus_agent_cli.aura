@@ -49,15 +49,71 @@
   ; seeded audit timeline has a stable shape.
   (string-append "mock:" (number->string id) ":" AGENT-REQUIREMENT))
 
-(define (agent-llm-answer id)
+; #5441: keep the LLM failure separate from its content. The old
+; "llm-error:..." string was indistinguishable from a model answer, so
+; the worker completed the task instead of failing it.
+(define (agent-llm-result id)
   (if AGENT-MOCK
-    (agent-mock-answer id)
+    (list "ok" (agent-mock-answer id))
     (let ((sys (agent-prompt))
           (usr (string-append AGENT-REQUIREMENT "\ntask " (number->string id))))
       (let ((r (llm:chat sys usr)))
         (if (and (hash? r) (hash-ref r "ok" #f))
-          (hash-ref r "content" "")
-          (string-append "llm-error:" (if (hash? r) (hash-ref r "error" "unknown") "unknown")))))))
+          (list "ok" (hash-ref r "content" ""))
+          (list "error" (if (hash? r) (hash-ref r "error" "unknown") "unknown")))))))
+
+(define (agent-longest-word text)
+  (let loop ((words (string-split text " ")) (best ""))
+    (if (null? words)
+      best
+      (let ((word (string-trim (car words))))
+        (loop (cdr words)
+              (if (> (string-length word) (string-length best)) word best))))))
+
+; #5441: the contract evidence must come from a check, not a constant.
+; A real run requires the answer to cite the requirement's longest word
+; (e.g. "port ZRANGEBYSCORE" -> ZRANGEBYSCORE). Mock mode is explicitly
+; unverified: it says so on stdout and still supplies the test double's
+; evidence so the contract flow can be exercised offline.
+(define (agent-verify answer)
+  (cond
+    ((not (string? answer)) (list #f 0 "answer-not-string"))
+    ((string=? answer "") (list #f 0 "empty-answer"))
+    (AGENT-MOCK (list #t 100 "mock-unverified"))
+    (else
+      (let ((key (agent-longest-word AGENT-REQUIREMENT)))
+        (if (or (string=? key "")
+                (string-contains? (string-downcase answer) (string-downcase key)))
+          (list #t 100 (string-append "answer-cites:" key))
+          (list #f 0 (string-append "answer-misses:" key)))))))
+
+(define (agent-heartbeat-interval)
+  ; A fraction of the lease: long enough not to flood the host, short
+  ; enough that a slow model call never lets the lease expire.
+  (max 50 (min 5000 (quotient AGENT-LEASE 3))))
+
+(define (agent-work-with-heartbeat id work)
+  (define stop? #f)
+  (define failed? #f)
+  (define interval (agent-heartbeat-interval))
+  (define fid
+    (try (fiber:spawn
+           (lambda ()
+             (let loop ()
+               (fiber:sleep interval)
+               (if stop?
+                 #t
+                 (let ((hb (bus:heartbeat SID id AGENT-LEASE)))
+                   (if (bus:error? hb)
+                     (begin (set! failed? #t) (set! stop? #t))
+                     (loop)))))))
+         (catch (e) 0)))
+  (define result (work))
+  (set! stop? #t)
+  (if (and (integer? fid) (> fid 0))
+    (try (fiber:join fid) (catch (e) #f))
+    #f)
+  (list result failed?))
 
 (define (agent-exit code)
   (display "agent-exit=") (display code) (newline)
@@ -105,6 +161,16 @@
                 (loop (+ i 1) (+ posted 1))))))))))
 
 ; ── worker ────────────────────────────────────────────────────────
+(define (agent-fail id reason)
+  (display "failed-task=") (display id) (display " reason=") (display reason) (newline)
+  (let ((f (bus:fail SID id 0)))
+    (if (bus:error? f)
+      (begin
+        (display "fail-error=") (display (bus:message f)) (newline))
+      (agent-say "task-failed" id)))
+  (bus:detach SID)
+  (agent-exit 1))
+
 (define (worker-run)
   (let loop ((done 0))
     (let ((c (bus:claim SID AGENT-LEASE)))
@@ -125,31 +191,39 @@
               (bus:detach SID)
               (agent-exit 1))))
         (let* ((id (car (cdr c)))
-               (hb (bus:heartbeat SID id AGENT-LEASE)))
-          (if (bus:error? hb)
-            (begin
-              (display "heartbeat-error=")
-              (display (bus:message hb))
-              (newline)
-              (bus:detach SID)
-              (agent-exit 1))
-            (let* ((answer (agent-llm-answer id))
-                   ; A contract task needs terminal evidence before the
-                   ; board accepts complete. A plain task has no contract;
-                   ; the error is expected and ignored.
-                   (ev (bus:contract-evidence SID id 1 100))
-                   (done-rec (bus:complete SID id (+ 100 id))))
-              (if (bus:error? done-rec)
-                (begin
-                  (display "complete-error=")
-                  (display (bus:message done-rec))
-                  (newline)
-                  (bus:detach SID)
-                  (agent-exit 1))
-                (begin
-                  (agent-say "completed-task" id)
-                  (agent-say "bytes" (string-length answer))
-                  (loop (+ done 1)))))))))))
+               (hb0 (bus:heartbeat SID id AGENT-LEASE)))
+          (if (bus:error? hb0)
+            (agent-fail id (string-append "heartbeat:" (bus:message hb0)))
+            (let* ((work (agent-work-with-heartbeat
+                           id
+                           (lambda () (agent-llm-result id))))
+                   (result (car work))
+                   (hb-failed (car (cdr work)))
+                   (status (car result))
+                   (payload (car (cdr result))))
+              (if hb-failed
+                (agent-fail id "heartbeat-lost")
+                (if (string=? status "error")
+                  (agent-fail id (string-append "llm-error:" payload))
+                  (let ((hb1 (bus:heartbeat SID id AGENT-LEASE)))
+                    (if (bus:error? hb1)
+                      (agent-fail id (string-append "heartbeat:" (bus:message hb1)))
+                      (let* ((v (agent-verify payload))
+                             (verified (car v))
+                             (metric (car (cdr v)))
+                             (vwhy (car (cdr (cdr v)))))
+                        (agent-say "verify" vwhy)
+                        (if (not verified)
+                          (agent-fail id (string-append "verify:" vwhy))
+                          (let* ((ev (bus:contract-evidence SID id 1 metric))
+                                 (done-rec (bus:complete SID id (+ 100 id))))
+                            (if (bus:error? done-rec)
+                              (agent-fail id
+                                          (string-append "complete:" (bus:message done-rec)))
+                              (begin
+                                (agent-say "completed-task" id)
+                                (agent-say "bytes" (string-length payload))
+                                (loop (+ done 1))))))))))))))))))
 
 ; ── supervisor ────────────────────────────────────────────────────
 (define (supervisor-run)
