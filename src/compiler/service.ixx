@@ -12969,11 +12969,10 @@ public:
         }
         sync_lock_order_metrics_();
         if (locked) {
-            return Evaluator::MutationLockHandle(new OrderedUniqueLock<std::shared_mutex>(
-                mutate_mtx_, Level::Mutate, std::adopt_lock_t{}));
+            return std::make_shared<OrderedUniqueLock<std::shared_mutex>>(
+                mutate_mtx_, Level::Mutate, std::adopt_lock_t{});
         }
-        return Evaluator::MutationLockHandle(
-            new OrderedUniqueLock<std::shared_mutex>(mutate_mtx_, Level::Mutate));
+        return std::make_shared<OrderedUniqueLock<std::shared_mutex>>(mutate_mtx_, Level::Mutate);
     }
 
     // Issue #1526: remap IRClosure::env_id through compact_env_frames remap table.
