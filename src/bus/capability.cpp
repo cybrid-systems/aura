@@ -327,33 +327,29 @@ std::uint64_t WorldlineLedger::open_trial(std::uint64_t owner, std::uint64_t wor
     rec.pending = true;
     rec.loan_outstanding = true;
     records_.push_back(rec);
+    pending_.emplace(rec.owner, rec.id);
     return rec.id;
 }
 
+TrialRecord* WorldlineLedger::at(std::uint64_t id) {
+    return id != 0 && id <= records_.size() ? &records_[static_cast<std::size_t>(id - 1)] : nullptr;
+}
+
+const TrialRecord* WorldlineLedger::at(std::uint64_t id) const {
+    return id != 0 && id <= records_.size() ? &records_[static_cast<std::size_t>(id - 1)] : nullptr;
+}
+
 void WorldlineLedger::release_loan(std::uint64_t id) {
-    for (auto& rec : records_) {
-        if (rec.id == id) {
-            rec.loan_outstanding = false;
-            return;
-        }
-    }
+    if (TrialRecord* rec = at(id))
+        rec->loan_outstanding = false;
 }
 
 std::size_t WorldlineLedger::pending_count() const {
-    std::size_t count = 0;
-    for (const TrialRecord& record : records_) {
-        if (record.pending)
-            ++count;
-    }
-    return count;
+    return pending_.size();
 }
 
 const TrialRecord* WorldlineLedger::find(std::uint64_t id) const {
-    for (const auto& rec : records_) {
-        if (rec.id == id)
-            return &rec;
-    }
-    return nullptr;
+    return at(id);
 }
 
 bool WorldlineLedger::keep(std::uint64_t id, std::uint64_t owner, const Capability& caps,
@@ -365,13 +361,7 @@ bool WorldlineLedger::keep(std::uint64_t id, std::uint64_t owner, const Capabili
     };
     if ((caps.bits & kCapKeep) == 0)
         return fail("missing capability: keep");
-    TrialRecord* rec = nullptr;
-    for (auto& candidate : records_) {
-        if (candidate.id == id) {
-            rec = &candidate;
-            break;
-        }
-    }
+    TrialRecord* rec = at(id);
     if (!rec)
         return fail("unknown worldline");
     if (rec->owner != owner && caps.worldline != id)
@@ -387,6 +377,7 @@ bool WorldlineLedger::keep(std::uint64_t id, std::uint64_t owner, const Capabili
     rec->pending = false;
     rec->kept = true;
     rec->applied_live = applied_live;
+    pending_.erase({rec->owner, id});
     return true;
 }
 
@@ -399,13 +390,7 @@ bool WorldlineLedger::rollback(std::uint64_t id, std::uint64_t owner, const Capa
     };
     if ((caps.bits & kCapRollback) == 0)
         return fail("missing capability: rollback");
-    TrialRecord* rec = nullptr;
-    for (auto& candidate : records_) {
-        if (candidate.id == id) {
-            rec = &candidate;
-            break;
-        }
-    }
+    TrialRecord* rec = at(id);
     if (!rec)
         return fail("unknown worldline");
     if (rec->owner != owner && caps.worldline != id)
@@ -418,6 +403,7 @@ bool WorldlineLedger::rollback(std::uint64_t id, std::uint64_t owner, const Capa
         return fail("worldline is not pending");
     rec->pending = false;
     rec->rolled_back = true;
+    pending_.erase({rec->owner, id});
     return true;
 }
 
@@ -430,94 +416,90 @@ bool WorldlineLedger::rollback_kept(std::uint64_t id, std::uint64_t owner, const
     };
     if ((caps.bits & kCapRollback) == 0)
         return fail("missing capability: rollback");
-    for (auto& rec : records_) {
-        if (rec.id != id)
-            continue;
-        if (rec.owner != owner && caps.worldline != id)
-            return fail("worldline is owned by another session");
-        if (rec.task != 0 || caps.task != 0) {
-            if (rec.task != caps.task)
-                return fail("capability is scoped to another task");
-        }
-        if (!rec.kept || rec.rolled_back)
-            return fail("worldline is not kept");
-        rec.kept = false;
-        rec.canary = false;
-        rec.rolled_back = true;
-        return true;
+    TrialRecord* rec = at(id);
+    if (!rec)
+        return fail("unknown worldline");
+    if (rec->owner != owner && caps.worldline != id)
+        return fail("worldline is owned by another session");
+    if (rec->task != 0 || caps.task != 0) {
+        if (rec->task != caps.task)
+            return fail("capability is scoped to another task");
     }
-    return fail("unknown worldline");
+    if (!rec->kept || rec->rolled_back)
+        return fail("worldline is not kept");
+    rec->kept = false;
+    rec->canary = false;
+    rec->rolled_back = true;
+    return true;
 }
 
 // #5381: canary lifecycle. A kept trial enters observation; seal ends it
 // as Kept, revert rolls it back. Ownership is not re-checked here: the
 // coordinator gates the frame (scoped keep/rollback capability) first.
 bool WorldlineLedger::enter_canary(std::uint64_t id, std::string* why) {
-    for (auto& rec : records_) {
-        if (rec.id != id)
-            continue;
-        if (!rec.kept || rec.rolled_back) {
-            if (why)
-                *why = "worldline is not kept";
-            return false;
-        }
-        if (rec.canary) {
-            if (why)
-                *why = "worldline is already under canary observation";
-            return false;
-        }
-        rec.canary = true;
-        return true;
+    TrialRecord* rec = at(id);
+    if (!rec) {
+        if (why)
+            *why = "unknown worldline";
+        return false;
     }
-    if (why)
-        *why = "unknown worldline";
-    return false;
+    if (!rec->kept || rec->rolled_back) {
+        if (why)
+            *why = "worldline is not kept";
+        return false;
+    }
+    if (rec->canary) {
+        if (why)
+            *why = "worldline is already under canary observation";
+        return false;
+    }
+    rec->canary = true;
+    return true;
 }
 
 bool WorldlineLedger::seal_canary(std::uint64_t id, std::string* why) {
-    for (auto& rec : records_) {
-        if (rec.id != id)
-            continue;
-        if (!rec.canary) {
-            if (why)
-                *why = "worldline is not under canary observation";
-            return false;
-        }
-        rec.canary = false;
-        return true;
+    TrialRecord* rec = at(id);
+    if (!rec) {
+        if (why)
+            *why = "unknown worldline";
+        return false;
     }
-    if (why)
-        *why = "unknown worldline";
-    return false;
+    if (!rec->canary) {
+        if (why)
+            *why = "worldline is not under canary observation";
+        return false;
+    }
+    rec->canary = false;
+    return true;
 }
 
 bool WorldlineLedger::revert_canary(std::uint64_t id, std::string* why) {
-    for (auto& rec : records_) {
-        if (rec.id != id)
-            continue;
-        if (!rec.canary) {
-            if (why)
-                *why = "worldline is not under canary observation";
-            return false;
-        }
-        rec.canary = false;
-        rec.kept = false;
-        rec.rolled_back = true;
-        return true;
+    TrialRecord* rec = at(id);
+    if (!rec) {
+        if (why)
+            *why = "unknown worldline";
+        return false;
     }
-    if (why)
-        *why = "unknown worldline";
-    return false;
+    if (!rec->canary) {
+        if (why)
+            *why = "worldline is not under canary observation";
+        return false;
+    }
+    rec->canary = false;
+    rec->kept = false;
+    rec->rolled_back = true;
+    return true;
 }
 
 std::vector<std::uint64_t> WorldlineLedger::end_session(std::uint64_t owner) {
     std::vector<std::uint64_t> rolled;
-    for (auto& rec : records_) {
-        if (rec.owner == owner && rec.pending) {
-            rec.pending = false;
-            rec.rolled_back = true;
-            rolled.push_back(rec.id);
-        }
+    // The settled trials leave the pending set as they are walked.
+    for (auto it = pending_.lower_bound({owner, 0}); it != pending_.end() && it->first == owner;) {
+        TrialRecord& rec = records_[static_cast<std::size_t>(it->second - 1)];
+        rec.pending = false;
+        rec.rolled_back = true;
+        rolled.push_back(rec.id);
+        it = pending_.erase(it);
     }
     return rolled;
 }

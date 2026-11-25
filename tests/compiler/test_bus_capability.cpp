@@ -219,6 +219,34 @@ int main() {
         check(audit.count(AuditKind::Rollback) == 1, "rollback audited");
         check(audit.count(AuditKind::Disconnect) == 1, "disconnect audited");
         check(audit.count(AuditKind::Trial) == 1, "trial audited");
+
+        // ── The ledger under a long history ───────────────────────
+        // Ids are positions: the first and the newest record are found
+        // alike and an id past the end is unknown; the pending count and
+        // a session's pending trials come from the pending set.
+        const std::uint64_t w5 = ledger.open_trial(alice, ws);
+        const std::uint64_t w6 = ledger.open_trial(bob, ws);
+        std::size_t kept = 0;
+        for (std::uint64_t i = 0; i < 5000; ++i) {
+            const std::uint64_t id = ledger.open_trial(alice, ws);
+            if (ledger.keep(id, alice, alice_caps, &why))
+                ++kept;
+        }
+        check(kept == 5000, "every trial in a long history is kept");
+        const std::uint64_t w7 = ledger.open_trial(bob, ws);
+        check(ledger.find(w1) && ledger.find(w1)->kept, "the first worldline is still found");
+        check(ledger.find(w7) && ledger.find(w7)->pending, "the newest worldline is found");
+        check(!ledger.find(0), "id 0 is no worldline");
+        check(!ledger.find(w7 + 1), "an id past the ledger is no worldline");
+        check(ledger.pending_count() == 3, "the pending set counts the open trials");
+        const auto bobs = ledger.end_session(bob);
+        check(bobs.size() == 2 && bobs[0] == w6 && bobs[1] == w7,
+              "a session ends only its own pending trials, oldest first");
+        check(ledger.find(w5)->pending, "alice's trial survives bob's disconnect");
+        check(ledger.pending_count() == 1, "the pending set follows the session end");
+        check(ledger.end_session(bob).empty(), "a second session end has nothing to roll");
+        check(!ledger.keep(w6, bob, bob_caps, &why) && why == "worldline is not pending",
+              "a rolled trial is not kept");
     }
 
     // ── #5459: the in-process audit log is a bounded window ─────

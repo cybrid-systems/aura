@@ -13,7 +13,9 @@
 #include <cstdint>
 #include <functional>
 #include <optional>
+#include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace aura::bus {
@@ -155,7 +157,15 @@ public:
                        std::string* why);
 
 private:
+    // The record of a worldline id: ids are handed out in order and the
+    // ledger only appends, so the id is the record's position.
+    [[nodiscard]] TrialRecord* at(std::uint64_t id);
+    [[nodiscard]] const TrialRecord* at(std::uint64_t id) const;
+
     std::vector<TrialRecord> records_;
+    // (owner, id) of every pending trial: the pending count and a
+    // session's trials without walking the whole ledger.
+    std::set<std::pair<std::uint64_t, std::uint64_t>> pending_;
     std::uint64_t next_id_ = 1;
 };
 
