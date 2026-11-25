@@ -84,14 +84,20 @@ class Concurrency5476(unittest.TestCase):
         boundary = read("src/compiler/evaluator_mutation_boundary.cpp")
         snap = boundary.find("mark_dirty_upward_call_count()")
         self.assertGreaterEqual(snap, 0)
-        before = boundary[max(0, snap - 900) : snap]
-        self.assertIn(
+        # The snapshot must run under the boundary's own workspace lock, not
+        # a separate shared pin taken before the unique acquire: that pin
+        # made the #4085 peer block before the boundary lock (and before the
+        # MutationHold its mailbox/GC checks observe).
+        flip = boundary.find("if (soft_only_below)\n            outermost = true;")
+        self.assertGreaterEqual(flip, 0)
+        lock = boundary.find("lock_.lock();", flip)
+        self.assertGreaterEqual(lock, 0)
+        self.assertGreater(snap, lock, "the dirty snapshot must follow the boundary lock")
+        self.assertNotIn(
             "lock_workspace_shared();",
-            before,
-            "the boundary-enter dirty snapshot must hold a workspace shared pin",
+            boundary[flip:snap],
+            "no pre-lock shared pin may precede the dirty snapshot",
         )
-        after = boundary[snap : snap + 900]
-        self.assertIn("unlock_workspace_shared();", after)
 
         service_ixx = read("src/compiler/service.ixx")
         run_pos = service_ixx.find("void run_() {")

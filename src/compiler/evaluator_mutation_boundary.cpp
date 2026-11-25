@@ -4356,21 +4356,6 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(
     // (fiber-steal restore / partial recovery / compact-only /
     // exception unwind) that skip mark_define_dirty.
     defuse_version_at_enter_ = ev_->defuse_version_.load(std::memory_order_acquire);
-    // Issue #2162: dirty-upward is cumulative — snapshot for boundary delta.
-    // Issue #5476: the snapshot reads workspace_flat_ and a counter on it
-    // before this boundary takes the workspace lock; another fiber's
-    // set-code installs a fresh FlatAST under unique. A shared pin keeps
-    // the object alive for the read (adopts an outer hold on this thread);
-    // the boundary's own unique lock follows after the pin is released.
-    ev_->lock_workspace_shared();
-    dirty_upward_at_enter_ =
-        ev_->workspace_flat_ ? ev_->workspace_flat_->mark_dirty_upward_call_count() : 0;
-    // Issue #3637: macro-dirty marker counter snapshot (same cumulative
-    // delta pattern; bumped once per newly-set kMacroExpansion column bit
-    // by apply_macro_dirty_bits, #290).
-    macro_expansion_dirty_at_enter_ =
-        ev_->workspace_flat_ ? ev_->workspace_flat_->macro_expansion_dirty_total() : 0;
-    ev_->unlock_workspace_shared();
     // Issue #236 / #1746 / #3552: thread_local depth counter keyed by
     // (Evaluator::instance_id_, Fiber::id()). The fiber_id key prevents
     // cross-worker hot-swap leaks: when scheduler migrates a Fiber to
@@ -4731,6 +4716,21 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(
             }
         }
     }
+    // Issue #2162: dirty-upward is cumulative — snapshot for boundary delta.
+    // Issue #5476: read these only after the workspace lock is held. An
+    // outermost Guard owns the unique (or region-shared) lock here, and a
+    // nested Guard is under the same thread's outer hold, so another fiber's
+    // set-code cannot swap workspace_flat_ mid-read. Pinning shared before
+    // the unique acquire made the #4085 waiter block on the pin instead of
+    // the boundary lock (and delayed the MutationHold its mail/GC checks
+    // observe). The Guard's lock is the pin.
+    dirty_upward_at_enter_ =
+        ev_->workspace_flat_ ? ev_->workspace_flat_->mark_dirty_upward_call_count() : 0;
+    // Issue #3637: macro-dirty marker counter snapshot (same cumulative
+    // delta pattern; bumped once per newly-set kMacroExpansion column bit
+    // by apply_macro_dirty_bits, #290).
+    macro_expansion_dirty_at_enter_ =
+        ev_->workspace_flat_ ? ev_->workspace_flat_->macro_expansion_dirty_total() : 0;
     if (fine_rollback_)
         ev_->request_fine_rollback_for_next_boundary();
     ev_->enter_mutation_boundary();
