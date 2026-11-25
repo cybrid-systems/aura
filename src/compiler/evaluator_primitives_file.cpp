@@ -600,7 +600,48 @@ void RegSplitParts::register_file_entry_primitives(PrimRegistrar add, Evaluator&
         if (auto denied = file_deny_write_scope(ev, "file-rename", dst_path, dst_resolved);
             is_error(denied))
             return denied;
-        if (std::rename(src_resolved.c_str(), dst_resolved.c_str()) != 0)
+        int rc = 0;
+        if (ev.host_path_policy_active()) {
+            // Open both parent directories under the tenant root and rename
+            // relative to those fds: a symlink swapped into a parent after
+            // check_tenant_host_path cannot redirect the rename outside the
+            // tenant. (The direct rename below is for Soft/Off only.)
+            const auto parent_leaf = [](const std::string& path, std::string& parent,
+                                        std::string& leaf) {
+                const auto slash = path.rfind('/');
+                if (slash == std::string::npos) {
+                    parent = ".";
+                    leaf = path;
+                } else {
+                    parent = slash == 0 ? "/" : path.substr(0, slash);
+                    leaf = path.substr(slash + 1);
+                }
+            };
+            std::string src_parent, src_leaf, dst_parent, dst_leaf;
+            parent_leaf(src_resolved, src_parent, src_leaf);
+            parent_leaf(dst_resolved, dst_parent, dst_leaf);
+            const int sfd =
+                ev.open_tenant_host_fd(src_parent, O_PATH | O_DIRECTORY, 0, "file-rename");
+            const int dfd = sfd < 0 ? -1
+                                    : ev.open_tenant_host_fd(dst_parent, O_PATH | O_DIRECTORY, 0,
+                                                             "file-rename");
+            if (sfd < 0 || dfd < 0) {
+                const int err = errno;
+                if (sfd >= 0)
+                    ::close(sfd);
+                if (dfd >= 0)
+                    ::close(dfd);
+                return file_io_fail(ev, "file-rename", dst_path, file_errno_reason(err));
+            }
+            rc = ::renameat(sfd, src_leaf.c_str(), dfd, dst_leaf.c_str());
+            const int err = errno;
+            ::close(sfd);
+            ::close(dfd);
+            errno = err;
+        } else {
+            rc = std::rename(src_resolved.c_str(), dst_resolved.c_str());
+        }
+        if (rc != 0)
             return file_io_fail(ev, "file-rename", dst_path, file_errno_reason(errno));
         return make_int(1);
     });

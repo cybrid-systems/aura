@@ -29,6 +29,11 @@
          (check (= "moved" (read-file "/tmp/aura-suite-rename-dst.txt")))
          (file-delete "/tmp/aura-suite-rename-dst.txt")))
 
+(test-suite "file:rename-missing-source"
+  (begin (check (error? (file-rename "/tmp/aura-suite-no-such-src.txt"
+                                    "/tmp/aura-suite-rename-dst2.txt")))
+         (check (not (file-exists? "/tmp/aura-suite-rename-dst2.txt")))))
+
 (test-suite "file:delete"
   (begin (write-file "/tmp/aura-suite-del.txt" "x")
          (file-delete "/tmp/aura-suite-del.txt")
