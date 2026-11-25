@@ -2143,7 +2143,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_aura_result_error_policy.cpp` (—) [domain_suite, theme_compiler] — test_aura_result_error_policy.cpp — Issues #807 + #808:
 - `tests/compiler/test_bugfix.cpp` (—) [domain_suite, theme_compiler] — Issue #957/#968/#982/#984 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_bus_adversarial_peer.cpp` (—) [domain_suite, theme_compiler] — Issue #5396: the adversarial peer boundaries.
-- `tests/compiler/test_bus_agent_spawn.cpp` (—) [domain_suite, theme_compiler] — Issue #5422: the supervisor's execution layer. The host's plan comes
+- `tests/compiler/test_bus_agent_spawn.cpp` (—) [large, domain_suite, theme_compiler] — Issue #5422: the supervisor's execution layer. The host's plan comes
 - `tests/compiler/test_bus_approval.cpp` (—) [small, domain_suite, theme_compiler] — Issue #5404: the human approval point. A pending object has a
 - `tests/compiler/test_bus_audit_replay.cpp` (—) [large, domain_suite, theme_compiler] — Issue #5392: audit replay and deterministic reproduction.
 - `tests/compiler/test_bus_budget.cpp` (—) [domain_suite, theme_compiler] — Issue #5403: task/global token, wall-clock and failure budgets.

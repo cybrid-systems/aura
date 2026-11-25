@@ -263,6 +263,38 @@ inline bool query_plan(aura::bus::Attach& att, aura::bus::SupervisorReplyBody* o
         *why = "supervise query send failed";
         return false;
     }
+    // Issue #5458: a supervisor must stay interruptible even when the host
+    // is stopped (SIGSTOP) and will never answer. Poll in short slices and
+    // give the whole query a finite deadline instead of blocking in
+    // recv_frame; a signal sets g_stop and the loop leaves immediately.
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (!g_stop) {
+        struct pollfd pfd = {att.sock, POLLIN, 0};
+        const int pr = ::poll(&pfd, 1, 100);
+        if (pr < 0) {
+            if (errno == EINTR)
+                continue;
+            *why = "supervise query poll failed";
+            return false;
+        }
+        if (pr == 0) {
+            if (std::chrono::steady_clock::now() >= deadline) {
+                *why = "supervise query timeout";
+                return false;
+            }
+            continue;
+        }
+        if ((pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) != 0 &&
+            (pfd.revents & POLLIN) == 0) {
+            *why = "host closed the bus";
+            return false;
+        }
+        break;
+    }
+    if (g_stop) {
+        *why = "stopped";
+        return false;
+    }
     aura::bus::FrameHeader hdr{};
     std::vector<std::byte> body(aura::bus::kBusMaxControlFrame);
     aura::bus::TransportError err;
@@ -313,6 +345,10 @@ inline pid_t spawn_worker(const Options& opts, const std::string& self, std::str
         return -1;
     }
     if (pid == 0) {
+        // Issue #5458: a terminal Ctrl-C goes to the foreground process
+        // group. Put each worker in its own group so SIGINT reaches only
+        // the supervisor, which then drains and forwards SIGTERM.
+        (void)::setpgid(0, 0);
 #ifdef __linux__
         // The worker must not outlive a killed supervisor.
         (void)::prctl(PR_SET_PDEATHSIG, SIGTERM);
@@ -350,6 +386,8 @@ inline pid_t spawn_worker(const Options& opts, const std::string& self, std::str
         ::execv(self.c_str(), argv.data());
         _exit(127);
     }
+    if (pid > 0)
+        (void)::setpgid(pid, pid); // close the child/parent race
     return pid;
 }
 
@@ -439,6 +477,12 @@ inline int run(const Options& opts, int* exit_code) {
                 }
                 std::println("supervisor-reconnect-wait={} reason={}", reconnect_ms, err.message);
                 std::fflush(stdout);
+                // #5458: --spawn-once is a CI one-shot; no host is a failed
+                // cycle, not an infinite reconnect loop.
+                if (opts.spawn_once) {
+                    query_ok = false;
+                    break;
+                }
                 sleep_reaping(reconnect_ms, &children);
                 reconnect_ms = std::min<std::uint64_t>(reconnect_ms * 2, 30000);
                 continue;
@@ -457,6 +501,10 @@ inline int run(const Options& opts, int* exit_code) {
             std::println(std::cerr, "warning: host query failed: {}", why);
             connected = false;
             att = aura::bus::Attach{};
+            if (opts.spawn_once) {
+                query_ok = false;
+                break;
+            }
             sleep_reaping(reconnect_ms, &children);
             reconnect_ms = std::min<std::uint64_t>(reconnect_ms * 2, 30000);
             continue;

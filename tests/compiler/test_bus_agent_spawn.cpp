@@ -5,6 +5,7 @@
 
 #include "bus/transport.hh"
 
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -160,6 +161,27 @@ bool wait_socket(const std::string& sock) {
         usleep(50000);
     }
     return false;
+}
+
+bool wait_exit_ms(pid_t pid, int* status, int ms) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(ms);
+    while (std::chrono::steady_clock::now() < deadline) {
+        const pid_t r = ::waitpid(pid, status, WNOHANG);
+        if (r == pid || (r < 0 && errno == ECHILD))
+            return true;
+        ::usleep(20000);
+    }
+    return false;
+}
+
+std::vector<pid_t> children_of(pid_t pid) {
+    std::vector<pid_t> out;
+    std::ifstream in("/proc/" + std::to_string(pid) + "/task/" + std::to_string(pid) + "/children",
+                     std::ios::binary);
+    int child = 0;
+    while (in >> child)
+        out.push_back(static_cast<pid_t>(child));
+    return out;
 }
 
 int count_workers(std::uint64_t workspace) {
@@ -338,6 +360,129 @@ int main() {
         ::close(host_in);
         int status = 0;
         waitpid(host, &status, 0);
+    }
+
+    // #5458: --spawn-once against no host is a failed one-shot, not a
+    // reconnect loop. It must exit non-zero within the first backoff.
+    {
+        constexpr std::uint64_t kPort = 8997;
+        ::unlink(default_socket_path(kPort).c_str());
+        int out = -1, in = -1;
+        const pid_t supervisor = run_agent({"--role", "supervisor", "--workspace",
+                                            std::to_string(kPort), "--mock", "--spawn-once"},
+                                           &out, &in);
+        ::close(in);
+        check(supervisor > 0, "fork spawn-once without host");
+        int status = 0;
+        const bool exited = wait_exit_ms(supervisor, &status, 3000);
+        check(exited, "spawn-once exits within a backoff period without a host");
+        if (!exited) {
+            ::kill(supervisor, SIGKILL);
+            (void)::waitpid(supervisor, &status, 0);
+        }
+        check(WIFEXITED(status) && WEXITSTATUS(status) != 0,
+              "spawn-once without a host exits non-zero");
+        const std::string text = read_all(out);
+        check(has(text, "supervisor-reconnect-wait="), "spawn-once reported the failed connect");
+        ::close(out);
+    }
+
+    // #5458: a stopped host must not make the supervisor immune to SIGTERM
+    // while it waits for a plan reply.
+    {
+        constexpr std::uint64_t kPort = 8960;
+        setenv("AURA_SUPERVISOR_MEM_FREE_MB", "512", 1);
+        setenv("AURA_SUPERVISOR_CPU_FREE_PCT", "20", 1);
+        setenv("AURA_SUPERVISOR_CPUS", "4", 1);
+        const std::string host_script = make_host_script(d, kPort);
+        const std::string sock = default_socket_path(kPort);
+        int host_out = -1, host_in = -1;
+        const pid_t host = run_script(host_script, &host_out, &host_in);
+        check(host > 0, "fork stopped-host test host");
+        check(wait_socket(sock), "stopped-host socket appeared");
+        check(has(read_until(host_out, "host-ready", 10000), "host-ready"), "stop host started");
+        unsetenv("AURA_SUPERVISOR_MEM_FREE_MB");
+        unsetenv("AURA_SUPERVISOR_CPU_FREE_PCT");
+        unsetenv("AURA_SUPERVISOR_CPUS");
+
+        int out = -1, in = -1;
+        const pid_t supervisor =
+            run_agent({"--role", "supervisor", "--workspace", std::to_string(kPort), "--mock",
+                       "--spawn", "--interval-ms", "100"},
+                      &out, &in);
+        ::close(in);
+        (void)read_until(out, "supervisor-desired=", 5000);
+        ::kill(host, SIGSTOP);
+        ::usleep(200000);
+        ::kill(supervisor, SIGTERM);
+        int status = 0;
+        const bool exited = wait_exit_ms(supervisor, &status, 3000);
+        check(exited, "SIGTERM exits while the host is stopped");
+        if (!exited)
+            ::kill(supervisor, SIGKILL);
+        ::kill(host, SIGCONT);
+        ::kill(host, SIGTERM);
+        ::close(host_in);
+        ::waitpid(host, &status, 0);
+        ::close(out);
+        ::close(host_out);
+    }
+
+    // #5458: workers get their own process group, so a terminal Ctrl-C
+    // reaches the supervisor and the normal drain path, not the workers.
+    {
+        constexpr std::uint64_t kPort = 8961;
+        setenv("AURA_SUPERVISOR_MEM_FREE_MB", "512", 1);
+        setenv("AURA_SUPERVISOR_CPU_FREE_PCT", "20", 1);
+        setenv("AURA_SUPERVISOR_CPUS", "4", 1);
+        const std::string host_script = make_host_script(d, kPort);
+        const std::string sock = default_socket_path(kPort);
+        int host_out = -1, host_in = -1;
+        const pid_t host = run_script(host_script, &host_out, &host_in);
+        check(host > 0, "fork pgrp host");
+        check(wait_socket(sock), "pgrp host socket appeared");
+        check(has(read_until(host_out, "host-ready", 10000), "host-ready"), "pgrp host started");
+        unsetenv("AURA_SUPERVISOR_MEM_FREE_MB");
+        unsetenv("AURA_SUPERVISOR_CPU_FREE_PCT");
+        unsetenv("AURA_SUPERVISOR_CPUS");
+
+        {
+            int pout = -1, pin = -1;
+            const pid_t planner =
+                run_agent({"--role", "planner", "--workspace", std::to_string(kPort), "--mock",
+                           "--tasks", "64", "--requirement", "pgrp work"},
+                          &pout, &pin);
+            ::close(pin);
+            const std::string text = read_all(pout);
+            check(has(text, "posted=64"), "pgrp planner posted 64 tasks");
+            int pstatus = 0;
+            waitpid(planner, &pstatus, 0);
+            ::close(pout);
+        }
+
+        int out = -1, in = -1;
+        const pid_t supervisor =
+            run_agent({"--role", "supervisor", "--workspace", std::to_string(kPort), "--mock",
+                       "--spawn-once", "--interval-ms", "50"},
+                      &out, &in);
+        ::close(in);
+        (void)read_until(out, "spawned=2", 15000);
+        const std::vector<pid_t> workers = children_of(supervisor);
+        check(!workers.empty(), "supervisor has live workers to inspect");
+        for (const pid_t worker : workers)
+            check(::getpgid(worker) == worker, "worker is in its own process group");
+        // The process-group fact is set at fork; stop the supervisor now
+        // instead of waiting for all 64 mock tasks. PDEATHSIG plus the
+        // explicit kill clean the workers up.
+        ::kill(supervisor, SIGKILL);
+        for (const pid_t worker : workers)
+            ::kill(worker, SIGKILL);
+        int status = 0;
+        ::waitpid(supervisor, &status, 0);
+        ::close(out);
+        ::close(host_in);
+        ::waitpid(host, &status, 0);
+        ::close(host_out);
     }
 
     // ── low slack: desired 0, nothing spawned, plan audited ──────

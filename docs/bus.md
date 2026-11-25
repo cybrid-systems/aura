@@ -272,8 +272,8 @@ canary 拒绝)、`test_bus_closed_loop_e2e`(#5382,三进程正常闭环 + 五类
 
 - **work-driven**：`bus:supervise` 的第 6 个返回值是 `open-tasks`（**当前可认领**的 open 任务数；被拒绝/待批准/`gate-state-lost`/全局预算耗尽的 open 任务不算，任务因此不会被反复 fork）。监督者目标 = `min(容量, alive + open-tasks)`，没活不拉，任务到达才补；空闲不再 churn (#5456)。
 - **host 崩溃接管**：`Server::listen_at` 对 socket 旁的 `.lock` 取 `flock(LOCK_EX|LOCK_NB)`。活 host 持有锁；崩溃后内核释放锁，新 host 探测旧 socket：连接成功=活 host，拒绝；`ECONNREFUSED/ENOENT`=陈旧，先 unlink 再 bind；非 socket 文件不删。`owns_path_` 保证 bind 失败/退出的 Server 不会误删别人的 socket。
-- **reconnect**：查询失败或 EOF 后关闭会话，指数退避 1s→30s 重连；子进程保留。只有 `attach rejected`（role/workspace/schema 等）才 fatal 退出。
-- **graceful drain**：`--drain-ms`（默认 10000）；SIGTERM 后停止拉新，先等活跃 worker 完成，超时才 SIGTERM（5s 宽限）→ SIGKILL。
+- **reconnect**：查询失败或 EOF 后关闭会话，指数退避 1s→30s 重连；子进程保留。只有 `attach rejected`（role/workspace/schema 等）才 fatal 退出。`--spawn-once` 是 CI 的一次性周期：连不上宿主（或查询失败）立即以非零退出，不再无限重连 (#5458)。
+- **graceful drain**：`--drain-ms`（默认 10000）；SIGTERM 后停止拉新，先等活跃 worker 完成，超时才 SIGTERM（5s 宽限）→ SIGKILL。计划查询用 100 ms poll 分片、5 s 总超时，SIGTERM/SIGINT 在等待宿主回复时也能退出；worker 在 fork 后 `setpgid(0,0)` 进入自己的进程组，终端 Ctrl-C 只打到监督者，走同一条 drain 路径而不是直接杀掉 worker (#5458)。
 - **可调策略**：`AURA_SUPERVISOR_RESERVE_MB`、`AURA_SUPERVISOR_PER_WORKER_MB`、`AURA_SUPERVISOR_PER_WORKER_CPU_PCT`；0/非法值回退默认，不会关闭上限。
 - **非阻塞容量采样**：`bus:supervise` 的空闲 CPU 用进程级上一次 `/proc/stat` 样本到现在的差值计算，100 ms 内的连续调用直接复用；首次采样用 1 分钟 loadavg，不 sleep。协调者线程不再被 20 ms 的二次采样冻住 (#5457)。
 - **CI**：`test_bus_repro` 的 ctest 工作目录固定为源码根，bus ctest 串行 31/31。回归：`test_bus_agent_spawn` 覆盖空闲 0 spawn、任务到达拉起、SIGKILL host 接管+重连、SIGTERM 无遗留 worker。
