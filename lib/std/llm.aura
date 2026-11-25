@@ -247,7 +247,50 @@
      #t)
     (else (hash "ok" #f "error" "unsupported-image-url"))))
 
-(define (llm-normalize-parts parts)
+; Concatenate every text part in order. Text values are validated here
+; before the injection gate; non-text parts are validated in the loop below.
+(define (llm-join-text-parts parts)
+  (let loop ((xs parts) (acc ""))
+    (cond
+      ((null? xs) (hash "ok" #t "text" acc))
+      ((not (hash? (car xs))) (hash "ok" #f "error" "bad-content"))
+      ((equal? (hash-ref (car xs) "type" #f) "text")
+       (let ((s (hash-ref (car xs) "text" #f)))
+         (if (string? s)
+           (loop (cdr xs) (string-append acc s))
+           (hash "ok" #f "error" "bad-content"))))
+      (else (loop (cdr xs) acc)))))
+
+; Join the text of normalized parts (all strings) for the sanitizer comparison.
+(define (llm-normalized-text-join parts)
+  (let loop ((xs parts) (acc ""))
+    (if (null? xs)
+      acc
+      (let ((p (car xs)))
+        (if (equal? (hash-ref p "type" #f) "text")
+          (loop (cdr xs) (string-append acc (hash-ref p "text" "")))
+          (loop (cdr xs) acc))))))
+
+; When a sanitizer marker spans a part boundary, the per-part result still
+; contains it while the concatenated result does not. Redistribute the
+; sanitized concatenation over the same part count and image positions,
+; using each normalized text part's length as its boundary. This runs only
+; on that boundary case; normal prompts keep their exact part boundaries.
+(define (llm-redistribute-text clean parts)
+  (let loop ((xs parts) (pos 0) (acc '()))
+    (if (null? xs)
+      (reverse acc)
+      (let* ((p (car xs))
+             (is-text (equal? (hash-ref p "type" #f) "text")))
+        (if is-text
+          (let* ((n (string-length (hash-ref p "text" "")))
+                 (left (max 0 (- (string-length clean) pos)))
+                 (take (min n left))
+                 (s (substring clean pos (+ pos take))))
+            (loop (cdr xs) (+ pos take) (cons (llm:text-part s) acc)))
+          (loop (cdr xs) pos (cons p acc)))))))
+
+(define (llm-normalize-parts-each parts)
   (let loop ((xs parts) (acc '()))
     (if (null? xs)
       (hash "ok" #t "parts" (reverse acc))
@@ -256,13 +299,10 @@
           ((not (hash? p)) (hash "ok" #f "error" "bad-content"))
           ((equal? (hash-ref p "type" #f) "text")
            (let ((s (hash-ref p "text" #f)))
-             (cond
-               ((not (string? s)) (hash "ok" #f "error" "bad-content"))
-               ((llm:injection-risk? s)
-                (hash "ok" #f "error" "injection-blocked"))
-               (else
-                (loop (cdr xs)
-                      (cons (llm:text-part (llm:sanitize-prompt s)) acc))))))
+             (if (string? s)
+               (loop (cdr xs)
+                     (cons (llm:text-part (llm:sanitize-prompt s)) acc))
+               (hash "ok" #f "error" "bad-content"))))
           ((equal? (hash-ref p "type" #f) "image_url")
            (let* ((iu (hash-ref p "image_url" #f))
                   (url (if (hash? iu) (hash-ref iu "url" #f) #f))
@@ -271,6 +311,27 @@
                e
                (loop (cdr xs) (cons (llm:image-part url) acc)))))
           (else (hash "ok" #f "error" "bad-content")))))))
+
+; #5443: the injection gate and sanitizer run on the concatenation of all
+; text parts, not on each part in isolation. A marker split over adjacent
+; parts is therefore seen as the one marker the model will see.
+(define (llm-normalize-parts parts)
+  (let ((joined (llm-join-text-parts parts)))
+    (if (not (hash-ref joined "ok" #f))
+      joined
+      (let ((text (hash-ref joined "text" "")))
+        (if (llm:injection-risk? text)
+          (hash "ok" #f "error" "injection-blocked")
+          (let* ((clean (llm:sanitize-prompt text))
+                 (norm (llm-normalize-parts-each parts)))
+            (if (not (hash-ref norm "ok" #f))
+              norm
+              (let* ((normalized (hash-ref norm "parts"))
+                     (per (llm-normalized-text-join normalized)))
+                (if (string=? clean per)
+                  norm
+                  (hash "ok" #t
+                        "parts" (llm-redistribute-text clean normalized)))))))))))
 
 ; ── Call surfaces ──────────────────────────────────────────────
 

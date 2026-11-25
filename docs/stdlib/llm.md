@@ -48,8 +48,11 @@ unsupported part is `bad-content`, `unsupported-image-type` or
 `unsupported-image-url`.
 
 Text parts go through the same sanitizer and injection gate as a plain
-prompt. The response parser is unchanged: an empty `content` with a
-`reasoning_content` is reported as `truncated/finish=<reason>`, so give
+prompt. Both run over the **concatenation of all text parts**, not per
+part, so a marker split across two adjacent parts is seen and blocked like
+the unsplit marker (#5443). The response parser is unchanged: an empty
+`content` with a `reasoning_content` is reported as
+`truncated/finish=<reason>`, so give
 the model enough `max_tokens` to finish its thinking and its answer.
 
 `llm:chat-request` is the pure request builder (no network); it is what
