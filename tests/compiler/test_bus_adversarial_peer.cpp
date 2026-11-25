@@ -522,6 +522,136 @@ int main() {
               "the honest peer returns the loan");
     }
 
+    // ── 8. Frames in pieces, and frames together ───────────────
+    // poll reports readability, never a whole frame. The coordinator
+    // serves a Hello and a frame that each arrive in two writes, answers
+    // two frames written back to back in order, and serves a frame that
+    // trails the Hello in the same write.
+    {
+        const auto put_frame = [](std::vector<std::byte>& out, FrameType type,
+                                  std::span<const std::byte> body) {
+            FrameHeader header{};
+            header.len = static_cast<std::uint32_t>(body.size());
+            header.type = static_cast<std::uint16_t>(type);
+            const std::size_t at = out.size();
+            out.resize(at + sizeof(header) + body.size());
+            std::memcpy(out.data() + at, &header, sizeof(header));
+            std::memcpy(out.data() + at + sizeof(header), body.data(), body.size());
+        };
+        const auto write_bytes = [](int fd, const std::byte* data, std::size_t bytes) {
+            while (bytes > 0) {
+                const ssize_t n = ::send(fd, data, bytes, MSG_NOSIGNAL);
+                if (n <= 0)
+                    return false;
+                data += n;
+                bytes -= static_cast<std::size_t>(n);
+            }
+            return true;
+        };
+        // True while the coordinator stays silent.
+        const auto silent = [](int fd) {
+            struct pollfd pfd{fd, POLLIN, 0};
+            return ::poll(&pfd, 1, 150) == 0;
+        };
+        HelloBody hello{};
+        hello.abi_major = kBusAbiMajor;
+        hello.abi_minor = kBusAbiMinor;
+        const SchemaId id = header_schema_id();
+        std::memcpy(hello.schema_id, &id.a, 8);
+        std::memcpy(hello.schema_id + 8, &id.b, 8);
+        hello.layout_version = 1;
+        hello.role = 0;
+        hello.caps = kCapRead;
+        hello.channels = ~0ull;
+        hello.workspace_id = kWorkspace;
+        std::vector<std::byte> hello_frame;
+        put_frame(hello_frame, FrameType::Hello,
+                  {reinterpret_cast<const std::byte*>(&hello), sizeof(hello)});
+        RoundRequestBody round{};
+        std::vector<std::byte> round_query;
+        put_frame(round_query, FrameType::RoundQuery,
+                  {reinterpret_cast<const std::byte*>(&round), sizeof(round)});
+        DegradeQueryBody degrade{};
+        std::vector<std::byte> degrade_query;
+        put_frame(degrade_query, FrameType::DegradeQuery,
+                  {reinterpret_cast<const std::byte*>(&degrade), sizeof(degrade)});
+
+        // A Hello in two writes: nothing answers the first half.
+        const int split = raw_connect(path);
+        check(split >= 0, "the piecemeal peer connects");
+        check(write_bytes(split, hello_frame.data(), hello_frame.size() / 2),
+              "half the Hello is sent");
+        check(silent(split), "half a Hello is not answered");
+        check(write_bytes(split, hello_frame.data() + hello_frame.size() / 2,
+                          hello_frame.size() - hello_frame.size() / 2),
+              "the rest of the Hello is sent");
+        {
+            FrameHeader hdr{};
+            std::vector<std::byte> reply;
+            check(read_frame(split, &hdr, &reply, &err), "the piecemeal Hello is answered");
+            check(hdr.type == static_cast<std::uint16_t>(FrameType::HelloOk),
+                  "a Hello in two writes attaches");
+        }
+        // A frame in two writes: nothing answers the first piece.
+        check(write_bytes(split, round_query.data(), 20), "the first piece of a frame is sent");
+        check(silent(split), "a partial frame is not answered");
+        check(write_bytes(split, round_query.data() + 20, round_query.size() - 20),
+              "the rest of the frame is sent");
+        {
+            FrameHeader hdr{};
+            std::vector<std::byte> reply;
+            check(read_frame(split, &hdr, &reply, &err), "the frame in two writes is answered");
+            check(hdr.type == static_cast<std::uint16_t>(FrameType::Credit) &&
+                      hdr.len == sizeof(RoundReplyBody),
+                  "a frame in two writes is served");
+        }
+        // Two frames in one write: two answers, in order (the round reply
+        // is 120 bytes, the degrade reply 112).
+        std::vector<std::byte> pair = round_query;
+        pair.insert(pair.end(), degrade_query.begin(), degrade_query.end());
+        check(write_bytes(split, pair.data(), pair.size()), "two frames are sent together");
+        {
+            FrameHeader first{};
+            FrameHeader second{};
+            std::vector<std::byte> reply;
+            check(read_frame(split, &first, &reply, &err), "the first of the pair is answered");
+            check(read_frame(split, &second, &reply, &err), "the second of the pair is answered");
+            check(first.len == sizeof(RoundReplyBody) && second.len == sizeof(DegradeReplyBody),
+                  "frames sent together are answered in order");
+        }
+        ::close(split);
+
+        // A frame that trails the Hello in the same write, then a frame
+        // that arrives in pieces after it.
+        const int trailing = raw_connect(path);
+        check(trailing >= 0, "the trailing-frame peer connects");
+        std::vector<std::byte> burst = hello_frame;
+        burst.insert(burst.end(), round_query.begin(), round_query.end());
+        burst.insert(burst.end(), degrade_query.begin(), degrade_query.begin() + 10);
+        check(write_bytes(trailing, burst.data(), burst.size()),
+              "the Hello, a frame and a fragment are sent together");
+        {
+            FrameHeader hdr{};
+            std::vector<std::byte> reply;
+            check(read_frame(trailing, &hdr, &reply, &err), "the trailing Hello is answered");
+            check(hdr.type == static_cast<std::uint16_t>(FrameType::HelloOk),
+                  "a Hello followed by frames attaches");
+            check(read_frame(trailing, &hdr, &reply, &err),
+                  "the frame after the Hello is answered");
+            check(hdr.len == sizeof(RoundReplyBody), "the frame after the Hello is served");
+            check(silent(trailing), "the fragment after the Hello is not answered");
+            check(write_bytes(trailing, degrade_query.data() + 10, degrade_query.size() - 10),
+                  "the rest of the fragment is sent");
+            check(read_frame(trailing, &hdr, &reply, &err),
+                  "the fragmented frame after the Hello is answered");
+            check(hdr.len == sizeof(DegradeReplyBody),
+                  "the fragmented frame after the Hello is served");
+        }
+        ::close(trailing);
+        TransportError e{};
+        check(honest.alive(&e), "the honest peer survives the piecemeal frames");
+    }
+
     // ── The audit records every cut-off ─────────────────────────
     server.stop();
     coordinator.join();

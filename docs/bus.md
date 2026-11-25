@@ -107,7 +107,10 @@
   收回该会话未归还 loan、把其未决 trial 标 Rollback 并写审计,绝不影响
   其他在线会话。宿主可经 `bus:grant`(带 worldline 作用域)实时委派单条
   worldline 的 keep+rollback 给裁判,`bus:revoke` 递归失效。提交新代次后
-  向其他已订阅会话的门铃 eventfd 发通知,裁判/观察者无需轮询。
+  向其他已订阅会话的门铃 eventfd 发通知,裁判/观察者无需轮询。每个 poll
+  轮次对每个套接字只读一次就回到 poll:同步对端(一帧一等回复)每帧省一次
+  EAGAIN `recvmsg`,流水对端按轮次轮转,不再独占协调者;套接字里还有字节时
+  poll 立刻就可读。
 - **被拒绝的附着只结束该连接**(#5383):未知角色、workspace 不符、schema/uid
   不符、握手半途 EOF 等拒绝会关闭该连接并继续 accept,不停服务循环;只有
   unhost/监听失效才退出。一个配置错误的对端不会瘫痪整条总线。

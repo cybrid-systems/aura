@@ -311,11 +311,22 @@ bool send_frame(int fd, FrameType type, std::uint64_t session, std::span<const s
     header.len = static_cast<std::uint32_t>(body.size());
     header.type = static_cast<std::uint16_t>(type);
     header.session = session;
-    std::vector<std::byte> out(sizeof(header) + body.size());
-    std::memcpy(out.data(), &header, sizeof(header));
+    const std::size_t bytes = sizeof(header) + body.size();
+    // Every request and every reply but the paged ones fits the stack
+    // frame; only those few (audit pages, define lists, source texts)
+    // take the heap.
+    constexpr std::size_t kInlineBody = 512;
+    alignas(FrameHeader) std::byte inline_bytes[sizeof(header) + kInlineBody];
+    std::vector<std::byte> heap;
+    void* out = inline_bytes;
+    if (bytes > sizeof(inline_bytes)) {
+        heap.resize(bytes);
+        out = heap.data();
+    }
+    std::memcpy(out, &header, sizeof(header));
     if (!body.empty())
-        std::memcpy(out.data() + sizeof(header), body.data(), body.size());
-    return write_all(fd, out.data(), out.size());
+        std::memcpy(static_cast<std::byte*>(out) + sizeof(header), body.data(), body.size());
+    return write_all(fd, out, bytes);
 }
 
 bool recv_frame(int fd, FrameHeader* header, std::span<std::byte> body, TransportError* error) {
@@ -4075,70 +4086,72 @@ void Server::serve(const BuildFn& build) {
                 return false;
         }
     };
-    // Feed readable bytes into a session; false on EOF/error/protocol.
+    // Feed one read to a session; false on EOF/error/protocol. The loop
+    // returns to poll after every read instead of draining the socket
+    // until EAGAIN: a synchronous peer (one frame, then a wait for its
+    // reply) used to cost the coordinator an extra EAGAIN recvmsg per
+    // frame, and a peer that streamed frames held the coordinator until
+    // its queue ran dry. A socket that still has bytes reports readable
+    // at once, so a pipelined peer is read again on the next turn.
     const auto feed = [&](PeerSession& peer) {
         std::byte buf[4096];
-        while (true) {
-            std::vector<int> fds;
-            const ssize_t n = recv_msg(peer.conn_fd, buf, sizeof(buf), &fds);
-            for (const int f : fds)
-                ::close(f); // ancillary data after Hello is unexpected
-            if (n == 0) {
+        std::vector<int> fds;
+        const ssize_t n = recv_msg(peer.conn_fd, buf, sizeof(buf), &fds);
+        for (const int f : fds)
+            ::close(f); // ancillary data after Hello is unexpected
+        if (n == 0)
+            return false;
+        if (n < 0)
+            return errno == EAGAIN || errno == EWOULDBLOCK;
+        if (!peer.hello_done) {
+            peer.hello_buf.insert(peer.hello_buf.end(), buf, buf + n);
+            constexpr std::size_t kHelloBytes = sizeof(FrameHeader) + sizeof(HelloBody);
+            if (peer.hello_buf.size() < kHelloBytes)
+                return true;
+            FrameHeader header{};
+            std::memcpy(&header, peer.hello_buf.data(), sizeof(header));
+            if (header.type != static_cast<std::uint16_t>(FrameType::Hello) ||
+                header.len != sizeof(HelloBody)) {
+                set_reject(peer.conn_fd, 0, RejectReason::Protocol, "expected Hello");
                 return false;
             }
-            if (n < 0) {
-                if (errno == EAGAIN || errno == EWOULDBLOCK)
-                    return true;
+            HelloBody hello{};
+            std::memcpy(&hello, peer.hello_buf.data() + sizeof(header), sizeof(hello));
+            TransportError err;
+            if (!handshake(peer.conn_fd, hello, build, &peer.session, &peer.caps, &peer.root_token,
+                           &peer.event_fd, &peer.staging_capacity, nullptr, &err)) {
                 return false;
             }
-            if (!peer.hello_done) {
-                peer.hello_buf.insert(peer.hello_buf.end(), buf, buf + n);
-                constexpr std::size_t kHelloBytes = sizeof(FrameHeader) + sizeof(HelloBody);
-                if (peer.hello_buf.size() < kHelloBytes)
-                    continue;
-                FrameHeader header{};
-                std::memcpy(&header, peer.hello_buf.data(), sizeof(header));
-                if (header.type != static_cast<std::uint16_t>(FrameType::Hello) ||
-                    header.len != sizeof(HelloBody)) {
-                    set_reject(peer.conn_fd, 0, RejectReason::Protocol, "expected Hello");
-                    return false;
-                }
-                HelloBody hello{};
-                std::memcpy(&hello, peer.hello_buf.data() + sizeof(header), sizeof(hello));
-                TransportError err;
-                if (!handshake(peer.conn_fd, hello, build, &peer.session, &peer.caps,
-                               &peer.root_token, &peer.event_fd, &peer.staging_capacity, nullptr,
-                               &err)) {
-                    return false;
-                }
-                // #5426: the image now exists; size the burst bucket from
-                // its channels (or the explicit quota) before any traffic.
-                frame_burst_cache_ = 0;
-                peer.frame_tokens = frame_burst_frames() * 1000;
-                peer.frame_refill_ms = round_now_ms();
-                if (peer.caps.max_loans > 0) {
-                    const auto cap = static_cast<std::uint32_t>(
-                        std::min<std::uint64_t>(peer.caps.max_loans, kBusMaxLoans));
-                    for (auto& ledger : peer.channel_loans)
-                        ledger.set_cap(cap);
-                }
-                peer.hello_done = true;
-                peer.inbuf.assign(peer.hello_buf.begin() + static_cast<std::ptrdiff_t>(kHelloBytes),
-                                  peer.hello_buf.end());
-                peer.hello_buf.clear();
-                peer.hello_buf.shrink_to_fit();
-                if (!drain(peer))
-                    return false;
-                continue;
+            // #5426: the image now exists; size the burst bucket from
+            // its channels (or the explicit quota) before any traffic.
+            frame_burst_cache_ = 0;
+            peer.frame_tokens = frame_burst_frames() * 1000;
+            peer.frame_refill_ms = round_now_ms();
+            if (peer.caps.max_loans > 0) {
+                const auto cap = static_cast<std::uint32_t>(
+                    std::min<std::uint64_t>(peer.caps.max_loans, kBusMaxLoans));
+                for (auto& ledger : peer.channel_loans)
+                    ledger.set_cap(cap);
             }
-            peer.inbuf.insert(peer.inbuf.end(), buf, buf + n);
-            if (!drain(peer))
-                return false;
+            peer.hello_done = true;
+            // The bytes that trailed the Hello in this read are the
+            // session's first frames.
+            peer.inbuf.assign(peer.hello_buf.begin() + static_cast<std::ptrdiff_t>(kHelloBytes),
+                              peer.hello_buf.end());
+            peer.hello_buf.clear();
+            peer.hello_buf.shrink_to_fit();
+            return drain(peer);
         }
+        peer.inbuf.insert(peer.inbuf.end(), buf, buf + n);
+        return drain(peer);
     };
+    // Reused across turns: a turn only refills them, so the steady state
+    // takes no heap.
+    std::vector<pollfd> pfds;
+    std::vector<std::size_t> peer_at; // pfds index -> peers_ index
     while (true) {
-        std::vector<pollfd> pfds;
-        std::vector<std::size_t> peer_at; // pfds index -> peers_ index
+        pfds.clear();
+        peer_at.clear();
         pfds.push_back({listen_fd_, POLLIN, 0});
         if (wake_fd_ >= 0)
             pfds.push_back({wake_fd_, POLLIN, 0});
