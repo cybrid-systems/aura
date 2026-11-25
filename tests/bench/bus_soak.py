@@ -3,12 +3,15 @@
 The bus soak lane (#5395).
 
 A resident host runs rounds while this driver samples the resource
-curves: the host's RSS, its open descriptors, the coordinator's
-committed bytes, the loans the peers hold, the trials that are still
-pending and the host's retained audit events. The curves must be flat —
-no monotonic growth over the run. The in-process audit log is a bounded
-window (#5459: `AuditLog::kMaxEvents`, 4096 events); each sample records
-how many it retains, and an overrun is a MISS.
+curves: the host's resident memory outside the image, its open
+descriptors, the coordinator's committed bytes, the loans the peers
+hold, the trials that are still pending and the host's retained audit
+events. The curves must be flat — no monotonic growth over the run.
+The image is not pre-faulted: its pages come in as commits reach them,
+so the image-backed share of RSS is sampled and left out of the flat
+check. The in-process audit log is a bounded window (#5459:
+`AuditLog::kMaxEvents`, 4096 events); each sample records how many it
+retains, and an overrun is a MISS.
 
 The worker is killed periodically: the coordinator must fail the round
 closed (nothing half-applied), the next round must open, and no
@@ -183,15 +186,18 @@ class Process:
         return self.proc.pid
 
 
-def _rss(pid: int) -> int:
+def _rss_split(pid: int) -> tuple[int, int]:
+    """The host's resident bytes and the image-backed (memfd) share of them."""
     try:
-        with open(f"/proc/{pid}/stat", encoding="utf-8") as handle:
-            fields = handle.read().rsplit(") ", 1)[-1].split()
-        # The rss is field 24 of /proc/<pid>/stat; the split above
-        # dropped the pid and the command name.
-        return int(fields[21]) * 4096
-    except (OSError, IndexError, ValueError):
-        return 0
+        with open(f"/proc/{pid}/status", encoding="utf-8") as handle:
+            fields = {}
+            for line in handle:
+                if line.startswith(("VmRSS:", "RssShmem:")):
+                    name, value = line.split(":", 1)
+                    fields[name] = int(value.split()[0]) * 1024
+        return fields["VmRSS"], fields.get("RssShmem", 0)
+    except (OSError, KeyError, IndexError, ValueError):
+        return 0, 0
 
 
 def _fds(pid: int) -> int:
@@ -249,10 +255,12 @@ def run(minutes: float, image_bytes: int, workspace: int) -> dict:
             if rounds % 10 == 0:
                 text = host.ask("slo", "slo=", 60.0)
                 slo = _records(text, "slo")
+                resident, image = _rss_split(host.pid())
                 samples.append(
                     {
                         "rounds": rounds,
-                        "rss": _rss(host.pid()),
+                        "rss": resident,
+                        "image": image,
                         "fds": _fds(host.pid()),
                         "frames": slo[1] if len(slo) > 1 else 0,
                         "loans": slo[10] if len(slo) > 10 else 0,
@@ -299,9 +307,11 @@ def check(report: dict) -> list[str]:
     if not samples:
         problems.append("no samples")
         return problems
-    rss = _growth(samples, "rss")
+    # The image is sealed and its pages only follow the commits, so the
+    # leak signal is the resident memory that is not the image.
+    rss = _growth(samples, "rss") - _growth(samples, "image")
     if rss > MAX_RSS_GROWTH_BYTES:
-        problems.append(f"rss grew {rss} B > {MAX_RSS_GROWTH_BYTES} B")
+        problems.append(f"the resident memory outside the image grew {rss} B > {MAX_RSS_GROWTH_BYTES} B")
     fds = _growth(samples, "fds")
     if fds > MAX_FD_GROWTH:
         problems.append(f"the descriptor count grew {fds} > {MAX_FD_GROWTH}")
@@ -344,7 +354,8 @@ def main() -> int:
         print(f"bus soak: {report['rounds']} rounds, {report['kills']} worker kills")
         for sample in report["samples"][:3] + report["samples"][-3:]:
             print(
-                f"  round {sample['rounds']:>6}: rss {sample['rss']} fds {sample['fds']} "
+                f"  round {sample['rounds']:>6}: rss {sample['rss']} image {sample.get('image', 0)} "
+                f"fds {sample['fds']} "
                 f"loans {sample['loans']} pending {sample['pending']} "
                 f"room {sample['room']} audit {sample.get('audit_events', 0)}"
             )

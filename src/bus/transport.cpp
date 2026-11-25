@@ -604,7 +604,11 @@ bool Server::handshake(int conn_fd, const HelloBody& hello, const BuildFn& build
                 *error = {errno, "mmap failed"};
             return false;
         }
-        std::memset(base, 0, bytes);
+        // A fresh memfd reads as zeros, so the mapping is not cleared
+        // here: faulting every page in at the first attach cost one minor
+        // fault per page of the image and held the whole image resident.
+        // The builder writes only what it lays out; the rest of the sealed
+        // image stays untouched until a commit reaches it.
         std::string why;
         if (!build({static_cast<std::byte*>(base), bytes}, &why)) {
             ::munmap(base, bytes);

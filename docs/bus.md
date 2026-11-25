@@ -87,6 +87,8 @@
   (五条记录频道 + 约束节),后台线程服务对端。按工作区幂等;重复调用返回同一
   路径。映像默认 256 MiB，可指定更小。频道容量随映像尺寸分配：每频道保底
   4096 条，超出保底的空间在五频道间均分（#5387）；用尽仍是硬错误。
+  映像页按需落入内存：首次附着只写表头、节目录和已预留的零区，其余页在
+  提交到达时才分配，所以宿主的 RSS 随已提交记录增长，上界是封印尺寸。
 - `(bus:unhost workspace)` 停止服务、收回线程、unlink 套接字;
   `(bus:host? workspace)` → `(ok 0|1)`。
 - 角色约定:`1` perf、`2` harness、`3` maintainer、`4` planner、`5` worker、
@@ -197,7 +199,7 @@ canary 拒绝)、`test_bus_closed_loop_e2e`(#5382,三进程正常闭环 + 五类
 - `(bus:slo session)` → `(ok frames frame-cpu-ns p99-cpu-ns publishes publish-cpu-ns attaches attach-cpu-ns catchups catchup-max loans pending)`：控制帧的服务成本（p99 是逐帧 CPU 成本的 99 分位）、publish 吞吐（按 CPU 秒折算）、握手成本、catchup 增量上界，以及当前未归还的 loan 与未决 trial（soak 看残留用）。
 - `(bus:capacity-plan session)` → `(ok rounds low remaining-metrics remaining-cc remaining-patches remaining-worldlines remaining-nodes committed-bytes image-bytes remaining-source-slots remaining-source-bytes)`：映像里还剩多少容量、还能支撑多少轮。频道容量是**交付映像的函数**（#5387），所以容量规划也跟着映像走；字符串表（候选源码，1024 个槽位 + 64 KiB 字节区）同样是容量墙，`rounds` 与 `low` 都算上它：槽位按每轮一个载体扣，字节按每轮一个 4 KiB（对齐后的最大帧文本）扣，所以 16 个满尺寸源之后计划就报 `rounds=0`，即使槽位还剩一千个。`low = 1` 表示余量已经偏低（低于 8 轮/槽），宿主据此告警。
 - 门控脚本：`tests/bench/bus_slo.py`（SLO 阈值版本化，`--check` 超限即失败）与 `tests/bench/bus_soak.py`（资源曲线采样与平坦性判定，`--check`）。周级 lane 在 `.github/workflows/bus-soak-weekly.yml`：先跑 SLO，再跑 soak（默认 24h）。
-- soak 的判据是**平坦**：RSS、fd 数、未归还 loan、未决 trial、映像 committed bytes 都不能单调增长；soak 还会周期性 SIGKILL worker（提议/裁判），闭环必须自恢复且不留残留。
+- soak 的判据是**平坦**：RSS（映像页除外——它们只随提交增长）、fd 数、未归还 loan、未决 trial、映像 committed bytes 都不能单调增长；soak 还会周期性 SIGKILL worker（提议/裁判），闭环必须自恢复且不留残留。
 
 ### v0.3.2 轮次编排(#5393)
 

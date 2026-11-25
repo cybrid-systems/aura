@@ -42,6 +42,11 @@ namespace {
         std::memcpy(img.data() + off, &v, sizeof(T));
     }
 
+    // The span is the freshly sealed memfd mapping the handshake hands
+    // the builder: a byte this function does not write reads as zero, so
+    // nothing clears the image. Only the header, the directory, the
+    // string table's reserved entry array and the constraint header are
+    // touched; the rest of the image faults in as commits reach it.
     bool build_host_image(std::span<std::byte> img, std::string* why) {
         constexpr std::uint32_t kSections = 8;
         constexpr std::uint64_t kMinPerChannel = 4096;
@@ -96,7 +101,6 @@ namespace {
                 *why = "image too small for the host section layout";
             return false;
         }
-        std::memset(img.data(), 0, img.size());
 
         ImageHeader h{};
         std::memcpy(h.magic, kImageMagic, sizeof(h.magic));
