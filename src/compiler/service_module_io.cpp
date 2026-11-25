@@ -116,6 +116,17 @@ void CompilerService::cache_module(const std::string& content, const std::string
             // Publish the cached closure into that env before returning.
             if (module_env != nullptr && disk_lowered.count(name) != 0)
                 (void)bind_define_env_only_to_env(flat, pool, node_id, name, *module_env);
+            // Issue #5464: the hit path must restore the same per-name
+            // bookkeeping the lowering path below publishes. Without
+            // function_sources_ the TW native tier has no source to
+            // re-lower at the hot threshold, so the second (warm) run of a
+            // module's self-recursive function stays on the tree walker.
+            user_bindings_.insert(name);
+            if (!is_workspace_lambda_define(name))
+                function_sources_[name] = content;
+            auto& module_names = module_functions_[path];
+            if (std::ranges::find(module_names, name) == module_names.end())
+                module_names.push_back(name);
             continue; // already cached
         }
 

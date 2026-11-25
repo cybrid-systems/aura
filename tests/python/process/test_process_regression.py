@@ -304,6 +304,11 @@ CASES = (
         "reg_concurrent_rebind.ConcurrentRebind.test_set_code_reload_next_to_a_rebind",
     ),
     (
+        5464,
+        "test_cold_and_warm_reach_the_native_tier",
+        "module_cache_tier.ModuleCacheTier.test_cold_and_warm_reach_the_native_tier",
+    ),
+    (
         5463,
         "test_six_stuck_bodies_share_one_drain_budget",
         "reg_fiber_exit.StuckBodyExit.test_six_stuck_bodies_share_one_drain_budget",
