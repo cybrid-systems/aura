@@ -58,7 +58,7 @@
 | `std/hot-update-reload` | `make-manual-reload` `make-threshold-reload` `make-composite-reload` `make-once-reload` | lib/std/hot-update-reload.aura — Issue #1370 |
 | `std/hot-update` | `hot-update:make-config` `hot-update:default-config` `hot-update:config-version` `hot-update:config-retries` `hot-update:config-telemetry?` `hot-update:reload` `hot-update:reload-with` `hot-update:reload-version` … (+7) | lib/std/hot-update.aura — Issue #1370 |
 | `std/hyper-heuristic` | `hh:make` `hh:next` `hh:credit!` `hh:report` `hh:usage` `hh:help` `tune:gate` `tune:race` … (+3) | lib/std/hyper-heuristic.aura — Issue #4945 (v0.2 P8): adaptive operator |
-| `std/io` | `file-exists?` `file-size` `file-copy` `file-delete` `file-read` `file-write` `file->string` `string->file` … (+20) | lib/std/io.aura — file verbs + R7RS ports (Issues #5003, #5005) |
+| `std/io` | `file-exists?` `file-size` `file-copy` `file-rename` `file-delete` `file-read` `file-write` `file->string` … (+21) | lib/std/io.aura — file verbs + R7RS ports (Issues #5003, #5005) |
 | `std/iter` | `;;` `List` `operations` `any?` `every?` `find` `find-index` `count` … (+25) | iter.aura — Iterator and collection utilities |
 | `std/json` | `json-stringify` `json-escape` `json-value` `c2s` `json-arr-items` `json-obj-items` | Aura JSON library -- product names over C++ hot-path prims (#1440). |
 | `std/kir-build` | `kir-build!` `kir-item-unit` `kir-rebuild-set` `kir-build-memo-stats` `kir-build-memo-clear!` | kir-build.aura — per-function incremental native builds for std/kir modules (Issue #4803) |
@@ -99,7 +99,7 @@
 | `std/regex` | `re-match?` `re-find` `re-replace` `re-split` `re-quote` | lib/std/regex.aura — Regular expression utilities |
 | `std/rule` | `rule:define` `rule:apply` `rule:apply-all` `rule:list` `rule:list-violations` `rule:remove` `rule:enable` `rule:disable` … (+3) | Aura std/rule — 代码规范系统 (P2) |
 | `std/safe-refactor` | `safe-refactor:with-snapshot` `safe-refactor:replace-fn` `safe-refactor:check-and-apply` `safe-refactor:rollback` `safe-refactor:contract-pre` `safe-refactor:contract-post` `safe-refactor:last-gate` | lib/std/safe-refactor.aura — verification-gated refactoring |
-| `std/schedule` | `schedule:make` `schedule:open` `schedule:on-due!` `schedule:after` `schedule:at` `schedule:cancel` `schedule:pending` `schedule:timers` … (+2) | lib/std/schedule.aura — timers and a persistable schedule (#5414) |
+| `std/schedule` | `schedule:make` `schedule:open` `schedule:on-due!` `schedule:after` `schedule:at` `schedule:cancel` `schedule:pending` `schedule:timers` … (+3) | lib/std/schedule.aura — timers and a persistable schedule (#5414) |
 | `std/search` | `search:init` `search:step` `search:batch` `search:run` `search:pending` `search:best` `search:best-score` `search:export` … (+7) | lib/std/search.aura — one search protocol over the program space (#5007) |
 | `std/secret` | `secret:store` `secret:default-store` `secret:get` `secret:handle-name?` `secret:put!` `secret:import-file!` `secret:import-env!` `secret:use` … (+6) | lib/std/secret — a minimal-disclosure credential store (#5417) |
 | `std/set` | `set` `set?` `set-copy` `set-clear!` `set-adjoin` `set-adjoin!` `set-delete` `set-delete!` … (+37) | lib/std/set.aura — SRFI-113 sets on the unified hash table (Issue #5003) |

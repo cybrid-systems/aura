@@ -4967,6 +4967,7 @@ void InferenceEngine::init_primitive_env_part2(TypeId Int, TypeId Bool, TypeId F
     register_primitive("file-exists?", {String}, Bool);
     register_primitive("file-size", {String}, Int);
     register_primitive("file-copy", {String, String}, Int);
+    register_primitive("file-rename", {String, String}, Int);
     register_primitive("file-delete", {String}, Int);
     register_primitive("file-read", {String}, String);
     register_primitive("file-write", {String, String}, Void);

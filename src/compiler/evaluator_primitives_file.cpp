@@ -5,6 +5,7 @@
 module;
 
 #include <cerrno>
+#include <cstdio>
 #include <dirent.h>
 #include <fcntl.h>
 #include <sys/stat.h>
@@ -569,6 +570,39 @@ void RegSplitParts::register_file_entry_primitives(PrimRegistrar add, Evaluator&
         if (S_ISDIR(st.st_mode))
             return make_int(0); // directories require explicit rmdir API
         return make_int(::unlink(resolved.c_str()) == 0 ? 1 : 0);
+    });
+    // Issue #5445: atomic rename. std/schedule writes an alarm to a temp
+    // path in the same directory and renames it over the real one, so a
+    // crash leaves either the old alarm file or the new one, never a torn
+    // JSON file. Both ends are tenant-checked and Write-scoped: a rename
+    // deletes the source, so an in-scope destination is not enough.
+    ev.defer_std_host_prim("file-rename", [&ev](std::span<const EvalValue> a) -> EvalValue {
+        if (auto denied = file_deny_io(ev, aura::compiler::security::kCapIoWrite,
+                                       "capability denied: io-write required");
+            is_error(denied))
+            return denied;
+        if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]))
+            return make_int(0);
+        auto sidx = as_string_idx(a[0]), didx = as_string_idx(a[1]);
+        if (sidx >= ev.string_heap_.size() || didx >= ev.string_heap_.size())
+            return make_int(0);
+        auto& src_path = ev.mutable_string_at(sidx);
+        auto& dst_path = ev.mutable_string_at(didx);
+        if (file_path_is_denied(src_path) || file_path_is_denied(dst_path))
+            return make_int(0);
+        std::string src_resolved, dst_resolved;
+        if (!ev.check_tenant_host_path(src_path, src_resolved, "file-rename") ||
+            !ev.check_tenant_host_path(dst_path, dst_resolved, "file-rename"))
+            return make_int(0);
+        if (auto denied = file_deny_write_scope(ev, "file-rename", src_path, src_resolved);
+            is_error(denied))
+            return denied;
+        if (auto denied = file_deny_write_scope(ev, "file-rename", dst_path, dst_resolved);
+            is_error(denied))
+            return denied;
+        if (std::rename(src_resolved.c_str(), dst_resolved.c_str()) != 0)
+            return file_io_fail(ev, "file-rename", dst_path, file_errno_reason(errno));
+        return make_int(1);
     });
     ev.defer_std_host_prim("file-size", [&ev](const auto& a) {
         // Issue #1173: require io-read for size probes.

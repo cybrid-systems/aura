@@ -8,7 +8,7 @@
 ;
 ; File verbs (host primitives; io-read / io-write are checked at the
 ; call, not at module load — #4919):
-;   file-exists? file-size file-copy file-delete
+;   file-exists? file-size file-copy file-rename file-delete
 ;   file-read   (read-file)
 ;   file-write  (write-file, #t on success, io error value otherwise)
 ;   file->string string->file  (aliases)
@@ -37,7 +37,7 @@
 ; port object, but Aura has no stderr writer primitive, so characters
 ; written to it go to stdout (noted in the R7RS table).
 
-(export file-exists? file-size file-copy file-delete
+(export file-exists? file-size file-copy file-rename file-delete
         file-read file-write file->string string->file
         file->lines file->words
         port? current-input-port current-output-port current-error-port

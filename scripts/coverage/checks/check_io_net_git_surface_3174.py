@@ -55,6 +55,7 @@ DEFERRED = (
     "command-output",
     "file-exists?",
     "file-copy",
+    "file-rename",
     "file-delete",
     "file-size",
     "directory-list",

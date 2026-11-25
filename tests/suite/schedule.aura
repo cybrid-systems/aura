@@ -74,6 +74,64 @@
   (check= 1 *hits*)
   (check= (list "done") (states s)))
 
+; #5445: fiber:sleep refuses ms > 86400000. A 25 h alarm must wait in a
+; 24 h chunk and a 1 h chunk, not die in an argument check. A fake clock
+; and sleep make the chunks observable without waiting 25 h.
+(test-case "a wait past the 24 h sleep ceiling is split and still fires"
+          (hash "issue" 5445)
+  (set! *hits* 0)
+  (define now 1700000000000)
+  (define slept (list))
+  (define s (schedule:make (hash "clock" (lambda () now)
+                                 "sleep" (lambda (ms)
+                                           (set! slept (cons ms slept))
+                                           (set! now (+ now ms))))))
+  (define t (schedule:after s 90000000 (bump! 1)))
+  (fiber:sleep 200)
+  (check= 1 *hits*)
+  (check= (list 86400000 3600000) (reverse slept))
+  (check= (list "done") (states s)))
+
+(test-case "schedule:at past the sleep ceiling is split as well"
+          (hash "issue" 5445)
+  (set! *hits* 0)
+  (define now 1700000000000)
+  (define slept (list))
+  (define s (schedule:make (hash "clock" (lambda () now)
+                                 "sleep" (lambda (ms)
+                                           (set! slept (cons ms slept))
+                                           (set! now (+ now ms))))))
+  (define t (schedule:at s (+ now 86400001) (bump! 1)))
+  (fiber:sleep 200)
+  (check= 1 *hits*)
+  (check= (list 86400000 1) (reverse slept))
+  (check= (list "done") (states s)))
+
+; #5445: a timer fiber that dies must not leave an "armed" timer behind
+; with no way to see it. The state becomes failed, the error is on the
+; timer, and schedule:pending / schedule:timers both show it.
+(test-case "a timer fiber failure is visible on the timer" (hash "issue" 5445)
+  (set! *hits* 0)
+  (define s (schedule:make (hash "sleep" (lambda (ms) (error "sleep refused")))))
+  (define t (schedule:after s 5000 (bump! 1)))
+  (fiber:sleep 100)
+  (check= 0 *hits*)
+  (check= (list "failed") (states s))
+  (define shown (car (schedule:timers s)))
+  (check= "failed" (hash-ref shown "state"))
+  (check (string-contains? (hash-ref shown "error") "sleep refused"))
+  (check (member (hash-ref shown "id")
+                 (map (lambda (x) (hash-ref x "id")) (schedule:pending s)))))
+
+(test-case "a thunk that throws on its own fiber marks the timer failed"
+          (hash "issue" 5445)
+  (define s (schedule:make (hash)))
+  (define t (schedule:after s 20 (lambda () (error "handler boom"))))
+  (fiber:sleep 100)
+  (check= (list "failed") (states s))
+  (check (string-contains? (hash-ref (car (schedule:timers s)) "error")
+                           "handler boom")))
+
 (test-case "a persisted timer writes its alarm file and removes it once it ran"
           (hash "issue" 5414)
   (set! *hits* 0)
@@ -136,20 +194,44 @@
   (check= 2 calls)
   (check= (list) (dir-files d)))
 
-(test-case "a file that is not an alarm is a refusal that names it" (hash "issue" 5414)
+; #5445: a bad alarm file only costs itself. The valid alarms next to it
+; still load and deliver, and the bad file is named in schedule:problems.
+(test-case "one bad file does not stop the valid alarms and is named"
+          (hash "issue" 5445)
   (define d (dir "torn"))
   (make-directory d)
-  (write-file (string-append d "/torn.json") "{\"id\": \"x\"")
-  (check (string-prefix? (try (schedule:open d (hash)) (catch (e) e))
-                         "schedule:open: not an alarm file: "))
+  (define now (current-time-ms))
+  ; a torn write (0 bytes) beside a valid overdue alarm
+  (write-file (string-append d "/torn.json") "")
+  (leave-alarm! d "good-overdue" (- now 1000) "armed" "kept")
+  (leave-alarm! d "good-second" (- now 500) "armed" "kept-2")
+  (define handed (list))
+  (define s (schedule:open d (hash "on-due"
+                                   (lambda (timer)
+                                     (set! handed (cons (hash-ref timer "payload") handed))))))
+  (check= 2 (length handed))
+  (check (member "kept" handed))
+  (check (member "kept-2" handed))
+  (check= 1 (length (schedule:problems s)))
+  (check= (string-append d "/torn.json")
+          (hash-ref (car (schedule:problems s)) "file"))
+  (check= "not an alarm file"
+          (hash-ref (car (schedule:problems s)) "error"))
+  ; the delivered alarm is gone, the bad file is left in place
+  (check= (list "torn.json") (dir-files d))
   ; an id that does not match its file name would be rewritten and deleted
-  ; under another name, so it is refused as well
-  (leave-alarm! d "under-another-name" (+ (current-time-ms) 1000) "armed" #f)
-  (check (string-prefix? (try (schedule:open d (hash)) (catch (e) e))
-                         "schedule:open: not an alarm file: "))
+  ; under another name: skip it too, and say why
   (file-delete (string-append d "/torn.json"))
-  (file-delete (alarm-file d "under-another-name"))
-  (check (schedule:open d (hash))))
+  (write-file (string-append d "/mismatch.json")
+              (json-encode (hash "id" "other-id"
+                                 "due" (+ (current-time-ms) 1000)
+                                 "payload" #f "state" "armed")))
+  (define again (schedule:open d (hash)))
+  (check= 1 (length (schedule:problems again)))
+  (check= "id does not match file name"
+          (hash-ref (car (schedule:problems again)) "error"))
+  (file-delete (string-append d "/mismatch.json"))
+  (check= (list) (schedule:problems (schedule:open d (hash)))))
 
 (test-case "shutdown stops the fibers and keeps the alarm files" (hash "issue" 5414)
   (set! *hits* 0)

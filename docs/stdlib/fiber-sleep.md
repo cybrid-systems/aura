@@ -65,7 +65,7 @@ timeout) on an otherwise idle scheduler.
 (define t (schedule:after s 60000 take-break))     ; once, 60 s from now
 (schedule:at s (+ (current-time-ms) 3600000) report)
 (schedule:cancel s t)                               ; → #t; take-break never runs
-(schedule:pending s)                                ; armed timers, earliest first
+(schedule:pending s)                                ; armed or failed, earliest first
 
 ; persisted across restarts
 (define p (schedule:open "~/.aura-runtime/schedule"
@@ -74,13 +74,21 @@ timeout) on an otherwise idle scheduler.
 
 A timer is `(hash "id" "due" "payload" "state")`: `due` is epoch
 milliseconds, `payload` is the optional fourth argument of
-`schedule:after` / `schedule:at`, `state` is `armed`, `fired`, `done` or
-`cancelled`. `(schedule:cancel s timer)` takes the timer or its id.
+`schedule:after` / `schedule:at`, `state` is `armed`, `fired`, `done`,
+`cancelled` or `failed`. `(schedule:cancel s timer)` takes the timer or its
+id.
 
-**A timer runs on its own fiber.** `(fiber:sleep ms)` then the thunk. A
-cancel joins that fiber before it returns, so the thunk has either run or
-never will. A thunk that throws is the timer fiber's result (visible to
-nobody unless you keep the fiber); the timer stays `fired`.
+**A timer runs on its own fiber.** The wait is split into chunks of at most
+86400000 ms (the `fiber:sleep` ceiling) and the deadline is re-read after
+each chunk, so a 25 h or weekly alarm fires on time instead of dying in the
+primitive's argument check. A cancel joins that fiber before it returns, so
+the thunk has either run or never will.
+
+**A timer fiber failure is visible on the timer.** A wait or thunk that
+throws is caught by the timer's fiber and recorded as `state: "failed"`
+plus an `"error"` string; it never becomes a silent `armed` timer with no
+fiber. `schedule:timers` shows every timer, and `schedule:pending` includes
+the failed ones so a poller sees that something is dead.
 
 ### The alarm directory
 
@@ -94,6 +102,10 @@ nobody unless you keep the fiber); the timer stays `fired`.
 | ran | deleted after the handler returns |
 | cancelled | deleted after the fiber was joined |
 
+Every write goes to a temp file in the same directory and is renamed over
+the alarm file (`write-file` + `file-rename`), so a crash leaves either the
+old JSON file or the new one, never a torn file.
+
 A restart therefore finds exactly the alarms that did not run.
 `(schedule:open DIR (hash "on-due" fn))` reads the directory and, **before
 it returns**, hands every overdue `armed` alarm and every `fired` alarm to
@@ -105,10 +117,12 @@ lost: the alarms wait for `(schedule:on-due! s fn)`.
 "fired" and "ran" leaves a `fired` file, and the next `schedule:open` hands
 it to `on-due` again. A timer keeps its id, so a handler can dedupe.
 
-**A file that is not an alarm is a refusal.** `schedule:open` raises and
-names the file — a torn write, a foreign file, or an id that does not match
-its file name (recovery rewrites and deletes by id) — instead of dropping
-it or guessing.
+**A file that is not an alarm only costs itself.** `schedule:open` skips
+it, still loads and delivers every valid alarm in the directory, and names
+the file and reason in `(schedule:problems s)` — a torn write, a foreign
+file, or an id that does not match its file name (recovery rewrites and
+deletes by id). The bad file is left in place for inspection; it is never
+dropped in silence.
 
 **Why one file per alarm.** Nothing is written from two threads: the
 caller's thread writes when it arms, the timer's own fiber rewrites and
@@ -126,9 +140,9 @@ with the process; there is nothing to recover it from.
 
 ### Grants
 
-Persistence uses `write-file`, `file-delete` and `make-directory`, which
-need the write effect. Under a sandbox without it `schedule:after` /
-`schedule:at` answer the refusal message (the string
+Persistence uses `write-file`, `file-rename`, `file-delete` and
+`make-directory`, which need the write effect. Under a sandbox without it
+`schedule:after` / `schedule:at` answer the refusal message (the string
 `effect-denied: write not granted ...`) instead of a timer and arm nothing:
 pass `--grant write:DIR`. A directory is read with the read effect. An
 in-memory schedule needs no grant beyond what `hash-set!` needs.
@@ -143,8 +157,9 @@ alarm files. The contract:
   after a restart);
 - call `schedule:shutdown` before the process exits, and `schedule:open`
   with the same directory and an `on-due` when it starts again;
-- treat a `schedule:open` refusal as a broken alarm directory: nothing was
-  delivered.
+- inspect `(schedule:problems s)` after `schedule:open`: a bad file is
+  skipped and named, and the other alarms are delivered; a raised
+  `schedule:open` error still means the directory itself could not be read.
 
 ## What moved onto fiber:sleep (#5414)
 
@@ -171,15 +186,21 @@ the idle rule); the primitive: `src/compiler/evaluator_primitives_messaging.cpp`
 - `tests/suite/schedule.aura`: fires once; cancel never fires; `at`; the
   alarm file written and removed; a restart hands overdue and `fired`
   alarms over exactly once and re-arms the rest; a throwing handler's alarm
-  is handed over again; a torn file and a mismatched id are refusals;
+  is handed over again; a >24 h wait is split into a 24 h and a 1 h chunk
+  and fires; a failed timer fiber is `failed` with its error on the timer;
+  a torn file and a mismatched id are skipped and named in
+  `schedule:problems` while the valid alarm beside them is delivered;
   `shutdown` keeps the files.
 
 ## Limits
 
 - Whole milliseconds; no sub-ms timer, and the park's wake is only as
   precise as the IO loop's tick.
-- A timer is a sleeping fiber: one fiber per pending alarm.
+- A timer is a sleeping fiber: one fiber per pending alarm, and a wait
+  longer than 24 h is a sequence of sleeps on that one fiber.
 - `schedule:open` delivers overdue alarms on the calling thread; a slow
   `on-due` slows the open.
+- A skipped alarm file stays on disk; `schedule:problems` is a per-open
+  report, not a repair.
 - The alarm directory is for one process. Two processes arming into the
   same directory at the same millisecond can pick the same id.

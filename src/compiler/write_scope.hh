@@ -1,6 +1,7 @@
 // write_scope.hh — Issue #4912: path-scoped Write (`--grant write:out/`, the
 // `ci` preset). When a scope is set, every host-path write primitive
-// (write-file, make-directory, file-copy, file-delete, serialize-workspace,
+// (write-file, make-directory, file-copy, file-rename, file-delete,
+// serialize-workspace,
 // generate-type-sigs) must land under one of its roots; anything else is an
 // effect-denied refusal. No scope = Write applies to every path (dev,
 // `--grant write`). Set once at startup, before any form runs; read-only

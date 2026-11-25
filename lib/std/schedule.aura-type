@@ -4,6 +4,7 @@ schedule:at: Any Any Any Any -> Any
 schedule:cancel: Any Any -> Bool
 schedule:pending: Any -> Any
 schedule:timers: Any -> Any
+schedule:problems: Any -> Any
 schedule:shutdown: Any -> Any
 schedule:on-due!: Any Any -> Any
 schedule:open: Any Any -> Any

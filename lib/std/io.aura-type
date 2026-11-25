@@ -1,6 +1,7 @@
 file-exists?: String -> Bool
 file-size: String -> Int
 file-copy: String String -> Bool
+file-rename: String String -> Bool
 file-delete: String -> Bool
 file-read: Any -> String
 file-write: Any Any -> Void

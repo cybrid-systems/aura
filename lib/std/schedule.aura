@@ -8,7 +8,9 @@
 ;   timer      (schedule:after s ms thunk) runs thunk once, ms from now, on
 ;              its own fiber. (schedule:cancel s timer) stops it: the body
 ;              sees the documented 'fiber-cancelled' condition and thunk is
-;              never called.
+;              never called. A wait past the fiber:sleep ceiling of 24 h
+;              (86400000 ms) is split into chunks of at most 24 h, so a
+;              daily or weekly alarm is not silently lost.
 ;   schedule   a directory with ONE JSON FILE PER ALARM. Arming writes the
 ;              file, a run deletes it, so a restart finds exactly the alarms
 ;              that did not run: (schedule:open dir opts) hands each overdue
@@ -21,12 +23,15 @@
 ;   (define t (schedule:after s 60000 take-break (hash "reason" "break")))
 ;   (schedule:cancel s t)
 ;   (schedule:at s (+ (current-time-ms) 3600000) report)
-;   (schedule:pending s)             ; armed timers, earliest first
+;   (schedule:pending s)             ; armed (or failed) timers, earliest first
 ;
 ; A timer is (hash "id" "due" "payload" "state"): due is epoch milliseconds
 ; (current-time-ms), payload is what was passed in, state is armed | fired |
-; done | cancelled. A persisted payload must be JSON (string, number,
-; boolean, list, hash): a closure is written as null.
+; done | cancelled | failed. A failed timer also carries the fiber's error as
+; "error"; it never reaches the handler and stays visible to schedule:timers
+; and schedule:pending instead of dying in an unobserved fiber. A persisted
+; payload must be JSON (string, number, boolean, list, hash): a closure is
+; written as null.
 ;
 ; Delivery is at-least-once. The alarm file goes armed -> fired before the
 ; handler runs and is deleted after it returns, so:
@@ -39,6 +44,8 @@
 ; and deletes it when it fires, and cancel joins that fiber before it
 ; touches anything: nothing is written from two threads
 ; (docs/stdlib/fiber-spawn.md). The in-memory state is an atomic counter.
+; Every write is temp-file + file-rename in the same directory, so a crash
+; leaves either the previous alarm file or the next one, never a torn file.
 ;
 ; Persistence needs the write effect. Under a sandbox without it
 ; schedule:after / schedule:at answer the refusal message (the string
@@ -48,11 +55,13 @@
 ; Interface note for aura-agents#39: the runtime owns the loop and the
 ; handlers; this module owns only timers and alarm files. It never polls a
 ; bus and never evaluates code from a file. An alarm file it cannot parse is
-; not skipped: schedule:open refuses the whole directory and names the file,
-; so a torn write is seen, not silently dropped.
+; skipped, does not stop the other alarms in the directory, and is named in
+; (schedule:problems s) with the reason, so a torn write is seen without
+; costing the valid alarms their delivery.
 
 (export schedule:make schedule:open schedule:on-due! schedule:after schedule:at
-        schedule:cancel schedule:pending schedule:timers schedule:shutdown schedule:help)
+        schedule:cancel schedule:pending schedule:timers schedule:problems
+        schedule:shutdown schedule:help)
 
 (require "std/fs" all:)
 (require "std/io" all:)
@@ -95,6 +104,7 @@
             "clock" (if (procedure? clock) clock sched-default-clock)
             "sleep" (if (procedure? sleep) sleep sched-default-sleep)
             "timers" (list)
+            "problems" (list)
             "seq" 0))))
 
 (define (sched-now s) ((hash-ref s "clock")))
@@ -110,13 +120,18 @@
 ;; ── timers ────────────────────────────────────────────────────
 
 ; The state is a counter so the timer's fiber can move it while the caller
-; reads it: 0 armed, 1 fired, 2 done, 3 cancelled. The fiber is the only
-; writer while it runs, and the caller writes only after cancel joined that
-; fiber, so no two threads write.
+; reads it: 0 armed, 1 fired, 2 done, 3 cancelled, 4 failed. The fiber is the
+; only writer while it runs, and the caller writes only after cancel joined
+; that fiber, so no two threads write.
 (define sched-armed 0)
 (define sched-fired 1)
 (define sched-done 2)
 (define sched-cancelled 3)
+(define sched-failed 4)
+
+; fiber:sleep refuses ms > 86400000. Split a longer wait instead of letting
+; the primitive's argument check kill the timer's fiber.
+(define sched-sleep-max 86400000)
 
 (define (sched-code timer) (atomic:counter-value (hash-ref timer "cell")))
 
@@ -127,14 +142,22 @@
   (cond ((= n sched-armed) "armed")
         ((= n sched-fired) "fired")
         ((= n sched-done) "done")
+        ((= n sched-failed) "failed")
         (else "cancelled")))
+
+; The cancel condition is the documented string "fiber-cancelled: ...".
+(define (sched-cancelled? e)
+  (string-prefix? (format "~a" e) "fiber-cancelled"))
 
 ; What a caller (and a handler) sees: no cell, no closure, no fiber id.
 (define (sched-view timer)
-  (hash "id" (hash-ref timer "id")
-        "due" (hash-ref timer "due")
-        "payload" (hash-ref timer "payload")
-        "state" (sched-state-name (sched-code timer))))
+  (let ((v (hash "id" (hash-ref timer "id")
+                 "due" (hash-ref timer "due")
+                 "payload" (hash-ref timer "payload")
+                 "state" (sched-state-name (sched-code timer)))))
+    (if (hash-ref timer "error" #f)
+      (begin (hash-set! v "error" (hash-ref timer "error")) v)
+      v)))
 
 (define (sched-make-timer id due payload)
   (hash "id" id
@@ -161,14 +184,22 @@
   (string-append (hash-ref s "dir") "/" (hash-ref timer "id") ".json"))
 
 ; → #t, or the refusal / failure message as a string (never raised here).
+; The bytes go to a temp file in the same directory and are renamed over the
+; alarm file, so a crash never leaves a half-written .json behind.
 (define (sched-write! s timer state)
-  (let ((r (try (write-file (sched-file s timer)
-                            (json-encode (hash "id" (hash-ref timer "id")
-                                               "due" (hash-ref timer "due")
-                                               "payload" (hash-ref timer "payload")
-                                               "state" state)))
-                (catch (e) e))))
-    (if (eq? r 1) #t r)))
+  (let* ((path (sched-file s timer))
+         (tmp (string-append path "." state ".tmp"))
+         (doc (json-encode (hash "id" (hash-ref timer "id")
+                                 "due" (hash-ref timer "due")
+                                 "payload" (hash-ref timer "payload")
+                                 "state" state)))
+         (w (try (write-file tmp doc) (catch (e) e))))
+    (if (eq? w 1)
+      (let ((r (try (file-rename tmp path) (catch (e) e))))
+        (if (eq? r 1)
+          #t
+          (begin (try (file-delete tmp) (catch (e) #f)) r)))
+      (begin (try (file-delete tmp) (catch (e) #f)) w))))
 
 ; The one alarm-file shape this module reads: an object with a string id,
 ; a non-negative epoch-ms due and the state armed or fired. #f otherwise.
@@ -179,8 +210,17 @@
        (>= (sched-int (hash-ref d "due" #f) -1) 0)
        (if (member (hash-ref d "state" #f) (list "armed" "fired")) #t #f)))
 
-; Read every alarm file. A file that is not an alarm is a refusal: one bad
-; file must not cost the others their delivery, nor be dropped in silence.
+; Record one bad alarm file next to the others. The file is left in place
+; (it may be a torn write, a foreign file or a hand edit) and never dropped
+; in silence: (schedule:problems s) names it and the reason.
+(define (sched-problem! s path why)
+  (hash-set! s "problems"
+             (append (hash-ref s "problems")
+                     (list (hash "file" path "error" why))))
+  #f)
+
+; Read every alarm file. A file that is not an alarm only costs itself: the
+; valid alarms still load, and the bad file is named in schedule:problems.
 (define (sched-load! s)
   (let ((dir (hash-ref s "dir")))
     (for-each
@@ -188,21 +228,26 @@
         (if (string-suffix? name ".json")
           (let* ((path (string-append dir "/" name))
                  (d (try (json-parse (read-file path)) (catch (e) #f))))
-            (if (not (and (sched-alarm? d)
-                          (string=? name (string-append (hash-ref d "id") ".json"))))
-              (error (string-append "schedule:open: not an alarm file: " path))
-              (let* ((timer (sched-make-timer (hash-ref d "id") (hash-ref d "due")
-                                              (hash-ref d "payload" #f))))
-                (if (string=? (hash-ref d "state" "armed") "fired")
-                  (sched-set-state! timer sched-fired)
-                  #f)
-                (hash-set! s "timers" (append (hash-ref s "timers") (list timer))))))
+            (cond
+              ((not (sched-alarm? d))
+               (sched-problem! s path "not an alarm file"))
+              ((not (string=? name (string-append (hash-ref d "id") ".json")))
+               (sched-problem! s path "id does not match file name"))
+              (else
+               (let* ((timer (sched-make-timer (hash-ref d "id") (hash-ref d "due")
+                                               (hash-ref d "payload" #f))))
+                 (if (string=? (hash-ref d "state" "armed") "fired")
+                   (sched-set-state! timer sched-fired)
+                   #f)
+                 (hash-set! s "timers" (append (hash-ref s "timers") (list timer)))))))
           #f))
-      (try (dir-files dir) (catch (e) (list))))))
+      (try (dir-files dir)
+           (catch (e) (begin (sched-problem! s dir (format "~a" e)) (list)))))))
 
 ; Mark it fired, tell the disk, call the handler, remove the alarm file,
 ; mark it done. A handler that throws leaves the timer fired and its file
-; "fired": the next schedule:open hands it to on-due again.
+; "fired": the next schedule:open hands it to on-due again. On a timer's
+; own fiber sched-run! records that throw as a failed timer instead.
 (define (sched-fire! s timer)
   (sched-set-state! timer sched-fired)
   (if (hash-ref s "dir")
@@ -214,23 +259,51 @@
     #f)
   (sched-set-state! timer sched-done))
 
-; Wait `wait` milliseconds on a fiber of our own, then deliver. The wait is
-; the cancellation safepoint: a cancelled timer never reaches sched-fire!.
-(define (sched-arm! s timer wait)
-  (hash-set! timer "fid"
-             (try (fiber:spawn (lambda ()
-                                 ((hash-ref s "sleep") wait)
-                                 (sched-fire! s timer)))
-                  (catch (e) #f))))
+; Record a timer-fiber failure on the timer itself. The state becomes
+; "failed" and the error string rides along in sched-view, so the caller can
+; see a dead timer instead of an armed one whose fiber died unobserved.
+(define (sched-fail! s timer e)
+  (hash-set! timer "error" (format "~a" e))
+  (sched-set-state! timer sched-failed)
+  #f)
+
+; Wait until the timer's due time, in chunks the primitive accepts, then
+; deliver. Re-reading the clock after each chunk keeps the deadline exact
+; and lets a cancelled timer observe the cancel at the next sleep.
+(define (sched-await! s timer)
+  (let loop ()
+    (let ((left (sched-int (- (hash-ref timer "due") (sched-now s)) 0)))
+      (if (<= left 0)
+        #t
+        (begin
+          ((hash-ref s "sleep") (min left sched-sleep-max))
+          (loop))))))
+
+; The fiber body: wait, then deliver. A non-cancel failure is recorded; a
+; cancel is left to the cancelling fiber, which sets the state after join.
+(define (sched-run! s timer)
+  (try
+    (begin (sched-await! s timer) (sched-fire! s timer))
+    (catch (e)
+      (if (sched-cancelled? e)
+        #f
+        (sched-fail! s timer e)))))
+
+; A spawn failure is a dead timer too, not an armed timer with no fiber.
+(define (sched-arm! s timer)
+  (let ((fid (try (fiber:spawn (lambda () (sched-run! s timer))) (catch (e) e))))
+    (if (and (integer? fid) (> fid 0))
+      (hash-set! timer "fid" fid)
+      (sched-fail! s timer (if (error? fid) fid "fiber:spawn failed")))))
 
 ; Persist first, then arm: a timer whose file could not be written is not
 ; running. → the timer, or the refusal message as a string.
-(define (sched-add! s timer wait)
+(define (sched-add! s timer)
   (let ((written (if (hash-ref s "dir") (sched-write! s timer "armed") #t)))
     (if (eq? written #t)
       (begin
         (hash-set! s "timers" (append (hash-ref s "timers") (list timer)))
-        (sched-arm! s timer wait)
+        (sched-arm! s timer)
         (sched-view timer))
       written)))
 
@@ -243,7 +316,7 @@
            (timer (sched-make-timer (sched-fresh-id! s) (+ (sched-now s) wait)
                                     (if (pair? rest) (car rest) #f))))
       (hash-set! timer "fire" thunk)
-      (sched-add! s timer wait))))
+      (sched-add! s timer))))
 
 ; The same at an absolute time (epoch milliseconds).
 (define (schedule:at s due thunk . rest)
@@ -255,7 +328,7 @@
         (let* ((timer (sched-make-timer (sched-fresh-id! s) at
                                         (if (pair? rest) (car rest) #f))))
           (hash-set! timer "fire" thunk)
-          (sched-add! s timer (max 0 (- at (sched-now s)))))))))
+          (sched-add! s timer))))))
 
 ; Stop an armed timer and reclaim its fiber. The body observes the cancel at
 ; its sleep, so the handler does not run. → #t when the timer was armed.
@@ -275,15 +348,24 @@
         (sched-set-state! timer sched-cancelled)
         #t))))
 
-; Armed timers, earliest first.
+; Timers that have not delivered: armed ones, plus failed ones that need
+; the caller's attention. Earliest first.
 (define (schedule:pending s)
   (sort (map sched-view
-             (filter (lambda (t) (= (sched-code t) sched-armed)) (hash-ref s "timers")))
+             (filter (lambda (t)
+                       (let ((c (sched-code t)))
+                         (or (= c sched-armed) (= c sched-failed))))
+                     (hash-ref s "timers")))
         (lambda (a b) (< (hash-ref a "due") (hash-ref b "due")))))
 
 ; Every timer this process knows.
 (define (schedule:timers s)
   (map sched-view (hash-ref s "timers")))
+
+; Alarm files schedule:open skipped because they are not valid alarms. Each
+; (hash "file" path "error" why); the file itself is left in place.
+(define (schedule:problems s)
+  (hash-ref s "problems" (list)))
 
 ; Stop every armed timer's fiber without touching its alarm file, so a
 ; process with pending alarms exits at once (a running fiber otherwise
@@ -331,7 +413,7 @@
                  (loop (cdr xs) (+ handed 1)))
                 (else
                  (hash-set! timer "fire" (lambda () (fn (sched-view timer))))
-                 (sched-arm! s timer (- (hash-ref timer "due") now))
+                 (sched-arm! s timer)
                  (loop (cdr xs) handed))))))))))
 
 ; A schedule over a directory of alarm files: (schedule:open DIR [opts]).
@@ -352,10 +434,12 @@
 
 (define (schedule:help)
   (string-append
-   "std/schedule (#5414)\n"
+   "std/schedule (#5414, #5445)\n"
    "  (schedule:open DIR (hash \"on-due\" (lambda (timer) ...)))  ; persisted\n"
    "  (schedule:make (hash))                                   ; in memory only\n"
    "  (schedule:after s MS THUNK [PAYLOAD]) (schedule:at s DUE-MS THUNK [PAYLOAD])\n"
    "  (schedule:cancel s TIMER-OR-ID) (schedule:pending s) (schedule:timers s)\n"
+   "  (schedule:problems s)   ; alarm files open skipped, with the reason\n"
    "  (schedule:shutdown s)   ; stop the fibers, keep the alarm files, exit\n"
-   "  a timer is (hash \"id\" \"due\" \"payload\" \"state\"); delivery is at-least-once\n"))
+   "  a timer is (hash \"id\" \"due\" \"payload\" \"state\") (plus \"error\" when failed)\n"
+   "  waits over 86400000 ms are split; delivery is at-least-once\n"))

@@ -122,9 +122,10 @@ infer_required_effects_from_name(std::string_view name) noexcept {
     // (would double-consume single-use). Sibling host writes:
     if (name == "shell" || name.starts_with("command-"))
         return kEffectExec;
-    // Issue #4919: a file copy / delete is a filesystem write, not an
-    // exec (same as write-file, #4575): `--allow write` lifts it.
-    if (name == "file-copy" || name == "file-delete" || name == "file-write")
+    // Issue #4919 / #5445: a file copy / delete / rename is a filesystem
+    // write, not an exec (same as write-file, #4575): `--allow write` lifts it.
+    if (name == "file-copy" || name == "file-delete" || name == "file-rename" ||
+        name == "file-write")
         return kEffectWrite;
     // Issue #4452: (aot:reload path) dlopens a caller path. Sibling
     // aot:set/get-region-mask and aot:set/get-module-version do not, so
