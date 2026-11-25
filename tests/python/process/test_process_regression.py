@@ -38,6 +38,7 @@ PARTS = (
     "reg_resolve",
     "reg_pipeline_face",
     "reg_concurrency_5476",
+    "module_cache_tier",
 )
 CASES = (
     (
