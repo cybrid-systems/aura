@@ -212,6 +212,11 @@
 ; binary size, so the data-URL text ceiling is 14,000,000 characters.
 
 (define *llm-image-data-max* 14000000)
+; Issue #5466: per-image limits alone let a long list allocate hundreds of
+; MB before the no-key exit. Cap all inline image text in one request; four
+; full 10 MB images is 56,000,000 data-URL characters.
+(define *llm-image-total-max* 56000000)
+(define *llm-image-prefix-max* 32)
 
 (define (llm:text-part text)
   (hash "type" "text" "text" text))
@@ -226,22 +231,28 @@
 
 ; #t when the URL is acceptable, else an error hash. A readable error matters:
 ; the caller sees "image-too-large", not a protocol rejection from the model.
+(define (llm-data-image-url? url)
+  ; Issue #5466: compare only the fixed media-type head; downcasing the
+  ; whole data URL was O(size) per image and allocated for every check.
+  (let* ((n (min (string-length url) *llm-image-prefix-max*))
+         (head (string-downcase (substring url 0 n))))
+    (or (string-prefix? head "data:image/png;base64,")
+        (string-prefix? head "data:image/jpeg;base64,")
+        (string-prefix? head "data:image/jpg;base64,")
+        (string-prefix? head "data:image/gif;base64,")
+        (string-prefix? head "data:image/webp;base64,"))))
+
 (define (llm-image-url-error url)
   (cond
     ((not (llm-nonempty-string? url))
      (hash "ok" #f "error" "bad-image-url"))
     ((string-prefix? url "data:")
-     (let ((lower (string-downcase url)))
-       (cond
-         ((not (or (string-prefix? lower "data:image/png;base64,")
-                   (string-prefix? lower "data:image/jpeg;base64,")
-                   (string-prefix? lower "data:image/jpg;base64,")
-                   (string-prefix? lower "data:image/gif;base64,")
-                   (string-prefix? lower "data:image/webp;base64,")))
-          (hash "ok" #f "error" "unsupported-image-type"))
-         ((> (string-length url) *llm-image-data-max*)
-          (hash "ok" #f "error" "image-too-large"))
-         (else #t))))
+     (cond
+       ((not (llm-data-image-url? url))
+        (hash "ok" #f "error" "unsupported-image-type"))
+       ((> (string-length url) *llm-image-data-max*)
+        (hash "ok" #f "error" "image-too-large"))
+       (else #t)))
     ((or (string-prefix? url "https://")
          (string-prefix? url "http://"))
      #t)
@@ -291,7 +302,7 @@
           (loop (cdr xs) pos (cons p acc)))))))
 
 (define (llm-normalize-parts-each parts)
-  (let loop ((xs parts) (acc '()))
+  (let loop ((xs parts) (acc '()) (image-chars 0))
     (if (null? xs)
       (hash "ok" #t "parts" (reverse acc))
       (let ((p (car xs)))
@@ -301,7 +312,8 @@
            (let ((s (hash-ref p "text" #f)))
              (if (string? s)
                (loop (cdr xs)
-                     (cons (llm:text-part (llm:sanitize-prompt s)) acc))
+                     (cons (llm:text-part (llm:sanitize-prompt s)) acc)
+                     image-chars)
                (hash "ok" #f "error" "bad-content"))))
           ((equal? (hash-ref p "type" #f) "image_url")
            (let* ((iu (hash-ref p "image_url" #f))
@@ -309,7 +321,13 @@
                   (e (llm-image-url-error url)))
              (if (hash? e)
                e
-               (loop (cdr xs) (cons (llm:image-part url) acc)))))
+               (let ((next (+ image-chars
+                              (if (and (string? url) (string-prefix? url "data:"))
+                                (string-length url)
+                                0))))
+                 (if (> next *llm-image-total-max*)
+                   (hash "ok" #f "error" "image-budget-exceeded")
+                   (loop (cdr xs) (cons (llm:image-part url) acc) next))))))
           (else (hash "ok" #f "error" "bad-content")))))))
 
 ; #5443: the injection gate and sanitizer run on the concatenation of all
@@ -532,11 +550,22 @@
 (define (llm:chat-request system-prompt user-content . rest)
   (let* ((parts (llm-split-rest rest))
          (extra (car parts))
-         (sys (llm:sanitize-prompt (if (string? system-prompt) system-prompt "")))
-         (usr (if (string? user-content)
-                (llm:sanitize-prompt user-content)
-                user-content)))
-    (json-encode (llm-build-request sys usr extra))))
+         (sys (llm:sanitize-prompt (if (string? system-prompt) system-prompt ""))))
+    (cond
+      ((string? user-content)
+       (if (llm:injection-risk? user-content)
+         (hash "ok" #f "error" "injection-blocked" "content" "")
+         (json-encode (llm-build-request sys (llm:sanitize-prompt user-content) extra))))
+      ((pair? user-content)
+       ; Issue #5466: the pure builder must shape/refuse a parts list
+       ; exactly like llm:chat / llm:chat-vision do.
+       (let ((checked (llm-normalize-parts user-content)))
+         (if (not (hash-ref checked "ok" #f))
+           (hash "ok" #f
+                 "error" (hash-ref checked "error" "bad-content")
+                 "content" "")
+           (json-encode (llm-build-request sys (hash-ref checked "parts") extra)))))
+      (else (hash "ok" #f "error" "bad-arg" "content" "")))))
 
 (define (llm-finish-raw raw)
   (cond

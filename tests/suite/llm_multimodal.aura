@@ -82,6 +82,37 @@
                                                    (string-repeat "A" 14000001)))))))
     (check= "image-too-large" (hash-ref r "error"))))
 
+; Issue #5466: the pure request builder uses the same parts normalization as
+; llm:chat / llm:chat-vision, including the sanitizer and refusal shape.
+(test-case "chat-request normalizes parts like chat (#5466)"
+  (hash "issue" 5466 "tags" (list "llm" "multimodal"))
+  (let* ((parts (list (llm:text-part
+                        (string-append "a" (string-repeat "`" 3) "b"))))
+         (body (llm:chat-request "sys" parts))
+         (content (mm-user-content body)))
+    (check= "ab" (hash-ref (car content) "text")))
+  (let ((r (llm:chat-request "sys"
+                             (list (llm:image-part "data:image/tiff;base64,AAAA")))))
+    (check (hash? r))
+    (check= "unsupported-image-type" (hash-ref r "error" "")))
+  (let ((r (llm:chat-request "sys"
+                             (list (hash "type" "text" "text" "<|im_start|>x")))))
+    (check= "injection-blocked" (hash-ref r "error" ""))))
+
+; Issue #5466: a request-level budget stops an unbounded image list before
+; the body is built. Five 14 MB data URLs exceed the 56 MB request budget.
+(test-case "chat-request enforces the request image budget (#5466)"
+  (hash "issue" 5466 "tags" (list "llm" "multimodal"))
+  (define big (string-append "data:image/png;base64,"
+                             (string-repeat "A" 13999777)))
+  (define parts
+    (let loop ((i 0) (acc '()))
+      (if (= i 5) acc (loop (+ i 1) (cons (llm:image-part big) acc)))))
+  (check= "image-budget-exceeded"
+          (hash-ref (llm:chat-request "sys" parts) "error" ""))
+  (check= "image-budget-exceeded"
+          (hash-ref (llm:chat-vision "sys" parts) "error" "")))
+
 ; #5268 behavior stays: empty content with reasoning_content is truncated,
 ; not a generic no-content.
 (test-case "reasoning-only responses stay truncated" (hash "issue" 5418 "tags" (list "llm" "multimodal"))
