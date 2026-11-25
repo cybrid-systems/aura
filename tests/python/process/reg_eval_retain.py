@@ -229,8 +229,11 @@ class TestIssue4859EvalProgramOwnership(unittest.TestCase):
             f"still retained.",
         )
         # The pre-fix shape was LINEAR: every batch grew by ~9-10 MB. A
-        # single batch must not grow by more than the budget either.
-        self.assertLess(
+        # single batch must not grow by more than the budget either. The
+        # budget is inclusive: on arm64 glibc the allocator's high-water can
+        # land exactly on the 8192 KB rung (16384-byte chunk ladder), while
+        # a single retained program batch was 9-10 MB and still fails.
+        self.assertLessEqual(
             worst,
             _BIG_LAMBDA_BATCH_BUDGET_KB,
             f"#4859: one batch grew {worst} KB (limit "
