@@ -103,19 +103,38 @@
             "on-due" (if (procedure? on-due) on-due #f)
             "clock" (if (procedure? clock) clock sched-default-clock)
             "sleep" (if (procedure? sleep) sleep sched-default-sleep)
-            "timers" (list)
+            "by-id" (hash)
             "problems" (list)
             "seq" 0))))
 
 (define (sched-now s) ((hash-ref s "clock")))
 
-; std/list find returns the element itself, () when nothing matches.
+; Issue #5455: id -> timer in a hash table, not a linear list scan.
 (define (sched-timer s id)
   (if (string? id)
-    (let ((hit (find (lambda (t) (string=? (hash-ref t "id") id))
-                     (hash-ref s "timers"))))
-      (if (null? hit) #f hit))
+    (hash-ref (hash-ref s "by-id") id #f)
     #f))
+
+; Issue #5455: done/cancelled timers are removed when their result has
+; been read, not kept in the table forever. The timer's own fiber only
+; moves its atomic state; this reap runs on the caller's thread, so the
+; table is not mutated from two threads.
+(define (sched-terminal? timer)
+  (let ((c (sched-code timer)))
+    (or (= c sched-done) (= c sched-cancelled))))
+
+(define (sched-reap! s)
+  (let ((by-id (hash-ref s "by-id")))
+    (let loop ((ks (hash-keys by-id)))
+      (if (null? ks)
+        #t
+        (let ((timer (hash-ref by-id (car ks) #f)))
+          (if (and (hash? timer) (sched-terminal? timer))
+            (hash-remove! by-id (car ks))
+            #f)
+          (loop (cdr ks)))))))
+
+(define (sched-all s) (hash-values (hash-ref s "by-id")))
 
 ;; ── timers ────────────────────────────────────────────────────
 
@@ -239,7 +258,7 @@
                  (if (string=? (hash-ref d "state" "armed") "fired")
                    (sched-set-state! timer sched-fired)
                    #f)
-                 (hash-set! s "timers" (append (hash-ref s "timers") (list timer)))))))
+                 (hash-set! (hash-ref s "by-id") (hash-ref timer "id") timer)))))
           #f))
       (try (dir-files dir)
            (catch (e) (begin (sched-problem! s dir (format "~a" e)) (list)))))))
@@ -302,7 +321,7 @@
   (let ((written (if (hash-ref s "dir") (sched-write! s timer "armed") #t)))
     (if (eq? written #t)
       (begin
-        (hash-set! s "timers" (append (hash-ref s "timers") (list timer)))
+        (hash-set! (hash-ref s "by-id") (hash-ref timer "id") timer)
         (sched-arm! s timer)
         (sched-view timer))
       written)))
@@ -351,16 +370,20 @@
 ; Timers that have not delivered: armed ones, plus failed ones that need
 ; the caller's attention. Earliest first.
 (define (schedule:pending s)
+  (sched-reap! s)
   (sort (map sched-view
              (filter (lambda (t)
                        (let ((c (sched-code t)))
                          (or (= c sched-armed) (= c sched-failed))))
-                     (hash-ref s "timers")))
+                     (sched-all s)))
         (lambda (a b) (< (hash-ref a "due") (hash-ref b "due")))))
 
-; Every timer this process knows.
+; Every timer this process knows. Finished ones are returned once, then
+; their result has been read and they leave the table (#5455).
 (define (schedule:timers s)
-  (map sched-view (hash-ref s "timers")))
+  (let ((views (map sched-view (sched-all s))))
+    (sched-reap! s)
+    views))
 
 ; Alarm files schedule:open skipped because they are not valid alarms. Each
 ; (hash "file" path "error" why); the file itself is left in place.
@@ -373,7 +396,8 @@
 ; in-memory timer is lost with the process: there is nothing to recover it
 ; from. → how many fibers were stopped.
 (define (schedule:shutdown s)
-  (let loop ((xs (hash-ref s "timers")) (stopped 0))
+  (sched-reap! s)
+  (let loop ((xs (sched-all s)) (stopped 0))
     (if (null? xs)
       stopped
       (let ((timer (car xs)))
@@ -396,8 +420,9 @@
     (error "schedule:on-due!: fn must be a procedure")
     (begin
       (hash-set! s "on-due" fn)
+      (sched-reap! s)
       (let ((now (sched-now s)))
-        (let loop ((xs (hash-ref s "timers")) (handed 0))
+        (let loop ((xs (sched-all s)) (handed 0))
           (if (null? xs)
             handed
             (let* ((timer (car xs))

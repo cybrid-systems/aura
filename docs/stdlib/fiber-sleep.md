@@ -88,7 +88,12 @@ the thunk has either run or never will.
 throws is caught by the timer's fiber and recorded as `state: "failed"`
 plus an `"error"` string; it never becomes a silent `armed` timer with no
 fiber. `schedule:timers` shows every timer, and `schedule:pending` includes
-the failed ones so a poller sees that something is dead.
+the failed ones so a poller sees that something is dead. A `done` or
+`cancelled` timer is returned by `schedule:timers` once; the next read
+reaps it, and `schedule:pending` reaps finished timers as it scans. The
+table is keyed by id (an arm is O(1), lookups are O(1)); a long run keeps
+`schedule:pending` / `schedule:timers` bounded by the active set rather than
+every timer ever armed (#5455).
 
 ### The alarm directory
 

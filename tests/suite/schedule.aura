@@ -269,4 +269,26 @@
               #f))
           (map dir (list "persisted" "restart" "retry" "torn" "shutdown")))
 
+; Issue #5455: fired timers leave a bounded window, not an ever-growing
+; list. The old append/lookups were O(n) per arm and per view.
+(test-case "finished timers are pruned to a bounded window" (hash "issue" 5455)
+  (define s (schedule:make (hash)))
+  (let loop ((i 0))
+    (if (< i 300) (begin (schedule:after s 1 (lambda () #f)) (loop (+ i 1))) #f))
+  ; schedule:timers returns the finished results once; the next read has
+  ; nothing left, because the result was read and reaped.
+  (let wait ((k 0))
+    (if (and (< k 4000) (> (length (schedule:timers s)) 0))
+      (begin (fiber:sleep 5) (wait (+ k 1)))
+      #f))
+  (check= 0 (hash-length (hash-ref s "by-id")))
+  (check= (list) (schedule:timers s))
+  (check= (list) (schedule:pending s))
+  ; arming another batch stays flat (the map is not copied per arm)
+  (let ((t0 (monotonic-ms)))
+    (let loop ((i 0))
+      (if (< i 100) (begin (schedule:after s 60000 (lambda () #f)) (loop (+ i 1))) #f))
+    (check (< (- (monotonic-ms) t0) 3000)))
+  (schedule:shutdown s))
+
 (test-finish)
