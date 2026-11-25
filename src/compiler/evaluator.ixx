@@ -312,7 +312,7 @@ public:
             const PrimFn* raw = held.get();
             const char* name_cstr = name.c_str();
             hot_timing_held_.push_back(std::move(held));
-            PrimFn timed =
+            const PrimFn timed =
                 [raw, name_cstr](std::span<const types::EvalValue> arguments) -> types::EvalValue {
                 if (!aura::core::arena_policy::in_render_hotpath())
                     return (*raw)(arguments);
@@ -404,7 +404,7 @@ public:
         // is benign by construction rather than by timing.
         static constexpr std::uint32_t kEffectsKnownBit = 0x1'0000u;
         if (slot < effect_cache_.size()) {
-            std::atomic_ref<std::uint32_t> word(effect_cache_[slot]);
+            const std::atomic_ref<std::uint32_t> word(effect_cache_[slot]);
             const auto cached = word.load(std::memory_order_acquire);
             if ((cached & kEffectsKnownBit) != 0)
                 return static_cast<std::uint16_t>(cached & 0xFFFFu);
@@ -708,7 +708,7 @@ public:
     // carries legacy bindings_ (Define/begin paths that bound before
     // pool was set). Rebuilds binding_index_ for O(1) lookup.
     void replace_string_bindings(std::span<const std::pair<std::string, types::EvalValue>> bs) {
-        auto guard = lock_bindings_exclusive(); // Issue #4717: top_ rewrite
+        const auto guard = lock_bindings_exclusive(); // Issue #4717: top_ rewrite
         bindings_.assign(bs.begin(), bs.end());
         binding_index_.clear();
         for (std::size_t i = 0; i < bindings_.size(); ++i)
