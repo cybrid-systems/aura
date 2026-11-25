@@ -20,6 +20,7 @@
 (require "std/json" all:)
 (require "std/process" all:)
 (require "std/io" all:)
+(require "std/list" all:)
 
 (define *mcp-protocol-version* "2024-11-05")
 
@@ -56,7 +57,7 @@
 
 ; ── one-shot transport ─────────────────────────────────────────
 
-(define (mcp-run c messages)
+(define (mcp-run c messages target-id)
   (let* ((cmd (hash-ref c "command"))
          (timeout (hash-ref c "timeout" 15))
          (dir (try (command-output "mktemp -d /tmp/aura-mcp.XXXXXX") (catch (e) #f))))
@@ -70,9 +71,28 @@
               (err (string-append dir "/stderr.txt"))
               (runner (string-append dir "/run.sh"))
               (body (mcp-jsonl messages))
+              ; Issue #5467: the one-shot transport must not wait for EOF
+              ; after the reply we asked for. Run the child in the
+              ; background, poll the response file for the target id, and
+              ; stop it once that reply is on disk (or on its own exit).
               (script (string-append
-                        "#!/bin/sh\nexec timeout " (number->string timeout)
-                        "s " cmd " < " req " > " resp " 2> " err "\n"))
+                        "#!/bin/sh\n"
+                        "timeout " (number->string timeout) "s " cmd
+                        " < " req " > " resp " 2> " err " &\n"
+                        "pid=$!\n"
+                        "i=0\n"
+                        "while [ \"$i\" -lt " (number->string (* timeout 100))
+                        " ]; do\n"
+                        "  if grep -qE '\"id\"[[:space:]]*:[[:space:]]*"
+                        (number->string target-id) "([^0-9]|$)' " resp
+                        " 2>/dev/null; then sleep 0.05; break; fi\n"
+                        "  if ! kill -0 \"$pid\" 2>/dev/null; then break; fi\n"
+                        "  sleep 0.02\n"
+                        "  i=$((i+1))\n"
+                        "done\n"
+                        "if kill -0 \"$pid\" 2>/dev/null; then kill \"$pid\" 2>/dev/null; fi\n"
+                        "wait \"$pid\" 2>/dev/null\n"
+                        "exit $?\n"))
               (w1 (try (file-write req body) (catch (e) #f)))
               (w2 (try (file-write runner script) (catch (e) #f)))
               (rc (if (and (not (error? w1)) (not (error? w2)))
@@ -82,6 +102,12 @@
          (try (shell (string-append "rm -rf " dir)) (catch (e) #f))
          (cond
            ((not (string? out))
+            (hash "ok" #f "error" "mcp-server-failed" "exit" rc))
+           ; Issue #5467: a missing command leaves an empty response
+           ; file; docs promise mcp-server-failed, not a later
+           ; method-specific name.
+           ((and (or (not (number? rc)) (not (= rc 0)))
+                 (= (string-length (string-trim out)) 0))
             (hash "ok" #f "error" "mcp-server-failed" "exit" rc))
            (else
             (hash "ok" #t "lines" out "exit" rc))))))))
@@ -112,8 +138,8 @@
         (if (string? msg) msg "mcp-error"))
       "mcp-error")))
 
-(define (mcp-session c messages)
-  (let ((r (mcp-run c messages)))
+(define (mcp-session c messages target-id)
+  (let ((r (mcp-run c messages target-id)))
     (if (not (hash-ref r "ok" #f))
       r
       (let ((replies (mcp-parse-lines (hash-ref r "lines" ""))))
@@ -127,7 +153,7 @@
 (define (mcp:initialize c)
   (if (not (mcp-client? c))
     (hash "ok" #f "error" "bad-client")
-    (let ((s (mcp-session c (mcp-init-messages))))
+    (let ((s (mcp-session c (mcp-init-messages) 1)))
       (if (not (hash-ref s "ok" #f))
         s
         (let ((init (hash-ref s "init")))
@@ -135,26 +161,51 @@
             (hash "ok" #f "error" (mcp-error-of init))
             (hash "ok" #t "result" (hash-ref init "result" (hash)))))))))
 
+(define (mcp-list-page c cursor)
+  (let* ((params (if (and (string? cursor) (> (string-length cursor) 0))
+                   (hash "cursor" cursor)
+                   (hash)))
+         (msgs (append (mcp-init-messages)
+                       (list (hash "jsonrpc" "2.0" "id" 2
+                                   "method" "tools/list"
+                                   "params" params))))
+         (s (mcp-session c msgs 2)))
+    (if (not (hash-ref s "ok" #f))
+      s
+      (let ((reply (mcp-find-id (hash-ref s "responses") 2)))
+        (if (not (hash? reply))
+          (hash "ok" #f "error" "mcp-list-failed")
+          (if (hash-ref reply "error" #f)
+            (hash "ok" #f "error" (mcp-error-of reply))
+            (let* ((result (hash-ref reply "result" (hash)))
+                   (tools (if (hash? result) (hash-ref result "tools" '()) '()))
+                   (raw-next (if (hash? result) (hash-ref result "nextCursor" #f) #f))
+                   (next (if (and (string? raw-next) (> (string-length raw-next) 0))
+                           raw-next
+                           #f)))
+              (hash "ok" #t
+                    "tools" (if (pair? tools) tools '())
+                    "nextCursor" next))))))))
+
 (define (mcp:list-tools c)
   (if (not (mcp-client? c))
     (hash "ok" #f "error" "bad-client")
-    (let* ((msgs (append (mcp-init-messages)
-                         (list (hash "jsonrpc" "2.0" "id" 2
-                                     "method" "tools/list"
-                                     "params" (hash)))))
-           (s (mcp-session c msgs)))
-      (if (not (hash-ref s "ok" #f))
-        s
-        (let ((reply (mcp-find-id (hash-ref s "responses") 2)))
-          (if (not (hash? reply))
-            (hash "ok" #f "error" "mcp-list-failed")
-            (if (hash-ref reply "error" #f)
-              (hash "ok" #f "error" (mcp-error-of reply))
-              (let* ((result (hash-ref reply "result" (hash)))
-                     (tools (if (hash? result)
-                              (hash-ref result "tools" '())
-                              '())))
-                (hash "ok" #t "tools" tools)))))))))
+    ; Issue #5467: follow nextCursor and merge every page. A stateless
+    ; server accepts a cursor in a fresh session; a repeated cursor or a
+    ; 100-page cap stops a misbehaving server instead of looping.
+    (let loop ((cursor #f) (acc '()) (pages 0) (seen '()))
+      (if (>= pages 100)
+        (hash "ok" #f "error" "mcp-list-failed")
+        (let ((page (mcp-list-page c cursor)))
+          (if (not (hash-ref page "ok" #f))
+            page
+            (let* ((tools (hash-ref page "tools" '()))
+                   (next (hash-ref page "nextCursor" #f))
+                   (all (append acc tools)))
+              (cond
+                ((not next) (hash "ok" #t "tools" all))
+                ((member? next seen) (hash "ok" #t "tools" all))
+                (else (loop next all (+ pages 1) (cons next seen)))))))))))
 
 (define (mcp:call-tool c name args)
   (cond
@@ -168,7 +219,7 @@
                                       "method" "tools/call"
                                       "params" (hash "name" name
                                                      "arguments" args)))))
-            (s (mcp-session c msgs)))
+            (s (mcp-session c msgs 3)))
        (if (not (hash-ref s "ok" #f))
          s
          (let ((reply (mcp-find-id (hash-ref s "responses") 3)))

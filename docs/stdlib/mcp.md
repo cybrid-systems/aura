@@ -17,14 +17,21 @@ system.
 
 Each call is one short-lived session: initialize +
 `notifications/initialized` + the requested method are written to the
-child's stdin as newline-delimited JSON-RPC, the child's stdout is read
-until EOF, and non-JSON lines are ignored. A server that needs a
-long-lived session (resources, subscriptions, server-initiated
-requests) is outside this MVP.
+child's stdin as newline-delimited JSON-RPC, and the child's stdout is
+read until the reply to the requested id arrives; non-JSON lines are
+ignored. A server that keeps running after stdin EOF therefore does not
+make every call wait for the timeout — the child is stopped once the
+reply is on disk. A server that needs a long-lived session (resources,
+subscriptions, server-initiated requests) is outside this MVP.
+
+`mcp:list-tools` follows `nextCursor` and merges every page. A repeated
+cursor or a 100-page cap ends the walk, so a misbehaving server cannot
+loop the client.
 
 ## Results
 
-- `mcp:list-tools` → `(hash "ok" #t "tools" [...])`; an error is
+- `mcp:list-tools` → `(hash "ok" #t "tools" [...])`, with all
+  `nextCursor` pages merged; an error is
   `(hash "ok" #f "error" message)`.
 - `mcp:call-tool` → `(hash "ok" #t "result" ...)` where `result` is the
   MCP result object (`content` array and `isError` when present).

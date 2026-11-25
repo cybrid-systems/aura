@@ -44,6 +44,34 @@
     (check (not (hash-ref r "ok" #t)))
     (check (string-contains? (hash-ref r "error" "") "unknown tool"))))
 
+; Issue #5467: follow tools/list nextCursor across pages and merge.
+(test-case "tools/list follows nextCursor" (hash "issue" 5467 "tags" (list "mcp"))
+  (define paged (mcp:client "python3 tests/fixtures/mcp_paged_server.py" 5))
+  (let* ((r (mcp:list-tools paged))
+         (names (mcp:tool-names (hash-ref r "tools" '()))))
+    (check (hash-ref r "ok" #f))
+    (check (member? "alpha" names))
+    (check (member? "beta" names))
+    (check (member? "gamma" names))
+    (check (member? "delta" names))))
+
+; Issue #5467: a reply returns immediately even when the server does not
+; exit on stdin EOF. The old transport waited for the full timeout.
+(test-case "a reply does not wait for server EOF" (hash "issue" 5467 "tags" (list "mcp"))
+  (define slow (mcp:client "python3 tests/fixtures/mcp_paged_server.py" 5))
+  (define t0 (monotonic-ms))
+  (let ((r (mcp:call-tool slow "delta" (hash))))
+    (define took (- (monotonic-ms) t0))
+    (check (hash-ref r "ok" #f))
+    (check (string-contains? (mcp-first-text (hash-ref r "result")) "delta"))
+    (check (< took 3000))))
+
+; Issue #5467: a missing command is mcp-server-failed, matching the docs.
+(test-case "a missing server is mcp-server-failed" (hash "issue" 5467 "tags" (list "mcp"))
+  (define missing (mcp:client "aura-command-does-not-exist-5467" 2))
+  (check= "mcp-server-failed" (hash-ref (mcp:initialize missing) "error" ""))
+  (check= "mcp-server-failed" (hash-ref (mcp:list-tools missing) "error" "")))
+
 (test-case "bad clients and arguments are refused before a process" (hash "issue" 5416 "tags" (list "mcp"))
   (check= "bad-client" (hash-ref (mcp:list-tools (hash)) "error"))
   (check= "bad-tool-name" (hash-ref (mcp:call-tool mcp-client "" (hash)) "error"))
