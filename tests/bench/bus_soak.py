@@ -156,6 +156,11 @@ class Process:
         self.pending = ""
 
     def ask(self, command: str, marker: str, timeout: float = 60.0) -> str:
+        # Each sample must read its own reply: the buffer holds only
+        # the answer to this command. It used to accumulate every reply,
+        # so _records found the first "slo=" ever printed and the loan,
+        # pending and committed curves were frozen at the first sample.
+        self.pending = ""
         self.proc.stdin.write(command + "\n")
         self.proc.stdin.flush()
         deadline = time.monotonic() + timeout
