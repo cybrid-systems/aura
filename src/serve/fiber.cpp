@@ -438,6 +438,20 @@ extern "C" int aura_hold_budget_poll_inbody_window(void) noexcept {
     const auto bound_us = mutation_hold_inbody_window_bound_us();
     if (bound_us == 0)
         return 0; // env 0 disables
+    // #5474: the window ends with the holder, not with the timestamp. A
+    // peer busy-path can re-stamp the arm between two polls (the snapshot
+    // may be stale by a few instructions); the gone-holder branch must win
+    // over the elapsed/now early returns so the quarantine clock clears.
+    const auto snap = mutation_hold_live_snapshot();
+    const auto armed_fiber = g_hold_budget_cancel_armed_fiber.load(std::memory_order_acquire);
+    if (!snap.held || (armed_fiber != 0 && snap.fiber_id != 0 && snap.fiber_id != armed_fiber)) {
+        // Holder gone or a different outermost holder — window no longer applies.
+        mutation_hold_budget_note_cancel_consumed(armed_fiber);
+        // Issue #3859: window ended — clear the no-edge quarantine clock.
+        g_hold_budget_no_edge_first_seen_ns.store(0, std::memory_order_release);
+        g_hold_budget_no_edge_quarantine_latched.store(0, std::memory_order_release);
+        return 0;
+    }
     const auto now = mutation_hold_steady_ns_now();
     if (now <= armed_ns)
         return 0;
@@ -475,16 +489,6 @@ extern "C" int aura_hold_budget_poll_inbody_window(void) noexcept {
     }
     if (elapsed_us <= bound_us)
         return 0;
-    const auto snap = mutation_hold_live_snapshot();
-    const auto armed_fiber = g_hold_budget_cancel_armed_fiber.load(std::memory_order_acquire);
-    if (!snap.held || (armed_fiber != 0 && snap.fiber_id != 0 && snap.fiber_id != armed_fiber)) {
-        // Holder gone or a different outermost holder — window no longer applies.
-        mutation_hold_budget_note_cancel_consumed(armed_fiber);
-        // Issue #3859: window ended — clear the no-edge quarantine clock.
-        g_hold_budget_no_edge_first_seen_ns.store(0, std::memory_order_release);
-        g_hold_budget_no_edge_quarantine_latched.store(0, std::memory_order_release);
-        return 0;
-    }
     g_mutation_hold_budget_inbody_window_exceeded_total.fetch_add(1, std::memory_order_relaxed);
     // Issue #3325: production multi-worker no-edge residual metric.
     // Soft still returns below (metric-only). Foreign unique_lock stays

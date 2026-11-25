@@ -1286,7 +1286,9 @@ int run_test_hold_budget_1slo_inject_3285() {
         auto fc = read_file("src/serve/fiber.cpp");
         auto pos = fc.find("aura_hold_budget_poll_inbody_window(void) noexcept");
         CHECK(pos != std::string::npos, "3285 AC1: poll definition present");
-        auto win = fc.substr(pos, 3200);
+        // #5474 added the gone-holder branch at the head of the poll, so
+        // the 2×SLO counter sits further from the definition.
+        auto win = fc.substr(pos, 5000);
         CHECK(win.find("Issue #3285") != std::string::npos, "3285 AC1: cites #3285");
         CHECK(win.find("mutation_hold_slo_us()") != std::string::npos,
               "3285 AC1: 1×SLO tier keyed on mutation_hold_slo_us");
@@ -2361,6 +2363,11 @@ int run_test_hold_budget_no_edge_quarantine_3859() {
                              std::memory_order_relaxed);
                 q_after.store(aura::compiler::hold_budget_no_edge_quarantine_total_v_read(),
                               std::memory_order_relaxed);
+                // Issue #5474: a peer busy-path can re-stamp the arm
+                // between the two polls. The holder is already gone, so
+                // the window must still end and clear the clock.
+                aura::compiler::g_hold_budget_cancel_armed_ns.store(
+                    aura::compiler::mutation_hold_steady_ns_now(), std::memory_order_release);
                 // Second poll: the first consume dropped the hold — the
                 // window ends (holder gone) and the quarantine clock must
                 // be cleared for the next window.

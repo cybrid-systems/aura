@@ -65,7 +65,9 @@ def main() -> int:
 
     pos = fc.find("aura_hold_budget_poll_inbody_window(void) noexcept")
     must(pos != -1, "G0: poll definition present")
-    win = fc[pos : pos + 3200] if pos != -1 else ""
+    # #5474 added the gone-holder branch at the head of the poll, so the
+    # 2×SLO counter sits further from the definition.
+    win = fc[pos : pos + 5000] if pos != -1 else ""
 
     must("Issue #3285" in win, "G1: fiber.cpp poll cites Issue #3285")
     must(
