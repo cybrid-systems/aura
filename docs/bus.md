@@ -201,7 +201,7 @@ canary 拒绝)、`test_bus_closed_loop_e2e`(#5382,三进程正常闭环 + 五类
 
 总线的开销必须**有界且可测**。协调者按**CPU 时间**（协调者线程的 `CLOCK_THREAD_CPUTIME_ID`）统计自己的开销——共享 runner 上的墙钟量的是调度器而不是工作（#5324 纪律）。
 
-- `(bus:slo session)` → `(ok frames frame-cpu-ns p99-cpu-ns publishes publish-cpu-ns attaches attach-cpu-ns catchups catchup-max loans pending)`：控制帧的服务成本（p99 是逐帧 CPU 成本的 99 分位）、publish 吞吐（按 CPU 秒折算）、握手成本、catchup 增量上界，以及当前未归还的 loan 与未决 trial（soak 看残留用）。
+- `(bus:slo session)` → `(ok frames frame-cpu-ns p99-cpu-ns publishes publish-cpu-ns attaches attach-cpu-ns catchups catchup-max loans pending)`：控制帧的服务成本（p99 是逐帧 CPU 成本的 99 分位）、publish 吞吐（按服务已提交 Publish 帧的 CPU 秒折算，含回帧与门铃；一条记录还有一次 Reserve 帧，计入 frame-cpu-ns）、握手成本、catchup 增量上界，以及当前未归还的 loan 与未决 trial（soak 看残留用）。
 - `(bus:capacity-plan session)` → `(ok rounds low remaining-metrics remaining-cc remaining-patches remaining-worldlines remaining-nodes committed-bytes image-bytes remaining-source-slots remaining-source-bytes)`：映像里还剩多少容量、还能支撑多少轮。频道容量是**交付映像的函数**（#5387），所以容量规划也跟着映像走；字符串表（候选源码，1024 个槽位 + 64 KiB 字节区）同样是容量墙，`rounds` 与 `low` 都算上它：槽位按每轮一个载体扣，字节按每轮一个 4 KiB（对齐后的最大帧文本）扣，所以 16 个满尺寸源之后计划就报 `rounds=0`，即使槽位还剩一千个。`low = 1` 表示余量已经偏低（低于 8 轮/槽），宿主据此告警。
 - 门控脚本：`tests/bench/bus_slo.py`（SLO 阈值版本化，`--check` 超限即失败）与 `tests/bench/bus_soak.py`（资源曲线采样与平坦性判定，`--check`）。周级 lane 在 `.github/workflows/bus-soak-weekly.yml`：先跑 SLO，再跑 soak（默认 24h）。
 - soak 的判据是**平坦**：RSS（映像页除外——它们只随提交增长）、fd 数、未归还 loan、未决 trial、映像 committed bytes 都不能单调增长；soak 还会周期性 SIGKILL worker（提议/裁判），闭环必须自恢复且不留残留。

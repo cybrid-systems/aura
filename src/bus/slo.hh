@@ -42,15 +42,18 @@ private:
 
 // The performance counters.
 struct SloCounters {
-    std::uint64_t frames = 0;         // the control frames served
-    std::uint64_t frame_cpu_ns = 0;   // the CPU time serving them
-    std::uint64_t p99_cpu_ns = 0;     // the p99 of the per-frame CPU cost
-    std::uint64_t publishes = 0;      // the records published
-    std::uint64_t publish_cpu_ns = 0; // the CPU time publishing them
-    std::uint64_t attaches = 0;       // the handshakes
-    std::uint64_t attach_cpu_ns = 0;  // the CPU time of the handshakes
-    std::uint64_t catchups = 0;       // the catchup replies
-    std::uint64_t catchup_max = 0;    // the largest catchup increment
+    std::uint64_t frames = 0;       // the control frames served
+    std::uint64_t frame_cpu_ns = 0; // the CPU time serving them
+    std::uint64_t p99_cpu_ns = 0;   // the p99 of the per-frame CPU cost
+    std::uint64_t publishes = 0;    // the records published
+    // The CPU time of the Publish frames that committed them, reply
+    // included: one pair of clock reads times a frame, and that frame
+    // is the publish.
+    std::uint64_t publish_cpu_ns = 0;
+    std::uint64_t attaches = 0;      // the handshakes
+    std::uint64_t attach_cpu_ns = 0; // the CPU time of the handshakes
+    std::uint64_t catchups = 0;      // the catchup replies
+    std::uint64_t catchup_max = 0;   // the largest catchup increment
     std::uint64_t version = 1;
 };
 

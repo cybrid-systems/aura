@@ -2730,9 +2730,6 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
                 }
                 std::uint64_t gen = 0;
                 std::string why;
-                // #5395: the publish cost is part of the bus's
-                // overhead — CPU time, never the wall clock.
-                const std::uint64_t publish_started_ns = slo_thread_cpu_ns();
                 if (!channel_commit({image_base_, image_size_}, channel, loan.offset, loan.length,
                                     &gen, &why)) {
                     deny(EINVAL, why);
@@ -2743,9 +2740,8 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
                 channel_view({image_base_, image_size_}, channel, &view);
                 generation_ = gen;
                 record_audit(AuditKind::Publish, root_token, 0, loan.length);
-                // #5395: the publish cost, in CPU time.
-                ++slo_.publishes;
-                slo_.publish_cpu_ns += slo_thread_cpu_ns() - publish_started_ns;
+                // The frame's own timing (serve_frame) is the publish cost.
+                publish_committed_ = true;
                 // #5381: online metrics drive the canary observation. Run
                 // the check BEFORE the reply so a revert completes before
                 // the publisher's next form observes the workspace.
@@ -4067,16 +4063,34 @@ bool Server::handle_frame(PeerSession& peer, const FrameHeader& header,
                          {reinterpret_cast<const std::byte*>(&eb), sizeof(eb)});
         return false;
     }
+    return serve_frame(peer.conn_fd, peer.session, peer.root_token, peer.caps, peer.loans,
+                       peer.channel_loans, peer.staging_capacity, peer.staging_used,
+                       &peer.subscribed, header, body);
+}
+
+bool Server::serve_frame(int conn_fd, std::uint64_t session, std::uint64_t root_token,
+                         Capability& caps, LoanLedger& loans,
+                         std::array<LoanLedger, 7>& channel_loans, std::uint64_t staging_capacity,
+                         std::uint64_t& staging_used, std::uint64_t* subscribed,
+                         const FrameHeader& header, std::span<const std::byte> body) {
     // #5395: the cost of serving a control frame is the bus's own
-    // overhead — CPU time, never the wall clock (#5324).
+    // overhead — CPU time, never the wall clock (#5324). One pair of
+    // clock reads times the frame, and a Publish frame that committed a
+    // record is also the whole cost of that publish, reply included.
+    // The thread clock is a syscall (~150 ns), so it is read four times
+    // per published record, not six.
     const std::uint64_t started_ns = slo_thread_cpu_ns();
-    const bool keep = dispatch_frame(peer.conn_fd, peer.session, peer.root_token, peer.caps,
-                                     peer.loans, peer.channel_loans, peer.staging_capacity,
-                                     peer.staging_used, &peer.subscribed, header, body);
+    publish_committed_ = false;
+    const bool keep = dispatch_frame(conn_fd, session, root_token, caps, loans, channel_loans,
+                                     staging_capacity, staging_used, subscribed, header, body);
     const std::uint64_t cost_ns = slo_thread_cpu_ns() - started_ns;
     ++slo_.frames;
     slo_.frame_cpu_ns += cost_ns;
     slo_hist_.add(cost_ns);
+    if (publish_committed_) {
+        ++slo_.publishes;
+        slo_.publish_cpu_ns += cost_ns;
+    }
     return keep;
 }
 
@@ -4126,9 +4140,9 @@ bool Server::wait_disconnect(TransportError* error) {
     while (true) {
         if (!recv_frame(conn_fd_, &header, body, error))
             return finish();
-        if (!dispatch_frame(conn_fd_, session_, root_token_, session_caps_, loans_, channel_loans_,
-                            staging_capacity_, staging_used_, nullptr, header,
-                            {body.data(), header.len}))
+        if (!serve_frame(conn_fd_, session_, root_token_, session_caps_, loans_, channel_loans_,
+                         staging_capacity_, staging_used_, nullptr, header,
+                         {body.data(), header.len}))
             return finish();
     }
 }

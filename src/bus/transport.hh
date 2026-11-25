@@ -921,6 +921,13 @@ private:
                         std::array<LoanLedger, 7>& channel_loans, std::uint64_t staging_capacity,
                         std::uint64_t& staging_used, std::uint64_t* subscribed,
                         const FrameHeader& header, std::span<const std::byte> body);
+    // #5395: dispatch one control frame and account its CPU cost. The
+    // publish cost is the whole Publish frame that committed a record.
+    bool serve_frame(int conn_fd, std::uint64_t session, std::uint64_t root_token, Capability& caps,
+                     LoanLedger& loans, std::array<LoanLedger, 7>& channel_loans,
+                     std::uint64_t staging_capacity, std::uint64_t& staging_used,
+                     std::uint64_t* subscribed, const FrameHeader& header,
+                     std::span<const std::byte> body);
     // End a session: roll back its pending trials, reclaim its loans,
     // audit Disconnect, close its fds. Never touches other sessions.
     void finish_session(PeerSession& peer);
@@ -1096,6 +1103,8 @@ private:
     // #5395: the performance counters and the capacity plan.
     SloCounters slo_{};
     SloHistogram slo_hist_{};
+    // Set by the Publish frame that committed; read by serve_frame.
+    bool publish_committed_ = false;
     // #5381: at most one active canary; its window/floor parameters.
     std::uint64_t canary_worldline_ = 0;
     std::uint64_t canary_window_ = 0;
