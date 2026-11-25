@@ -140,7 +140,10 @@ enum class Level : std::uint8_t {
     Closures = 12, // Evaluator::closures shard locks (closures_shards_[i] — one logical lock node;
                    // multi-shard holds take ascending index order, #3867)
     Module = 13,   // Evaluator::module_mtx_
-    kCount = 14,
+    // Issue #5449: Scheduler::park_deadlines_mutex_ (timed-park min-heap).
+    // Append-only: leaf lock, taken alone; no lower level is acquired under it.
+    ParkDeadline = 14,
+    kCount = 15,
 };
 
 // Process-wide observability (mirrored into CompilerMetrics by Agents).
@@ -229,6 +232,8 @@ inline std::atomic<int> g_lock_order_mode{0};
             return "Closures";
         case Level::Module:
             return "Module";
+        case Level::ParkDeadline:
+            return "ParkDeadline";
         default:
             return "Unknown";
     }

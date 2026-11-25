@@ -171,7 +171,7 @@ alarm files. The contract:
 | `std/race` default `"sleep"` | yield loop | `(fiber:sleep ms)` |
 
 The scheduler files that back the park: `src/serve/fiber.h`
-(`set_park_deadline_ms`), `src/serve/scheduler.cpp` (the deadline scan and
+(`set_park_deadline_ms`), `src/serve/scheduler.cpp` (the deadline min-heap and
 the idle rule); the primitive: `src/compiler/evaluator_primitives_messaging.cpp`.
 
 ## Acceptance evidence

@@ -9,6 +9,7 @@
 #include <ucontext.h>
 #include <chrono>
 #include <deque>
+#include <queue>
 #include <unordered_map>
 #include <unordered_set>
 #include <memory>
@@ -77,11 +78,18 @@ public:
 
     // Issue #5444: wake a blocked IO loop so its next iteration recomputes
     // the epoll timeout. A timed park armed while run() is already inside
-    // epoll_wait is invisible to the nearest-deadline scan (it runs once per
-    // iteration), so the sleeper waited for the idle tick instead of its
-    // deadline. The kick rides the offload-completion eventfd the loop
-    // already polls; draining it on an empty queue is a no-op. Any thread.
+    // epoll_wait is invisible to the timeout computed before it existed, so
+    // the sleeper waited for the idle tick instead of its deadline. The kick
+    // rides the offload-completion eventfd the loop already polls; draining
+    // it on an empty queue is a no-op. Any thread.
     void wake_io_loop() noexcept;
+
+    // Issue #5449: publish a timed-park deadline into the ordered deadline
+    // queue (min-heap) the IO loop consumes. Called by
+    // Fiber::set_park_deadline_ms on a worker; kicks an IO loop that is
+    // already inside epoll_wait so it recomputes its timeout. Any thread.
+    void note_park_deadline(Fiber* fiber, std::uint64_t deadline_ns,
+                            std::uint64_t generation) noexcept;
 
     // Issue #4726: the idle auto-stop ("all fibers done, no spawn for ~3s →
     // self-destruct") is a SERVE-lifecycle convenience: it exists so a
@@ -463,6 +471,34 @@ private:
     // mutable: owned_fibers_end_contains() runs from the const
     // has_waiting_fibers() / const event-dispatch paths (#63723).
     mutable std::mutex owned_fibers_mutex_;
+
+    // Issue #5449: timed-park deadlines in deadline order. An entry is live
+    // while the fiber still owns that exact (deadline, generation) pair;
+    // stale heads (early wake, re-arm, done) are discarded lazily. Queue
+    // size follows the number of armed parks, never the number of owned
+    // fibers, so the IO loop no longer scans owned_fibers_ per turn.
+    struct ParkDeadline {
+        std::uint64_t deadline_ns = 0;
+        std::uint64_t generation = 0;
+        Fiber* fiber = nullptr;
+    };
+    struct ParkDeadlineLater {
+        bool operator()(const ParkDeadline& a, const ParkDeadline& b) const noexcept {
+            return a.deadline_ns > b.deadline_ns;
+        }
+    };
+    std::priority_queue<ParkDeadline, std::vector<ParkDeadline>, ParkDeadlineLater> park_deadlines_;
+    mutable std::mutex park_deadlines_mutex_;
+    // Nearest live armed deadline; stale heads are dropped. False when no
+    // timed park is armed.
+    bool next_park_deadline_ns(std::uint64_t& out) noexcept;
+    // Pop every armed deadline that elapsed at now_ns and return the fibers
+    // still parked Waiting on it (not done, not already enqueued).
+    std::vector<Fiber*> take_expired_park_deadlines(std::uint64_t now_ns);
+    // Issue #5449: drop every heap entry that names `fiber` before the Fiber
+    // object is destroyed (retirement path). Lazy invalidation alone cannot
+    // protect a freed Fiber from a later peek/expire dereference.
+    void forget_park_deadline(Fiber* fiber) noexcept;
 
     // Issue #2782: AgentScope (and similar) observers notified before
     // fiber teardown so borrowed Scheduler* / Fiber* can be nulled.

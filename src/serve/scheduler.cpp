@@ -539,13 +539,102 @@ void Scheduler::wake_io_loop() noexcept {
 #endif
 }
 
-// Issue #5444: Fiber::set_park_deadline_ms arms a deadline on a worker while
-// the IO thread may already be blocked in epoll_wait with a timeout computed
-// before that deadline existed. Kick the loop so its next iteration sees the
-// deadline. Without a scheduler loop (thread backend) there is nothing to wake.
-void wake_scheduler_for_park_deadline() noexcept {
-    if (g_scheduler != nullptr)
-        g_scheduler->wake_io_loop();
+// Issue #5449: Fiber::set_park_deadline_ms arms a deadline on a worker. The
+// deadline goes into the owner scheduler's min-heap and the IO loop is kicked
+// when it is already blocked in epoll_wait with an older timeout. Without a
+// scheduler loop (thread backend) there is nothing to publish or wake.
+void scheduler_note_park_deadline(Fiber* fiber, std::uint64_t deadline_ns,
+                                  std::uint64_t generation) noexcept {
+    if (fiber == nullptr || deadline_ns == 0)
+        return;
+    Scheduler* sched = fiber->owner_sched();
+    if (sched == nullptr)
+        sched = g_scheduler;
+    if (sched == nullptr)
+        return;
+    sched->note_park_deadline(fiber, deadline_ns, generation);
+}
+
+// Issue #5449: O(log armed) instead of O(owned_fibers) per IO turn. An entry
+// is live while the fiber still owns exactly that (deadline, generation) pair;
+// an early wake / re-arm / done fiber leaves an entry that is dropped when it
+// reaches the head.
+void Scheduler::note_park_deadline(Fiber* fiber, std::uint64_t deadline_ns,
+                                   std::uint64_t generation) noexcept {
+    if (fiber == nullptr || deadline_ns == 0)
+        return;
+    {
+        ::aura::compiler::lock_order::AuditedMutexLock lock(
+            park_deadlines_mutex_, ::aura::compiler::lock_order::Level::ParkDeadline);
+        park_deadlines_.push(ParkDeadline{deadline_ns, generation, fiber});
+    }
+    // Issue #5444: the loop may be inside epoll_wait with a timeout computed
+    // before this deadline existed. An eventfd write returns it at once and
+    // the next iteration peeks the new heap head.
+    wake_io_loop();
+}
+
+bool Scheduler::next_park_deadline_ns(std::uint64_t& out) noexcept {
+    ::aura::compiler::lock_order::AuditedMutexLock lock(
+        park_deadlines_mutex_, ::aura::compiler::lock_order::Level::ParkDeadline);
+    while (!park_deadlines_.empty()) {
+        const ParkDeadline& top = park_deadlines_.top();
+        Fiber* fiber = top.fiber;
+        if (fiber != nullptr && !fiber->is_done() && fiber->park_deadline_ns() == top.deadline_ns &&
+            fiber->park_deadline_generation() == top.generation) {
+            out = top.deadline_ns;
+            return true;
+        }
+        park_deadlines_.pop();
+    }
+    return false;
+}
+
+std::vector<Fiber*> Scheduler::take_expired_park_deadlines(std::uint64_t now_ns) {
+    std::vector<Fiber*> expired;
+    ::aura::compiler::lock_order::AuditedMutexLock lock(
+        park_deadlines_mutex_, ::aura::compiler::lock_order::Level::ParkDeadline);
+    for (;;) {
+        if (park_deadlines_.empty())
+            break;
+        const ParkDeadline top = park_deadlines_.top();
+        Fiber* fiber = top.fiber;
+        const bool live = fiber != nullptr && !fiber->is_done() &&
+                          fiber->park_deadline_ns() == top.deadline_ns &&
+                          fiber->park_deadline_generation() == top.generation;
+        if (!live) {
+            park_deadlines_.pop();
+            continue;
+        }
+        if (top.deadline_ns > now_ns)
+            break;
+        park_deadlines_.pop();
+        // The mailbox recv re-runs its own deadline check after the resume;
+        // only a fiber still parked Waiting needs this synthetic wake. A
+        // fiber already queued (eventfd wake) must not be enqueued twice.
+        if (fiber->state() == FiberState::Waiting && !fiber->is_queued())
+            expired.push_back(fiber);
+    }
+    return expired;
+}
+
+void Scheduler::forget_park_deadline(Fiber* fiber) noexcept {
+    if (fiber == nullptr)
+        return;
+    ::aura::compiler::lock_order::AuditedMutexLock lock(
+        park_deadlines_mutex_, ::aura::compiler::lock_order::Level::ParkDeadline);
+    if (park_deadlines_.empty())
+        return;
+    std::vector<ParkDeadline> kept;
+    kept.reserve(park_deadlines_.size());
+    while (!park_deadlines_.empty()) {
+        const ParkDeadline top = park_deadlines_.top();
+        park_deadlines_.pop();
+        if (top.fiber != fiber)
+            kept.push_back(top);
+    }
+    for (const ParkDeadline& entry : kept)
+        park_deadlines_.push(entry);
 }
 
 // ── register_event_fiber ─────────────────────────────
@@ -759,6 +848,9 @@ bool Scheduler::retire_done_fiber(Fiber* fiber) noexcept {
         if (!dying)
             return false;
         owned_fiber_set_.erase(sit);
+        // Issue #5449: the Fiber object dies below; no heap entry may keep
+        // naming it.
+        forget_park_deadline(fiber);
     }
     fibers_retired_total_.fetch_add(1, std::memory_order_relaxed);
     return true; // dying destroys the Fiber here, outside the lock
@@ -797,6 +889,8 @@ std::size_t Scheduler::maybe_retire_pending_done_fibers() noexcept {
                 continue;
             }
             owned_fiber_set_.erase(fiber);
+            // Issue #5449: `dying` destroys the Fiber after the lock drops.
+            forget_park_deadline(fiber);
         }
         pending_retire_fibers_.swap(keep);
         pending_retire_count_.store(pending_retire_fibers_.size(), std::memory_order_release);
@@ -1380,34 +1474,22 @@ void Scheduler::run() {
         // the 2× SLO bound (no unlock; cooperative re-arm only).
         if (aura_hold_budget_cancel_armed() && wait_ms > 10)
             wait_ms = 10;
-        // Issue #2554 / #4506: a timed mailbox park is Waiting (so the steal
-        // walk and #4506 AC4 observe it) but nothing else wakes it, so the
-        // scheduler re-queues it at its own deadline. Scan owned_fibers_ (not
-        // wait_map_: a parked fiber need not be epoll-registered) and never
-        // sleep past the nearest armed deadline.
+        // Issue #2554 / #4506 / #5449: a timed mailbox park is Waiting (so
+        // the steal walk and #4506 AC4 observe it) but nothing else wakes it,
+        // so the scheduler re-queues it at its own deadline. Deadlines are
+        // armed into park_deadlines_ at park time, so the IO loop reads the
+        // nearest one in O(1) (plus lazy stale-head pops) instead of scanning
+        // every owned fiber on each turn. A parked fiber need not be
+        // epoll-registered; the heap, not wait_map_, is the source of truth.
         bool timed_park_armed = false; // #5414: a Waiting fiber with a deadline
         {
-            const auto now_ns =
-                static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
-                                               std::chrono::steady_clock::now().time_since_epoch())
-                                               .count());
             std::uint64_t nearest = 0;
-            {
-                ::aura::compiler::lock_order::AuditedMutexLock lock(
-                    owned_fibers_mutex_, ::aura::compiler::lock_order::Level::OwnedFibers);
-                for (const auto& fp : owned_fibers_) {
-                    Fiber* fiber = fp.get();
-                    if (!fiber || fiber->is_done())
-                        continue;
-                    if (fiber->state() != FiberState::Waiting)
-                        continue;
-                    const std::uint64_t dl = fiber->park_deadline_ns();
-                    if (dl != 0 && (nearest == 0 || dl < nearest))
-                        nearest = dl;
-                }
-            }
-            if (nearest != 0) {
+            if (next_park_deadline_ns(nearest)) {
                 timed_park_armed = true;
+                const auto now_ns = static_cast<std::uint64_t>(
+                    std::chrono::duration_cast<std::chrono::nanoseconds>(
+                        std::chrono::steady_clock::now().time_since_epoch())
+                        .count());
                 const std::uint64_t delta_ns = nearest > now_ns ? nearest - now_ns : 0;
                 int park_ms = static_cast<int>((delta_ns + 999999ULL) / 1000000ULL);
                 if (park_ms < 1)
@@ -1564,29 +1646,17 @@ void Scheduler::run() {
             }
         }
 
-        // Issue #2554 / #4506: re-queue timed parks whose deadline elapsed so
-        // the mailbox recv re-runs its deadline check. Scans owned_fibers_ so
-        // a parked fiber that is not epoll-registered is still woken.
+        // Issue #2554 / #4506 / #5449: re-queue timed parks whose deadline
+        // elapsed so the mailbox recv re-runs its deadline check. The expired
+        // entries are popped from the min-heap; a parked fiber that is not
+        // epoll-registered is still woken. Cost follows the expired count,
+        // never the owned-fiber count.
         {
             const auto now_ns =
                 static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
                                                std::chrono::steady_clock::now().time_since_epoch())
                                                .count());
-            std::vector<Fiber*> expired;
-            {
-                ::aura::compiler::lock_order::AuditedMutexLock lock(
-                    owned_fibers_mutex_, ::aura::compiler::lock_order::Level::OwnedFibers);
-                for (const auto& fp : owned_fibers_) {
-                    Fiber* fiber = fp.get();
-                    if (!fiber || fiber->is_done())
-                        continue;
-                    if (fiber->state() != FiberState::Waiting)
-                        continue;
-                    const std::uint64_t dl = fiber->park_deadline_ns();
-                    if (dl != 0 && dl <= now_ns)
-                        expired.push_back(fiber);
-                }
-            }
+            std::vector<Fiber*> expired = take_expired_park_deadlines(now_ns);
             for (auto* fiber : expired) {
                 if (fiber->is_done() || fiber->is_queued())
                     continue;

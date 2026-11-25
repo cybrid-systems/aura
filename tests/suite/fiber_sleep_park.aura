@@ -58,4 +58,19 @@
     (check= #t (fiber:sleep 40))
     (within-700 t0)))
 
+(test-case "a mass timed-park wake loses no sleeper" (hash "issue" 5449)
+  ; #5449: the IO loop no longer scans owned_fibers_ per turn; every
+  ; deadline lives in the scheduler's min-heap. A batch of sleepers that
+  ; all expire together must each be re-queued exactly once (stale heap
+  ; heads are dropped lazily, not re-enqueued).
+  (define done 0)
+  (define (sleeper) (fiber:sleep 40) (set! done (+ done 1)))
+  (let loop ((i 0))
+    (if (< i 512) (begin (fiber:spawn sleeper) (loop (+ i 1))) #f))
+  (let wait ((k 0))
+    (if (and (< k 20000) (< done 512))
+        (begin (fiber:sleep 2) (wait (+ k 1)))
+        #f))
+  (check= 512 done))
+
 (test-finish)

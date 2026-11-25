@@ -190,12 +190,15 @@ static void ac4_rank_table_and_source_cite() {
     CHECK(h.find("FiberRegistry = 11") != std::string::npos, "AC4: FiberRegistry = 11");
     CHECK(h.find("Closures = 12") != std::string::npos, "AC4: Closures = 12");
     CHECK(h.find("Module = 13") != std::string::npos, "AC4: Module = 13");
-    CHECK(h.find("kCount = 14") != std::string::npos, "AC4: kCount = 14");
+    CHECK(h.find("ParkDeadline = 14") != std::string::npos, "AC4: ParkDeadline = 14");
+    CHECK(h.find("kCount = 15") != std::string::npos, "AC4: kCount = 15");
     CHECK(h.find("AURA_LOCK_ORDER_AUDIT") != std::string::npos, "AC4: AUDIT env");
     CHECK(h.find("AuditedMutexLock") != std::string::npos, "AC4: AuditedMutexLock");
     CHECK(h.find("AuditScope") != std::string::npos, "AC4: AuditScope");
     CHECK(std::string_view(level_name(Level::Orphan)) == "Orphan", "AC4: level_name Orphan");
     CHECK(std::string_view(level_name(Level::WaitMap)) == "WaitMap", "AC4: level_name WaitMap");
+    CHECK(std::string_view(level_name(Level::ParkDeadline)) == "ParkDeadline",
+          "AC4: level_name ParkDeadline");
 
     const auto sch = read_file("src/serve/scheduler.cpp");
     CHECK(sch.find("Level::Orphan") != std::string::npos, "AC4: scheduler Orphan wire");

@@ -208,12 +208,14 @@ inline constexpr std::uint64_t kUnsetTenant = ~std::uint64_t{0};
 
 // Forward declare (full type in scheduler.h) — used by Fiber owner back-pointer.
 class Scheduler;
+class Fiber;
 
-// Issue #5444: a timed park armed from a worker thread must wake an IO loop
-// that is already blocked in epoll_wait with a timeout computed before that
-// deadline existed (the nearest-deadline scan runs once per loop iteration).
-// Defined in scheduler.cpp; a no-op while no scheduler loop is installed.
-void wake_scheduler_for_park_deadline() noexcept;
+// Issue #5449: an armed park deadline is published into the owner
+// Scheduler's deadline heap (and the IO loop is kicked if it is already
+// blocked in epoll_wait). Defined in scheduler.cpp; a no-op while no
+// scheduler loop is installed (thread backend).
+void scheduler_note_park_deadline(Fiber* fiber, std::uint64_t deadline_ns,
+                                  std::uint64_t generation) noexcept;
 
 // Issue #3369: forward declare (full type in multi_fiber_mailbox.h) —
 // used by Fiber::mailbox_ back-pointer so the steal-complete strong def
@@ -906,23 +908,35 @@ public:
     // which the scheduler must re-queue this fiber. A fiber parked as
     // Waiting has no attacher to write its eventfd, so without this the
     // deadline would never be re-checked (the #2554 regression).
+    //
+    // Issue #5449: the deadline is also pushed into the Scheduler's ordered
+    // priority queue (min-heap) so the IO loop no longer scans every owned
+    // fiber on each turn. The generation lets the heap discard a stale
+    // entry when this fiber is woken early, re-arms, or is done.
     void set_park_deadline_ms(int timeout_ms) {
         const auto now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
                                 std::chrono::steady_clock::now().time_since_epoch())
                                 .count();
-        park_deadline_ns_.store(static_cast<std::uint64_t>(now_ns) +
-                                    static_cast<std::uint64_t>(timeout_ms) * 1000000ULL,
-                                std::memory_order_release);
-        // Issue #5444: the IO loop looks for the nearest deadline once per
-        // iteration, before it blocks. A deadline armed while it is already
-        // inside epoll_wait is invisible until that wait returns, so the
-        // sleeper woke at the idle tick (about 1 s) instead of on time.
-        wake_scheduler_for_park_deadline();
+        const std::uint64_t deadline_ns = static_cast<std::uint64_t>(now_ns) +
+                                          static_cast<std::uint64_t>(timeout_ms) * 1000000ULL;
+        const std::uint64_t gen = park_deadline_gen_.fetch_add(1, std::memory_order_acq_rel) + 1;
+        park_deadline_ns_.store(deadline_ns, std::memory_order_release);
+        // Issue #5444: a deadline armed while the IO loop is already inside
+        // epoll_wait must kick it out, so the loop recomputes its timeout.
+        scheduler_note_park_deadline(this, deadline_ns, gen);
     }
     std::uint64_t park_deadline_ns() const {
         return park_deadline_ns_.load(std::memory_order_acquire);
     }
-    void clear_park_deadline() { park_deadline_ns_.store(0, std::memory_order_release); }
+    // Issue #5449: bump the generation even when no new deadline is armed so
+    // a heap entry left from the previous park is recognised as stale.
+    void clear_park_deadline() {
+        park_deadline_gen_.fetch_add(1, std::memory_order_acq_rel);
+        park_deadline_ns_.store(0, std::memory_order_release);
+    }
+    std::uint64_t park_deadline_generation() const {
+        return park_deadline_gen_.load(std::memory_order_acquire);
+    }
     int eventfd() const { return eventfd_; }
     // Issue #4176: close the wake eventfd as soon as the fiber is done.
     // Completed fibers stay owned by the Scheduler (owned_fibers_, per
@@ -1479,6 +1493,9 @@ private:
     std::atomic<FiberState> state_{FiberState::Ready};
     // Issue #2554 / #4506: 0 = no timed park armed.
     std::atomic<std::uint64_t> park_deadline_ns_{0};
+    // Issue #5449: monotonic arm/clear generation paired with the heap
+    // entry (see set_park_deadline_ms / clear_park_deadline).
+    std::atomic<std::uint64_t> park_deadline_gen_{0};
     std::atomic<YieldReason> last_yield_reason_{YieldReason::Explicit};
     // Issue #4883: see wait_generation()/bump_wait_generation().
     std::atomic<std::uint64_t> wait_gen_{0};
