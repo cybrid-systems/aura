@@ -10983,7 +10983,14 @@ Evaluator::FlatStep Evaluator::eval_flat_on_closure(EvalFlatCursor& cur,
             if (cl.pool)
                 p = cl.pool;
             // Issue #5342: the callee body visits its own flat's bucket.
-            let_bind_kind().clear();
+            // Issue #4599/#4745: do NOT clear the let-kind memo here. It is
+            // flat- and pool-scoped, and eval_flat_prepare_visit's
+            // bind_sym_intern_pool / bind_float_intern_flat drop it when
+            // this body really switches flat or pool; the top-level eval
+            // clears it at c_stack_depth 0. Clearing on every same-flat
+            // tail call made the game tick re-walk the same let bodies
+            // (native profile: assemble_nodeview 10.4% self, ~9.4% of the
+            // process under let_bind_kind_cached via FlatAST::get).
             name_res_enter(f, p);
             current_env = &*tail_env;
             current_id = cl.body_id;
