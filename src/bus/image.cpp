@@ -528,8 +528,8 @@ bool string_table_append(std::span<std::byte> image, std::string_view text, std:
     if (!text.empty())
         std::memcpy(image.data() + e.offset + byte_off, text.data(), text.size());
     // The digest chains the appends: this one adds its entry and its text.
-    std::uint64_t digest = fnv_continue(
-        image, e.offset + e.count * sizeof(StringTableEntry), sizeof(StringTableEntry), e.digest);
+    std::uint64_t digest = fnv_continue(image, e.offset + e.count * sizeof(StringTableEntry),
+                                        sizeof(StringTableEntry), e.digest);
     if (aligned_len != 0)
         digest = fnv_continue(image, e.offset + byte_off, aligned_len, digest);
     ImageHeader h = load_header(image);
