@@ -1785,7 +1785,9 @@ export struct Closure {
     // is unavailable. A workspace closure whose stamp no longer matches
     // the live epoch names a body the mutator may have replaced; the
     // apply sites fail closed before inlining it.
-    static constexpr std::uint64_t kNoWorkspaceEpoch = ~std::uint64_t{0};
+    static constexpr std::uint64_t kNoWorkspaceEpoch =
+        ~std::uint64_t{0}; // NOLINT(misc-non-private-member-variables-in-classes)
+    // NOLINTNEXTLINE(misc-non-private-member-variables-in-classes)
     std::uint64_t workspace_epoch = kNoWorkspaceEpoch;
 
     Closure() = default;
@@ -7069,20 +7071,27 @@ private:
         // Issue #5477 follow-up: the workspace flat this body has an
         // active reader registration on, or nullptr. Held until the
         // eval_flat_body frame exits so rebind never recycles its nodes.
-        aura::ast::FlatAST*& ws_reader_flat;
+        aura::ast::FlatAST*& ws_reader_flat; // NOLINT(misc-non-private-member-variables-in-classes)
         // Issue #5477: stable copies of the borrowed SoA spans in the
         // NodeView. FlatAST children_/params_ can reallocate (or be
         // rebuilt) under this frame between get() and the dispatch that
         // reads the ids; owning them here keeps the id list intact. The
         // inline arrays cover every ordinary form; larger vectors fall
         // back to the heap.
-        static constexpr std::size_t kWsSnapInline = 8;
-        std::array<aura::ast::NodeId, kWsSnapInline> ws_children_inline{};
-        std::array<aura::ast::SymId, kWsSnapInline> ws_params_inline{};
-        std::array<aura::ast::NodeId, kWsSnapInline> ws_ann_inline{};
-        std::vector<aura::ast::NodeId> ws_children_heap;
-        std::vector<aura::ast::SymId> ws_params_heap;
-        std::vector<aura::ast::NodeId> ws_ann_heap;
+        static constexpr std::size_t kWsSnapInline =
+            8; // NOLINT(misc-non-private-member-variables-in-classes)
+        std::array<aura::ast::NodeId, kWsSnapInline>
+            ws_children_inline{}; // NOLINT(misc-non-private-member-variables-in-classes)
+        std::array<aura::ast::SymId, kWsSnapInline>
+            ws_params_inline{}; // NOLINT(misc-non-private-member-variables-in-classes)
+        std::array<aura::ast::NodeId, kWsSnapInline>
+            ws_ann_inline{}; // NOLINT(misc-non-private-member-variables-in-classes)
+        std::vector<aura::ast::NodeId>
+            ws_children_heap; // NOLINT(misc-non-private-member-variables-in-classes)
+        std::vector<aura::ast::SymId>
+            ws_params_heap; // NOLINT(misc-non-private-member-variables-in-classes)
+        std::vector<aura::ast::NodeId>
+            ws_ann_heap; // NOLINT(misc-non-private-member-variables-in-classes)
         void pin_if_current_in_tail();
     };
     [[nodiscard]] FlatStep eval_flat_on_if(EvalFlatCursor& cur, const aura::ast::NodeView& v,

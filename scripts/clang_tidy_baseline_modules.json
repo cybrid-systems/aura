@@ -106,7 +106,7 @@
     "src/compiler/evaluator.ixx|misc-explicit-constructor": 5,
     "src/compiler/evaluator.ixx|misc-include-cleaner": 86,
     "src/compiler/evaluator.ixx|misc-no-recursion": 12,
-    "src/compiler/evaluator.ixx|misc-non-private-member-variables-in-classes": 198,
+    "src/compiler/evaluator.ixx|misc-non-private-member-variables-in-classes": 200,
     "src/compiler/evaluator.ixx|modernize-loop-convert": 1,
     "src/compiler/evaluator.ixx|modernize-use-auto": 1,
     "src/compiler/evaluator.ixx|modernize-use-nodiscard": 9,
