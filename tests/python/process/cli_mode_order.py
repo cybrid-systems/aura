@@ -124,12 +124,15 @@ class TestIssue5170ModeOrder(unittest.TestCase):
         self.assertIn("no errors", typed.stdout)
         self.assertNotIn(UNKNOWN, blob)
 
+        # #5167: --preset in front of --ir mints the dev session. The
+        # expression still comes from stdin, and the caps line is the
+        # evidence the preset was not dropped.
         ir = run_aura(["--preset", "dev", "--ir"])
         blob = ir.stdout + ir.stderr
         self.assertEqual(ir.returncode, 0, blob)
         self.assertEqual(ir.stdout.strip(), "3")
         self.assertNotIn(UNKNOWN, blob)
-        self.assertNotIn("caps=", ir.stderr)
+        self.assertIn(DEV_CAPS, ir.stderr)
 
         queried = run_aura(["--quiet", "--query", ":calls"])
         blob = queried.stdout + queried.stderr

@@ -5021,23 +5021,67 @@ static int cli_tool_missing_5171(const CliToolProgram5171& prog) {
     return 1;
 }
 
+// Defined with the other #5170 helpers. --ir needs it to tell a capability
+// flag from the program token.
+static int cli_leading_option_5170(std::string_view a);
+
 static int run_cli_ir(int argc, char** argv) {
     aura::compiler::CompilerService cs;
-    // --ir returned here before the oneshot capability parser, so --preset /
-    // --grant / --deny never reached the evaluator and set-code was
-    // effect-denied. normalize_tool_mode_5170 keeps those options in front of
-    // this mode; reuse the file-face parser with the mode flag removed, then
-    // mint the same soft session.
+    // #5167: --preset / --grant / --deny mint the same soft session as the
+    // file face. The program token does not go through that parser. The
+    // oneshot reader treats every bare arg as a file (#5240, exit 2), which
+    // rejected inline source (`aura --ir '(+ 1 2)'`) and a missing path
+    // (`cannot read`, exit 1). Options after --ir (`--preset dev --ir`) were
+    // also taken as the program, so stdin never ran.
+    // An existing file is still handed to the oneshot parser so the entry
+    // path and aura.toml preset stay in effect. Anything else is #5171:
+    // missing path-shaped token, source text, or stdin.
+    const char* program = nullptr;
+    std::vector<std::string> cap_args;
+    cap_args.reserve(static_cast<std::size_t>(argc) + 1);
+    cap_args.emplace_back(argv[0]);
+    for (int i = 1; i < argc; ++i) {
+        const std::string_view a(argv[i]);
+        if (a == "--ir")
+            continue;
+        const int skip = cli_leading_option_5170(a);
+        if (skip == 2) {
+            cap_args.emplace_back(argv[i]);
+            if (i + 1 < argc)
+                cap_args.emplace_back(argv[++i]);
+            continue;
+        }
+        if (skip == 1) {
+            cap_args.emplace_back(argv[i]);
+            continue;
+        }
+        if (a == "--error-format") {
+            cap_args.emplace_back(argv[i]);
+            if (i + 1 < argc)
+                cap_args.emplace_back(argv[++i]);
+            continue;
+        }
+        if (a.starts_with("--error-format=") || a == "-h" || a == "--help" || a == "--help-all") {
+            cap_args.emplace_back(argv[i]);
+            continue;
+        }
+        if (!a.empty() && a.front() == '-') {
+            cap_args.emplace_back(argv[i]);
+            continue;
+        }
+        if (!program) {
+            program = argv[i];
+            continue;
+        }
+        cap_args.emplace_back(argv[i]);
+    }
+    if (program) {
+        std::error_code ec;
+        if (std::filesystem::is_regular_file(program, ec) && !ec)
+            cap_args.emplace_back(program);
+    }
     OneshotLaunch launch;
     {
-        std::vector<std::string> cap_args;
-        cap_args.reserve(static_cast<std::size_t>(argc));
-        cap_args.emplace_back(argv[0]);
-        for (int i = 1; i < argc; ++i) {
-            if (std::string_view(argv[i]) == "--ir")
-                continue;
-            cap_args.emplace_back(argv[i]);
-        }
         std::vector<char*> cap_argv;
         cap_argv.reserve(cap_args.size() + 1);
         for (auto& arg : cap_args)
@@ -5051,8 +5095,8 @@ static int run_cli_ir(int argc, char** argv) {
     }
     std::string source = launch.all_input;
     if (source.empty()) {
-        if (argc > 2) {
-            const CliToolProgram5171 prog = cli_tool_program_5171(argv[2]);
+        if (program) {
+            const CliToolProgram5171 prog = cli_tool_program_5171(program);
             if (prog.missing)
                 return cli_tool_missing_5171(prog);
             source = prog.text;
