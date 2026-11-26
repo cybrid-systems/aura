@@ -662,9 +662,12 @@ void FlatAST::mark_dirty(NodeId id, std::uint8_t reasons) {
         std::unique_lock<std::shared_mutex> wlock(dirty_column_mtx_.mutable_get());
         if (id >= dirty_.size())
             dirty_.resize(id + 1, 0);
-        const auto before = dirty_[id];
+        // Issue #5476: the non-const column element is a Ref proxy, so a
+        // `const auto before = dirty_[id]` would bind the proxy and re-read
+        // the post-write mirror in the comparison below. Snapshot the value.
+        const auto before = dirty_.load(id, std::memory_order_relaxed);
         dirty_[id] |= reasons;
-        if (dirty_[id] != before)
+        if (dirty_.load(id, std::memory_order_relaxed) != before)
             dirty_column_writes_total_.fetch_add(1, std::memory_order_relaxed);
         // Issue #1519: post — requested reason bits are set after stamp.
         contract_assert(reasons == 0 || (dirty_[id] & reasons) == reasons);

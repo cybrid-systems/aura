@@ -189,7 +189,10 @@ int run_test_macro_dirty_bits_lock() {
         CHECK(src.find("apply_macro_dirty_bits") != std::string::npos &&
                   src.find("dirty_column_mtx_") != std::string::npos,
               "lock used in apply_macro");
-        CHECK(src.find("fetch_or(reasons") != std::string::npos &&
+        // Issue #5476: the column stores its bits in the atomic mirror, so
+        // the RMW names the macro column and index instead of a vector
+        // element's atomic_ref.
+        CHECK(src.find("macro_dirty_.fetch_or(id, reasons") != std::string::npos &&
                   src.find("newly_set = static_cast<std::uint8_t>(reasons & ~prev)") !=
                       std::string::npos,
               "newly_set via fetch_or prev");

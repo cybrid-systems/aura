@@ -58,6 +58,8 @@ public:
         if (this != &o) {
             store_ = std::move(o.store_);
             mirror_ = std::move(o.mirror_);
+            mirror_size_.store(o.mirror_size_.load(std::memory_order_relaxed),
+                               std::memory_order_release);
         }
         return *this;
     }

@@ -1305,6 +1305,7 @@ static std::uint32_t lower_flat_variable(
                         // refresh so stale flat/pool are not retained.
                         const bool in_impact_scope =
                             !g_lowering_hooks.impact_func_indices ||
+                            g_lowering_hooks.impact_func_indices->empty() ||
                             g_lowering_hooks.impact_func_indices->count(ci) > 0;
                         // Issue #224 Cycle 2: shared_ptr<>-based
                         // bridge. The cache bridge holds a
