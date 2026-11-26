@@ -13175,6 +13175,27 @@ std::optional<EvalResult> Evaluator::eval_flat_prepare_visit(EvalFlatCursor& cur
     auto& p = cur.p;
     auto& current_env = cur.current_env;
     auto& current_id = cur.current_id;
+    // Issue #5477: a body that entered over the workspace flat must not
+    // keep executing after a *different* executor structurally changed
+    // that flat. A sibling rebind + eval-current recycles node slots;
+    // the child id this frame already owns can then name another form,
+    // and the body would run that form in its own env (observed as a
+    // type error in the wrong define). Fail closed at the first node
+    // visit after the change. Same-fiber mutations (the body itself
+    // calls mutate:*) adopt the new epoch and keep the existing
+    // restamp/continue behaviour.
+    if (f == workspace_flat_) {
+        const auto live_ws_epoch = workspace_mutation_epoch_.load(std::memory_order_acquire);
+        if (live_ws_epoch != cur.ws_epoch) {
+            if (workspace_mutation_writer_.load(std::memory_order_acquire) !=
+                workspace_eval_token())
+                return std::unexpected(Diagnostic{
+                    ErrorKind::StaleWorkspace,
+                    "stale workspace: another fiber mutated the workspace while this body was "
+                    "evaluating — retry the form (or re-run (eval-current))"});
+            cur.ws_epoch = live_ws_epoch;
+        }
+    }
     // Park, and reclaim if this thread owes a sweep, before any fast return.
     // Integer calls then skip the intern-pool generation and current-flat
     // publish loads. The if / self-call still run the full prologue.
@@ -13317,6 +13338,47 @@ std::optional<EvalResult> Evaluator::eval_flat_prepare_visit(EvalFlatCursor& cur
         auto cached = f->get_cached_value(current_id);
         if (cached != aura::ast::FlatAST::kNotCached) {
             return EvalResult(EvalValue(cached));
+        }
+    }
+
+    // Issue #5477: own the borrowed SoA spans before dispatch. A sibling
+    // workspace mutation can append/reallocate children_/params_ while
+    // this frame evaluates the node's arguments; the NodeView's spans
+    // would then point at freed storage, and the child ids read after
+    // the reallocation name unrelated forms (the observed Closure-in-+
+    // failure: id 0 for both arguments). Copy immediately after get(),
+    // so the id list this dispatch walks is a stable snapshot. Only the
+    // workspace flat is mutated by another fiber; every other flat keeps
+    // the zero-copy path.
+    if (f == workspace_flat_) {
+        const auto nch = v.children.size();
+        if (nch <= EvalFlatCursor::kWsSnapInline) {
+            std::copy(v.children.begin(), v.children.end(), cur.ws_children_inline.begin());
+            v.children = std::span<const aura::ast::NodeId>(cur.ws_children_inline.data(), nch);
+        } else {
+            cur.ws_children_heap.assign(v.children.begin(), v.children.end());
+            v.children = std::span<const aura::ast::NodeId>(cur.ws_children_heap.data(),
+                                                            cur.ws_children_heap.size());
+        }
+        const auto npar = v.params.size();
+        if (npar <= EvalFlatCursor::kWsSnapInline) {
+            std::copy(v.params.begin(), v.params.end(), cur.ws_params_inline.begin());
+            v.params = std::span<const aura::ast::SymId>(cur.ws_params_inline.data(), npar);
+        } else {
+            cur.ws_params_heap.assign(v.params.begin(), v.params.end());
+            v.params = std::span<const aura::ast::SymId>(cur.ws_params_heap.data(),
+                                                         cur.ws_params_heap.size());
+        }
+        const auto nann = v.param_annotations.size();
+        if (nann <= EvalFlatCursor::kWsSnapInline) {
+            std::copy(v.param_annotations.begin(), v.param_annotations.end(),
+                      cur.ws_ann_inline.begin());
+            v.param_annotations =
+                std::span<const aura::ast::NodeId>(cur.ws_ann_inline.data(), nann);
+        } else {
+            cur.ws_ann_heap.assign(v.param_annotations.begin(), v.param_annotations.end());
+            v.param_annotations =
+                std::span<const aura::ast::NodeId>(cur.ws_ann_heap.data(), cur.ws_ann_heap.size());
         }
     }
 
@@ -14601,6 +14663,10 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
         // taken from — TCO may re-point f mid-loop.
         std::uint16_t body_gen = f->generation();
         aura::ast::FlatAST* body_gen_flat = f;
+        // Issue #5477: workspace content epoch at body entry. prepare_visit
+        // compares it against the live epoch; a sibling executor's mutation
+        // fails this body closed before it reads a recycled node slot.
+        std::uint64_t body_ws_epoch = workspace_mutation_epoch_.load(std::memory_order_acquire);
         // Issue #2871: when TCO rebinds tail_env, any Env that still serves
         // as a raw parent_ target (letrec / inline-lambda child frames)
         // must outlive the rebind. Call TCO materialize uses SoA capture
@@ -14608,7 +14674,8 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
         // pin only when we are about to emplace a child of *current_env
         // while current_env lives inside tail_env.
         std::vector<std::unique_ptr<Env>> tco_pinned;
-        EvalFlatCursor cursor{f, p, current_env, current_id, tail_env, tco_pinned, tco};
+        EvalFlatCursor cursor{f,        p,          current_env, current_id,
+                              tail_env, tco_pinned, tco,         body_ws_epoch};
         auto pin_if_current_in_tail = [&]() { cursor.pin_if_current_in_tail(); };
 
         // Issue #4454: C-stack depth is checked in the eval_flat wrapper

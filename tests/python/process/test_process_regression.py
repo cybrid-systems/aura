@@ -317,6 +317,11 @@ CASES = (
         "reg_fiber_exit.StuckBodyExit.test_six_stuck_bodies_share_one_drain_budget",
     ),
     (
+        5477,
+        "test_define_call_next_to_rebind_eval_current_jit",
+        "reg_concurrent_rebind.ConcurrentRebind.test_define_call_next_to_rebind_eval_current_jit",
+    ),
+    (
         5436,
         "test_program_end_exits_with_its_status",
         "reg_fiber_exit.StuckBodyExit.test_program_end_exits_with_its_status",

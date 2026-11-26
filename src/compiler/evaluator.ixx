@@ -3233,6 +3233,10 @@ public:
             aura::compiler::lock_order::on_acquire(aura::compiler::lock_order::Level::Workspace);
             lock_ = std::unique_lock<std::shared_mutex>(ev.workspace_mtx_);
             owns_unique_ = true;
+            // Issue #5477: a fresh workspace hold is a structural-change
+            // point (set-code / eval-current's macro expansion / relower);
+            // publish it before the caller writes.
+            ev.note_workspace_mutation_begin();
             if (eval_current_pin) {
                 Evaluator::note_eval_current_shared_enter();
                 pin_armed_ = true;
@@ -7050,6 +7054,23 @@ private:
         std::optional<Env>& tail_env;
         std::vector<std::unique_ptr<Env>>& tco_pinned;
         aura::core::fiber_ctx::Context::TcoReuseState& tco;
+        // Issue #5477: workspace epoch this body entered at. A sibling
+        // mutation advances the Evaluator epoch; prepare_visit refuses
+        // before touching a node when the writer is a different executor.
+        std::uint64_t& ws_epoch;
+        // Issue #5477: stable copies of the borrowed SoA spans in the
+        // NodeView. FlatAST children_/params_ can reallocate (or be
+        // rebuilt) under this frame between get() and the dispatch that
+        // reads the ids; owning them here keeps the id list intact. The
+        // inline arrays cover every ordinary form; larger vectors fall
+        // back to the heap.
+        static constexpr std::size_t kWsSnapInline = 8;
+        std::array<aura::ast::NodeId, kWsSnapInline> ws_children_inline{};
+        std::array<aura::ast::SymId, kWsSnapInline> ws_params_inline{};
+        std::array<aura::ast::NodeId, kWsSnapInline> ws_ann_inline{};
+        std::vector<aura::ast::NodeId> ws_children_heap;
+        std::vector<aura::ast::SymId> ws_params_heap;
+        std::vector<aura::ast::NodeId> ws_ann_heap;
         void pin_if_current_in_tail();
     };
     [[nodiscard]] FlatStep eval_flat_on_if(EvalFlatCursor& cur, const aura::ast::NodeView& v,
@@ -8549,6 +8570,27 @@ private:
     //     memory_order_acquire — synchronizes with prior releases.
     //   - read for stats / debug: memory_order_relaxed is fine.
     std::atomic<std::uint64_t> defuse_version_{0};
+    // Issue #5477: workspace content epoch. Every structural workspace
+    // write bumps it before the write starts, stamped with the fiber /
+    // thread that owns the write. A tree-walker body that entered over
+    // the workspace flat records the epoch at entry and refuses
+    // (StaleWorkspace) when a *different* executor changed it mid-body.
+    // Same-fiber mutations (a body that calls mutate:*) adopt the new
+    // epoch and keep the existing restamp path. This closes the window
+    // where a sibling rebind + eval-current recycles a node slot while
+    // the caller executes the old child id: the caller now fails closed
+    // instead of running the node that landed in that slot.
+    std::atomic<std::uint64_t> workspace_mutation_epoch_{0};
+    std::atomic<std::uint64_t> workspace_mutation_writer_{0};
+    // Stable identity of the current execution context: the fiber id when
+    // running on a fiber (stable across worker migration), otherwise a
+    // per-thread token. The non-fiber arm sets bit 0 so it can never
+    // collide with a fiber arm value.
+    static std::uint64_t workspace_eval_token() noexcept;
+    void note_workspace_mutation_begin() noexcept {
+        workspace_mutation_writer_.store(workspace_eval_token(), std::memory_order_release);
+        workspace_mutation_epoch_.fetch_add(1, std::memory_order_acq_rel);
+    }
 
 public:
     // Issue #4682 step 1 (shared change cone): a rebind that already

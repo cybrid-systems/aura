@@ -1419,6 +1419,22 @@ struct FiberHookRegistrar {
 };
 static FiberHookRegistrar g_fiber_hook_registrar{};
 
+// Issue #5477: stable execution-context token for the workspace content
+// epoch. A fiber keeps its id across worker migration, so a body that
+// yields/resumes still recognises its own mutation. Off-fiber the thread
+// token is enough (two CLI threads never share a body frame).
+std::uint64_t aura::compiler::Evaluator::workspace_eval_token() noexcept {
+    if (g_current_fiber_void != nullptr) {
+        auto* fiber = static_cast<aura::serve::Fiber*>(g_current_fiber_void);
+        return 0x100000000ull | (static_cast<std::uint64_t>(fiber->id()) & 0xffffffffull);
+    }
+    static thread_local const std::uint64_t token = [] {
+        const auto h = std::hash<std::thread::id>{}(std::this_thread::get_id());
+        return (h << 1) | 1ull;
+    }();
+    return token;
+}
+
 std::vector<aura::compiler::Evaluator::MutationCheckpoint>&
 aura::compiler::Evaluator::active_mutation_stack_static() {
     if (g_current_fiber_void != nullptr) {
