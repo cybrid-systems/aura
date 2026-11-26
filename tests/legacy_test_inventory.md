@@ -18,8 +18,8 @@ This file is not the decision tree for a new test. Ask `python3 tests/run.py hom
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 961 | Preferred destination suites |
-| **Total scanned** | **961** | |
+| `tests/core/test_*.cpp` | 962 | Preferred destination suites |
+| **Total scanned** | **962** | |
 
 ### Related artifacts
 
@@ -43,7 +43,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 89 | 89 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 56 | 56 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 135 | 135 | P2 — often thin schema probes; collapse into obs matrix |
-| `uncategorized` | Uncategorized / mixed | 0 | 0 | 87 | 87 | P3 — review case-by-case |
+| `uncategorized` | Uncategorized / mixed | 0 | 0 | 88 | 88 | P3 — review case-by-case |
 
 ## Patterns, harness usage, coupling
 
@@ -604,6 +604,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_ir_metadata_interpreter_jit_closed_loop.cpp`
 - `tests/compiler/test_ir_optimize_type_info_chain.cpp`
 - `tests/reflect/test_ir_pod_phase4.cpp`
+- `tests/compiler/test_ir_runtime_require.cpp`
 - `tests/compiler/test_ir_soa_dual_emit_batch.cpp`
 - `tests/compiler/test_ir_soa_incremental_closed_loop.cpp`
 - `tests/compiler/test_ir_soa_layout_stamp.cpp`
@@ -2129,13 +2130,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_verify_parse_shared_helper.cpp` (—) [domain_suite, theme_compiler] — Issue #1771 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_workspace_mtx_contention.cpp` (—) [domain_suite, theme_compiler] — AC1: Source cites #2523; residual strategy documented
 
-### `uncategorized` — Uncategorized / mixed (87)
+### `uncategorized` — Uncategorized / mixed (88)
 
 **Target:** manual triage before domain placement
 
 **Priority:** P3 — review case-by-case
 
-#### domain/ (87)
+#### domain/ (88)
 
 - `tests/core/test_address_bits_scratch.cpp` (—) [domain_suite, theme_core] — AC1: bit_cast round-trips a pointer and an integer address
 - `tests/compiler/test_and_or_error_value.cpp` (—) [domain_suite, theme_compiler] — (#4535 contract: only the UNCAUGHT face prints).
@@ -2183,6 +2184,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_hot_pass_contract_batch.cpp` (—) [small, batch_driver, domain_suite, theme_compiler] — test_hot_pass_contract_batch.cpp — thematic multi-TU batch
 - `tests/compiler/test_ir_const_string_intern.cpp` (—) [domain_suite, theme_compiler] — AC1: IR-path loop with a string literal: heap growth O(1) not O(N)
 - `tests/compiler/test_ir_optimize_type_info_chain.cpp` (—) [domain_suite, theme_compiler] — AC1: X→0→5 multi-step chain remaps uses to terminal source (not MAX)
+- `tests/compiler/test_ir_runtime_require.cpp` (—) [small, domain_suite, theme_compiler] — binds the name with a runtime require inside a function (the live
 - `tests/compiler/test_json_parse_number_exception.cpp` (—) [domain_suite, theme_compiler] — AC1: oversized integer → error (not crash)
 - `tests/compiler/test_json_parse_object_grow.cpp` (—) [domain_suite, theme_compiler] — AC1: 8-key object retains all keys
 - `tests/core/test_linenoise_core.cpp` (—) [domain_suite, theme_core] — Issue #5041: direct key-by-key tests of the REPL line editor. No terminal.

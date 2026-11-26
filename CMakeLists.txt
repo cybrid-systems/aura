@@ -5445,6 +5445,12 @@ aura_add_issue_test(test_hash_probe)
 aura_issue_test_link_light(test_hash_probe)
 add_dependencies(all_test_issue_targets test_hash_probe)
 
+# IR late-bound globals: a runtime require inside a function binds a name the
+# lowering could not resolve, and IR must call it (top-ref) instead of 0.
+aura_add_issue_test(test_ir_runtime_require)
+aura_issue_test_link_light(test_ir_runtime_require)
+add_dependencies(all_test_issue_targets test_ir_runtime_require)
+
 # Issue #2586: single-use / mutation-bound grant (auto-revoke after first
 # successful check_and_record_effect that uses the grant's bits; deny path
 # does NOT consume). Source-cite in capability_model.hh (CapabilityGrant

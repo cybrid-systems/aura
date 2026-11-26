@@ -3159,6 +3159,20 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
     RegSplitParts::register_type_introspection_primitives(add, ev, mev);
     RegSplitParts::register_annotate_functions_primitive(add, ev, mev);
     RegSplitParts::register_datum_io_primitives(add, ev, mev);
+    // Latest-bound top-level value by name. The IR lowering uses this for a
+    // global that was unbound when the form was compiled (a runtime require
+    // binds it later, e.g. coin-blank inside load-coins!). The tree walker
+    // already resolves names at use time; this gives IR the same face. Added
+    // last so the existing primitive slot ids stay put for cached IR.
+    ev.primitives().add("top-ref", [&ev](std::span<const EvalValue> a) -> EvalValue {
+        if (a.empty() || !types::is_string(a[0]))
+            return types::make_void();
+        const auto idx = types::as_string_idx(a[0]);
+        if (idx >= ev.string_heap().size())
+            return types::make_void();
+        auto bound = ev.lookup_top_deref(ev.string_heap()[idx]);
+        return bound ? *bound : types::make_void();
+    });
 }
 
 } // namespace aura::compiler::primitives_detail

@@ -1410,6 +1410,24 @@ static std::uint32_t lower_flat_variable(
     // closure.
     if (state.unbound_globals)
         state.unbound_globals->emplace_back(std::string(name), v.id);
+    // A global that is unbound at compile time can still be bound before
+    // this code runs: the game loads lib/coins with a runtime require, then
+    // calls coin-blank. Const0 made that call "cannot call: coin-blank".
+    // Emit (top-ref "name") and let the IR call the value it returns; the
+    // tree walker already resolves the name at use time.
+    if (state.primitives) {
+        const auto ref_slot_idx = state.primitives->slot_for_name("top-ref");
+        if (ref_slot_idx < state.primitives->slot_count()) {
+            auto name_slot = state.alloc_local();
+            const auto str_idx = state.module.add_string(std::string(name));
+            state.emit(IROpcode::ConstString, name_slot, str_idx, 0);
+            auto prim_slot = state.alloc_local();
+            state.emit(IROpcode::Primitive, prim_slot, static_cast<std::uint32_t>(ref_slot_idx));
+            auto value_slot = state.alloc_local();
+            state.emit(IROpcode::Call, prim_slot, name_slot, 1, value_slot);
+            return value_slot;
+        }
+    }
     auto slot = state.alloc_local();
     state.emit(IROpcode::ConstI64, slot, 0, 0);
     return slot;
@@ -1675,12 +1693,31 @@ static std::uint32_t lower_call_require(
     const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>,
                              aura::core::TransparentStringHash, std::equal_to<>>* cache,
     std::vector<std::string>* cache_hits) {
-    // import/require are handled by pre_exec_requires.
-    // The import call in the AST is still present; skip
-    // it here to avoid going through PrimCall dispatch.
-    auto slot = state.alloc_local();
-    state.emit(IROpcode::ConstVoid, slot);
-    return slot;
+    // Top-level requires are already run by pre_exec_requires; the AST call
+    // is still present, so skip it to avoid PrimCall dispatch. A require
+    // inside a function body (the game's load-coins!) has NOT run yet; lower
+    // it to the import primitive, which loads the module and injects its
+    // exports into the active env.
+    if (state.lambda_depth == 0 || v.children.size() < 2 || !state.primitives) {
+        auto slot = state.alloc_local();
+        state.emit(IROpcode::ConstVoid, slot);
+        return slot;
+    }
+    const auto import_idx = state.primitives->slot_for_name("import");
+    if (import_idx >= state.primitives->slot_count()) {
+        auto slot = state.alloc_local();
+        state.emit(IROpcode::ConstVoid, slot);
+        return slot;
+    }
+    auto prim_slot = state.alloc_local();
+    state.emit(IROpcode::Primitive, prim_slot, static_cast<std::uint32_t>(import_idx));
+    const auto arg_base = state.local_count;
+    auto path_slot = lower_flat_expr(state, flat, pool, v.child(1), cache, cache_hits);
+    state.emit(IROpcode::Local, arg_base, path_slot);
+    state.alloc_local();
+    auto result_slot = state.alloc_local();
+    state.emit(IROpcode::Call, prim_slot, arg_base, 1, result_slot);
+    return result_slot;
 }
 
 // Lower try/catch.
