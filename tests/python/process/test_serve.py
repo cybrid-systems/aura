@@ -36,6 +36,11 @@ CASES = (
     ),
     (
         5167,
+        "test_ir_preset_dev_grants_set_code",
+        "serve_preset.TestIssue5167ServePreset.test_ir_preset_dev_grants_set_code",
+    ),
+    (
+        5167,
         "test_preset_dev_display_repro",
         "serve_preset.TestIssue5167ServePreset.test_preset_dev_display_repro",
     ),

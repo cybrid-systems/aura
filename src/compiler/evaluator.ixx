@@ -7296,16 +7296,16 @@ public:
     // Late-bound IR global: the tree walker dereferences a define cell at
     // use time; top-ref must do the same or it returns <cell[N]>.
     [[nodiscard]] std::optional<types::EvalValue> lookup_top_deref(std::string_view name) const {
-        auto v = top_.lookup(name);
-        if (!v)
+        const auto value = top_.lookup(name);
+        if (!value)
             return std::nullopt;
-        if (types::is_cell(*v)) {
-            const auto ci = static_cast<std::size_t>(types::as_cell_id(*v));
-            std::scoped_lock lock(alloc_storage_lock_);
-            if (ci < cells_.size())
-                return cells_[ci];
+        if (types::is_cell(*value)) {
+            const auto cell_index = static_cast<std::size_t>(types::as_cell_id(*value));
+            const std::scoped_lock storage_lock(alloc_storage_lock_);
+            if (cell_index < cells_.size())
+                return cells_[cell_index];
         }
-        return v;
+        return value;
     }
     // Issue #5190. Public so module load, Env::bind, and the hash/vector/pair
     // writers can publish a value that just became reachable from a workspace.
