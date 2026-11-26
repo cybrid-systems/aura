@@ -13508,7 +13508,15 @@ public:
             &CompilerService::lowering_quote_lambda_bridge_trampoline;
         {
             std::scoped_lock impact_lock(impact_func_mtx_);
-            hooks.impact_func_indices = pending_impact_func_indices_;
+            // An empty impact set means "no filter" (lower everything), the
+            // same face the pre-#5476 raw pointer published as nullptr.
+            // Publishing the empty snapshot instead makes the lowering hook
+            // skip every function (count(ci) == 0), which dropped the first
+            // lowering after a no-impact rebind.
+            hooks.impact_func_indices =
+                (pending_impact_func_indices_ && !pending_impact_func_indices_->empty())
+                    ? pending_impact_func_indices_
+                    : nullptr;
         }
         set_lowering_observability_hooks(hooks);
     }

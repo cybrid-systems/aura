@@ -1780,6 +1780,13 @@ export struct Closure {
     // (0=Untracked). Stamped at construction via stamp_closure_bridge_epoch;
     // apply / materialize dual-check against host fingerprint + frame version.
     std::uint8_t linear_state = 0;
+    // Issue #5477 follow-up: workspace content epoch at closure build.
+    // kNoWorkspaceEpoch = the body is not a workspace define or the stamp
+    // is unavailable. A workspace closure whose stamp no longer matches
+    // the live epoch names a body the mutator may have replaced; the
+    // apply sites fail closed before inlining it.
+    static constexpr std::uint64_t kNoWorkspaceEpoch = ~std::uint64_t{0};
+    std::uint64_t workspace_epoch = kNoWorkspaceEpoch;
 
     Closure() = default;
     ~Closure() = default;
@@ -1816,10 +1823,12 @@ export struct Closure {
         , bridge_epoch(o.bridge_epoch)
         , lifetime_version(o.lifetime_version)
         , must_deopt_before_next_call(o.must_deopt_before_next_call)
-        , linear_state(o.linear_state) {
+        , linear_state(o.linear_state)
+        , workspace_epoch(o.workspace_epoch) {
         o.tombstone_for_views();
         o.must_deopt_before_next_call = false;
         o.linear_state = 0;
+        o.workspace_epoch = kNoWorkspaceEpoch;
     }
     Closure& operator=(Closure&& o) noexcept {
         if (this != &o) {
@@ -1836,9 +1845,11 @@ export struct Closure {
             lifetime_version = o.lifetime_version;
             must_deopt_before_next_call = o.must_deopt_before_next_call;
             linear_state = o.linear_state;
+            workspace_epoch = o.workspace_epoch;
             o.tombstone_for_views();
             o.must_deopt_before_next_call = false;
             o.linear_state = 0;
+            o.workspace_epoch = kNoWorkspaceEpoch;
         }
         return *this;
     }
@@ -1851,6 +1862,7 @@ export struct Closure {
         flat = nullptr;
         pool = nullptr;
         owner_arena = nullptr;
+        workspace_epoch = kNoWorkspaceEpoch;
     }
 
     [[nodiscard]] bool lifetime_valid_for_views() const noexcept { return lifetime_version != 0; }
@@ -3233,6 +3245,10 @@ public:
             aura::compiler::lock_order::on_acquire(aura::compiler::lock_order::Level::Workspace);
             lock_ = std::unique_lock<std::shared_mutex>(ev.workspace_mtx_);
             owns_unique_ = true;
+            // Issue #5477: a fresh workspace hold is a structural-change
+            // point (set-code / eval-current's macro expansion / relower);
+            // publish it before the caller writes.
+            ev.note_workspace_mutation_begin();
             if (eval_current_pin) {
                 Evaluator::note_eval_current_shared_enter();
                 pin_armed_ = true;
@@ -7050,6 +7066,23 @@ private:
         std::optional<Env>& tail_env;
         std::vector<std::unique_ptr<Env>>& tco_pinned;
         aura::core::fiber_ctx::Context::TcoReuseState& tco;
+        // Issue #5477 follow-up: the workspace flat this body has an
+        // active reader registration on, or nullptr. Held until the
+        // eval_flat_body frame exits so rebind never recycles its nodes.
+        aura::ast::FlatAST*& ws_reader_flat;
+        // Issue #5477: stable copies of the borrowed SoA spans in the
+        // NodeView. FlatAST children_/params_ can reallocate (or be
+        // rebuilt) under this frame between get() and the dispatch that
+        // reads the ids; owning them here keeps the id list intact. The
+        // inline arrays cover every ordinary form; larger vectors fall
+        // back to the heap.
+        static constexpr std::size_t kWsSnapInline = 8;
+        std::array<aura::ast::NodeId, kWsSnapInline> ws_children_inline{};
+        std::array<aura::ast::SymId, kWsSnapInline> ws_params_inline{};
+        std::array<aura::ast::NodeId, kWsSnapInline> ws_ann_inline{};
+        std::vector<aura::ast::NodeId> ws_children_heap;
+        std::vector<aura::ast::SymId> ws_params_heap;
+        std::vector<aura::ast::NodeId> ws_ann_heap;
         void pin_if_current_in_tail();
     };
     [[nodiscard]] FlatStep eval_flat_on_if(EvalFlatCursor& cur, const aura::ast::NodeView& v,
@@ -8549,6 +8582,22 @@ private:
     //     memory_order_acquire — synchronizes with prior releases.
     //   - read for stats / debug: memory_order_relaxed is fine.
     std::atomic<std::uint64_t> defuse_version_{0};
+    // Issue #5477: workspace content epoch. Every structural workspace
+    // write bumps it before the write starts, stamped with the fiber /
+    // thread that owns the write. A tree-walker body that entered over
+    // the workspace flat records the epoch at entry and refuses
+    // (StaleWorkspace) when a *different* executor changed it mid-body.
+    // Same-fiber mutations (a body that calls mutate:*) adopt the new
+    // epoch and keep the existing restamp path. This closes the window
+    // where a sibling rebind + eval-current recycles a node slot while
+    // the caller executes the old child id: the caller now fails closed
+    // instead of running the node that landed in that slot.
+    std::atomic<std::uint64_t> workspace_mutation_epoch_{0};
+    void note_workspace_mutation_begin() noexcept {
+        // seq_cst: paired with FlatAST::enter_body_reader/body_reader_count
+        // (the writer bumps, then allocators consult the reader count).
+        workspace_mutation_epoch_.fetch_add(1, std::memory_order_seq_cst);
+    }
 
 public:
     // Issue #4682 step 1 (shared change cone): a rebind that already

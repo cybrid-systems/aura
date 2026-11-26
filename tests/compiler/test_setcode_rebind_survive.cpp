@@ -180,6 +180,12 @@ static ClosureId make_stale_unimpacted_lambda(CompilerService& cs) {
     CHECK(cs.eval("(define score (lambda (x) (* x 2)))").has_value(), "define score");
     auto r = cs.eval("(lambda (x) (+ x 1))");
     CHECK(r && is_closure(*r), "unimpacted lambda");
+    // The host keeps this closure id across the next eval; an unbound bare
+    // lambda has no Aura-level root, so a reclaim window may sweep it as
+    // unreachable. Freeze the generation so the cases below test the #2569
+    // rebind recover, not whether a GC happened to run.
+    if (r && is_closure(*r))
+        cs.evaluator().raise_gc_freeze_closure_id(as_closure_id(*r) + 1);
     CHECK(cs.eval("(mutate :rebind \"score\" \"(lambda (x) (* x 3))\" \"t\")").has_value(),
           "rebind other define");
     CHECK(cs.eval("(eval-current)").has_value(), "eval-current after rebind");

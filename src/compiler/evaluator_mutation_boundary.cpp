@@ -4671,6 +4671,12 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(
             if (m)
                 m->workspace_global_exclusive_total.fetch_add(1, std::memory_order_relaxed);
         }
+        // Issue #5477: publish the structural change before the first
+        // workspace write. A tree-walker body entered over the workspace
+        // flat checks this epoch at every node visit and fails closed when
+        // another executor owns the change.
+        if (!t_heap_auto_guard_admit_4908)
+            ev_->note_workspace_mutation_begin();
         ev_->outermost_mutation_success_flag_.store(flag_, std::memory_order_release);
         ev_->bind_yield_hook_evaluator();
         // Issue #354: set the atomic flag so

@@ -152,8 +152,10 @@ class Concurrency5476(unittest.TestCase):
             svc,
         )
         self.assertIn("std::scoped_lock impact_lock(impact_func_mtx_)", svc)
+        # An empty set is "no filter": publish nullptr, not an empty snapshot
+        # (the lowering hook treats a non-null empty set as "lower nothing").
         self.assertIn(
-            "hooks.impact_func_indices = pending_impact_func_indices_;",
+            "pending_impact_func_indices_ && !pending_impact_func_indices_->empty()",
             svc,
         )
         low = read("src/compiler/lowering.ixx")

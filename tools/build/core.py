@@ -102,7 +102,14 @@ SANITIZER_FLAGS = {
         None,  # honor user AURA_BUILD_TYPE
     ),
     "ubsan": (
-        "-fsanitize=undefined -fno-omit-frame-pointer",
+        # -fno-sanitize=vptr: the prebuilt LLVM DSO creates polymorphic
+        # objects / shared_ptr control blocks (JITLink BinaryStreamRef,
+        # ORC DefinitionGenerator, SymbolStringPool) whose vtables are not
+        # in the instrumented test binary, so the vptr check reports an
+        # "invalid vptr" on a valid object. It fires inside LLVM's own
+        # LLJITBuilder/create path, out of reach of a source workaround
+        # (#5461 hit the same false positive in getSymbolStringPool).
+        "-fsanitize=undefined -fno-sanitize=vptr -fno-omit-frame-pointer",
         "-fsanitize=undefined",
         None,
     ),

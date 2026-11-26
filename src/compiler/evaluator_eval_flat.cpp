@@ -1251,6 +1251,7 @@ struct TwCallMeta {
     EnvId env_id = NULL_ENV_ID;
     std::uint8_t linear_state = 0;
     bool must_deopt_before_next_call = false;
+    std::uint64_t workspace_epoch = Closure::kNoWorkspaceEpoch;
 
     [[nodiscard]] Closure to_closure() const {
         Closure c;
@@ -1265,6 +1266,7 @@ struct TwCallMeta {
         c.lifetime_version = lifetime_version;
         c.linear_state = linear_state;
         c.must_deopt_before_next_call = must_deopt_before_next_call;
+        c.workspace_epoch = workspace_epoch;
         return c;
     }
 
@@ -1279,6 +1281,7 @@ struct TwCallMeta {
         env_id = c.env_id;
         linear_state = c.linear_state;
         must_deopt_before_next_call = c.must_deopt_before_next_call;
+        workspace_epoch = c.workspace_epoch;
         if (c.params.size() <= inline_params.size()) {
             for (std::size_t i = 0; i < c.params.size(); ++i)
                 inline_params[i] = c.params[i];
@@ -1350,6 +1353,7 @@ namespace {
         dst.env_id = src.env_id;
         dst.linear_state = src.linear_state;
         dst.must_deopt_before_next_call = src.must_deopt_before_next_call;
+        dst.workspace_epoch = src.workspace_epoch;
         if (src.params.size() <= dst.inline_params.size()) {
             for (std::size_t i = 0; i < src.params.size(); ++i)
                 dst.inline_params[i] = src.params[i];
@@ -2905,6 +2909,25 @@ Evaluator::apply_closure_eval_body(ClosureId cid, std::span<const EvalValue> arg
             const auto nnote =
                 std::min(args.size(), static_cast<std::size_t>(feedback::kMaxUserArgs));
             feedback_enter_call(cid, cl_copy.name, args.data(), static_cast<std::uint32_t>(nnote));
+        }
+        // Issue #5477 follow-up: hold a workspace body reader for the
+        // whole applied body. The closure may have been fetched just
+        // before a rebind published a new define (the stale-stamp case);
+        // the reader makes that harmless by keeping the old body's node
+        // slots out of the free list and out of the recycler. No epoch
+        // abort: executing the body the closure actually names is the
+        // rebind linearization point.
+        struct ApplyWsReader {
+            bool on = false;
+            ~ApplyWsReader() {
+                if (on)
+                    aura::ast::FlatAST::exit_body_reader();
+            }
+        } apply_ws_reader;
+        if (cl_copy.flat != nullptr && cl_copy.flat == workspace_flat_ &&
+            !any_active_mutation_boundary() && !eval_current_holds_shared_pin()) {
+            aura::ast::FlatAST::enter_body_reader();
+            apply_ws_reader.on = true;
         }
         auto r = eval_flat(*cl_copy.flat, *cl_copy.pool, cl_copy.body_id, ne,
                            /*allow_file_diag_arm=*/false);
@@ -10710,6 +10733,56 @@ Evaluator::FlatStep Evaluator::eval_flat_on_closure(EvalFlatCursor& cur,
             return FlatStep::ret(std::unexpected(
                 Diagnostic{ErrorKind::InvalidClosure, "eval_flat: invalid closure"}));
         }
+        // Issue #5477 follow-up: the closure was fetched from a cell that
+        // a sibling rebind can replace between the fetch and this inline.
+        // Register as a workspace body reader FIRST, then compare the
+        // closure's build epoch with the live one. The writer bumps the
+        // epoch before it may reuse a slot and consults the reader count
+        // before reusing; the pair orders so at least one side observes
+        // the other (a reader that loses fails closed before any body
+        // node is read).
+        if (cl.flat != nullptr && cl.flat == workspace_flat_ &&
+            cl.workspace_epoch != Closure::kNoWorkspaceEpoch && !any_active_mutation_boundary() &&
+            !eval_current_holds_shared_pin()) {
+            bool just_registered = false;
+            if (cur.ws_reader_flat != cl.flat) {
+                aura::ast::FlatAST::enter_body_reader();
+                cur.ws_reader_flat = cl.flat;
+                just_registered = true;
+            }
+            if (just_registered &&
+                cl.workspace_epoch != workspace_mutation_epoch_.load(std::memory_order_acquire)) {
+                // Issue #5477 follow-up: the common case is a rebind that
+                // landed between the callee lookup and this inline. Re-read
+                // the callee cell and retry the call; arguments have not
+                // been evaluated yet, so a retry is side-effect free. A
+                // bounded recursive retry keeps a continuous rebind loop
+                // from turning the whole caller body into a stale error.
+                static thread_local int t_ws_inline_retry_5477 = 0;
+                if (t_ws_inline_retry_5477 < 2) {
+                    struct RetryPop {
+                        int& depth;
+                        ~RetryPop() { --depth; }
+                    } retry_pop{t_ws_inline_retry_5477};
+                    ++t_ws_inline_retry_5477;
+                    auto fresh_fn = eval_flat(*f, *p, v.child(0), eval_env);
+                    if (fresh_fn && is_closure(*fresh_fn)) {
+                        TwPinResult pin_fresh(fresh_fn);
+                        auto retried = eval_flat_on_closure(cur, v, eval_env, fresh_fn, callee);
+                        if (retried.kind != FlatStep::Kind::Fall)
+                            return retried;
+                    }
+                }
+                if (just_registered) {
+                    aura::ast::FlatAST::exit_body_reader();
+                    cur.ws_reader_flat = nullptr;
+                }
+                return FlatStep::ret(std::unexpected(Diagnostic{
+                    ErrorKind::StaleWorkspace,
+                    "stale workspace: the definition changed before the call — retry the form "
+                    "(or re-run (eval-current))"}));
+            }
+        }
         // Evaluate ALL args before overwriting tail_env.
         // Issue #3915: dotted rest used to eval after
         // materialize_call_env, which destroys the TCO
@@ -13175,6 +13248,16 @@ std::optional<EvalResult> Evaluator::eval_flat_prepare_visit(EvalFlatCursor& cur
     auto& p = cur.p;
     auto& current_env = cur.current_env;
     auto& current_id = cur.current_id;
+    // Issue #5477 follow-up: a frame that TCOs onto the workspace flat
+    // (or a nested eval that entered through another flat) registers as a
+    // reader before its first node read. The closure apply sites do the
+    // epoch handshake that makes a mid-entry mutation fail closed; here we
+    // only need the registration for the rest of the frame.
+    if (f == workspace_flat_ && cur.ws_reader_flat != f && !any_active_mutation_boundary() &&
+        !eval_current_holds_shared_pin()) {
+        aura::ast::FlatAST::enter_body_reader();
+        cur.ws_reader_flat = f;
+    }
     // Park, and reclaim if this thread owes a sweep, before any fast return.
     // Integer calls then skip the intern-pool generation and current-flat
     // publish loads. The if / self-call still run the full prologue.
@@ -13317,6 +13400,47 @@ std::optional<EvalResult> Evaluator::eval_flat_prepare_visit(EvalFlatCursor& cur
         auto cached = f->get_cached_value(current_id);
         if (cached != aura::ast::FlatAST::kNotCached) {
             return EvalResult(EvalValue(cached));
+        }
+    }
+
+    // Issue #5477: own the borrowed SoA spans before dispatch. A sibling
+    // workspace mutation can append/reallocate children_/params_ while
+    // this frame evaluates the node's arguments; the NodeView's spans
+    // would then point at freed storage, and the child ids read after
+    // the reallocation name unrelated forms (the observed Closure-in-+
+    // failure: id 0 for both arguments). Copy immediately after get(),
+    // so the id list this dispatch walks is a stable snapshot. Only the
+    // workspace flat is mutated by another fiber; every other flat keeps
+    // the zero-copy path.
+    if (f == workspace_flat_) {
+        const auto nch = v.children.size();
+        if (nch <= EvalFlatCursor::kWsSnapInline) {
+            std::copy(v.children.begin(), v.children.end(), cur.ws_children_inline.begin());
+            v.children = std::span<const aura::ast::NodeId>(cur.ws_children_inline.data(), nch);
+        } else {
+            cur.ws_children_heap.assign(v.children.begin(), v.children.end());
+            v.children = std::span<const aura::ast::NodeId>(cur.ws_children_heap.data(),
+                                                            cur.ws_children_heap.size());
+        }
+        const auto npar = v.params.size();
+        if (npar <= EvalFlatCursor::kWsSnapInline) {
+            std::copy(v.params.begin(), v.params.end(), cur.ws_params_inline.begin());
+            v.params = std::span<const aura::ast::SymId>(cur.ws_params_inline.data(), npar);
+        } else {
+            cur.ws_params_heap.assign(v.params.begin(), v.params.end());
+            v.params = std::span<const aura::ast::SymId>(cur.ws_params_heap.data(),
+                                                         cur.ws_params_heap.size());
+        }
+        const auto nann = v.param_annotations.size();
+        if (nann <= EvalFlatCursor::kWsSnapInline) {
+            std::copy(v.param_annotations.begin(), v.param_annotations.end(),
+                      cur.ws_ann_inline.begin());
+            v.param_annotations =
+                std::span<const aura::ast::NodeId>(cur.ws_ann_inline.data(), nann);
+        } else {
+            cur.ws_ann_heap.assign(v.param_annotations.begin(), v.param_annotations.end());
+            v.param_annotations =
+                std::span<const aura::ast::NodeId>(cur.ws_ann_heap.data(), cur.ws_ann_heap.size());
         }
     }
 
@@ -14601,6 +14725,33 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
         // taken from — TCO may re-point f mid-loop.
         std::uint16_t body_gen = f->generation();
         aura::ast::FlatAST* body_gen_flat = f;
+        // Issue #5477 follow-up: a body over the workspace flat registers
+        // as a reader for its whole frame. While registered, rebind appends
+        // new nodes instead of reusing or recycling slots, so the body's
+        // NodeIds keep naming the same content. The registration is skipped
+        // inside a mutation boundary / eval-current hold, where no peer
+        // mutation can run concurrently.
+        aura::ast::FlatAST* ws_reader_flat = nullptr;
+        struct WsBodyReaderGuard {
+            aura::ast::FlatAST*& held;
+            ~WsBodyReaderGuard() {
+                if (held != nullptr) {
+                    aura::ast::FlatAST::exit_body_reader();
+                    held = nullptr;
+                }
+            }
+        } ws_reader_guard{ws_reader_flat};
+        if (f == workspace_flat_ && !any_active_mutation_boundary() &&
+            !eval_current_holds_shared_pin()) {
+            // Registration alone is enough here: the closure apply site has
+            // already validated the body epoch (or the body came from a
+            // frame that holds this registration). A reopen-race between the
+            // two epoch reads would abort nearly every call under a
+            // continuous rebind and is not needed for memory safety: the
+            // counter now prevents slot reuse for the whole frame.
+            aura::ast::FlatAST::enter_body_reader();
+            ws_reader_flat = f;
+        }
         // Issue #2871: when TCO rebinds tail_env, any Env that still serves
         // as a raw parent_ target (letrec / inline-lambda child frames)
         // must outlive the rebind. Call TCO materialize uses SoA capture
@@ -14608,7 +14759,8 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
         // pin only when we are about to emplace a child of *current_env
         // while current_env lives inside tail_env.
         std::vector<std::unique_ptr<Env>> tco_pinned;
-        EvalFlatCursor cursor{f, p, current_env, current_id, tail_env, tco_pinned, tco};
+        EvalFlatCursor cursor{f,        p,          current_env, current_id,
+                              tail_env, tco_pinned, tco,         ws_reader_flat};
         auto pin_if_current_in_tail = [&]() { cursor.pin_if_current_in_tail(); };
 
         // Issue #4454: C-stack depth is checked in the eval_flat wrapper

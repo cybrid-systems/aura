@@ -199,8 +199,10 @@ int run_test_verification_dirty_bits_lock() {
         CHECK(src.find("dirty_column_mtx_") != std::string::npos &&
                   src.find("apply_verification_dirty_bits") != std::string::npos,
               "lock used in apply_verification");
-        // newly_set from atomic fetch_or prev (Issue #2440 strengthens #2439)
-        CHECK(src.find("fetch_or(reasons") != std::string::npos &&
+        // newly_set from atomic fetch_or prev (Issue #2440 strengthens #2439;
+        // #5476 moved the bits from a vector element's atomic_ref to the
+        // column's stable atomic mirror).
+        CHECK(src.find("verification_dirty_.fetch_or(id, reasons") != std::string::npos &&
                   src.find("newly_set = static_cast<std::uint8_t>(reasons & ~prev)") !=
                       std::string::npos,
               "newly_set under exclusive path via fetch_or");

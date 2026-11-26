@@ -255,7 +255,8 @@ int run_test_soa_column_atomic() {
         CHECK(src.find("is_always_lock_free") != std::string::npos &&
                   src.find("uint64") != std::string::npos,
               "is_always_lock_free assert present");
-        CHECK(src.find("fetch_or(reasons") != std::string::npos, "fetch_or verification path");
+        CHECK(src.find("verification_dirty_.fetch_or(id, reasons") != std::string::npos,
+              "fetch_or verification path");
     }
 
     std::println("\n=== #2440 results: {} passed, {} failed ===", g_passed, g_failed);
