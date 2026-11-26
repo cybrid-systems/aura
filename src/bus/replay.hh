@@ -90,9 +90,17 @@ struct ReplayReport {
 // the image-backed ones do not. `candidate_digest` recomputes a
 // trial's patch digest; when it is given, the recorded candidate hash
 // is checked against it.
+//
+// `seq_base` is the audit sequence of `events.front()` (1: the log
+// starts here). `window_floor` is the lowest worldline whose Trial
+// event `events` still hold (0: the log is complete from its first
+// event). A worldline below it was opened before the window: its
+// remaining events are history, not orphans, its evidence is not
+// looked for, and its image records are not loaded.
 ReplayReport replay_lineage(const std::vector<AuditEvent>& events, std::span<const std::byte> image,
                             const std::vector<ReplayEvidence>& evidence, bool gate_required,
-                            const std::function<std::uint64_t(std::uint64_t)>& candidate_digest);
+                            const std::function<std::uint64_t(std::uint64_t)>& candidate_digest,
+                            std::uint64_t seq_base = 1, std::uint64_t window_floor = 0);
 
 } // namespace aura::bus
 

@@ -247,6 +247,35 @@ int main() {
         check(ledger.end_session(bob).empty(), "a second session end has nothing to roll");
         check(!ledger.keep(w6, bob, bob_caps, &why) && why == "worldline is not pending",
               "a rolled trial is not kept");
+
+        // ── Settled trials leave with the audit window ──────────────
+        // The ledger forgets every settled trial below a horizon. A
+        // pending trial and a worldline under observation keep their
+        // records wherever their id falls, and the ids of what stays
+        // keep resolving.
+        const std::size_t before = ledger.size();
+        check(ledger.forget_settled_before(w5) == 4,
+              "the settled trials below the pending one are forgotten");
+        check(ledger.size() == before - 4, "the ledger shrank by the forgotten records");
+        check(!ledger.find(w1) && !ledger.find(w4), "a forgotten worldline is unknown");
+        check(ledger.find(w5) && ledger.find(w5)->pending, "the pending trial stays");
+        check(ledger.forget_settled_before(ledger.next_id()) == before - 5,
+              "every settled trial leaves, the pending one does not pin them");
+        check(ledger.size() == 1 && ledger.find(w5), "only the pending trial is left");
+        check(!ledger.find(w7), "the settled trials after a pending one leave too");
+        check(ledger.keep(w5, alice, alice_caps, &why), "the pending trial still settles");
+        check(ledger.forget_settled_before(ledger.next_id()) == 1, "once settled, it leaves too");
+        check(ledger.size() == 0, "the ledger is empty");
+
+        // A worldline under observation stays until the observation ends.
+        const std::uint64_t watched = ledger.open_trial(alice, ws);
+        check(ledger.keep(watched, alice, alice_caps, &why, true), "the watched trial is kept");
+        check(ledger.enter_canary(watched, &why), "the kept trial enters observation");
+        check(ledger.forget_settled_before(ledger.next_id()) == 0 && ledger.find(watched),
+              "an observed worldline is not forgotten");
+        check(ledger.seal_canary(watched, &why), "the observation seals");
+        check(ledger.forget_settled_before(ledger.next_id()) == 1, "a sealed worldline leaves");
+        check(ledger.forget_settled_before(0) == 0, "a horizon at the start forgets nothing");
     }
 
     // ── #5459: the in-process audit log is a bounded window ─────

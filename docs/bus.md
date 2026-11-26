@@ -181,6 +181,8 @@ canary 拒绝)、`test_bus_closed_loop_e2e`(#5382,三进程正常闭环 + 五类
 `(api-reference)` 现在也列出这些动词、所需能力和失败码。审计有两个面：控制面日志（带原因，供 `bus:audit`）和映像审计节（只追加，供映射方直接遍历）。控制面日志保留最近 4096 条事件，超出按 1024 条一批淘汰，所以没有映像审计节的宿主也不会随 publish 数增长 (#5459)；`bus:audit` 的 count/truncated 反映这个有界窗口。
 `bus:audit` 翻页从 `since-seq` 起读：凑满一页（20 行）再多读到一条匹配就停，多出的那条就是 `truncated`，不再每页扫完整个窗口。
 
+worldline 的状态跟着审计窗口走。trial 未决或处于金丝雀观察期时一直保留；结算之后，只要它的 Trial 事件还在控制面日志里，协调者就继续留着它的台账记录、证据、准入判决和映像下标。窗口淘汰事件时，最老的 Trial 事件之前的已结算 worldline 一并忘掉（宿主同时丢掉为回滚它们留的快照），未决和观察期的 worldline 留在原位，不挡住别的记录离开。所以 `bus:repro` 与已 KEEP worldline 的回滚只对窗口内的 worldline 有效，窗口外的回 `unknown worldline`；`bus:audit-replay` 只重建窗口内的谱系；`bus:audit` 的序号是事件落盘时的序号，窗口滑动不重编号。映像里的 worldlines / patches 频道不受影响，映射方仍能读到全部已提交记录。回归：`test_bus_audit_replay` 让窗口滑过 1 500 个绑证据后回滚的 trial，`test_bus_capability` 让已结算的 trial 离开台账、未决与观察期的留下。
+
 ### v0.3.2 统计准入(#5391)
 
 裁判负责测量，协调者负责裁决。裁判把候选的 held-out 证据绑到自己的 trial 上，协调者**不信裁判的汇总结论**：它从绑定的原始窗口重算均值、样本标准差与标准误，按**自己观察到的**候选族规模做多重比较校正（Bailey/López-de-Prado 折价 `E[max of N 正态] * se`，与 `std/validation` 的 `val:deflate` 同一套数学），然后裁决。结论是定点数，同一份证据永远重算出逐字节相同的判决。

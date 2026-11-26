@@ -20,6 +20,7 @@
 #include <deque>
 #include <map>
 #include <mutex>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -1035,14 +1036,14 @@ std::vector<PatchRecord> Server::trial_patches(std::uint64_t worldline) const {
     // A patch is only published under a pending trial, so a trial's
     // records lie between the committed counts of its open and its
     // settle; the rest of the channel is other trials' history. A
-    // worldline the ledger does not know keeps the whole-channel read.
-    std::uint64_t from = 0;
-    std::uint64_t to = view.count;
-    if (const TrialRecord* trial = worldlines_.find(worldline)) {
-        from = std::min<std::uint64_t>(trial->patch_begin, view.count);
-        if (!trial->pending)
-            to = std::min<std::uint64_t>(trial->patch_end, view.count);
-    }
+    // worldline the ledger does not hold — forgotten, or never a trial of
+    // this host — has no patches to read.
+    const TrialRecord* trial = worldlines_.find(worldline);
+    if (trial == nullptr)
+        return out;
+    const std::uint64_t from = std::min<std::uint64_t>(trial->patch_begin, view.count);
+    const std::uint64_t to =
+        trial->pending ? view.count : std::min<std::uint64_t>(trial->patch_end, view.count);
     for (std::uint64_t i = from; i < to; ++i) {
         PatchRecord p{};
         std::memcpy(&p, image_base_ + view.offset + i * elem,
@@ -1391,6 +1392,8 @@ bool Server::gate_check(std::uint64_t worldline, std::uint64_t token, std::strin
 ReplayReport Server::replay() const {
     std::vector<ReplayEvidence> evidence;
     evidence.reserve(evidence_.size() + gate_evidence_.size());
+    std::unordered_set<std::uint64_t> with_five;
+    with_five.reserve(evidence_.size());
     for (const auto& [id, five] : evidence_) {
         ReplayEvidence item{};
         item.worldline = id;
@@ -1400,6 +1403,7 @@ ReplayReport Server::replay() const {
         item.seed = five.seed;
         item.verifier_version = five.verifier_version;
         item.has_five = true;
+        with_five.insert(id);
         const auto git = gate_evidence_.find(id);
         if (git != gate_evidence_.end()) {
             item.gate = git->second;
@@ -1415,14 +1419,7 @@ ReplayReport Server::replay() const {
     // A candidate that never bound the five-tuple can still hold a
     // statistical verdict: the gate binds its own evidence.
     for (const auto& [id, gate] : gate_evidence_) {
-        bool known = false;
-        for (const ReplayEvidence& item : evidence) {
-            if (item.worldline == id) {
-                known = true;
-                break;
-            }
-        }
-        if (known)
+        if (with_five.count(id) != 0)
             continue;
         ReplayEvidence item{};
         item.worldline = id;
@@ -1436,8 +1433,20 @@ ReplayReport Server::replay() const {
         evidence.push_back(item);
     }
     const auto digest = [this](std::uint64_t worldline) { return candidate_digest(worldline); };
+    // The window's events are numbered from its first retained one, and
+    // a worldline whose Trial event the window dropped is history.
     return replay_lineage(audit_.events(), {image_base_, image_size_}, evidence,
-                          gate_policy_.required, digest);
+                          gate_policy_.required, digest, audit_.dropped() + 1, audit_floor());
+}
+
+std::uint64_t Server::audit_floor() const {
+    // The worldline of the oldest Trial event the window still holds; a
+    // window without one has forgotten every trial.
+    for (const AuditEvent& event : audit_.events()) {
+        if (event.kind == AuditKind::Trial)
+            return event.worldline;
+    }
+    return worldlines_.next_id();
 }
 
 // ── The admission round (#5393) ──────────────────────────────
@@ -2500,14 +2509,18 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
             // last row: that extra match is what says "truncated". Every
             // page used to walk the whole window and keep every match.
             const auto& all = audit_.events();
-            // `since_seq` is 1-based; 0 starts at the oldest retained event.
-            std::size_t from =
-                request.since_seq == 0 ? 0 : static_cast<std::size_t>(request.since_seq - 1);
+            // Sequences are stable across the sliding window: its first
+            // retained event is number dropped() + 1. `since_seq` is
+            // 1-based; 0 starts at the oldest retained event.
+            const std::uint64_t base = audit_.dropped();
+            std::size_t from = request.since_seq > base
+                                   ? static_cast<std::size_t>(request.since_seq - base - 1)
+                                   : 0;
             from = std::min(from, all.size());
             std::array<std::pair<std::uint64_t, const AuditEvent*>, kMaxEvents + 1> page{};
             std::size_t found = 0;
             for (std::size_t i = from; i < all.size() && found <= kMaxEvents; ++i) {
-                const std::uint64_t seq = static_cast<std::uint64_t>(i) + 1;
+                const std::uint64_t seq = base + static_cast<std::uint64_t>(i) + 1;
                 const AuditEvent& e = all[i];
                 if (request.worldline != 0 && e.worldline != request.worldline)
                     continue;
@@ -4109,7 +4122,28 @@ bool Server::serve_frame(int conn_fd, std::uint64_t session, std::uint64_t root_
         ++slo_.publishes;
         slo_.publish_cpu_ns += cost_ns;
     }
+    // The audit window slid: the worldlines it forgot go with it.
+    if (audit_.dropped() != pruned_through_)
+        prune_worldlines();
     return keep;
+}
+
+void Server::prune_worldlines() {
+    pruned_through_ = audit_.dropped();
+    std::uint64_t horizon = audit_floor();
+    // A worldline under observation still changes state: holding the
+    // floor at it keeps its evidence, verdicts and index with it.
+    if (canary_worldline_ != 0 && canary_worldline_ < horizon)
+        horizon = canary_worldline_;
+    (void)worldlines_.forget_settled_before(horizon);
+    const auto below = [horizon](const auto& entry) { return entry.first < horizon; };
+    std::erase_if(worldline_record_index_, below);
+    std::erase_if(evidence_, below);
+    std::erase_if(gate_evidence_, below);
+    std::erase_if(gate_verdicts_, below);
+    std::erase_if(gate_keep_slots_, below);
+    if (forget_)
+        forget_(horizon);
 }
 
 void Server::finish_session(PeerSession& peer) {

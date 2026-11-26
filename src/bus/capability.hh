@@ -151,6 +151,15 @@ public:
     // #5395: the trials that are still pending (the soak lane watches
     // this number for a residue).
     std::size_t pending_count() const;
+    // The records still held: a settled trial leaves with its audit
+    // window (forget_settled_before); a pending or observed one stays.
+    [[nodiscard]] std::size_t size() const { return records_.size(); }
+    // The id the next trial takes.
+    [[nodiscard]] std::uint64_t next_id() const { return next_id_; }
+    // Forget the settled trials below `horizon`. A pending trial and a
+    // worldline under canary observation keep their records, whatever
+    // their id. Returns how many records left.
+    std::size_t forget_settled_before(std::uint64_t horizon);
     std::vector<std::uint64_t> end_session(std::uint64_t owner, std::uint32_t patch_end = 0);
 
     // #5381: canary transitions. enter_canary requires a kept, applied
@@ -165,12 +174,12 @@ public:
                        std::string* why);
 
 private:
-    // The record of a worldline id: ids are handed out in order and the
-    // ledger only appends, so the id is the record's position.
+    // The record of a worldline id. Records are appended in id order and
+    // forgotten ones leave gaps, so an id is found by bisection.
     [[nodiscard]] TrialRecord* at(std::uint64_t id);
     [[nodiscard]] const TrialRecord* at(std::uint64_t id) const;
 
-    std::vector<TrialRecord> records_;
+    std::vector<TrialRecord> records_; // by id, with gaps
     // (owner, id) of every pending trial: the pending count and a
     // session's trials without walking the whole ledger.
     std::set<std::pair<std::uint64_t, std::uint64_t>> pending_;
@@ -281,12 +290,17 @@ public:
     // newest window and drop in batches so the common append stays O(1)
     // amortized.
     static constexpr std::size_t kMaxEvents = 4096;
+    // The events the window dropped at its head. An event's stable
+    // sequence is dropped() + its index + 1: the window slides, the
+    // sequence does not.
+    [[nodiscard]] std::uint64_t dropped() const { return dropped_; }
 
 private:
     void push(AuditEvent&& event);
 
     std::vector<AuditEvent> events_;
     Sink sink_;
+    std::uint64_t dropped_ = 0;
 };
 
 // Workspace allow policy. A role is only a hint; the coordinator grants

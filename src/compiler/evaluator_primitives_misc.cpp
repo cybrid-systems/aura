@@ -493,6 +493,18 @@ namespace {
         return ok;
     }
 
+    // The coordinator forgot the worldlines below `horizon`: their Trial
+    // events left the audit window, nothing can revert them any more, and
+    // the pre-apply snapshots kept for that go with them. Runs on the
+    // coordinator thread, like the apply and revert it cleans up after.
+    void bus_forget_keeps(std::uint64_t workspace, std::uint64_t horizon) {
+        const auto it = g_bus_apply.find(workspace);
+        if (it == g_bus_apply.end())
+            return;
+        std::erase_if(it->second.canary_snapshots,
+                      [horizon](const auto& entry) { return entry.first < horizon; });
+    }
+
 } // namespace
 
 
@@ -700,6 +712,9 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                 };
                 opts.revert = [&ev, ws](std::uint64_t wl, std::string* why) {
                     return bus_revert_keep(ev, static_cast<std::uint64_t>(ws), wl, why);
+                };
+                opts.forget = [ws](std::uint64_t horizon) {
+                    bus_forget_keeps(static_cast<std::uint64_t>(ws), horizon);
                 };
                 // #5397: the host's define names, so a peer can address
                 // a named function.
@@ -2269,17 +2284,19 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                     return bus_error(ev, "unavailable", "worldline section is missing");
                 const auto* base = static_cast<const std::byte*>(state->att.base);
                 // The ledger appends a record per state transition; the
-                // LAST record for the id carries the final evidence tail.
+                // LAST record for the id carries the final evidence tail,
+                // so read from the tail: the worldline just judged is at
+                // the end.
                 aura::bus::WorldlineRecord found{};
                 bool have = false;
-                for (std::uint64_t i = 0; i < view.count; ++i) {
-                    aura::bus::WorldlineRecord w{};
-                    std::memcpy(&w, base + view.offset + i * view.element_size,
-                                std::min<std::uint64_t>(view.element_size, sizeof(w)));
-                    if (w.id == static_cast<std::uint64_t>(wl)) {
-                        found = w;
-                        have = true;
-                    }
+                for (std::uint64_t i = view.count; i > 0 && !have; --i) {
+                    const auto* at = base + view.offset + (i - 1) * view.element_size;
+                    std::memcpy(&found.id, at, sizeof(found.id));
+                    if (found.id != static_cast<std::uint64_t>(wl))
+                        continue;
+                    std::memcpy(&found, at,
+                                std::min<std::uint64_t>(view.element_size, sizeof(found)));
+                    have = true;
                 }
                 if (have) {
                     // Evidence fields are 62-bit immediates (#5379);
@@ -2373,14 +2390,14 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                 const auto* base = static_cast<const std::byte*>(state->att.base);
                 aura::bus::WorldlineRecord found{};
                 bool have = false;
-                for (std::uint64_t i = 0; i < view.count; ++i) {
-                    aura::bus::WorldlineRecord w{};
-                    std::memcpy(&w, base + view.offset + i * view.element_size,
-                                std::min<std::uint64_t>(view.element_size, sizeof(w)));
-                    if (w.id == static_cast<std::uint64_t>(wl)) {
-                        found = w;
-                        have = true;
-                    }
+                for (std::uint64_t i = view.count; i > 0 && !have; --i) {
+                    const auto* at = base + view.offset + (i - 1) * view.element_size;
+                    std::memcpy(&found.id, at, sizeof(found.id));
+                    if (found.id != static_cast<std::uint64_t>(wl))
+                        continue;
+                    std::memcpy(&found, at,
+                                std::min<std::uint64_t>(view.element_size, sizeof(found)));
+                    have = true;
                 }
                 if (!have)
                     return bus_error(ev, "unregistered-id", "worldline has no committed record");

@@ -768,6 +768,11 @@ public:
     // Runs on the coordinator thread when an observation reverts.
     using RevertFn = std::function<bool(std::uint64_t worldline, std::string* why)>;
     void set_revert_callback(RevertFn fn) { revert_ = std::move(fn); }
+    // The coordinator forgot the worldlines below `horizon` (their Trial
+    // events left the audit window): the host drops what it kept for them.
+    // Runs on the coordinator thread.
+    using ForgetFn = std::function<void(std::uint64_t horizon)>;
+    void set_forget_callback(ForgetFn fn) { forget_ = std::move(fn); }
     // The host advances this after each successful apply; trials record
     // it as their baseline and KEEP rejects a stale one (#5378/#5379).
     void set_workspace_generation(std::uint64_t gen) { workspace_gen_ = gen; }
@@ -928,6 +933,15 @@ private:
                      std::uint64_t staging_capacity, std::uint64_t& staging_used,
                      std::uint64_t* subscribed, const FrameHeader& header,
                      std::span<const std::byte> body);
+    // The audit window slid: forget every settled worldline below its
+    // oldest Trial event (a pending trial and the observed one stay).
+    void prune_worldlines();
+    // The worldline of the oldest Trial event the audit window still
+    // holds: the lineage and the paging cursors do not reach past it.
+    [[nodiscard]] std::uint64_t audit_floor() const;
+    // Whether a KEEP frame would apply to the host's live workspace:
+    // its trial carries a source-carrier patch.
+    [[nodiscard]] bool keep_reaches_host(std::span<const std::byte> body) const;
     // End a session: roll back its pending trials, reclaim its loans,
     // audit Disconnect, close its fds. Never touches other sessions.
     void finish_session(PeerSession& peer);
@@ -1039,6 +1053,7 @@ private:
     DefineNodesFn define_nodes_;
     std::uint64_t workspace_gen_ = 0;
     RevertFn revert_;
+    ForgetFn forget_;
     // #5381: generation the active canary applied at (seal advances to it).
     std::uint64_t canary_applied_gen_ = 0;
     bool evidence_required_ = false;
@@ -1055,6 +1070,11 @@ private:
     // The negative-KEEP window and the slot each KEEP holds in it.
     NegativeKeepWindow negative_keeps_{};
     std::unordered_map<std::uint64_t, std::size_t> gate_keep_slots_;
+    // The worldline state follows the audit window. When the window
+    // drops events, every settled worldline below its oldest Trial event
+    // is forgotten (ledger record, evidence, verdicts, channel index); a
+    // pending or observed one stays wherever its id falls.
+    std::uint64_t pruned_through_ = 0; // the audit drop count pruned for
     // #5393: the admission round state machine and its checkpoint.
     RoundMachine round_{};
     RoundCheckpoint round_checkpoint_{};

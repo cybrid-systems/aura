@@ -544,8 +544,8 @@ int main() {
             if (!server.wait_disconnect(&err))
                 _exit(23);
             const ReplayReport report = server.replay();
-            std::uint64_t out[4] = {report.events, report.keeps, report.findings,
-                                    report.nodes.size()};
+            std::uint64_t out[5] = {report.events, report.keeps, report.findings,
+                                    report.nodes.size(), server.worldlines().size()};
             if (::write(result[1], out, sizeof(out)) != sizeof(out))
                 _exit(24);
             _exit(0);
@@ -656,7 +656,8 @@ int main() {
         // whether more follow, until the window is drained. A filter
         // pages the same way over its own matches.
         {
-            const auto audit_page = [&](std::uint64_t since, std::uint64_t worldline) {
+            const auto audit_page = [&](std::uint64_t since, std::uint64_t worldline,
+                                        std::uint64_t* first_row = nullptr) {
                 AuditQueryBody query{};
                 query.worldline = worldline;
                 query.since_seq = since;
@@ -669,8 +670,15 @@ int main() {
                       "the audit query answers");
                 AuditReply head{};
                 std::memcpy(&head, body.data(), sizeof(head));
-                // An unfiltered page is consecutive from its cursor.
-                const std::uint64_t first_seq = worldline == 0 ? (since == 0 ? 1 : since) : 0;
+                if (first_row != nullptr && head.count != 0) {
+                    AuditWire row{};
+                    std::memcpy(&row, body.data() + sizeof(head), sizeof(row));
+                    *first_row = row.seq;
+                }
+                // An unfiltered page read from a cursor is consecutive
+                // from it. From the start of a window that slid, the
+                // first row keeps the sequence the event landed with.
+                const std::uint64_t first_seq = worldline == 0 && since != 0 ? since : 0;
                 for (std::uint64_t i = 0; i < head.count && first_seq != 0; ++i) {
                     AuditWire row{};
                     std::memcpy(&row, body.data() + sizeof(head) + i * sizeof(row), sizeof(row));
@@ -691,13 +699,50 @@ int main() {
             const AuditReply scoped = audit_page(0, control);
             check(scoped.count == 3 && scoped.truncated == 0,
                   "a worldline filter pages over its own events");
+
+            // The audit window slides past a worldline: the coordinator
+            // forgets it with its Trial event, the evidence goes with it,
+            // and the lineage that remains still replays clean.
+            // 1 500 trials with bound evidence, each rolled back: three
+            // audited events per trial, more than the window holds.
+            for (int i = 0; i < 1500; ++i) {
+                const std::uint64_t id = open_trial();
+                bind_five(id);
+                LoanBody back{};
+                back.channel = 1;
+                back.worldline = id;
+                check(send_frame(att.sock, FrameType::Rollback, att.session,
+                                 {reinterpret_cast<const std::byte*>(&back), sizeof(back)}),
+                      "rollback");
+                check(recv_frame(att.sock, &hdr, body, &err) &&
+                          hdr.type == static_cast<std::uint16_t>(FrameType::Credit),
+                      "rollback reply");
+            }
+            check(send_frame(att.sock, FrameType::AuditReplay, att.session,
+                             {reinterpret_cast<const std::byte*>(&request), sizeof(request)}),
+                  "audit replay after the window slid");
+            check(recv_frame(att.sock, &hdr, body, &err),
+                  "the replay answers after the window slid");
+            AuditReplayReply slid{};
+            std::memcpy(&slid, body.data(), sizeof(slid));
+            check(slid.findings == 0, "the lineage replays clean after the window slid");
+            check(slid.worldlines < 1500, "the lineage is bounded by the audit window");
+            std::uint64_t oldest_seq = 0;
+            const AuditReply oldest = audit_page(0, 0, &oldest_seq);
+            check(oldest.count == 20 && oldest.truncated == 1,
+                  "the window still pages from its start");
+            check(oldest_seq > 1, "the first retained event keeps the sequence it landed with");
+            check(audit_page(oldest_seq, 0).count == 20,
+                  "a cursor is a sequence, not a window offset");
         }
         att.close_all();
-        std::uint64_t out[4] = {0, 0, 0, 0};
+        std::uint64_t out[5] = {0, 0, 0, 0, 0};
         check(::read(result[0], out, sizeof(out)) == static_cast<ssize_t>(sizeof(out)),
               "server report");
-        check(out[1] == 1, "the server counts the same keeps");
-        check(out[2] == 0, "the server finds no defect");
+        check(out[1] == 0, "the KEEP left the window with its worldline");
+        check(out[2] == 0, "the server finds no defect after the window slid");
+        check(out[3] > 0 && out[3] < 1500, "the lineage is bounded by the audit window");
+        check(out[4] > 0 && out[4] < 1500, "the ledger forgets worldlines with their Trial event");
         int status = 0;
         waitpid(pid, &status, 0);
         check(WIFEXITED(status) && WEXITSTATUS(status) == 0, "server clean exit");

@@ -9,6 +9,7 @@
 #include <cstring>
 #include <map>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace aura::bus {
 namespace {
@@ -47,7 +48,8 @@ namespace {
 
 ReplayReport replay_lineage(const std::vector<AuditEvent>& events, std::span<const std::byte> image,
                             const std::vector<ReplayEvidence>& evidence, bool gate_required,
-                            const std::function<std::uint64_t(std::uint64_t)>& candidate_digest) {
+                            const std::function<std::uint64_t(std::uint64_t)>& candidate_digest,
+                            std::uint64_t seq_base, std::uint64_t window_floor) {
     ReplayReport report{};
     report.events = events.size();
     Collector sink{&report};
@@ -61,10 +63,15 @@ ReplayReport replay_lineage(const std::vector<AuditEvent>& events, std::span<con
             se.count <= kImageMaxRecords && se.length % se.element_size == 0 &&
             se.offset + se.length <= image.size()) {
             const std::uint64_t stride = se.element_size;
-            records.reserve(se.count);
             for (std::uint64_t i = 0; i < se.count; ++i) {
+                const auto* at = image.data() + se.offset + i * stride;
+                // A worldline opened before the audit window is history:
+                // its id is read, its record is not loaded.
                 WorldlineRecord w{};
-                std::memcpy(&w, image.data() + se.offset + i * stride,
+                std::memcpy(&w.id, at, sizeof(w.id));
+                if (w.id < window_floor)
+                    continue;
+                std::memcpy(&w, at,
                             static_cast<std::size_t>(std::min<std::uint64_t>(stride, sizeof(w))));
                 records.push_back(w);
             }
@@ -112,7 +119,7 @@ ReplayReport replay_lineage(const std::vector<AuditEvent>& events, std::span<con
     std::unordered_map<std::uint64_t, std::uint64_t> opened; // worldline -> trial seq
     for (std::size_t i = 0; i < events.size(); ++i) {
         const AuditEvent& event = events[i];
-        const std::uint64_t seq = static_cast<std::uint64_t>(i) + 1;
+        const std::uint64_t seq = seq_base + static_cast<std::uint64_t>(i);
         if (!names_worldline(event.kind) || event.worldline == 0)
             continue;
         if (event.kind == AuditKind::Trial) {
@@ -124,6 +131,10 @@ ReplayReport replay_lineage(const std::vector<AuditEvent>& events, std::span<con
         }
         const auto it = opened.find(event.worldline);
         if (it == opened.end()) {
+            // Opened before the window: its Trial event is gone, and this
+            // is the tail of a worldline the window no longer starts.
+            if (event.worldline < window_floor)
+                continue;
             sink.add(ReplayFinding::OrphanEvent, seq,
                      "the event names worldline " + std::to_string(event.worldline) +
                          ", which was never opened");
@@ -156,8 +167,8 @@ ReplayReport replay_lineage(const std::vector<AuditEvent>& events, std::span<con
         // may still carry a raw 64-bit FNV value. The replay node feeds
         // an Aura immediate, so mask it here as well as at the source.
         node.fingerprint = record->gate_fingerprint & ((1ull << 62) - 1);
-        if (node.parent != 0 && by_id.find(node.parent) == by_id.end() &&
-            opened.find(node.parent) == opened.end()) {
+        if (node.parent != 0 && node.parent >= window_floor &&
+            by_id.find(node.parent) == by_id.end() && opened.find(node.parent) == opened.end()) {
             sink.add(ReplayFinding::BrokenParent, node.trial_seq,
                      "worldline " + std::to_string(id) + " names the unknown parent " +
                          std::to_string(node.parent));
@@ -165,7 +176,12 @@ ReplayReport replay_lineage(const std::vector<AuditEvent>& events, std::span<con
     }
 
     // ── The evidence: the five-tuple, the admission, the replay ──
+    std::unordered_set<std::uint64_t> evidenced;
+    evidenced.reserve(evidence.size());
     for (const ReplayEvidence& item : evidence) {
+        if (item.worldline < window_floor)
+            continue; // opened before the window: its evidence is history
+        evidenced.insert(item.worldline);
         ReplayNode& node = nodes[item.worldline];
         node.worldline = item.worldline;
         // Evidence for a worldline that was never opened is an orphan.
@@ -249,16 +265,7 @@ ReplayReport replay_lineage(const std::vector<AuditEvent>& events, std::span<con
     // needs a verdict while the gate is on.
     if (gate_required) {
         for (const auto& [id, node] : nodes) {
-            if (node.keep_seq == 0)
-                continue;
-            bool known = false;
-            for (const ReplayEvidence& item : evidence) {
-                if (item.worldline == id) {
-                    known = true;
-                    break;
-                }
-            }
-            if (!known) {
+            if (node.keep_seq != 0 && evidenced.count(id) == 0) {
                 sink.add(ReplayFinding::KeepWithoutVerdict, node.keep_seq,
                          "worldline " + std::to_string(id) +
                              " was kept without an admission verdict");

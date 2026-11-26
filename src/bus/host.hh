@@ -77,6 +77,10 @@ struct HostOptions {
         apply;
     // #5381: restore the pre-canary snapshot when an observation reverts.
     std::function<bool(std::uint64_t worldline, std::string* why)> revert;
+    // The coordinator forgot the worldlines below a horizon (their Trial
+    // events left the audit window): the host drops what it kept to
+    // revert them. Runs on the coordinator thread.
+    std::function<void(std::uint64_t horizon)> forget;
     // #5397: the host's live define names and their node ids. A peer
     // that wants to rewrite a named function (choose-fn + admit-fn +
     // ttl-fn) asks the host for the id; the ids are host-local, so

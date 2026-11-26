@@ -334,11 +334,17 @@ std::uint64_t WorldlineLedger::open_trial(std::uint64_t owner, std::uint64_t wor
 }
 
 TrialRecord* WorldlineLedger::at(std::uint64_t id) {
-    return id != 0 && id <= records_.size() ? &records_[static_cast<std::size_t>(id - 1)] : nullptr;
+    const auto it = std::lower_bound(
+        records_.begin(), records_.end(), id,
+        [](const TrialRecord& record, std::uint64_t value) { return record.id < value; });
+    return it != records_.end() && it->id == id ? &*it : nullptr;
 }
 
 const TrialRecord* WorldlineLedger::at(std::uint64_t id) const {
-    return id != 0 && id <= records_.size() ? &records_[static_cast<std::size_t>(id - 1)] : nullptr;
+    const auto it = std::lower_bound(
+        records_.begin(), records_.end(), id,
+        [](const TrialRecord& record, std::uint64_t value) { return record.id < value; });
+    return it != records_.end() && it->id == id ? &*it : nullptr;
 }
 
 void WorldlineLedger::release_loan(std::uint64_t id) {
@@ -352,6 +358,17 @@ std::size_t WorldlineLedger::pending_count() const {
 
 const TrialRecord* WorldlineLedger::find(std::uint64_t id) const {
     return at(id);
+}
+
+std::size_t WorldlineLedger::forget_settled_before(std::uint64_t horizon) {
+    // A pending trial and a worldline under observation still change
+    // state, so they stay whatever their id; the gaps do not cost a
+    // lookup more than a bisection.
+    const std::size_t before = records_.size();
+    std::erase_if(records_, [horizon](const TrialRecord& record) {
+        return record.id < horizon && !record.pending && !record.canary;
+    });
+    return before - records_.size();
 }
 
 bool WorldlineLedger::keep(std::uint64_t id, std::uint64_t owner, const Capability& caps,
@@ -519,6 +536,7 @@ void AuditLog::push(AuditEvent&& event) {
         // would move the whole window for every audited publish.
         const std::size_t keep = kMaxEvents - kMaxEvents / 4;
         const std::size_t drop = events_.size() - keep;
+        dropped_ += static_cast<std::uint64_t>(drop);
         events_.erase(events_.begin(), events_.begin() + static_cast<std::ptrdiff_t>(drop));
     }
 }

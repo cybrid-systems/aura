@@ -298,6 +298,8 @@ bool host_start(const HostOptions& opts, std::string* path_out, std::string* why
         host->server.set_apply_callback(opts.apply);
     if (opts.revert)
         host->server.set_revert_callback(opts.revert);
+    if (opts.forget)
+        host->server.set_forget_callback(opts.forget);
     // #5397: the host's define names, so a peer can address a named
     // function instead of guessing a host-local node id.
     if (opts.define_names)
