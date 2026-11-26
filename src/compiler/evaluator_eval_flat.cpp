@@ -6015,8 +6015,12 @@ namespace {
 std::uint8_t Evaluator::let_bind_kind_cached(aura::ast::FlatAST& flat, aura::ast::NodeId id,
                                              aura::ast::SymId name, aura::ast::NodeId body) {
     const auto kind_of = [&]() { return let_body_bind_kind(flat, body, name); };
-    if (aura::serve::g_current_fiber != nullptr)
-        return kind_of();
+    // Issue #4599 / #4717: this memo lives in the running body's Context
+    // (let_bind_kind()), and bind_float_intern_flat clears it when the
+    // body switches flats. A fiber's walk is therefore as safe to memoize
+    // as the host's; the old host-only guard made every game tick re-walk
+    // the same let body (profile: let_body_bind_kind 5.2% + its
+    // assemble_nodeview callers).
     const auto uid = static_cast<std::uint32_t>(id);
     if (uid < let_bind_kind().size() && let_bind_kind()[uid] != 0)
         return let_bind_kind()[uid];
