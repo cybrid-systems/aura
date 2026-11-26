@@ -7,6 +7,7 @@
 #include <cstring>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <fcntl.h>
@@ -331,13 +332,16 @@ Built build_image(std::span<std::byte> img, std::uint64_t node_tail_bytes = 0) {
     a1.generation = 2;
     put(img, audit_off + sizeof(AuditRecord), a1);
 
-    // Commit: every known section carries the digest of its bytes.
+    // Commit: every known section carries the digest of its bytes; the
+    // string table's chains its entries.
     for (std::uint32_t i = 0; i < section_count; ++i) {
         const std::uint64_t at = dir_off + static_cast<std::uint64_t>(i) * sizeof(SectionEntry);
         SectionEntry e = get<SectionEntry>(img, at);
         if (e.kind == static_cast<std::uint32_t>(SectionKind::Staging))
             continue;
-        e.digest = fnv_bytes(img, e.offset, e.length);
+        e.digest = e.kind == static_cast<std::uint32_t>(SectionKind::StringTable)
+                       ? aura::bus::string_table_digest(img, e, 0, 14695981039346656037ull)
+                       : fnv_bytes(img, e.offset, e.length);
         put(img, at, e);
     }
 
@@ -689,6 +693,81 @@ int main() {
         put(g, 0, h2);
         const auto vc2 = aura::bus::validate_image(g);
         check(vc2.ok(), "unknown section kind is ignored");
+    }
+
+    // ── The string table chains its appends ─────────────────────
+    // An append adds its entry and its text to the committed digest. A
+    // reader that already verified the table replays only what was
+    // appended, and a changed entry or text is still a mismatch.
+    {
+        // An image that holds a string table alone: the entry array of
+        // the first layout, then room for 32 sources of eight bytes.
+        constexpr std::uint64_t kEntries =
+            aura::bus::kStringSlotsReserved * sizeof(StringTableEntry);
+        constexpr std::uint64_t kTableOff = aura::bus::kImageHeaderSize + sizeof(SectionEntry);
+        constexpr std::uint64_t kTableBytes = kEntries + 256;
+        std::vector<std::byte> table_image(kTableOff + kTableBytes, std::byte{0});
+        const auto view = [&] { return std::span<std::byte>(table_image); };
+        const auto table = [&] { return get<SectionEntry>(view(), aura::bus::kImageHeaderSize); };
+        {
+            ImageHeader th{};
+            std::memcpy(th.magic, aura::bus::kImageMagic, sizeof(th.magic));
+            th.abi_major = aura::bus::kImageAbiMajor;
+            th.abi_minor = aura::bus::kImageAbiMinor;
+            th.endianness = aura::bus::kImageEndianMarker;
+            th.header_len = aura::bus::kImageHeaderSize;
+            th.image_size = table_image.size();
+            const aura::bus::SchemaId sid = aura::bus::header_schema_id();
+            std::memcpy(th.schema_id, &sid.a, 8);
+            std::memcpy(th.schema_id + 8, &sid.b, 8);
+            th.layout_version = 1;
+            th.committed_bytes = table_image.size();
+            th.committed_gen = 2;
+            th.section_dir_off = aura::bus::kImageHeaderSize;
+            th.section_count = 1;
+            put(view(), 0, th);
+            SectionEntry te{};
+            te.kind = static_cast<std::uint32_t>(SectionKind::StringTable);
+            te.version = 1;
+            te.offset = kTableOff;
+            te.length = kEntries;
+            te.element_size = sizeof(StringTableEntry);
+            te.capacity = kTableBytes;
+            te.generation = 2;
+            te.fingerprint = aura::bus::section_layout_fingerprint(SectionKind::StringTable);
+            te.digest = 14695981039346656037ull;
+            put(view(), aura::bus::kImageHeaderSize, te);
+        }
+        std::string why;
+        std::uint64_t index = 0;
+        aura::bus::ImageDigestCache cache{};
+        check(aura::bus::validate_image(view(), &cache).ok(), "the empty table validates");
+        for (int i = 0; i < 32; ++i) {
+            check(aura::bus::string_table_append(view(), "more", &index, &why),
+                  "a source is appended");
+            check(index == static_cast<std::uint64_t>(i), "the source takes the next slot");
+            check(aura::bus::validate_image(view(), &cache).ok(),
+                  "the appended table validates on the cached prefix");
+            check(aura::bus::validate_image(view()).ok(), "the appended table validates cold");
+        }
+        check(!aura::bus::string_table_append(view(), "more", &index, &why) &&
+                  why.rfind("string table bytes full", 0) == 0,
+              "the byte region bounds the table");
+        std::string_view text;
+        check(aura::bus::string_table_read(view(), 31, &text) && text == "more",
+              "the appended source reads back");
+        check(aura::bus::string_table_digest(view(), table(), 0, 14695981039346656037ull) ==
+                  table().digest,
+              "the committed digest is the chain of the entries");
+        // The last byte the section committed is the padding of the
+        // last source.
+        table_image.back() = std::byte{'M'};
+        check(aura::bus::validate_image(view()).status == ImageStatus::BadDigest,
+              "in-place change to an appended source");
+        table_image.back() = std::byte{0};
+        put(view(), kTableOff + offsetof(StringTableEntry, len), std::uint32_t{3});
+        check(aura::bus::validate_image(view()).status == ImageStatus::BadDigest,
+              "in-place change to a string entry");
     }
 
     if (g_failed == 0)

@@ -51,11 +51,14 @@ namespace {
         constexpr std::uint32_t kSections = 8;
         constexpr std::uint64_t kMinPerChannel = 4096;
         constexpr std::uint64_t kConstraintBytes = 4096;
-        // #5378: source-carrier string table — 1024 entry slots plus a
-        // 64 KiB byte region for candidate define sources.
+        // #5378: the source-carrier string table takes a 32nd of the
+        // image, and never less than the first layout (1024 entry slots
+        // and a 64 KiB byte region). A candidate loop publishes one
+        // source per candidate, so its room has to keep pace with the
+        // channels' instead of running out a thousand rounds in.
         constexpr std::uint64_t kStringSlots = 1024;
-        constexpr std::uint64_t kStringBytes =
-            ((kStringSlots * sizeof(StringTableEntry) + 7) & ~7ull) + (64u << 10);
+        const std::uint64_t kStringBytes = std::max<std::uint64_t>(
+            ((kStringSlots * sizeof(StringTableEntry) + 7) & ~7ull) + (64u << 10), img.size() / 32);
         const std::uint64_t dir = kImageHeaderSize;
         const std::uint64_t elems[6] = {sizeof(MetricRecord), sizeof(CctRecord),
                                         sizeof(PatchRecord),  sizeof(WorldlineRecord),
@@ -144,18 +147,19 @@ namespace {
               kConstraintBytes);
         entry(7, SectionKind::Tasks, tasks, sizeof(TaskRecord), per[5] * elems[5]);
         {
-            // String table: fixed entry array, then the byte region.
+            // String table: the entry array, then the byte region. Its
+            // digest chains the appends (string_table_digest); none yet.
             SectionEntry se{};
             se.kind = static_cast<std::uint32_t>(SectionKind::StringTable);
             se.version = 1;
             se.offset = strings;
             se.element_size = sizeof(StringTableEntry);
             se.capacity = kStringBytes;
-            se.length = (kStringSlots * sizeof(StringTableEntry) + 7) & ~7ull;
+            se.length = string_table_reserved(kStringBytes);
             se.count = 0;
             se.generation = 2;
             se.fingerprint = section_layout_fingerprint(SectionKind::StringTable);
-            se.digest = fnv_bytes({img.data() + strings, static_cast<std::size_t>(se.length)});
+            se.digest = 14695981039346656037ull;
             put(img, dir + 6 * sizeof(SectionEntry), se);
         }
         {

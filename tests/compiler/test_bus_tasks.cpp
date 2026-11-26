@@ -187,7 +187,7 @@ const char* kHostScript = R"AURA(
        (loop))
       ((string=? l "sources")
        (define (fill i)
-         (if (< i 1026)
+         (if (< i 70000)
              (let ((r (bus:publish-source msid "x")))
                (if (bus:ok? r)
                    (fill (+ i 1))
@@ -478,8 +478,14 @@ int main() {
     const std::string sources = read_until(host_out, "source-stop=", 20000) +
                                 read_until(host_out, "capacity-src=", 20000) +
                                 read_until(host_out, "\n", 20000);
-    check(has(sources, "string table slots exhausted"), "the source limit names the string table");
-    check(has(sources, "0/1024 left"), "the source limit reports the remaining slots");
+    // The default image gives the table a 32nd of its bytes and the
+    // entry array a ninth of those.
+    const std::string exhausted =
+        "string table slots exhausted (0/" +
+        std::to_string(aura::bus::string_table_reserved(aura::bus::kBusDefaultImageBytes / 32) /
+                       sizeof(aura::bus::StringTableEntry)) +
+        " left)";
+    check(has(sources, exhausted.c_str()), "the source limit names the string table and its slots");
     check(has(sources, "capacity-src=(ok 0 1"), "the plan flags low and counts zero rounds");
 
     check(::write(host_in, "quit\n", 5) == 5, "send quit");

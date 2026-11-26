@@ -207,6 +207,17 @@ bool string_table_append(std::span<std::byte> image, std::string_view text, std:
 // Read one string-table entry back (bounds-checked). False when absent.
 bool string_table_read(std::span<const std::byte> image, std::uint64_t index,
                        std::string_view* text);
+// The digest a string table commits chains its appends in order: each
+// entry's 16 bytes, then its text with the padding that aligns the next
+// one. The entry array sits before the byte region, so every append
+// writes inside the committed range and a digest over the physical
+// bytes would be rebuilt whole each time; on the chain an append adds
+// only its own bytes, and a reader that trusts the first `from_count`
+// entries replays the rest from their digest. `basis` is that digest
+// (the FNV basis, 14695981039346656037, for none). The entries must be
+// validated already.
+std::uint64_t string_table_digest(std::span<const std::byte> image, const SectionEntry& entry,
+                                  std::uint64_t from_count, std::uint64_t basis);
 // Patch field_offset marker: new_value is a StringTable entry index
 // holding the candidate define source, not an immediate field value.
 inline constexpr std::uint32_t kPatchSourceField = 0xFFFFFFF0u;

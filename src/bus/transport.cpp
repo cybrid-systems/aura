@@ -2198,7 +2198,8 @@ CapacityPlan Server::capacity_plan() const {
     SectionEntry strings{};
     if (find_section({image_base_, image_size_}, SectionKind::StringTable, &strings)) {
         const std::uint64_t slot_capacity = std::min<std::uint64_t>(
-            kStringSlotsReserved, strings.capacity / sizeof(StringTableEntry));
+            string_table_reserved(strings.capacity) / sizeof(StringTableEntry),
+            strings.capacity / sizeof(StringTableEntry));
         plan.remaining_source_slots =
             strings.count < slot_capacity ? slot_capacity - strings.count : 0;
         plan.remaining_source_bytes =

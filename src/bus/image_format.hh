@@ -280,10 +280,18 @@ inline constexpr std::uint64_t kImageLayoutVersion = 3;
 // tail to zero (#5379 additive-evolution rule).
 inline constexpr std::uint32_t kWorldlineV1Size = 48;
 
-// #5378: the host string table reserves this many entry slots; the byte
-// region follows the fixed array. string_table_append uses it to keep
-// the entry array size constant so validation's count*16 bound holds.
+// #5378: the host string table reserves its entry slots up front; the
+// byte region follows the fixed array. string_table_append keeps the
+// array size constant so validation's count*16 bound holds. The array
+// is a ninth of the section's capacity (one 16-byte entry per eight
+// bytes of source) and never fewer than kStringSlotsReserved slots —
+// which is the whole array of a v0.3.1 section, so that layout stays
+// valid as it is.
 inline constexpr std::uint64_t kStringSlotsReserved = 1024;
+constexpr std::uint64_t string_table_reserved(std::uint64_t capacity) {
+    const std::uint64_t slots = capacity / 9 / sizeof(StringTableEntry);
+    return (slots > kStringSlotsReserved ? slots : kStringSlotsReserved) * sizeof(StringTableEntry);
+}
 
 inline constexpr std::uint32_t expected_element_size(SectionKind kind) {
     switch (kind) {

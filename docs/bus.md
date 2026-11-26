@@ -170,6 +170,7 @@ canary 拒绝)、`test_bus_closed_loop_e2e`(#5382,三进程正常闭环 + 五类
 ### v0.3.1 闭环动词(#5378/#5379/#5381)
 
 - `(bus:publish-source session source-text)` → `(ok index generation)`：把候选 define 源码追加进映像字符串表,返回条目下标。提议方随后 `(bus:publish-patch session node bus:source-field index worldline generation)` 发布源载体补丁(field_offset = `bus:source-field` = 4294967280,new_value = 字符串表下标)。KEEP 时协调者把源码经 `mutate:rebind` + `eval-current` 原子应用回宿主活工作区;任一步失败即回滚快照,活 AST 逐字节不变。
+- 字符串表随映像大小伸缩：占映像的 1/32（默认 256 MiB 映像下是 58 254 个条目槽和约 7.1 MiB 文本；1 MiB 以下的映像保持最初的 1024 槽 + 64 KiB），条目数组占其中的 1/9。它只追加，槽或字节用尽时 `bus:publish-source` 回 `string table slots exhausted (N/M left)` 或 `string table bytes full (N B left)`，`bus:capacity-plan` 把剩余源码槽计入可跑轮数；调用方要读这个错误，否则 KEEP 会结算一个没有源码的 trial。节的摘要按追加顺序链接（每个条目 16 字节，后跟其文本与对齐填充），追加只哈希自己的字节；冷读者重放一遍，信任前缀的读者从缓存处续算。
 - `(bus:candidate-digest session worldline)` → `(ok digest)`：协调者对该 trial 已提交补丁字节流的 FNV-1a 摘要(截断低 62 位,fixnum 安全)。补丁只可能在 trial pending 期间提交,协调者按 trial 记录补丁窗口并在结算时闭合,摘要、KEEP 与回放重算只读这个窗口,成本不随补丁历史增长;trial 结算之后才到达、却写它名字的补丁不进它的摘要。
 - `(bus:bind-evidence session worldline baseline candidate workload seed verifier)` → `(ok worldline)`：把五元证据绑定到未决 trial。KEEP 强制核对 `baseline_gen == 当前工作区代次`、`candidate_hash == digest(trial.patches)`、workload/seed/verifier 非零;任一缺失或不一致拒绝 KEEP(`stale-baseline` / `candidate-hash-mismatch` / `incomplete-evidence` / `missing-evidence`)。证据尾随 worldline 记录追加进映像(layout_version 2,v1 读者安全跳过)。
 - `(bus:evidence session worldline)` → `(ok baseline candidate workload seed verifier)`：读回某 worldline 最终记录的证据尾。

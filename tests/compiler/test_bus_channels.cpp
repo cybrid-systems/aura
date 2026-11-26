@@ -138,11 +138,14 @@ Layout build(std::span<std::byte> img) {
         put(img, dir, se);
     }
 
-    // Commit digests after the section bytes exist.
+    // Commit digests after the section bytes exist; the string table's
+    // chains its entries.
     for (std::uint32_t i = 0; i < kSections; ++i) {
         const std::uint64_t at = dir + static_cast<std::uint64_t>(i) * sizeof(SectionEntry);
         SectionEntry e = get<SectionEntry>(img, at);
-        e.digest = fnv(img, e.offset, e.length);
+        e.digest = e.kind == static_cast<std::uint32_t>(SectionKind::StringTable)
+                       ? aura::bus::string_table_digest(img, e, 0, 14695981039346656037ull)
+                       : fnv(img, e.offset, e.length);
         put(img, at, e);
     }
     return L;

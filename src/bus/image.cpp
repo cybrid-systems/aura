@@ -25,9 +25,11 @@ namespace {
         return (v & 1u) == 0;
     }
 
+    constexpr std::uint64_t kFnvBasis = 14695981039346656037ull;
+
     std::uint64_t fnv_section(std::span<const std::byte> image, std::uint64_t off,
                               std::uint64_t len) {
-        std::uint64_t hash = 14695981039346656037ull;
+        std::uint64_t hash = kFnvBasis;
         for (std::uint64_t i = 0; i < len; ++i) {
             hash ^= static_cast<std::uint64_t>(static_cast<unsigned char>(image[off + i]));
             hash *= 1099511628211ull;
@@ -94,6 +96,22 @@ namespace {
     }
 
 } // namespace
+
+std::uint64_t string_table_digest(std::span<const std::byte> image, const SectionEntry& entry,
+                                  std::uint64_t from_count, std::uint64_t basis) {
+    constexpr std::uint64_t bytes = sizeof(StringTableEntry);
+    for (std::uint64_t i = from_count; i < entry.count; ++i) {
+        const StringTableEntry s = load_at<StringTableEntry>(image, entry.offset + i * bytes);
+        // The padding after a text is committed with it. A table built by
+        // hand may end its last text short of the aligned length, and the
+        // chain never reads past what the section committed.
+        const std::uint64_t aligned = (static_cast<std::uint64_t>(s.len) + 7) & ~7ull;
+        const std::uint64_t room = s.off < entry.length ? entry.length - s.off : 0;
+        basis = fnv_continue(image, entry.offset + i * bytes, bytes, basis);
+        basis = fnv_continue(image, entry.offset + s.off, std::min(aligned, room), basis);
+    }
+    return basis;
+}
 
 ImageCheck validate_image(std::span<const std::byte> image, ImageDigestCache* cache) {
     // #5460: start from the prefixes this reader already verified. The
@@ -216,13 +234,12 @@ ImageCheck validate_image(std::span<const std::byte> image, ImageDigestCache* ca
     const SectionView worldlines = view_section(image, h, SectionKind::Worldlines);
 
     // ── String table: entries index UTF-8 bytes inside the section ──
-    // The entry array is a FIXED reserved region (kStringSlotsReserved
-    // slots); bytes follow it. Validate each entry's byte range against
-    // the section length, and require the offset past the reserved array
-    // (not count*16, which grows as entries are added).
+    // The entry array is a FIXED reserved region (string_table_reserved
+    // of the section's capacity); bytes follow it. Validate each entry's
+    // byte range against the section length, and require the offset past
+    // the reserved array (not count*16, which grows as entries are added).
     if (strings.present) {
-        const std::uint64_t reserved =
-            (kStringSlotsReserved * sizeof(StringTableEntry) + 7) & ~7ull;
+        const std::uint64_t reserved = string_table_reserved(strings.entry.capacity);
         for (std::uint64_t i = cached_count(strings.entry); i < strings.count; ++i) {
             const StringTableEntry s = load_at<StringTableEntry>(
                 image, strings.entry.offset + i * strings.entry.element_size);
@@ -389,19 +406,32 @@ ImageCheck validate_image(std::span<const std::byte> image, ImageDigestCache* ca
         const auto kind = static_cast<SectionKind>(e.kind);
         if (kind == SectionKind::Staging)
             continue;
+        // A string table's digest chains its appends (string_table_digest);
+        // every other section's is the FNV of its committed bytes, which a
+        // cached prefix continues over the appended tail.
+        const auto matches = [&](std::uint64_t from_count, std::uint64_t from_length,
+                                 std::uint64_t prefix) {
+            if (kind == SectionKind::StringTable)
+                return string_table_digest(image, e, from_count, prefix) == e.digest;
+            return from_length == e.length
+                       ? prefix == e.digest
+                       : fnv_continue(image, e.offset + from_length, e.length - from_length,
+                                      prefix) == e.digest;
+        };
         bool verified = false;
         if (cache != nullptr) {
             const ImageDigestCache::SectionPrefix& p = next.sections[e.kind];
-            if (p.valid && p.offset == e.offset && p.length <= e.length &&
-                p.generation <= e.generation) {
-                const std::uint64_t candidate =
-                    p.length == e.length
-                        ? p.digest
-                        : fnv_continue(image, e.offset + p.length, e.length - p.length, p.digest);
-                verified = candidate == e.digest;
+            // A prefix of the same length with another digest was
+            // rewritten, not extended.
+            if (p.valid && p.offset == e.offset && p.generation <= e.generation &&
+                (p.length != e.length || p.digest == e.digest)) {
+                if (kind == SectionKind::StringTable)
+                    verified = p.count <= e.count && matches(p.count, p.length, p.digest);
+                else
+                    verified = p.length <= e.length && matches(p.count, p.length, p.digest);
             }
         }
-        if (!verified && fnv_section(image, e.offset, e.length) != e.digest)
+        if (!verified && !matches(0, 0, kFnvBasis))
             return {ImageStatus::BadDigest, "committed section bytes changed in place"};
         ImageDigestCache::SectionPrefix& p = next.sections[e.kind];
         p.valid = true;
@@ -465,19 +495,19 @@ bool string_table_append(std::span<std::byte> image, std::string_view text, std:
         return fail("string table section is missing");
     if (e.element_size != sizeof(StringTableEntry))
         return fail("string table element size mismatch");
-    // Layout: a fixed reserved entry array (kStringSlotsReserved slots),
-    // then the byte region. Entries fill the array from slot 0; bytes
-    // append at the committed tail, 8-aligned. The array size is FIXED so
-    // existing entries never move.
-    const std::uint64_t reserved = (kStringSlotsReserved * sizeof(StringTableEntry) + 7) & ~7ull;
+    // Layout: a reserved entry array (string_table_reserved of the
+    // capacity), then the byte region. Entries fill the array from slot
+    // 0; bytes append at the committed tail, 8-aligned. The array size
+    // is FIXED so existing entries never move.
+    const std::uint64_t reserved = string_table_reserved(e.capacity);
     const std::uint64_t tail = e.length < reserved ? reserved : e.length;
     const std::uint64_t byte_off = (tail + 7) & ~7ull;
-    if ((e.count + 1) * sizeof(StringTableEntry) > reserved) {
+    const std::uint64_t slots = reserved / sizeof(StringTableEntry);
+    if (e.count >= slots) {
         if (why) {
-            const std::uint64_t left =
-                e.count < kStringSlotsReserved ? kStringSlotsReserved - e.count : 0;
+            const std::uint64_t left = e.count < slots ? slots - e.count : 0;
             *why = "string table slots exhausted (" + std::to_string(left) + "/" +
-                   std::to_string(kStringSlotsReserved) + " left)";
+                   std::to_string(slots) + " left)";
         }
         return false;
     }
@@ -497,12 +527,17 @@ bool string_table_append(std::span<std::byte> image, std::string_view text, std:
     std::memcpy(image.data() + e.offset + e.count * sizeof(StringTableEntry), &ent, sizeof(ent));
     if (!text.empty())
         std::memcpy(image.data() + e.offset + byte_off, text.data(), text.size());
+    // The digest chains the appends: this one adds its entry and its text.
+    std::uint64_t digest = fnv_continue(
+        image, e.offset + e.count * sizeof(StringTableEntry), sizeof(StringTableEntry), e.digest);
+    if (aligned_len != 0)
+        digest = fnv_continue(image, e.offset + byte_off, aligned_len, digest);
     ImageHeader h = load_header(image);
     const std::uint64_t next_gen = h.committed_gen + 2;
     e.length = byte_off + aligned_len;
     e.count += 1;
     e.generation = next_gen;
-    e.digest = fnv_section(image, e.offset, e.length);
+    e.digest = digest;
     std::uint64_t at = 0;
     for (std::uint32_t i = 0; i < h.section_count; ++i) {
         const SectionEntry cand = load_section_entry(image, i);
