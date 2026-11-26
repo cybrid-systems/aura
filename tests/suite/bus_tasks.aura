@@ -184,10 +184,13 @@
   (define s (car (cdr a)))
   (define before (bus:capacity-plan s))
   (check (bus:ok? before))
-  ; At most one 4096-byte carrier per round: 16 rounds, not 1024.
-  (check= 16 (list-ref before 1))
+  ; At most one 4096-byte carrier per round; the table scales with the
+  ; image (#5378), so derive the bound from the reported free bytes.
+  (define bytes0 (list-ref before 11))
+  (define slots0 (list-ref before 10))
+  (check (> bytes0 65536))
+  (check= (quotient bytes0 4096) (list-ref before 1))
   (check= 0 (list-ref before 2))
-  (check= 65536 (list-ref before 11))
   (define big (string-repeat "x" 4090))
   (define accepted
     (let loop ((i 0))
@@ -197,11 +200,11 @@
               i)
           i)))
   ; The byte region is full, the slot array is not: the wall is bytes.
-  (check= 16 accepted)
+  (check= (quotient bytes0 4096) accepted)
   (define after (bus:capacity-plan s))
   (check (bus:ok? after))
-  (check= 1008 (list-ref after 10))
-  (check= 0 (list-ref after 11))
+  (check= (- slots0 accepted) (list-ref after 10))
+  (check= (remainder bytes0 4096) (list-ref after 11))
   (check= 0 (list-ref after 1))
   (check= 1 (list-ref after 2))
   (bus:detach s)
