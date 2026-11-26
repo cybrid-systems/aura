@@ -40,7 +40,7 @@ ACs:
   AC2  evaluator_env.cpp: lookup_cell_ptr and lookup_cell_index match
        frame string bindings in REVERSE — SoA walk (f.bindings_.rbegin()),
        legacy parent_ walk (p->bindings_.rbegin()), and live top_
-       consult (auto tb = owner_->top_env().bindings(); reverse) — so
+       consult (const auto& tb = owner_->top_env().bindings(); reverse) — so
        set! writes the newest (shadowing) cell after a top-level let/
        define rebind leaves [old binding, fresh binding] in one env;
        cites #4595. The symid scans were already reverse; the string
@@ -135,8 +135,12 @@ def main() -> int:
         "AC2: fiber-gate rationale documented",
     )
     must(
-        env.count("auto tb4595 = owner_->top_env().bindings();") == 2,
-        "AC2: cell-lookup empty-capture consults use tb4595",
+        env.count("const auto& tb4595 = owner_->top_env().bindings();") == 2,
+        "AC2: cell-lookup empty-capture consults bind top bindings by reference",
+    )
+    must(
+        env.count("auto tb4595 = owner_->top_env().bindings();") == 0,
+        "AC2: no by-value copy of the top bindings vector (#5480)",
     )
     must(
         env.count("(cap_snap_->bindings_.empty() && cap_snap_->bindings_symid_.empty())") == 3,
