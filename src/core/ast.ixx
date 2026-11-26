@@ -1892,7 +1892,10 @@ public:
         reserve_geom(verify_dirty_, upcoming_size);
         reserve_geom(verification_dirty_, upcoming_size);
         reserve_geom(macro_dirty_, upcoming_size);
-        if (!free_list_.empty()) {
+        // Issue #5477 follow-up: a live workspace body reader may still hold
+        // this id (its old define body). Appending instead of reusing keeps
+        // that body's content stable until the reader exits.
+        if (body_reader_count() == 0 && !free_list_.empty()) {
             auto id = free_list_.back();
             free_list_.pop_back();
             // Issue #2424: exclusive dirty_column while clearing
@@ -1948,7 +1951,7 @@ public:
             children_grown.insert(children_grown.end(), children_.begin(), children_.end());
             children_.swap(children_grown);
             children_retired_.push_back(std::move(children_grown));
-            if (children_retired_.size() > kChildrenRetiredCap)
+            if (children_retired_.size() > kChildrenRetiredCap && body_reader_count() == 0)
                 children_retired_.erase(children_retired_.begin());
         }
         if (id < children_.size())
@@ -2107,6 +2110,30 @@ public:
     // exclusive section, orders of magnitude after any reader that
     // sampled it can still be mid-assemble.
     static constexpr std::size_t kChildrenRetiredCap = 32;
+    // Issue #5477 follow-up: active workspace-body readers. A tree-walker
+    // body that is executing a workspace define registers here for the
+    // life of its eval_flat_body frame. While any reader is live the flat
+    // must not recycle or overwrite a node slot: the reader's NodeIds name
+    // the old body and must keep resolving to the same content. New nodes
+    // are appended instead of reusing free slots, and dead-slot sweeps are
+    // deferred. Process-wide (not per-flat) because the only registered
+    // readers are workspace bodies and the cost of being conservative is
+    // append-only growth, never an overwritten body.
+    static std::atomic<std::uint32_t>& active_body_readers() noexcept {
+        static std::atomic<std::uint32_t> readers{0};
+        return readers;
+    }
+    static void enter_body_reader() noexcept {
+        // seq_cst: the increment and the epoch re-read form the reader half
+        // of a Dekker handshake with the writer's epoch bump + reader check.
+        active_body_readers().fetch_add(1, std::memory_order_seq_cst);
+    }
+    static void exit_body_reader() noexcept {
+        active_body_readers().fetch_sub(1, std::memory_order_seq_cst);
+    }
+    [[nodiscard]] static std::uint32_t body_reader_count() noexcept {
+        return active_body_readers().load(std::memory_order_seq_cst);
+    }
     // Issue #222: shared_mutex that guards structural mutations
     // (set_child / insert_child / remove_child). Acquired
     // exclusively via begin_structural_mutation() (the public
@@ -6658,7 +6685,7 @@ public:
         // still be mid-assemble (an assemble is a few column loads; a
         // retiree here is superseded by kChildrenRetiredCap later
         // restores).
-        if (children_retired_.size() > kChildrenRetiredCap)
+        if (children_retired_.size() > kChildrenRetiredCap && body_reader_count() == 0)
             children_retired_.erase(children_retired_.begin());
         dense_dirty_ = true; // Issue #3402: PCV snapshot is the source of truth
         if (post_size > pre_size)
@@ -6882,6 +6909,11 @@ public:
     // and push onto free_list_. Used after rollback when mutations added
     // nodes that are no longer reachable after children_ restore.
     std::size_t free_orphan_nodes_from(NodeId begin) {
+        // Issue #5477 follow-up: never tombstone a slot a workspace body
+        // reader may still name. Leaving the parse orphans live is the
+        // safe side of a failed mutation.
+        if (body_reader_count() != 0)
+            return 0;
         std::unique_lock<std::shared_mutex> publish_lock(node_slot_publish_mtx_); // #4717
         std::size_t freed = 0;
         for (NodeId id = begin; id < size(); ++id) {
@@ -7156,6 +7188,11 @@ public:
     void note_mutation_record_written(std::size_t index) { sync_frozen_mutation_record(index); }
 
     [[nodiscard]] std::size_t recycle_dead_nodes() {
+        // Issue #5477 follow-up: a live workspace body reader still owns
+        // NodeIds into the old body. Defer the sweep; rebind appends, so
+        // nothing needs reclaiming until the reader exits.
+        if (body_reader_count() != 0)
+            return 0;
         // Issue #4717: node_gen_=0 is the slot-death publication that
         // is_free_slot() reads lock-free from other bodies (workspace
         // scanners / specialize). Take the slot-publication lock exclusive
@@ -7279,6 +7316,10 @@ public:
     }
 
     [[nodiscard]] std::size_t compact_nodes() {
+        // Issue #5477 follow-up: compaction remaps NodeIds; a live
+        // workspace body reader would see its body move underneath it.
+        if (body_reader_count() != 0)
+            return 0;
         auto live = mark_live_nodes();
         std::size_t live_count = 0;
         for (bool is_live : live) {

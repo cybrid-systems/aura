@@ -115,6 +115,9 @@ void Evaluator::stamp_closure_bridge_epoch(Closure& cl) const noexcept {
     // independent of max_lin. Moving the read inside the lock
     // would change concurrent staleness detection.
     cl.bridge_epoch = current_bridge_epoch();
+    // #5477: workspace body epoch.
+    if (cl.workspace_epoch == Closure::kNoWorkspaceEpoch && cl.flat && cl.flat == workspace_flat_)
+        cl.workspace_epoch = workspace_mutation_epoch_.load();
     // Aggregate max linear ownership from captured EnvFrame bindings.
     std::uint8_t max_lin = 0;
     if (cl.env_id != NULL_ENV_ID) {

@@ -21,12 +21,15 @@ Issue #5477: a body that called a workspace define while a sibling rebind +
 eval-current replaced that define's body could read the recycled node slot
 after the AST was rebuilt. The child ids in the held NodeView could then
 name another form, and the caller ran it in its own environment (about 2-4%
-of runs ended in "expected Int, got Closure" inside the wrong define). The
-tree-walker body now records the workspace content epoch at entry, owns the
-child/param id snapshot instead of borrowing the SoA spans, and fails closed
-with StaleWorkspace when a different executor changed the workspace. Only
-the fail-closed face is required here; a successful run keeps the old
-behaviour.
+of runs ended in "expected Int, got Closure" inside the wrong define).
+
+The follow-up keeps the caller running instead of failing closed: an applied
+or inlined workspace body registers as a flat reader for its whole frame, so
+a concurrent rebind appends new nodes instead of reusing/recycling the old
+body's slots; the child/param id list is snapshotted before dispatch. A
+rebind that lands between the callee lookup and the inline is retried from
+the live cell. The program must finish successfully and the caller must
+never observe a wrong node.
 """
 
 from __future__ import annotations
@@ -236,18 +239,17 @@ class ConcurrentRebind(unittest.TestCase):
             self.assertEqual(lines[-1:] or [None], ["(reloader rebinder)"], run.stdout[-300:])
 
     def test_define_call_next_to_rebind_eval_current_jit(self) -> None:
-        # Issue #5477: the caller may succeed, or fail closed with the
-        # stale-workspace diagnostic. It must never run the wrong node.
+        # Issue #5477 follow-up: the caller now finishes successfully while
+        # the sibling keeps rebinding. It must never run the wrong node.
         for _ in range(15):
             run = self.run_program(RACE_PROGRAM, timeout=45, jit=True)
             out = (run.stdout or "") + (run.stderr or "")
+            self.assertEqual(run.returncode, 0, run.stderr[-600:])
             self.assertNotIn("expected Int, got Closure", out, out[-600:])
             self.assertNotIn("invalid closure: eval_flat", out, out[-600:])
-            if run.returncode != 0:
-                self.assertIn("stale workspace", run.stderr, run.stderr[-600:])
-            else:
-                lines = [ln.strip() for ln in run.stdout.splitlines() if ln.strip()]
-                self.assertTrue((lines[-1:] or [""])[0].startswith("((rebinder "), run.stdout[-300:])
+            self.assertNotIn("stale workspace", out, out[-600:])
+            lines = [ln.strip() for ln in run.stdout.splitlines() if ln.strip()]
+            self.assertEqual(lines[-1:] or [None], ["(rebinder 0)"], run.stdout[-300:])
 
     def test_rebind_and_eval_current_storm(self) -> None:
         # Issues #5472 / #5473: no hang, no crash, the key and its value survive.

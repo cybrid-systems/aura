@@ -1780,6 +1780,13 @@ export struct Closure {
     // (0=Untracked). Stamped at construction via stamp_closure_bridge_epoch;
     // apply / materialize dual-check against host fingerprint + frame version.
     std::uint8_t linear_state = 0;
+    // Issue #5477 follow-up: workspace content epoch at closure build.
+    // kNoWorkspaceEpoch = the body is not a workspace define or the stamp
+    // is unavailable. A workspace closure whose stamp no longer matches
+    // the live epoch names a body the mutator may have replaced; the
+    // apply sites fail closed before inlining it.
+    static constexpr std::uint64_t kNoWorkspaceEpoch = ~std::uint64_t{0};
+    std::uint64_t workspace_epoch = kNoWorkspaceEpoch;
 
     Closure() = default;
     ~Closure() = default;
@@ -1816,10 +1823,12 @@ export struct Closure {
         , bridge_epoch(o.bridge_epoch)
         , lifetime_version(o.lifetime_version)
         , must_deopt_before_next_call(o.must_deopt_before_next_call)
-        , linear_state(o.linear_state) {
+        , linear_state(o.linear_state)
+        , workspace_epoch(o.workspace_epoch) {
         o.tombstone_for_views();
         o.must_deopt_before_next_call = false;
         o.linear_state = 0;
+        o.workspace_epoch = kNoWorkspaceEpoch;
     }
     Closure& operator=(Closure&& o) noexcept {
         if (this != &o) {
@@ -1836,9 +1845,11 @@ export struct Closure {
             lifetime_version = o.lifetime_version;
             must_deopt_before_next_call = o.must_deopt_before_next_call;
             linear_state = o.linear_state;
+            workspace_epoch = o.workspace_epoch;
             o.tombstone_for_views();
             o.must_deopt_before_next_call = false;
             o.linear_state = 0;
+            o.workspace_epoch = kNoWorkspaceEpoch;
         }
         return *this;
     }
@@ -1851,6 +1862,7 @@ export struct Closure {
         flat = nullptr;
         pool = nullptr;
         owner_arena = nullptr;
+        workspace_epoch = kNoWorkspaceEpoch;
     }
 
     [[nodiscard]] bool lifetime_valid_for_views() const noexcept { return lifetime_version != 0; }
@@ -7054,10 +7066,10 @@ private:
         std::optional<Env>& tail_env;
         std::vector<std::unique_ptr<Env>>& tco_pinned;
         aura::core::fiber_ctx::Context::TcoReuseState& tco;
-        // Issue #5477: workspace epoch this body entered at. A sibling
-        // mutation advances the Evaluator epoch; prepare_visit refuses
-        // before touching a node when the writer is a different executor.
-        std::uint64_t& ws_epoch;
+        // Issue #5477 follow-up: the workspace flat this body has an
+        // active reader registration on, or nullptr. Held until the
+        // eval_flat_body frame exits so rebind never recycles its nodes.
+        aura::ast::FlatAST*& ws_reader_flat;
         // Issue #5477: stable copies of the borrowed SoA spans in the
         // NodeView. FlatAST children_/params_ can reallocate (or be
         // rebuilt) under this frame between get() and the dispatch that
@@ -8581,15 +8593,10 @@ private:
     // the caller executes the old child id: the caller now fails closed
     // instead of running the node that landed in that slot.
     std::atomic<std::uint64_t> workspace_mutation_epoch_{0};
-    std::atomic<std::uint64_t> workspace_mutation_writer_{0};
-    // Stable identity of the current execution context: the fiber id when
-    // running on a fiber (stable across worker migration), otherwise a
-    // per-thread token. The non-fiber arm sets bit 0 so it can never
-    // collide with a fiber arm value.
-    static std::uint64_t workspace_eval_token() noexcept;
     void note_workspace_mutation_begin() noexcept {
-        workspace_mutation_writer_.store(workspace_eval_token(), std::memory_order_release);
-        workspace_mutation_epoch_.fetch_add(1, std::memory_order_acq_rel);
+        // seq_cst: paired with FlatAST::enter_body_reader/body_reader_count
+        // (the writer bumps, then allocators consult the reader count).
+        workspace_mutation_epoch_.fetch_add(1, std::memory_order_seq_cst);
     }
 
 public:
