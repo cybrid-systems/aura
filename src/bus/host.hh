@@ -101,6 +101,11 @@ bool host_stop(std::uint64_t workspace, std::string* why);
 
 bool host_active(std::uint64_t workspace);
 
+// The coordinator serving `path` for `workspace` in this process, or
+// null when this process does not host it. A session attached there
+// registers with direct_attach_register and sends with send_request.
+Server* host_server(std::uint64_t workspace, std::string_view path);
+
 } // namespace aura::bus
 
 #endif

@@ -833,6 +833,155 @@ int main() {
         ::unlink(bell_path.c_str());
     }
 
+    // ── 10. A session this process hosts is served in process ───
+    // Its request and its reply never cross the kernel: the frame runs
+    // on the caller's thread between two coordinator turns, and the
+    // reply waits in the session's read buffer. The other sessions keep
+    // their turns on the socket meanwhile, a commit still rings its
+    // subscribers, and a frame that reaches back into the host takes
+    // the socket.
+    {
+        const std::string fast_path = std::string(dir) + "/fast.sock";
+        Server fast;
+        check(fast.listen_at(fast_path, 1u << 16, kWorkspace, &err), "the in-process bus listens");
+        WorkspacePolicy policy;
+        policy.allow(0, Capability{kCapAll, 0xFF, kWorkspace, 0, 0, 0});
+        fast.set_policy(policy);
+        std::thread fast_thread([&] { fast.serve(build_metrics_image); });
+        sleep_ms(200);
+
+        Client host_client, watcher_client, peer_client;
+        Attach host{}, watcher{}, peer{};
+        check(host_client.connect_to(fast_path, kWorkspace, 0,
+                                     kCapRead | kCapPublish | kCapTrial | kCapKeep, &host, &err),
+              "the host's own session attaches");
+        check(watcher_client.connect_to(fast_path, kWorkspace, 0, kCapRead, &watcher, &err),
+              "the subscriber attaches");
+        direct_attach_register(host.sock, &fast, host.session);
+        LoanBody subscription{};
+        subscription.channel = 1;
+        check(send_frame(watcher.sock, FrameType::Subscribe, watcher.session,
+                         {reinterpret_cast<const std::byte*>(&subscription), sizeof(subscription)}),
+              "the subscriber subscribes");
+        FrameHeader hdr{};
+        std::vector<std::byte> reply(kBusMaxControlFrame);
+        check(read_frame(watcher.sock, &hdr, &reply, &err) &&
+                  hdr.type == static_cast<std::uint16_t>(FrameType::Credit),
+              "the subscription is answered");
+        const auto bell_count = [](int fd, int timeout_ms) {
+            struct pollfd pfd{fd, POLLIN, 0};
+            if (::poll(&pfd, 1, timeout_ms) <= 0)
+                return -1L;
+            std::uint64_t count = 0;
+            if (::read(fd, &count, sizeof(count)) != static_cast<ssize_t>(sizeof(count)))
+                return -1L;
+            return static_cast<long>(count);
+        };
+
+        // Whether the session's socket holds a byte.
+        const auto queued = [](int fd) {
+            std::byte byte{};
+            return ::recv(fd, &byte, 1, MSG_DONTWAIT) > 0;
+        };
+        FrameBuffer buffer{};
+        const auto ask = [&](FrameType type, std::span<const std::byte> body) {
+            check(send_request(host.sock, type, host.session, body), "the request is sent");
+            return recv_frame_buffered(host.sock, buffer, &hdr, reply, &err)
+                       ? static_cast<FrameType>(hdr.type)
+                       : FrameType::Error;
+        };
+        const auto loan_bytes = [](const LoanBody& loan) {
+            return std::span<const std::byte>{reinterpret_cast<const std::byte*>(&loan),
+                                              sizeof(loan)};
+        };
+
+        RoundRequestBody round{};
+        const auto round_bytes =
+            std::span<const std::byte>{reinterpret_cast<const std::byte*>(&round), sizeof(round)};
+        check(ask(FrameType::RoundQuery, round_bytes) == FrameType::Credit,
+              "the round query answers in process");
+        check(!queued(host.sock), "the reply did not cross the socket");
+
+        // A trial opens in process and settles over the socket: a KEEP
+        // may apply to the live workspace. The define list reads the
+        // host's names, so it takes the socket too.
+        LoanBody trial{};
+        trial.channel = 1;
+        check(ask(FrameType::Trial, loan_bytes(trial)) == FrameType::Credit,
+              "the trial opens in process");
+        LoanBody opened{};
+        std::memcpy(&opened, reply.data(), sizeof(opened));
+        trial.worldline = opened.worldline;
+        check(ask(FrameType::Keep, loan_bytes(trial)) == FrameType::Credit,
+              "the KEEP takes the socket and answers");
+        check(ask(FrameType::DefineQuery, {}) == FrameType::Error,
+              "the define list takes the socket and is refused without the host's names");
+
+        // The trial rang the subscriber already (a trial is a commit);
+        // that ring is taken here, so the publish's is the one counted.
+        (void)bell_count(watcher.event, 2000);
+
+        // A record published in process lands in the image and rings the
+        // subscriber.
+        LoanBody reserve{};
+        reserve.channel = 1;
+        reserve.length = sizeof(MetricRecord);
+        check(ask(FrameType::Reserve, loan_bytes(reserve)) == FrameType::Credit,
+              "the loan is reserved in process");
+        LoanBody granted{};
+        std::memcpy(&granted, reply.data(), sizeof(granted));
+        MetricRecord m{};
+        m.key_sym = kImageNoIndex;
+        m.value = 7;
+        std::memcpy(static_cast<std::byte*>(host.base) + granted.offset, &m, sizeof(m));
+        granted.channel = 1;
+        granted.length = sizeof(m);
+        check(ask(FrameType::Publish, loan_bytes(granted)) == FrameType::Credit,
+              "the record is published in process");
+        check(!queued(host.sock), "the publish reply did not cross the socket");
+        MetricRecord seen{};
+        std::memcpy(&seen, static_cast<const std::byte*>(watcher.base) + granted.offset,
+                    sizeof(seen));
+        check(seen.value == 7, "the subscriber's mapping holds the record");
+        check(bell_count(watcher.event, 2000) == 1,
+              "the subscriber is rung for the in-process commit");
+
+        // A socket peer and the in-process session are served at once:
+        // every frame of both is answered, whatever order they take.
+        check(peer_client.connect_to(fast_path, kWorkspace, 0, kCapRead, &peer, &err),
+              "the socket peer attaches");
+        std::atomic<bool> answered{true};
+        std::thread socket_peer([&] {
+            FrameBuffer own{};
+            FrameHeader own_hdr{};
+            std::vector<std::byte> own_reply(kBusMaxControlFrame);
+            TransportError own_err;
+            for (int i = 0; i < 2000 && answered; ++i) {
+                answered =
+                    send_frame(peer.sock, FrameType::RoundQuery, peer.session, round_bytes) &&
+                    recv_frame_buffered(peer.sock, own, &own_hdr, own_reply, &own_err) &&
+                    own_hdr.type == static_cast<std::uint16_t>(FrameType::Credit);
+            }
+        });
+        bool all = true;
+        for (int i = 0; i < 2000 && all; ++i)
+            all = ask(FrameType::RoundQuery, round_bytes) == FrameType::Credit;
+        socket_peer.join();
+        check(all && answered, "both sessions are answered throughout");
+
+        // The host forgets its sessions: they take the socket again.
+        direct_attach_forget_server(&fast);
+        check(ask(FrameType::RoundQuery, round_bytes) == FrameType::Credit,
+              "the socket answers once the registration is gone");
+
+        peer.close_all();
+        watcher.close_all();
+        host.close_all();
+        fast.stop();
+        fast_thread.join();
+        ::unlink(fast_path.c_str());
+    }
+
     ::unlink(path.c_str());
     if (g_failed == 0)
         std::printf("test_bus_adversarial_peer: OK\n");

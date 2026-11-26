@@ -49,6 +49,64 @@ namespace {
     std::map<std::pair<std::uint64_t, std::uint64_t>, ImageDigestCache> g_image_caches;
     constexpr std::size_t kImageCacheEntries = 32;
 
+    // The sessions whose coordinator this process hosts, by socket:
+    // their requests are served on the caller's thread (send_request)
+    // and the replies wait here for recv_frame_buffered.
+    struct DirectSession {
+        Server* server = nullptr;
+        std::uint64_t session = 0;
+        std::vector<std::byte> reply;
+    };
+    struct DirectSessions {
+        std::mutex mutex;
+        std::unordered_map<int, DirectSession> by_fd;
+    };
+    // Leaked on purpose: sessions forget themselves while the process
+    // tears down (Attach::close_all), after the static destructors ran.
+    DirectSessions& direct_sessions() {
+        static DirectSessions* sessions = new DirectSessions;
+        return *sessions;
+    }
+
+    // While an in-process frame is served, what it writes to its
+    // session's socket is taken here instead of crossing the kernel.
+    thread_local int g_capture_fd = -1;
+    thread_local std::vector<std::byte>* g_capture_bytes = nullptr;
+
+    class ReplyCapture {
+    public:
+        ReplyCapture(int fd, std::vector<std::byte>& bytes) {
+            g_capture_fd = fd;
+            g_capture_bytes = &bytes;
+        }
+        ~ReplyCapture() {
+            g_capture_fd = -1;
+            g_capture_bytes = nullptr;
+        }
+        ReplyCapture(const ReplyCapture&) = delete;
+        ReplyCapture& operator=(const ReplyCapture&) = delete;
+    };
+
+    // The reply to a frame served in process goes to the head of the
+    // session's read buffer; the caller reads it without a syscall.
+    void take_direct_reply(int fd, FrameBuffer& buffer) {
+        DirectSessions& sessions = direct_sessions();
+        const std::lock_guard lock(sessions.mutex);
+        const auto it = sessions.by_fd.find(fd);
+        if (it == sessions.by_fd.end() || it->second.reply.empty())
+            return;
+        const std::vector<std::byte>& reply = it->second.reply;
+        const std::size_t bytes = reply.size();
+        // The buffer holds one largest frame; it grows only when bytes
+        // a read overtook still sit in it.
+        if (buffer.bytes.size() < buffer.len + bytes)
+            buffer.bytes.resize(buffer.len + bytes);
+        std::memmove(buffer.bytes.data() + bytes, buffer.bytes.data(), buffer.len);
+        std::memcpy(buffer.bytes.data(), reply.data(), bytes);
+        buffer.len += bytes;
+        it->second.reply.clear();
+    }
+
     int memfd_create_cloexec(const char* name, unsigned flags) {
         return static_cast<int>(syscall(SYS_memfd_create, name, flags));
     }
@@ -71,6 +129,11 @@ namespace {
     }
 
     bool write_all(int fd, const void* buf, std::size_t len) {
+        if (fd == g_capture_fd) {
+            const auto* at = static_cast<const std::byte*>(buf);
+            g_capture_bytes->insert(g_capture_bytes->end(), at, at + len);
+            return true;
+        }
         const auto* p = static_cast<const std::byte*>(buf);
         while (len > 0) {
             const ssize_t n = ::send(fd, p, len, MSG_NOSIGNAL);
@@ -278,8 +341,10 @@ void Attach::close_all() {
         ::munmap(base, size);
     base = nullptr;
     size = 0;
-    if (sock >= 0)
+    if (sock >= 0) {
+        direct_attach_forget(sock);
         ::close(sock);
+    }
     sock = -1;
     if (event >= 0)
         ::close(event);
@@ -330,6 +395,42 @@ bool send_frame(int fd, FrameType type, std::uint64_t session, std::span<const s
     return write_all(fd, out, bytes);
 }
 
+// ── In-process sessions ──────────────────────────────────────
+void direct_attach_register(int fd, Server* server, std::uint64_t session) {
+    if (fd < 0)
+        return;
+    DirectSessions& sessions = direct_sessions();
+    const std::lock_guard lock(sessions.mutex);
+    sessions.by_fd[fd] = {server, session, {}};
+}
+
+void direct_attach_forget(int fd) {
+    DirectSessions& sessions = direct_sessions();
+    const std::lock_guard lock(sessions.mutex);
+    sessions.by_fd.erase(fd);
+}
+
+void direct_attach_forget_server(Server* server) {
+    DirectSessions& sessions = direct_sessions();
+    const std::lock_guard lock(sessions.mutex);
+    std::erase_if(sessions.by_fd,
+                  [server](const auto& entry) { return entry.second.server == server; });
+}
+
+bool send_request(int fd, FrameType type, std::uint64_t session, std::span<const std::byte> body) {
+    DirectSessions& sessions = direct_sessions();
+    // The registry lock is held across the frame: a host that stops
+    // meanwhile waits for the frame instead of pulling its server from
+    // under it. Nothing the frame runs takes this lock again — its
+    // reply is taken by the capture, not sent.
+    const std::lock_guard lock(sessions.mutex);
+    const auto it = sessions.by_fd.find(fd);
+    if (it != sessions.by_fd.end() && it->second.session == session &&
+        it->second.server->serve_in_process(session, type, body, &it->second.reply))
+        return true;
+    return send_frame(fd, type, session, body);
+}
+
 bool recv_frame(int fd, FrameHeader* header, std::span<std::byte> body, TransportError* error) {
     std::size_t nfds = 0;
     int fds[4] = {-1, -1, -1, -1};
@@ -361,6 +462,7 @@ bool recv_frame_buffered(int fd, FrameBuffer& buffer, FrameHeader* header,
     constexpr std::size_t kBufferBytes = sizeof(FrameHeader) + kBusMaxControlFrame;
     if (buffer.bytes.size() < kBufferBytes)
         buffer.bytes.resize(kBufferBytes);
+    take_direct_reply(fd, buffer);
     int failure = 0;
     const auto fill = [&](std::size_t need) {
         while (buffer.len < need && failure == 0) {
@@ -4203,9 +4305,10 @@ bool Server::wait_disconnect(TransportError* error) {
 // ── Multi-peer coordinator (#5377) ───────────────────────────
 // One poll loop over the listener, the wake eventfd and every session
 // socket. All shared state (image commits, grant tree, worldline
-// ledger, constraints, audit) is touched only here, so generation
-// advances stay serialized without locks. A session's crash/EOF
-// reclaims only its own loans and pending trials.
+// ledger, constraints, audit) is touched under the turn lock — by this
+// loop's turns and by the in-process frames (serve_in_process) — so
+// generation advances stay serialized. A session's crash/EOF reclaims
+// only its own loans and pending trials.
 void Server::serve(const BuildFn& build) {
     if (listen_fd_ < 0)
         return;
@@ -4295,46 +4398,63 @@ void Server::serve(const BuildFn& build) {
     std::vector<pollfd> pfds;
     std::vector<std::size_t> peer_at; // pfds index -> peers_ index
     while (true) {
-        pfds.clear();
-        peer_at.clear();
-        pfds.push_back({listen_fd_, POLLIN, 0});
-        if (wake_fd_ >= 0)
-            pfds.push_back({wake_fd_, POLLIN, 0});
-        for (std::size_t i = 0; i < peers_.size(); ++i) {
-            if (peers_[i].conn_fd < 0)
-                continue;
-            peer_at.push_back(i);
-            pfds.push_back({peers_[i].conn_fd, POLLIN, 0});
-        }
-        std::size_t polled_peers = peer_at.size();
-        // #5393: a running round wakes the loop now and then, so the
-        // wall budget closes it even when nothing happens.
-        int timeout =
-            (round_.active() || tasks_.has_leases() || approvals_.has_pending()) ? 100 : -1;
-        // #5396: a peer that is still waiting for its hello needs a
-        // wakeup when its handshake deadline passes.
-        if (timeout < 0) {
-            std::uint64_t earliest = 0;
-            for (const auto& peer : peers_) {
-                if (peer.hello_done || peer.hello_deadline_ms == 0)
+        int timeout = -1;
+        std::size_t polled_peers = 0;
+        std::uint64_t peers_at_poll = peers_epoch_;
+        {
+            // Everything but the poll runs under the turn lock: an
+            // in-process frame (serve_in_process) takes its turn from
+            // another thread whenever this one waits in the poll.
+            const std::lock_guard lock(turn_mutex_);
+            pfds.clear();
+            peer_at.clear();
+            pfds.push_back({listen_fd_, POLLIN, 0});
+            if (wake_fd_ >= 0)
+                pfds.push_back({wake_fd_, POLLIN, 0});
+            for (std::size_t i = 0; i < peers_.size(); ++i) {
+                if (peers_[i].conn_fd < 0)
                     continue;
-                if (earliest == 0 || peer.hello_deadline_ms < earliest)
-                    earliest = peer.hello_deadline_ms;
+                peer_at.push_back(i);
+                pfds.push_back({peers_[i].conn_fd, POLLIN, 0});
             }
-            if (earliest != 0) {
-                const std::uint64_t now = round_now_ms();
-                const std::uint64_t delta = earliest > now ? earliest - now : 0;
-                timeout = static_cast<int>(std::min<std::uint64_t>(delta + 1, 1000));
+            polled_peers = peer_at.size();
+            // #5393: a running round wakes the loop now and then, so the
+            // wall budget closes it even when nothing happens.
+            timeout =
+                (round_.active() || tasks_.has_leases() || approvals_.has_pending()) ? 100 : -1;
+            // #5396: a peer that is still waiting for its hello needs a
+            // wakeup when its handshake deadline passes.
+            if (timeout < 0) {
+                std::uint64_t earliest = 0;
+                for (const auto& peer : peers_) {
+                    if (peer.hello_done || peer.hello_deadline_ms == 0)
+                        continue;
+                    if (earliest == 0 || peer.hello_deadline_ms < earliest)
+                        earliest = peer.hello_deadline_ms;
+                }
+                if (earliest != 0) {
+                    const std::uint64_t now = round_now_ms();
+                    const std::uint64_t delta = earliest > now ? earliest - now : 0;
+                    timeout = static_cast<int>(std::min<std::uint64_t>(delta + 1, 1000));
+                }
             }
+            // The commits of the turn that ends here reach the subscribers now.
+            flush_doorbells();
+            idle_ = timeout < 0;
         }
-        // The commits of the turn that ends here reach the subscribers now.
-        flush_doorbells();
         const int ready = ::poll(pfds.data(), static_cast<nfds_t>(pfds.size()), timeout);
+        const std::lock_guard lock(turn_mutex_);
+        idle_ = false;
         if (ready < 0) {
             if (errno == EINTR)
                 continue;
             break;
         }
+        // An in-process frame ended a session while this thread waited
+        // in the poll: the poll set names peers by position, so the
+        // ready ones are read on a fresh one.
+        if (peers_epoch_ != peers_at_poll)
+            continue;
         // #5399: lease expiry runs on every wakeup; a claimed task
         // whose deadline passed is open again even if its holder died
         // without a Disconnect.
@@ -4432,13 +4552,132 @@ void Server::serve(const BuildFn& build) {
             peers_.erase(peers_.begin() + static_cast<std::ptrdiff_t>(i));
         }
     }
-    for (auto& peer : peers_)
-        finish_session(peer);
-    peers_.clear();
-    if (wake_fd_ >= 0) {
-        ::close(wake_fd_);
-        wake_fd_ = -1;
+    {
+        const std::lock_guard lock(turn_mutex_);
+        for (auto& peer : peers_)
+            finish_session(peer);
+        peers_.clear();
     }
+}
+
+namespace {
+
+    // The frames that stay inside the coordinator: none of them calls
+    // back into the host on its own. A KEEP applies to the live
+    // workspace only through a source-carrier patch, and
+    // serve_in_process sends those to the socket; a DefineQuery reads
+    // the host's define names, and Hello and Disconnect belong to the
+    // socket, as does a SupervisorNote, which has no reply a caller
+    // would wait for.
+    bool in_process_frame(FrameType type) {
+        switch (type) {
+            case FrameType::Subscribe:
+            case FrameType::Unsubscribe:
+            case FrameType::Reserve:
+            case FrameType::Publish:
+            case FrameType::CatchUp:
+            case FrameType::Grant:
+            case FrameType::Revoke:
+            case FrameType::Keep:
+            case FrameType::Trial:
+            case FrameType::Rollback:
+            case FrameType::Query:
+            case FrameType::AuditQuery:
+            case FrameType::AuditReplay:
+            case FrameType::ConstraintRollback:
+            case FrameType::ConstraintInstall:
+            case FrameType::EvidenceBind:
+            case FrameType::CanaryConfirm:
+            case FrameType::SourcePublish:
+            case FrameType::CandidateDigest:
+            case FrameType::GrantActivate:
+            case FrameType::GateBind:
+            case FrameType::RoundOpen:
+            case FrameType::RoundQuery:
+            case FrameType::DegradeQuery:
+            case FrameType::DegradeConfig:
+            case FrameType::SloQuery:
+            case FrameType::SupervisorQuery:
+            case FrameType::ReproQuery:
+            case FrameType::SourceRead:
+            case FrameType::TaskAction:
+            case FrameType::ApprovalAction:
+            case FrameType::ContractAction:
+            case FrameType::BudgetAction:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+} // namespace
+
+bool Server::serve_in_process(std::uint64_t session, FrameType type,
+                              std::span<const std::byte> body, std::vector<std::byte>* reply) {
+    if (!in_process_frame(type))
+        return false;
+    const std::lock_guard lock(turn_mutex_);
+    // An observation is driven by the metrics published to it, and
+    // reverting one restores the host's workspace: it stays on the
+    // coordinator thread.
+    if (canary_worldline_ != 0)
+        return false;
+    // A KEEP whose trial carries source is applied to the host's live
+    // workspace by the host: it stays on the coordinator thread.
+    if (type == FrameType::Keep && keep_reaches_host(body))
+        return false;
+    std::size_t at = peers_.size();
+    for (std::size_t i = 0; i < peers_.size(); ++i) {
+        if (peers_[i].conn_fd >= 0 && peers_[i].hello_done && peers_[i].session == session) {
+            at = i;
+            break;
+        }
+    }
+    if (at == peers_.size())
+        return false;
+    FrameHeader header{};
+    header.len = static_cast<std::uint32_t>(body.size());
+    header.type = static_cast<std::uint16_t>(type);
+    header.session = session;
+    PeerSession& peer = peers_[at];
+    // The reply is taken from its write to the socket, not read back
+    // from the socket.
+    reply->clear();
+    bool keep = true;
+    {
+        const ReplyCapture capture(peer.conn_fd, *reply);
+        keep = handle_frame(peer, header, body);
+    }
+    // The commits of the frame reach the subscribers now: no poll turn
+    // comes to flush them.
+    flush_doorbells();
+    if (!keep) {
+        finish_session(peer);
+        peers_.erase(peers_.begin() + static_cast<std::ptrdiff_t>(at));
+        ++peers_epoch_;
+    }
+    // The loop waits without a deadline and the frame started one. The
+    // bell is a wakeup, not an exit.
+    if (idle_ && wake_fd_ >= 0 &&
+        (round_.active() || tasks_.has_leases() || approvals_.has_pending())) {
+        const std::uint64_t one = 1;
+        ssize_t ignored = ::write(wake_fd_, &one, sizeof(one));
+        (void)ignored;
+    }
+    return true;
+}
+
+bool Server::keep_reaches_host(std::span<const std::byte> body) const {
+    // The handler applies a KEEP through the host only when the trial
+    // carries a source-carrier patch.
+    if (!apply_ || body.size() < sizeof(LoanBody))
+        return false;
+    LoanBody loan{};
+    std::memcpy(&loan, body.data(), sizeof(loan));
+    for (const PatchRecord& patch : trial_patches(loan.worldline))
+        if (patch.field_offset == kPatchSourceField)
+            return true;
+    return false;
 }
 
 bool Client::connect_to(const std::string& path, std::uint64_t workspace_id, std::uint32_t role,

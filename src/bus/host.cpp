@@ -362,6 +362,8 @@ bool host_stop(std::uint64_t workspace, std::string* why) {
         host = std::move(it->second);
         g_hosts.erase(it);
     }
+    // Its sessions take the socket again before the server goes.
+    direct_attach_forget_server(&host->server);
     // ~Host stops the loop and joins; ~Server unlinks the socket.
     host.reset();
     return true;
@@ -370,6 +372,12 @@ bool host_stop(std::uint64_t workspace, std::string* why) {
 bool host_active(std::uint64_t workspace) {
     const std::lock_guard lock(g_host_mutex);
     return g_hosts.find(workspace) != g_hosts.end();
+}
+
+Server* host_server(std::uint64_t workspace, std::string_view path) {
+    const std::lock_guard lock(g_host_mutex);
+    const auto it = g_hosts.find(workspace);
+    return it != g_hosts.end() && it->second->path == path ? &it->second->server : nullptr;
 }
 
 } // namespace aura::bus

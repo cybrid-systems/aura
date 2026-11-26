@@ -515,8 +515,8 @@ EvalValue bus_publish_record(Evaluator& ev, BusSessionState& state, int channel,
     aura::bus::LoanBody loan{};
     loan.channel = static_cast<std::uint64_t>(channel);
     loan.length = bytes;
-    if (!aura::bus::send_frame(att.sock, aura::bus::FrameType::Reserve, att.session,
-                               {reinterpret_cast<const std::byte*>(&loan), sizeof(loan)}))
+    if (!aura::bus::send_request(att.sock, aura::bus::FrameType::Reserve, att.session,
+                                 {reinterpret_cast<const std::byte*>(&loan), sizeof(loan)}))
         return bus_error(ev, "transport-failed", "reserve send failed");
     aura::bus::FrameHeader hdr{};
     std::vector<std::byte> body(aura::bus::kBusMaxControlFrame);
@@ -536,8 +536,8 @@ EvalValue bus_publish_record(Evaluator& ev, BusSessionState& state, int channel,
     aura::bus::LoanBody pub = granted;
     pub.channel = static_cast<std::uint64_t>(channel);
     pub.length = bytes;
-    if (!aura::bus::send_frame(att.sock, aura::bus::FrameType::Publish, att.session,
-                               {reinterpret_cast<const std::byte*>(&pub), sizeof(pub)}))
+    if (!aura::bus::send_request(att.sock, aura::bus::FrameType::Publish, att.session,
+                                 {reinterpret_cast<const std::byte*>(&pub), sizeof(pub)}))
         return bus_error(ev, "transport-failed", "publish send failed");
     if (!aura::bus::recv_frame_buffered(att.sock, state.replies, &hdr, body, &err))
         return bus_error(ev, "transport-failed", "publish reply lost");
@@ -612,7 +612,7 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
             };
             const auto send_loan = [&](int fd, std::uint64_t session_id, aura::bus::FrameType type,
                                        const aura::bus::LoanBody& loan) {
-                return aura::bus::send_frame(
+                return aura::bus::send_request(
                     fd, type, session_id,
                     {reinterpret_cast<const std::byte*>(&loan), sizeof(loan)});
             };
@@ -638,7 +638,15 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                 const std::int64_t sid = g_bus_next++;
                 const std::uint64_t size = state->att.size;
                 const std::uint64_t granted = state->att.caps;
+                // A bus this process hosts serves this session in
+                // process: its requests never cross the socket.
+                aura::bus::Server* const hosted =
+                    aura::bus::host_server(static_cast<std::uint64_t>(ws), path);
+                const int sock = state->att.sock;
+                const std::uint64_t session = state->att.session;
                 g_bus_sessions[sid] = std::move(state);
+                if (hosted != nullptr)
+                    aura::bus::direct_attach_register(sock, hosted, session);
                 // #5408: size and the granted capability mask are raw
                 // 64-bit values from HelloOk; promote instead of aborting
                 // when one is outside the fixnum domain.
@@ -659,7 +667,7 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                 // session cleanly (rolls back pending trials, reclaims
                 // loans) before the socket closes.
                 aura::bus::LoanBody bye{};
-                (void)aura::bus::send_frame(
+                (void)aura::bus::send_request(
                     it->second->att.sock, aura::bus::FrameType::Disconnect, it->second->att.session,
                     {reinterpret_cast<const std::byte*>(&bye), sizeof(bye)});
                 g_bus_sessions.erase(it);
@@ -887,8 +895,9 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                 req.lease_ms = lease_ms;
                 req.ref = ref;
                 req.flags = flags;
-                if (!aura::bus::send_frame(att.sock, aura::bus::FrameType::TaskAction, att.session,
-                                           {reinterpret_cast<const std::byte*>(&req), sizeof(req)}))
+                if (!aura::bus::send_request(
+                        att.sock, aura::bus::FrameType::TaskAction, att.session,
+                        {reinterpret_cast<const std::byte*>(&req), sizeof(req)}))
                     return bus_error(ev, "transport-failed", "task send failed");
                 aura::bus::FrameHeader hdr{};
                 std::vector<std::byte> body(aura::bus::kBusMaxControlFrame);
@@ -934,9 +943,9 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                 req.metric_floor = metric_floor;
                 req.tests_passed = tests_passed;
                 req.metric = metric;
-                if (!aura::bus::send_frame(att.sock, aura::bus::FrameType::ContractAction,
-                                           att.session,
-                                           {reinterpret_cast<const std::byte*>(&req), sizeof(req)}))
+                if (!aura::bus::send_request(
+                        att.sock, aura::bus::FrameType::ContractAction, att.session,
+                        {reinterpret_cast<const std::byte*>(&req), sizeof(req)}))
                     return bus_error(ev, "transport-failed", "contract send failed");
                 aura::bus::FrameHeader hdr{};
                 std::vector<std::byte> body(aura::bus::kBusMaxControlFrame);
@@ -978,9 +987,9 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                 req.tokens = tokens;
                 req.wall_ms = wall_ms;
                 req.failures = failures;
-                if (!aura::bus::send_frame(att.sock, aura::bus::FrameType::BudgetAction,
-                                           att.session,
-                                           {reinterpret_cast<const std::byte*>(&req), sizeof(req)}))
+                if (!aura::bus::send_request(
+                        att.sock, aura::bus::FrameType::BudgetAction, att.session,
+                        {reinterpret_cast<const std::byte*>(&req), sizeof(req)}))
                     return bus_error(ev, "transport-failed", "budget send failed");
                 aura::bus::FrameHeader hdr{};
                 std::vector<std::byte> body(aura::bus::kBusMaxControlFrame);
@@ -1047,8 +1056,9 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                 req.channel = static_cast<std::uint64_t>(channel);
                 req.generation = static_cast<std::uint64_t>(since_gen);
                 req.count = static_cast<std::uint64_t>(since_count);
-                if (!aura::bus::send_frame(att.sock, aura::bus::FrameType::CatchUp, att.session,
-                                           {reinterpret_cast<const std::byte*>(&req), sizeof(req)}))
+                if (!aura::bus::send_request(
+                        att.sock, aura::bus::FrameType::CatchUp, att.session,
+                        {reinterpret_cast<const std::byte*>(&req), sizeof(req)}))
                     return bus_error(ev, "transport-failed", "query send failed");
                 aura::bus::FrameHeader hdr{};
                 std::vector<std::byte> body(aura::bus::kBusMaxControlFrame);
@@ -1192,9 +1202,9 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                 req.object = static_cast<std::uint64_t>(object);
                 req.decision = static_cast<std::uint64_t>(decision);
                 req.timeout_ms = static_cast<std::uint64_t>(timeout);
-                if (!aura::bus::send_frame(att.sock, aura::bus::FrameType::ApprovalAction,
-                                           att.session,
-                                           {reinterpret_cast<const std::byte*>(&req), sizeof(req)}))
+                if (!aura::bus::send_request(
+                        att.sock, aura::bus::FrameType::ApprovalAction, att.session,
+                        {reinterpret_cast<const std::byte*>(&req), sizeof(req)}))
                     return bus_error(ev, "transport-failed", "approve send failed");
                 aura::bus::FrameHeader hdr{};
                 std::vector<std::byte> body(aura::bus::kBusMaxControlFrame);
@@ -1405,7 +1415,7 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                 request.caps.expires_gen = static_cast<std::uint64_t>(expires);
                 request.caps.worldline = static_cast<std::uint64_t>(worldline);
                 request.caps.task = static_cast<std::uint64_t>(task);
-                if (!aura::bus::send_frame(
+                if (!aura::bus::send_request(
                         att.sock, aura::bus::FrameType::Grant, att.session,
                         {reinterpret_cast<const std::byte*>(&request), sizeof(request)}))
                     return bus_error(ev, "transport-failed", "grant send failed");
@@ -1489,8 +1499,9 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                 req.actor = static_cast<std::uint64_t>(actor);
                 req.since_seq = static_cast<std::uint64_t>(since_seq);
                 req.reserved = static_cast<std::uint64_t>(task);
-                if (!aura::bus::send_frame(att.sock, aura::bus::FrameType::AuditQuery, att.session,
-                                           {reinterpret_cast<const std::byte*>(&req), sizeof(req)}))
+                if (!aura::bus::send_request(
+                        att.sock, aura::bus::FrameType::AuditQuery, att.session,
+                        {reinterpret_cast<const std::byte*>(&req), sizeof(req)}))
                     return bus_error(ev, "transport-failed", "audit send failed");
                 aura::bus::FrameHeader hdr{};
                 std::vector<std::byte> body(aura::bus::kBusMaxControlFrame);
@@ -1542,8 +1553,8 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                 if (sit == g_bus_sessions.end())
                     return bus_error(ev, "unregistered-id", "unknown session");
                 auto& att = sit->second->att;
-                if (!aura::bus::send_frame(att.sock, aura::bus::FrameType::DefineQuery, att.session,
-                                           {}))
+                if (!aura::bus::send_request(att.sock, aura::bus::FrameType::DefineQuery,
+                                             att.session, {}))
                     return bus_error(ev, "transport-failed", "define query send failed");
                 aura::bus::FrameHeader hdr{};
                 std::vector<std::byte> body(aura::bus::kBusMaxControlFrame);
@@ -1591,8 +1602,9 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                     return bus_error(ev, "unregistered-id", "unknown session");
                 auto& att = sit->second->att;
                 const std::uint64_t idx = static_cast<std::uint64_t>(index);
-                if (!aura::bus::send_frame(att.sock, aura::bus::FrameType::SourceRead, att.session,
-                                           {reinterpret_cast<const std::byte*>(&idx), sizeof(idx)}))
+                if (!aura::bus::send_request(
+                        att.sock, aura::bus::FrameType::SourceRead, att.session,
+                        {reinterpret_cast<const std::byte*>(&idx), sizeof(idx)}))
                     return bus_error(ev, "transport-failed", "source read send failed");
                 aura::bus::FrameHeader hdr{};
                 std::vector<std::byte> body(aura::bus::kBusMaxControlFrame);
@@ -1624,7 +1636,7 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                     return bus_error(ev, "unregistered-id", "unknown session");
                 auto& att = sit->second->att;
                 const std::uint64_t worldline = static_cast<std::uint64_t>(wl);
-                if (!aura::bus::send_frame(
+                if (!aura::bus::send_request(
                         att.sock, aura::bus::FrameType::ReproQuery, att.session,
                         {reinterpret_cast<const std::byte*>(&worldline), sizeof(worldline)}))
                     return bus_error(ev, "transport-failed", "repro query send failed");
@@ -1760,8 +1772,9 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                 req.kind = op == "round-budget" ? 1 : 0;
                 const auto type = op == "round-open" ? aura::bus::FrameType::RoundOpen
                                                      : aura::bus::FrameType::RoundQuery;
-                if (!aura::bus::send_frame(att.sock, type, att.session,
-                                           {reinterpret_cast<const std::byte*>(&req), sizeof(req)}))
+                if (!aura::bus::send_request(
+                        att.sock, type, att.session,
+                        {reinterpret_cast<const std::byte*>(&req), sizeof(req)}))
                     return bus_error(ev, "transport-failed", "round request send failed");
                 aura::bus::FrameHeader hdr{};
                 std::vector<std::byte> body(aura::bus::kBusMaxControlFrame);
@@ -1808,7 +1821,7 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                 auto& att = sit->second->att;
                 if (op == "degradation-state") {
                     aura::bus::DegradeQueryBody req{};
-                    if (!aura::bus::send_frame(
+                    if (!aura::bus::send_request(
                             att.sock, aura::bus::FrameType::DegradeQuery, att.session,
                             {reinterpret_cast<const std::byte*>(&req), sizeof(req)}))
                         return bus_error(ev, "transport-failed", "degrade query send failed");
@@ -1907,11 +1920,11 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                         std::memcpy(payload.data() + at, &wire, sizeof(wire));
                         at += sizeof(wire);
                     }
-                    if (!aura::bus::send_frame(att.sock, aura::bus::FrameType::DegradeConfig,
-                                               att.session, payload))
+                    if (!aura::bus::send_request(att.sock, aura::bus::FrameType::DegradeConfig,
+                                                 att.session, payload))
                         return bus_error(ev, "transport-failed", "degrade config send failed");
                 } else {
-                    if (!aura::bus::send_frame(
+                    if (!aura::bus::send_request(
                             att.sock, aura::bus::FrameType::DegradeConfig, att.session,
                             {reinterpret_cast<const std::byte*>(&config), sizeof(config)}))
                         return bus_error(ev, "transport-failed", "degrade rollback send failed");
@@ -1944,9 +1957,9 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                     return bus_error(ev, "unregistered-id", "unknown session");
                 auto& att = sit->second->att;
                 aura::bus::SupervisorQueryBody req{};
-                if (!aura::bus::send_frame(att.sock, aura::bus::FrameType::SupervisorQuery,
-                                           att.session,
-                                           {reinterpret_cast<const std::byte*>(&req), sizeof(req)}))
+                if (!aura::bus::send_request(
+                        att.sock, aura::bus::FrameType::SupervisorQuery, att.session,
+                        {reinterpret_cast<const std::byte*>(&req), sizeof(req)}))
                     return bus_error(ev, "transport-failed", "supervise query send failed");
                 aura::bus::FrameHeader hdr{};
                 std::vector<std::byte> body(aura::bus::kBusMaxControlFrame);
@@ -1981,8 +1994,9 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                 auto& att = sit->second->att;
                 aura::bus::SloQueryBody req{};
                 req.kind = op == "capacity-plan" ? 1 : 0;
-                if (!aura::bus::send_frame(att.sock, aura::bus::FrameType::SloQuery, att.session,
-                                           {reinterpret_cast<const std::byte*>(&req), sizeof(req)}))
+                if (!aura::bus::send_request(
+                        att.sock, aura::bus::FrameType::SloQuery, att.session,
+                        {reinterpret_cast<const std::byte*>(&req), sizeof(req)}))
                     return bus_error(ev, "transport-failed", "slo query send failed");
                 aura::bus::FrameHeader hdr{};
                 std::vector<std::byte> body(aura::bus::kBusMaxControlFrame);
@@ -2037,8 +2051,9 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                     return bus_error(ev, "unregistered-id", "unknown session");
                 auto& att = sit->second->att;
                 aura::bus::AuditReplayBody req{};
-                if (!aura::bus::send_frame(att.sock, aura::bus::FrameType::AuditReplay, att.session,
-                                           {reinterpret_cast<const std::byte*>(&req), sizeof(req)}))
+                if (!aura::bus::send_request(
+                        att.sock, aura::bus::FrameType::AuditReplay, att.session,
+                        {reinterpret_cast<const std::byte*>(&req), sizeof(req)}))
                     return bus_error(ev, "transport-failed", "audit replay send failed");
                 aura::bus::FrameHeader hdr{};
                 std::vector<std::byte> body(aura::bus::kBusMaxControlFrame);
@@ -2213,7 +2228,7 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                 if (text.size() > aura::bus::kBusMaxControlFrame)
                     return bus_error(ev, "validation-failed",
                                      "source text exceeds the control frame");
-                if (!aura::bus::send_frame(
+                if (!aura::bus::send_request(
                         att.sock, aura::bus::FrameType::SourcePublish, att.session,
                         {reinterpret_cast<const std::byte*>(text.data()), text.size()}))
                     return bus_error(ev, "transport-failed", "source publish send failed");
@@ -2252,9 +2267,9 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                 evb.workload_sym = static_cast<std::uint64_t>(workload);
                 evb.seed = static_cast<std::uint64_t>(seed);
                 evb.verifier_version = static_cast<std::uint64_t>(verifier);
-                if (!aura::bus::send_frame(att.sock, aura::bus::FrameType::EvidenceBind,
-                                           att.session,
-                                           {reinterpret_cast<const std::byte*>(&evb), sizeof(evb)}))
+                if (!aura::bus::send_request(
+                        att.sock, aura::bus::FrameType::EvidenceBind, att.session,
+                        {reinterpret_cast<const std::byte*>(&evb), sizeof(evb)}))
                     return bus_error(ev, "transport-failed", "evidence bind send failed");
                 aura::bus::FrameHeader hdr{};
                 std::vector<std::byte> body(aura::bus::kBusMaxControlFrame);
@@ -2359,8 +2374,9 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                 if (n != static_cast<std::size_t>(folds) || folds <= 0)
                     return bus_error(ev, "validation-failed",
                                      "bind-gate window count does not match the fold count");
-                if (!aura::bus::send_frame(att.sock, aura::bus::FrameType::GateBind, att.session,
-                                           {reinterpret_cast<const std::byte*>(&gev), sizeof(gev)}))
+                if (!aura::bus::send_request(
+                        att.sock, aura::bus::FrameType::GateBind, att.session,
+                        {reinterpret_cast<const std::byte*>(&gev), sizeof(gev)}))
                     return bus_error(ev, "transport-failed", "gate bind send failed");
                 aura::bus::FrameHeader hdr{};
                 std::vector<std::byte> body(aura::bus::kBusMaxControlFrame);
@@ -2861,8 +2877,8 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
                 std::memcpy(body.data(), &wire, sizeof(wire));
                 std::memcpy(body.data() + sizeof(wire), name.data(), name.size());
                 std::memcpy(body.data() + sizeof(wire) + name.size(), source.data(), source.size());
-                if (!aura::bus::send_frame(att.sock, aura::bus::FrameType::ConstraintInstall,
-                                           att.session, body))
+                if (!aura::bus::send_request(att.sock, aura::bus::FrameType::ConstraintInstall,
+                                             att.session, body))
                     return bus_error(ev, "transport-failed", "constraint install send failed");
                 aura::bus::FrameHeader hdr{};
                 std::vector<std::byte> reply(aura::bus::kBusMaxControlFrame);
@@ -2882,7 +2898,7 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
 
             if (op == "rollback-constraints") {
                 aura::bus::LoanBody empty{};
-                if (!aura::bus::send_frame(
+                if (!aura::bus::send_request(
                         att.sock, aura::bus::FrameType::ConstraintRollback, att.session,
                         {reinterpret_cast<const std::byte*>(&empty), sizeof(empty)}))
                     return bus_error(ev, "transport-failed", "constraint rollback send failed");

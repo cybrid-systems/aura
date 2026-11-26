@@ -25,11 +25,13 @@
 #include "bus/tasks.hh"
 
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <functional>
+#include <mutex>
 #include <span>
 #include <string>
 #include <string_view>
@@ -741,6 +743,17 @@ public:
     // or the listener dies. The single-peer accept_one/wait_disconnect
     // pair stays for the #5123 harnesses; serve() is the host path.
     void serve(const BuildFn& build);
+    // A session whose coordinator this process hosts can hand a frame
+    // over on its own thread instead of the socket round trip: the
+    // frame runs under the turn lock, between two coordinator turns,
+    // and what it writes as a reply is handed back in `reply`. False,
+    // with nothing done, when the frame has to take the socket: the
+    // type reaches back into the host (a KEEP of a trial that carries
+    // source, the define list, a session end) or an observation is
+    // running (a published metric can revert it). Only a session
+    // attached through serve() is found.
+    bool serve_in_process(std::uint64_t session, FrameType type, std::span<const std::byte> body,
+                          std::vector<std::byte>* reply);
 
     // Issue #5128: unblock accept_one / wait_disconnect / serve so a host
     // thread can stop. Shutdown only; the serving thread still closes fds.
@@ -1022,13 +1035,28 @@ private:
     std::uint64_t root_token_ = 0;
     // serve() path: the session table and the wake eventfd stop() writes.
     std::vector<PeerSession> peers_;
+    // Bumped when a session leaves the table outside the loop (an
+    // in-process frame ended it): a poll set taken before then names
+    // the peers by position and is not used.
+    std::uint64_t peers_epoch_ = 0;
     // The doorbells owed for the commits of the current poll turn.
     bool doorbell_pending_ = false;
     std::uint64_t doorbell_only_ = 0; // the one session that committed; 0 = several
-    int wake_fd_ = -1;
+    // The wake bell and the stop flag it wakes the loop for. stop()
+    // rings the bell from another thread while the loop may already be
+    // leaving, so both are atomic and the bell closes with the server.
+    std::atomic<int> wake_fd_{-1};
+    // The turn lock: a coordinator turn and an in-process frame
+    // (serve_in_process) never touch the bus state at the same time,
+    // whichever thread each runs on. The loop holds it around
+    // everything but the poll.
+    std::mutex turn_mutex_;
+    // The loop is blocked in a poll without a deadline: a frame that
+    // starts a deadline has to ring the bell.
+    bool idle_ = false;
     // #5394: only a stop() request stops the coordinator; the wake
     // bell is just a wakeup.
-    bool stop_requested_ = false;
+    std::atomic<bool> stop_requested_{false};
     SandboxPreset preset_ = SandboxPreset::Dev;
     CapabilityTable caps_table_{};
     AuditLog audit_{};
@@ -1145,6 +1173,22 @@ public:
     bool connect_to(const std::string& path, std::uint64_t workspace_id, std::uint32_t role,
                     std::uint64_t caps, Attach* out, TransportError* error);
 };
+
+// ── In-process sessions ──────────────────────────────────────
+// A session attached by the process that hosts its coordinator keeps
+// its socket for the reply, but its requests do not travel it:
+// send_request hands them to Server::serve_in_process on the caller's
+// thread. The registry maps the session's socket to its coordinator.
+void direct_attach_register(int fd, Server* server, std::uint64_t session);
+// The session's socket closed.
+void direct_attach_forget(int fd);
+// The host is stopping: its sessions take the socket, which closes
+// with it. Waits for an in-process frame that is being served.
+void direct_attach_forget_server(Server* server);
+// send_frame for a request: served in process when `fd` is a
+// registered session and the frame allows it, written to the socket
+// otherwise.
+bool send_request(int fd, FrameType type, std::uint64_t session, std::span<const std::byte> body);
 
 } // namespace aura::bus
 
