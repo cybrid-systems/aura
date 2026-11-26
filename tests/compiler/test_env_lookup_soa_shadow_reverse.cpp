@@ -27,6 +27,8 @@
 //          no envframe desync detected for the capture frame
 //   AC10 (#4701): source-cite — the inline-lambda call frame sets the pool
 //          and binds the parameters through bind_symid (both binding arrays)
+//   AC11 (#5480): source-cite — the live-top cell lookups bind
+//          top_env().bindings() by const reference, not by value.
 
 #include "test_harness.hpp"
 
@@ -158,8 +160,10 @@ static void ac6_4595_source_cite_gates() {
         CHECK(src.find("cap_snap_->bindings_.empty() && cap_snap_->bindings_symid_.empty()") !=
                   std::string::npos,
               "AC6: consult only for truly-empty captures (symid-only keeps capture order)");
-        CHECK(src.find("auto tb4595 = owner_->top_env().bindings();") != std::string::npos,
-              "AC6: cell-lookup empty-capture consults use tb4595");
+        CHECK(src.find("auto tb4595 = owner_->top_env().bindings();") == std::string::npos,
+              "AC11: no by-value copy of the top bindings vector");
+        CHECK(src.find("const auto& tb4595 = owner_->top_env().bindings();") != std::string::npos,
+              "AC11: live-top cell lookups bind the top bindings by reference");
         break;
     }
     CHECK(found_env_cpp, "AC6: evaluator_env.cpp found from CWD");

@@ -5003,7 +5003,10 @@ EvalValue* Env::lookup_cell_ptr(std::string_view n, std::vector<EvalValue>* cell
         (!cap_snap_ || (cap_snap_->bindings_.empty() && cap_snap_->bindings_symid_.empty()) ||
          cap_snap_->live_safe_top)) {
         auto top_bind_guard = owner_->top_env().lock_bindings_shared(); // #4717
-        auto tb4595 = owner_->top_env().bindings();
+        // Issue #5480: bind by reference — top_env() is the non-const
+        // overload, so auto copied the whole top-level bindings vector on
+        // every zero-capture set! lookup (40 B per top define).
+        const auto& tb4595 = owner_->top_env().bindings();
         for (auto it = tb4595.rbegin(); it != tb4595.rend(); ++it) {
             auto& b = *it;
             if (b.first == n) {
@@ -5179,7 +5182,8 @@ std::optional<std::uint64_t> Env::lookup_cell_index(std::string_view n) const {
         (!cap_snap_ || (cap_snap_->bindings_.empty() && cap_snap_->bindings_symid_.empty()) ||
          cap_snap_->live_safe_top)) {
         auto top_bind_guard = owner_->top_env().lock_bindings_shared(); // #4717
-        auto tb4595 = owner_->top_env().bindings();
+        // Issue #5480: bind by reference — no per-lookup bindings copy.
+        const auto& tb4595 = owner_->top_env().bindings();
         for (auto it = tb4595.rbegin(); it != tb4595.rend(); ++it) {
             auto& b = *it;
             if (b.first == n) {
