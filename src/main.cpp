@@ -5023,16 +5023,44 @@ static int cli_tool_missing_5171(const CliToolProgram5171& prog) {
 
 static int run_cli_ir(int argc, char** argv) {
     aura::compiler::CompilerService cs;
-    std::string source;
-    if (argc > 2) {
-        const CliToolProgram5171 prog = cli_tool_program_5171(argv[2]);
-        if (prog.missing)
-            return cli_tool_missing_5171(prog);
-        source = prog.text;
-    } else {
-        std::ostringstream buf;
-        buf << std::cin.rdbuf();
-        source = buf.str();
+    // --ir returned here before the oneshot capability parser, so --preset /
+    // --grant / --deny never reached the evaluator and set-code was
+    // effect-denied. normalize_tool_mode_5170 keeps those options in front of
+    // this mode; reuse the file-face parser with the mode flag removed, then
+    // mint the same soft session.
+    OneshotLaunch launch;
+    {
+        std::vector<std::string> cap_args;
+        cap_args.reserve(static_cast<std::size_t>(argc));
+        cap_args.emplace_back(argv[0]);
+        for (int i = 1; i < argc; ++i) {
+            if (std::string_view(argv[i]) == "--ir")
+                continue;
+            cap_args.emplace_back(argv[i]);
+        }
+        std::vector<char*> cap_argv;
+        cap_argv.reserve(cap_args.size() + 1);
+        for (auto& arg : cap_args)
+            cap_argv.push_back(arg.data());
+        cap_argv.push_back(nullptr);
+        launch = parse_oneshot_launch(static_cast<int>(cap_args.size()), cap_argv.data());
+        if (launch.status >= 0)
+            return launch.status;
+        if (const int rc = apply_oneshot_soft_session(cs, launch); rc != 0)
+            return rc;
+    }
+    std::string source = launch.all_input;
+    if (source.empty()) {
+        if (argc > 2) {
+            const CliToolProgram5171 prog = cli_tool_program_5171(argv[2]);
+            if (prog.missing)
+                return cli_tool_missing_5171(prog);
+            source = prog.text;
+        } else {
+            std::ostringstream buf;
+            buf << std::cin.rdbuf();
+            source = buf.str();
+        }
     }
     auto result = cs.eval_ir(source);
     if (!result) {
@@ -6449,7 +6477,7 @@ static int normalize_tool_mode_5170(int& argc, char** argv) {
             argv[i] = argv[i - 1];
         argv[1] = mode;
     }
-    if (first.name == "--serve")
+    if (first.name == "--serve" || first.name == "--ir")
         return 0;
     int dst = 2;
     for (int i = 2; i < argc; ++i) {

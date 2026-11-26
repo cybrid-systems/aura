@@ -59,6 +59,32 @@ class TestIssue5167ServePreset(unittest.TestCase):
         self.assertNotIn(DENIED, blob)
         self.assertNotIn("AURA CRASH", blob)
 
+    def test_ir_preset_dev_grants_set_code(self) -> None:
+        # --ir returned before the oneshot capability parser, so the preset
+        # never reached the evaluator and set-code was effect-denied.
+        with tempfile.TemporaryDirectory() as tmp:
+            prog = Path(tmp) / "ir_preset.aura"
+            prog.write_text('(display (set-code "(display 1)"))')
+            env = os.environ.copy()
+            for key in ("AURA_SANDBOX", "AURA_PRESET", "AURA_KEEP_GOING"):
+                env.pop(key, None)
+            env["AURA_PIPELINE_STRICT"] = "0"
+            env["AURA_RUNTIME_DIR"] = str(ROOT)
+            proc = subprocess.run(
+                [str(AURA_BIN), "--ir", "--preset", "dev", str(prog)],
+                cwd=tmp,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=60,
+                check=False,
+            )
+        blob = proc.stdout + proc.stderr
+        self.assertEqual(proc.returncode, 0, blob)
+        self.assertIn(DEV_CAPS, proc.stderr)
+        self.assertIn("#t", proc.stdout)
+        self.assertNotIn(DENIED, blob)
+
     def test_preset_dev_display_repro(self) -> None:
         proc = serve(["--serve", "--preset", "dev"], f"(display {SET_CODE})")
         blob = proc.stdout + proc.stderr
