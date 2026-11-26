@@ -10706,11 +10706,31 @@ Evaluator::FlatStep Evaluator::eval_flat_on_closure(EvalFlatCursor& cur,
                     return FlatStep::ret(ar);
                 cargs.push_back(*ar);
             }
-            auto bridged = apply_closure(cid, cargs);
-            if (bridged)
-                return FlatStep::ret(*bridged);
-            // Issue #4690: an unbound name inside the bridge
-            // body is not an invalid closure.
+            // Issue #5477 follow-up: a sibling rebind can erase/replace
+            // the workspace closure between the callee lookup and this
+            // apply. The arguments are already evaluated, so retry the
+            // dispatch from the live variable cell without re-evaluating
+            // them. The rebind may still be between its parse and its
+            // eval-current install; yield and re-read the cell for a few
+            // turns instead of giving up on the first same-id read. A real
+            // invalid closure / arity error still leaves as before.
+            std::optional<EvalValue> bridged;
+            for (int attempt = 0;; ++attempt) {
+                bridged = apply_closure(cid, cargs);
+                if (bridged)
+                    return FlatStep::ret(*bridged);
+                // Issue #4690: an unbound name inside the bridge
+                // body is not an invalid closure.
+                if (auto diag = take_pending_apply_diagnostic())
+                    return FlatStep::ret(std::unexpected(std::move(*diag)));
+                if (attempt >= 7 || callee.tag != aura::ast::NodeTag::Variable)
+                    break;
+                std::this_thread::yield();
+                auto fresh_fn = eval_flat(*f, *p, v.child(0), eval_env);
+                if (!fresh_fn || !is_closure(*fresh_fn))
+                    break;
+                cid = as_closure_id(*fresh_fn);
+            }
             if (auto diag = take_pending_apply_diagnostic())
                 return FlatStep::ret(std::unexpected(std::move(*diag)));
             if (auto msg = take_pending_user_arity()) {
