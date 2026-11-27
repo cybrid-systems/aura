@@ -7,7 +7,12 @@
 #include "test_harness.hpp"
 
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <print>
+#include <string>
+#include <sys/wait.h>
+#include <unistd.h>
 
 import std;
 import aura.compiler.service;
@@ -39,6 +44,77 @@ static void ac2_plain_global_still_resolves() {
           "AC2: a bound global still lowers normally");
 }
 
+static std::string aura_binary_5484() {
+    if (const char* e = std::getenv("AURA_BIN"); e != nullptr && ::access(e, X_OK) == 0)
+        return e;
+    for (const char* c : {"./build/aura", "../build/aura", "../../build/aura"}) {
+        if (::access(c, X_OK) == 0)
+            return c;
+    }
+    return {};
+}
+
+static bool write_text_5484(const std::filesystem::path& path, const std::string& body) {
+    std::ofstream out(path);
+    out << body;
+    return static_cast<bool>(out);
+}
+
+struct CliResult5484 {
+    int rc = -1;
+    std::string out;
+};
+
+static CliResult5484 run_cli_5484(const std::string& cmd, const std::filesystem::path& out_path) {
+    CliResult5484 r;
+    const int raw = std::system(cmd.c_str());
+    r.rc = (raw != -1 && WIFEXITED(raw)) ? WEXITSTATUS(raw) : raw;
+    std::ifstream in(out_path);
+    r.out.assign(std::istreambuf_iterator<char>(in), {});
+    return r;
+}
+
+static void ac3_warm_disk_cache_keeps_cross_call() {
+    // A module's cached bundle is the define plus the callees it inlined.
+    // The warm (disk-cache) require used to load only the entry function, so
+    // f's call to g resolved to __top__ on the second run. Cold was green.
+    const auto bin = aura_binary_5484();
+    if (bin.empty()) {
+        std::println("SKIP AC3: no aura binary (set AURA_BIN)");
+        return;
+    }
+    const auto dir = std::filesystem::temp_directory_path() /
+                     ("aura-5484-" + std::to_string(static_cast<long long>(::getpid())));
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+    std::filesystem::create_directories(dir / "lib", ec);
+    CHECK(!ec, "AC3: temp workspace");
+    CHECK(write_text_5484(dir / "lib" / "m.aura", "(define (g x) (+ x 1))\n"
+                                                  "(define (f x) (g x))\n"
+                                                  "(export f g)\n"),
+          "AC3: write module");
+    CHECK(write_text_5484(dir / "m.aura", "(require \"lib/m\")\n"
+                                          "(display (f 1))\n"
+                                          "(newline)\n"),
+          "AC3: write main");
+    const auto cache = dir / "cache";
+    const auto out_path = dir / "out.txt";
+    std::filesystem::create_directories(cache, ec);
+
+    const std::string cmd = "cd '" + dir.string() + "' && XDG_CACHE_HOME='" + cache.string() +
+                            "' AURA_SANDBOX=off '" + bin + "' --ir m.aura >'" + out_path.string() +
+                            "' 2>&1";
+    const auto cold = run_cli_5484(cmd, out_path);
+    CHECK(cold.rc == 0 && cold.out.find('2') != std::string::npos,
+          "AC3: cold --ir require resolves the sibling call");
+    const auto warm = run_cli_5484(cmd, out_path);
+    CHECK(warm.rc == 0 && warm.out.find('2') != std::string::npos,
+          "AC3: warm --ir require keeps the whole bundle");
+    if (!(warm.rc == 0))
+        std::println("AC3 warm stderr/stdout: {}", warm.out);
+    std::filesystem::remove_all(dir, ec);
+}
+
 } // namespace
 
 int run_test_ir_runtime_require() {
@@ -47,6 +123,7 @@ int run_test_ir_runtime_require() {
     std::println("=== IR runtime require + late-bound global ===");
     ac1_runtime_require_binds_late_global();
     ac2_plain_global_still_resolves();
+    ac3_warm_disk_cache_keeps_cross_call();
     std::println("\n=== IR runtime require: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

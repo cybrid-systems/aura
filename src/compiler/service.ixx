@@ -6689,11 +6689,35 @@ public:
                                                       aura::ast::NodeId root,
                                                       const std::string& self_name = {}) const;
 
+    // Disk bundles must survive a round trip through the module cache. The
+    // cache loader groups functions by the prefix before '#', so every
+    // function in a define's bundle (the define plus the callees it inlines)
+    // is named owner#pos. Without this, a warm require loaded only the
+    // define's own function and a call to a sibling resolved to __top__.
+    [[nodiscard]] static std::vector<aura::ir::IRFunction>
+    disk_bundle_for(const std::string& owner, const std::vector<aura::ir::IRFunction>& bundle) {
+        std::vector<aura::ir::IRFunction> out = bundle;
+        // The define's own function must be #0: lowering picks name#0 as
+        // the closure target when it embeds this bundle.
+        std::size_t own = out.size();
+        for (std::size_t i = 0; i < out.size(); ++i) {
+            if (out[i].name == owner || out[i].name == owner + "#0") {
+                own = i;
+                break;
+            }
+        }
+        if (own < out.size() && own != 0)
+            std::swap(out[0], out[own]);
+        for (std::size_t i = 0; i < out.size(); ++i)
+            out[i].name = owner + "#" + std::to_string(i);
+        return out;
+    }
+
     void snapshot_ir_for_disk(const std::string& name) {
         auto it = ir_cache_.find(name);
         if (it == ir_cache_.end() || it->second.empty())
             return;
-        ir_disk_snapshots_[name] = it->second;
+        ir_disk_snapshots_[name] = disk_bundle_for(name, it->second);
     }
 
     bool bind_value_define_via_ir(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,

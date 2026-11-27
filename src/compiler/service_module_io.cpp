@@ -31,15 +31,27 @@ void CompilerService::cache_module(const std::string& content, const std::string
     const bool disk_hit = disk_cached.valid() && disk_cached.has_ir();
     std::unordered_set<std::string> disk_lowered;
     if (disk_hit) {
+        // Group the whole bundle before inserting it. A disk snapshot names
+        // every function define#pos; checking ir_cache_ per function would
+        // keep only #0 and drop the inlined callees, so f's call to g became
+        // a call to __top__ on the warm run.
+        std::unordered_map<std::string, std::vector<aura::ir::IRFunction>> bundles;
         for (const auto& func : disk_cached.ir_functions()) {
-            // Bundles are stored under the stable name "define#pos"; the
-            // ir_cache_ key is the bare define name.
             const auto hash = func.name.rfind('#');
             const std::string bare =
                 hash == std::string::npos ? func.name : func.name.substr(0, hash);
-            if (bare.empty() || ir_cache_.count(bare))
+            if (bare.empty())
                 continue;
-            ir_cache_[bare].push_back(func);
+            auto& bundle = bundles[bare];
+            const bool seen =
+                std::ranges::any_of(bundle, [&](const auto& f) { return f.name == func.name; });
+            if (!seen)
+                bundle.push_back(func);
+        }
+        for (auto& [bare, bundle] : bundles) {
+            if (ir_cache_.count(bare))
+                continue;
+            ir_cache_[bare] = std::move(bundle);
             ir_cache_strings_[bare] = disk_cached.ir_strings();
             disk_lowered.insert(bare);
         }
@@ -321,9 +333,10 @@ void CompilerService::cache_module(const std::string& content, const std::string
             function_sources_[name] = content;
         module_functions_[path].push_back(name);
         // Issue #5374: snapshot for the require-path disk cache (same
-        // pre-bind shape cache_define records for compile_module).
+        // pre-bind shape cache_define records for compile_module). Name every
+        // function in the bundle so the disk loader can group it back.
         if (!disk_hit)
-            ir_disk_snapshots_[name] = ir_cache_[name];
+            ir_disk_snapshots_[name] = disk_bundle_for(name, ir_cache_[name]);
 
         for (auto& cn : cache_hits)
             record_dependency(name, cn);
@@ -421,17 +434,26 @@ EvalResult CompilerService::compile_module(const std::string& name, const std::s
                 continue;
             if (flat.get(dv.child(0)).tag != aura::ast::NodeTag::Lambda)
                 continue;
+            // A bundle is the define plus the callees it inlined. Disk
+            // snapshots name every member fname#pos, so collect the whole
+            // prefix group; keeping only the entry function lost the callee
+            // and left a warm require with a call to __top__.
+            std::vector<aura::ir::IRFunction> bundle;
             for (auto& func : all_funcs) {
-                if (func.name == fname && func.id != cached.ir_entry()) {
-                    ir_cache_[fname] = std::vector<aura::ir::IRFunction>{func};
-                    ir_cache_strings_[fname] = cached.ir_strings();
-                    // Issue #5384: same rule as cache_module — a workspace
-                    // define keeps its canonical source row.
-                    if (!is_workspace_lambda_define(fname))
-                        function_sources_[fname] = source;
-                    module_functions_[name].push_back(fname);
-                    break;
-                }
+                const auto hash = func.name.rfind('#');
+                const std::string bare =
+                    hash == std::string::npos ? func.name : func.name.substr(0, hash);
+                if (bare == fname)
+                    bundle.push_back(func);
+            }
+            if (!bundle.empty()) {
+                ir_cache_[fname] = std::move(bundle);
+                ir_cache_strings_[fname] = cached.ir_strings();
+                // Issue #5384: same rule as cache_module — a workspace
+                // define keeps its canonical source row.
+                if (!is_workspace_lambda_define(fname))
+                    function_sources_[fname] = source;
+                module_functions_[name].push_back(fname);
             }
             // Issue #2572: bind_in_env=false — load_module_file already
             // injects TW closures for exports. Only cache IR (+ strings)

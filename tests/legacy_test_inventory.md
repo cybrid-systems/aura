@@ -1,7 +1,7 @@
 # Legacy test inventory
 
 **Issue:** [#1957](https://github.com/cybrid-systems/aura/issues/1957)
-**Generated:** 2026-11-26 by `scripts/tools/inventory_legacy_tests.py`
+**Generated:** 2026-11-27 by `scripts/tools/inventory_legacy_tests.py`
 **Status:** generated inventory, not the how-to-add-a-test policy. Policy is tests/HOMES.md. Re-run this script after consolidations.
 
 ## Purpose
@@ -2184,7 +2184,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_hot_pass_contract_batch.cpp` (—) [small, batch_driver, domain_suite, theme_compiler] — test_hot_pass_contract_batch.cpp — thematic multi-TU batch
 - `tests/compiler/test_ir_const_string_intern.cpp` (—) [domain_suite, theme_compiler] — AC1: IR-path loop with a string literal: heap growth O(1) not O(N)
 - `tests/compiler/test_ir_optimize_type_info_chain.cpp` (—) [domain_suite, theme_compiler] — AC1: X→0→5 multi-step chain remaps uses to terminal source (not MAX)
-- `tests/compiler/test_ir_runtime_require.cpp` (—) [small, domain_suite, theme_compiler] — binds the name with a runtime require inside a function (the live
+- `tests/compiler/test_ir_runtime_require.cpp` (—) [domain_suite, theme_compiler] — binds the name with a runtime require inside a function (the live
 - `tests/compiler/test_json_parse_number_exception.cpp` (—) [domain_suite, theme_compiler] — AC1: oversized integer → error (not crash)
 - `tests/compiler/test_json_parse_object_grow.cpp` (—) [domain_suite, theme_compiler] — AC1: 8-key object retains all keys
 - `tests/core/test_linenoise_core.cpp` (—) [domain_suite, theme_core] — Issue #5041: direct key-by-key tests of the REPL line editor. No terminal.

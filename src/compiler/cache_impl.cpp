@@ -229,7 +229,10 @@ bool write_cache(const std::string& path, const FlatAST& flat, const StringPool&
     // ── Write header via std::meta reflection (auto_serialize<CacheHeader>) ─
     CacheHeader header = {};
     std::memcpy(header.magic, "AURACACHE", 8);
-    header.version = 5;
+    // v6: IR bundles name every inlined function define#pos. A v5 cache
+    // groups by bare name and loses the callees, so f's call to g became
+    // a call to __top__ on the warm require.
+    header.version = 6;
     header.num_nodes = static_cast<std::uint32_t>(n);
     header.num_strings = static_cast<std::uint32_t>(stbl.strings.size());
     header.content_hash = static_cast<std::uint64_t>(root);
@@ -655,10 +658,12 @@ MappedCache open_cache(const std::string& path) {
     // Version 3 used a hand-written format — safe to skip (rebuilt on miss)
     // Version 5+ IR blobs include IRInstruction::source_marker (#455).
     // v4 blobs were serialized with a smaller mirror layout — skip them.
-    // Issue #5159: a v5 header that claims an IR section must contain the
+    // v6 names every function in a bundle owner#pos; a v5 blob would group
+    // only the entry function and lose the inlined callees, so skip it.
+    // Issue #5159: a v6 header that claims an IR section must contain the
     // whole size-prefixed blob. A truncated section is not a valid cache
     // (the old skip path reported the AST as "version=3" with no IR).
-    if (hdr->version >= 5 && hdr->num_functions > 0) {
+    if (hdr->version >= 6 && hdr->num_functions > 0) {
         const auto off = static_cast<std::uint64_t>(hdr->ir_offset);
         const bool fits = off <= cache.file_size_ && cache.file_size_ - off >= 4;
         std::uint32_t ir_size = 0;

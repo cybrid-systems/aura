@@ -325,7 +325,9 @@ EvalResult CompilerService::cache_define(std::string_view source, aura::ast::Fla
             bridge_bundle.emplace_back();
     }
     // Issue #272 Cycle 4: snapshot before move + IR env bind for disk serialize.
-    ir_disk_snapshots_[name_str] = bundle;
+    // The disk copy names every function in the bundle owner#pos; the cache
+    // loader can then rebuild the whole bundle, not just its entry function.
+    ir_disk_snapshots_[name_str] = disk_bundle_for(name_str, bundle);
     ir_cache_[name_str] = std::move(bundle);
     ir_cache_bridge_[name_str] = std::move(bridge_bundle);
     ir_cache_strings_[name_str] = ir_mod.string_pool;

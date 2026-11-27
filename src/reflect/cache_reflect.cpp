@@ -91,7 +91,9 @@ int cache_validate_header(const void* h, std::uint64_t file_size) {
         ch->magic[4] != 'C' || ch->magic[5] != 'A' || ch->magic[6] != 'C' || ch->magic[7] != 'H') {
         return -1;
     }
-    if (ch->version < 1 || ch->version > 5)
+    // v6 names every function in an IR bundle owner#pos; v5 cannot be
+    // reconstructed into a whole bundle on a warm require.
+    if (ch->version < 1 || ch->version > 6)
         return -2;
     if (ch->num_nodes == 0 || ch->num_nodes > 10000000)
         return -3;
