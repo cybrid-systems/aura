@@ -404,6 +404,12 @@ since the symbol layer landed.  Without a client it asks the REPL, whose
       :side 'right :size 0.45 :select t :quit t :ttl 0))
 
   (when (modulep! :editor evil)
+    ;; [m / ]m follow the same top-level sexp stops as C-M-a (#5482).
+    ;; :nm is evil normal and motion.  Doom's own [m uses a column-0
+    ;; search, which skips an indented form and a second form on a line.
+    (map! :map aura-mode-map
+          :nm "[m" #'beginning-of-defun
+          :nm "]m" #'aura-lang-next-defun)
     (map! (:localleader
            :map aura-mode-map
            "'" #'run-aura

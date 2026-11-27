@@ -516,6 +516,44 @@ The array arrives as a vector of plists; every part's value counts."
           (should (+aura-lookup-definition "piece-x"))
           (should (equal jumped "piece-x")))))))
 
+(ert-deftest aura-doom-defun-motion-keys ()
+  "[m and ]m in normal and motion state use the same defun motion."
+  (aura-doom-test--with-binary "aura 0.2.7"
+    (aura-doom-test--load-config)
+    (let ((maps (mapcar #'cdr
+                        (seq-filter (lambda (call) (eq (car call) 'map!))
+                                    aura-doom-test--calls))))
+      (should (seq-some
+               (lambda (form)
+                 (and (aura-doom-test--somewhere "[m" form)
+                      (aura-doom-test--somewhere "]m" form)
+                      (aura-doom-test--somewhere :nm form)
+                      (aura-doom-test--somewhere 'beginning-of-defun form)
+                      (aura-doom-test--somewhere 'aura-lang-next-defun form)))
+               maps)))))
+
+(ert-deftest aura-doom-send-defun-bounds ()
+  "+aura-send-defun sends one top-level sexp, including a same-line form."
+  (aura-doom-test--with-binary "aura 0.2.7"
+    (aura-doom-test--load-config)
+    (with-temp-buffer
+      (insert "(define (b) 3) (define (c) 4)\n  (define (indented-top) 2)\n")
+      (aura-mode)
+      (let ((sent nil))
+        (cl-letf (((symbol-function '+aura--send)
+                   (lambda (text) (setq sent text) "ok")))
+          (goto-char (point-min))
+          (search-forward "(define (c)")
+          (forward-char 1)
+          (+aura-send-defun)
+          (should (string-match-p "(define (c) 4)" sent))
+          (should-not (string-match-p "(define (b)" sent))
+          (goto-char (point-min))
+          (search-forward "indented-top")
+          (+aura-send-defun)
+          (should (string-match-p "(define (indented-top) 2)" sent))
+          (should-not (string-match-p "(define (c)" sent)))))))
+
 (ert-deftest aura-doom-localleader ()
   "The localleader holds goto, send, world, REPL and doc keys."
   (aura-doom-test--with-binary "aura 0.2.7"

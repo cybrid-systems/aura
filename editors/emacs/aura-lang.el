@@ -22,13 +22,18 @@
 ;;
 ;; Reader notes (probed with aura 0.2.6/nightly):
 ;;   * ';' is a line comment, '#| ... |#' a block comment.
-;;   * '#;' is NOT a comment; the reader reports a parse error.
+;;   * '#;' is NOT a line comment; the reader reports a parse error.
+;;     Defun motion still treats "#;" plus the following sexp as one sexp,
+;;     so a parenthesis inside that datum is not its own stop (#5482).
 ;;   * '#\a' is a character literal (97), ':kw' a self-evaluating keyword.
+;;     '#\(' and '#\"' are character literals too; the escaped parenthesis
+;;     or quote is not a delimiter.
 ;;   * '[' and ']' parse, but they are not list literals: (display [1 2 3])
 ;;     prints 3 and (car [1 2 3]) is a parse error.  Their semantics are
 ;;     still open (issue #5264 / the A6 formatter work), so this mode treats
 ;;     '[' and ']' as ordinary matching brackets and gives them no list
-;;     syntax.  Revisit when the reader semantics are settled.
+;;     syntax.  Revisit when the reader semantics are settled.  Defun
+;;     motion still stops on a top-level bracket sexp.
 
 ;;; Code:
 
@@ -89,6 +94,15 @@ When nil, the grammar is looked up next to this package in
 editors/grammar/aura.tmLanguage.json (the post-#5273 location) and then
 in the older editors/vscode/syntaxes/ location."
   :type '(choice (const :tag "Locate automatically" nil) file)
+  :group 'aura-lang)
+
+(defcustom aura-lang-defun-only-definitions nil
+  "When non-nil, defun motion stops only on Aura definition forms.
+The stops are top-level lists whose head is in `aura-lang-define-forms'
+\(such as `define' and `define-syntax').  When nil, every top-level
+sexp is a stop, including `require', symbols such as `std:foo', strings
+and bracket forms."
+  :type 'boolean
   :group 'aura-lang)
 
 ;;; Grammar-derived keyword lists
@@ -353,15 +367,226 @@ bodies to +2 columns, which is what these values give.")
          2))
   "Imenu fallback for `aura-mode', used when no LSP is running.")
 
+;;; Top-level sexp motion
+
+;; `beginning-of-defun' in Emacs moves to column 0 after a successful
+;; search, and with `open-paren-in-column-0-is-defun-start' it never
+;; sees an indented form or a second form on the same line (#5482).
+;; The stops below are the real top-level sexps.  `syntax-ppss' tells
+;; a string, comment or nested list from a top-level form; `scan-lists'
+;; crosses a parenthesized form (including `[]'); `scan-sexps' crosses
+;; the sexps `scan-lists' skips, such as `std:foo', strings and `#\('.
+
+(defun aura-lang--define-form-p (pos)
+  "Return non-nil if the sexp at POS is an Aura definition form.
+POS is the first character of the sexp.  Only a list whose head is a
+name in `aura-lang-define-forms' counts; a bracket form does not."
+  (save-excursion
+    (goto-char pos)
+    (when (eq (char-after) ?\()
+      (forward-char 1)
+      (forward-comment (point-max))
+      (let ((start (point)))
+        (when (memq (char-syntax (or (char-after) ?\s)) '(?w ?_))
+          (skip-syntax-forward "w_")
+          (member (buffer-substring-no-properties start (point))
+                  aura-lang-define-forms))))))
+
+(defun aura-lang--sexp-end (start)
+  "Return the position after the sexp starting at START, or nil.
+Parentheses, including `[]', move with `scan-lists'.  Anything else
+\(`std:foo', a string, `#\\(', `#;') moves with `scan-sexps', which
+keeps a character literal and a datum comment as one sexp."
+  (condition-case nil
+      (if (eq (char-syntax (char-after start)) ?\()
+          (scan-lists start 1 0)
+        (scan-sexps start 1))
+    (scan-error nil)))
+
+(defun aura-lang--skip-non-toplevel ()
+  "Move point out of a string, comment or nested list, then past that sexp.
+Uses `syntax-ppss' for the state and `scan-lists' to reach the
+outermost open parenthesis."
+  (let ((ppss (syntax-ppss)))
+    (when (nth 8 ppss)
+      (goto-char (nth 8 ppss))
+      (setq ppss (syntax-ppss)))
+    (let ((depth (nth 0 ppss)))
+      (when (and depth (> depth 0))
+        (condition-case nil
+            (goto-char (scan-lists (point) -1 depth))
+          (scan-error (goto-char (point-max))))))
+    (condition-case nil
+        (forward-sexp 1)
+      (scan-error (goto-char (point-max))))))
+
+(defun aura-lang--toplevel-bounds ()
+  "Return (START . END) for each top-level sexp in the accessible buffer.
+Parentheses inside a string, a `;' line comment, a `#| ... |#' block
+comment or a `#;' datum are not separate entries."
+  (save-excursion
+    (goto-char (point-min))
+    (let ((parse-sexp-ignore-comments t)
+          (bounds nil))
+      (while (not (eobp))
+        (let ((before (point)))
+          (forward-comment (point-max))
+          (cond
+           ((eobp))
+           ((let ((ppss (syntax-ppss)))
+              (or (nth 8 ppss) (> (nth 0 ppss) 0)))
+            (aura-lang--skip-non-toplevel))
+           (t
+            (let* ((start (point))
+                   (end (aura-lang--sexp-end start)))
+              (if (and end (> end start))
+                  (progn
+                    (push (cons start end) bounds)
+                    (goto-char end))
+                (goto-char (min (1+ start) (point-max)))))))
+          (when (<= (point) before)
+            (goto-char (min (1+ before) (point-max))))))
+      (nreverse bounds))))
+
+(defun aura-lang--defun-bounds ()
+  "Return the top-level bounds defun motion should stop on.
+With `aura-lang-defun-only-definitions', keep definition forms only."
+  (let ((bounds (aura-lang--toplevel-bounds)))
+    (if aura-lang-defun-only-definitions
+        (seq-filter (lambda (bound)
+                      (aura-lang--define-form-p (car bound)))
+                    bounds)
+      bounds)))
+
+(defun aura-lang--pick-start (bounds origin direction)
+  "Return the next sexp start from ORIGIN in DIRECTION, or nil.
+DIRECTION -1 is the rightmost start strictly before ORIGIN.
+DIRECTION 1 is the leftmost start strictly after ORIGIN."
+  (let (best)
+    (dolist (bound bounds)
+      (let ((start (car bound)))
+        (cond
+         ((and (< direction 0) (< start origin))
+          (setq best start))
+         ((and (> direction 0) (> start origin) (not best))
+          (setq best start)))))
+    best))
+
+(defun aura-lang--pick-end (bounds origin direction)
+  "Return the next sexp end from ORIGIN in DIRECTION, or nil.
+Forward prefers the sexp that contains ORIGIN, including one that
+starts there, and otherwise the following sexp.  Backward is the
+rightmost end strictly before ORIGIN."
+  (if (< direction 0)
+      (let (best)
+        (dolist (bound bounds)
+          (when (< (cdr bound) origin)
+            (setq best (cdr bound))))
+        best)
+    (let ((containing nil)
+          (following nil))
+      (dolist (bound bounds)
+        (let ((start (car bound))
+              (end (cdr bound)))
+          (when (and (<= start origin) (< origin end))
+            (setq containing end))
+          (when (and (not following) (> start origin))
+            (setq following end))))
+      (or containing following))))
+
+(defun aura-lang--step-defun (steps direction pick)
+  "Move STEPS times in DIRECTION by calling PICK on the defun bounds.
+DIRECTION is -1 or 1.  Return non-nil if every step landed on a
+stop.  Otherwise leave point at `point-min' or `point-max'."
+  (let* ((bounds (aura-lang--defun-bounds))
+         (pos (point))
+         (found t))
+    (while (and found (> steps 0))
+      (let ((next (funcall pick bounds pos direction)))
+        (if next
+            (setq pos next
+                  steps (1- steps))
+          (setq found nil))))
+    (goto-char (if found
+                   pos
+                 (if (> direction 0) (point-max) (point-min))))
+    found))
+
+(defun aura-lang-beginning-of-defun (&optional arg)
+  "Move to the ARGth top-level sexp start.
+ARG defaults to 1.  Positive ARG moves backward and negative ARG
+moves forward, as with `beginning-of-defun'.  Point stays on the
+sexp, not at the beginning of its line, so two forms on one line
+are two stops.  Return non-nil if the requested stop was found."
+  (interactive "^p")
+  (unless arg (setq arg 1))
+  (if (zerop arg)
+      nil
+    (aura-lang--step-defun (abs arg)
+                           (if (> arg 0) -1 1)
+                           #'aura-lang--pick-start)))
+
+(defun aura-lang-next-defun (&optional arg)
+  "Move forward to the ARGth following top-level sexp start.
+ARG defaults to 1.  This is `beginning-of-defun' with a negative
+argument, so `]m' shares stops with `C-M-a'."
+  (interactive "^p")
+  (beginning-of-defun (- (or arg 1))))
+
+(defun aura-lang--end-of-defun (&optional arg)
+  "Move to the ARGth top-level sexp end.
+Positive ARG moves forward, negative ARG moves backward.  A call
+from the first character of a sexp moves to the end of that sexp."
+  (unless (or (null arg) (zerop arg))
+    (aura-lang--step-defun (abs arg)
+                           (if (> arg 0) 1 -1)
+                           #'aura-lang--pick-end)))
+
+(defun aura-lang--forward-defun-end ()
+  "Move from the start of a top-level sexp to just after it.
+This is `end-of-defun-function' for `aura-mode'."
+  (condition-case nil
+      (forward-sexp 1)
+    (scan-error nil)))
+
+(defun aura-lang--beginning-of-defun-advice (orig &rest args)
+  "In `aura-mode', do not let ORIG retreat to the beginning of the line.
+`beginning-of-defun' calls `beginning-of-line' after a successful
+search.  Aura forms can share a line, so that step would keep only
+the first stop (#5482)."
+  (if (not (derived-mode-p 'aura-mode))
+      (apply orig args)
+    (cl-letf (((symbol-function 'beginning-of-line) #'ignore))
+      (apply orig args))))
+
+(defun aura-lang--end-of-defun-advice (orig &rest args)
+  "In `aura-mode', move by real sexp ends instead of ORIG.
+`end-of-defun' first calls `beginning-of-defun-raw', which leaves
+the sexp it is already on, so `C-M-e' at that sexp's start would
+skip it.  ARGS are the arguments of `end-of-defun'."
+  (if (not (derived-mode-p 'aura-mode))
+      (apply orig args)
+    (or (not (eq this-command 'end-of-defun))
+        (eq last-command 'end-of-defun)
+        (and transient-mark-mode mark-active)
+        (push-mark))
+    (let ((arg (car args)))
+      (aura-lang--end-of-defun (if (or (null arg) (zerop arg)) 1 arg)))))
+
+(advice-add 'beginning-of-defun :around #'aura-lang--beginning-of-defun-advice)
+(advice-add 'end-of-defun :around #'aura-lang--end-of-defun-advice)
+
 ;;; Major mode
 
 ;;;###autoload
 (define-derived-mode aura-mode lisp-data-mode "Aura"
   "Major mode for Aura source files.
 
-Comments use ; and #| ... |#; #; is not a comment.  Font-lock keywords
+Comments use ; and #| ... |#; #; is not a line comment.  Font-lock keywords
 come from the TextMate grammar in this repository.  Indentation uses
-the symbol `lisp-indent-function' (see `aura-lang--indent-specs')."
+the symbol `lisp-indent-function' (see `aura-lang--indent-specs').
+`beginning-of-defun' and `end-of-defun' (`C-M-a', `C-M-e') move by
+top-level sexps."
   :group 'aura-lang
   :syntax-table aura-lang-mode-syntax-table
   (setq-local font-lock-defaults
@@ -372,7 +597,12 @@ the symbol `lisp-indent-function' (see `aura-lang--indent-specs')."
   (setq-local comment-start ";")
   (setq-local comment-end "")
   (setq-local comment-start-skip ";[ \t]*")
-  (setq-local comment-use-syntax t))
+  (setq-local comment-use-syntax t)
+  ;; Column 0 is not special: an indented top-level form is still a sexp.
+  (setq-local open-paren-in-column-0-is-defun-start nil)
+  (setq-local end-of-defun-moves-to-eol nil)
+  (setq-local beginning-of-defun-function #'aura-lang-beginning-of-defun)
+  (setq-local end-of-defun-function #'aura-lang--forward-defun-end))
 
 ;;;###autoload
 (add-to-list 'auto-mode-alist '("\\.aura\\'" . aura-mode))

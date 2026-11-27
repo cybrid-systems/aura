@@ -489,5 +489,220 @@ both (car 1) and (vector-ref ...) are errors, while (+ 1 2) and
       (let ((kill-buffer-query-functions nil))
         (kill-buffer buffer)))))
 
+(defun aura-lang-test--pos (needle)
+  "Return the start of the first NEEDLE in the current buffer."
+  (save-excursion
+    (goto-char (point-min))
+    (search-forward needle)
+    (match-beginning 0)))
+
+(defun aura-lang-test--defun-points ()
+  "Return every `beginning-of-defun' stop, from the top of the buffer.
+The walk starts at `point-max' and repeats with argument 1."
+  (goto-char (point-max))
+  (let (points)
+    (while (beginning-of-defun 1)
+      (push (point) points))
+    points))
+
+(ert-deftest aura-lang-defun-motion-setup ()
+  "Defun motion uses real sexps, not an open parenthesis in column 0."
+  (aura-lang-test--in-buffer
+   "(define (a) 1)\n"
+   (lambda ()
+     (should-not open-paren-in-column-0-is-defun-start)
+     (should-not end-of-defun-moves-to-eol)
+     (should (eq beginning-of-defun-function #'aura-lang-beginning-of-defun))
+     (should (eq end-of-defun-function #'aura-lang--forward-defun-end))
+     (should-not aura-lang-defun-only-definitions))))
+
+(ert-deftest aura-lang-defun-toplevel-shapes ()
+  "Column 0, indented forms and several forms on one line are all stops.
+Argument 1 moves to the previous start, a negative argument to the
+next, and repeating either walks every stop."
+  (let ((text (concat "(define (a) 1)\n"
+                      "  (define (indented-top) 2)\n"
+                      "(define (b) 3) (define (c) 4)\n")))
+    (aura-lang-test--in-buffer
+     text
+     (lambda ()
+       (let ((a (aura-lang-test--pos "(define (a)"))
+             (indented (aura-lang-test--pos "(define (indented-top)"))
+             (b (aura-lang-test--pos "(define (b)"))
+             (c (aura-lang-test--pos "(define (c)")))
+         (should (equal (aura-lang-test--defun-points) (list a indented b c)))
+         (goto-char (1+ c))
+         (should (beginning-of-defun 1))
+         (should (= (point) c))
+         (should (beginning-of-defun 1))
+         (should (= (point) b))
+         (goto-char (1+ c))
+         (should (beginning-of-defun 2))
+         (should (= (point) b))
+         (goto-char (1+ c))
+         (should-not (beginning-of-defun 10))
+         (should (= (point) (point-min)))
+         (goto-char a)
+         (let ((origin (point)))
+           (should-not (beginning-of-defun 0))
+           (should (= (point) origin)))
+         (goto-char a)
+         (should (beginning-of-defun -1))
+         (should (= (point) indented))
+         (should (beginning-of-defun -1))
+         (should (= (point) b))
+         (should (beginning-of-defun -1))
+         (should (= (point) c))
+         (should-not (beginning-of-defun -1))
+         (should (= (point) (point-max)))
+         (goto-char a)
+         (should (aura-lang-next-defun 2))
+         (should (= (point) b))
+         ;; Inside (b), not on its opening parenthesis.
+         (goto-char (+ b 9))
+         (should (beginning-of-defun 1))
+         (should (= (point) b))
+         (goto-char a)
+         (should (beginning-of-defun -2))
+         (should (= (point) b)))))))
+
+(ert-deftest aura-lang-defun-skips-non-code-parens ()
+  "A parenthesis in a string, comment or #; datum is not a stop.
+`#\\(' and `#\\\"' are character literals.  `std:foo' and `[]' are
+sexps, and a parenthesis nested in brackets is not a top-level stop."
+  (let ((text (concat "\"\n(\n\"\n"
+                      "; (line)\n"
+                      "#|\n(\n|#\n"
+                      "#;\n(not-a-stop)\n"
+                      "#;(outer\n(inner-at-bol)\n)\n"
+                      "#\\(\n"
+                      "#\\\"\n"
+                      "std:foo\n"
+                      "[1 (2) 3]\n"
+                      "(define (visible) 1)\n")))
+    (aura-lang-test--in-buffer
+     text
+     (lambda ()
+       (let ((points (aura-lang-test--defun-points))
+             (string (aura-lang-test--pos "\"\n"))
+             (datum (aura-lang-test--pos "#;\n"))
+             (outer (aura-lang-test--pos "#;(outer"))
+             (char-open (aura-lang-test--pos "#\\("))
+             (char-quote (aura-lang-test--pos "#\\\""))
+             (symbol (aura-lang-test--pos "std:foo"))
+             (brackets (aura-lang-test--pos "[1"))
+             (visible (aura-lang-test--pos "(define (visible)")))
+         (should (equal points
+                        (list string datum outer char-open char-quote
+                              symbol brackets visible)))
+         (dolist (hidden '("(not-a-stop)" "(inner-at-bol)" "(2)" "(line)"))
+           (should-not (member (aura-lang-test--pos hidden) points)))
+         ;; The escaped parenthesis and quote are inside the literal.
+         (should (= (char-after char-open) ?#))
+         (should (= (char-after char-quote) ?#))
+         ;; The escaped parenthesis and quote are not stops of their own.
+         (should-not (member (+ char-open 2) points))
+         (should-not (member (+ char-quote 2) points))
+         (should-not (member (+ string 2) points))
+         (should-not (member (+ (aura-lang-test--pos "#|") 3) points)))))))
+
+(ert-deftest aura-lang-defun-only-definitions ()
+  "With the option, motion stops only on `aura-lang-define-forms'."
+  (let ((text (concat "(require \"std/core\")\n"
+                      "std:foo\n"
+                      "[1 2]\n"
+                      "42\n"
+                      "(define (a) 1)\n"
+                      "(display 1)\n"
+                      "(define-syntax (m x) x)\n"
+                      "(define-hygienic-macro (h y) y)\n"))
+        (aura-lang-defun-only-definitions t))
+    (aura-lang-test--in-buffer
+     text
+     (lambda ()
+       (let ((points (aura-lang-test--defun-points)))
+         (should (equal points
+                        (list (aura-lang-test--pos "(define (a)")
+                              (aura-lang-test--pos "(define-syntax")
+                              (aura-lang-test--pos "(define-hygienic-macro"))))
+         (dolist (skipped '("(require" "std:foo" "[1" "42" "(display"))
+           (should-not (member (aura-lang-test--pos skipped) points)))
+         (goto-char (point-max))
+         (should (beginning-of-defun 1))
+         (should (looking-at "(define-hygienic-macro"))
+         (should-not (beginning-of-defun -1))
+         (should (= (point) (point-max))))))))
+
+(ert-deftest aura-lang-defun-end-roundtrip ()
+  "end-of-defun and beginning-of-defun meet on the same sexp.
+The end of a form that shares its line is that form's end, and
+starting at the opening parenthesis does not skip the sexp."
+  (let ((text (concat "(define (a) 1)\n"
+                      "  (define (indented-top) 2)\n"
+                      "(define (b) 3) (define (c) 4)\n")))
+    (aura-lang-test--in-buffer
+     text
+     (lambda ()
+       (goto-char (1+ (aura-lang-test--pos "(define (indented-top)")))
+       (let ((start (save-excursion (beginning-of-defun 1) (point))))
+         (end-of-defun 1)
+         (should (eq (char-before) ?\)))
+         (beginning-of-defun 1)
+         (should (= (point) start)))
+       (goto-char (aura-lang-test--pos "(define (c)"))
+       (let ((start (point)))
+         (end-of-defun 1)
+         (should (eq (char-before) ?\)))
+         (should (looking-at "\n"))
+         (beginning-of-defun 1)
+         (should (= (point) start)))
+       (goto-char (1+ (aura-lang-test--pos "(define (b)")))
+       (end-of-defun 1)
+       (should (looking-at " (define (c) 4)"))
+       (beginning-of-defun 1)
+       (should (looking-at "(define (b)"))
+       (goto-char (point-max))
+       (should (end-of-defun -1))
+       (should (eq (char-before) ?\)))
+       (should (end-of-defun -1))
+       (should (looking-back "(define (b) 3)" (line-beginning-position)))))))
+
+(ert-deftest aura-lang-send-defun-bounds ()
+  "send-defun sends one top-level sexp, not its neighbour on the line."
+  (let ((sent nil))
+    (cl-letf (((symbol-function 'aura-lang--send-string)
+               (lambda (text) (setq sent text))))
+      (aura-lang-test--in-buffer
+       (concat "(define (a) 1)\n"
+               "  (define (indented-top) 2)\n"
+               "(define (b) 3) (define (c) 4)\n"
+               "\"\n(\n\"\n")
+       (lambda ()
+         (goto-char (1+ (aura-lang-test--pos "indented-top")))
+         (aura-lang-send-defun)
+         (should (string-match-p "(define (indented-top) 2)" sent))
+         (should-not (string-match-p "(define (a)" sent))
+         (should-not (string-match-p "(define (b)" sent))
+         (goto-char (1+ (aura-lang-test--pos "(define (c)")))
+         (aura-lang-send-defun)
+         (should (string-match-p "(define (c) 4)" sent))
+         (should-not (string-match-p "(define (b)" sent))
+         (goto-char (aura-lang-test--pos "\"\n(\n"))
+         (forward-char 2)
+         (aura-lang-send-defun)
+         (should (string-prefix-p "\"" sent))
+         (should-not (string-prefix-p "(" sent)))))))
+
+(ert-deftest aura-lang-defun-advice-leaves-other-modes ()
+  "The bol adjustment stays in place outside `aura-mode'."
+  (with-temp-buffer
+    (emacs-lisp-mode)
+    (setq-local open-paren-in-column-0-is-defun-start nil)
+    (insert "(a) (b)")
+    (goto-char (point-max))
+    (beginning-of-defun)
+    (should (bolp))
+    (should (looking-at "(a)"))))
+
 (provide 'aura-lang-test)
 ;;; aura-lang-test.el ends here
