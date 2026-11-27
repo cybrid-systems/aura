@@ -208,6 +208,7 @@ AURA_CONFIG_ENTRY(AURA_WORKSPACE_SPECIALIZE_CAP, "AURA_WORKSPACE_SPECIALIZE_CAP"
 AURA_CONFIG_ENTRY(AURA_YIELD_HELD_ABORT, "AURA_YIELD_HELD_ABORT", Flag, "", "Abort when yielding while holding a lock.")
 AURA_CONFIG_ENTRY(AURA_FEEDBACK_BACK_EDGES, "AURA_FEEDBACK_BACK_EDGES", Size, "", "Type-feedback back-edge budget; unset uses the compiled default.")
 AURA_CONFIG_ENTRY(AURA_FEEDBACK_ENTRIES, "AURA_FEEDBACK_ENTRIES", Size, "", "Type-feedback entry budget; unset uses the compiled default.")
+AURA_CONFIG_ENTRY(AURA_FEEDBACK_TLS_CACHE, "AURA_FEEDBACK_TLS_CACHE", Flag, "", "Multi-function TLS enter cache for type feedback; 0 restores the single-slot cache.")
 AURA_CONFIG_ENTRY(AURA_OFFLOAD_QUEUE_CAP, "AURA_OFFLOAD_QUEUE_CAP", Size, "", "Offload pool queue capacity.")
 AURA_CONFIG_ENTRY(AURA_OFFLOAD_THREADS, "AURA_OFFLOAD_THREADS", Size, "", "Offload pool thread count.")
 AURA_CONFIG_ENTRY(AURA_QUOTA_PER_TENANT, "AURA_QUOTA_PER_TENANT", Flag, "", "Arm per-tenant resource quota tracking.")

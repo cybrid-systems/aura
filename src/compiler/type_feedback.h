@@ -145,14 +145,37 @@ namespace detail {
         std::unordered_map<std::string, std::shared_ptr<Row>> rows;
     };
 
-    struct Tls {
+    // Multi-function enter cache. The old single slot remembered only
+    // the last function, so a hot call loop that alternates between a
+    // few defines (step -> collide -> road-height -> ...) missed on
+    // every call and paid enter_slow's lock + string-key lookup each
+    // time. The cache holds the last kEnterCacheSize distinct functions
+    // per thread; a hit is a pointer-compare scan, no lock, no hash.
+    // Slots are replaced round-robin. Every lookup is validated against
+    // the table epoch, so a rebind/reset (epoch bump) invalidates all
+    // slots at once; the table mutex keeps a replaced Row alive through
+    // any concurrent scan. AURA_FEEDBACK_TLS_CACHE=0 restores the single
+    // slot.
+    inline constexpr std::uint32_t kEnterCacheSize = 16;
+
+    struct TlsEntry {
         const void* key = nullptr;
-        std::uint64_t epoch = 0;
         std::shared_ptr<Row> row;
         std::uint32_t bases[kMaxBlocks]{};
         std::uint32_t nblocks = 0;
         std::uint32_t free_count = 0;
         bool known_off = false;
+    };
+
+    struct Tls {
+        // The active entry: enter publishes the callee here so
+        // note_call_current / note_loop_edge keep reading the current
+        // function, exactly as with the old single slot.
+        TlsEntry* cur = nullptr;
+        std::uint64_t epoch = 0;
+        TlsEntry entries[kEnterCacheSize];
+        std::uint32_t next = 0;
+        std::uint32_t used = 0;
     };
 
     // One row map for the interpreter, the tree walker, and query:.
@@ -197,6 +220,31 @@ namespace detail {
         static const std::uint32_t v =
             read_budget(::aura::config::Key::AURA_FEEDBACK_BACK_EDGES, kDefaultBackEdges);
         return v;
+    }
+
+    inline std::uint32_t enter_cache_size() noexcept {
+        static const std::uint32_t v = [] {
+            const char* raw = ::aura::config::raw(::aura::config::Key::AURA_FEEDBACK_TLS_CACHE);
+            if (raw && raw[0] == '0')
+                return 1u;
+            return kEnterCacheSize;
+        }();
+        return v;
+    }
+
+    // The cached entry for key, or nullptr. Epoch-checked: a stale
+    // epoch means the table changed (rebind/reset) and every slot must
+    // be re-entered through enter_slow.
+    inline TlsEntry* cache_find(const void* key) noexcept {
+        auto& tls = tls_slot();
+        if (tls.epoch != table().epoch.load(std::memory_order_acquire))
+            return nullptr;
+        for (std::uint32_t i = 0; i < tls.used; ++i) {
+            TlsEntry& e = tls.entries[i];
+            if (e.key == key && e.row)
+                return &e;
+        }
+        return nullptr;
     }
 
     inline std::uint32_t entry_budget() noexcept {
@@ -285,31 +333,58 @@ namespace detail {
         return row;
     }
 
-    inline void fill_rec(Recorder& r, const std::shared_ptr<Row>& row, const std::uint32_t* bases,
-                         std::uint32_t nblocks, std::uint32_t free_count) noexcept {
-        r.hold = row;
-        r.row = row.get();
-        r.free_count = free_count;
-        r.nblocks = nblocks;
-        for (std::uint32_t i = 0; i < nblocks && i < kMaxBlocks; ++i)
-            r.base[i] = bases[i];
-        const auto n = row->entries.fetch_add(1, std::memory_order_relaxed);
-        const bool cooled = row->cooled.load(std::memory_order_relaxed) != 0;
+    inline void fill_rec(Recorder& r, TlsEntry& e) noexcept {
+        r.hold = e.row;
+        r.row = e.row.get();
+        r.free_count = e.free_count;
+        r.nblocks = e.nblocks;
+        for (std::uint32_t i = 0; i < e.nblocks && i < kMaxBlocks; ++i)
+            r.base[i] = e.bases[i];
+        const auto n = e.row->entries.fetch_add(1, std::memory_order_relaxed);
+        const bool cooled = e.row->cooled.load(std::memory_order_relaxed) != 0;
         r.on = !cooled && n < entry_budget();
         if (!r.on)
-            tls_slot().known_off = true;
+            e.known_off = true;
     }
 
     inline void publish_tls(const EnterInfo& in, const std::shared_ptr<Row>& row) {
         auto& tls = tls_slot();
-        tls.key = in.key;
-        tls.epoch = table().epoch.load(std::memory_order_relaxed);
-        tls.row = row;
-        tls.nblocks = in.nblocks;
-        tls.free_count = in.free_count;
-        tls.known_off = false;
+        const std::uint64_t ep = table().epoch.load(std::memory_order_acquire);
+        // ep is read AFTER enter_slow released the table mutex, so it is
+        // >= the epoch of the row just looked up. If it is newer than
+        // this thread's cached epoch, every cached row (possibly this
+        // one) predates a table change: drop them all and re-enter.
+        TlsEntry* e = nullptr;
+        if (tls.epoch == ep) {
+            for (std::uint32_t i = 0; i < tls.used; ++i) {
+                if (tls.entries[i].key == in.key) {
+                    e = &tls.entries[i];
+                    break;
+                }
+            }
+        } else {
+            // Table changed: every cached row may be stale. Drop them all.
+            for (std::uint32_t i = 0; i < tls.used; ++i)
+                tls.entries[i] = TlsEntry{};
+            tls.used = 0;
+            tls.next = 0;
+            tls.epoch = ep;
+        }
+        if (!e) {
+            const std::uint32_t cap = enter_cache_size();
+            e = &tls.entries[tls.next];
+            tls.next = (tls.next + 1) % cap;
+            if (tls.used < cap)
+                ++tls.used;
+        }
+        e->key = in.key;
+        e->row = row;
+        e->nblocks = in.nblocks;
+        e->free_count = in.free_count;
+        e->known_off = false;
         for (std::uint32_t i = 0; i < in.nblocks && i < kMaxBlocks; ++i)
-            tls.bases[i] = in.bases[i];
+            e->bases[i] = in.bases[i];
+        tls.cur = e;
     }
 
     inline void drop_anonymous_over_cap(Table& t) {
@@ -326,27 +401,23 @@ namespace detail {
 } // namespace detail
 
 inline bool known_off(const void* key) noexcept {
-    auto& tls = detail::tls_slot();
-    if (!tls.known_off || tls.key != key || !tls.row)
-        return false;
-    return tls.epoch == detail::table().epoch.load(std::memory_order_acquire);
+    detail::TlsEntry* e = detail::cache_find(key);
+    return e && e->known_off;
 }
 
 inline bool fast_hit(const void* key) noexcept {
-    auto& tls = detail::tls_slot();
-    if (!tls.row || tls.key != key)
-        return false;
-    return tls.epoch == detail::table().epoch.load(std::memory_order_acquire);
+    return detail::cache_find(key) != nullptr;
 }
 
-inline Recorder enter_fast() noexcept {
+inline Recorder enter_fast(const void* key) noexcept {
     Recorder r;
-    auto& tls = detail::tls_slot();
-    if (!tls.row || tls.epoch != detail::table().epoch.load(std::memory_order_acquire))
+    detail::TlsEntry* e = detail::cache_find(key);
+    if (!e)
         return r;
-    detail::fill_rec(r, tls.row, tls.bases, tls.nblocks, tls.free_count);
+    detail::fill_rec(r, *e);
     if (!r.on)
         r.nblocks = 0;
+    detail::tls_slot().cur = e;
     return r;
 }
 
@@ -369,7 +440,7 @@ inline Recorder enter_slow(const EnterInfo& in) {
         }
     }
     detail::publish_tls(in, row);
-    detail::fill_rec(r, row, in.bases, in.nblocks, in.free_count);
+    detail::fill_rec(r, *detail::tls_slot().cur);
     if (!r.on)
         r.nblocks = 0;
     return r;
@@ -386,7 +457,7 @@ inline Recorder enter_named(const void* key, std::string_view name, std::uint32_
     if (known_off(key))
         return r;
     if (fast_hit(key)) {
-        r = enter_fast();
+        r = enter_fast(key);
         if (r.row)
             return r;
     }
@@ -500,15 +571,16 @@ inline void note_call(Row* row, std::uint32_t site, std::uint32_t target_id) noe
 // for the polymorphic query (two targets, or the megamorphic bit).
 inline void note_call_current(std::uint32_t target) noexcept {
     auto& tls = detail::tls_slot();
-    if (!tls.row || tls.known_off)
+    detail::TlsEntry* e = tls.cur;
+    if (!e || !e->row || e->known_off)
         return;
     if (tls.epoch != detail::table().epoch.load(std::memory_order_acquire))
         return;
-    if (tls.row->cooled.load(std::memory_order_relaxed)) {
-        tls.known_off = true;
+    if (e->row->cooled.load(std::memory_order_relaxed)) {
+        e->known_off = true;
         return;
     }
-    note_call(tls.row.get(), 0, target);
+    note_call(e->row.get(), 0, target);
 }
 
 // Special-form while. The tree walker does not inline the loop into
@@ -516,18 +588,19 @@ inline void note_call_current(std::uint32_t target) noexcept {
 // this is a TLS flag check.
 inline void note_loop_edge() noexcept {
     auto& tls = detail::tls_slot();
-    if (!tls.row || tls.known_off)
+    detail::TlsEntry* e = tls.cur;
+    if (!e || !e->row || e->known_off)
         return;
     if (tls.epoch != detail::table().epoch.load(std::memory_order_acquire))
         return;
-    if (tls.row->cooled.load(std::memory_order_relaxed)) {
-        tls.known_off = true;
+    if (e->row->cooled.load(std::memory_order_relaxed)) {
+        e->known_off = true;
         return;
     }
-    const auto n = tls.row->back_edges.fetch_add(1, std::memory_order_relaxed) + 1;
+    const auto n = e->row->back_edges.fetch_add(1, std::memory_order_relaxed) + 1;
     if (n >= detail::back_edge_budget()) {
-        tls.row->cooled.store(1, std::memory_order_relaxed);
-        tls.known_off = true;
+        e->row->cooled.store(1, std::memory_order_relaxed);
+        e->known_off = true;
     }
 }
 

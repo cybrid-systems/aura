@@ -3233,7 +3233,7 @@ static feedback::Recorder ir_enter_feedback(const IRFunction& func) {
     feedback::Recorder fb;
     if (!func.name.empty() && func.name != "__top__" && !feedback::known_off(&func)) {
         if (feedback::fast_hit(&func))
-            fb = feedback::enter_fast();
+            fb = feedback::enter_fast(&func);
         if (!fb.row) {
             feedback::EnterInfo info;
             info.key = &func;
