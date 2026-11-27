@@ -175,18 +175,102 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
         run: |
+          set -euo pipefail
+          sha9=${GITHUB_SHA::9}
+          # Issue #5486: every build gets an immutable, build-unique asset
+          # name. The run id + attempt make a re-run a new asset instead of
+          # overwriting the previous build, even for the same commit. The
+          # fixed aura-nightly-linux-<arch> names stay as rolling aliases for
+          # install.sh's default channel, and are the only ones clobbered.
+          stamp="r${GITHUB_RUN_ID}-a${GITHUB_RUN_ATTEMPT}"
+          for arch in x86_64 arm64; do
+            src="dist/aura-nightly-linux-${arch}.tar.gz"
+            dst="aura-${sha9}-${stamp}-linux-${arch}.tar.gz"
+            cp "$src" "dist/$dst"
+            (cd dist && sha256sum "$dst" > "$dst.sha256")
+          done
+          imm_x86="aura-${sha9}-${stamp}-linux-x86_64.tar.gz"
+          imm_arm="aura-${sha9}-${stamp}-linux-arm64.tar.gz"
+          sum_x86=$(cut -d' ' -f1 "dist/${imm_x86}.sha256")
+          sum_arm=$(cut -d' ' -f1 "dist/${imm_arm}.sha256")
+          jq -n \
+            --arg commit "$GITHUB_SHA" \
+            --arg short "$sha9" \
+            --arg run_id "$GITHUB_RUN_ID" \
+            --arg run_attempt "$GITHUB_RUN_ATTEMPT" \
+            --arg generated_at "$(date -u +%FT%TZ)" \
+            --arg x86_name "$imm_x86" --arg x86_sum "$sum_x86" \
+            --arg arm_name "$imm_arm" --arg arm_sum "$sum_arm" \
+            --arg x86_roll "aura-nightly-linux-x86_64.tar.gz" \
+            --arg arm_roll "aura-nightly-linux-arm64.tar.gz" \
+            '{schema: 1, commit: $commit, commit_short: $short,
+              run_id: $run_id, run_attempt: $run_attempt,
+              generated_at: $generated_at,
+              assets: {"linux-x86_64": {
+                          rolling: {name: $x86_roll, sha256: $x86_sum},
+                          immutable: {name: $x86_name, sha256: $x86_sum}},
+                        "linux-arm64": {
+                          rolling: {name: $arm_roll, sha256: $arm_sum},
+                          immutable: {name: $arm_name, sha256: $arm_sum}}}}' \
+            > dist/aura-nightly-manifest.json
           notes="aura nightly @ ${GITHUB_SHA::9}
 
           - linux-x86_64 and linux-arm64 tarballs (+ .sha256). Each carries its own loader,
             glibc 2.44 and libstdc++ (rt/), so the host glibc does not matter. Verified on
             Ubuntu 24.04, Ubuntu 26.10, Debian 12, Rocky Linux 9, and openEuler 24.03 LTS SP4,
             x86_64 and arm64. Needs Linux >= 3.2.
+          - immutable per-build assets: aura-<sha9>-r<run_id>-a<attempt>-linux-<arch>.tar.gz
+            (each address stays valid; the aura-nightly-linux-<arch>.tar.gz names are rolling aliases).
+          - machine-readable manifest: aura-nightly-manifest.json
           - install: curl -fsSL https://raw.githubusercontent.com/cybrid-systems/aura/main/install.sh | sh
           - image: docker run --rm -v \$PWD:/w -w /w $IMAGE:nightly main.aura"
           gh release view nightly >/dev/null 2>&1 ||
             gh release create nightly --prerelease --title "aura nightly" --notes "$notes"
           gh release edit nightly --notes "$notes"
-          gh release upload nightly dist/*.tar.gz dist/*.sha256 --clobber
+          # Immutable names first: a baseline that pins one can never point at
+          # a missing asset, and the rolling aliases below cannot move it.
+          gh release upload nightly \
+            "dist/${imm_x86}" "dist/${imm_x86}.sha256" \
+            "dist/${imm_arm}" "dist/${imm_arm}.sha256"
+          gh release upload nightly \
+            dist/aura-nightly-linux-*.tar.gz dist/aura-nightly-linux-*.tar.gz.sha256 --clobber
+          gh release upload nightly dist/aura-nightly-manifest.json --clobber
+      - name: verify nightly assets
+        if: env.VER == 'nightly'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          sha9=${GITHUB_SHA::9}
+          stamp="r${GITHUB_RUN_ID}-a${GITHUB_RUN_ATTEMPT}"
+          mkdir -p verify
+          for arch in x86_64 arm64; do
+            imm="aura-${sha9}-${stamp}-linux-${arch}.tar.gz"
+            roll="aura-nightly-linux-${arch}.tar.gz"
+            gh release download nightly --pattern "$imm" --dir verify
+            gh release download nightly --pattern "$imm.sha256" --dir verify
+            gh release download nightly --pattern "$roll" --dir verify
+            gh release download nightly --pattern "$roll.sha256" --dir verify
+            (cd verify && sha256sum -c "$imm.sha256" && sha256sum -c "$roll.sha256")
+            imm_sum=$(cut -d' ' -f1 "verify/${imm}.sha256")
+            roll_sum=$(cut -d' ' -f1 "verify/${roll}.sha256")
+            test "$imm_sum" = "$roll_sum"
+          done
+          gh release download nightly --pattern aura-nightly-manifest.json --dir verify
+          jq -e \
+            --arg commit "$GITHUB_SHA" \
+            --arg imm86 "aura-${sha9}-${stamp}-linux-x86_64.tar.gz" \
+            --arg imma "aura-${sha9}-${stamp}-linux-arm64.tar.gz" \
+            '.schema == 1 and .commit == $commit and
+             .assets["linux-x86_64"].immutable.name == $imm86 and
+             .assets["linux-arm64"].immutable.name == $imma' \
+            verify/aura-nightly-manifest.json >/dev/null
+          count=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/nightly" --jq '.assets | length')
+          echo "nightly release assets: ${count}"
+          if [ "$count" -ge 900 ]; then
+            echo "::warning::nightly release has ${count} assets (GitHub limit 1000); archive old per-build assets"
+          fi
       - name: stable release
         if: env.VER != 'nightly'
         env:

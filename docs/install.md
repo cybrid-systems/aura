@@ -27,6 +27,16 @@ under `~/.aura/<version>` and links `~/.local/bin/aura`. Settings:
 | `AURA_BIN_DIR` | `~/.local/bin` | where the `aura` link goes |
 | `AURA_DOWNLOAD_BASE` | the GitHub release URL | a mirror, or a local directory holding the tarballs |
 
+## Reproducible nightly builds
+
+The `nightly` release is a rolling channel: `aura-nightly-linux-<arch>.tar.gz`
+always names the newest build. Each build also keeps a build-unique asset,
+`aura-<sha9>-r<run_id>-a<attempt>-linux-<arch>.tar.gz`, whose URL and digest do
+not change when the channel moves. `aura-nightly-manifest.json` maps the current
+build to both names. Pin the build-unique name (and its `.sha256`) when a
+consumer needs a reproducible install; use the rolling name only for the newest
+build.
+
 ## From the install line to a report
 
 The v0.2 search demo is the end-to-end path: install, scaffold `evolve-moo`,
