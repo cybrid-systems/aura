@@ -77,9 +77,18 @@ server has no declaration provider, so that binding has no Aura target.
 | `SPC c x` | list diagnostics |
 | `SPC m '` | open or switch to the REPL |
 | `SPC m s d` / `s r` / `s b` | send the definition at point, the region, the buffer |
+| `C-M-a` / `C-M-e` | start / end of the top-level sexp at point |
+| `[m` / `]m` | previous / next top-level sexp start (evil normal and motion) |
 | `g r` / `g R` | send the region / the buffer and show the answer (`:tools eval`) |
 | `SPC m r` | `:reload` the visited file |
 | `SPC m w w` / `w s` / `w r` / `w k` | `:worldline` / `:snapshot` / `:restore` / `:ws` |
+
+`C-M-a` and `C-M-e` move by real top-level sexps, so an indented form counts and
+two forms on one line are two stops; a parenthesis inside a string, a `;`
+comment, a `#| |#` block comment, or a `#;` datum is not a stop, while `#\(`
+and `#\"` stay character literals and `[]` is one bracket sexp. `[m` and `]m`
+use the same starts, `aura-lang-defun-only-definitions` limits them to
+`aura-lang-define-forms`, and `SPC m s d` uses these bounds.
 
 On a primitive such as `car`, `g d` ends the lookup with a message and
 point stays put. The handler asks the LSP server's own primitive registry
@@ -101,6 +110,7 @@ error line `- : unknown = ...` uses the error face.
 | `aura-lang-repl-args` | `("repl")` | arguments that start the REPL |
 | `aura-lang-repl-buffer` | `"*aura*"` | REPL buffer name |
 | `aura-lang-grammar-file` | `nil` | TextMate grammar. `nil` looks beside the library for `editors/grammar/aura.tmLanguage.json`, then the keyword lists in `aura-lang.el` |
+| `aura-lang-defun-only-definitions` | `nil` | when non-nil, `C-M-a` / `C-M-e` / `[m` / `]m` stop only on `aura-lang-define-forms` |
 | `+aura-trust-nightly-formatter` | `nil` | register `aura --fmt` for a nightly or `aura dev` build |
 | `+aura-repl-timeout` | `10.0` | seconds to wait for one REPL answer |
 | `+aura-result-duration` | `8` | seconds an error overlay stays (`nil` or `0` keeps it). Used with `:tools eval` `+overlay` |
