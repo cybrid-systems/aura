@@ -122,6 +122,7 @@ static void ac3_multifiber_safe_span() {
     std::atomic<bool> stop{false};
     std::atomic<std::uint64_t> bad{0};
     std::atomic<std::uint64_t> iters{0};
+    std::atomic<bool> mutator_ran{false};
 
     std::thread mutator([&] {
         for (int i = 0; i < 200 && !stop.load(std::memory_order_relaxed); ++i) {
@@ -139,8 +140,16 @@ static void ac3_multifiber_safe_span() {
                 snap = flat.snapshot_children();
             }
             iters.fetch_add(1, std::memory_order_relaxed);
+            mutator_ran.store(true, std::memory_order_release);
         }
     });
+
+    // AC3 flake: the reader's 500 iterations can finish before the mutator
+    // thread is scheduled, leaving iters == 0 when the AC is checked. Wait for
+    // one real mutation before starting the reader; the remaining iterations
+    // still overlap with it.
+    while (!mutator_ran.load(std::memory_order_acquire))
+        std::this_thread::yield();
 
     std::thread reader([&] {
         for (int i = 0; i < 500; ++i) {
