@@ -8,7 +8,7 @@
     "src/exec",
     "src/compiler"
   ],
-  "total": 42968,
+  "total": 42988,
   "counts": {
     "/usr/include/c++/16/bits/stl_algobase.h|misc-no-recursion": 1,
     "/usr/include/c++/16/bits/stl_construct.h|misc-no-recursion": 1,
@@ -439,7 +439,7 @@
     "src/compiler/type_feedback.h|bugprone-easily-swappable-parameters": 7,
     "src/compiler/type_feedback.h|cert-err33-c": 1,
     "src/compiler/type_feedback.h|cppcoreguidelines-pro-bounds-array-to-pointer-decay": 4,
-    "src/compiler/type_feedback.h|cppcoreguidelines-pro-bounds-constant-array-index": 12,
+    "src/compiler/type_feedback.h|cppcoreguidelines-pro-bounds-constant-array-index": 18,
     "src/compiler/type_feedback.h|cppcoreguidelines-pro-bounds-pointer-arithmetic": 4,
     "src/compiler/type_feedback.h|cppcoreguidelines-pro-type-vararg": 1,
     "src/compiler/type_feedback.h|cppcoreguidelines-special-member-functions": 1,
@@ -448,8 +448,8 @@
     "src/compiler/type_feedback.h|modernize-loop-convert": 3,
     "src/compiler/type_feedback.h|modernize-return-braced-init-list": 1,
     "src/compiler/type_feedback.h|performance-faster-string-find,performance-prefer-single-char-overloads": 5,
-    "src/compiler/type_feedback.h|readability-identifier-length": 46,
-    "src/compiler/type_feedback.h|readability-implicit-bool-conversion": 21,
+    "src/compiler/type_feedback.h|readability-identifier-length": 55,
+    "src/compiler/type_feedback.h|readability-implicit-bool-conversion": 26,
     "src/compiler/typed_mutation_audit.h|bugprone-argument-comment": 48,
     "src/compiler/typed_mutation_audit.h|bugprone-easily-swappable-parameters": 96,
     "src/compiler/typed_mutation_audit.h|bugprone-exception-escape": 8,
