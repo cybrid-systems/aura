@@ -992,7 +992,7 @@ static bool test_module_cache_untrusted_5213() {
         miss_file("huge.abfc", bytes, "huge num_nodes in a small file is a miss");
     }
 
-    // v5 IR blob whose first vector count is 0xffffffff. Must miss, not OOM.
+    // v6 IR blob whose first vector count is 0xffffffff. Must miss, not OOM.
     {
         constexpr std::uint32_t n = 1;
         auto pad8 = [](std::uint64_t v) { return (v + 7) & ~7ull; };
@@ -1016,7 +1016,7 @@ static bool test_module_cache_untrusted_5213() {
         std::string bytes(static_cast<std::size_t>(ir_off + 4 + 4), '\0');
         CacheHeader hdr{};
         std::memcpy(hdr.magic, "AURACACHE", 8);
-        hdr.version = 5;
+        hdr.version = 6;
         hdr.num_nodes = n;
         hdr.num_strings = 0;
         hdr.num_functions = 1;
