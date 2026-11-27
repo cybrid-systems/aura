@@ -125,7 +125,12 @@ class _ChatReply(http.server.BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", "0") or 0)
         if length:
             self.rfile.read(length)
-        payload = b'{"choices":[{"message":{"content":"pong"}}]}'
+        payload = (
+            b'{"choices":[{"message":{"content":"pong"}}],'
+            b'"usage":{"total_tokens":12,"prompt_tokens":9,"completion_tokens":3,'
+            b'"completion_tokens_details":{"reasoning_tokens":0},'
+            b'"prompt_tokens_details":{"cached_tokens":4}}}'
+        )
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(payload)))
@@ -280,6 +285,52 @@ class LlmCallStats(unittest.TestCase):
         self.assertEqual(_counter(r.stdout, "fail"), 0)
         self.assertEqual(_counter(r.stdout, "rate-limited"), 0)
         self.assertEqual(_counter(r.stdout, "no-key"), 0)
+
+
+class LlmTokenUsage(unittest.TestCase):
+    """Issue #5481: both chat entry points expose the provider's usage."""
+
+    def test_chat_and_vision_report_usage(self) -> None:
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _ChatReply)
+        port = int(server.server_address[1])
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            program = _stats_program(
+                '(define r (llm:chat "sys" "ping" (hash "max_tokens" 8) 2))\n'
+                '(define u (hash-ref r "usage" #f))\n'
+                '(display "chat-usage=") (display (hash? u)) (newline)\n'
+                '(display "prompt=") (display (hash-ref u "prompt_tokens" 0)) (newline)\n'
+                '(display "completion=") (display (hash-ref u "completion_tokens" 0)) (newline)\n'
+                '(display "total=") (display (hash-ref u "total_tokens" 0)) (newline)\n'
+                '(display "reasoning=") (display (hash-ref u "reasoning_tokens" -1)) (newline)\n'
+                '(display "cached=") (display (hash-ref u "cached_tokens" -1)) (newline)\n'
+                '(define v (llm:chat-vision "sys" (list (llm:text-part "ping")) (hash "max_tokens" 8) 2))\n'
+                '(define vu (hash-ref v "usage" #f))\n'
+                '(display "vision-usage=") (display (hash? vu)) (newline)\n'
+                '(display "vision-total=") (display (hash-ref vu "total_tokens" 0)) (newline)\n'
+            )
+            r = run_llm_program(
+                program,
+                ("--quiet", "--preset", "dev", "--grant", "net"),
+                {
+                    "LLM_API_KEY": "x",
+                    "LLM_BASE_URL": f"http://127.0.0.1:{port}",
+                    "LLM_MODEL": "dummy",
+                },
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+        self.assertEqual(r.returncode, 0, r.stderr[-800:])
+        self.assertIn("chat-usage=#t", r.stdout)
+        self.assertIn("prompt=9", r.stdout)
+        self.assertIn("completion=3", r.stdout)
+        self.assertIn("total=12", r.stdout)
+        self.assertIn("reasoning=0", r.stdout)
+        self.assertIn("cached=4", r.stdout)
+        self.assertIn("vision-usage=#t", r.stdout)
+        self.assertIn("vision-total=12", r.stdout)
 
 
 if __name__ == "__main__":

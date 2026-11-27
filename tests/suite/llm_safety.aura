@@ -133,4 +133,30 @@
   (check= 0 (hash-ref (llm:call-stats) "success" 0))
   (check (> (hash-ref (llm:call-stats) "parse-ok" 0) 0)))
 
+; Issue #5481: the provider's token accounting survives the parse. The
+; nested usage hash carries only numbers the server sent; absent or
+; partial usage is #f rather than an estimate.
+(test-case "parse-response carries usage" (hash "issue" 5481 "tags" (list "llm"))
+  (let* ((json "{\"choices\":[{\"message\":{\"content\":\"OK\"}}],\"usage\":{\"total_tokens\":209,\"prompt_tokens\":206,\"completion_tokens\":3,\"completion_tokens_details\":{\"reasoning_tokens\":0},\"prompt_tokens_details\":{\"cached_tokens\":197}}}")
+         (r (llm:parse-response json))
+         (u (hash-ref r "usage" #f)))
+    (check (hash? u))
+    (check= 206 (hash-ref u "prompt_tokens" 0))
+    (check= 3 (hash-ref u "completion_tokens" 0))
+    (check= 209 (hash-ref u "total_tokens" 0))
+    (check= 0 (hash-ref u "reasoning_tokens" -1))
+    (check= 197 (hash-ref u "cached_tokens" -1)))
+  (let ((r (llm:parse-response
+             "{\"choices\":[{\"message\":{\"content\":\"OK\"}}]}")))
+    (check (hash? r))
+    (check (not (hash-ref r "usage" #t))))
+  (let ((r (llm:parse-response
+             "{\"choices\":[{\"message\":{\"content\":\"OK\"}}],\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":2}}")))
+    (check (not (hash-ref r "usage" #t))))
+  ; A truncated answer still reports what the provider charged.
+  (let ((r (llm:parse-response
+             "{\"choices\":[{\"finish_reason\":\"length\",\"message\":{\"content\":\"\",\"reasoning_content\":\"thinking\"}}],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":4,\"total_tokens\":14}}")))
+    (check= "truncated/finish=length" (hash-ref r "error" ""))
+    (check= 14 (hash-ref (hash-ref r "usage" #f) "total_tokens" 0))))
+
 (test-finish)

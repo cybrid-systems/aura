@@ -135,18 +135,62 @@
     (if (procedure? fn) (fn arg) #f)))
 
 ; ── Response parse (#1551) ─────────────────────────────────────
-; Returns hash with keys ok / error / content (string values + bool ok).
+; Returns hash with keys ok / error / content (string values + bool ok)
+; and usage (the provider's token counts, or #f; #5481).
+
+(define (llm-parse-fail* reason content usage)
+  (llm-stat-bump! "parse-err")
+  (hash "ok" #f "error" reason "content" content "usage" usage))
 
 (define (llm-parse-fail reason content)
-  (llm-stat-bump! "parse-err")
-  (hash "ok" #f "error" reason "content" content))
+  (llm-parse-fail* reason content #f))
 
-(define (llm-parse-ok content)
+(define (llm-parse-ok content usage)
   (llm-stat-bump! "parse-ok")
-  (hash "ok" #t "error" "" "content" content))
+  (hash "ok" #t "error" "" "content" content "usage" usage))
 
 (define (llm-nonempty-string? s)
   (and (string? s) (> (string-length s) 0)))
+
+; ── Token usage (#5481) ────────────────────────────────────────
+; OpenAI-compatible endpoints report usage.prompt_tokens /
+; completion_tokens / total_tokens, with optional
+; completion_tokens_details.reasoning_tokens and
+; prompt_tokens_details.cached_tokens. Keep only numbers the server sent;
+; absent or partial usage is #f instead of an estimate.
+(define (llm-usage-number h key)
+  (let ((v (hash-ref h key #f)))
+    (if (number? v) v #f)))
+
+(define (llm-usage-of data)
+  (let ((u (hash-ref data "usage" #f)))
+    (if (not (hash? u))
+      #f
+      (let ((prompt (llm-usage-number u "prompt_tokens"))
+            (completion (llm-usage-number u "completion_tokens"))
+            (total (llm-usage-number u "total_tokens")))
+        (if (not (and (number? prompt)
+                      (number? completion)
+                      (number? total)))
+          #f
+          (let* ((ctd (hash-ref u "completion_tokens_details" #f))
+                 (ptd (hash-ref u "prompt_tokens_details" #f))
+                 (reasoning (if (hash? ctd)
+                              (llm-usage-number ctd "reasoning_tokens")
+                              #f))
+                 (cached (if (hash? ptd)
+                           (llm-usage-number ptd "cached_tokens")
+                           #f))
+                 (out (hash "prompt_tokens" prompt
+                            "completion_tokens" completion
+                            "total_tokens" total)))
+            (if (number? reasoning)
+              (hash-set! out "reasoning_tokens" reasoning)
+              #f)
+            (if (number? cached)
+              (hash-set! out "cached_tokens" cached)
+              #f)
+            out))))))
 
 (define (llm-finish-reason choice msg)
   (let ((from-choice (if (hash? choice) (hash-ref choice "finish_reason" "") "")))
@@ -170,12 +214,13 @@
      (let ((data (try (json-parse json-str) (catch (e) #f))))
        (if (not (hash? data))
          (llm-parse-fail "json-parse-failed" json-str)
-         (let ((err (hash-ref data "error" #f)))
+         (let* ((err (hash-ref data "error" #f))
+                (usage (llm-usage-of data)))
            (if (and (hash? err) (llm-nonempty-string? (hash-ref err "message" #f)))
-             (llm-parse-fail (hash-ref err "message" "") "")
+             (llm-parse-fail* (hash-ref err "message" "") "" usage)
              (let ((choices (hash-ref data "choices" #f)))
                (if (not (pair? choices))
-                 (llm-parse-fail "no-choices" "")
+                 (llm-parse-fail* "no-choices" "" usage)
                  (let* ((first (car choices))
                         (msg (if (hash? first) (hash-ref first "message" #f) #f))
                         (content (if (hash? msg) (hash-ref msg "content" #f) #f))
@@ -185,17 +230,18 @@
                         (finish (llm-finish-reason first msg)))
                    (cond
                      ((llm-nonempty-string? content)
-                      (llm-parse-ok content))
+                      (llm-parse-ok content usage))
                      ((llm-nonempty-string? reasoning)
-                      (llm-parse-fail
+                      (llm-parse-fail*
                         (string-append "truncated/finish="
                                        (if (llm-nonempty-string? finish)
                                          finish
                                          "unknown"))
-                        ""))
+                        ""
+                        usage))
                      ((string? content)
-                      (llm-parse-ok content))
-                     (else (llm-parse-fail "no-content" "")))))))))))))
+                      (llm-parse-ok content usage))
+                     (else (llm-parse-fail* "no-content" "" usage)))))))))))))
 
 (define (llm:extract-content json-str)
   (let ((r (llm:parse-response json-str)))

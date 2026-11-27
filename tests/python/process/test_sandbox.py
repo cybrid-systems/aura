@@ -242,6 +242,11 @@ CASES = (
         "sand_std.LlmCallStats.test_ungranted_network_leaves_outcome_counters_at_zero",
     ),
     (
+        5481,
+        "test_chat_and_vision_report_usage",
+        "sand_std.LlmTokenUsage.test_chat_and_vision_report_usage",
+    ),
+    (
         5086,
         "test_preset_dev_trial_mutates_child_not_live",
         "sand_dev_child.DevChildCow.test_preset_dev_trial_mutates_child_not_live",
