@@ -115,6 +115,27 @@ static void ac3_warm_disk_cache_keeps_cross_call() {
     std::filesystem::remove_all(dir, ec);
 }
 
+static void ac4_ir_map_callback_reads_captures() {
+    // The primitive map/for-each bridge binds free vars into a tree-walker
+    // Env. IR cell captures are ids in the interpreter's cell_heap_; binding
+    // the raw id made the callback read void. The bridge must resolve the
+    // cell value first.
+    CompilerService cs;
+    auto global = cs.eval_ir(R"(
+        (define n 5)
+        (car (map (lambda (x) (+ x n)) (list 1 2))))");
+    CHECK(global && aura::compiler::types::is_int(*global) &&
+              aura::compiler::types::as_int(*global) == 6,
+          "AC4: map callback reads a top-level define");
+
+    auto local = cs.eval_ir(R"(
+        (let ((k 10))
+          (car (map (lambda (x) (+ x k)) (list 1 2)))))");
+    CHECK(local && aura::compiler::types::is_int(*local) &&
+              aura::compiler::types::as_int(*local) == 11,
+          "AC4: map callback reads a let capture");
+}
+
 } // namespace
 
 int run_test_ir_runtime_require() {
@@ -124,6 +145,7 @@ int run_test_ir_runtime_require() {
     ac1_runtime_require_binds_late_global();
     ac2_plain_global_still_resolves();
     ac3_warm_disk_cache_keeps_cross_call();
+    ac4_ir_map_callback_reads_captures();
     std::println("\n=== IR runtime require: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

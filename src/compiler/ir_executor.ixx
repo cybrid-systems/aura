@@ -284,6 +284,15 @@ public:
     // List all active mutable cells
     std::vector<CellSnapshot> list_cells() const;
 
+    // One cell by id (O(1), no snapshot allocation). The tree-walker
+    // closure bridge uses this to resolve an IR cell capture before binding
+    // it into its Env; list_cells() per callback would be O(cells).
+    [[nodiscard]] std::optional<EvalValue> inspect_cell(std::uint64_t id) const {
+        if (id < cell_heap_.size())
+            return cell_heap_[id];
+        return std::nullopt;
+    }
+
     // Get/set evaluation strategy
     const EvalStrategy& strategy() const { return strategy_; }
     void set_strategy(const EvalStrategy& s) { strategy_ = s; }

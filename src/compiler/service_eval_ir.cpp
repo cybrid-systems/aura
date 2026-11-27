@@ -290,8 +290,21 @@ namespace aura::compiler {
             // dispatch_ir_define_closure's pattern at the cached-define site.
             aura::compiler::Env ne(&evaluator_.top_env());
             ne.set_primitives(&evaluator_.primitives());
+            // Free variables captured from an enclosing IR frame are cell
+            // references from the IR interpreter's cell_heap_. The tree-walker
+            // Env cannot dereference an IR cell id (its cells_ are a different
+            // heap), so a callback passed to map/for-each/filter read a
+            // captured global as void. Resolve the IR cells to their values
+            // before binding the bridge Env.
+            auto bridge_value = [&](types::EvalValue v) {
+                if (!types::is_cell(v))
+                    return v;
+                if (auto cell = ir_interp.inspect_cell(types::as_cell_id(v)))
+                    return *cell;
+                return v;
+            };
             for (std::size_t i = 0; i < snap->env.size() && i < snap->func_free_vars.size(); ++i)
-                ne.bind(snap->func_free_vars[i], snap->env[i]);
+                ne.bind(snap->func_free_vars[i], bridge_value(snap->env[i]));
             for (std::size_t i = 0; i < snap->func_params.size() && i < args.size(); ++i)
                 ne.bind(snap->func_params[i], args[i]);
             // Try bridge data from IR module. Issue #224 Cycle 2:
