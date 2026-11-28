@@ -438,6 +438,29 @@ static void note_pair_capacity_exhausted_5518() noexcept {
     }
 }
 
+// ── Issue #5518 phase 2: JIT frame accounting ─────────────────────────
+// The sweep may only free JIT pairs when no native frame can still hold one
+// in its slot allocas. The JIT emits enter at the body entry and leave in
+// every return; an unwind that skips the leave leaks the count upward, which
+// keeps the sweep off (safe direction).
+static std::atomic<std::uint64_t> g_jit_frames_active_5518{0};
+
+extern "C" void aura_jit_frame_enter() {
+    g_jit_frames_active_5518.fetch_add(1, std::memory_order_relaxed);
+}
+
+extern "C" void aura_jit_frame_leave() {
+    std::uint64_t cur = g_jit_frames_active_5518.load(std::memory_order_relaxed);
+    while (cur != 0) {
+        if (g_jit_frames_active_5518.compare_exchange_weak(cur, cur - 1, std::memory_order_relaxed))
+            return;
+    }
+}
+
+std::uint64_t aura_jit_frames_active() {
+    return g_jit_frames_active_5518.load(std::memory_order_relaxed);
+}
+
 // ── Issue #5518: pair id recycling ────────────────────────────────────
 // An arena scope (tl_arena_push .. tl_arena_pop) mints ids from the fixed
 // 2^26 directory. When the scope ends every non-escaping pair it minted is

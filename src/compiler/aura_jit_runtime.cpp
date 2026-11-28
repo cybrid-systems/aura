@@ -6991,12 +6991,37 @@ extern "C" int64_t aura_pack_rest(int64_t* locals, int64_t start, int64_t count)
     return list;
 }
 
+// Issue #5518 phase 2: reclaimed heap slots. The sweep frees the slot after
+// clearing its table cell; the same thread's next cons reuses it instead of
+// bumping a fresh slab slot, so a reclaimed loop keeps its slab footprint
+// flat. Bounded and allocation-free on purpose (the cons path is hot).
+namespace {
+    constexpr std::uint32_t kPairSlotFreeMax = 1024;
+    thread_local PairSlot* t_pair_slot_free[kPairSlotFreeMax];
+    thread_local std::uint32_t t_pair_slot_free_n = 0;
+} // namespace
+
+extern "C" void aura_pair_slot_free(PairSlot* slot) {
+    if (!slot)
+        return;
+    if (t_pair_slot_free_n < kPairSlotFreeMax)
+        t_pair_slot_free[t_pair_slot_free_n++] = slot;
+}
+
+extern "C" PairSlot* aura_pair_slot_take() {
+    if (t_pair_slot_free_n == 0)
+        return nullptr;
+    return t_pair_slot_free[--t_pair_slot_free_n];
+}
+
 int64_t aura_alloc_pair(int64_t car, int64_t cdr) {
     // Issue #898: thread-local slab (one malloc per 64 pairs) and a
     // release publish into the non-moving segment table. No workspace
     // write lock on this path. The slab is linked once for process-exit
     // free; it is not pushed onto g_owned_pair_slots_.
-    auto* slot = aura_pair_tls_bump();
+    auto* slot = aura_pair_slot_take();
+    if (!slot)
+        slot = aura_pair_tls_bump();
     if (!slot)
         return aura::compiler::types::kSpecialVoid; // #5518: never fixnum 0
     slot->car = car;

@@ -349,6 +349,20 @@ void tl_arena_pop(TLarena* arena);
 // id to this thread's free batch). The next push_back reuses it instead of
 // growing the fixed 2^26 directory.
 extern "C" void aura_note_arena_pair(std::int64_t id, PairSlot* slot);
+
+// Issue #5518 phase 2: JIT frame accounting. Every native JIT entry bumps the
+// counter and every return drops it, so the evaluator sweep can tell whether
+// any unrooted JIT frame (values only in its slot allocas) is live. Overcount
+// (an unwind that skips the leave) only disables reclamation; it never frees a
+// live pair.
+extern "C" void aura_jit_frame_enter();
+extern "C" void aura_jit_frame_leave();
+std::uint64_t aura_jit_frames_active();
+
+// Slot free list for reclaimed JIT heap pairs (thread-local: a slot freed by
+// the sweep is reused by the same thread's next cons).
+extern "C" void aura_pair_slot_free(PairSlot* slot);
+extern "C" PairSlot* aura_pair_slot_take();
 extern "C" void aura_pair_id_recycle(std::uint64_t id);
 std::uint64_t aura_pair_id_take_recycled();
 extern "C" void aura_pair_scope_release_to(TLarena* arena, TLarena::PairIdRec* stop);

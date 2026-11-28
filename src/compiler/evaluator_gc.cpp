@@ -1579,6 +1579,10 @@ static std::size_t sweep_unreachable_channels_4854(ChannelVec& channels, FreeVec
 struct FileModeMarkContext {
     std::vector<EvalValue>& work;
     std::vector<std::uint8_t>& seen_pair;
+    // Issue #5518 phase 2: pair ids >= pairs_.size() live in the shared
+    // g_pair_slots table (JIT cons). Marked in their own bitmap so the sweep
+    // can tell a reachable JIT pair from a dropped one.
+    std::vector<std::uint8_t>& seen_jit_pair;
     std::vector<std::uint8_t>& seen_vec;
     std::vector<std::uint8_t>& seen_hash;
     std::vector<std::uint8_t>& seen_ev_cell;
@@ -1629,6 +1633,7 @@ static inline void file_reclaim_mark_child(const EvalValue v, FileModeMarkContex
 static void file_reclaim_mark_value(const EvalValue v, FileModeMarkContext& ctx) {
     auto& work = ctx.work;
     auto& seen_pair = ctx.seen_pair;
+    auto& seen_jit_pair = ctx.seen_jit_pair;
     auto& seen_vec = ctx.seen_vec;
     auto& seen_hash = ctx.seen_hash;
     auto& seen_ev_cell = ctx.seen_ev_cell;
@@ -1668,10 +1673,22 @@ static void file_reclaim_mark_value(const EvalValue v, FileModeMarkContext& ctx)
     }
     if (is_pair(v)) {
         const auto id = as_pair_idx(v);
-        if (id < seen_pair.size() && !seen_pair[id]) {
-            seen_pair[id] = 1;
-            file_reclaim_mark_child(pairs[id].car, ctx);
-            file_reclaim_mark_child(pairs[id].cdr, ctx);
+        if (id < seen_pair.size()) {
+            if (!seen_pair[id]) {
+                seen_pair[id] = 1;
+                file_reclaim_mark_child(pairs[id].car, ctx);
+                file_reclaim_mark_child(pairs[id].cdr, ctx);
+            }
+            return;
+        }
+        // Issue #5518 phase 2: a JIT cons id lives in the shared table.
+        if (id < seen_jit_pair.size() && !seen_jit_pair[id]) {
+            PairSlot* slot = g_pair_slots[id];
+            if (slot) {
+                seen_jit_pair[id] = 1;
+                file_reclaim_mark_child(types::EvalValue{slot->car}, ctx);
+                file_reclaim_mark_child(types::EvalValue{slot->cdr}, ctx);
+            }
         }
         return;
     }
@@ -2032,6 +2049,9 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
         }
     }
     std::vector<std::uint8_t> seen_pair(n_pairs, 0);
+    // Issue #5518: JIT pair ids in the shared table (sized to the table, not
+    // to pairs_ — a JIT id is above the evaluator's index space).
+    std::vector<std::uint8_t> seen_jit_pair(g_pair_slots.size(), 0);
     std::vector<std::uint8_t> seen_vec(n_vecs, 0);
     std::vector<std::uint8_t> seen_hash;
     std::vector<std::uint8_t> seen_ev_cell(cells_.size(), 0);
@@ -2106,10 +2126,11 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
         }
     };
     absorb(pending_frames);
-    FileModeMarkContext mark_ctx{
-        work,          seen_pair,   seen_vec,   seen_hash,   seen_ev_cell, seen_err,
-        seen_ir,       live_tw,     view,       pairs_,      vector_heap_, cells_,
-        error_values_, seen_opaque, opaque_gen, seen_string, seen_float,   live_channel_ids};
+    FileModeMarkContext mark_ctx{work,        seen_pair,     seen_jit_pair,   seen_vec,
+                                 seen_hash,   seen_ev_cell,  seen_err,        seen_ir,
+                                 live_tw,     view,          pairs_,          vector_heap_,
+                                 cells_,      error_values_, seen_opaque,     opaque_gen,
+                                 seen_string, seen_float,    live_channel_ids};
     {
         std::size_t traced = 0;
         for (int guard = 0; guard < 1000000; ++guard) {
@@ -2452,6 +2473,7 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
     // Sized after the codec sample below. Constructing them from the zeros
     // above would let the wipe treat every slot as unseen.
     std::vector<std::uint8_t> seen_pair;
+    std::vector<std::uint8_t> seen_jit_pair;
     std::vector<std::uint8_t> seen_vec;
     std::vector<std::uint8_t> seen_hash;
     std::vector<std::uint8_t> seen_ev_cell(n_cells, 0);
@@ -2595,6 +2617,7 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
         }
     }
     seen_pair.assign(n_pairs, 0);
+    seen_jit_pair.assign(g_pair_slots.size(), 0);
     seen_vec.assign(n_vecs, 0);
     seen_string.assign(n_strings, 0);
     seen_float.assign(n_floats, 0);
@@ -2698,10 +2721,11 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
     }
 
     FileModeReclaimView view;
-    FileModeMarkContext mark_ctx{
-        work,          seen_pair,   seen_vec,   seen_hash,   seen_ev_cell, seen_err,
-        seen_ir,       live_tw,     view,       pairs_,      vector_heap_, cells_,
-        error_values_, seen_opaque, opaque_gen, seen_string, seen_float,   live_channel_ids};
+    FileModeMarkContext mark_ctx{work,        seen_pair,     seen_jit_pair,   seen_vec,
+                                 seen_hash,   seen_ev_cell,  seen_err,        seen_ir,
+                                 live_tw,     view,          pairs_,          vector_heap_,
+                                 cells_,      error_values_, seen_opaque,     opaque_gen,
+                                 seen_string, seen_float,    live_channel_ids};
     std::unordered_set<std::uint64_t> expanded;
     std::size_t traced = 0;
     // Issue #4613: the hash-table slot snapshot (the table pointer per

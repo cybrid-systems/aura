@@ -1335,6 +1335,9 @@ struct LLVMBuilder {
     std::unordered_set<std::uint32_t> mc_value_slots;
     llvm::Function* fn_top_cell_get = nullptr;
     llvm::Function* fn_alloc_pair = nullptr;
+    // Issue #5518 phase 2: native frame accounting for the JIT-pair sweep.
+    llvm::Function* fn_jit_frame_enter = nullptr;
+    llvm::Function* fn_jit_frame_leave = nullptr;
     llvm::Function* fn_alloc_pair_arena = nullptr;
     llvm::Function* fn_pair_car = nullptr;
     llvm::Function* fn_pair_cdr = nullptr;
@@ -1538,6 +1541,16 @@ struct LLVMBuilder {
         fn_alloc_pair_arena =
             llvm::Function::Create(llvm::FunctionType::get(i64, {i64, i64}, false),
                                    llvm::Function::ExternalLinkage, "aura_alloc_pair_arena", mod);
+
+        // Issue #5518 phase 2: frame accounting. Emitted at body entry and in
+        // every return; the evaluator sweep only frees JIT pairs while the
+        // counter is zero (no frame can still hold one in its slots).
+        fn_jit_frame_enter =
+            llvm::Function::Create(llvm::FunctionType::get(void_ty, {}, false),
+                                   llvm::Function::ExternalLinkage, "aura_jit_frame_enter", mod);
+        fn_jit_frame_leave =
+            llvm::Function::Create(llvm::FunctionType::get(void_ty, {}, false),
+                                   llvm::Function::ExternalLinkage, "aura_jit_frame_leave", mod);
 
         fn_pair_car = llvm::Function::Create(llvm::FunctionType::get(i64, {i64}, false),
                                              llvm::Function::ExternalLinkage, "aura_pair_car", mod);
@@ -1971,6 +1984,8 @@ struct LLVMBuilder {
     void emit_ret(llvm::Value* v) {
         if (depth_armed && fn_depth_leave)
             irb->CreateCall(llvm::FunctionCallee(fn_depth_leave), {});
+        if (fn_jit_frame_leave)
+            irb->CreateCall(llvm::FunctionCallee(fn_jit_frame_leave), {});
         irb->CreateRet(v);
     }
     llvm::Value* c64(int64_t v) { return llvm::ConstantInt::get(llvm::Type::getInt64Ty(ctx), v); }
@@ -6464,6 +6479,16 @@ struct AuraJIT::Impl {
             } else {
                 builder.entry_body_bb = bb_ok;
             }
+        }
+
+        // Issue #5518 phase 2: account this native frame after the prologue's
+        // early-exit guards (the depth-over return never enters the body), so
+        // the leave emitted by emit_ret always has a matching enter.
+        if (builder.fn_jit_frame_enter) {
+            auto* enter_bb =
+                builder.entry_body_bb ? builder.entry_body_bb : builder.block_map[fn.entry_block];
+            builder.irb->SetInsertPoint(enter_bb, enter_bb->getFirstInsertionPt());
+            builder.irb->CreateCall(llvm::FunctionCallee(builder.fn_jit_frame_enter), {});
         }
 
         // Lower each block
