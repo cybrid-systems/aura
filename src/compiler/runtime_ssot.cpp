@@ -487,44 +487,147 @@ struct PairRootRec {
     const std::int64_t* slots;
     std::uint32_t count;
 };
-thread_local PairRootRec t_pair_roots[kPairRootMax];
-thread_local std::uint32_t t_pair_root_depth = 0;
-thread_local std::uint32_t t_pair_root_overflow = 0;
+
+// Issue #5518: the root chain is per EXECUTION CONTEXT, not per thread. A
+// fiber carries its own context so a migrate between workers keeps push/pop
+// balanced; the binder (Fiber::resume / trampoline) points TLS at it. The
+// no-fiber path (interpreter, main thread) uses a lazily registered TLS
+// fallback.
+struct PairRootCtx {
+    PairRootRec recs[kPairRootMax];
+    std::uint32_t depth = 0;
+    std::uint32_t overflow = 0;
+    bool registered = false;
+};
+
+thread_local PairRootCtx t_pair_roots_thread;
+thread_local PairRootCtx* t_pair_roots_cur = nullptr;
+
+std::mutex g_pair_roots_reg_mtx;
+std::vector<PairRootCtx*> g_pair_roots_registered;
+
+void roots_register(PairRootCtx* c) {
+    if (!c || c->registered)
+        return;
+    std::scoped_lock lock(g_pair_roots_reg_mtx);
+    if (!c->registered) {
+        g_pair_roots_registered.push_back(c);
+        c->registered = true;
+    }
+}
+
+void roots_unregister(PairRootCtx* c) {
+    if (!c)
+        return;
+    std::scoped_lock lock(g_pair_roots_reg_mtx);
+    if (!c->registered)
+        return;
+    auto it = std::find(g_pair_roots_registered.begin(), g_pair_roots_registered.end(), c);
+    if (it != g_pair_roots_registered.end())
+        g_pair_roots_registered.erase(it);
+    c->registered = false;
+}
+
+// Deregister the fallback at thread exit: a stale pointer would be scanned.
+struct ThreadRootGuard {
+    ~ThreadRootGuard() { roots_unregister(&t_pair_roots_thread); }
+};
+thread_local ThreadRootGuard t_pair_roots_guard;
+
+PairRootCtx* roots_ctx() {
+    if (t_pair_roots_cur)
+        return t_pair_roots_cur;
+    roots_register(&t_pair_roots_thread);
+    return &t_pair_roots_thread;
+}
+
 std::atomic<void (*)()> g_pair_gc_hook{nullptr};
 std::atomic<std::uint32_t> g_pair_gc_running{0};
 } // namespace
 
+extern "C" void* aura_pair_roots_ctx_new() {
+    auto* c = new PairRootCtx();
+    roots_register(c);
+    return c;
+}
+
+extern "C" void aura_pair_roots_ctx_free(void* ctx) {
+    auto* c = static_cast<PairRootCtx*>(ctx);
+    if (!c)
+        return;
+    roots_unregister(c);
+    delete c;
+}
+
+extern "C" void aura_pair_roots_bind(void* ctx) {
+    t_pair_roots_cur = static_cast<PairRootCtx*>(ctx);
+}
+
 extern "C" void aura_pair_roots_push(const std::int64_t* slots, std::uint32_t count) {
     if (!slots || count == 0)
         return;
-    if (t_pair_root_depth >= kPairRootMax) {
-        t_pair_root_overflow = 1;
+    auto* c = roots_ctx();
+    if (c->depth >= kPairRootMax) {
+        c->overflow = 1;
         return;
     }
-    t_pair_roots[t_pair_root_depth++] = PairRootRec{slots, count};
+    c->recs[c->depth++] = PairRootRec{slots, count};
 }
 
 extern "C" void aura_pair_roots_pop() {
-    if (t_pair_root_depth != 0)
-        --t_pair_root_depth;
+    auto* c = roots_ctx();
+    if (c->depth != 0)
+        --c->depth;
 }
 
 extern "C" void aura_pair_roots_scan(void (*cb)(std::int64_t, void*), void* ud) {
     if (!cb)
         return;
-    for (std::uint32_t i = 0; i < t_pair_root_depth; ++i) {
-        const PairRootRec& rec = t_pair_roots[i];
+    auto* c = roots_ctx();
+    for (std::uint32_t i = 0; i < c->depth; ++i) {
+        const PairRootRec& rec = c->recs[i];
         for (std::uint32_t j = 0; j < rec.count; ++j)
             cb(rec.slots[j], ud);
     }
 }
 
+// Every registered execution context: used by the collector (all parked
+// fibers + thread fallbacks) and by the sweep gate.
+extern "C" void aura_pair_roots_scan_all(void (*cb)(std::int64_t, void*), void* ud) {
+    if (!cb)
+        return;
+    std::scoped_lock lock(g_pair_roots_reg_mtx);
+    for (auto* c : g_pair_roots_registered) {
+        for (std::uint32_t i = 0; i < c->depth; ++i) {
+            const PairRootRec& rec = c->recs[i];
+            for (std::uint32_t j = 0; j < rec.count; ++j)
+                cb(rec.slots[j], ud);
+        }
+    }
+}
+
 extern "C" std::uint32_t aura_pair_roots_depth() {
-    return t_pair_root_depth;
+    return roots_ctx()->depth;
+}
+
+extern "C" std::uint64_t aura_pair_roots_total_depth() {
+    std::uint64_t total = 0;
+    std::scoped_lock lock(g_pair_roots_reg_mtx);
+    for (auto* c : g_pair_roots_registered)
+        total += c->depth;
+    return total;
 }
 
 extern "C" std::uint32_t aura_pair_roots_overflowed() {
-    return t_pair_root_overflow;
+    auto* c = roots_ctx();
+    if (c->overflow)
+        return 1;
+    std::scoped_lock lock(g_pair_roots_reg_mtx);
+    for (auto* r : g_pair_roots_registered) {
+        if (r->overflow)
+            return 1;
+    }
+    return 0;
 }
 
 extern "C" void aura_set_pair_gc_hook(void (*fn)()) {
@@ -554,7 +657,7 @@ extern "C" std::uint32_t aura_pair_gc_armed() {
         const char* v = std::getenv("AURA_PAIR_GC");
         return v && v[0] == '1';
     }();
-    return on && t_pair_root_overflow == 0 ? 1u : 0u;
+    return on && aura_pair_roots_overflowed() == 0 ? 1u : 0u;
 }
 
 // ── Issue #5518 phase 2: JIT frame accounting ─────────────────────────

@@ -1558,6 +1558,9 @@ void Fiber::release_done_resources() noexcept {
     // it, and the segment's frame pointers point into this stack.
     aura_tw_roots_free(tw_roots_);
     tw_roots_ = nullptr;
+    // Issue #5518: same for the pair root chain (idempotent with ~Fiber).
+    aura_pair_roots_ctx_free(pair_roots_ctx_);
+    pair_roots_ctx_ = nullptr;
     // Issue #4716: drop the fiber's execution context with the stack it
     // belongs to. A body that is still parked never resumes, so the cached
     // pointer (if any thread still had it) is dropped defensively inside
@@ -1586,6 +1589,10 @@ Fiber::~Fiber() {
     // (a fiber destroyed while parked never resumes).
     aura_tw_roots_free(tw_roots_);
     tw_roots_ = nullptr;
+    // Issue #5518: unregister before the stack goes away; a parked fiber's
+    // records must not be scanned after munmap.
+    aura_pair_roots_ctx_free(pair_roots_ctx_);
+    pair_roots_ctx_ = nullptr;
     // Issue #4716: idempotent with release_done_resources (whichever runs
     // first wins; the other sees nullptr).
     aura::core::fiber_ctx::aura_fiber_ctx_destroy(
@@ -1807,6 +1814,11 @@ void Fiber::resume() {
     if (!tw_roots_)
         tw_roots_ = aura_tw_roots_new();
     aura_tw_roots_attach(tw_roots_);
+    // Issue #5518: bind this fiber's pair root chain for the swapped-in body;
+    // the worker's fallback is restored when control comes back below.
+    if (!pair_roots_ctx_)
+        pair_roots_ctx_ = aura_pair_roots_ctx_new();
+    aura_pair_roots_bind(pair_roots_ctx_);
 
     // Swap from worker's loop context to fiber's context
     if (::swapcontext(&wctx->uctx, &ctx_) == -1) {
@@ -1814,6 +1826,8 @@ void Fiber::resume() {
                      std::strerror(errno));
     }
 
+    // Issue #5518: back on the worker — drop the fiber's chain binding.
+    aura_pair_roots_bind(nullptr);
     // Issue #264: validate yield-boundary checkpoint after resume.
     if (g_fiber_resume_validate_)
         g_fiber_resume_validate_();

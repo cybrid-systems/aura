@@ -33,7 +33,8 @@ import aura.core.lifetime_pin;
 // Issue #5518 phase 2: native-frame slot roots (root mode) and the opt-in
 // reclamation arming flag. Declared at module purview (the global module
 // fragment only takes preprocessor inclusion).
-extern "C" void aura_pair_roots_scan(void (*cb)(std::int64_t, void*), void* ud);
+extern "C" void aura_pair_roots_scan_all(void (*cb)(std::int64_t, void*), void* ud);
+extern "C" std::uint64_t aura_pair_roots_total_depth();
 extern "C" std::uint32_t aura_pair_gc_armed();
 extern "C" std::uint32_t aura_pair_roots_depth();
 extern "C" std::uint64_t aura_pair_jit_base();
@@ -2144,10 +2145,11 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
                                  live_tw,     view,          pairs_,          vector_heap_,
                                  cells_,      error_values_, seen_opaque,     opaque_gen,
                                  seen_string, seen_float,    live_channel_ids};
-    // Issue #5518 phase 2: a native frame in root mode mirrors its slots;
-    // fold them into the same mark so a pair only that frame holds survives
-    // (#5631). Captureless lambda -> the C callback the runtime expects.
-    aura_pair_roots_scan(
+    // Issue #5518 phase 2: every registered execution context (parked fibers
+    // and thread fallbacks) exposes its slot mirrors; fold them into the same
+    // mark so a pair only a frame holds survives. Captureless lambda -> the
+    // C callback the runtime expects.
+    aura_pair_roots_scan_all(
         [](std::int64_t raw, void* ud) {
             file_reclaim_mark_child(types::EvalValue{raw}, *static_cast<FileModeMarkContext*>(ud));
         },
@@ -2318,8 +2320,9 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
         // thread's frame would have roots this mark cannot see. Unmarked
         // ids above the evaluator index space are dead: clear the cell,
         // hand the slot to the thread free list, recycle the id.
-        if (aura_pair_gc_armed() &&
-            aura_jit_frames_active() == static_cast<std::uint64_t>(aura_pair_roots_depth())) {
+        // Issue #5518: global gate now that every context is registered:
+        // every live native frame must have pushed its mirror somewhere.
+        if (aura_pair_gc_armed() && aura_jit_frames_active() == aura_pair_roots_total_depth()) {
             const std::uint64_t jit_base = aura_pair_jit_base();
             const std::size_t jit_n = std::min<std::size_t>(
                 static_cast<std::size_t>(aura_pair_jit_high_water() - jit_base),
@@ -2784,10 +2787,11 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
                                  live_tw,     view,          pairs_,          vector_heap_,
                                  cells_,      error_values_, seen_opaque,     opaque_gen,
                                  seen_string, seen_float,    live_channel_ids};
-    // Issue #5518 phase 2: a native frame in root mode mirrors its slots;
-    // fold them into the same mark so a pair only that frame holds survives
-    // (#5631). Captureless lambda -> the C callback the runtime expects.
-    aura_pair_roots_scan(
+    // Issue #5518 phase 2: every registered execution context (parked fibers
+    // and thread fallbacks) exposes its slot mirrors; fold them into the same
+    // mark so a pair only a frame holds survives. Captureless lambda -> the
+    // C callback the runtime expects.
+    aura_pair_roots_scan_all(
         [](std::int64_t raw, void* ud) {
             file_reclaim_mark_child(types::EvalValue{raw}, *static_cast<FileModeMarkContext*>(ud));
         },
@@ -2982,8 +2986,9 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
         // thread's frame would have roots this mark cannot see. Unmarked
         // ids above the evaluator index space are dead: clear the cell,
         // hand the slot to the thread free list, recycle the id.
-        if (aura_pair_gc_armed() &&
-            aura_jit_frames_active() == static_cast<std::uint64_t>(aura_pair_roots_depth())) {
+        // Issue #5518: global gate now that every context is registered:
+        // every live native frame must have pushed its mirror somewhere.
+        if (aura_pair_gc_armed() && aura_jit_frames_active() == aura_pair_roots_total_depth()) {
             const std::uint64_t jit_base = aura_pair_jit_base();
             const std::size_t jit_n = std::min<std::size_t>(
                 static_cast<std::size_t>(aura_pair_jit_high_water() - jit_base),

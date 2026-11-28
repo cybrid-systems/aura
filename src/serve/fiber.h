@@ -100,6 +100,13 @@ extern "C" void* aura_tw_roots_new() noexcept;
 extern "C" void* aura_tw_roots_detach() noexcept;
 extern "C" void aura_tw_roots_attach(void* state) noexcept;
 extern "C" void aura_tw_roots_free(void* state) noexcept;
+
+// Issue #5518: per-execution-context pair root chain. Mirrors the #4713
+// tree-walker segment: created at spawn, bound on resume (so a migrate keeps
+// push/pop on the same chain), freed before the stack goes away.
+extern "C" void* aura_pair_roots_ctx_new();
+extern "C" void aura_pair_roots_ctx_free(void* ctx);
+extern "C" void aura_pair_roots_bind(void* ctx);
 // Issue #2114 / #2188: outermost Guard held flag (weak default 0 in
 // fiber_bridge when Evaluator not linked).
 // Issue #2849: also true when process-wide held count > 0 so cross-thread
@@ -1599,6 +1606,8 @@ private:
     // in ~Fiber. The segment itself never moves, so a push/pop pair can never
     // straddle two threads (the #4706 failure).
     void* tw_roots_ = nullptr;
+    // Issue #5518: this fiber's pair root chain (bound on resume).
+    void* pair_roots_ctx_ = nullptr;
     // Issue #4716: this fiber's evaluator EXECUTION CONTEXT (IRInterpreter
     // active pointer, Guard eval identity, macro hygiene depth/limits, the
     // recursive TypeRegistry lock stack, the quota tenant, the CLI body
