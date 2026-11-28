@@ -257,6 +257,13 @@ struct DocIndex {
 // read as data; a malformed tail closes the list at EOF instead of failing,
 // so a half-typed buffer still yields an outline.
 struct SymReader {
+    // Issue #5516: the LSP reader must not recurse without a bound. The main
+    // parser stops at MAX_PARSE_DEPTH = 500; this reader never passes through
+    // it, so a deeply nested project file overflowed the server stack.
+    static constexpr int kMaxDepth5516 = 500;
+    int depth = 0;
+    bool too_deep = false;
+
     DocIndex& ix;
     std::string_view s;
     std::size_t base = 0;
@@ -324,6 +331,12 @@ struct SymReader {
     }
 
     int read_list(std::size_t open_len) {
+        if (depth >= kMaxDepth5516) {
+            too_deep = true;
+            i = s.size(); // stop the tolerant reader; the caller drops the index
+            return -1;
+        }
+        ++depth;
         const std::size_t b = i;
         i += open_len;
         const int n = add(SymKind::List, b, b);
@@ -342,6 +355,7 @@ struct SymReader {
             ix.nodes[n].kids.push_back(kid);
         }
         ix.nodes[n].span.end = base + i;
+        --depth;
         return n;
     }
 
@@ -387,6 +401,12 @@ struct SymReader {
     }
 
     int read_prefix(std::size_t b) {
+        if (depth >= kMaxDepth5516) {
+            too_deep = true;
+            i = s.size();
+            return -1;
+        }
+        ++depth;
         ++i; // the quote / quasiquote / unquote / unquote-splicing char
         if (b < s.size() && s[b] == ',' && i < s.size() && s[i] == '@')
             ++i;
@@ -399,6 +419,7 @@ struct SymReader {
         } else {
             ix.nodes[n].span.end = base + i;
         }
+        --depth;
         return n;
     }
 
@@ -797,6 +818,21 @@ inline DocIndex DocIndex::build(std::string_view text) {
             if (head.kind == SymKind::Atom && head.text == "require" && spec.kind == SymKind::Str &&
                 spec.span.end >= spec.span.begin + 2)
                 ix.links.push_back({{spec.span.begin + 1, spec.span.end - 1}, spec.text});
+        }
+        if (rd.too_deep) {
+            // Issue #5516: never index a tree the reader refused to build.
+            // The main parser still reports the depth error to the editor;
+            // the symbol index stays empty and the server survives.
+            ix.nodes.clear();
+            ix.forms.clear();
+            ix.defs.clear();
+            ix.top.clear();
+            ix.bindings.clear();
+            ix.occs.clear();
+            ix.links.clear();
+            ix.atom_at_begin.clear();
+            ix.top_name_begin.clear();
+            return ix;
         }
     }
     SymIndexer(ix).run();

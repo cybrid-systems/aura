@@ -196,6 +196,11 @@ CASES = (
         "test_crash_handler_prints_diagnostics",
         "LspDepth5155.test_crash_handler_prints_diagnostics",
     ),
+    (
+        5516,
+        "test_deep_source_keeps_the_server_alive",
+        "SymbolDepth5516.test_deep_source_keeps_the_server_alive",
+    ),
     # #5258 protocol base: encoding, URI spellings, debounce/pull/close,
     # JSON-RPC errors, AURA_PATH/std definition, untitled buffers.
     (
@@ -542,6 +547,50 @@ CASES = (
         "lsp_diagnostics.LspDiagnostics5363.test_a_genuine_type_error_still_reports",
     ),
 )
+
+
+class SymbolDepth5516(unittest.TestCase):
+    def test_deep_source_keeps_the_server_alive(self) -> None:
+        # Issue #5516: the LSP symbol reader recursed without a bound, so a
+        # file of deeply nested parens overflowed the server stack. The
+        # reader now stops at the same 500-level cap as the main parser and
+        # drops the (empty) index; the server must stay alive and answering.
+        deep = "(" * 100000
+        did_open = {
+            "jsonrpc": "2.0",
+            "method": "textDocument/didOpen",
+            "params": {
+                "textDocument": {
+                    "uri": "file:///tmp/deep5516.aura",
+                    "languageId": "aura",
+                    "version": 1,
+                    "text": deep,
+                }
+            },
+        }
+        msgs = (
+            frame({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
+            + frame({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+            + frame(did_open)
+            + frame({"jsonrpc": "2.0", "id": 2, "method": "workspace/symbol", "params": {"query": ""}})
+            + frame({"jsonrpc": "2.0", "id": 3, "method": "shutdown"})
+            + frame({"jsonrpc": "2.0", "method": "exit"})
+        )
+        r = subprocess.run(
+            [str(AURA), "lsp"],
+            input=msgs,
+            capture_output=True,
+            env=env(),
+            timeout=60,
+        )
+        err = r.stderr.decode(errors="replace")
+        self.assertNotEqual(r.returncode, -signal.SIGSEGV, err)
+        self.assertNotIn("SIGSEGV", err)
+        self.assertNotIn("AURA CRASH", err)
+        self.assertEqual(r.returncode, 0, err)
+        frames = read_frames(r.stdout)
+        by_id = {f.get("id"): f for f in frames}
+        self.assertIn("result", by_id.get(2, {}), "the server answers after the deep file")
 
 
 def load_tests(loader, tests, pattern):
