@@ -181,4 +181,29 @@
   (check= 1 (fiber:join (fiber:spawn (lambda () (floorm)))))
   (check= (* 16 one) (join-all (spawn-n 16) 0)))
 
+; #5642: a tail call wrapped in a trivial (begin ...) is the same loop.
+; Leading literals have no effect, so the accelerator may skip them; a
+; leading effect (set!) or a variable read keeps the wrapper and still
+; gives the interpreter's exact answer.
+(define (sum-begin5642 n)
+  (let loop ((i 0) (s 0))
+    (if (< i n) (begin (loop (+ i 1) (+ s i))) s)))
+(define (sum-begin-lit5642 n)
+  (let loop ((i 0) (s 0))
+    (if (< i n) (begin 7 "x" (loop (+ i 1) (+ s i))) s)))
+(define (sum-begin-side5642 n c)
+  (let loop ((i 0) (s 0))
+    (if (< i n) (begin (set! c (+ c 1)) (loop (+ i 1) (+ s i))) s)))
+(define (sum-begin-gt5642 n)
+  (let loop ((i 0) (s 0))
+    (if (>= i n) s (begin 7 (loop (+ i 1) (+ s i))))))
+
+(test-case "begin-wrapped tail call stays exact" (hash "issue" 5642)
+  (check= 45 (sum-begin5642 10))
+  (check= 45 (sum-begin-lit5642 10))
+  (check= 45 (sum-begin-gt5642 10))
+  (check= 45 (sum-begin-side5642 10 0))
+  (check= 45 (fiber:join (fiber:spawn (lambda () (sum-begin-lit5642 10)))))
+  (check= 45 (fiber:join (fiber:spawn (lambda () (sum-begin-gt5642 10))))))
+
 (test-finish)

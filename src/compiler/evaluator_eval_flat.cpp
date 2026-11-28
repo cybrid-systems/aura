@@ -7635,6 +7635,43 @@ namespace {
     };
     thread_local AccelLatch5066 tls_accel_latch_5066;
 
+    // Issue #5642: a tail call wrapped in a trivial `(begin …)` is the same
+    // loop shape. `(if c (begin (loop …)) s)` — and the common macro
+    // expansion `(begin <literals> (loop …))` — ran the generic call path
+    // (~750 ns/iteration) while the bare form hit this accelerator
+    // (~63 ns). Strip a Begin whose leading children are literals only: a
+    // literal has no effect, so dropping it is unobservable. Any other
+    // leading child (a call, a variable read — it can raise unbound) keeps
+    // the wrapper and latches a miss.
+    aura::ast::NodeId strip_trivial_begin_5642(const aura::ast::FlatAST& flat,
+                                               aura::ast::NodeId node) {
+        for (int hops = 0; hops < 8 && node < flat.size(); ++hops) {
+            if (flat.tag(node) != aura::ast::NodeTag::Begin)
+                return node;
+            const auto kids = flat.children(node);
+            if (kids.empty())
+                return node;
+            std::size_t last = kids.size();
+            while (last > 0 && kids[last - 1] == aura::ast::NULL_NODE)
+                --last;
+            if (last == 0)
+                return node;
+            bool literals_only = true;
+            for (std::size_t i = 0; i + 1 < last; ++i) {
+                const auto t = flat.tag(kids[i]);
+                if (t != aura::ast::NodeTag::LiteralInt && t != aura::ast::NodeTag::LiteralFloat &&
+                    t != aura::ast::NodeTag::LiteralString) {
+                    literals_only = false;
+                    break;
+                }
+            }
+            if (!literals_only)
+                return node;
+            node = kids[last - 1];
+        }
+        return node;
+    }
+
     std::optional<EvalValue>
     try_named_let_int_loop_5066(CompilerMetrics* metrics, const std::atomic<std::uint64_t>& top_gen,
                                 Env& env, const aura::ast::FlatAST& flat,
@@ -7671,13 +7708,16 @@ namespace {
             return reject();
         // `(if (>= i n) s (loop ...))` returns from the then arm.
         // `(if (< i n) (loop ...) s)` returns from the else arm (#5297).
-        const bool then_call = flat.tag(kids[1]) == aura::ast::NodeTag::Call;
-        const bool else_call = flat.tag(kids[2]) == aura::ast::NodeTag::Call;
+        const bool then_call =
+            flat.tag(strip_trivial_begin_5642(flat, kids[1])) == aura::ast::NodeTag::Call;
+        const bool else_call =
+            flat.tag(strip_trivial_begin_5642(flat, kids[2])) == aura::ast::NodeTag::Call;
         if (then_call == else_call)
             return reject();
         const bool continue_when_truthy = then_call;
         const auto result_node = then_call ? kids[2] : kids[1];
-        const auto call_node = then_call ? kids[1] : kids[2];
+        const auto call_node = then_call ? strip_trivial_begin_5642(flat, kids[1])
+                                         : strip_trivial_begin_5642(flat, kids[2]);
         const bool result_lit = flat.tag(result_node) == aura::ast::NodeTag::LiteralInt;
         const bool result_float_lit =
             !result_lit && flat.tag(result_node) == aura::ast::NodeTag::LiteralFloat;
