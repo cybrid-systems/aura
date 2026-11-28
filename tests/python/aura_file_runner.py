@@ -561,7 +561,9 @@ def run_aura_file_suite(
                     continue
                 retry_rel, retry_ok, retry_err = run_one(case)
                 if retry_ok:
-                    warn(f"{rel}: passed on sequential retry (parallel failure: {patched[rel][1].splitlines()[0][:100] if patched[rel][1] else ''})")
+                    warn(
+                        f"{rel}: passed on sequential retry (parallel failure: {patched[rel][1].splitlines()[0][:100] if patched[rel][1] else ''})"
+                    )
                     patched[retry_rel] = (True, "")
             results = [(rel, patched[rel][0], patched[rel][1]) for rel in sorted(patched)]
 
