@@ -3377,7 +3377,8 @@ inline std::string spawn_tenant_spoof_error(std::uint64_t requested, std::uint64
                     // eventfd waker; a bounded slice keeps body_done /
                     // helper_stop / reclaim observation within 100 ms while
                     // cutting the switch rate from ~1 kHz to <=10 Hz.
-                    if (serve::g_current_fiber && park_ok) {
+                    if (serve::g_current_fiber && park_ok &&
+                        serve::g_current_fiber->deadline_park_supported()) {
                         const auto now_park = std::chrono::steady_clock::now();
                         long long wait_ms = 100;
                         if (now_park < next_emit) {

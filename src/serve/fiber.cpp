@@ -2509,6 +2509,26 @@ extern "C" std::uint64_t aura_fiber_join_linear_enforcement_total() {
     return Fiber::join_linear_enforcement_total();
 }
 
+// Issue #5528: see fiber.h. A timed join parks the joiner; the IO loop
+// re-queues a woken fiber on any worker unless affinity pins it. The eval
+// mutex (M1) / exec mutex (M2) are thread-affine recursive mutexes, so a
+// cross-worker resume would make their unlock a non-owner no-op and leave
+// the mutex stuck on the worker that ran before the park.
+bool Fiber::pin_to_running_worker(int& prev) noexcept {
+    if (affinity_ >= 0 || g_scheduler == nullptr)
+        return false;
+    const int n = g_scheduler->num_workers();
+    for (int i = 0; i < n; ++i) {
+        auto* w = g_scheduler->worker(i);
+        if (w != nullptr && w->runs_on_this_thread()) {
+            prev = affinity_;
+            affinity_ = i;
+            return true;
+        }
+    }
+    return false;
+}
+
 JoinResult Fiber::join(Fiber* target, std::optional<std::uint64_t> timeout_ms) {
     join_total_.fetch_add(1, std::memory_order_relaxed);
     const auto t0 = std::chrono::steady_clock::now();
@@ -2696,10 +2716,57 @@ JoinResult Fiber::join(Fiber* target, std::optional<std::uint64_t> timeout_ms) {
             // whole process hung. Take the always-resumes Explicit yield
             // there (allowed by the join-wait flag above, #4853), exactly
             // like the deadline path.
-            if (has_deadline || self->orch_agent_boundary_active()) {
-                // Timeout path: short Explicit yields so steal/GC can progress
-                // and we can re-check the deadline without busy-spinning the
-                // worker forever. Joiner stays registered for eventfd wake.
+            // Issue #5528: parking is only legal where Fiber::yield accepts
+            // BlockingIO — no soft orch window (#4721), no real Guard frame,
+            // no held mirror. Elsewhere keep the Explicit hand-off so the
+            // loop cannot arm a deadline the gate would reject.
+            const auto join_snap = self->mutation_safety_snapshot();
+            const bool can_park_join =
+                has_deadline && self->deadline_park_supported() &&
+                !self->orch_agent_boundary_active() && !join_snap.held &&
+                join_snap.depth == 0 && join_snap.real_depth == 0;
+            if (can_park_join) {
+                // Issue #5528: park on the scheduler deadline instead of
+                // Explicit-yield spinning. on_fiber_done writes the joiner's
+                // eventfd (Scheduler::on_fiber_done joiner pass), so the park
+                // is woken by target completion; the deadline re-queues it at
+                // timeout. A joiner that used to occupy a full worker for the
+                // whole wait now costs one wakeup.
+                const auto now_park = std::chrono::steady_clock::now();
+                if (now_park >= deadline) {
+                    g_scheduler->remove_joiner(target->id(), self);
+                    return finish(JoinStatus::Timeout);
+                }
+                const auto remaining =
+                    std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now_park)
+                        .count();
+                // Clamp to a bounded slice: set_park_deadline_ms takes an int
+                // and a spurious early wake simply re-parks. 60 s covers every
+                // realistic join while staying far from int overflow.
+                const long long park_ms = std::clamp<long long>(remaining, 1, 60000);
+                // Keep a joiner that holds a thread-affine eval/exec mutex
+                // on its own worker across the park (see fiber.h). The
+                // window is small: pinned only while parked and restored on
+                // the first resume.
+                int prev_affinity = -1;
+                const bool pinned = self->pin_to_running_worker(prev_affinity);
+                self->set_park_deadline_ms(static_cast<int>(park_ms));
+                self->set_state(FiberState::Waiting);
+                Fiber::yield(YieldReason::BlockingIO);
+                self->clear_park_deadline();
+                int evfd = self->eventfd();
+                if (evfd >= 0) {
+                    std::uint64_t val = 0;
+                    while (::read(evfd, &val, sizeof(val)) > 0) {
+                    }
+                }
+                self->set_state(FiberState::Running);
+                if (pinned)
+                    self->set_affinity(prev_affinity);
+            } else if (has_deadline || self->orch_agent_boundary_active()) {
+                // Soft orch agent-body window: BlockingIO is rejected (#4721),
+                // so the deadline path falls back to Explicit yields (the
+                // join-wait flag above permits them, #4853).
                 Fiber::yield(YieldReason::Explicit);
             } else {
                 self->set_state(FiberState::Waiting);

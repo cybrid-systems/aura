@@ -15,6 +15,7 @@
 #include "scheduler.h"
 #include "core/resource_quota.hh" // #1600 orchestration fiber quota
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -25,6 +26,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -32,6 +34,44 @@ namespace aura::serve::parallel_orch {
 
 inline constexpr int kParallelOrchPhase = 3; // #1881 observability
 inline constexpr int kParallelOrchIssue = 1881;
+
+// Issue #5528: bounded park for the concurrency gate and retry backoff.
+// Both waits have no eventfd waker, so the park deadline IS the poll
+// interval. One scheduler deadline entry replaces a full yield+resume pair
+// per iteration; the fiber sleeps instead of round-robining the ready FIFO.
+inline void gate_park_ms(std::uint32_t ms) noexcept {
+    if (ms == 0)
+        ms = 1;
+    auto* self = g_current_fiber;
+    if (self == nullptr) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+        return;
+    }
+    if (!self->deadline_park_supported()) {
+        // No owner scheduler: no deadline consumer. Hand the worker back.
+        Fiber::yield(YieldReason::Explicit);
+        return;
+    }
+    // Arms must not be wasted where Fiber::yield rejects BlockingIO: the
+    // soft orch agent-body window (#4721) and any real Guard frame. Those
+    // keeps the legacy Explicit hand-off (it always resumes).
+    const auto snap = self->mutation_safety_snapshot();
+    if (self->orch_agent_boundary_active() || snap.held || snap.depth > 0) {
+        Fiber::yield(YieldReason::Explicit);
+        return;
+    }
+    // A task fiber can hold a thread-affine eval/exec mutex when a nested
+    // batch parks it; keep it on the same worker across the park.
+    int prev_affinity = -1;
+    const bool pinned = self->pin_to_running_worker(prev_affinity);
+    self->set_park_deadline_ms(static_cast<int>(std::clamp<std::uint32_t>(ms, 1, 60000)));
+    self->set_state(FiberState::Waiting);
+    Fiber::yield(YieldReason::BlockingIO);
+    self->clear_park_deadline();
+    self->set_state(FiberState::Running);
+    if (pinned)
+        self->set_affinity(prev_affinity);
+}
 
 // ── Failure policy (#2007) ─────────────────────────────
 // Composable strategies for body errors under parallel_intend / parallel_run.
@@ -529,7 +569,10 @@ inline void snapshot_global_ext(std::uint64_t& batches, std::uint64_t& spawned,
                                                          std::memory_order_relaxed))
                         break;
                 } else {
-                    Fiber::yield(YieldReason::Explicit);
+                    // Issue #5528: park instead of an unthrottled Explicit
+                    // yield loop. 1 ms keeps permit handoff snappy while a
+                    // 4x-oversubscribed gate no longer pins a worker.
+                    gate_park_ms(1);
                 }
             }
 
@@ -552,7 +595,12 @@ inline void snapshot_global_ext(std::uint64_t& batches, std::uint64_t& spawned,
                         while (std::chrono::steady_clock::now() < deadline) {
                             if (g_current_fiber && g_current_fiber->is_cancel_requested())
                                 break;
-                            Fiber::yield(YieldReason::Explicit);
+                            // Issue #5528: park for the remaining backoff.
+                            const auto left =
+                                std::chrono::duration_cast<std::chrono::milliseconds>(
+                                    deadline - std::chrono::steady_clock::now())
+                                    .count();
+                            gate_park_ms(static_cast<std::uint32_t>(std::max<long long>(left, 1)));
                         }
                     } else {
                         Fiber::yield(YieldReason::Explicit);

@@ -894,6 +894,15 @@ public:
     // Worker affinity (P2): -1 = any worker, 0..N-1 = specific worker
     int affinity() const { return affinity_; }
     void set_affinity(int worker_id) { affinity_ = worker_id; }
+    // Issue #5528: pin a running fiber to the worker executing it so a
+    // BlockingIO park resumes on the same OS thread. A fiber can hold a
+    // thread-affine recursive mutex (eval M1 #4711 / exec M2 #4717) across
+    // a join wait; waking it on another worker turns the eventual unlock
+    // into a non-owner no-op and leaves the mutex owned by an idle worker
+    // (observed as a host eval blocked after the in-fiber batch returned).
+    // Returns true and stores the previous affinity in `prev` when pinned;
+    // the caller restores it after the resume.
+    bool pin_to_running_worker(int& prev) noexcept;
 
     // Accessors
     uint64_t id() const { return id_; }
@@ -911,6 +920,13 @@ public:
         return wait_gen_.fetch_add(1, std::memory_order_acq_rel) + 1;
     }
     void set_state(FiberState s) { state_.store(s, std::memory_order_release); }
+    // Issue #5528: a deadline park is only woken by the owner
+    // scheduler's run loop (Scheduler::take_expired_park_deadlines). A fiber
+    // with no owner scheduler (thread backend) has no deadline consumer, so
+    // parking it would strand the fiber forever.
+    [[nodiscard]] bool deadline_park_supported() const noexcept {
+        return owner_sched_ != nullptr;
+    }
     // Issue #2554 / #4506: a timed park records the wall-clock deadline at
     // which the scheduler must re-queue this fiber. A fiber parked as
     // Waiting has no attacher to write its eventfd, so without this the
