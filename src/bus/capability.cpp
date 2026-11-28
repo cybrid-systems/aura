@@ -515,13 +515,23 @@ bool WorldlineLedger::revert_canary(std::uint64_t id, std::string* why) {
 std::vector<std::uint64_t> WorldlineLedger::end_session(std::uint64_t owner,
                                                         std::uint32_t patch_end) {
     std::vector<std::uint64_t> rolled;
-    // The settled trials leave the pending set as they are walked.
+    // Issue #5502: the record is looked up by id, never by id-1. The audit
+    // window forgets settled records in the middle of the vector, so the
+    // pending trial's record is not at its id offset any more; indexing
+    // records_[id-1] wrote past the end once the window had slid.
     for (auto it = pending_.lower_bound({owner, 0}); it != pending_.end() && it->first == owner;) {
-        TrialRecord& rec = records_[static_cast<std::size_t>(it->second - 1)];
-        rec.pending = false;
-        rec.rolled_back = true;
-        rec.patch_end = patch_end;
-        rolled.push_back(rec.id);
+        TrialRecord* rec = at(it->second);
+        if (rec == nullptr) {
+            // A record forgotten under an unsettled pending entry cannot
+            // happen while pending records are kept by forget_settled_before,
+            // but never write through a missing one.
+            it = pending_.erase(it);
+            continue;
+        }
+        rec->pending = false;
+        rec->rolled_back = true;
+        rec->patch_end = patch_end;
+        rolled.push_back(rec->id);
         it = pending_.erase(it);
     }
     return rolled;

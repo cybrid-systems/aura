@@ -276,6 +276,32 @@ int main() {
         check(ledger.seal_canary(watched, &why), "the observation seals");
         check(ledger.forget_settled_before(ledger.next_id()) == 1, "a sealed worldline leaves");
         check(ledger.forget_settled_before(0) == 0, "a horizon at the start forgets nothing");
+
+        // ── #5502: end_session after the audit window slid ──────────
+        // forget_settled_before removes settled records from the middle of
+        // the vector, so a pending trial's record is no longer at id-1.
+        // end_session must resolve it by id: resolving by offset wrote past
+        // the end and left the real trial pending forever.
+        std::vector<std::uint64_t> cut;
+        for (int i = 0; i < 6; ++i)
+            cut.push_back(ledger.open_trial(alice, ws));
+        for (int i = 0; i < 5; ++i)
+            check(ledger.keep(cut[static_cast<std::size_t>(i)], alice, alice_caps, &why),
+                  "a trial settled before the cut is kept");
+        check(ledger.size() == 6, "six records are live before the window slides");
+        check(ledger.forget_settled_before(ledger.next_id()) == 5,
+              "the five settled records leave the compacted vector");
+        check(ledger.size() == 1, "only the pending record stays");
+        const auto after_cut = ledger.end_session(alice);
+        check(after_cut.size() == 1 && after_cut[0] == cut[5],
+              "end_session rolls the pending trial after the prune");
+        const TrialRecord* last = ledger.find(cut[5]);
+        check(last != nullptr && last->rolled_back && !last->pending,
+              "the pruned-but-pending trial is rolled back");
+        check(ledger.pending_count() == 0, "the pending set is empty after the end");
+        check(ledger.forget_settled_before(ledger.next_id()) == 1,
+              "the rolled trial leaves on the next prune");
+        check(ledger.size() == 0, "the compacted ledger is empty");
     }
 
     // ── #5459: the in-process audit log is a bounded window ─────
