@@ -7293,6 +7293,12 @@ public:
         if (root)
             seal_workspace_value(v);
     }
+    // Issue #5490: the tree-walker integer fast path and the IR
+    // TopCellStore share this generation. TW set! bumps it through the
+    // same method; an IR store must bump it too or a TW loop keeps its
+    // free-variable snapshot and reads the pre-store value.
+    void bump_cell_store_gen_5066() noexcept;
+    [[nodiscard]] std::uint64_t cell_store_gen_5066() const noexcept;
     // Late-bound IR global: the tree walker dereferences a define cell at
     // use time; top-ref must do the same or it returns <cell[N]>.
     [[nodiscard]] std::optional<types::EvalValue> lookup_top_deref(std::string_view name) const {

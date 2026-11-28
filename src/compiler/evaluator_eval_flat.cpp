@@ -8796,8 +8796,9 @@ Evaluator::FlatStep Evaluator::eval_flat_on_set(EvalFlatCursor& cur, const aura:
     // defuse_version_. Bumping defuse makes a named-let that set!s drop
     // its loop binding ("unbound variable: loop").
     struct CellStoreBump5066 {
-        ~CellStoreBump5066() { g_cell_store_gen_5066.fetch_add(1, std::memory_order_release); }
-    } cell_store_bump_5066;
+        Evaluator* ev;
+        ~CellStoreBump5066() { ev->bump_cell_store_gen_5066(); }
+    } cell_store_bump_5066{this};
     // Issue #4715 AC2: an open overlay owns the write. A set!
     // of a top-level binding is captured as a private cell (the
     // shared cell is never overwritten in place); a local
@@ -16150,6 +16151,14 @@ bool Evaluator::commit_pending_workspace_source_patch() {
 void Evaluator::discard_pending_workspace_source_patch() noexcept {
     pending_workspace_source_patch_valid_ = false;
     pending_workspace_source_patch_.clear();
+}
+
+void Evaluator::bump_cell_store_gen_5066() noexcept {
+    g_cell_store_gen_5066.fetch_add(1, std::memory_order_release);
+}
+
+std::uint64_t Evaluator::cell_store_gen_5066() const noexcept {
+    return g_cell_store_gen_5066.load(std::memory_order_acquire);
 }
 
 } // namespace aura::compiler

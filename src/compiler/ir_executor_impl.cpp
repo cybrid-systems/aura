@@ -3509,8 +3509,14 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     // is the value local.
                     if (context_.evaluator) {
                         auto& cells = context_.evaluator->cells();
-                        if (ops[0] < cells.size())
-                            cells[ops[0]] = locals[ops[1]];
+                        if (ops[0] < cells.size()) {
+                            // Issue #5490: keep #4789 nil-mark and #5190
+                            // workspace seal semantics, and advance the
+                            // generation a TW integer fast-path snapshot
+                            // keys off.
+                            context_.evaluator->store_cell_value(ops[0], locals[ops[1]]);
+                            context_.evaluator->bump_cell_store_gen_5066();
+                        }
                     }
                     break;
                 }
