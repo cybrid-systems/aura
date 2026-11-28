@@ -732,13 +732,30 @@ void register_security_set_sandbox_mode(PrimRegistrar add, Evaluator& ev) {
 
     // Issue #1565: (security:set-effect-sandbox-mode! n) 0=Off 1=Restricted 2=Strict
     add("security:set-effect-sandbox-mode!", [&ev](std::span<const EvalValue> a) -> EvalValue {
-        if (a.empty() || !is_int(a[0]))
+        if (a.empty())
             return make_int(static_cast<std::int64_t>(ev.effect_sandbox_mode()));
+        if (!is_int(a[0])) {
+            ev.bump_capability_denial();
+            return ev.make_typed_error(
+                "security:set-effect-sandbox-mode!: mode must be an integer 0, 1, or 2",
+                aura::diag::ErrorKind::EffectDenied);
+        }
         // Issue #3088: gate reads the authority triple (bool OR effect mode != 0)
         // so a drifted bool cannot reopen downgrade under Restricted.
         const auto new_mode = as_int(a[0]);
+        // Issue #5493: reject every mode outside 0/1/2 before comparing or
+        // writing. The old int64 compare accepted 256, while the uint8 write
+        // folded it to Off and skipped the downgrade gate.
+        if (new_mode < 0 || new_mode > 2) {
+            ev.bump_capability_denial();
+            return ev.make_typed_error(
+                "security:set-effect-sandbox-mode!: mode must be 0, 1, or 2",
+                aura::diag::ErrorKind::EffectDenied);
+        }
+        auto& reg = aura::core::capability::g_capability_registry();
+        std::scoped_lock<std::mutex> lock(reg.mtx);
         const auto cur = static_cast<std::int64_t>(ev.effect_sandbox_mode());
-        if ((ev.sandbox_mode() || ev.effect_sandbox_mode() != 0) && new_mode < cur) {
+        if ((ev.sandbox_mode() || cur != 0) && new_mode < cur) {
             // Issue #3995: hold mtx across TA check + set_mode so a
             // concurrent revoke cannot land between the unlocked wildcard
             // string read and the process-wide Off write.
@@ -746,8 +763,6 @@ void register_security_set_sandbox_mode(PrimRegistrar add, Evaluator& ev) {
             // (!holds_wildcard_only_locked && effects_for_locked & TA) —
             // same pattern as security:grant-effect! (#3362). Upgrade arm
             // stays unprivileged. Soft/Off short-circuit unchanged.
-            auto& reg = aura::core::capability::g_capability_registry();
-            std::scoped_lock<std::mutex> lock(reg.mtx);
             using aura::compiler::security::kEffectTenantAdmin;
             if (reg.holds_wildcard_only_locked(ev.capability_tenant_id()) ||
                 (static_cast<std::uint16_t>(reg.effects_effective_for_locked(

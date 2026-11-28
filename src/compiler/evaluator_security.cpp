@@ -2261,7 +2261,7 @@ void Evaluator::set_effect_sandbox_mode(std::uint8_t mode) noexcept {
     using namespace ::aura::core::sandbox;
     using namespace ::aura::core::provenance;
     if (mode > 2)
-        mode = 2;
+        return; // Issue #5493: reject, do not silently fold to Strict.
     // Issue #2657: route through the process-wide authority
     // aura::core::sandbox::set_mode (the SOLE writer of sandbox mode —
     // atomic + plain enum + CapabilityRegistry + workspace_isolation

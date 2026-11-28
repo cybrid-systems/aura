@@ -734,9 +734,10 @@ int run_test_sandbox_mode_authority_2657() {
               "4012 AC4: prim emits sandbox-downgrade SE reason");
         auto p_eff = prim.find("security:set-effect-sandbox-mode!");
         CHECK(p_eff != std::string::npos, "4012 AC4: effect-mode prim present");
-        // #4440 lengthened the locked TenantAdmin read. 2500 still ends
-        // before the grant-effect reason in the next primitive.
-        auto win = prim.substr(p_eff, 2500);
+        // #4440 lengthened the locked TenantAdmin read; #5493 adds the
+        // leading mode validation. 3200 still ends before the grant-effect
+        // reason in the next primitive.
+        auto win = prim.substr(p_eff, 3200);
         CHECK(win.find("sandbox-downgrade-needs-explicit-tenant-admin") != std::string::npos,
               "4012 AC4: effect-mode prim uses sandbox-downgrade reason");
         CHECK(win.find("grant-effect-needs-explicit-tenant-admin") == std::string::npos,
@@ -754,6 +755,27 @@ int run_test_sandbox_mode_authority_2657() {
               "4012 AC4: no docs/design");
         CHECK(!std::filesystem::exists("tests/issues/test_issue_4012.cpp"),
               "4012 AC4: no tests/issues invent");
+        reset_all();
+    }
+
+    {
+        std::println("\n--- #5493: out-of-range mode is denied and mode is unchanged ---");
+        reset_all();
+        aura::core::sandbox::set_mode(SandboxMode::Restricted);
+        aura::compiler::CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_capability_tenant_id(7);
+        const auto auth0 = snapshot_sandbox_authority_stats().authority_set_total;
+        for (const char* expr : {"(security:set-effect-sandbox-mode! 256)",
+                                 "(security:set-effect-sandbox-mode! -1)",
+                                 "(security:set-effect-sandbox-mode! 9223372036854775807)"}) {
+            const auto r = cs.eval(expr);
+            CHECK(r && aura::compiler::types::is_error(*r),
+                  std::format("5493: {} is a primitive error", expr));
+            CHECK(ev.effect_sandbox_mode() == 1, "5493: mode stays Restricted");
+        }
+        CHECK(snapshot_sandbox_authority_stats().authority_set_total == auth0,
+              "5493: no authority write for an invalid mode");
         reset_all();
     }
 
