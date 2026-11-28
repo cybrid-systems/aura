@@ -1081,7 +1081,7 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
         if (aura::messaging::g_http_post_async) {
             std::string url_copy = curl_url;
             std::string body_copy = curl_body;
-            std::string result;
+            std::optional<std::string> posted;
             // Issue #5274: copies are already off the heap. Drop the hold
             // before yield/curl so a 20–60s chat cannot pin the budget.
             (void)aura_mutation_hold_release_before_block();
@@ -1090,10 +1090,13 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
                 // Issue #5274: the async hand-off still parks THIS body until
                 // the worker answers; certify its frames for that span.
                 TwPlainPark park_5274;
-                result = aura::messaging::g_http_post_async(url_copy, body_copy, auth, timeout_sec);
+                posted = aura::messaging::g_http_post_async(url_copy, body_copy, auth, timeout_sec);
             }
-            if (!result.empty()) {
-                auto sidx = ev.string_heap_.mint(std::move(result));
+            // Issue #5506: an engaged result is the POST's answer - including
+            // an empty body. Falling through to the synchronous path re-sent
+            // non-idempotent requests after a spurious wake.
+            if (posted.has_value()) {
+                auto sidx = ev.string_heap_.mint(std::move(*posted));
                 return types::make_string(sidx);
             }
         }

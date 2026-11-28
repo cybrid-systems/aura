@@ -2376,6 +2376,7 @@ bool test_incr_repeated_spawn() {
 
 bool test_fiber_affinity();
 bool test_steal_skips_pinned();
+bool test_issue_5508_affinity_out_of_range();
 bool test_broadcast_primitive();
 bool test_scheduler_pin_primitive();
 
@@ -3403,6 +3404,7 @@ int main() {
     run_test("test_incr_repeated_spawn", test_incr_repeated_spawn);
     run_test("test_fiber_affinity", test_fiber_affinity);
     run_test("test_steal_skips_pinned", test_steal_skips_pinned);
+    run_test("test_issue_5508_affinity_out_of_range", test_issue_5508_affinity_out_of_range);
     run_test("test_broadcast_primitive", test_broadcast_primitive);
     run_test("test_scheduler_pin_primitive", test_scheduler_pin_primitive);
     run_test("test_gc_safepoint_all_stop", test_gc_safepoint_all_stop);
@@ -3523,6 +3525,23 @@ bool test_steal_skips_pinned() {
     // Both metrics should show 0 steals for pinned fibers
     std::string json = sched.metrics().to_json();
     CHECK(!json.empty(), "metrics JSON present after pinned fiber test");
+    return true;
+}
+
+// ── Test: #5508 out-of-range affinity ────────────────────────
+// A pinned id past the worker count must not index workers_. The spawn
+// falls back to the normal lane and the fiber still runs.
+bool test_issue_5508_affinity_out_of_range() {
+    std::println("\n--- Test: #5508 out-of-range affinity ---");
+    aura::serve::Scheduler sched(2);
+    std::atomic<int> completed{0};
+    auto* f = sched.spawn_with_affinity([&completed]() { completed.store(1); }, 99);
+    CHECK(f != nullptr, "a fiber with an out-of-range affinity is still spawned");
+    std::thread t([&sched]() { sched.run(); });
+    bool _wait_5508 = wait_for_atomic(completed, 1);
+    sched.stop();
+    t.join();
+    CHECK(completed.load() == 1, "the out-of-range affinity fiber ran on a real worker");
     return true;
 }
 

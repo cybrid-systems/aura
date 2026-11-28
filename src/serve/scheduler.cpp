@@ -409,6 +409,10 @@ Fiber* Scheduler::spawn(Fiber::Func func, size_t stack_size, bool fifo_start) {
 }
 
 Fiber* Scheduler::spawn_with_affinity(Fiber::Func func, int worker_id, size_t stack_size) {
+    // Issue #5508: never index workers_ with an inherited / caller id that
+    // does not exist. -1 means "normal lane" (round robin).
+    if (worker_id < 0 || worker_id >= num_workers_)
+        worker_id = -1;
     // Issue #1579 / #1618: same process-wide fiber quota as spawn() via manager.
     using aura::core::resource_quota::process_resource_quota;
     using aura::core::resource_quota::process_resource_quota_manager;
@@ -460,9 +464,12 @@ Fiber* Scheduler::spawn_with_affinity(Fiber::Func func, int worker_id, size_t st
         owned_fiber_set_.insert(ptr);
     }
 
-    workers_[worker_id]->enqueue(ptr);
+    // Issue #5508: worker_id == -1 (unknown / out of range) takes the normal
+    // round-robin lane instead of indexing past workers_.
+    const int target = worker_id >= 0 ? worker_id : next_worker_id();
+    workers_[target]->enqueue(ptr);
     // Issue #119: register the fiber for fiber:join lookup.
-    workers_[worker_id]->register_fiber(ptr);
+    workers_[target]->register_fiber(ptr);
 
     // Always-on spawn-activity counter (gates the IO loop auto-stop).
     spawns_total_.fetch_add(1, std::memory_order_release);

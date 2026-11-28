@@ -1610,7 +1610,11 @@ public:
     void set_wake_eventfd(int fd) { wake_eventfd_ = fd; }
 
     void push_message(const std::string& sender, const std::string& msg) {
-        mailbox_.push_back({sender, msg});
+        // Issue #5507: the sender runs on another session's thread.
+        {
+            std::lock_guard<std::mutex> lk(mailbox_mu_);
+            mailbox_.push_back({sender, msg});
+        }
         if (wake_eventfd_ >= 0) {
             uint64_t _val = 1;
             ::write(wake_eventfd_, &_val, sizeof(_val));
@@ -1618,12 +1622,8 @@ public:
     }
 
     std::optional<std::string> pop_message(int timeout_ms = -1) {
-        if (!mailbox_.empty()) {
-            last_sender_ = mailbox_.front().first;
-            auto msg = std::move(mailbox_.front().second);
-            mailbox_.erase(mailbox_.begin());
-            return msg;
-        }
+        if (auto got = take_mailbox_locked_())
+            return got;
         if (timeout_ms == 0)
             return std::nullopt;
         // Use poll() on wake_eventfd_ for timeout-capable wait
@@ -1642,27 +1642,25 @@ public:
             // (pret < 0) = error, fall through to yield
         }
         // Fallback: try fiber yield (scheduler-based wake)
-        if (!mailbox_.empty()) {
-            last_sender_ = mailbox_.front().first;
-            auto msg = std::move(mailbox_.front().second);
-            mailbox_.erase(mailbox_.begin());
-            return msg;
-        }
+        if (auto got = take_mailbox_locked_())
+            return got;
         if (aura::serve::g_current_fiber && timeout_ms != 0) {
             aura::serve::g_current_fiber->set_state(aura::serve::FiberState::Waiting);
             aura::serve::Fiber::yield();
-            if (!mailbox_.empty()) {
-                last_sender_ = mailbox_.front().first;
-                auto msg = std::move(mailbox_.front().second);
-                mailbox_.erase(mailbox_.begin());
-                return msg;
-            }
+            if (auto got = take_mailbox_locked_())
+                return got;
         }
         return std::nullopt;
     }
 
-    std::string last_sender() const { return last_sender_; }
-    std::size_t mailbox_size() const { return mailbox_.size(); }
+    std::string last_sender() const {
+        std::lock_guard<std::mutex> lk(mailbox_mu_);
+        return last_sender_;
+    }
+    std::size_t mailbox_size() const {
+        std::lock_guard<std::mutex> lk(mailbox_mu_);
+        return mailbox_.size();
+    }
 
     static void register_session(const std::string& id, CompilerService* svc) {
         std::scoped_lock lk(registry_mtx());
@@ -13672,6 +13670,18 @@ public:
 
     // ── Messaging (P14) ───────────────────────────────────────
     int wake_eventfd_ = -1;
+    // Issue #5507: push_message runs on the sender's thread while the owner
+    // pops on its own; the mutex also guards last_sender_.
+    std::optional<std::string> take_mailbox_locked_() {
+        std::lock_guard<std::mutex> lk(mailbox_mu_);
+        if (mailbox_.empty())
+            return std::nullopt;
+        last_sender_ = mailbox_.front().first;
+        auto msg = std::move(mailbox_.front().second);
+        mailbox_.erase(mailbox_.begin());
+        return msg;
+    }
+    mutable std::mutex mailbox_mu_;
     std::vector<std::pair<std::string, std::string>> mailbox_; // (sender, msg)
     std::string last_sender_;
     std::string session_id_;

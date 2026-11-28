@@ -132,9 +132,19 @@ extern ResetArenaFn g_reset_arena;
 // Returns the response body, or "" when the hook cannot run, the body is
 // empty, or the transfer fails. An empty return falls through to the
 // synchronous path.
-using HttpPostAsyncFn = std::string (*)(const std::string& url, const std::string& body,
-                                        const std::string& auth, long timeout_sec);
+// Issue #5506: nullopt = the async face did not run (fall back to the
+// synchronous path); an engaged value IS the POST result, so a transport
+// failure never becomes a second POST.
+using HttpPostAsyncFn = std::optional<std::string> (*)(const std::string& url,
+                                                      const std::string& body,
+                                                      const std::string& auth, long timeout_sec);
 extern HttpPostAsyncFn g_http_post_async;
+
+// Issue #5506: wake a fiber parked by a worker thread through the scheduler's
+// offload completion channel. A raw fiber eventfd can be closed by
+// on_fiber_done before the worker's write lands.
+using OffloadCompletionFn = void (*)(std::uint64_t fiber_id, std::uint64_t wait_gen);
+extern OffloadCompletionFn g_post_offload_completion;
 
 // Issue #4053 / #2869 / #4054: denseness body mutex unlock across wait/yield.
 // Soft Ready (#4048) holds the denseness body mutex for the entire
@@ -316,6 +326,9 @@ extern ResetMetricsFn g_reset_scheduler_metrics;
 // nullptr when not in serve-async mode.
 using FiberSetAffinityFn = void (*)(int worker_id);
 extern FiberSetAffinityFn g_fiber_set_affinity;
+// Issue #5508: number of scheduler workers when the serve bridge is installed
+// (0 = no scheduler / unknown). A pin id must be below it.
+extern int g_fiber_worker_count;
 
 // GC root flush — set by serve_async.cpp (P2 Phase 2).
 // Each evaluator registers a callback that fills a GCRootSet

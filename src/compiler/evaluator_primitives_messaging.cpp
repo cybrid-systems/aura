@@ -3039,6 +3039,12 @@ void RegSplitParts::register_messaging_scheduler_primitives(PrimRegistrar add, E
                                    auto wid = static_cast<int>(as_int(a[0]));
                                    if (wid < 0)
                                        return make_bool(false);
+                                   // Issue #5508: an id past the worker count
+                                   // must be #f; the next fiber:spawn inherits
+                                   // the affinity and would index workers_.
+                                   if (aura::messaging::g_fiber_worker_count > 0 &&
+                                       wid >= aura::messaging::g_fiber_worker_count)
+                                       return make_bool(false);
                                    if (aura::messaging::g_fiber_set_affinity) {
                                        aura::messaging::g_fiber_set_affinity(wid);
                                        return make_bool(true);

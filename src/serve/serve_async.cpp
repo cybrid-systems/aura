@@ -90,6 +90,21 @@ static std::string fmt_val(const EvalValue& v, aura::compiler::CompilerService& 
 
 namespace {
 
+// Issue #5506: the one serve scheduler the async http-post completion posts to.
+static aura::serve::Scheduler* g_async_offload_sched_5506 = nullptr;
+
+// Issue #5507: the stdin deque, the eof flag and the session map are shared by
+// the stdin fiber and the session fibers (each on an arbitrary worker). Every
+// access below takes the matching mutex; no lock is held across a yield or a
+// service call.
+static std::mutex g_serve_stdin_mu_5507;
+static std::mutex g_serve_sessions_mu_5507;
+
+static bool stdin_eof_read_5507(bool* eof) {
+    std::lock_guard<std::mutex> lk(g_serve_stdin_mu_5507);
+    return eof != nullptr && *eof;
+}
+
     // Issue #4698: the session Evaluator that owns the pending fiber body
     // closure. The fiber:spawn primitive evaluates the body closure on the
     // session Evaluator, so the pending-body pin (the tree-walker reclaim
@@ -248,6 +263,42 @@ static std::string http_post_in_process(const std::string& url, const std::strin
     c.slist_free_all(headers);
     c.easy_cleanup(curl);
     return res == CURLE_OK ? response : std::string{};
+}
+
+// Issue #5506: one async http-post wait for both serve faces. The worker
+// publishes completion through the scheduler's offload channel (never a raw
+// fiber eventfd: on_fiber_done closes it and the fd number gets reused), and
+// the fiber re-checks the flag on every wake. A stdin broadcast can then
+// neither return a result the worker has not written nor fall through to the
+// synchronous POST. BlockingIO keeps the stdin broadcast from requeueing the
+// park in the first place.
+static std::optional<std::string> http_post_async_wait_5506(const std::string& url,
+                                                            const std::string& body,
+                                                            const std::string& auth,
+                                                            long timeout_sec) {
+    auto* fiber = aura::serve::g_current_fiber;
+    if (!fiber)
+        return std::nullopt;
+    if (!aura::messaging::g_post_offload_completion) {
+        // No completion channel: run in-process on this fiber (the pre-async
+        // behaviour) instead of parking with no waker.
+        return http_post_in_process(url, body, auth, timeout_sec);
+    }
+    auto done = std::make_shared<std::atomic<bool>>(false);
+    auto result = std::make_shared<std::string>();
+    const std::uint64_t fiber_id = fiber->id();
+    const std::uint64_t wait_gen = fiber->bump_wait_generation();
+    std::thread([fiber_id, wait_gen, url, body, auth, timeout_sec, result, done]() {
+        *result = http_post_in_process(url, body, auth, timeout_sec);
+        done->store(true, std::memory_order_release);
+        aura::messaging::g_post_offload_completion(fiber_id, wait_gen);
+    }).detach();
+    while (!done->load(std::memory_order_acquire)) {
+        fiber->set_state(aura::serve::FiberState::Waiting);
+        aura::serve::Fiber::yield(aura::serve::YieldReason::BlockingIO);
+    }
+    fiber->set_state(aura::serve::FiberState::Running);
+    return std::move(*result);
 }
 
 // Issue #4079: display/newline fprintf + fflush, then std::println, leaves
@@ -489,6 +540,8 @@ namespace {
     }
 
     std::string take_session_line(std::deque<std::string>& stdin_lines, std::string_view sid) {
+        // Issue #5507: the stdin fiber pushes from another worker.
+        std::lock_guard<std::mutex> lk(g_serve_stdin_mu_5507);
         for (auto it = stdin_lines.begin(); it != stdin_lines.end(); ++it) {
             if (!line_for_session(*it, sid))
                 continue;
@@ -507,6 +560,8 @@ namespace {
     // consumes it as the following exec. Enqueue the parked session on
     // its worker directly once the line is in the deque.
     void wake_waiting_session_fibers(SessionMap& sessions, Scheduler& sched) {
+        // Issue #5507: the map is shared with the session fibers.
+        std::lock_guard<std::mutex> lk(g_serve_sessions_mu_5507);
         for (auto& [id, sess] : sessions) {
             (void)id;
             Fiber* f = sess ? sess->fiber : nullptr;
@@ -578,7 +633,10 @@ namespace {
                 // Skip comment, blank, and empty lines
                 auto s = line.find_first_not_of(" \t\r\n");
                 if (s != std::string::npos && line[s] != ';') {
-                    stdin_lines.push_back(std::move(line));
+                    {
+                        std::lock_guard<std::mutex> lk(g_serve_stdin_mu_5507);
+                        stdin_lines.push_back(std::move(line));
+                    }
                     pushed = true;
                 }
                 buf.erase(0, nl + 1);
@@ -604,7 +662,10 @@ namespace {
 #if AURA_HAVE_EPOLL
                 ::epoll_ctl(sched.epoll_fd(), EPOLL_CTL_DEL, STDIN_FILENO, nullptr);
 #endif
-                stdin_eof = true;
+                {
+                    std::lock_guard<std::mutex> lk(g_serve_stdin_mu_5507);
+                    stdin_eof = true;
+                }
                 wake_waiting_session_fibers(sessions, sched);
                 break;
             }
@@ -782,6 +843,9 @@ namespace {
         };
 
         // Fiber affinity — pin current fiber to a specific worker (P2)
+        // Issue #5508: a pinned id must name a real worker. spawn_with_affinity
+        // inherits this id, and an unchecked 99 indexed workers_[99].
+        aura::messaging::g_fiber_worker_count = sched.num_workers();
         aura::messaging::g_fiber_set_affinity = [](int worker_id) {
             auto fb = aura::serve::g_current_fiber;
             if (fb) {
@@ -800,35 +864,16 @@ namespace {
         // ahead of yield (EPOLLET: write-before-park loses the edge). Always
         // drain eventfd after wake so a leftover counter cannot confuse the next
         // wait on this denseness fiber / recycled wake path.
+        g_async_offload_sched_5506 = &sched;
+        aura::messaging::g_post_offload_completion = [](std::uint64_t fiber_id,
+                                                        std::uint64_t wait_gen) {
+            if (g_async_offload_sched_5506 != nullptr)
+                g_async_offload_sched_5506->post_offload_completion(fiber_id, wait_gen);
+        };
         aura::messaging::g_http_post_async = [](const std::string& url, const std::string& body,
                                                 const std::string& auth,
-                                                long timeout_sec) -> std::string {
-            auto* fiber = aura::serve::g_current_fiber;
-            if (!fiber)
-                return {};
-            auto evfd = fiber->eventfd();
-            if (evfd < 0)
-                return {};
-
-            auto result = std::make_shared<std::string>();
-            std::thread t([evfd, url, body, auth, timeout_sec, result]() {
-                *result = http_post_in_process(url, body, auth, timeout_sec);
-                uint64_t v = 1;
-                ::write(evfd, &v, sizeof(v));
-            });
-            t.detach();
-
-            aura::serve::g_current_fiber->set_state(aura::serve::FiberState::Waiting);
-            uint64_t primed = 0;
-            const ssize_t early = ::read(evfd, &primed, sizeof(primed));
-            if (early != static_cast<ssize_t>(sizeof(primed))) {
-                aura::serve::Fiber::yield();
-                uint64_t val = 0;
-                while (::read(evfd, &val, sizeof(val)) > 0) {
-                }
-            }
-            aura::serve::g_current_fiber->set_state(aura::serve::FiberState::Running);
-            return std::move(*result);
+                                                long timeout_sec) -> std::optional<std::string> {
+            return http_post_async_wait_5506(url, body, auth, timeout_sec);
         };
     }
 
@@ -984,7 +1029,7 @@ namespace {
         while (sess.active) {
             std::string sl = take_session_line(stdin_lines, nsid);
             if (sl.empty()) {
-                if (stdin_eof)
+                if (stdin_eof_read_5507(&stdin_eof))
                     break;
                 // Issue #4079: same-turn reader push vs park.
                 aura::serve::g_current_fiber->set_state(aura::serve::FiberState::Waiting);
@@ -1128,7 +1173,7 @@ namespace {
                 }
 
                 // Nothing to do
-                if (stdin_eof)
+                if (stdin_eof_read_5507(&stdin_eof))
                     break;
                 // Issue #4079: epoll wakes this fiber before the
                 // stdin reader pushes. Park only after a second
@@ -1276,7 +1321,10 @@ namespace {
                                      "\"status\":\"error\",\"msg\":\"missing name\"}}",
                                      json_escape(sid));
                         std::fflush(stdout);
-                    } else if (sessions.count(name) > 0) {
+                    } else if ([&] {
+                                   std::lock_guard<std::mutex> lk(g_serve_sessions_mu_5507);
+                                   return sessions.count(name) > 0;
+                               }()) {
                         // Already exists — ok (sync-style activate)
                         std::println("{{\"session\":\"{}\","
                                      "\"status\":\"ok\",\"name\":\"{}\"}}",
@@ -1300,22 +1348,25 @@ namespace {
                     // does not retarget a later unscoped line. Do not erase a
                     // Session here — its fiber holds a Session&.
                     std::string body;
-                    body.reserve(64 + sessions.size() * 16);
-                    body += "{\"session\":\"";
-                    body += json_escape(sid);
-                    body += "\",\"status\":\"ok\",\"sessions\":[";
-                    bool first_name = true;
-                    for (const auto& [id, sp] : sessions) {
-                        if (!sp || !sp->active)
-                            continue;
-                        if (!first_name)
-                            body += ',';
-                        first_name = false;
-                        body += '"';
-                        body += json_escape(id);
-                        body += '"';
+                    {
+                        std::lock_guard<std::mutex> lk(g_serve_sessions_mu_5507);
+                        body.reserve(64 + sessions.size() * 16);
+                        body += "{\"session\":\"";
+                        body += json_escape(sid);
+                        body += "\",\"status\":\"ok\",\"sessions\":[";
+                        bool first_name = true;
+                        for (const auto& [id, sp] : sessions) {
+                            if (!sp || !sp->active)
+                                continue;
+                            if (!first_name)
+                                body += ',';
+                            first_name = false;
+                            body += '"';
+                            body += json_escape(id);
+                            body += '"';
+                        }
+                        body += "],\"active\":\"default\"}";
                     }
-                    body += "],\"active\":\"default\"}";
                     emit_status_line(std::move(body));
                 } else {
                     std::println("{{\"session\":\"{}\",\"status\":\"error\",\"msg\":\"unknown "
@@ -1328,9 +1379,15 @@ namespace {
                 auto target = json_field(line, "target");
                 auto data = json_field(line, "data");
                 if (!target.empty() && !data.empty()) {
-                    auto it = sessions.find(target);
-                    if (it != sessions.end() && it->second->active) {
-                        it->second->mailbox.push(data);
+                    Session* target_sess = nullptr;
+                    {
+                        std::lock_guard<std::mutex> lk(g_serve_sessions_mu_5507);
+                        auto it = sessions.find(target);
+                        if (it != sessions.end() && it->second && it->second->active)
+                            target_sess = it->second.get();
+                    }
+                    if (target_sess != nullptr) {
+                        target_sess->mailbox.push(data);
                         std::println("{{\"session\":\"{}\",\"status\":\"sent\",\"target\":\"{}\"}}",
                                      json_escape(sid), json_escape(target));
                     } else {
@@ -1441,7 +1498,7 @@ void run_serve_async(int num_workers) {
 
     std::string active_session = "default";
     {
-        auto& sess = sessions["default"];
+        std::unique_ptr<Session>& sess = sessions["default"]; // setup: single-threaded
         sess = std::make_unique<Session>();
         sess->id = "default";
         sess->service.set_session_id("default");
@@ -1455,8 +1512,10 @@ void run_serve_async(int num_workers) {
     // Soft shared graph: named-session exec uses default CompilerService.
     auto cs_for = [&sessions,
                    soft_shared_graph](Session& sess) -> aura::compiler::CompilerService& {
-        if (soft_shared_graph)
+        if (soft_shared_graph) {
+            std::lock_guard<std::mutex> lk(g_serve_sessions_mu_5507);
             return sessions.at("default")->service;
+        }
         return sess.service;
     };
 
@@ -1476,36 +1535,42 @@ void run_serve_async(int num_workers) {
         });
     };
     if (gc_collect) {
-        register_session_root(*sessions["default"], 0);
+        register_session_root(*sessions["default"], 0); // setup: single-threaded
     }
 
     // Register / create named session (Soft: alias CS to default).
     auto emplace_named_session = [&](const std::string& name) -> bool {
-        if (sessions.count(name) > 0)
-            return false;
-        auto [it, created] = sessions.try_emplace(name, std::make_unique<Session>());
-        if (!created)
-            return false;
-        it->second->id = name;
-        it->second->service.set_session_id(name);
-        it->second->service.set_workspace_tree(shared_workspace_tree);
+        Session* ns = nullptr;
+        {
+            std::lock_guard<std::mutex> lk(g_serve_sessions_mu_5507);
+            if (sessions.count(name) > 0)
+                return false;
+            auto [it, created] = sessions.try_emplace(name, std::make_unique<Session>());
+            if (!created)
+                return false;
+            ns = it->second.get();
+        }
+        ns->id = name;
+        ns->service.set_session_id(name);
+        ns->service.set_workspace_tree(shared_workspace_tree);
         if (soft_shared_graph) {
+            std::lock_guard<std::mutex> lk(g_serve_sessions_mu_5507);
             aura::compiler::CompilerService::register_session(name,
                                                               &sessions.at("default")->service);
             // Soft alias — do not register an extra GC root for the unused CS.
         } else {
-            aura::compiler::CompilerService::register_session(name, &it->second->service);
+            aura::compiler::CompilerService::register_session(name, &ns->service);
             // Issue #4264: own-service (non-shared) sessions bind the same
             // std prelude as oneshot; shared-graph sessions already inherited
             // it through the default service above.
-            load_soft_session_prelude(it->second->service);
+            load_soft_session_prelude(ns->service);
             if (gc_collect) {
                 int wid = static_cast<int>(std::hash<std::string>{}(name) % 997) + 1;
-                register_session_root(*it->second, wid);
+                register_session_root(*ns, wid);
             }
         }
-        it->second->fiber = spawn_named_session_fiber(sched, stdin_eof, stdin_lines, cs_for,
-                                                      soft_shared_graph, name, *it->second);
+        ns->fiber = spawn_named_session_fiber(sched, stdin_eof, stdin_lines, cs_for,
+                                              soft_shared_graph, name, *ns);
         return true;
     };
 
@@ -1648,35 +1713,16 @@ void run_serve_async_bench(const std::string& file_path, int num_workers) {
     // ahead of yield (EPOLLET: write-before-park loses the edge). Always
     // drain eventfd after wake so a leftover counter cannot confuse the next
     // wait on this denseness fiber / recycled wake path.
+    g_async_offload_sched_5506 = &sched;
+    aura::messaging::g_post_offload_completion = [](std::uint64_t fiber_id,
+                                                    std::uint64_t wait_gen) {
+        if (g_async_offload_sched_5506 != nullptr)
+            g_async_offload_sched_5506->post_offload_completion(fiber_id, wait_gen);
+    };
     aura::messaging::g_http_post_async = [](const std::string& url, const std::string& body,
                                             const std::string& auth,
-                                            long timeout_sec) -> std::string {
-        auto* fiber = aura::serve::g_current_fiber;
-        if (!fiber)
-            return {};
-        auto evfd = fiber->eventfd();
-        if (evfd < 0)
-            return {};
-
-        auto result = std::make_shared<std::string>();
-        std::thread t([evfd, url, body, auth, timeout_sec, result]() {
-            *result = http_post_in_process(url, body, auth, timeout_sec);
-            uint64_t v = 1;
-            ::write(evfd, &v, sizeof(v));
-        });
-        t.detach();
-
-        aura::serve::g_current_fiber->set_state(aura::serve::FiberState::Waiting);
-        uint64_t primed = 0;
-        const ssize_t early = ::read(evfd, &primed, sizeof(primed));
-        if (early != static_cast<ssize_t>(sizeof(primed))) {
-            aura::serve::Fiber::yield();
-            uint64_t val = 0;
-            while (::read(evfd, &val, sizeof(val)) > 0) {
-            }
-        }
-        aura::serve::g_current_fiber->set_state(aura::serve::FiberState::Running);
-        return std::move(*result);
+                                            long timeout_sec) -> std::optional<std::string> {
+        return http_post_async_wait_5506(url, body, auth, timeout_sec);
     };
 
     // 3. Create default session

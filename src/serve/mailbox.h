@@ -5,6 +5,8 @@
 #include "fiber.h"
 #include <string>
 #include <deque>
+#include <mutex>
+#include <optional>
 #include <utility>
 #include <unistd.h>
 #include <poll.h>
@@ -21,9 +23,14 @@ public:
     // Attach to an owning fiber. Must be called before pop(wait=true).
     void attach(Fiber* owner) { owner_ = owner; }
 
-    // Push a message and wake the waiting fiber (if any)
+    // Push a message and wake the waiting fiber (if any).
+    // Issue #5507: session-send pushes from another session's worker while
+    // the owner pops; the deque needs the lock (the wake stays outside it).
     void push(std::string msg) {
-        queue_.push_back(std::move(msg));
+        {
+            std::lock_guard<std::mutex> lk(mu_);
+            queue_.push_back(std::move(msg));
+        }
         notify_owner();
     }
 
@@ -36,19 +43,32 @@ public:
     // timeout_ms = -1 means wait forever (if wait=true).
     std::string pop(bool wait, int timeout_ms) { return pop_impl(wait, timeout_ms); }
 
-    size_t size() const { return queue_.size(); }
-    bool empty() const { return queue_.empty(); }
+    size_t size() const {
+        std::lock_guard<std::mutex> lk(mu_);
+        return queue_.size();
+    }
+    bool empty() const {
+        std::lock_guard<std::mutex> lk(mu_);
+        return queue_.empty();
+    }
 
 private:
+    mutable std::mutex mu_;
     std::deque<std::string> queue_;
     Fiber* owner_ = nullptr;
 
+    std::optional<std::string> take_locked_() {
+        std::lock_guard<std::mutex> lk(mu_);
+        if (queue_.empty())
+            return std::nullopt;
+        auto msg = std::move(queue_.front());
+        queue_.pop_front();
+        return msg;
+    }
+
     std::string pop_impl(bool wait, int timeout_ms) {
-        if (!queue_.empty()) {
-            auto msg = std::move(queue_.front());
-            queue_.pop_front();
-            return msg;
-        }
+        if (auto got = take_locked_())
+            return std::move(*got);
         if (wait && g_current_fiber && owner_) {
             auto evfd = owner_->eventfd();
             if (evfd >= 0 && timeout_ms != 0) {
@@ -69,20 +89,14 @@ private:
                     return {};
                 }
                 // Check queue after poll
-                if (!queue_.empty()) {
-                    auto msg = std::move(queue_.front());
-                    queue_.pop_front();
-                    return msg;
-                }
+                if (auto got = take_locked_())
+                    return std::move(*got);
             }
             // Fallback: yield and wait (for scheduler-based wake)
             g_current_fiber->set_state(FiberState::Waiting);
             Fiber::yield();
-            if (!queue_.empty()) {
-                auto msg = std::move(queue_.front());
-                queue_.pop_front();
-                return msg;
-            }
+            if (auto got = take_locked_())
+                return std::move(*got);
         }
         return {};
     }

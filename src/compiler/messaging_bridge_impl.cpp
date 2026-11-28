@@ -23,6 +23,7 @@ std::function<aura::messaging::SessionCreateFn>* aura::messaging::g_session_crea
 aura::messaging::SessionListFn aura::messaging::g_session_list = nullptr;
 aura::messaging::ResetArenaFn aura::messaging::g_reset_arena = nullptr;
 aura::messaging::HttpPostAsyncFn aura::messaging::g_http_post_async = nullptr;
+aura::messaging::OffloadCompletionFn aura::messaging::g_post_offload_completion = nullptr;
 aura::messaging::DensenessBodyUnlockFn aura::messaging::g_denseness_body_unlock_for_wait = nullptr;
 aura::messaging::DensenessBodyRelockFn aura::messaging::g_denseness_body_relock_after_wait =
     nullptr;
@@ -66,6 +67,7 @@ bool aura::compiler::stats_registration_suppressed() {
 aura::messaging::GetMetricsFn aura::messaging::g_get_scheduler_metrics;
 aura::messaging::ResetMetricsFn aura::messaging::g_reset_scheduler_metrics;
 aura::messaging::FiberSetAffinityFn aura::messaging::g_fiber_set_affinity = nullptr;
+int aura::messaging::g_fiber_worker_count = 0;
 aura::messaging::GCRootFlushFn aura::messaging::g_gc_flush_root_set;
 aura::messaging::GCCollectFn aura::messaging::g_gc_collect;
 aura::messaging::HeapMutexFn aura::messaging::g_heap_mutex;
