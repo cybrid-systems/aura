@@ -314,6 +314,13 @@ _gate.set_commands(lint=cmd_lint, format_cmd=cmd_format)
 # default secret store. An empty 0700 directory keeps `std/llm` on the
 # no-key path even on a machine that has configured the store.
 _TEST_SECRET_STORE = tempfile.mkdtemp(prefix="aura-test-secret-store-")
+# Issue #5524 hardening: the bus persists task/gate state NEXT TO its socket
+# under XDG_RUNTIME_DIR/<workspace>.sock.{tasks,gates}. The suite's bus tests
+# use fixed workspace ids, so without a per-run runtime dir a failed earlier
+# run left a task board whose global budget was already spent and every later
+# run failed at claim ("global budget exhausted"). One fresh dir per build.py
+# invocation makes the whole suite hermetic.
+_TEST_XDG_RUNTIME = tempfile.mkdtemp(prefix="aura-test-xdg-")
 
 
 def _aura_test_env(extra: dict | None = None) -> dict:
@@ -345,6 +352,8 @@ def _aura_test_env(extra: dict | None = None) -> dict:
     # Issue #5447: an empty store wins over the operator's real store; an
     # explicit `extra` entry still overrides this default.
     env["AURA_SECRET_STORE"] = _TEST_SECRET_STORE
+    if not str(env.get("XDG_RUNTIME_DIR", "")).strip():
+        env["XDG_RUNTIME_DIR"] = _TEST_XDG_RUNTIME
     if not str(env.get("AURA_SANDBOX", "")).strip():
         env["AURA_SANDBOX"] = "off"
     if not str(env.get("AURA_PIPELINE_STRICT", "")).strip():

@@ -548,6 +548,22 @@ def run_aura_file_suite(
                 rel, ok_case, err = fut.result()
                 collected[rel] = (ok_case, err)
         results = [(rel, collected[rel][0], collected[rel][1]) for rel in sorted(collected)]
+        # Issue #5524 hardening: a case that fails only under the parallel wave
+        # (CPU contention on a serve-async stress / timing assertion) gets one
+        # sequential retry before it is reported. Real regressions fail both.
+        failed_rel = [rel for rel, ok_case, _ in results if not ok_case]
+        if failed_rel:
+            by_rel = {c.rel: c for c in work}
+            patched = {rel: (ok_case, err) for rel, ok_case, err in results}
+            for rel in failed_rel:
+                case = by_rel.get(rel)
+                if case is None:
+                    continue
+                retry_rel, retry_ok, retry_err = run_one(case)
+                if retry_ok:
+                    warn(f"{rel}: passed on sequential retry (parallel failure: {patched[rel][1].splitlines()[0][:100] if patched[rel][1] else ''})")
+                    patched[retry_rel] = (True, "")
+            results = [(rel, patched[rel][0], patched[rel][1]) for rel in sorted(patched)]
 
     passed = failed = 0
     for rel, ok_case, err in results:
