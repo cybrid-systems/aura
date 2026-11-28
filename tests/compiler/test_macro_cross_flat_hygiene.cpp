@@ -1146,7 +1146,7 @@ static void ac4687_source_both_splice_sites() {
     CHECK(mex.find("splice_expansion_into_live_slot(flat, new_root, id, expanded,") !=
               std::string::npos,
           "4687: macro_expand_all_body splices into the live slot");
-    CHECK(eef.find("splice_expansion_into_live_slot(flat, flat.root, call_id, expanded)") !=
+    CHECK(eef.find("splice_expansion_into_live_slot(flat, flat.root, call_id, expanded,") !=
               std::string::npos,
           "4687: reexpand_call splices into the live slot");
     CHECK(mex.find("flat.set_child(parent_id, ci, expanded)") == std::string::npos,

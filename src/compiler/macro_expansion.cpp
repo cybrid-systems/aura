@@ -4075,15 +4075,36 @@ static void splice_child_keep_caller_edge(aura::ast::FlatAST& flat, aura::ast::N
 // Call carries a preserved caller edge (#4309/#4649), so the
 // parent_of == NULL skip cannot see it; a per-call tree walk would be
 // O(live tree) per dead node on truncation-heavy flats.
+// Issue #5530: post_mutation_macro_reexpand shares one map across every
+// splice of a mutation, so this walk runs once per mutation, not once
+// per Call.
 using LiveSlotCache = std::unordered_map<aura::ast::NodeId, aura::ast::NodeId>;
+
+// Issue #5530: full-walk count. The reexpand AC observes one fill per
+// mutation; macro_expand_all still fills once per pass on its own map.
+std::atomic<std::uint64_t> g_fill_live_slot_cache_calls{0};
+
+extern "C" std::uint64_t aura_test_fill_live_slot_cache_calls_for_test(void) noexcept {
+    return g_fill_live_slot_cache_calls.load(std::memory_order_relaxed);
+}
+extern "C" void aura_test_reset_fill_live_slot_cache_calls_for_test(void) noexcept {
+    g_fill_live_slot_cache_calls.store(0, std::memory_order_relaxed);
+}
 
 // Full live-tree walk: record the first live parent of every child.
 static void fill_live_slot_cache(aura::ast::FlatAST& flat, aura::ast::NodeId live_root,
                                  LiveSlotCache& cache) {
     using namespace aura::ast;
+    g_fill_live_slot_cache_calls.fetch_add(1, std::memory_order_relaxed);
     cache.clear();
-    if (live_root == NULL_NODE || live_root >= flat.size() || !flat.is_live_node(live_root))
+    // Empty means "not built yet" (find_live_child_slot_parent). A
+    // childless root would stay empty and refill on every Call.
+    // NULL_NODE is never a recorded child.
+    auto seal = [&] { cache.emplace(NULL_NODE, NULL_NODE); };
+    if (live_root == NULL_NODE || live_root >= flat.size() || !flat.is_live_node(live_root)) {
+        seal();
         return;
+    }
     std::vector<std::uint8_t> seen(flat.size(), 0);
     std::vector<NodeId> stack;
     auto push_once = [&](NodeId id) {
@@ -4104,6 +4125,7 @@ static void fill_live_slot_cache(aura::ast::FlatAST& flat, aura::ast::NodeId liv
             push_once(cid);
         }
     }
+    seal();
 }
 
 // Incremental cache update after a splice: everything under the newly
@@ -4162,12 +4184,18 @@ static aura::ast::NodeId find_live_child_slot_parent(aura::ast::FlatAST& flat,
     // The per-pass map is built once (and updated on every splice) so
     // the cost is O(live tree) per pass, not per Call.
     if (cache != nullptr) {
+        // Empty means this map has not been walked yet. fill seals it
+        // (Issue #5530) so a childless root does not refill per Call.
         if (cache->empty())
             fill_live_slot_cache(flat, live_root, *cache);
         const auto it = cache->find(child);
-        return it == cache->end() ? NULL_NODE : it->second;
+        if (it == cache->end() || it->second == NULL_NODE)
+            return NULL_NODE;
+        return it->second;
     }
-    // One-shot walk for callers without a pass cache (reexpand).
+    // One-shot walk for a caller that did not pass a pass cache.
+    // post_mutation_macro_reexpand passes one map for the mutation
+    // (Issue #5530); this branch stays for other one-shot callers.
     LiveSlotCache local;
     fill_live_slot_cache(flat, live_root, local);
     const auto it = local.find(child);

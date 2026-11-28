@@ -15201,22 +15201,32 @@ std::size_t Evaluator::post_mutation_macro_reexpand(aura::ast::FlatAST& flat,
     // set — we may visit nodes that aren't actually affected
     // by the macro, but the re-expansion is idempotent for
     // already-fresh gensym (fresh clone each time under hygiene).
+    // Issue #5530: one visit per node. target-inside-parent used to
+    // push every descendant twice, so reexpand_call cloned the same
+    // Call twice. The parent climb still pins ancestors only — it
+    // does not pull in their other children. Both subtree walks run
+    // before the climb, so a duplicate root already owns its
+    // descendants.
     std::vector<NodeId> affected;
+    std::unordered_set<NodeId> affected_set;
     auto add_subtree = [&](NodeId root_id) {
         if (root_id == NULL_NODE || root_id >= flat.size())
             return;
+        if (!affected_set.insert(root_id).second)
+            return;
         affected.push_back(root_id);
-        // BFS for descendants
         std::vector<NodeId> frontier{root_id};
         while (!frontier.empty()) {
             std::vector<NodeId> next;
             for (auto n : frontier) {
                 auto v = flat.get(n);
                 for (auto c : v.children) {
-                    if (c != NULL_NODE && c < flat.size()) {
-                        affected.push_back(c);
-                        next.push_back(c);
-                    }
+                    if (c == NULL_NODE || c >= flat.size())
+                        continue;
+                    if (!affected_set.insert(c).second)
+                        continue;
+                    affected.push_back(c);
+                    next.push_back(c);
                 }
             }
             frontier = std::move(next);
@@ -15231,7 +15241,8 @@ std::size_t Evaluator::post_mutation_macro_reexpand(aura::ast::FlatAST& flat,
     NodeId climb = rec.target_node;
     for (int i = 0; i < 256 && climb != NULL_NODE && climb < flat.size(); ++i) {
         if (auto p = flat.parent_of(climb); p != NULL_NODE && p < flat.size()) {
-            affected.push_back(p);
+            if (affected_set.insert(p).second)
+                affected.push_back(p);
             climb = p;
         } else {
             break;
@@ -15243,7 +15254,6 @@ std::size_t Evaluator::post_mutation_macro_reexpand(aura::ast::FlatAST& flat,
     // (call sites may lie outside the local dirty cone).
     std::unordered_set<std::string> macros_body_dirty;
     {
-        std::unordered_set<NodeId> affected_set(affected.begin(), affected.end());
         for (const auto& [name, md] : macros_) {
             if (md.body_id != NULL_NODE && affected_set.count(md.body_id) != 0)
                 macros_body_dirty.insert(name);
@@ -15256,6 +15266,12 @@ std::size_t Evaluator::post_mutation_macro_reexpand(aura::ast::FlatAST& flat,
                 macros_body_dirty.insert(std::string(pool.resolve(v.sym_id)));
         }
     }
+
+    // Issue #5530: one child -> live-parent map for every splice this
+    // mutation performs (the local cone and the workspace-wide walk).
+    // The helper fills it on the first lookup and updates it on each
+    // splice, so fill_live_slot_cache runs once instead of once per Call.
+    std::unordered_map<NodeId, NodeId> reexpand_live_slots;
 
     // Re-expand one Call site: clone + expand_inner + splice into parent.
     aura::ast::NodeId last_expanded = aura::ast::NULL_NODE;
@@ -15375,7 +15391,8 @@ std::size_t Evaluator::post_mutation_macro_reexpand(aura::ast::FlatAST& flat,
         // already spliced away), so parent_of alone is not the slot —
         // set_child on it left the clone's slot unexpanded. The caller
         // edge is preserved by the shared splice helper.
-        if (macro_exp::splice_expansion_into_live_slot(flat, flat.root, call_id, expanded))
+        if (macro_exp::splice_expansion_into_live_slot(flat, flat.root, call_id, expanded,
+                                                       &reexpand_live_slots))
             flat.mark_dirty_upward(expanded);
         last_expanded = expanded;
         return true;

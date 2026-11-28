@@ -18,7 +18,7 @@
       "path": "src/compiler/evaluator_eval_flat.cpp",
       "contains": [
         "Issue #4687",
-        "macro_exp::splice_expansion_into_live_slot(flat, flat.root, call_id, expanded)"
+        "macro_exp::splice_expansion_into_live_slot(flat, flat.root, call_id, expanded,"
       ]
     },
     {

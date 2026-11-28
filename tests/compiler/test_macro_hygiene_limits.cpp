@@ -3397,6 +3397,51 @@ static void ac4902_memo_reuse_under_restricted() {
     CHECK(after - before <= 2, "4902: call-site memo reused under Restricted (one clone, not 200)");
     reset_all();
 }
+
+// Issue #5530: fifty live macro calls, one mutation, one live-slot fill.
+extern "C" std::uint64_t aura_test_fill_live_slot_cache_calls_for_test(void) noexcept;
+extern "C" void aura_test_reset_fill_live_slot_cache_calls_for_test(void) noexcept;
+
+static void ac5530_one_fill_for_fifty_calls() {
+    std::println("\n--- #5530: 50 call sites fill the live-slot cache once ---");
+    reset_all();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define-hygienic-macro (m5530 x) (begin x))\")").has_value(),
+          "5530: macro set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "5530: eval-current registers the macro");
+    auto* ws = cs.evaluator().workspace_flat();
+    auto* pool = cs.evaluator().workspace_pool();
+    CHECK(ws != nullptr && pool != nullptr, "5530: workspace");
+    if (ws == nullptr || pool == nullptr)
+        return;
+    constexpr int kCalls = 50;
+    std::vector<aura::ast::NodeId> calls;
+    calls.reserve(static_cast<std::size_t>(kCalls));
+    const auto mname = pool->intern("m5530");
+    for (int i = 0; i < kCalls; ++i) {
+        const auto lit = ws->add_literal(i);
+        const auto callee = ws->add_variable(mname);
+        calls.push_back(ws->add_call(callee, std::span<const aura::ast::NodeId>(&lit, 1)));
+    }
+    const auto root = ws->add_begin(calls);
+    ws->root = root;
+    aura::ast::MutationRecord rec{};
+    rec.target_node = root;
+    rec.parent_id = aura::ast::NULL_NODE;
+    const auto eef = read_file("src/compiler/evaluator_eval_flat.cpp");
+    CHECK(eef.find("Issue #5530") != std::string::npos, "5530: reexpand cites the shared cache");
+    CHECK(eef.find("&reexpand_live_slots") != std::string::npos,
+          "5530: every splice receives the shared map");
+    CHECK(eef.find("affected_set.insert") != std::string::npos, "5530: affected dedups on insert");
+    aura_test_reset_fill_live_slot_cache_calls_for_test();
+    const auto n = cs.evaluator().post_mutation_macro_reexpand(*ws, *pool, rec);
+    const auto fills = aura_test_fill_live_slot_cache_calls_for_test();
+    std::println("  reexpanded={} fills={}", n, fills);
+    CHECK(n == static_cast<std::size_t>(kCalls), "5530: every call site re-expanded");
+    CHECK(fills == 1, "5530: fill_live_slot_cache ran once");
+    reset_all();
+}
+
 int run_test_macro_hygiene_limits() {
     std::println("=== Issue #2101: runtime hygiene depth/pass caps ===");
     ac1_runtime_cap_clamps();
@@ -3486,6 +3531,8 @@ int run_test_macro_hygiene_limits() {
     ac4390_legacy_eval_macro_denies_without_mse();
     std::println("\n=== Issue #4902: hygienic call memo under Restricted + MacroSelfEvo ===");
     ac4902_memo_reuse_under_restricted();
+    std::println("\n=== Issue #5530: one live-slot fill per mutation ===");
+    ac5530_one_fill_for_fifty_calls();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
