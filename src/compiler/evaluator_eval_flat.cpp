@@ -11034,11 +11034,10 @@ Evaluator::FlatStep Evaluator::eval_flat_on_closure(EvalFlatCursor& cur,
     return FlatStep::fall();
 }
 
-Evaluator::FlatStep Evaluator::eval_flat_on_primitive(EvalFlatCursor& cur,
-                                                      const aura::ast::NodeView& v,
-                                                      const Env& eval_env,
-                                                      const aura::ast::NodeView& callee,
-                                                      aura::ast::NodeId callee_id) {
+Evaluator::FlatStep
+Evaluator::eval_flat_on_primitive(EvalFlatCursor& cur, const aura::ast::NodeView& v,
+                                  const Env& eval_env, const aura::ast::NodeView& callee,
+                                  aura::ast::NodeId callee_id, const std::string* callee_name) {
     auto& f = cur.f;
     auto& p = cur.p;
     auto& current_env = cur.current_env;
@@ -11096,7 +11095,8 @@ Evaluator::FlatStep Evaluator::eval_flat_on_primitive(EvalFlatCursor& cur,
                 // environment lookup below handles missing
                 // names gracefully via nullopt.
                 std::optional<types::EvalValue> bound;
-                cname = std::string(p->resolve(callee.sym_id));
+                // Issue #5525: the caller already resolved this callee name.
+                cname = callee_name ? *callee_name : std::string(p->resolve(callee.sym_id));
                 if (!cname.empty()) {
                     bound = eval_env.lookup(cname);
                     // PrimitiveRef ⇒ unbound prim name (lookup fallback)
@@ -12957,11 +12957,18 @@ Evaluator::FlatStep Evaluator::eval_flat_on_call(EvalFlatCursor& cur, const aura
     }
     // Macro expansion: evaluate args, bind in env, evaluate body (produces template
     // data), then re-evaluate the data as code
+    // Issue #5525: resolve the callee name once per call. Fiber calls bypass
+    // the #4599 memo, so this path used to resolve for the macro probe and
+    // again for the special-form chain (and once more inside the primitive
+    // probe).
+    std::string callee_name;
+    if (callee.tag == aura::ast::NodeTag::Variable)
+        callee_name = std::string(p->resolve(callee.sym_id));
     // Issue #4599 follow-up: an empty registry cannot match.
     // Every call used to pay a pool resolve + std::string +
     // hash-table probe here before the prim/closure paths.
     if (callee.tag == aura::ast::NodeTag::Variable && !macros_.empty()) {
-        auto cname = std::string(p->resolve(callee.sym_id));
+        const std::string& cname = callee_name;
         auto macro_it = macros_.find(cname);
         if (macro_it != macros_.end()) {
             // Issue #4901: a procedure defined by an earlier
@@ -13061,7 +13068,7 @@ Evaluator::FlatStep Evaluator::eval_flat_on_call(EvalFlatCursor& cur, const aura
     // body is evaluated; if it returns an error, handler is evaluated with var
     // bound
     if (callee.tag == aura::ast::NodeTag::Variable) {
-        auto cname = std::string(p->resolve(callee.sym_id));
+        const std::string& cname = callee_name;
         // when: (when cond body...) — evaluate body only if cond is truthy
         {
             auto step = eval_flat_on_when(cur, v, eval_env, cname);
@@ -13157,7 +13164,7 @@ Evaluator::FlatStep Evaluator::eval_flat_on_call(EvalFlatCursor& cur, const aura
     // prim. Multi-frame load-sim patterns used `let take` and
     // silently returned empty instead of iterating.
     {
-        auto step = eval_flat_on_primitive(cur, v, eval_env, callee, callee_id);
+        auto step = eval_flat_on_primitive(cur, v, eval_env, callee, callee_id, &callee_name);
         if (step.kind == FlatStep::Kind::Cont)
             return FlatStep::cont();
         if (step.kind == FlatStep::Kind::Ret)

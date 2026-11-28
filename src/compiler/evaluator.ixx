@@ -7138,7 +7138,8 @@ private:
     [[nodiscard]] FlatStep eval_flat_on_primitive(EvalFlatCursor& cur, const aura::ast::NodeView& v,
                                                   const Env& eval_env,
                                                   const aura::ast::NodeView& callee,
-                                                  aura::ast::NodeId callee_id);
+                                                  aura::ast::NodeId callee_id,
+                                                  const std::string* callee_name = nullptr);
     [[nodiscard]] FlatStep eval_flat_on_and_or(EvalFlatCursor& cur, const aura::ast::NodeView& v,
                                                const Env& eval_env,
                                                const aura::ast::NodeView& callee);
