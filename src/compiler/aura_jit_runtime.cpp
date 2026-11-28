@@ -7004,18 +7004,53 @@ namespace {
     constexpr std::uint32_t kPairSlotFreeMax = 1024;
     thread_local PairSlot* t_pair_slot_free[kPairSlotFreeMax];
     thread_local std::uint32_t t_pair_slot_free_n = 0;
+    // Issue #5518: a single collection can free far more than 1024 slots
+    // (one per reclaimed pair). The TLS batch alone dropped the rest and
+    // the slab footprint grew 16 B per cons (1.6 GB at 10^8 cons). A shared
+    // pool behind the batch keeps every freed slot reusable; it only holds
+    // pointers to slabs that already exist, so it adds no allocation of
+    // its own.
+    std::mutex g_pair_slot_pool_mtx;
+    std::vector<PairSlot*> g_pair_slot_pool;
+    constexpr std::size_t kPairSlotPoolMax = 4u << 20;
+
+    void pair_slot_pool_put(PairSlot* const* slots, std::uint32_t n) {
+        if (n == 0)
+            return;
+        std::scoped_lock lock(g_pair_slot_pool_mtx);
+        if (g_pair_slot_pool.size() >= kPairSlotPoolMax)
+            return;
+        g_pair_slot_pool.insert(g_pair_slot_pool.end(), slots, slots + n);
+    }
+
+    std::uint32_t pair_slot_pool_get(PairSlot** out, std::uint32_t want) {
+        std::scoped_lock lock(g_pair_slot_pool_mtx);
+        const std::size_t n = std::min<std::size_t>(want, g_pair_slot_pool.size());
+        if (n == 0)
+            return 0;
+        std::copy(g_pair_slot_pool.end() - static_cast<std::ptrdiff_t>(n), g_pair_slot_pool.end(),
+                  out);
+        g_pair_slot_pool.resize(g_pair_slot_pool.size() - n);
+        return static_cast<std::uint32_t>(n);
+    }
 } // namespace
 
 extern "C" void aura_pair_slot_free(PairSlot* slot) {
     if (!slot)
         return;
-    if (t_pair_slot_free_n < kPairSlotFreeMax)
-        t_pair_slot_free[t_pair_slot_free_n++] = slot;
+    if (t_pair_slot_free_n >= kPairSlotFreeMax) {
+        pair_slot_pool_put(t_pair_slot_free, t_pair_slot_free_n);
+        t_pair_slot_free_n = 0;
+    }
+    t_pair_slot_free[t_pair_slot_free_n++] = slot;
 }
 
 extern "C" PairSlot* aura_pair_slot_take() {
-    if (t_pair_slot_free_n == 0)
-        return nullptr;
+    if (t_pair_slot_free_n == 0) {
+        t_pair_slot_free_n = pair_slot_pool_get(t_pair_slot_free, kPairSlotFreeMax);
+        if (t_pair_slot_free_n == 0)
+            return nullptr;
+    }
     return t_pair_slot_free[--t_pair_slot_free_n];
 }
 

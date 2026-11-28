@@ -323,13 +323,6 @@ static bool pair_gc_root_mode_5518() {
 }
 
 static bool jit_l1_enabled() {
-    // Issue #5518: L1 cell promotion is OFF in root mode. Turning it on
-    // restores arithmetic speed but disables the self-tail-call loop shape,
-    // so a long named-let loop recurses per iteration and exhausts the
-    // stack (1M cons crashed). Correctness first until the promotion and
-    // the root mirror are unified.
-    if (pair_gc_root_mode_5518())
-        return false;
     static const bool on = [] {
         const char* v = ::aura::config::raw(::aura::config::Key::AURA_JIT_L1);
         return !(v && v[0] == '0');
@@ -2002,7 +1995,14 @@ struct LLVMBuilder {
             // (float shadows reboxed), then one stub call.
             for (std::uint32_t i = 0; i < fn.local_count; ++i) {
                 auto* gep = irb->CreateGEP(llvm::Type::getInt64Ty(ctx), spill_buf, c64(i));
-                irb->CreateStore(load(i), gep);
+                // Issue #5518: a promoted cell's authoritative value is its
+                // alloca, not the tagged slot. Float cells are excluded from
+                // frame_deopt_ok, so this load is always a tagged i64.
+                if (is_pcell(i)) {
+                    irb->CreateStore(irb->CreateLoad(llvm::Type::getInt64Ty(ctx), pcells[i]), gep);
+                } else {
+                    irb->CreateStore(load(i), gep);
+                }
             }
             slots = spill_buf;
             nslots = n32(fn.local_count);
@@ -3663,7 +3663,10 @@ struct LLVMBuilder {
                 auto arg_count = inst.ops[1];
                 auto generic_apply = [&]() {
                     auto alloca_ty = llvm::ArrayType::get(llvm::Type::getInt64Ty(ctx), arg_count);
-                    auto args_arr = irb->CreateAlloca(alloca_ty);
+                    // Entry-block alloca: a call site inside a loop must not
+                    // grow the C stack on every iteration (found via the
+                    // pre-existing stack exhaustion on 1M-call loops).
+                    auto* args_arr = create_entry_alloca(alloca_ty, "apply_args");
                     // Inline args: locals[ops[0]+1] ... locals[ops[0]+arg_count]
                     for (uint32_t i = 0; i < arg_count; ++i) {
                         auto gep = irb->CreateGEP(llvm::Type::getInt64Ty(ctx), args_arr, c64(i));
@@ -3698,7 +3701,7 @@ struct LLVMBuilder {
                 auto arg_count = inst.ops[2];
                 auto generic_call = [&]() {
                     auto alloca_ty = llvm::ArrayType::get(llvm::Type::getInt64Ty(ctx), arg_count);
-                    auto args_arr = irb->CreateAlloca(alloca_ty);
+                    auto* args_arr = create_entry_alloca(alloca_ty, "call_args");
                     for (uint32_t i = 0; i < arg_count; ++i) {
                         auto gep = irb->CreateGEP(llvm::Type::getInt64Ty(ctx), args_arr, c64(i));
                         irb->CreateStore(load(arg_base + i), gep);
@@ -3782,7 +3785,16 @@ struct LLVMBuilder {
                         irb->CreateStore(loadf(inst.ops[1]), pcells[inst.ops[0]]);
                         return true;
                     }
-                    irb->CreateStore(load(inst.ops[1]), pcells[inst.ops[0]]);
+                    auto* pv = load(inst.ops[1]);
+                    irb->CreateStore(pv, pcells[inst.ops[0]]);
+                    // Issue #5518: a promoted cell holds a tagged value; the
+                    // root mirror must see it or a pair bound to a let cell
+                    // would be invisible to the mark.
+                    if (pair_root_arr && inst.ops[0] < pair_root_n) {
+                        auto* gep = irb->CreateConstInBoundsGEP2_64(pair_root_arr_ty, pair_root_arr,
+                                                                    0, inst.ops[0]);
+                        irb->CreateStore(pv, gep);
+                    }
                     return true;
                 }
                 // Issue #4600/#4606: the entry fn's define-cell binds (value
@@ -4227,7 +4239,7 @@ struct LLVMBuilder {
                     // We still encode the result as a pointer to the
                     // pair so existing pair-car/cdr code works.
                     auto* i64_ty = llvm::Type::getInt64Ty(ctx);
-                    auto* slot = irb->CreateAlloca(i64_ty);
+                    auto* slot = create_entry_alloca(i64_ty, "l2_pair_slot");
                     // Encode as a tagged pair ref. The lower 4 bits
                     // are 0b0001 (RefPair). Bits 2..5 = RefType=0 (Pair).
                     // We use the slot address with the RefPair tag.
@@ -4799,7 +4811,7 @@ struct LLVMBuilder {
                     auto* i64_ty = llvm::Type::getInt64Ty(ctx);
                     auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
                     auto* alloca_ty = llvm::ArrayType::get(i64_ty, n > 0 ? n : 1);
-                    auto* args_arr = irb->CreateAlloca(alloca_ty);
+                    auto* args_arr = create_entry_alloca(alloca_ty, "prim_args");
                     for (uint32_t i = 0; i < n; ++i) {
                         auto* slot_val =
                             (arg_base + i < fn.local_count) ? load(arg_base + i) : c64(0);
@@ -6129,10 +6141,14 @@ struct AuraJIT::Impl {
                 if (fn.blocks[bi].id == fn.entry_block)
                     entry_idx_scan = bi;
             builder.entry_block_idx = entry_idx_scan;
+            // Issue #5518: promoted cells are no longer hidden state — the
+            // mid-body spill reads their alloca and the root mirror sees
+            // their tagged value. Scalar-pair fields and float cells stay
+            // excluded (their storage is not a single tagged value).
             bool has_hidden_state = false;
             for (std::uint32_t i = 0; i < fn.local_count && !has_hidden_state; ++i)
-                has_hidden_state = builder.is_pcell(i) || builder.is_spair(i) ||
-                                   builder.is_spair(fn.local_count + i);
+                has_hidden_state = builder.is_spair(i) || builder.is_spair(fn.local_count + i) ||
+                                   (builder.is_pcell(i) && builder.pcell_f[i] != 0);
             if (jit_frame_deopt_enabled() && fn.name && fn.name[0] && !builder.aot_mode &&
                 fn.local_count > 0 && builder.fn_deopt_frame && !has_hidden_state) {
                 builder.frame_deopt_ok = true;
@@ -6359,6 +6375,20 @@ struct AuraJIT::Impl {
                                builder.fn_native_self_id && jit_force_guard_deopt() < 2 &&
                                fn.local_count > 0 && fn.env_count <= fn.local_count &&
                                fn.arg_count <= fn.local_count - fn.env_count;
+        if (std::getenv("AURA_JIT_COMPILE_TRACE")) {
+            bool any_cell = false;
+            bool any_spair = false;
+            for (std::uint32_t i = 0; i < fn.local_count; ++i) {
+                any_cell = any_cell || builder.is_pcell(i);
+                any_spair = any_spair || builder.is_spair(i);
+            }
+            std::fprintf(stderr,
+                         "[jit] fn=%s locals=%u self=%d deopt_ok=%d cells=%d spairs=%d "
+                         "root=%d\n",
+                         fn.name ? fn.name : "?", fn.local_count, builder.self_call_ok ? 1 : 0,
+                         builder.frame_deopt_ok ? 1 : 0, any_cell ? 1 : 0, any_spair ? 1 : 0,
+                         builder.pair_root_arr ? 1 : 0);
+        }
         if (builder.self_call_ok) {
             // Map each env buffer index to the IR slot the entry OpArg
             // wrote. Missing or out-of-range mapping: keep the generic path.
