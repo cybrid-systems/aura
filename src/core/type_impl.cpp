@@ -1354,6 +1354,46 @@ std::uint32_t TypeRegistry::compact() {
     return reclaimed;
 }
 
+void TypeRegistry::note_reusable_prefix() {
+    std::scoped_lock lock(type_registry_mutex_);
+    if (reusable_prefix_ != 0)
+        return;
+    reusable_prefix_ = static_cast<std::uint32_t>(entries_.size());
+}
+
+std::uint32_t TypeRegistry::reclaim_above_prefix() {
+    std::scoped_lock lock(type_registry_mutex_);
+    const auto keep = static_cast<std::size_t>(reusable_prefix_);
+    if (keep == 0 || entries_.size() <= keep)
+        return 0;
+    const auto before = static_cast<std::uint32_t>(entries_.size());
+    for (std::size_t i = keep; i < entries_.size(); ++i) {
+        if (entries_[i])
+            arena_.destroy(entries_[i]);
+        entries_[i] = nullptr;
+    }
+    entries_.resize(keep);
+    for (auto it = name_to_id_.begin(); it != name_to_id_.end();) {
+        if (it->second.index >= keep)
+            it = name_to_id_.erase(it);
+        else
+            ++it;
+    }
+    for (auto it = intern_.begin(); it != intern_.end();) {
+        if (it->second >= keep)
+            it = intern_.erase(it);
+        else
+            ++it;
+    }
+    for (auto it = type_by_tag_name_.begin(); it != type_by_tag_name_.end();) {
+        if (it->second >= keep)
+            it = type_by_tag_name_.erase(it);
+        else
+            ++it;
+    }
+    return before - static_cast<std::uint32_t>(keep);
+}
+
 // Issue #70 follow-up: TypeId interning. Two helpers that compare
 // TypeIds by structural content rather than by raw id. Used by the
 // register_* methods to dedup identical types.

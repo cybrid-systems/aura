@@ -4562,6 +4562,9 @@ void InferenceEngine::init_primitive_env() {
     cs_.fresh_log_ = nullptr;
     fresh->base = env_.snapshot_top_as_base();
     reg_.set_prim_env_cache(std::shared_ptr<const void>(std::move(fresh)));
+    // Issue #5633: this cache's TypeIds must survive a later offload
+    // reclaim. Note the watermark after the init-time vars, not before.
+    reg_.note_reusable_prefix();
 }
 
 void InferenceEngine::init_primitive_env_uncached() {

@@ -46,6 +46,11 @@ CASES = (
         "test_await_first_ticket_after_a_second_submit",
         "offload_primitives.TestOffloadPrimitives.test_await_first_ticket_after_a_second_submit",
     ),
+    (
+        5633,
+        "test_reused_worker_matches_fresh_snapshot",
+        "offload_primitives.TestOffloadPrimitives.test_reused_worker_matches_fresh_snapshot",
+    ),
 )
 
 

@@ -1,8 +1,8 @@
 // offload/offload_job.h — private-compiler job bodies (issues #4887/#4888)
 //
-// The pool worker never receives a session Evaluator: each job builds a
-// thread-private CompilerService, loads the immutable snapshot source, and
-// returns a plain Result. The snapshot carries no session state.
+// The pool worker never receives a session Evaluator: each worker thread
+// reuses one private CompilerService (#5633), loads the immutable snapshot
+// source, and returns a plain Result. The snapshot carries no session state.
 #ifndef AURA_OFFLOAD_OFFLOAD_JOB_H
 #define AURA_OFFLOAD_OFFLOAD_JOB_H
 

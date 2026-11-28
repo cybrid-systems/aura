@@ -1776,6 +1776,77 @@ public:
         install_lowering_compiler_core_hooks();
     }
 
+    // Issue #5633: an offload worker keeps one CompilerService. claim/park
+    // hand back the process-wide wires the constructor takes (the session
+    // service stays current while this worker is idle). recycle drops
+    // job-local caches and returns arena bump pointers to this thread
+    // without freeing the buffers and without bumping the process-wide
+    // mutation epoch (that bump would invalidate the session's closures).
+    void claim_offload_wires() {
+        prev_compiler_service_ = aura::messaging::g_current_compiler_service;
+        aura::messaging::g_current_compiler_service = this;
+        prev_aot_metrics_ = aura_get_aot_metrics();
+        aura_set_aot_metrics(&metrics_);
+        aura::compiler::dirty::set_cascade_skip_subtree_metrics(
+            &metrics_.cascade_skip_subtree_total);
+        aura_set_jit_batch_deopt_target(&jit_);
+        Evaluator::set_query_evaluator(&evaluator_);
+    }
+
+    void park_offload_wires() {
+        if (aura::messaging::g_current_compiler_service == this)
+            aura::messaging::g_current_compiler_service = prev_compiler_service_;
+        if (aura_get_aot_metrics() == static_cast<void*>(&metrics_))
+            aura_set_aot_metrics(static_cast<CompilerMetrics*>(prev_aot_metrics_));
+        if (aura::compiler::dirty::g_cascade_skip_subtree_metrics ==
+            &metrics_.cascade_skip_subtree_total)
+            aura::compiler::dirty::set_cascade_skip_subtree_metrics(nullptr);
+        aura_clear_jit_batch_deopt_target(&jit_);
+    }
+
+    void recycle_offload_job() {
+        IrCacheGate ir_gate(ir_cache_gate_); // #4717 shared IR/closure cache
+        evaluator_.discard_offload_job_state();
+        function_sources_.clear();
+        user_bindings_.clear();
+        user_bindings_.insert("#t");
+        user_bindings_.insert("#f");
+        user_bindings_.insert("nil");
+        dep_graph_.clear();
+        node_dep_graph_.clear();
+        dep_name_to_slot_.clear();
+        dep_slot_to_name_.clear();
+        deferred_hybrid_edges_.clear();
+        loaded_modules_.clear();
+        last_ir_mod_.reset();
+        last_closures_.clear();
+        last_cells_.clear();
+        last_escape_maps_.clear();
+        for (auto& [_, entry] : ir_cache_v2_) {
+            entry.dirty = true;
+            entry.mark_all_blocks_dirty();
+        }
+        ir_cache_.clear();
+        ir_cache_strings_.clear();
+        ir_cache_v2_.clear();
+        jit_program_memo_.reset();
+        ir_cache_bridge_.clear();
+        ir_define_env_bindings_.clear();
+        ir_define_closure_owner_.clear();
+        ir_value_cell_bindings_.clear();
+        ir_value_define_closure_owners_.clear();
+        ir_call_slots_4681_.clear();
+        ir_disk_snapshots_.clear();
+        // compact() bumps the generation. The type cache rebuilds
+        // TypeId{index, 1}, so the next job's ground check sees Dynamic
+        // and reports "no errors" for an ill-typed snapshot (#5633).
+        type_registry_.reclaim_above_prefix();
+        arena_group_.reset_all();
+        temp_arena_.reset();
+        arena_.reset();
+        install_lowering_compiler_core_hooks();
+    }
+
     // ---- Strict mode (type errors → rejected) ------------------------
     void set_strict_mode(bool s) { strict_mode_ = s; }
     bool strict_mode() const { return strict_mode_; }

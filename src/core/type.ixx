@@ -319,6 +319,14 @@ public:
     // Returns the number of entries reclaimed.
     std::uint32_t compact();
 
+    // Issue #5633: remember how many entries the primitive-env cache owns.
+    // reclaim_above_prefix() drops only what a later inference registered.
+    // It does not bump generation: synthesize_flat_try_cache rebuilds
+    // TypeId{index, 1}, and a bumped generation makes that id Dynamic, so
+    // a ground mismatch fails open ("no errors") on the next job.
+    void note_reusable_prefix();
+    std::uint32_t reclaim_above_prefix();
+
     // Issue #70: is_subtype — replace the stub with real structural
     // subtyping rules. The private impl is a depth-limited helper that
     // is_subtype delegates to (avoids recursing the public method for
@@ -429,6 +437,9 @@ private:
     // do not race that increment. Lookups load relaxed while they hold
     // the mutex.
     std::atomic<uint32_t> next_generation_{1};
+    // Issue #5633: entries_.size() at the end of primitive-env init.
+    // 0 means note_reusable_prefix() has not run.
+    std::uint32_t reusable_prefix_ = 0;
 
     // Issue #1431: TypeRegistry thread-safety. InferenceEngine is
     // constructed fresh per infer_flat() call (cached InferenceEngine

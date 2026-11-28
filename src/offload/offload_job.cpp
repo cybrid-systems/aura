@@ -1,8 +1,10 @@
 // offload/offload_job.cpp — thread-private compiler job bodies (#4887/#4888)
 //
-// Every job constructs its own CompilerService on the executing pool thread:
-// the session CompilerService is never touched, so a parked fiber holding the
-// session eval/body mutexes cannot deadlock the worker.
+// Each pool thread keeps one CompilerService (#5633) and recycles it between
+// jobs. The session CompilerService is never touched, so a parked fiber
+// holding the session eval/body mutexes cannot deadlock the worker. The
+// service's arenas stay on this thread: reset returns the bump pointers,
+// it does not hand the buffers back to the system allocator.
 #include "offload_job.h"
 
 #include "compiler/messaging_bridge.h"
@@ -130,6 +132,45 @@ namespace {
         }
     }
 
+    // Issue #5633: one CompilerService per worker thread. The first job uses
+    // the constructor's wires; later jobs reclaim them, recycle job state,
+    // and park the wires again so the session service is current while idle.
+    struct WorkerCompiler {
+        CompilerService cs;
+        bool parked = false;
+
+        CompilerService& acquire() {
+            if (parked) {
+                cs.claim_offload_wires();
+                cs.recycle_offload_job();
+                parked = false;
+            }
+            return cs;
+        }
+        void release() {
+            if (!parked) {
+                cs.park_offload_wires();
+                parked = true;
+            }
+        }
+    };
+
+    struct WorkerCompilerScope {
+        WorkerCompiler& slot;
+        CompilerService& cs;
+        explicit WorkerCompilerScope(WorkerCompiler& s)
+            : slot(s)
+            , cs(s.acquire()) {}
+        ~WorkerCompilerScope() { slot.release(); }
+        WorkerCompilerScope(const WorkerCompilerScope&) = delete;
+        WorkerCompilerScope& operator=(const WorkerCompilerScope&) = delete;
+    };
+
+    WorkerCompiler& worker_compiler() {
+        thread_local WorkerCompiler slot;
+        return slot;
+    }
+
 } // namespace
 
 Result run_stages(const SnapshotInput& input, const std::vector<std::string>& stages,
@@ -137,7 +178,8 @@ Result run_stages(const SnapshotInput& input, const std::vector<std::string>& st
     const auto started = std::chrono::steady_clock::now();
     PrivateEvalScope private_eval;
     Result out;
-    CompilerService cs;
+    WorkerCompilerScope scope(worker_compiler());
+    CompilerService& cs = scope.cs;
     std::string error;
     if (!load_snapshot(cs, input.source, error)) {
         out.diagnostics.push_back(Diagnostic{"snapshot-load: " + error});
@@ -181,7 +223,8 @@ Result run_stages(const SnapshotInput& input, const std::vector<std::string>& st
 
 std::string eval_code(const SnapshotInput& input, std::string_view code) {
     PrivateEvalScope private_eval;
-    CompilerService cs;
+    WorkerCompilerScope scope(worker_compiler());
+    CompilerService& cs = scope.cs;
     std::string error;
     if (!load_snapshot(cs, input.source, error))
         return "snapshot-load: " + error;

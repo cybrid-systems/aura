@@ -146,6 +146,51 @@ class TestOffloadPrimitives(unittest.TestCase):
         self.assertEqual(rows[0].get("status"), "ok", rows[0])
         self.assertIn(":done", rows[0].get("value", ""))
 
+    def test_reused_worker_matches_fresh_snapshot(self) -> None:
+        # Issue #5633: one pool thread reuses its CompilerService. An
+        # ill-typed snapshot, a conflicting well-typed snapshot of the same
+        # name, then the ill-typed snapshot again must match the first result.
+        if not AURA_BIN.exists():
+            self.skipTest(f"{AURA_BIN} not built")
+        env = dict(os.environ)
+        env["AURA_SANDBOX"] = "off"
+        env["AURA_PIPELINE_STRICT"] = "force-soa"
+        env["AURA_OFFLOAD_THREADS"] = "1"
+        program = (
+            "(begin "
+            '(set-code "(: x String 1)") (eval-current) '
+            "(define b1 (offload:await (offload:submit (offload:snapshot) "
+            "'(typecheck) :class 'compile) :timeout-ms 30000)) "
+            '(set-code "(: x Int 1)") (eval-current) '
+            "(define a (offload:await (offload:submit (offload:snapshot) "
+            "'(typecheck) :class 'compile) :timeout-ms 30000)) "
+            '(set-code "(: x String 1)") (eval-current) '
+            "(define b2 (offload:await (offload:submit (offload:snapshot) "
+            "'(typecheck) :class 'compile) :timeout-ms 30000)) "
+            '(define db (hash-ref b1 "diagnostics")) '
+            '(define da (hash-ref a "diagnostics")) '
+            '(define db2 (hash-ref b2 "diagnostics")) '
+            '(list (if (equal? db db2) "DIAG_SAME" "DIAG_DIFF") '
+            '(if (equal? db da) "A_SAME" "A_DIFF") '
+            '(hash-ref b1 "status") db da))'
+        )
+        payload = json.dumps({"session": "default", "cmd": "exec", "code": program}) + "\n"
+        proc = subprocess.run(
+            [str(AURA_BIN), "--serve-async"],
+            input=payload,
+            text=True,
+            capture_output=True,
+            timeout=60,
+            env=env,
+        )
+        rows = [json.loads(line) for line in proc.stdout.splitlines() if line.startswith("{")]
+        self.assertEqual(len(rows), 1, f"stdout={proc.stdout[-800:]!r} stderr={proc.stderr[-800:]!r}")
+        self.assertEqual(rows[0].get("status"), "ok", rows[0])
+        value = rows[0].get("value", "")
+        self.assertIn("DIAG_SAME", value, value)
+        self.assertIn("A_DIFF", value, value)
+        self.assertIn(":done", value, value)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -514,6 +514,75 @@ Evaluator::~Evaluator() {
     }
 }
 
+// Issue #5633: between offload jobs on a reused CompilerService. The
+// primitive table, string heap, and symbol intern stay. Arena objects are
+// dropped by the caller's arena reset, so every pointer into them is
+// cleared here first.
+void Evaluator::discard_offload_job_state() {
+    invalidate_persistent_typechecker();
+    invalidate_typecheck_report_cache();
+    invalidate_workspace_source_text();
+    last_eval_current_result_.reset();
+    guard_infer_engine_opaque_.reset();
+    top_.clear_user_bindings();
+    note_top_binding_changed();
+    {
+        std::unique_lock<std::shared_mutex> module_lock(module_mtx_, std::defer_lock);
+        std::unique_lock<std::shared_mutex> workspace_lock(workspace_mtx_, std::defer_lock);
+        std::lock(module_lock, workspace_lock);
+        defuse_index_destroy(&defuse_index_);
+        modules_.clear();
+        module_cache_.clear();
+        module_arena_ptrs_.clear();
+        module_names_.clear();
+        module_base_dirs_.clear();
+        loading_stack_.clear();
+        macros_.clear();
+        macro_history_4901_.clear();
+        current_flat_.store(nullptr, std::memory_order_relaxed);
+        current_pool_.store(nullptr, std::memory_order_relaxed);
+        workspace_flat_ = nullptr;
+        workspace_pool_ = nullptr;
+        {
+            std::scoped_lock<std::mutex> memo(hyg_call_memo_mtx_4894_);
+            hyg_call_memo_4894_.clear();
+        }
+        {
+            std::scoped_lock<std::mutex> mutate(mutate_target_mu_);
+            mutate_target_flat_ = nullptr;
+            mutate_target_pool_ = nullptr;
+        }
+    }
+    declared_type_sigs_.clear();
+    module_templates_.clear();
+    functor_instance_cache_.clear();
+    {
+        std::scoped_lock<std::mutex> gens(define_closure_gens_mu_);
+        define_closure_gens_.clear();
+    }
+    bump_closures_apply_epoch();
+    for (auto& cl_sh : closures_shards_)
+        cl_sh.map.clear();
+    {
+        std::scoped_lock<std::mutex> heap(heap_mutex());
+        cells_.clear();
+        truncate_cell_nil_marks(0);
+        pairs_.clear();
+        pair_slot_tenants_.clear();
+        vector_heap_.clear();
+        vector_slot_tenants_.clear();
+        error_values_.clear();
+        error_kind_marks_.clear();
+        (void)primitives_detail::push_error_cause(error_values_, make_void());
+    }
+    {
+        std::scoped_lock<std::mutex> patterns(pattern_parse_cache_mu_);
+        pattern_parse_cache_.clear();
+    }
+    if (arena_group_)
+        arena_group_->reset_all();
+}
+
 // Issue #2078: drain per-Evaluator orch agent name table + best-effort
 // join outstanding agents. Called from ~Evaluator before arena teardown.
 // AgentHandle destructors (when the local vector goes out of scope at

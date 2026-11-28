@@ -1029,6 +1029,24 @@ public:
     // observability code).
     [[nodiscard]] std::uint64_t env_version() const noexcept { return env_version_; }
     void set_env_version(std::uint64_t v) noexcept { env_version_ = v; }
+
+    // Issue #5633: drop user bindings between offload jobs. The primitive
+    // table stays; the pool pointer is cleared because it addresses the
+    // arena the next reset() frees.
+    void clear_user_bindings() {
+        auto guard = lock_bindings_exclusive();
+        bindings_.clear();
+        binding_index_.clear();
+        bindings_symid_.clear();
+        symid_index_.clear();
+        bindings_linear_ownership_state_.clear();
+        cap_snap_.reset();
+        pool_.store(nullptr, std::memory_order_release);
+        pool_epoch_.store(0, std::memory_order_release);
+        rekey_memo_4682_[0] = {};
+        rekey_memo_4682_[1] = {};
+        rekey_memo_next_4682_ = 0;
+    }
 };
 
 export using ClosureId = std::uint64_t;
@@ -2795,6 +2813,11 @@ public:
     Primitives& primitives() { return primitives_; }
     const Env& top_env() const { return top_; }
     Env& top_env() { return top_; }
+    // Issue #5633: wipe job-local session state on a reused offload
+    // Evaluator. Keeps the primitive table, the string heap, and the symbol
+    // intern (the fixed cost of the service). Call before the owning
+    // CompilerService resets its arenas.
+    void discard_offload_job_state();
     // Issue #4599: a bind or unbind on top_ invalidates cached prim/global
     // resolutions. set! does not (cells are re-read; non-cells are not cached).
     // Issue #4717: written by the top-env binder (main thread) and read by
