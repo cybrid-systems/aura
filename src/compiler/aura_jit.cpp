@@ -1349,6 +1349,9 @@ struct LLVMBuilder {
     llvm::Function* fn_new_cell = nullptr;
     llvm::Function* fn_cell_get = nullptr;
     llvm::Function* fn_cell_set = nullptr;
+    // Issue #5640: language-level set! on a captured cell. Same tenant/lock
+    // write as the interpreter's CellSet; NOT the EDSL mutate choke.
+    llvm::Function* fn_cell_set_lang = nullptr;
     // Issue #4600/#4606 family: define-cell bind entry (no user-mutation
     // choke — see aura_cell_set_jit_bind in aura_jit_runtime.cpp).
     llvm::Function* fn_cell_set_jit_bind = nullptr;
@@ -1571,6 +1574,9 @@ public:
                                    llvm::Function::ExternalLinkage, "aura_cell_set_jit_bind", mod);
         fn_cell_set = llvm::Function::Create(llvm::FunctionType::get(void_ty, {i64, i64}, false),
                                              llvm::Function::ExternalLinkage, "aura_cell_set", mod);
+        fn_cell_set_lang =
+            llvm::Function::Create(llvm::FunctionType::get(void_ty, {i64, i64}, false),
+                                   llvm::Function::ExternalLinkage, "aura_cell_set_jit_lang", mod);
 
         fn_top_cell_get =
             llvm::Function::Create(llvm::FunctionType::get(i64, {i64}, false),
@@ -3826,13 +3832,16 @@ public:
                 // operand_count, so DCE does not see a slot). A nested
                 // let's init is not a __top__ MakeClosure value, and
                 // dropping it left the cell at 0. set! leaves the operand
-                // 0 and keeps aura_cell_set's Mutate choke.
+                // 0; language set! runs with the interpreter's CellSet write
+                // contract (tenant/lock only), not the EDSL mutate choke —
+                // the session-less exec_jit face has no audit mutation id and
+                // dropped every captured-cell set! (Issue #5640).
                 constexpr std::uint32_t kCellSetBindInit = 0xFFFFFFFFu;
                 const bool is_entry_bind = inst.ops[2] == kCellSetBindInit ||
                                            (fn.name && std::string_view(fn.name) == "__top__" &&
                                             mc_value_slots.count(inst.ops[1]) != 0);
                 irb->CreateCall(
-                    llvm::FunctionCallee(is_entry_bind ? fn_cell_set_jit_bind : fn_cell_set),
+                    llvm::FunctionCallee(is_entry_bind ? fn_cell_set_jit_bind : fn_cell_set_lang),
                     llvm::ArrayRef<llvm::Value*>{load(inst.ops[0]), load(inst.ops[1])});
                 return true;
             }
@@ -5339,6 +5348,7 @@ int64_t aura_pack_rest(int64_t*, int64_t, int64_t);
 int64_t aura_new_cell();
 int64_t aura_cell_get(int64_t);
 void aura_cell_set(int64_t, int64_t);
+void aura_cell_set_jit_lang(int64_t, int64_t); // Issue #5640
 int64_t aura_top_cell_get(int64_t);
 int64_t aura_alloc_pair(int64_t, int64_t);
 int64_t aura_alloc_pair_arena(int64_t, int64_t);
@@ -5864,6 +5874,7 @@ struct AuraJIT::Impl {
         reg("aura_new_cell", (void*)aura_new_cell);
         reg("aura_cell_get", (void*)aura_cell_get);
         reg("aura_cell_set", (void*)aura_cell_set);
+        reg("aura_cell_set_jit_lang", (void*)aura_cell_set_jit_lang); // Issue #5640
         reg("aura_cell_set_jit_bind", (void*)aura_cell_set_jit_bind); // #4600
         reg("aura_top_cell_get", (void*)aura_top_cell_get);
         reg("aura_alloc_pair", (void*)aura_alloc_pair);

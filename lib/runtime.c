@@ -473,6 +473,12 @@ __attribute__((weak)) void aura_cell_set_jit_bind(int64_t cell_id, int64_t val) 
     aura_cell_set(cell_id, val);
 }
 
+/* Issue #5640: language-level set! entry used by the JIT/AOT lowering. The
+ * standalone AOT runtime has no EDSL mutate choke, so this is the same store. */
+__attribute__((weak)) void aura_cell_set_jit_lang(int64_t cell_id, int64_t val) {
+    aura_cell_set(cell_id, val);
+}
+
 void aura_drop_cell(int64_t cell_id) {
     uint64_t id = (uint64_t)cell_id;
     if (id >= cell_count || !cell_heap[id].live)

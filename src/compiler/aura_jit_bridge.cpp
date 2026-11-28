@@ -3742,14 +3742,15 @@ aura_jit_osr_fn g_osr_host = nullptr;
 // decline path; AURA_JIT_OSR=0 disables the escape entirely.
 int osr_enabled_env() noexcept {
     static const int on = [] {
-        // Issue #5631: an OSR entry hands the compiled body a copy of the
-        // interpreter's slots and skips the entry block that registers the
-        // pair root mirror; a GC primitive in that chain then leaves the
-        // frame's heap pair unreadable ("type error: runtime error"). Until
-        // the OSR handoff registers its own roots and preserves the live
-        // slots, OSR is opt-in (AURA_JIT_OSR=1) rather than default.
+        // Issue #5640: default on again. The handoff re-bases interpreter
+        // cell refs into the kClosureIdHighBit namespace and the runtime
+        // bridges them (and IR closure ids) to the active interpreter; the
+        // GC-primitive fallback that triggered #5631 is gone because a
+        // RefPrimitive callee now dispatches through the evaluator instead
+        // of aborting the native frame. AURA_JIT_OSR=0 remains the kill
+        // switch.
         const char* v = ::aura::config::raw(::aura::config::Key::AURA_JIT_OSR);
-        return (v && v[0] == '1') ? 1 : 0;
+        return !(v && v[0] == '0');
     }();
     return on;
 }

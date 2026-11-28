@@ -31,6 +31,14 @@ extern "C" int aura_ir_bridge_cell_set(std::uint64_t idx, std::int64_t val) noex
 extern "C" int aura_ir_bridge_call_closure(std::uint64_t closure_id, const std::int64_t* args,
                                            std::uint32_t argc, std::int64_t* out) noexcept
     __attribute__((weak));
+// Issue #5640: primitives loaded from a define/let cell are ordinary values
+// in the OpCall callee slot; the native dispatch refuses them and used to
+// unwind the whole frame, replaying side effects on the interpreter retry.
+// This helper (service.ixx) runs the primitive through the same
+// invoke_prim_with_telemetry choke the interpreter uses.
+extern "C" int aura_jit_call_primitive_slot(std::int64_t slot, std::int64_t* args,
+                                            std::int32_t argc, std::int64_t* out)
+    __attribute__((weak));
 
 namespace {
 constexpr std::uint64_t kIrBridgeIndexMask = aura::compiler::types::kClosureIdHighBit - 1;
@@ -5988,6 +5996,20 @@ extern "C" int64_t aura_closure_dispatch_native_checked(int64_t closure_id, int6
         // locks, none of which may nest inside g_closure_table_mtx.
         if (closure_id >= 0 && aura::compiler::types::is_ref(closure_id) &&
             aura::compiler::types::ref_type(closure_id) == aura::compiler::types::RefPrimitive) {
+            // Issue #5640: dispatch the primitive instead of unwinding the
+            // native frame. The out-of-range guard above means this word is
+            // not a live closure id, so the RefPrimitive tag is unambiguous
+            // here; the primitive slot index is the ref payload.
+            // The helper runs evaluator code (allocation/GC/free), which may
+            // take g_closure_table_mtx exclusively; drop the shared lock first.
+            tlock.unlock();
+            std::int64_t prim_out = 0;
+            const auto prim_slot =
+                static_cast<std::int64_t>(aura::compiler::types::ref_index(closure_id));
+            const auto prim_argc = argc > 0 ? static_cast<std::int32_t>(argc) : 0;
+            if (aura_jit_call_primitive_slot &&
+                aura_jit_call_primitive_slot(prim_slot, args, prim_argc, &prim_out))
+                return prim_out;
             return closure_dispatch_leave_native();
         }
         return closure_id; /* match IRInterpreter: return callee_val for non-callable */
@@ -7049,6 +7071,17 @@ extern "C" void aura_cell_set_checked(int64_t cell_id, int64_t val, std::uint64_
 // programs computed wrong values. This entry keeps the tenant gate +
 // workspace write lock (checked) but not the user-mutation choke.
 extern "C" void aura_cell_set_jit_bind(int64_t cell_id, int64_t val) {
+    aura_cell_set_checked(cell_id, val, aura_jit_owner_capability_tenant(),
+                          aura_jit_owner_sandbox_mode());
+}
+
+// Issue #5640: language-level set! on a captured cell. The EDSL mutate choke
+// on aura_cell_set is fail-closed in a session-less exec_jit (no audit
+// mutation id), which silently dropped every captured-cell set! once the
+// call no longer fell back to the interpreter. The interpreter's CellSet is a
+// plain cell_heap_ write; this entry matches it (tenant gate + workspace lock)
+// while keeping aura_cell_set for the source-cited EDSL choke.
+void aura_cell_set_jit_lang(int64_t cell_id, int64_t val) {
     aura_cell_set_checked(cell_id, val, aura_jit_owner_capability_tenant(),
                           aura_jit_owner_sandbox_mode());
 }

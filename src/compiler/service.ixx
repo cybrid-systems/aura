@@ -824,6 +824,53 @@ namespace {
 } // namespace
 } // namespace aura::compiler
 
+// Issue #5640: dynamic primitive dispatch by the primitive VALUE's slot (the
+// IR `Primitive` opcode index), not the kPrimNameTable PrimId the OpPrimCall
+// fast path uses. The interpreter's Call arm resolves a RefPrimitive callee
+// through Primitives::name_for_slot; the JIT used to answer that word with the
+// #4084 leave-native sentinel, which aborted the native frame and re-ran the
+// whole program interpreted (replaying every side effect before the call).
+// Same telemetry/effect choke as jit_prim_dispatch_impl.
+extern "C" int aura_jit_call_primitive_slot(std::int64_t slot, std::int64_t* args,
+                                            std::int32_t argc, std::int64_t* out) {
+    if (!out)
+        return 0;
+    auto* prims = g_jit_prim_ctx.load(std::memory_order_acquire);
+    if (!prims || slot < 0 || static_cast<std::size_t>(slot) >= prims->slot_count())
+        return 0;
+    const std::string& pname = prims->name_for_slot(static_cast<std::size_t>(slot));
+    if (pname.empty())
+        return 0;
+    // Issue #5640: only primitives whose arguments are JIT-domain values
+    // (numbers, strings, pairs, vectors, ...) may run on a native frame.
+    // A JIT-created closure is a plain runtime id, not the evaluator's
+    // tagged RefClosure word, so closure-identity or higher-order
+    // primitives (procedure?, apply, map, ...) must keep the old
+    // leave-native fallback. gc-* is the #5631 trigger and is value-free.
+    if (pname != "gc-heap" && pname != "gc-freeze" && pname != "gc-temp")
+        return 0;
+    auto pfn = prims->lookup(pname);
+    if (!pfn)
+        return 0;
+
+    std::vector<aura::compiler::types::EvalValue> eval_args;
+    eval_args.reserve(static_cast<std::size_t>(argc));
+    for (std::int32_t i = 0; i < argc; ++i) {
+        std::int64_t a = args[i];
+        if (is_str_val(a))
+            a = convert_str_for_eval(a, prims);
+        eval_args.emplace_back(a);
+    }
+
+    auto* owner = owner_evaluator(prims);
+    if (!owner)
+        return 0;
+    auto result =
+        owner->invoke_prim_with_telemetry(pname, eval_args, [&] { return (*pfn)(eval_args); });
+    *out = is_str_val(result.val) ? convert_str_for_jit(result.val, prims) : result.val;
+    return 1;
+}
+
 extern "C" std::int64_t aura_jit_prim_dispatch(std::int64_t prim_id, std::int64_t* args,
                                                std::int32_t argc) {
     // Issue #3593: thin C ABI entry — the body lives in
