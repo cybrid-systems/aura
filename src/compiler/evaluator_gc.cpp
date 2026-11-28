@@ -1287,8 +1287,7 @@ Evaluator::CompactSweepResult Evaluator::compact_sweep(void* sweep_buffers) {
                     // live count. An id at or past its end was never
                     // representable, so treat it as live instead of sweeping
                     // a closure nobody could have marked.
-                    if (id >= 0 &&
-                        static_cast<std::size_t>(id) >= marks->closure_marks->size()) {
+                    if (id >= 0 && static_cast<std::size_t>(id) >= marks->closure_marks->size()) {
                         ++it;
                         continue;
                     }

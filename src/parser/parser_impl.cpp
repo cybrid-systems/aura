@@ -323,7 +323,8 @@ static bool enter_parse_depth(ParserState& s) {
 
 struct ParseDepthScope5496 : ::aura::core::NoCopy {
     std::size_t& d;
-    explicit ParseDepthScope5496(std::size_t& depth) : d(depth) {}
+    explicit ParseDepthScope5496(std::size_t& depth)
+        : d(depth) {}
     ~ParseDepthScope5496() { --d; }
 };
 

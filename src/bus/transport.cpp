@@ -2861,8 +2861,7 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
                     ChannelView expect{};
                     if (!find_section(image, section_for(channel), &entry) ||
                         !channel_view(image, channel, &expect) || loan.length == 0 ||
-                        expect.element_size == 0 ||
-                        loan.length % expect.element_size != 0 ||
+                        expect.element_size == 0 || loan.length % expect.element_size != 0 ||
                         expect.length > entry.capacity ||
                         loan.length > entry.capacity - expect.length ||
                         loan.offset != expect.offset + expect.length) {

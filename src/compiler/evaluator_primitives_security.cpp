@@ -748,9 +748,8 @@ void register_security_set_sandbox_mode(PrimRegistrar add, Evaluator& ev) {
         // folded it to Off and skipped the downgrade gate.
         if (new_mode < 0 || new_mode > 2) {
             ev.bump_capability_denial();
-            return ev.make_typed_error(
-                "security:set-effect-sandbox-mode!: mode must be 0, 1, or 2",
-                aura::diag::ErrorKind::EffectDenied);
+            return ev.make_typed_error("security:set-effect-sandbox-mode!: mode must be 0, 1, or 2",
+                                       aura::diag::ErrorKind::EffectDenied);
         }
         auto& reg = aura::core::capability::g_capability_registry();
         std::scoped_lock<std::mutex> lock(reg.mtx);

@@ -136,8 +136,8 @@ extern ResetArenaFn g_reset_arena;
 // synchronous path); an engaged value IS the POST result, so a transport
 // failure never becomes a second POST.
 using HttpPostAsyncFn = std::optional<std::string> (*)(const std::string& url,
-                                                      const std::string& body,
-                                                      const std::string& auth, long timeout_sec);
+                                                       const std::string& body,
+                                                       const std::string& auth, long timeout_sec);
 extern HttpPostAsyncFn g_http_post_async;
 
 // Issue #5506: wake a fiber parked by a worker thread through the scheduler's

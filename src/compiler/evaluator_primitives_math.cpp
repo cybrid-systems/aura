@@ -420,8 +420,8 @@ void RegSplitParts::register_math_regex_primitives(
             return bump_regex_error(prim, "regex execution exceeded timeout");
         }
         if (st == RegexRunStatus::Exhausted)
-            return bump_regex_error(
-                prim, "regex workers exhausted: a timed-out match is still running");
+            return bump_regex_error(prim,
+                                    "regex workers exhausted: a timed-out match is still running");
         if (st == RegexRunStatus::SyntaxError)
             return bump_regex_error(prim, "invalid regular expression");
         return make_void(); // Ok — caller ignores

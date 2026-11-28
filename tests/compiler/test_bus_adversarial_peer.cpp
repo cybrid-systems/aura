@@ -478,8 +478,7 @@ int main() {
               "the granter asks for a scoped grant");
         FrameHeader hdr{};
         std::vector<std::byte> reply;
-        check(read_frame(g.sock, &hdr, &reply, &err),
-              "the granter receives an answer");
+        check(read_frame(g.sock, &hdr, &reply, &err), "the granter receives an answer");
         check(hdr.type == static_cast<std::uint16_t>(FrameType::Credit) &&
                   reply.size() >= sizeof(GrantReply),
               "the granter receives a token");
@@ -583,8 +582,7 @@ int main() {
                   "the patch attacker publishes a forged slice");
             FrameHeader hdr{};
             std::vector<std::byte> reply;
-            check(read_frame(att.sock, &hdr, &reply, &err),
-                  "the forged patch slice is answered");
+            check(read_frame(att.sock, &hdr, &reply, &err), "the forged patch slice is answered");
             check(hdr.type == static_cast<std::uint16_t>(FrameType::Error),
                   "the forged patch slice is an error, not a crash");
             ::close(att.sock);

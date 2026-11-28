@@ -151,19 +151,17 @@ std::uint64_t CapabilityTable::mint_token_() {
         candidate &= (1ull << 62) - 1;
         if (candidate == 0)
             continue;
-        const bool used = std::any_of(records_.begin(), records_.end(),
-                                      [candidate](const GrantRecord& r) {
-                                          return r.token == candidate;
-                                      });
+        const bool used =
+            std::any_of(records_.begin(), records_.end(),
+                        [candidate](const GrantRecord& r) { return r.token == candidate; });
         if (!used)
             return candidate;
     }
     // Practically unreachable: stay non-zero and unique enough.
     std::random_device rd;
-    std::uint64_t fallback =
-        (((static_cast<std::uint64_t>(rd()) << 32) ^ rd()) ^
-         ((records_.size() + 1) * 0x9e3779b97f4a7c15ull)) &
-        ((1ull << 62) - 1);
+    std::uint64_t fallback = (((static_cast<std::uint64_t>(rd()) << 32) ^ rd()) ^
+                              ((records_.size() + 1) * 0x9e3779b97f4a7c15ull)) &
+                             ((1ull << 62) - 1);
     return fallback == 0 ? 1 : fallback;
 }
 

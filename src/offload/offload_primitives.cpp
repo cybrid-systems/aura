@@ -157,8 +157,8 @@ namespace {
         const std::string name = status_name(status);
         // Issue #5513: a poll that observes a terminal state consumes the
         // handle, same as await.
-        if (status == Status::Done || status == Status::Failed ||
-            status == Status::Cancelled || status == Status::Rejected) {
+        if (status == Status::Done || status == Status::Failed || status == Status::Cancelled ||
+            status == Status::Rejected) {
             auto& reg = registry();
             std::scoped_lock lock(reg.mutex);
             reg.tickets.erase(ticket_id);

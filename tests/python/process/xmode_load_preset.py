@@ -79,9 +79,7 @@ class LoadPreset(unittest.TestCase):
 
     def test_project_run_trusts_toml(self) -> None:
         # The user asked for the project face, so its aura.toml preset runs.
-        (self.cwd / "kit" / "aura.toml").write_text(
-            'preset = "dev"\nentry = "p.aura"\n'
-        )
+        (self.cwd / "kit" / "aura.toml").write_text('preset = "dev"\nentry = "p.aura"\n')
         r = self.run_aura("run", "kit/p.aura")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("(v 2)", r.stdout)

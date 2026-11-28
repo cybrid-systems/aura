@@ -151,11 +151,10 @@ EvalValue RegSplitParts::apply_callback(Evaluator& ev, std::uint64_t cid,
     // failure, not a Void result. Returning Void here made map/filter/fold
     // silently produce () for every element when the callback could not be
     // resolved.
-    return make_primitive_error(
-        ev.string_heap_, ev.error_values_,
-        std::string("callback apply failed (closure ") + std::to_string(cid) +
-            ")",
-        ev.primitive_error_counter_ptr());
+    return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                std::string("callback apply failed (closure ") +
+                                    std::to_string(cid) + ")",
+                                ev.primitive_error_counter_ptr());
 }
 
 EvalValue RegSplitParts::apply_unary(Evaluator& ev, const EvalValue& fn, const EvalValue& arg,

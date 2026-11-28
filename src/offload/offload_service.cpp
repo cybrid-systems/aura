@@ -20,8 +20,8 @@ public:
             // soon as the same fiber submits again, and the drain drops a
             // completion whose generation no longer matches. Address the
             // waiter by fiber and let it re-check its ticket.
-            sched_->post_offload_completion(
-                ticket->fiber_id, aura::serve::Scheduler::kOffloadAnyWaitGen);
+            sched_->post_offload_completion(ticket->fiber_id,
+                                            aura::serve::Scheduler::kOffloadAnyWaitGen);
         }
     }
 
@@ -131,9 +131,8 @@ bool OffloadService::await_for(const std::shared_ptr<Ticket>& ticket,
         const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
                                    deadline - std::chrono::steady_clock::now())
                                    .count();
-        const int park_ms = remaining <= 0
-                                ? 1
-                                : static_cast<int>(std::min<long long>(remaining, 60000));
+        const int park_ms =
+            remaining <= 0 ? 1 : static_cast<int>(std::min<long long>(remaining, 60000));
         fiber->set_park_deadline_ms(park_ms);
         aura::serve::Fiber::yield();
         fiber->clear_park_deadline();

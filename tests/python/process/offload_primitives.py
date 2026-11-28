@@ -95,7 +95,6 @@ class TestOffloadPrimitives(unittest.TestCase):
         self.assertEqual(len(rows), 1, f"stdout={proc.stdout[-800:]!r} stderr={proc.stderr[-800:]!r}")
         self.assertEqual(rows[0].get("value"), '"3"')
 
-
     def test_snapshot_registry_is_bounded(self) -> None:
         # Issue #5513: every offload:snapshot kept a full workspace-source
         # copy for the life of the process. The handle table is now capped;
@@ -104,10 +103,7 @@ class TestOffloadPrimitives(unittest.TestCase):
             self.skipTest(f"{AURA_BIN} not built")
         env = dict(os.environ)
         env["AURA_SANDBOX"] = "off"
-        program = (
-            "(begin (let loop ((i 0) (last 0)) "
-            "(if (< i 70) (loop (+ i 1) (offload:snapshot)) last)))"
-        )
+        program = "(begin (let loop ((i 0) (last 0)) (if (< i 70) (loop (+ i 1) (offload:snapshot)) last)))"
         proc = subprocess.run(
             [str(AURA_BIN)],
             input=program,
@@ -134,7 +130,7 @@ class TestOffloadPrimitives(unittest.TestCase):
             "(define t2 (offload:submit (offload:snapshot) '(typecheck))) "
             "(define r1 (offload:await t1 :timeout-ms 30000)) "
             "(define r2 (offload:await t2 :timeout-ms 30000)) "
-            "(list (hash-ref r1 \"status\") (hash-ref r2 \"status\")))"
+            '(list (hash-ref r1 "status") (hash-ref r2 "status")))'
         )
         payload = json.dumps({"session": "default", "cmd": "exec", "code": program}) + "\n"
         proc = subprocess.run(

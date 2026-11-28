@@ -3832,8 +3832,8 @@ static int fold_oneshot_capabilities(
     if (preset_4912 == "ci") {
         // Issue #5501: `out` comes from the same trusted aura.toml that
         // supplied the preset (aura run), and must stay under the project.
-        auto out_dir = g_trust_project_5501 ? read_toml_key_4913("aura.toml", "out")
-                                            : std::string{};
+        auto out_dir =
+            g_trust_project_5501 ? read_toml_key_4913("aura.toml", "out") : std::string{};
         if (!out_dir.empty() && !trusted_out_dir_5501(out_dir)) {
             std::println(std::cerr,
                          "error: aura.toml out = \"{}\" must be a relative path inside the "

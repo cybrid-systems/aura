@@ -2048,18 +2048,16 @@ void RegSplitParts::register_offload_primitives(PrimRegistrar add, Evaluator& ev
         return offload_hash(kvs);
     };
 
-    add("offload:snapshot",
-        [&ev, offload_handles, mev](const auto&) -> EvalValue {
-            std::string source = ev.authoritative_workspace_source();
-            std::scoped_lock lock(offload_handles->mutex);
-            if (offload_handles->snapshots.size() >= kMaxOffloadSnapshots5513)
-                return mev("snapshot-limit",
-                           "offload:snapshot: too many unconsumed snapshots (64)");
-            const auto id = offload_handles->next_snapshot++;
-            offload_handles->snapshots.emplace(
-                id, std::make_shared<const std::string>(std::move(source)));
-            return make_int(id);
-        });
+    add("offload:snapshot", [&ev, offload_handles, mev](const auto&) -> EvalValue {
+        std::string source = ev.authoritative_workspace_source();
+        std::scoped_lock lock(offload_handles->mutex);
+        if (offload_handles->snapshots.size() >= kMaxOffloadSnapshots5513)
+            return mev("snapshot-limit", "offload:snapshot: too many unconsumed snapshots (64)");
+        const auto id = offload_handles->next_snapshot++;
+        offload_handles->snapshots.emplace(id,
+                                           std::make_shared<const std::string>(std::move(source)));
+        return make_int(id);
+    });
 
     add("offload:submit",
         [&ev, offload_handles, offload_stage_name, mev](std::span<const EvalValue> a) -> EvalValue {

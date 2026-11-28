@@ -766,9 +766,9 @@ int run_test_sandbox_mode_authority_2657() {
         auto& ev = cs.evaluator();
         ev.set_capability_tenant_id(7);
         const auto auth0 = snapshot_sandbox_authority_stats().authority_set_total;
-        for (const char* expr : {"(security:set-effect-sandbox-mode! 256)",
-                                 "(security:set-effect-sandbox-mode! -1)",
-                                 "(security:set-effect-sandbox-mode! 9223372036854775807)"}) {
+        for (const char* expr :
+             {"(security:set-effect-sandbox-mode! 256)", "(security:set-effect-sandbox-mode! -1)",
+              "(security:set-effect-sandbox-mode! 9223372036854775807)"}) {
             const auto r = cs.eval(expr);
             CHECK(r && aura::compiler::types::is_error(*r),
                   std::format("5493: {} is a primitive error", expr));

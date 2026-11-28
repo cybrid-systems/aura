@@ -177,10 +177,8 @@ static void ac7_worker_cap() {
     const std::string msg2 = (second && is_error(*second)) ? ev.soft_error_message(*second) : "";
     CHECK(msg2.find("regex workers exhausted") != std::string::npos,
           "AC7: exhausted, not another timeout");
-    const auto refused_ms =
-        std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count();
-    const auto first_ms =
-        std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
+    const auto refused_ms = std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count();
+    const auto first_ms = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
     std::println("  first_ms={} refused_ms={}", first_ms, refused_ms);
     CHECK(refused_ms < 50, "AC7: the refused call does not pay another budget");
     ::aura::config::test_unsetenv("AURA_REGEX_TIMEOUT_MS");

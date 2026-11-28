@@ -113,11 +113,9 @@ void CompilerService::cache_module(const std::string& content, const std::string
                         if (cal.tag == aura::ast::NodeTag::Variable &&
                             p.resolve(cal.sym_id) == "while") {
                             const bool arm1 = nv.child(1) < f.size() &&
-                                              f.get(nv.child(1)).tag ==
-                                                  aura::ast::NodeTag::Lambda;
+                                              f.get(nv.child(1)).tag == aura::ast::NodeTag::Lambda;
                             const bool arm2 = nv.child(2) < f.size() &&
-                                              f.get(nv.child(2)).tag ==
-                                                  aura::ast::NodeTag::Lambda;
+                                              f.get(nv.child(2)).tag == aura::ast::NodeTag::Lambda;
                             if (arm1 || arm2)
                                 hit = true;
                         }
@@ -172,8 +170,7 @@ void CompilerService::cache_module(const std::string& content, const std::string
     // site. lib/ modules keep the binding even without an export form
     // (lib/phys.aura is the motivating 156-define case).
     Env* binding_env = nullptr;
-    if (module_env != nullptr &&
-        (module_has_export || path.find("/lib/") != std::string::npos))
+    if (module_env != nullptr && (module_has_export || path.find("/lib/") != std::string::npos))
         binding_env = module_env;
 
     // Cache each define (IR only — tree-walker already evaluated the module)
@@ -262,8 +259,7 @@ void CompilerService::cache_module(const std::string& content, const std::string
                         return true;
                     if (local_bound(nm) || params.count(nm) != 0 || nm == self_name)
                         return true;
-                    if (eval.primitives().slot_for_name(nm) <
-                        eval.primitives().slot_count())
+                    if (eval.primitives().slot_for_name(nm) < eval.primitives().slot_count())
                         return true;
                     if (ir_cache.count(nm) != 0)
                         return true;
@@ -276,8 +272,7 @@ void CompilerService::cache_module(const std::string& content, const std::string
                     return false;
                 }
                 void walk(aura::ast::NodeId id) {
-                    if (skip || id == aura::ast::NULL_NODE || id >= f.size() ||
-                        f.is_free_slot(id))
+                    if (skip || id == aura::ast::NULL_NODE || id >= f.size() || f.is_free_slot(id))
                         return;
                     auto nv = f.get(id);
                     if (nv.tag == aura::ast::NodeTag::Quote)
@@ -294,8 +289,7 @@ void CompilerService::cache_module(const std::string& content, const std::string
                         scopes.pop_back();
                         return;
                     }
-                    if (nv.tag == aura::ast::NodeTag::Let ||
-                        nv.tag == aura::ast::NodeTag::LetRec) {
+                    if (nv.tag == aura::ast::NodeTag::Let || nv.tag == aura::ast::NodeTag::LetRec) {
                         const bool rec = nv.tag == aura::ast::NodeTag::LetRec;
                         std::string nm;
                         if (nv.sym_id != aura::ast::INVALID_SYM)

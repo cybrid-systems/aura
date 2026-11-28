@@ -90,20 +90,20 @@ static std::string fmt_val(const EvalValue& v, aura::compiler::CompilerService& 
 
 namespace {
 
-// Issue #5506: the one serve scheduler the async http-post completion posts to.
-static aura::serve::Scheduler* g_async_offload_sched_5506 = nullptr;
+    // Issue #5506: the one serve scheduler the async http-post completion posts to.
+    static aura::serve::Scheduler* g_async_offload_sched_5506 = nullptr;
 
-// Issue #5507: the stdin deque, the eof flag and the session map are shared by
-// the stdin fiber and the session fibers (each on an arbitrary worker). Every
-// access below takes the matching mutex; no lock is held across a yield or a
-// service call.
-static std::mutex g_serve_stdin_mu_5507;
-static std::mutex g_serve_sessions_mu_5507;
+    // Issue #5507: the stdin deque, the eof flag and the session map are shared by
+    // the stdin fiber and the session fibers (each on an arbitrary worker). Every
+    // access below takes the matching mutex; no lock is held across a yield or a
+    // service call.
+    static std::mutex g_serve_stdin_mu_5507;
+    static std::mutex g_serve_sessions_mu_5507;
 
-static bool stdin_eof_read_5507(bool* eof) {
-    std::lock_guard<std::mutex> lk(g_serve_stdin_mu_5507);
-    return eof != nullptr && *eof;
-}
+    static bool stdin_eof_read_5507(bool* eof) {
+        std::lock_guard<std::mutex> lk(g_serve_stdin_mu_5507);
+        return eof != nullptr && *eof;
+    }
 
     // Issue #4698: the session Evaluator that owns the pending fiber body
     // closure. The fiber:spawn primitive evaluates the body closure on the
@@ -1020,9 +1020,8 @@ namespace {
                 // Issue #5509: closure mark bits are indexed by the monotonic
                 // ClosureId, not by a slot in [0, count). Size the bitmap to
                 // the allocator watermark so a live root's set() lands.
-                const std::size_t closures =
-                    std::max<std::size_t>(ev.closures_size(),
-                                          static_cast<std::size_t>(ev.closure_id_watermark()));
+                const std::size_t closures = std::max<std::size_t>(
+                    ev.closures_size(), static_cast<std::size_t>(ev.closure_id_watermark()));
                 return {ev.string_heap_size(), ev.pairs_size(), closures};
             });
     }
