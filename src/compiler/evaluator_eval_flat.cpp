@@ -9333,7 +9333,7 @@ Evaluator::FlatStep Evaluator::eval_flat_on_define(EvalFlatCursor& cur,
     // Check if already bound as a cell — update existing cell to maintain
     // sequential define chains across multiple eval calls
     // Use lookup_binding to get the raw cell sentinel (not dereferenced value)
-    auto existing = eval_env.lookup_binding(std::string(name));
+    auto existing = eval_env.lookup_binding(name);
     if (!existing && v.sym_id != aura::ast::INVALID_SYM) {
         // SymId path: re-define after capture/materialize may only
         // have the cell on bindings_symid_.

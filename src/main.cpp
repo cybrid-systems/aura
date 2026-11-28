@@ -4198,21 +4198,27 @@ static std::optional<std::vector<std::string>> split_oneshot_forms(const std::st
         bool semi = false;
     };
     std::vector<OpenSite> opens;
-    auto line_col_at = [&](std::size_t index) {
-        std::size_t line = 1;
-        std::size_t col = 1;
-        for (std::size_t k = 0; k < index && k < all_input.size(); ++k) {
+    // Issue #5638: line/col ride the single scan. Recounting from byte 0
+    // on every '(' / '[' is O(openers × file length).
+    std::size_t cur_line = 1;
+    std::size_t cur_col = 1;
+    std::size_t noted = 0;
+    auto sync_to = [&](std::size_t end) {
+        if (end > all_input.size())
+            end = all_input.size();
+        for (std::size_t k = noted; k < end; ++k) {
             if (all_input[k] == '\n') {
-                ++line;
-                col = 1;
+                ++cur_line;
+                cur_col = 1;
             } else {
-                ++col;
+                ++cur_col;
             }
         }
-        return OpenSite{line, col, false};
+        noted = end;
     };
 
     for (std::size_t i = 0; i < all_input.size(); ++i) {
+        sync_to(i);
         auto c = all_input[i];
 
         if (in_string) {
@@ -4268,20 +4274,10 @@ static std::optional<std::vector<std::string>> split_oneshot_forms(const std::st
             if (nest > 0) {
                 // Inside a form: same contract as an unclosed list (#4866),
                 // but name the real cause instead of a missing ')'.
-                std::size_t line = 1, col = 1;
-                for (std::size_t k = 0; k < i; ++k) {
-                    if (all_input[k] == '\n') {
-                        ++line;
-                        col = 1;
-                    } else {
-                        ++col;
-                    }
-                }
-                // #5239: do not print a second parser here. Hand the whole
-                // source to the parser, whose Diagnostic names the file,
-                // snippet and the real cause.
-                (void)line;
-                (void)col;
+                // #5239: the parser owns the diagnostic. cur_line/cur_col is
+                // the opener; it is not printed here.
+                (void)cur_line;
+                (void)cur_col;
                 return std::vector<std::string>{all_input};
             }
             if (depth > 0)
@@ -4339,7 +4335,7 @@ static std::optional<std::vector<std::string>> split_oneshot_forms(const std::st
                 }
             }
             current += c;
-            auto site = line_col_at(i);
+            OpenSite site{cur_line, cur_col, false};
             site.semi = c == '(' && i + 1 < all_input.size() && all_input[i + 1] == ';';
             opens.push_back(site);
             ++depth;
@@ -4351,18 +4347,9 @@ static std::optional<std::vector<std::string>> split_oneshot_forms(const std::st
             // read error. Do not evaluate a already-split prefix — a
             // truncated named-let would run with rewritten control flow
             // (n becomes (1)/(), infinite back-off).
-            std::size_t line = 1, col = 1;
-            for (std::size_t k = 0; k < i; ++k) {
-                if (all_input[k] == '\n') {
-                    ++line;
-                    col = 1;
-                } else {
-                    ++col;
-                }
-            }
             // #5239: parser is the single source of parse diagnostics.
-            (void)line;
-            (void)col;
+            (void)cur_line;
+            (void)cur_col;
             (void)c;
             return std::vector<std::string>{all_input};
         }
@@ -4412,7 +4399,8 @@ static std::optional<std::vector<std::string>> split_oneshot_forms(const std::st
                 if (!opens.empty())
                     site = opens.back();
                 else {
-                    site = line_col_at(all_input.size());
+                    sync_to(all_input.size());
+                    site = OpenSite{cur_line, cur_col, false};
                 }
                 // #5239: the parser owns this diagnostic (it knows whether the
                 // real cause is an unclosed list or an unterminated string,

@@ -824,19 +824,26 @@ std::optional<EvalValue> Env::lookup(std::string_view n) const {
     return std::nullopt;
 }
 
-// ── Env::lookup_binding: returns raw binding (cell sentinel as-is) ─
+// ── lookup_binding: returns raw binding (cell sentinel as-is) ─
 // Issue #1860: pre-#1860 walked parent_ with no depth guard —
 // a cyclic parent_ chain stack-overflowed the C++ call stack.
 // Share aura_env_lookup_depth_slot / MAX_ENV_DEPTH with Env::lookup (#1858/#2650).
 std::optional<EvalValue> Env::lookup_binding(std::string_view n) const {
-    // The pre (!n.empty()) is on the declaration in evaluator.ixx.
+    // #1860 depth guard. #5639: index is authoritative once built (#4350).
     if (!env_lookup_enter())
         return std::nullopt;
     EnvLookupDepthGuard dec(true);
     auto bind_guard = lock_bindings_shared(); // #4717 shared top env
-    for (auto it = bindings_.rbegin(); it != bindings_.rend(); ++it)
-        if (it->first == n)
-            return it->second;
+    if (!binding_index_.empty()) {
+        if (auto it = binding_index_.find(n); it != binding_index_.end() &&
+                                              it->second < bindings_.size() &&
+                                              bindings_[it->second].first == n)
+            return bindings_[it->second].second;
+    } else {
+        for (auto it = bindings_.rbegin(); it != bindings_.rend(); ++it)
+            if (it->first == n)
+                return it->second;
+    }
     return parent_ ? parent_->lookup_binding(n) : std::nullopt;
 }
 
@@ -1241,20 +1248,28 @@ std::optional<types::EvalValue> Env::lookup_by_symid(aura::ast::SymId s) const {
     auto bind_guard = lock_bindings_shared(); // #4717 shared top env
     // Issue #4343: O(1) index hit before the linear walk. The map keeps
     // the newest index per SymId (bind appends are last-wins), matching
-    // the reverse-scan semantics exactly; the walk stays as a
-    // stale-index fallback.
-    if (auto it = symid_index_.find(s); it != symid_index_.end()) {
-        const auto idx = it->second;
-        if (idx < bindings_symid_.size() && bindings_symid_[idx].first == s)
-            return bindings_symid_[idx].second;
+    // the reverse-scan semantics exactly.
+    // Issue #5639: a populated index is authoritative, same as
+    // Env::lookup's local_symid_binding. A miss used to walk every
+    // binding (each new top-level define). A stale slot still scans.
+    bool scan_local = symid_index_.empty();
+    if (!scan_local) {
+        if (auto it = symid_index_.find(s); it != symid_index_.end()) {
+            const auto idx = it->second;
+            if (idx < bindings_symid_.size() && bindings_symid_[idx].first == s)
+                return bindings_symid_[idx].second;
+            scan_local = true;
+        }
     }
-    for (auto it = bindings_symid_.rbegin(); it != bindings_symid_.rend(); ++it) {
-        if (it->first == s) {
-            // P0 step 2: return raw binding (sentinel as-is). No cells_
-            // member anymore. Deref (if cell) happens at caller using
-            // central Evaluator cells_ when in Evaluator scope, or
-            // explicit cells param for mutation paths (lookup_cell_*).
-            return it->second;
+    if (scan_local) {
+        for (auto it = bindings_symid_.rbegin(); it != bindings_symid_.rend(); ++it) {
+            if (it->first == s) {
+                // P0 step 2: return raw binding (sentinel as-is). No cells_
+                // member anymore. Deref (if cell) happens at caller using
+                // central Evaluator cells_ when in Evaluator scope, or
+                // explicit cells param for mutation paths (lookup_cell_*).
+                return it->second;
+            }
         }
     }
     // Issue #4350: delegated capture bindings — resolve the query SymId

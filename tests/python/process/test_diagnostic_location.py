@@ -10,11 +10,12 @@ import unittest
 
 PROCESS_THEME = "diagnostic-location"
 PROCESS_TIER = "fast"
-PROCESS_TIMEOUT = 180
+PROCESS_TIMEOUT = 300
 PARTS = (
     "dloc_file_face",
     "dloc_quality",
     "dloc_module_file",
+    "dloc_scale",
 )
 CASES = (
     (
@@ -66,6 +67,21 @@ CASES = (
         4916,
         "test_deny_after_std_require_is_in_entry_file",
         "dloc_module_file.TestModuleDiagLocation4916.test_deny_after_std_require_is_in_entry_file",
+    ),
+    (
+        5639,
+        "test_redefine_same_name_ten_thousand",
+        "dloc_scale.TestDefineScale.test_redefine_same_name_ten_thousand",
+    ),
+    (
+        5639,
+        "test_distinct_defines_scale_linearly",
+        "dloc_scale.TestDefineScale.test_distinct_defines_scale_linearly",
+    ),
+    (
+        5638,
+        "test_file_face_matches_load_within_five",
+        "dloc_scale.TestDefineScale.test_file_face_matches_load_within_five",
     ),
 )
 
