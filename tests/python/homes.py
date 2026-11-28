@@ -105,6 +105,17 @@ HOMES: tuple[Home, ...] = (
         note="std/list contract, including the std/iter re-export of the same names.",
     ),
     _h(
+        "runtime/pair-scope-recycle",
+        "aura",
+        "tests/suite/pair_scope_recycle.aura",
+        ("with-arena", "pair id", "pair-id", "cons", "gc", "recycle"),
+        tag="gc",
+        requires=(),
+        body="(check= 3 (with-arena (+ (car (cons 1 2)) (cdr (cons 1 2)))))",
+        roots=("src/compiler/runtime_ssot.cpp", "src/compiler/aura_jit_runtime.cpp"),
+        note="Arena-scoped pair ids are recycled at scope pop (#5518).",
+    ),
+    _h(
         "std/vector",
         "aura",
         "tests/suite/vector_srfi_5133.aura",

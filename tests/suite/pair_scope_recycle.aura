@@ -1,0 +1,46 @@
+; suite/pair_scope_recycle.aura — Issue #5518
+; An arena scope (with-arena) mints pair ids for non-escaping cons. When the
+; scope pops those ids go back to the pair table instead of being burned for
+; the life of the process. These cases pin the two shapes that must survive
+; the recycle: scoped pairs used inside the scope, and a pair that escapes
+; the scope (interned before the pop, so it must still read afterwards).
+
+(require "std/test" all:)
+(test-file "pair_scope_recycle.aura")
+
+(define (scoped-sum n)
+  (let loop ((i 0) (acc 0))
+    (if (< i n)
+        (loop (+ i 1)
+              (+ acc (with-arena
+                       (let ((p (cons i (* 2 i))))
+                         (+ (car p) (cdr p))))))
+        acc)))
+
+(test-case "pair-scope:recycled-ids-stay-correct" (hash "issue" 5518 "tags" (list "gc" "pair"))
+  (check (= 599970000 (scoped-sum 20000))))
+
+(define (nested-sum n)
+  (let loop ((i 0) (acc 0))
+    (if (< i n)
+        (loop (+ i 1)
+              (+ acc
+                 (with-arena
+                   (let ((outer (cons i 1)))
+                     (+ (car outer)
+                        (with-arena
+                          (let ((inner (cons i 2)))
+                            (+ (car inner) (cdr inner))))
+                        (cdr outer))))))
+        acc)))
+
+(test-case "pair-scope:nested-watermarks" (hash "issue" 5518)
+  ; per i: car outer (i) + inner (i+2) + cdr outer (1) = 2i + 3
+  (check (= 25010000 (nested-sum 5000))))
+
+(define escaped (with-arena (cons 7 8)))
+
+(test-case "pair-scope:escaping-result-survives-pop" (hash)
+  (check (pair? escaped))
+  (check (= 7 (car escaped)))
+  (check (= 8 (cdr escaped))))

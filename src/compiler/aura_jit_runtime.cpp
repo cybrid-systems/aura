@@ -180,6 +180,9 @@ extern "C" uint64_t aura_tl_arena_oom_total() {
 bool tl_arena_init(TLarena* arena) {
     if (!arena)
         return false;
+    // Issue #5518: re-init discards the bump region, so any scoped pair ids
+    // chained there die with it.
+    aura_pair_scope_release_to(arena, nullptr);
     arena->capacity = tl_arena_resolve_capacity(arena->capacity);
     if (!arena->base) {
         arena->base = static_cast<uint8_t*>(::aura::core::c_alloc(arena->capacity));
@@ -198,6 +201,8 @@ bool tl_arena_init(TLarena* arena) {
 void tl_arena_destroy(TLarena* arena) {
     if (!arena)
         return;
+    // Issue #5518: the rec chain lives in the arena being freed.
+    aura_pair_scope_release_to(arena, nullptr);
     ::aura::core::c_free(arena->base);
     arena->base = nullptr;
     arena->offset = 0;
@@ -208,6 +213,8 @@ void tl_arena_destroy(TLarena* arena) {
 void tl_arena_reset(TLarena* arena) {
     if (!arena)
         return;
+    // Issue #5518: everything the arena minted dies with the reset.
+    aura_pair_scope_release_to(arena, nullptr);
     arena->offset = 0;
     arena->mark_depth = 0;
 }
@@ -270,6 +277,8 @@ void tl_arena_push(TLarena* arena) {
             contract_assert(false);
         return;
     }
+    // Issue #5518: save the scoped-pair watermark next to the bump mark.
+    arena->pair_rec_marks[arena->mark_depth] = arena->pair_rec_head;
     arena->marks[arena->mark_depth++] = arena->offset;
 }
 
@@ -285,6 +294,10 @@ void tl_arena_pop(TLarena* arena) {
             contract_assert(false);
         return; // Soft: unmatched pop is a no-op (do not scramble offset)
     }
+    const unsigned depth = arena->mark_depth - 1;
+    // Issue #5518: the scope is over — every pair id it minted died here.
+    // Release before the offset rewind invalidates the rec chain.
+    aura_pair_scope_release_to(arena, arena->pair_rec_marks[depth]);
     arena->offset = arena->marks[--arena->mark_depth];
 }
 
@@ -7033,6 +7046,8 @@ int64_t aura_alloc_pair_arena(int64_t car, int64_t cdr) {
     const int64_t id = g_pair_slots.push_back(slot);
     if (id < 0)
         return aura::compiler::types::kSpecialVoid; // #5518: cap exhausted
+    // Issue #5518: inside an arena scope the id can be handed back at pop.
+    aura_note_arena_pair(id, slot);
     // Issue #4057: same owner-principal stamp as aura_alloc_pair — the arena
     // path publishes into the same process-shared index space.
     if (g_pair_slot_tenants.size() < g_pair_slots.size())

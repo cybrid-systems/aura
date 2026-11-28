@@ -34,6 +34,12 @@ public:
     // Release-store into an index the caller already claimed.
     void store(std::size_t id, PairSlot* slot);
     void clear();
+    // Issue #5518: hand a scoped id back. Clears the cell only if it still
+    // holds expect (a concurrent mirror may own the index), drops the
+    // tenant stamp, and recycles the id. Returns true when the cell was
+    // cleared. Only ids whose last reference died with the scope may be
+    // released: the arena scope is the escape contract.
+    bool release(std::size_t id, PairSlot* expect);
     void stamp_tenant(std::size_t id, std::uint64_t tenant);
     std::uint64_t load_tenant(std::size_t id) const;
 
@@ -100,7 +106,31 @@ struct TLarena {
     static constexpr unsigned kMaxMarks = 8;
     size_t marks[kMaxMarks]{};
     unsigned mark_depth = 0;
+
+    // Issue #5518: pair ids minted from this arena inside an arena scope
+    // (tl_arena_push .. tl_arena_pop) are chained here so the pop can hand
+    // the ids back to the pair table instead of burning them for the life
+    // of the process. The recs are bump-allocated from this same arena, so
+    // tracking costs no malloc and dies with the scope. Only scoped
+    // allocations are tracked: an unscoped arena cons keeps the old
+    // "valid until process exit" contract.
+    struct PairIdRec {
+        std::uint64_t id;
+        PairSlot* slot;
+        PairIdRec* prev;
+    };
+    PairIdRec* pair_rec_head = nullptr;
+    PairIdRec* pair_rec_marks[kMaxMarks]{};
+    // Recycled ids this thread can hand out without touching the global
+    // pool. Batch hand-off keeps a cons that reuses an id lock-free.
+    static constexpr std::uint32_t kFreeBatch = 1024;
+    std::uint64_t free_ids[kFreeBatch]{};
+    std::uint32_t free_n = 0;
 };
+
+// Issue #5518: sentinel for "no recycled pair id available" (ids are
+// 57-bit, so the all-ones value is outside the space).
+inline constexpr std::uint64_t kNoRecycledPairId = ~std::uint64_t{0};
 
 // Per-thread global arena instance
 extern __thread TLarena g_tl_arena;
@@ -312,6 +342,16 @@ void* tl_arena_alloc(TLarena* arena, size_t size, size_t align);
 // Issue #3265: push/pop use TLarena::marks[] (not arena memory).
 void tl_arena_push(TLarena* arena);
 void tl_arena_pop(TLarena* arena);
+
+// Issue #5518: pair id recycling for arena scopes. An arena-scoped cons
+// records its id via aura_note_arena_pair; tl_arena_pop walks the recs back
+// to the saved watermark and releases each id (clear cell + stamp, hand the
+// id to this thread's free batch). The next push_back reuses it instead of
+// growing the fixed 2^26 directory.
+extern "C" void aura_note_arena_pair(std::int64_t id, PairSlot* slot);
+extern "C" void aura_pair_id_recycle(std::uint64_t id);
+std::uint64_t aura_pair_id_take_recycled();
+extern "C" void aura_pair_scope_release_to(TLarena* arena, TLarena::PairIdRec* stop);
 
 // Issue #1359 probes
 extern "C" size_t aura_tl_arena_default_capacity();

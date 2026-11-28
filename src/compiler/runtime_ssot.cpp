@@ -438,9 +438,101 @@ static void note_pair_capacity_exhausted_5518() noexcept {
     }
 }
 
+// ── Issue #5518: pair id recycling ────────────────────────────────────
+// An arena scope (tl_arena_push .. tl_arena_pop) mints ids from the fixed
+// 2^26 directory. When the scope ends every non-escaping pair it minted is
+// dead, so the ids go back on a free batch instead of being burned for the
+// life of the process. Hand-off is batched per thread (kFreeBatch) so a
+// cons that reuses an id takes no global lock; only a full/empty batch
+// touches the pool.
+namespace {
+std::mutex g_pair_free_mtx;
+std::vector<std::uint64_t> g_pair_free_ids;
+} // namespace
+
+extern "C" void aura_pair_id_recycle(std::uint64_t id) {
+    TLarena& a = g_tl_arena;
+    if (a.free_n >= TLarena::kFreeBatch) {
+        std::scoped_lock lock(g_pair_free_mtx);
+        g_pair_free_ids.insert(g_pair_free_ids.end(), a.free_ids, a.free_ids + a.free_n);
+        a.free_n = 0;
+    }
+    a.free_ids[a.free_n++] = id;
+}
+
+std::uint64_t aura_pair_id_take_recycled() {
+    TLarena& a = g_tl_arena;
+    if (a.free_n == 0) {
+        std::scoped_lock lock(g_pair_free_mtx);
+        const std::size_t n = std::min<std::size_t>(TLarena::kFreeBatch, g_pair_free_ids.size());
+        if (n == 0)
+            return kNoRecycledPairId;
+        std::copy(g_pair_free_ids.end() - static_cast<std::ptrdiff_t>(n), g_pair_free_ids.end(),
+                  a.free_ids);
+        g_pair_free_ids.resize(g_pair_free_ids.size() - n);
+        a.free_n = static_cast<std::uint32_t>(n);
+    }
+    return a.free_ids[--a.free_n];
+}
+
+// Walk this thread's arena-pair recs back to the saved watermark, release
+// each id and stop there. Called from tl_arena_pop / reset / destroy while
+// the rec memory is still inside the arena (before the offset rewind).
+extern "C" void aura_pair_scope_release_to(TLarena* arena, TLarena::PairIdRec* stop) {
+    if (!arena)
+        return;
+    while (arena->pair_rec_head != stop) {
+        auto* rec = arena->pair_rec_head;
+        if (!rec)
+            break; // defensive: watermark from another thread / lost chain
+        g_pair_slots.release(static_cast<std::size_t>(rec->id), rec->slot);
+        aura_pair_id_recycle(rec->id);
+        arena->pair_rec_head = rec->prev;
+    }
+    arena->pair_rec_head = stop;
+}
+
+// Record a scoped arena pair. No-op outside a scope: an unscoped arena cons
+// has no known death point, so its id keeps the old (leak-until-exit)
+// contract.
+extern "C" void aura_note_arena_pair(std::int64_t id, PairSlot* slot) {
+    if (id < 0 || !slot)
+        return;
+    TLarena& a = g_tl_arena;
+    if (a.mark_depth == 0)
+        return;
+    auto* rec = static_cast<TLarena::PairIdRec*>(
+        tl_arena_alloc(&a, sizeof(TLarena::PairIdRec), alignof(TLarena::PairIdRec)));
+    if (!rec)
+        return;
+    rec->id = static_cast<std::uint64_t>(id);
+    rec->slot = slot;
+    rec->prev = a.pair_rec_head;
+    a.pair_rec_head = rec;
+}
+
 std::int64_t PairSlotTable::push_back(PairSlot* slot) {
     const auto limit = pair_id_limit_5518();
     for (;;) {
+        // Issue #5518: a scoped pop returned ids to this thread's free
+        // batch; reuse one before claiming fresh directory space. The
+        // placeholder push_back(nullptr) path (IR MakePair grow) must not
+        // consume recycled ids: it only advances size() for its own index.
+        if (slot != nullptr) {
+            const std::uint64_t rid = aura_pair_id_take_recycled();
+            if (rid != kNoRecycledPairId) {
+                PairSegment* rseg = pair_segment(static_cast<std::size_t>(rid), /*create=*/true);
+                if (rseg) {
+                    const std::size_t roff = static_cast<std::size_t>(rid) % kPairSegSlots;
+                    rseg->tenants[roff].store(0, std::memory_order_release);
+                    PairSlot* rexpected = nullptr;
+                    if (rseg->slots[roff].compare_exchange_strong(
+                            rexpected, slot, std::memory_order_release, std::memory_order_acquire))
+                        return static_cast<std::int64_t>(rid);
+                }
+                continue; // cell taken by a concurrent publisher; take another
+            }
+        }
         const std::uint64_t ep = g_pair_claim_epoch.load(std::memory_order_acquire);
         if (tls_pair_ids.epoch != ep) {
             tls_pair_ids.next = 0;
@@ -488,6 +580,21 @@ std::int64_t PairSlotTable::push_back(PairSlot* slot) {
                                                     std::memory_order_acquire))
             return static_cast<std::int64_t>(id);
     }
+}
+
+bool PairSlotTable::release(std::size_t id, PairSlot* expect) {
+    if (id >= high_water_.load(std::memory_order_acquire))
+        return false;
+    PairSegment* seg = pair_segment(id, /*create=*/false);
+    if (!seg)
+        return false;
+    const std::size_t off = id % kPairSegSlots;
+    PairSlot* expected = expect;
+    const bool cleared = seg->slots[off].compare_exchange_strong(
+        expected, nullptr, std::memory_order_release, std::memory_order_acquire);
+    if (cleared)
+        seg->tenants[off].store(0, std::memory_order_release);
+    return cleared;
 }
 
 void PairSlotTable::store(std::size_t id, PairSlot* slot) {
