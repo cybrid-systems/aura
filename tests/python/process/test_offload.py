@@ -36,6 +36,16 @@ CASES = (
         "test_eval_async_isolated_result",
         "offload_primitives.TestOffloadPrimitives.test_eval_async_isolated_result",
     ),
+    (
+        5513,
+        "test_snapshot_registry_is_bounded",
+        "offload_primitives.TestOffloadPrimitives.test_snapshot_registry_is_bounded",
+    ),
+    (
+        5514,
+        "test_await_first_ticket_after_a_second_submit",
+        "offload_primitives.TestOffloadPrimitives.test_await_first_ticket_after_a_second_submit",
+    ),
 )
 
 

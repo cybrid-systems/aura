@@ -15,8 +15,14 @@ public:
         : sched_(sched) {}
 
     void on_complete(std::shared_ptr<Ticket> ticket) noexcept override {
-        if (sched_ && ticket)
-            sched_->post_offload_completion(ticket->fiber_id, ticket->wait_gen);
+        if (sched_ && ticket) {
+            // Issue #5514: the ticket's submit-time generation goes stale as
+            // soon as the same fiber submits again, and the drain drops a
+            // completion whose generation no longer matches. Address the
+            // waiter by fiber and let it re-check its ticket.
+            sched_->post_offload_completion(
+                ticket->fiber_id, aura::serve::Scheduler::kOffloadAnyWaitGen);
+        }
     }
 
 private:
@@ -96,6 +102,11 @@ void OffloadService::await(const std::shared_ptr<Ticket>& ticket) {
         return;
     while (!terminal(ticket->status.load(std::memory_order_acquire))) {
         fiber->set_state(aura::serve::FiberState::Waiting);
+        // Issue #5514: the completion may land between the status load and
+        // the state store; the drain then saw Running and skipped the wake.
+        // Re-check after the store - a finished ticket never yields.
+        if (terminal(ticket->status.load(std::memory_order_acquire)))
+            break;
         aura::serve::Fiber::yield();
     }
 }
@@ -112,7 +123,20 @@ bool OffloadService::await_for(const std::shared_ptr<Ticket>& ticket,
         if (std::chrono::steady_clock::now() >= deadline)
             return false;
         fiber->set_state(aura::serve::FiberState::Waiting);
+        if (terminal(ticket->status.load(std::memory_order_acquire)))
+            break;
+        // Issue #5514: arm the park deadline so the scheduler wakes this
+        // fiber even when the ticket never completes; the timeout used to be
+        // checked only after a wake that might never come.
+        const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                   deadline - std::chrono::steady_clock::now())
+                                   .count();
+        const int park_ms = remaining <= 0
+                                ? 1
+                                : static_cast<int>(std::min<long long>(remaining, 60000));
+        fiber->set_park_deadline_ms(park_ms);
         aura::serve::Fiber::yield();
+        fiber->clear_park_deadline();
     }
     return true;
 }

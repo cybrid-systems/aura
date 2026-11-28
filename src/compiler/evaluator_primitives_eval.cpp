@@ -1974,9 +1974,13 @@ void RegSplitParts::register_offload_primitives(PrimRegistrar add, Evaluator& ev
     // The snapshot registry and the private CompilerService job live outside
     // the evaluator module (messaging_bridge g_offload_*); the primitive table
     // only marshals values. Non-fiber contexts degrade to mode: sync.
+    // Issue #5513: a shared_ptr keeps one source copy per handle (not one
+    // per lookup) and the entry is erased when submit consumes it; the table
+    // is capped so a snapshot loop cannot grow without bound.
+    constexpr std::size_t kMaxOffloadSnapshots5513 = 64;
     struct OffloadHandles {
         std::mutex mutex;
-        std::unordered_map<std::int64_t, std::string> snapshots;
+        std::unordered_map<std::int64_t, std::shared_ptr<const std::string>> snapshots;
         std::int64_t next_snapshot = 1;
     };
     auto offload_handles = std::make_shared<OffloadHandles>();
@@ -2044,13 +2048,18 @@ void RegSplitParts::register_offload_primitives(PrimRegistrar add, Evaluator& ev
         return offload_hash(kvs);
     };
 
-    add("offload:snapshot", [&ev, offload_handles](const auto&) -> EvalValue {
-        std::string source = ev.authoritative_workspace_source();
-        std::scoped_lock lock(offload_handles->mutex);
-        const auto id = offload_handles->next_snapshot++;
-        offload_handles->snapshots.emplace(id, std::move(source));
-        return make_int(id);
-    });
+    add("offload:snapshot",
+        [&ev, offload_handles, mev](const auto&) -> EvalValue {
+            std::string source = ev.authoritative_workspace_source();
+            std::scoped_lock lock(offload_handles->mutex);
+            if (offload_handles->snapshots.size() >= kMaxOffloadSnapshots5513)
+                return mev("snapshot-limit",
+                           "offload:snapshot: too many unconsumed snapshots (64)");
+            const auto id = offload_handles->next_snapshot++;
+            offload_handles->snapshots.emplace(
+                id, std::make_shared<const std::string>(std::move(source)));
+            return make_int(id);
+        });
 
     add("offload:submit",
         [&ev, offload_handles, offload_stage_name, mev](std::span<const EvalValue> a) -> EvalValue {
@@ -2066,7 +2075,11 @@ void RegSplitParts::register_offload_primitives(PrimRegistrar add, Evaluator& ev
                 auto it = offload_handles->snapshots.find(snap_id);
                 if (it == offload_handles->snapshots.end())
                     return mev("bad-arg", "offload:submit: unknown snapshot handle");
-                source = it->second;
+                if (it->second)
+                    source = *it->second;
+                // Issue #5513: the handle is consumed by its submit; keeping
+                // it retained a full workspace-source copy per call.
+                offload_handles->snapshots.erase(it);
             }
             std::vector<std::string> stages;
             auto collect_stage = [&](const EvalValue& v) {

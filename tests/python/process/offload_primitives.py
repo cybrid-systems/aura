@@ -96,5 +96,60 @@ class TestOffloadPrimitives(unittest.TestCase):
         self.assertEqual(rows[0].get("value"), '"3"')
 
 
+    def test_snapshot_registry_is_bounded(self) -> None:
+        # Issue #5513: every offload:snapshot kept a full workspace-source
+        # copy for the life of the process. The handle table is now capped;
+        # an unconsumed loop must fail with a clear error, not OOM.
+        if not AURA_BIN.exists():
+            self.skipTest(f"{AURA_BIN} not built")
+        env = dict(os.environ)
+        env["AURA_SANDBOX"] = "off"
+        program = (
+            "(begin (let loop ((i 0) (last 0)) "
+            "(if (< i 70) (loop (+ i 1) (offload:snapshot)) last)))"
+        )
+        proc = subprocess.run(
+            [str(AURA_BIN)],
+            input=program,
+            text=True,
+            capture_output=True,
+            timeout=60,
+            env=env,
+        )
+        out = proc.stdout + proc.stderr
+        self.assertIn("too many unconsumed snapshots", out, out[-800:])
+
+    def test_await_first_ticket_after_a_second_submit(self) -> None:
+        # Issue #5514: the second submit bumps the fiber's wait generation,
+        # so the first ticket's completion was dropped as stale and the
+        # requester hung forever. Both awaits must return.
+        if not AURA_BIN.exists():
+            self.skipTest(f"{AURA_BIN} not built")
+        env = dict(os.environ)
+        env["AURA_SANDBOX"] = "off"
+        env["AURA_PIPELINE_STRICT"] = "force-soa"
+        program = (
+            "(begin "
+            "(define t1 (offload:submit (offload:snapshot) '(typecheck))) "
+            "(define t2 (offload:submit (offload:snapshot) '(typecheck))) "
+            "(define r1 (offload:await t1 :timeout-ms 30000)) "
+            "(define r2 (offload:await t2 :timeout-ms 30000)) "
+            "(list (hash-ref r1 \"status\") (hash-ref r2 \"status\")))"
+        )
+        payload = json.dumps({"session": "default", "cmd": "exec", "code": program}) + "\n"
+        proc = subprocess.run(
+            [str(AURA_BIN), "--serve-async"],
+            input=payload,
+            text=True,
+            capture_output=True,
+            timeout=60,
+            env=env,
+        )
+        rows = [json.loads(line) for line in proc.stdout.splitlines() if line.startswith("{")]
+        self.assertEqual(len(rows), 1, f"stdout={proc.stdout[-800:]!r} stderr={proc.stderr[-800:]!r}")
+        self.assertEqual(rows[0].get("status"), "ok", rows[0])
+        self.assertIn(":done", rows[0].get("value", ""))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -21,6 +21,12 @@ namespace {
     using aura::offload::Status;
     using aura::offload::Ticket;
 
+    // Issue #5513: both registries used to grow for the life of the process.
+    // A loop of offload:snapshot / submit leaked full source copies and
+    // ticket state until OOM, so each table is bounded and consumes on
+    // terminal await/poll.
+    constexpr std::size_t kMaxOffloadTickets = 4096;
+
     struct TicketRegistry {
         std::mutex mutex;
         std::unordered_map<int, std::shared_ptr<Ticket>> tickets;
@@ -101,6 +107,13 @@ namespace {
                 return -3;
         }
         std::scoped_lock lock(reg.mutex);
+        if (reg.tickets.size() >= kMaxOffloadTickets) {
+            // The job was accepted; stop it rather than retaining a handle
+            // nobody can look up.
+            if (submission.ticket)
+                submission.ticket->stop.request_stop();
+            return -4;
+        }
         const int id = reg.next_ticket_id++;
         reg.tickets.emplace(id, std::move(submission.ticket));
         return id;
@@ -128,6 +141,11 @@ namespace {
         if (!terminal)
             return false;
         fill_result(ticket, out);
+        // Issue #5513: terminal ticket state (result variant + stop_source)
+        // is consumed here; poll-only callers are covered by poll_impl.
+        auto& reg = registry();
+        std::scoped_lock lock(reg.mutex);
+        reg.tickets.erase(ticket_id);
         return true;
     }
 
@@ -135,7 +153,17 @@ namespace {
         auto ticket = find_ticket(ticket_id);
         if (!ticket)
             return "unknown";
-        return status_name(ticket->status.load(std::memory_order_acquire));
+        const auto status = ticket->status.load(std::memory_order_acquire);
+        const std::string name = status_name(status);
+        // Issue #5513: a poll that observes a terminal state consumes the
+        // handle, same as await.
+        if (status == Status::Done || status == Status::Failed ||
+            status == Status::Cancelled || status == Status::Rejected) {
+            auto& reg = registry();
+            std::scoped_lock lock(reg.mutex);
+            reg.tickets.erase(ticket_id);
+        }
+        return name;
     }
 
     bool cancel_impl(int ticket_id) {

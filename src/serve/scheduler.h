@@ -211,6 +211,11 @@ public:
     // completion after Ticket::status; the IO thread validates fiber_id and
     // wait_gen and re-queues only the matching park. A stale completion
     // (reaped fiber or an older wait) is dropped and counted.
+    // Issue #5514: ~0ull = wake the fiber regardless of its current wait
+    // generation. Offload waiters re-check their ticket after every wake, so
+    // a cross-ticket / stale-generation wake is a harmless spurious wake,
+    // whereas dropping it hung the requester forever.
+    static constexpr std::uint64_t kOffloadAnyWaitGen = ~0ull;
     void post_offload_completion(std::uint64_t fiber_id, std::uint64_t wait_gen);
     [[nodiscard]] std::uint64_t offload_stale_completions() const noexcept {
         return offload_stale_completions_.load(std::memory_order_relaxed);

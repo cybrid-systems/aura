@@ -685,7 +685,11 @@ void Scheduler::drain_offload_completions() noexcept {
     }
     for (const auto& item : items) {
         Fiber* fiber = fiber_by_id(item.fiber_id);
-        if (!fiber || fiber->is_done() || fiber->wait_generation() != item.wait_gen) {
+        if (!fiber || fiber->is_done()) {
+            offload_stale_completions_.fetch_add(1, std::memory_order_relaxed);
+            continue;
+        }
+        if (item.wait_gen != kOffloadAnyWaitGen && fiber->wait_generation() != item.wait_gen) {
             offload_stale_completions_.fetch_add(1, std::memory_order_relaxed);
             continue;
         }
