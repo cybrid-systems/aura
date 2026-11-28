@@ -9,6 +9,7 @@ module;
 #include <memory>
 #include <memory_resource>
 #include <mutex>
+#include <new>
 #include <shared_mutex>
 #include <string>
 #include <unordered_map>
@@ -343,6 +344,48 @@ export inline void reset_moving_freelist_exclusion_for_test() noexcept {
     return tag;
 }
 
+// Issue #5536: storage that does not value-initialize. vector<byte>::resize
+// faults every page (8 MiB arena + 3 MiB small pool per ASTArena). Upstream
+// chunks past this block already come from ::operator new and are not
+// zeroed, so a caller must construct or overwrite a slot before reading it.
+// Shrink keeps the allocation and the data pointer: the monotonic bump may
+// sit past size() and still inside the original block (rebuild_resource_
+// is intentionally empty). Growth drops the old block and does not copy;
+// no production path grows these buffers.
+struct UninitByteBuf {
+    static_assert(alignof(std::max_align_t) <= __STDCPP_DEFAULT_NEW_ALIGNMENT__,
+                  "operator new alignment must cover the arena bump");
+
+    std::byte* data_ = nullptr;
+    std::size_t size_ = 0;
+    std::size_t cap_ = 0;
+
+    UninitByteBuf() = default;
+    explicit UninitByteBuf(std::size_t bytes) { resize(bytes); }
+    UninitByteBuf(const UninitByteBuf&) = delete;
+    UninitByteBuf& operator=(const UninitByteBuf&) = delete;
+    UninitByteBuf(UninitByteBuf&&) = delete;
+    UninitByteBuf& operator=(UninitByteBuf&&) = delete;
+    ~UninitByteBuf() { ::operator delete(data_); }
+
+    [[nodiscard]] std::byte* data() noexcept { return data_; }
+    [[nodiscard]] const std::byte* data() const noexcept { return data_; }
+    [[nodiscard]] std::size_t size() const noexcept { return size_; }
+    [[nodiscard]] bool empty() const noexcept { return size_ == 0; }
+
+    void resize(std::size_t bytes) {
+        if (bytes <= cap_) {
+            size_ = bytes;
+            return;
+        }
+        auto* fresh = static_cast<std::byte*>(::operator new(bytes));
+        ::operator delete(data_);
+        data_ = fresh;
+        size_ = bytes;
+        cap_ = bytes;
+    }
+};
+
 // ── SmallObjectPool — fixed-size class allocator ─────────────────
 //
 // Three tiers for frequently allocated small objects:
@@ -369,8 +412,8 @@ public:
     static_assert(kTierSizes[0] >= 16 && kTierSizes[2] <= kMaxSmallSize,
                   "SmallObjectPool tier range must be [16, kMaxSmallSize]");
 
-    SmallObjectPool() {
-        buffer_.resize(kSmallPoolSize);
+    SmallObjectPool()
+        : buffer_(kSmallPoolSize) {
         for (std::size_t i = 0; i < kNumTiers; ++i) {
             classes_[i].start = buffer_.data() + i * kPerTierSize;
             classes_[i].bump = classes_[i].start;
@@ -592,7 +635,7 @@ private:
         free_count_ = 0;
     }
 
-    std::vector<std::byte> buffer_;
+    UninitByteBuf buffer_;
     Tier classes_[kNumTiers];
     std::size_t allocated_from_small_ = 0;
     // Issue #1518: per-tier freelist (singly linked via first void* of free block).
@@ -2348,17 +2391,23 @@ public:
         std::unique_lock lock(owner_mtx_);
         arena_owner_ = owner;
         quota_allow_fn_ = allow_fn;
+        // Publish only after both words are written. An alloc that loads
+        // false still sees "no quota", which matches a not-yet-published pair.
+        has_quota_.store(owner != nullptr && allow_fn != nullptr, std::memory_order_release);
     }
     void clear_arena_owner() noexcept {
         std::unique_lock lock(owner_mtx_);
         arena_owner_ = nullptr;
         quota_allow_fn_ = nullptr;
+        has_quota_.store(false, std::memory_order_release);
     }
     [[nodiscard]] void* arena_owner() const noexcept {
         std::shared_lock lock(owner_mtx_);
         return arena_owner_;
     }
     [[nodiscard]] bool has_arena_owner() const noexcept {
+        if (!has_quota_.load(std::memory_order_acquire))
+            return false;
         std::shared_lock lock(owner_mtx_);
         return arena_owner_ != nullptr && quota_allow_fn_ != nullptr;
     }
@@ -3881,9 +3930,11 @@ public:
                 aura::core::AuraError{aura::core::AuraErrorKind::InternalInvariantViolation,
                                       std::string("ASTArena::allocate_checked size==0")});
         }
+        if (void* q = nullptr; quiet_small_alloc_(size, alignment, cover_slot, cover_reason, q))
+            return q;
         // Issue #1663: hold shared_lock across allow_fn so clear cannot
         // destroy owner mid-callback (snapshot-then-call would UAF).
-        {
+        if (has_quota_.load(std::memory_order_acquire)) {
             std::shared_lock lock(owner_mtx_);
             if (quota_allow_fn_ && arena_owner_) {
                 if (!quota_allow_fn_(arena_owner_, size)) {
@@ -4468,13 +4519,13 @@ public:
     // live objects.
     //
     // Note: this only works if the bump pointer is still
-    // pointing into valid buffer_ capacity. std::vector::resize
-    // with n < size() preserves capacity (no reallocation), so
-    // the bump pointer's storage stays valid even though
-    // buffer_.size() shrank. The bump pointer might point past
-    // the new size, but the underlying bytes are still
-    // allocated (capacity unchanged), so accessing them is safe
-    // (the resource just treats the bytes as allocatable).
+    // pointing into the original block. UninitByteBuf::resize
+    // with n <= cap_ keeps the allocation and the data pointer,
+    // so the bump stays valid even though buffer_.size() shrank.
+    // The bump might point past the new size, but those bytes
+    // are still allocated, so accessing them is safe (the
+    // resource just treats the bytes as allocatable). Shrinking
+    // size() does not return pages to the OS.
     void rebuild_resource_() noexcept {
         // Intentionally empty: don't reset the bump pointer.
         // See the comment above for why this is the correct
@@ -4499,7 +4550,8 @@ public:
         // set/clear cannot tear the pair AND ~Evaluator cannot destroy
         // owner mid-callback (unique_lock waits for shared_lock release).
         // allow_fn must not call set/clear_arena_owner (deadlock).
-        {
+        // Issue #5536: one acquire load when no quota is published.
+        if (has_quota_.load(std::memory_order_acquire)) {
             std::shared_lock lock(owner_mtx_);
             if (quota_allow_fn_ && arena_owner_) {
                 if (!quota_allow_fn_(arena_owner_, size)) {
@@ -4575,10 +4627,8 @@ public:
         void* ptr = resource_.allocate(size, alignment);
         contract_assert(ptr != nullptr); // Issue #1519
         used_bytes_.fetch_add(size, std::memory_order_relaxed);
-        {
-            std::scoped_lock<std::mutex> lock(stats_mu_);
-            stats_.used += size;
-        }
+        // Issue #5536: stats().used is overlaid from used_bytes_ plus the
+        // small pool. Do not take stats_mu_ on this path.
         // Issue #3214: pmr / large / small-pool-fallback allocate joins
         // the same cover triad as the small-pool hit path (maybe_note
         // is a single required-active load on Soft / Off).
@@ -4597,11 +4647,106 @@ public:
     // losing the user's pending request. The fix: also
     // require frag_high to act on want_defrag. small_high
     // still triggers compact() (no flag interaction).
+    // Same ratio as ArenaStats::fragmentation_ratio, without the stats copy.
+    [[nodiscard]] double fragmentation_ratio_now() const noexcept {
+        const std::size_t cap = buffer_.size() + small_pool_.capacity();
+        if (cap == 0)
+            return 0.0;
+        const std::size_t u = used_bytes_.load(std::memory_order_relaxed) + small_pool_.allocated();
+        if (u >= cap)
+            return 0.0;
+        return static_cast<double>(cap - u) / static_cast<double>(cap);
+    }
+
+    // True when compact() would lower buffer_.size(). Matches compact()'s
+    // empty-arena floor and adaptive-headroom target. A high published
+    // frag ratio can be the untouched 3 MiB small-pool reservation; that
+    // ratio alone must not force a stats() copy when the main buffer
+    // cannot shrink.
+    [[nodiscard]] bool main_buffer_can_shrink() const noexcept {
+        const std::size_t before = buffer_.size();
+        const std::size_t u = used_bytes_.load(std::memory_order_relaxed);
+        if (u == 0)
+            return before > 1024;
+        if (u >= before)
+            return false;
+        const double hr = aura::core::arena_policy::current_adaptive_headroom();
+        const std::size_t headroom_bytes = static_cast<std::size_t>(static_cast<double>(u) * hr);
+        std::size_t target = 1024;
+        while (target < u + headroom_bytes)
+            target *= 2;
+        return target < before;
+    }
+
+    // Issue #5536: true when this alloc must run the compact policy.
+    // Small-pool pressure matches utilization() >= 0.85 with an integer
+    // compare so the quiet path does not divide two doubles. Every signal
+    // is loaded on each call: a one-alloc test after request_defrag, dirty
+    // cascade, or fiber install still enters the policy.
+    [[nodiscard]] bool alloc_policy_signal_() const noexcept {
+        if (main_buffer_can_shrink())
+            return true;
+        const std::size_t used = small_pool_.allocated();
+        if (used * 100 >= SmallObjectPool::kSmallPoolSize * 85)
+            return true;
+        if (defrag_requested())
+            return true;
+        if (aura::core::arena_policy::dirty_cascade_pending.load(std::memory_order_acquire))
+            return true;
+        if (aura::core::arena_policy::peek_shape_churn())
+            return true;
+        if (aura::core::arena_policy::peek_mutation_pressure())
+            return true;
+        if (aura::core::arena_policy::peek_jit_deopt_pressure())
+            return true;
+        if (aura::gc_hooks::fiber_active())
+            return true;
+        if (aura::core::arena_policy::peek_live_pressure())
+            return true;
+        return false;
+    }
+
+    // Issue #5536: unbound allocate_checked of a small object with no cover.
+    // Returns true only when *out is the new pointer. A tier miss returns
+    // false with nothing consumed so allocate_raw_impl can request_defrag.
+    // Pin-required stays on allocate_raw_impl (factory refuse + maybe_note).
+    [[nodiscard]] bool quiet_small_alloc_(std::size_t size, std::size_t alignment,
+                                          void** cover_slot, const char* cover_reason,
+                                          void*& out) noexcept {
+        if (cover_slot != nullptr || cover_reason != nullptr)
+            return false;
+        if (size == 0 || size > SmallObjectPool::kMaxSmallSize)
+            return false;
+        if (alignment != alignof(std::max_align_t))
+            return false;
+        if (has_quota_.load(std::memory_order_acquire))
+            return false;
+        if (aura::core::lifetime::general_object_pin_required_active())
+            return false;
+        // Same order as allocate_raw_impl: safepoint, then accounting, then bump.
+        aura::gc_hooks::safepoint_check();
+        aura::gc_hooks::record_alloc();
+        void* ptr = small_pool_.try_allocate(size);
+        if (!ptr)
+            return false;
+        if (alloc_policy_signal_())
+            maybe_auto_compact_on_alloc();
+        out = ptr;
+        return true;
+    }
+
     void maybe_auto_compact_on_alloc() noexcept {
         // Issue #685 / #743 / #1621: smart auto-compact policy —
         // frag + small-pool util + dirty cascade + Shape churn +
         // defrag_req, soft-gated on render hot path, fiber-safe
         // safepoint when a fiber is active.
+        //
+        // Issue #5536: a quiet arena (main buffer cannot shrink, small
+        // pool under 85%, no pending signal) cannot compact. Skip stats()
+        // and evaluate_auto_compact_policy, and do not divide utilization()
+        // on that path. The dynamic frag threshold never drops below
+        // kFragThresholdMin; soft-frag still needs mutation, live pressure,
+        // or a defrag request, all of which alloc_policy_signal_ loads.
         //
         // Issue #3404: `auto_alloc_trigger_count` (and the
         // `saved = 1` amortisation bookkeeping) only increments on
@@ -4614,25 +4759,28 @@ public:
         // it only Soft-marked and frag stayed. Source-cite anchor
         // for AC1; the Soft fallback paths branch around
         // `auto_alloc_trigger_count++` below.
+        // Published frag stays high while the small pool's 3 MiB
+        // reservation is empty; compact() is a no-op in that state.
+        if (!alloc_policy_signal_())
+            return;
         const bool render_hp = aura::core::arena_policy::in_render_hotpath();
+        const double small_now = small_pool_.utilization();
+        const bool dirty_pending =
+            aura::core::arena_policy::dirty_cascade_pending.load(std::memory_order_acquire);
+        const bool shape_pending = aura::core::arena_policy::peek_shape_churn();
+        const bool want_defrag = defrag_requested();
+        const bool fiber = aura::gc_hooks::fiber_active();
         if (render_hp) {
             aura::core::arena_policy::record_compact_soft_gated_render();
             // Still evaluate for metrics (soft-gate count).
             (void)aura::core::arena_policy::evaluate_auto_compact_policy(
-                stats().fragmentation_ratio(), defrag_requested(),
-                aura::core::arena_policy::dirty_cascade_pending.load(std::memory_order_acquire),
-                aura::core::arena_policy::peek_shape_churn(), aura::gc_hooks::fiber_active(),
-                /*render_hotpath=*/true, small_pool_.utilization());
+                fragmentation_ratio_now(), want_defrag, dirty_pending, shape_pending, fiber,
+                /*render_hotpath=*/true, small_now);
             return;
         }
         const auto snap = stats();
-        const bool want_defrag = defrag_requested();
         // Peek then consume so a no-trigger path does not drop signals
         // that boundary-exit / fiber probes still need.
-        const bool dirty_pending =
-            aura::core::arena_policy::dirty_cascade_pending.load(std::memory_order_acquire);
-        const bool shape_pending = aura::core::arena_policy::peek_shape_churn();
-        const bool fiber = aura::gc_hooks::fiber_active();
         const auto decision = aura::core::arena_policy::evaluate_auto_compact_policy(
             snap.fragmentation_ratio(), want_defrag, dirty_pending, shape_pending, fiber,
             /*render_hotpath=*/false, small_pool_.utilization());
@@ -4958,7 +5106,7 @@ public:
     }
 
     std::size_t initial_size_ = 0; // Issue #187: for shrink_to_fit()
-    std::vector<std::byte> buffer_;
+    UninitByteBuf buffer_;         // Issue #5536: not value-initialized
     std::pmr::monotonic_buffer_resource resource_;
     SmallObjectPool small_pool_;
     // GUARDED_BY(per-arena compact serial) — see ArenaStats #2381 contract.
@@ -5059,6 +5207,9 @@ public:
     mutable std::shared_mutex owner_mtx_;
     void* arena_owner_ = nullptr;
     ArenaQuotaAllowFn quota_allow_fn_ = nullptr;
+    // Issue #5536: true only while a quota pair is published. Alloc skips
+    // owner_mtx_ when this is false.
+    std::atomic<bool> has_quota_{false};
     // Issue #2004: per-arena stable id (minted from g_arena_id_counter in
     // the constructor) + generation counter (atomic, bumped on successful
     // live_compact). arena_id_ keys LifetimePin invalidation to THIS arena.

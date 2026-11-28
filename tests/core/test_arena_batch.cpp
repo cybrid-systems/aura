@@ -31,6 +31,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <cstring>
 #include <fstream>
 #include <iterator>
 #include <memory>
@@ -40,6 +41,7 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <sys/resource.h>
 
 import std;
 import aura.core.arena;
@@ -1001,6 +1003,59 @@ static void run_3173_surface() {
           "3173: no invent test_issue_3173");
 }
 
+// Issue #5536: constructing an arena must not fault the 8 MiB + 3 MiB
+// buffers, and allocate_checked with no quota and no pending compact
+// stays under 20 ns. Freelist links are written on recycle (see #1518);
+// a fresh bump slot is overwritten here before any read.
+static void run_5536_uninit_buffer_and_fast_alloc() {
+    std::println("\n--- #5536: construct does not pre-zero, quiet alloc < 20 ns ---");
+    auto minor_faults = []() -> long {
+        rusage usage{};
+        getrusage(RUSAGE_SELF, &usage);
+        return usage.ru_minflt;
+    };
+    const long faults_before = minor_faults();
+    {
+        ASTArena constructed;
+        const long faults_after = minor_faults();
+        const long delta = faults_after - faults_before;
+        std::println("ASTArena construct minor faults {}", delta);
+        CHECK(delta >= 0 && delta < 64, "construct minor faults < 64");
+        (void)constructed.capacity();
+    }
+    constexpr int kSamples = 20000;
+    long best_ns = 0;
+    void* sink = nullptr;
+    for (int round = 0; round < 5; ++round) {
+        // Fresh arena each round so the 16-byte bump stays inside tier 0
+        // (1 MiB). Past that, tier overflow requests defrag and leaves
+        // the quiet path.
+        ASTArena arena;
+        auto first = arena.allocate_checked(16);
+        CHECK(static_cast<bool>(first), "warmup allocate_checked");
+        if (!first)
+            return;
+        std::memset(*first, 0xA5, 16);
+        const auto started = std::chrono::steady_clock::now();
+        for (int i = 0; i < kSamples; ++i) {
+            auto got = arena.allocate_checked(16);
+            if (!got) {
+                CHECK(false, "quiet allocate_checked");
+                return;
+            }
+            sink = *got;
+        }
+        const auto elapsed = std::chrono::steady_clock::now() - started;
+        const auto per_ns =
+            std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed).count() / kSamples;
+        if (round == 0 || per_ns < best_ns)
+            best_ns = per_ns;
+    }
+    std::println("quiet allocate_checked best {} ns", best_ns);
+    CHECK(sink != nullptr, "bench retained a pointer");
+    CHECK(best_ns < 20, "allocate_checked < 20 ns with no quota and no compact");
+}
+
 // ── Issue #4449 — production-face fail-closed for (gc) / (gc-heap) ──
 // The direct-clear reset prims dangle every live binding on the
 // production face (bulk heap clear / arena reset with no root,
@@ -1117,6 +1172,7 @@ int main() {
     run_219_gap_buffer_child_data();
     run_3173_surface();
     run_4449_production_gc_deny();
+    run_5536_uninit_buffer_and_fast_alloc();
     std::println("\n=== Arena batch: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
