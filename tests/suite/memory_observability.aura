@@ -136,16 +136,27 @@
 (define suggs3 (hash-ref p3 "suggestions"))
 (check= #f (contains? suggs3 "gc-temp"))
 
-; ── 14. Determinism: top-arena must be the first one alphabetically
-;; among arenas tied at the same used-pct. On a fresh system, every
-;; arena is at used-pct=0, so the tie-breaker must use the next criterion
-;; (largest used) and then name ascending. All empty arenas → tie
-;; breaks on name ascending → "algorithm.aura" < "json.aura" <
-;; "list.aura" < "main" (in ASCII order, "a" < "j" < "l" < "m").
-;; So if we loaded json, list, algorithm, the top-arena should be
-;; "algorithm.aura" (smallest name among non-empty + main).
+; ── 14. top-arena: highest used-pct, then largest used, then name
+;; ascending. Loaded modules are not an all-zero tie (main holds the
+;; file), so the winner is computed from gc-arena-info with that rule
+;; rather than a hardcoded empty-arena name.
+(define (observability-top-arena info)
+  (let loop ((i 1) (name "") (pct -1) (used -1.0) (have #f))
+    (if (>= i (vector-length info))
+        name
+        (let ((e (vector-ref info i)))
+          (let ((n (hash-ref e "name"))
+                (p (hash-ref e "used-pct"))
+                (u (hash-ref e "used")))
+            (if (or (not have)
+                    (> p pct)
+                    (and (= p pct) (> u used))
+                    (and (= p pct) (= u used) (string<? n name)))
+                (loop (+ i 1) n p u #t)
+                (loop (+ i 1) name pct used have)))))))
+(define info-top (stats:get "gc-arena-info"))
 (define p4 (memory-pressure))
-(check= "algorithm.aura" (hash-ref p4 "top-arena"))
+(check= (observability-top-arena info-top) (hash-ref p4 "top-arena"))
 
 ; ── 15. (stats:get "gc-arena-info") is read-only: state is unchanged after the call ──
 ;; Take a snapshot, call gc-arena-info twice, verify the snapshots are

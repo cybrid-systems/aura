@@ -76,10 +76,6 @@ namespace {
         return v;
     }
 
-    const std::byte* section_base(std::span<const std::byte> image, const SectionEntry& e) {
-        return image.data() + e.offset;
-    }
-
     // Parent indexes must point strictly backwards, so a cycle is
     // structurally impossible and the walk is bounded by the record count.
     template <typename ParentFn>

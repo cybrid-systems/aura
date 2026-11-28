@@ -2020,16 +2020,23 @@ void RegSplitParts::register_memory_pressure_primitives(
             level = "medium";
 
         // Find top-arena (highest used-pct, then largest used, then name asc).
+        // An empty initial name is smaller than every real name, so a
+        // tie at pct=0 used=0 used to select nobody. Take the first arena,
+        // then apply the three keys.
         std::string top_name;
         int top_pct = 0;
         double top_used = 0.0;
+        bool have_top = false;
         for (auto& s : snaps) {
-            if (s.pct > top_pct || (s.pct == top_pct && s.used > top_used) ||
-                (s.pct == top_pct && s.used == top_used && s.name < top_name)) {
-                top_name = s.name;
-                top_pct = s.pct;
-                top_used = s.used;
-            }
+            const bool better = !have_top || s.pct > top_pct ||
+                                (s.pct == top_pct && s.used > top_used) ||
+                                (s.pct == top_pct && s.used == top_used && s.name < top_name);
+            if (!better)
+                continue;
+            have_top = true;
+            top_name = s.name;
+            top_pct = s.pct;
+            top_used = s.used;
         }
 
         // Build suggestions: for each arena with used-pct >= 80, add a

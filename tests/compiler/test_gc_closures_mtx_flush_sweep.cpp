@@ -136,7 +136,14 @@ static void ac1_stress() {
         thr.emplace_back([&] {
             while (!go.load(std::memory_order_acquire))
                 std::this_thread::yield();
-            MarkBitVector cmarks(256);
+            // Issue #5509: an id at or past the mark bitmap stays live.
+            // A 256-bit vector never erased the writers' closures, so each
+            // sweep walked a map that grew to 2*kIters and the issue-farm
+            // shard died at 60s with no checks printed. next_id_ starts at
+            // 1 and the two writers mint kIters ids each; cover that range
+            // so unmarked entries are erased and the map stays small.
+            const auto mark_bits = static_cast<std::size_t>(kIters) * 2 + 65536;
+            MarkBitVector cmarks(mark_bits);
             GCSweepBuffers marks{};
             marks.closure_marks = &cmarks;
             for (int i = 0; i < kIters; ++i) {

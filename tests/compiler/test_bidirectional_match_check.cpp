@@ -262,7 +262,8 @@ static void ac3044_exhaustive_tag_coverage() {
         aura::compiler::TypeChecker tc(treg);
         diag.clear();
         auto id = flat.add_literal(7);
-        flat.tag(id) = static_cast<NodeTag>(0xFE);
+        // tag() is read-only. A future tag is a live transition (#4598).
+        flat.set_tag_live_adjusted(id, static_cast<NodeTag>(0xFE));
         auto ty = tc.infer_flat(flat, pool, id, diag);
         CHECK(tc.last_uncovered_bidirectional_tag_count() >= 1, "3044 AC2: soft counter");
         CHECK(!tc.last_uncovered_bidirectional_tag_hard_fail(), "3044 AC2: soft no hard-fail");
@@ -285,7 +286,7 @@ static void ac3044_exhaustive_tag_coverage() {
         tc.set_strict(true);
         diag.clear();
         auto id = flat.add_literal(8);
-        flat.tag(id) = static_cast<NodeTag>(0xFD);
+        flat.set_tag_live_adjusted(id, static_cast<NodeTag>(0xFD));
         auto ty = tc.infer_flat(flat, pool, id, diag);
         CHECK(tc.last_uncovered_bidirectional_tag_hard_fail(), "3044 AC1: strict hard-fail");
         bool err = false;
