@@ -265,7 +265,9 @@ export enum class SummaryFlag : std::uint32_t {
 // so an Agent can compute read/write contention ratio. Exposed via the
 // export accessors below (consumed by the query:stringpool-intern-stats
 // primitive in evaluator_primitives_query.cpp).
-static std::atomic<std::uint64_t> g_stringpool_intern_total{0};
+// Issue #5522: sharded like the reader counter — a plain atomic put one
+// shared cache-line RMW on every intern.
+static aura::core::ShardedCounter g_stringpool_intern_total{0};
 // Issue #4717 (P4 step 3): the reader counter is bumped on EVERY
 // resolve()/find_by_name() shared-lock acquisition — i.e. per variable
 // lookup fallback — so as one std::atomic it put a shared cache-line RMW
@@ -296,6 +298,33 @@ public:
         push_entry(std::string_view{});
         // Initialize hash table (power of 2, start small)
         rehash(64);
+    }
+
+    // Issue #5522: the seal mirror holds atomics, so the implicit copy is
+    // gone. Rebuild the mirror from the copied buffer; the mutex keeps the
+    // wrapper's fresh-mutex semantics.
+    StringPool(const StringPool& o)
+        : buf_(o.buf_)
+        , hash_tbl_(o.hash_tbl_) {
+        hash_capacity_ = o.hash_capacity_;
+        entry_count_ = o.entry_count_;
+        intern_epoch_ = o.intern_epoch_;
+        image_base_ = o.image_base_;
+        seal_rebuild_from_buf();
+    }
+    StringPool& operator=(const StringPool& o) {
+        if (this == &o)
+            return *this;
+        std::unique_lock<std::shared_mutex> wl(mtx_.mutable_get());
+        buf_ = o.buf_;
+        hash_tbl_ = o.hash_tbl_;
+        hash_capacity_ = o.hash_capacity_;
+        entry_count_ = o.entry_count_;
+        intern_epoch_ = o.intern_epoch_;
+        image_base_ = o.image_base_;
+        seal_retire_all();
+        seal_rebuild_from_buf();
+        return *this;
     }
 
     // Intern a string — returns a stable SymId.
@@ -354,6 +383,23 @@ public:
     // Resolve a SymId back to string_view. Issue #2062: thread-safe
     // under concurrent intern via std::shared_mutex shared_lock.
     std::string_view resolve(SymId id) const {
+        // Issue #5522: entries in a SEALED chunk are immutable, so the common
+        // resolve is lock-free. Only the chunk currently being appended to
+        // (and ids past the mirror cap) fall back to the shared lock.
+        const std::size_t i = static_cast<std::size_t>(id);
+        const std::size_t ci = i >> kSealShift;
+        if (ci < kMaxSealChunks && sealed_) {
+            const char* base = sealed_[ci].load(std::memory_order_acquire);
+            if (base) {
+                const std::size_t off = i & (kSealChunk - 1);
+                if (off + kEntryHeader <= kSealChunk) {
+                    const auto n = load_entry_len(base + off);
+                    if (off + kEntryHeader + static_cast<std::size_t>(n) < kSealChunk)
+                        return std::string_view(base + off + kEntryHeader, n);
+                }
+                return {};
+            }
+        }
         std::shared_lock<std::shared_mutex> read_lock(mtx_.get());
         g_stringpool_intern_concurrent_readers_total.fetch_add(1, std::memory_order_relaxed);
         return resolve_unlocked(id);
@@ -425,12 +471,37 @@ public:
     }
 
     SymId push_entry(std::string_view s) {
-        auto offset = static_cast<SymId>(buf_.size());
         const auto n = static_cast<std::uint32_t>(s.size());
+        const std::size_t need = kEntryHeader + s.size() + 1;
+        std::size_t off = buf_.size();
+        std::size_t ci = off >> kSealShift;
+        std::size_t in = off & (kSealChunk - 1);
+        if (in + need > kSealChunk) {
+            // Issue #5522: an entry never straddles a seal chunk. Pad the
+            // contiguous buffer to the boundary (padding is never an id) and
+            // publish the chunk that just completed.
+            seal_publish(ci);
+            buf_.insert(buf_.end(), kSealChunk - in, '\0');
+            off = buf_.size();
+            ci = off >> kSealShift;
+            in = 0;
+        }
+        const auto offset = static_cast<SymId>(off);
         const char* raw = reinterpret_cast<const char*>(&n);
         buf_.insert(buf_.end(), raw, raw + sizeof n);
         buf_.insert(buf_.end(), s.begin(), s.end());
         buf_.push_back('\0');
+        // Mirror the finished entry into the (still active, unpublished)
+        // chunk. It becomes readable once the next entry seals the chunk.
+        if (ci < kMaxSealChunks) {
+            seal_grow(ci);
+            if (char* m = seal_owner_[ci].get()) {
+                std::memcpy(m + in, raw, sizeof n);
+                if (!s.empty())
+                    std::memcpy(m + in + sizeof n, s.data(), s.size());
+                m[in + kEntryHeader + s.size()] = '\0';
+            }
+        }
         return offset;
     }
 
@@ -560,6 +631,9 @@ public:
 
     // Reset all state
     void reset() {
+        // Issue #5522: retire the mirror before clearing, so the sentinel
+        // cannot alias a previously published chunk.
+        seal_retire_all();
         buf_.clear();
         push_entry(std::string_view{});
         hash_tbl_.clear();
@@ -610,6 +684,9 @@ public:
         const Image* base = image_base_.get();
         buf_.restore_from(img->buf, base ? &base->buf : nullptr);
         hash_tbl_.restore_from(img->tbl, base ? &base->tbl : nullptr);
+        // Issue #5522: the mirror follows the restored buffer.
+        seal_retire_all();
+        seal_rebuild_from_buf();
         hash_capacity_ = img->hash_capacity;
         entry_count_ = img->entry_count;
         intern_epoch_ = img->intern_epoch;
@@ -666,6 +743,74 @@ private:
                 hash_tbl_[idx] = old_tbl[i];
                 ++entry_count_;
             }
+        }
+    }
+
+    // Issue #5522: sealed-chunk mirror. A chunk is published (release) only
+    // after it is complete, so resolve() can read it without the pool mutex.
+    // The buffer keeps entries from straddling chunks; the tail chunk stays
+    // unpublished (its ids take the shared lock).
+    static constexpr std::size_t kSealShift = 13; // 8 KiB
+    static constexpr std::size_t kSealChunk = std::size_t{1} << kSealShift;
+    static constexpr std::size_t kMaxSealChunks = 1024; // 8 MiB mirror
+    // Heap array (lazy): keeping it in the object grew sizeof(StringPool) by
+    // 8 KiB, which perturbed the per-module arena accounting that
+    // (memory-pressure) ranks.
+    std::unique_ptr<std::atomic<const char*>[]> sealed_;
+    std::vector<std::unique_ptr<char[]>> seal_owner_; // writer-owned
+
+    void seal_grow(std::size_t ci) {
+        if (ci >= kMaxSealChunks)
+            return;
+        if (!sealed_)
+            sealed_ = std::make_unique<std::atomic<const char*>[]>(kMaxSealChunks);
+        if (seal_owner_.size() <= ci)
+            seal_owner_.resize(ci + 1);
+        if (!seal_owner_[ci])
+            seal_owner_[ci] = std::make_unique<char[]>(kSealChunk);
+    }
+
+    void seal_publish(std::size_t ci) noexcept {
+        if (!sealed_ || ci >= kMaxSealChunks || ci >= seal_owner_.size() || !seal_owner_[ci])
+            return;
+        if (sealed_[ci].load(std::memory_order_relaxed) == nullptr)
+            sealed_[ci].store(seal_owner_[ci].get(), std::memory_order_release);
+    }
+
+    // Retire, do not free: a lock-free reader may still be looking at a chunk
+    // from a previous buffer generation (documented quiescent restore rule
+    // still applies for content, but the memory must stay mapped).
+    void seal_retire_all() {
+        static std::mutex retired_mtx;
+        static std::vector<std::unique_ptr<char[]>> retired;
+        std::scoped_lock lock(retired_mtx);
+        for (auto& p : seal_owner_) {
+            if (p)
+                retired.push_back(std::move(p));
+        }
+        seal_owner_.clear();
+        if (sealed_) {
+            for (std::size_t i = 0; i < kMaxSealChunks; ++i)
+                sealed_[i].store(nullptr, std::memory_order_relaxed);
+        }
+    }
+
+    // Rebuild the mirror from the (restored) contiguous buffer. Complete
+    // chunks are published; the partial tail stays active.
+    void seal_rebuild_from_buf() {
+        const std::size_t n = buf_.size();
+        const std::size_t full = std::min<std::size_t>(n / kSealChunk, kMaxSealChunks);
+        const char* src = buf_.data();
+        for (std::size_t ci = 0; ci < full; ++ci) {
+            seal_grow(ci);
+            std::memcpy(seal_owner_[ci].get(), src + ci * kSealChunk, kSealChunk);
+            seal_publish(ci);
+        }
+        if (full < kMaxSealChunks) {
+            seal_grow(full);
+            const std::size_t rem = n - full * kSealChunk;
+            if (rem != 0)
+                std::memcpy(seal_owner_[full].get(), src + full * kSealChunk, rem);
         }
     }
 

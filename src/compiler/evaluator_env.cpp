@@ -5245,59 +5245,55 @@ std::optional<std::uint64_t> Env::lookup_cell_index(std::string_view n) const {
     // 2. SoA walk via env_frames_ when registered
     if (owner_ && parent_id_ != NULL_ENV_ID) {
         const auto version_snap = owner_->get_defuse_version();
-        std::optional<std::uint64_t> result;
-        // Issue #355: take the shared lock so refresh_stale_frame_in_walk
-        // can bump the stale frame's version_ safely (same
-        // precondition as the other walker sites).
-        std::array<std::shared_lock<std::shared_mutex>, Evaluator::env_frame_shard_count()> rlock;
-        for (std::size_t ef_i = 0; ef_i < Evaluator::env_frame_shard_count(); ++ef_i)
-            rlock[ef_i] = std::shared_lock<std::shared_mutex>(
-                owner_->env_frame_shard_mu(ef_i)); // Issue #3900
-        // Issue #4529: locked-caller face — the full shard array is held
-        // above; per-hop re-locking would deadlock under a waiting writer.
-        owner_->walk_env_frames_locked_caller(parent_id_, [&](EnvId cur, const EnvFrame& f) {
-            // Issue #355: record a behind frame. lookup_by_symid_chain
-            // still skips it (#4099). This walk must not.
-            // Issue #4122: set-car! / vector-set! / hash-set! bump
-            // defuse_version_ on the guard and leave the named-let
-            // capture behind without compacting its cells. Variable
-            // lookup still reads the cell, so (set! widx (+ widx 1))
-            // must store into that same cell. refresh does not stamp
-            // version_. A non-cell on a behind frame does not shadow
-            // a parent cell.
+        // Issue #5523: intern once for the whole SoA walk (the #4558
+        // Env::lookup pattern) instead of once per hop under the shard locks.
+        std::uint64_t hop_sym = aura::ast::INVALID_SYM;
+        if (pool_) {
+            hop_sym = static_cast<std::uint64_t>(
+                const_cast<aura::ast::StringPool*>(pool_.load(std::memory_order_acquire))
+                    ->intern(n));
+        }
+        // Issue #5523: per-hop shard lock, not all 16 shards per set!.
+        // Structural writers take every shard unique, so the hop's shared
+        // lock excludes a concurrent shrink while that frame is read; the
+        // size check under the lock catches a truncate between hops.
+        EnvId cur = parent_id_;
+        std::size_t hops = 0;
+        while (cur != NULL_ENV_ID && hops < MAX_ENV_DEPTH) {
+            ++hops;
+            std::shared_lock<std::shared_mutex> hop_rlock(
+                owner_->env_frame_shard_mu(Evaluator::env_frame_shard_index(cur)));
+            if (static_cast<std::size_t>(cur) >= owner_->env_frames_size())
+                break;
+            const EnvFrame& f = owner_->env_frame(cur);
+            // Issue #355/#4122: a behind capture still owns the cell the
+            // read path returns; refresh it under this hop's lock. A
+            // non-cell on a behind frame does not shadow a parent cell.
             const bool behind = f.version_ < version_snap;
             if (behind)
                 owner_->refresh_stale_frame_in_walk(cur, "Env::lookup_cell_index");
-            for (auto& b : f.bindings_) {
-                if (b.first == n) {
-                    if (is_cell(b.second)) {
-                        result = as_cell_id(b.second);
-                        return false;
-                    }
+            for (auto it = f.bindings_.rbegin(); it != f.bindings_.rend(); ++it) {
+                if (it->first == n) {
+                    if (is_cell(it->second))
+                        return as_cell_id(it->second);
                     if (!behind)
-                        return false;
+                        return std::nullopt;
                 }
             }
-            // SymId path on parent frames. A behind capture may only
-            // have bindings_symid_.
-            if (pool_ && !f.bindings_symid_.empty()) {
-                auto s = const_cast<aura::ast::StringPool*>(pool_.load(std::memory_order_acquire))
-                             ->intern(n);
+            // SymId path on parent frames (pool-local keys only, #4351).
+            if (hop_sym != aura::ast::INVALID_SYM && !f.bindings_symid_.empty() &&
+                f.pool_ == pool_) {
                 for (auto it = f.bindings_symid_.rbegin(); it != f.bindings_symid_.rend(); ++it) {
-                    if (it->first == s) {
-                        if (is_cell(it->second)) {
-                            result = as_cell_id(it->second);
-                            return false;
-                        }
+                    if (it->first == hop_sym) {
+                        if (is_cell(it->second))
+                            return as_cell_id(it->second);
                         if (!behind)
-                            return false;
+                            return std::nullopt;
                     }
                 }
             }
-            return true;
-        });
-        if (result)
-            return result;
+            cur = f.parent_id;
+        }
         // Fall through to parent_ walk + live top_ (#2870).
     }
     // 3. Legacy pointer walk (let*/named-let free-var cells often here)
