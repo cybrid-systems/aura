@@ -424,9 +424,11 @@ thread_local JitPairClaim tls_jit_pair_ids;
 } // namespace
 
 PairSlot* PairSlotTable::operator[](std::size_t id) {
-    const std::uint64_t low = high_water_.load(std::memory_order_acquire);
+    // Issue #5518: below the JIT base every directory cell is addressable
+    // (the evaluator's pairs_ index is the id; a cell may simply be empty).
+    // Above it, only ids actually claimed.
     const std::uint64_t jw = g_pair_jit_water.load(std::memory_order_acquire);
-    if (id >= pair_jit_base_5518() ? id >= jw : id >= low)
+    if (id >= pair_jit_base_5518() && id >= jw)
         return nullptr;
     PairSegment* seg = pair_segment(id, /*create=*/true);
     if (!seg)
@@ -435,7 +437,13 @@ PairSlot* PairSlotTable::operator[](std::size_t id) {
 }
 
 std::size_t PairSlotTable::size() const {
-    return static_cast<std::size_t>(high_water_.load(std::memory_order_acquire));
+    // Issue #5518: readers use size() as the upper bound for BOTH id ranges
+    // (evaluator pairs below the base, JIT pairs above it). Returning only
+    // the low cursor made every evaluator-side car/cdr/set-car! reject a
+    // live JIT pair as out of bounds (the OSR-resume face of #5631).
+    const std::uint64_t low = high_water_.load(std::memory_order_acquire);
+    const std::uint64_t jw = g_pair_jit_water.load(std::memory_order_acquire);
+    return static_cast<std::size_t>(std::max(low, jw));
 }
 
 std::atomic<std::uint64_t> g_pair_capacity_exhausted_5518{0};
@@ -860,9 +868,8 @@ std::int64_t PairSlotTable::push_back(PairSlot* slot) {
 }
 
 bool PairSlotTable::release(std::size_t id, PairSlot* expect) {
-    const std::uint64_t low = high_water_.load(std::memory_order_acquire);
     const std::uint64_t jw = g_pair_jit_water.load(std::memory_order_acquire);
-    if (id >= pair_jit_base_5518() ? id >= jw : id >= low)
+    if (id >= pair_jit_base_5518() && id >= jw)
         return false;
     PairSegment* seg = pair_segment(id, /*create=*/false);
     if (!seg)
@@ -941,9 +948,8 @@ void PairSlotTable::stamp_tenant(std::size_t id, std::uint64_t tenant) {
 }
 
 std::uint64_t PairSlotTable::load_tenant(std::size_t id) const {
-    const std::uint64_t low = high_water_.load(std::memory_order_acquire);
     const std::uint64_t jw = g_pair_jit_water.load(std::memory_order_acquire);
-    if (id >= pair_jit_base_5518() ? id >= jw : id >= low)
+    if (id >= pair_jit_base_5518() && id >= jw)
         return 0;
     PairSegment* seg = pair_segment(id, /*create=*/false);
     if (!seg)

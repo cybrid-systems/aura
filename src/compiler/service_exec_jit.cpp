@@ -116,6 +116,9 @@ namespace {
         auto* fnp = st.jit->get_function_ptr(fn_name);
         if (!fnp)
             return 0;
+        if (std::getenv("AURA_OSR_TRACE")) {
+            std::fprintf(stderr, "[osr] enter fn=%s nslots=%u argc=%u\n", fn_name, nslots, argc);
+        }
         std::vector<std::int64_t> osr_slots(slots, slots + nslots);
         struct OsrBusyGuard : ::aura::core::NoCopy {
             int& flag;

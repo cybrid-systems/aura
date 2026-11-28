@@ -3742,16 +3742,14 @@ aura_jit_osr_fn g_osr_host = nullptr;
 // decline path; AURA_JIT_OSR=0 disables the escape entirely.
 int osr_enabled_env() noexcept {
     static const int on = [] {
-        // Issue #5518: an OSR entry jumps into the loop header and skips the
-        // function entry block, where root mode alloca's the slot mirror and
-        // registers it. An OSR'd frame therefore holds values no mark can see
-        // (repro: a JIT pair held across (gc-heap) is lost). Root mode keeps
-        // OSR off until the OSR bridge registers its own roots.
-        const char* r = std::getenv("AURA_PAIR_GC");
-        if (!(r && r[0] == '0'))
-            return 0; // root mode is on by default; OSR stays off with it
+        // Issue #5631: an OSR entry hands the compiled body a copy of the
+        // interpreter's slots and skips the entry block that registers the
+        // pair root mirror; a GC primitive in that chain then leaves the
+        // frame's heap pair unreadable ("type error: runtime error"). Until
+        // the OSR handoff registers its own roots and preserves the live
+        // slots, OSR is opt-in (AURA_JIT_OSR=1) rather than default.
         const char* v = ::aura::config::raw(::aura::config::Key::AURA_JIT_OSR);
-        return (v && v[0] == '0') ? 0 : 1;
+        return (v && v[0] == '1') ? 1 : 0;
     }();
     return on;
 }
