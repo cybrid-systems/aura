@@ -3406,6 +3406,27 @@ void RegSplitParts::parallel_intend_tasks(Evaluator& ev, ParallelIntendState& st
 
     std::vector<aura::serve::parallel_orch::TaskSpec> tasks;
     tasks.reserve(cids.size());
+    // Issue #5641: a batch task's closure id is a value this batch owns, but
+    // (gc-heap) in a sibling task sweeps closures from the collecting thread's
+    // roots only. A task that had not entered apply_closure yet then lost its
+    // id and failed as "closure-freed". Root every id for the whole batch the
+    // same way fiber:spawn roots its body closure (#4698 / #5099); the guard
+    // lives in the task lambdas and releases after the batch returns.
+    struct BatchClosurePins {
+        void* ev = nullptr;
+        std::vector<std::uint64_t> ids;
+        ~BatchClosurePins() {
+            for (auto id : ids)
+                aura_fiber_release_pending_closure(ev, id);
+        }
+    };
+    auto closure_pins = std::make_shared<BatchClosurePins>();
+    closure_pins->ev = &ev;
+    closure_pins->ids.reserve(cids.size());
+    for (const auto cid : cids) {
+        if (cid != 0)
+            closure_pins->ids.push_back(aura_fiber_root_pending_closure(&ev, cid));
+    }
     // Issue #4383: a spawn body already inside gate_spawn_apply_region
     // re-enters parallel-intend on this thread. Workers must not take
     // agent_apply_mu_ again; the outer hold still excludes other agents.
@@ -3415,7 +3436,7 @@ void RegSplitParts::parallel_intend_tasks(Evaluator& ev, ParallelIntendState& st
         const std::uint64_t rkey = (i < region_keys.size()) ? region_keys[i] : 0;
         const std::uint64_t cmask = (i < cone_masks.size()) ? cone_masks[i] : 0;
         tasks.push_back(aura::serve::parallel_orch::TaskSpec{
-            .body = [&ev, ash, cid, i, pure_mode, rkey, cmask,
+            .body = [&ev, ash, closure_pins, cid, i, pure_mode, rkey, cmask,
                      caller_apply_hold]() -> aura::serve::parallel_orch::TaskResult {
                 // Issue #2746 / #2760: stamp parallel-task region + cone
                 // TLS so try_acquire → try_acquire_for_region (#2724) and
