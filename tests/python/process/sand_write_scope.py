@@ -138,8 +138,20 @@ class WriteScope(unittest.TestCase):
 
     def test_default_still_denies_write(self) -> None:
         r = self.run_aura()
-        self.assertIn("write not granted", r.stdout + r.stderr)
+        out = r.stdout + r.stderr
+        self.assertIn("write not granted", out)
         self.assertFalse((self.cwd / "out" / "a.txt").exists())
+        # Issue #5494: the other host-write primitives are Write-gated too.
+        self.assertFalse((self.cwd / "ws.bin").exists())
+        self.assertIn("serialize-workspace", out)
+
+    def test_default_denies_generate_type_sigs(self) -> None:
+        (self.cwd / "helper.aura").write_text("(define (f x) x)\n")
+        (self.cwd / "g.aura").write_text('(display (generate-type-sigs "helper.aura"))\n')
+        r = self.run_aura(entry="g.aura")
+        out = r.stdout + r.stderr
+        self.assertIn("effect-denied: write not granted", out)
+        self.assertFalse((self.cwd / "helper.aura-type").exists())
 
 
 if __name__ == "__main__":

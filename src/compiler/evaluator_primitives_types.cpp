@@ -11,6 +11,7 @@ module;
 #include "write_scope.hh"                  // #4912
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 #include "compiler/chunk_io.hh" // #4936 std::array file chunks
+#include "security_capabilities.h" // Issue #5494: Write gate
 
 module aura.compiler.evaluator;
 
@@ -155,6 +156,13 @@ void RegSplitParts::register_generate_type_sigs_primitive(PrimRegistrar add, Eva
     // 生成同名的 .aura-type 签名文件。
     // 示例: (generate-type-sigs "helper.aura") → helper.aura-type
     add("generate-type-sigs", [&ev](std::span<const EvalValue> a) -> EvalValue {
+        // Issue #5494: this primitive writes a .aura-type sibling; it needs
+        // the same Write effect as write-file, not just the path scope.
+        using aura::compiler::security::kEffectWrite;
+        if (!ev.require_effect(kEffectWrite, "generate-type-sigs")) {
+            return ev.make_refusal_error(aura::compiler::security::format_deny_reason(
+                kEffectWrite, ev.capability_tenant_id(), "generate-type-sigs"));
+        }
         if (a.empty() || !is_string(a[0]))
             return make_bool(false);
         auto idx = as_string_idx(a[0]);

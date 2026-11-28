@@ -320,6 +320,14 @@ static void remap_define_mutation_targets(aura::ast::StringPool* pool, aura::ast
 void RegSplitParts::register_persist_serialize(PrimRegistrar add, Evaluator& ev) {
     // (serialize-workspace path) → #t / #f
     add("serialize-workspace", [&ev](std::span<const EvalValue> a) -> EvalValue {
+        // Issue #5494: this is a host write primitive; require Write before
+        // the tenant/path checks so default Restricted / prod / --deny write
+        // cannot truncate an arbitrary user file.
+        using aura::compiler::security::kEffectWrite;
+        if (!ev.require_effect(kEffectWrite, "serialize-workspace")) {
+            return ev.make_refusal_error(aura::compiler::security::format_deny_reason(
+                kEffectWrite, ev.capability_tenant_id(), "serialize-workspace"));
+        }
         if (a.empty() || !is_string(a[0]))
             return make_bool(false);
         const auto pidx = as_string_idx(a[0]);
@@ -416,7 +424,8 @@ void RegSplitParts::register_persist_serialize(PrimRegistrar add, Evaluator& ev)
 
         if (ev.host_path_policy_active()) {
             const int fd = ev.open_tenant_host_fd(
-                resolved, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644, "serialize-workspace");
+                resolved, O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW | O_CLOEXEC, 0644,
+                "serialize-workspace");
             if (fd < 0)
                 return make_bool(false);
             std::size_t off = 0;
@@ -436,11 +445,28 @@ void RegSplitParts::register_persist_serialize(PrimRegistrar add, Evaluator& ev)
             }
             return make_bool(::close(fd) == 0);
         }
-        std::ofstream ofs(resolved, std::ios::binary | std::ios::trunc);
-        if (!ofs)
+        // Issue #5494: O_NOFOLLOW, matching write-file; ofstream followed a
+        // final symlink and truncated its target.
+        const int fd =
+            ::open(resolved.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW | O_CLOEXEC, 0644);
+        if (fd < 0)
             return make_bool(false);
-        ofs.write(out.data(), static_cast<std::streamsize>(out.size()));
-        return make_bool(static_cast<bool>(ofs));
+        std::size_t off = 0;
+        while (off < out.size()) {
+            const auto n = ::write(fd, out.data() + off, out.size() - off);
+            if (n < 0) {
+                if (errno == EINTR)
+                    continue;
+                ::close(fd);
+                return make_bool(false);
+            }
+            if (n == 0) {
+                ::close(fd);
+                return make_bool(false);
+            }
+            off += static_cast<std::size_t>(n);
+        }
+        return make_bool(::close(fd) == 0);
     });
 }
 

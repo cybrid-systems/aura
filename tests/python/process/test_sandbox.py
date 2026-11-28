@@ -107,6 +107,11 @@ CASES = (
         "sand_write_scope.WriteScope.test_default_still_denies_write",
     ),
     (
+        5494,
+        "test_default_denies_generate_type_sigs",
+        "sand_write_scope.WriteScope.test_default_denies_generate_type_sigs",
+    ),
+    (
         4914,
         "test_list_quote_restore",
         "sand_soft_rebind.SoftRebindMatchesOff.test_list_quote_restore",
