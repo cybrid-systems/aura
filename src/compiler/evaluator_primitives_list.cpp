@@ -140,9 +140,17 @@ EvalValue RegSplitParts::apply_callback(Evaluator& ev, std::uint64_t cid,
             ev.string_heap_, ev.error_values_,
             "closure apply refused: Moving densify window incomplete (#4928)",
             ev.primitive_error_counter_ptr());
-    // Issue #5499: a nullopt from apply_closure is a dispatch failure, not a
-    // Void result. Returning Void here made map/filter/fold silently produce
-    // () for every element when the callback could not be resolved.
+    // Issue #5198 pins map's historical result for a one-argument procedure
+    // over several lists: the arity miss yields void elements, not an error.
+    // apply_closure parked that diagnosis in the user-arity channel, so a
+    // non-empty channel means the call was routable and only the arity was
+    // wrong - keep the historical void.
+    if (take_pending_user_arity())
+        return make_void();
+    // Issue #5499: otherwise a nullopt from apply_closure is a dispatch
+    // failure, not a Void result. Returning Void here made map/filter/fold
+    // silently produce () for every element when the callback could not be
+    // resolved.
     return make_primitive_error(
         ev.string_heap_, ev.error_values_,
         std::string("callback apply failed (closure ") + std::to_string(cid) +
