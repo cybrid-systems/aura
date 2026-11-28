@@ -12,8 +12,18 @@ namespace {
 
     constexpr std::uint64_t kNoEntry = ~0ull;
 
+    // Issue #5503: the directory is peer-writable. Every entry read on the
+    // way must be sane for its own declared kind, and the target entry too;
+    // otherwise a peer could repoint a channel outside the mapping.
     std::uint64_t find_entry_offset(std::span<const std::byte> image, SectionKind kind) {
         const ImageHeader h = load_header(image);
+        if (h.section_count > 64 || h.section_dir_off < kImageHeaderSize ||
+            h.section_dir_off % 8 != 0 || h.section_dir_off > image.size())
+            return kNoEntry;
+        const std::uint64_t dir_bytes =
+            static_cast<std::uint64_t>(h.section_count) * sizeof(SectionEntry);
+        if (dir_bytes > image.size() - h.section_dir_off)
+            return kNoEntry;
         for (std::uint32_t i = 0; i < h.section_count; ++i) {
             const std::uint64_t at =
                 h.section_dir_off + static_cast<std::uint64_t>(i) * sizeof(SectionEntry);
@@ -21,6 +31,12 @@ namespace {
                 return kNoEntry;
             SectionEntry e{};
             std::memcpy(&e, image.data() + at, sizeof(e));
+            if (e.kind <= static_cast<std::uint32_t>(SectionKind::Tasks)) {
+                if (!section_entry_sane_for(image, static_cast<SectionKind>(e.kind), e))
+                    return kNoEntry;
+            } else if (!section_entry_sane(image, e)) {
+                return kNoEntry;
+            }
             if (e.kind == static_cast<std::uint32_t>(kind))
                 return at;
         }
@@ -170,6 +186,10 @@ bool channel_view(std::span<const std::byte> image, Channel channel, ChannelView
         return false;
     SectionEntry e{};
     std::memcpy(&e, image.data() + at, sizeof(e));
+    // Issue #5503: re-check right before publishing the view - a writable
+    // peer can rewrite the entry between the directory walk and this copy.
+    if (!section_entry_sane_for(image, section_for(channel), e))
+        return false;
     out->generation = e.generation;
     out->count = e.count;
     out->offset = e.offset;
@@ -188,6 +208,11 @@ bool channel_reserve(std::span<std::byte> image, Channel channel, std::uint64_t 
     }
     SectionEntry e{};
     std::memcpy(&e, image.data() + at, sizeof(e));
+    if (!section_entry_sane_for(image, section_for(channel), e)) {
+        if (why)
+            *why = "corrupt channel directory";
+        return false;
+    }
     if (bytes == 0) {
         if (why)
             *why = "empty reservation";
@@ -212,6 +237,11 @@ bool channel_commit(std::span<std::byte> image, Channel channel, std::uint64_t o
     }
     SectionEntry e{};
     std::memcpy(&e, image.data() + at, sizeof(e));
+    if (!section_entry_sane_for(image, section_for(channel), e)) {
+        if (why)
+            *why = "corrupt channel directory";
+        return false;
+    }
     if (offset != e.offset + e.length) {
         if (why)
             *why = "publish offset is not the committed tail";
@@ -268,13 +298,13 @@ bool channel_read(std::span<const std::byte> image, Channel channel, ChannelCurs
             continue;
         SectionEntry e{};
         std::memcpy(&e, image.data() + at, sizeof(e));
-        if (e.generation > h.committed_gen)
-            continue;
-        if (e.length > e.capacity || e.count > kImageMaxRecords) {
+        if (!section_entry_sane_for(image, section_for(channel), e)) {
             if (why)
                 *why = "corrupt channel directory";
             return false;
         }
+        if (e.generation > h.committed_gen)
+            continue;
         // #5385: same rule as the CatchUp control path — generations are
         // image-global, so a cursor at or below the section generation with
         // a fitting count slices the append-only channel; ahead of either

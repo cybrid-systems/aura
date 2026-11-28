@@ -367,6 +367,69 @@ int main() {
         check(why.find("capacity") != std::string::npos, "capacity reason");
     }
 
+    // ── #5503: a writable peer rewrites the section directory ──────
+    // The image is MAP_SHARED, so a peer with publish/trial can rewrite a
+    // SectionEntry after attach. Every lookup re-validates what it read;
+    // a forged offset/capacity must make the section unusable instead of
+    // pointing a memcpy outside the mapping.
+    {
+        std::vector<std::byte> copy(img.begin(), img.end());
+        const auto copy_span = std::span<std::byte>(copy);
+        const ImageHeader h = load_header(copy_span);
+        std::uint64_t entry_at = 0;
+        SectionEntry good{};
+        for (std::uint32_t i = 0; i < h.section_count; ++i) {
+            const SectionEntry e = load_section_entry(copy_span, i);
+            if (e.kind == static_cast<std::uint32_t>(SectionKind::Metrics)) {
+                entry_at = h.section_dir_off + static_cast<std::uint64_t>(i) * sizeof(SectionEntry);
+                good = e;
+                break;
+            }
+        }
+        check(entry_at != 0, "metrics directory entry is found");
+        // A forged offset past the mapping.
+        SectionEntry bad = good;
+        bad.offset = copy.size();
+        put(copy_span, entry_at, bad);
+        ChannelView view{};
+        std::uint64_t off = 0;
+        std::uint64_t gen = 0;
+        std::string why;
+        ChannelCursor cur{};
+        std::span<const std::byte> recs{};
+        bool snap = false;
+        check(!find_section(copy_span, SectionKind::Metrics, &bad),
+              "a forged section offset is not found");
+        check(!channel_view(copy_span, Channel::Metrics, &view),
+              "channel_view rejects a forged offset");
+        check(!channel_reserve(copy_span, Channel::Metrics, sizeof(MetricRecord), &off, &why),
+              "channel_reserve rejects a forged offset");
+        why.clear();
+        check(!channel_commit(copy_span, Channel::Metrics, good.offset + good.length,
+                              sizeof(MetricRecord), &gen, &why),
+              "channel_commit rejects a forged offset");
+        check(!channel_read(copy_span, Channel::Metrics, &cur, &recs, &snap, &why),
+              "channel_read rejects a forged offset");
+        // A forged capacity that runs past the mapping.
+        bad = good;
+        bad.capacity = ~0ull;
+        put(copy_span, entry_at, bad);
+        check(!find_section(copy_span, SectionKind::Metrics, &bad),
+              "a forged capacity is not found");
+        check(!channel_view(copy_span, Channel::Metrics, &view),
+              "channel_view rejects a forged capacity");
+        // A wrapped section directory offset.
+        ImageHeader hh = h;
+        hh.section_dir_off = ~0ull - 8;
+        put(copy_span, 0, hh);
+        check(!find_section(copy_span, SectionKind::Metrics, &bad),
+              "a wrapped section directory is rejected");
+        check(!channel_read(copy_span, Channel::Metrics, &cur, &recs, &snap, &why),
+              "channel_read rejects a wrapped directory");
+        // The live image still works: only the copy was attacked.
+        check(channel_view(img, Channel::Metrics, &view), "the live image is unaffected");
+    }
+
     int status = 0;
     waitpid(pid, &status, 0);
     check(WIFEXITED(status) && WEXITSTATUS(status) == 0, "child exits cleanly");

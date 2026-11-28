@@ -858,7 +858,9 @@ bool Server::handshake(int conn_fd, const HelloBody& hello, const BuildFn& build
     if (first_image) {
         image_base_ = static_cast<std::byte*>(base);
         image_size_ = bytes;
-        host_image_fd_ = ::dup(image_fd);
+        // Issue #5503: a plain dup keeps the descriptor inheritable and
+        // without CLOEXEC, so a forked child inherits a writable image fd.
+        host_image_fd_ = ::fcntl(image_fd, F_DUPFD_CLOEXEC, 0);
         if (out != nullptr) {
             // The host's mapping must outlive the peer's Attach: give the
             // peer its own mapping of the same memfd.

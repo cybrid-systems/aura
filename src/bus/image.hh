@@ -105,22 +105,75 @@ inline ImageHeader load_header(std::span<const std::byte> image) {
     return h;
 }
 
+// Issue #5503: the section directory lives in shared, peer-writable memory.
+// validate_image is authoritative at handshake/attach, but a writable peer
+// can rewrite an entry afterwards; every lookup re-checks what it read.
+inline bool section_entry_sane(std::span<const std::byte> image, const SectionEntry& e) {
+    if (e.offset < kImageHeaderSize || e.offset % 8 != 0)
+        return false;
+    if (e.length > e.capacity)
+        return false;
+    if (e.offset > image.size() || e.capacity > image.size() - e.offset)
+        return false;
+    if (e.element_size == 0 || e.count > kImageMaxRecords)
+        return false;
+    // A count that needs more bytes than the committed length is a forged
+    // entry: every walker indexes records by count.
+    if (static_cast<std::uint64_t>(e.count) > e.length / e.element_size)
+        return false;
+    return true;
+}
+
+// The kind-specific half: the stride must at least cover the record type
+// (a v1 worldline keeps the frozen 48-byte prefix), and a record section's
+// count must be exactly its committed length over that stride.
+inline bool section_entry_sane_for(std::span<const std::byte> image, SectionKind kind,
+                                   const SectionEntry& e) {
+    if (!section_entry_sane(image, e))
+        return false;
+    const std::uint64_t expected = expected_element_size(kind);
+    const std::uint64_t min_size = kind == SectionKind::Worldlines ? kWorldlineV1Size : expected;
+    if (expected != 0 && e.element_size < min_size)
+        return false;
+    if (is_record_section(kind)) {
+        if (e.length % e.element_size != 0 || e.count != e.length / e.element_size)
+            return false;
+    }
+    return true;
+}
+
 inline SectionEntry load_section_entry(std::span<const std::byte> image, std::uint64_t index) {
     SectionEntry e{};
     const ImageHeader h = load_header(image);
+    // Issue #5503: the directory offset and count are peer-writable. A
+    // wrapped at must never read the header back as a directory entry.
+    if (h.section_count > 64 || h.section_dir_off < kImageHeaderSize ||
+        h.section_dir_off % 8 != 0 || h.section_dir_off > image.size())
+        return e;
+    const std::uint64_t dir_bytes =
+        static_cast<std::uint64_t>(h.section_count) * sizeof(SectionEntry);
+    if (dir_bytes > image.size() - h.section_dir_off || index >= h.section_count)
+        return e;
     const std::uint64_t at = h.section_dir_off + index * sizeof(SectionEntry);
     if (at + sizeof(SectionEntry) <= image.size())
         std::memcpy(&e, image.data() + at, sizeof(SectionEntry));
     return e;
 }
 
-// Locate one known section kind. Returns false when absent.
+// Locate one known section kind. Returns false when absent or when any
+// entry read on the way is not sane for its own declared kind.
 inline bool find_section(std::span<const std::byte> image, SectionKind kind, SectionEntry* out) {
     const ImageHeader h = load_header(image);
-    if (h.section_count > 4096)
+    if (h.section_count > 64)
         return false;
     for (std::uint32_t i = 0; i < h.section_count; ++i) {
         const SectionEntry e = load_section_entry(image, i);
+        if (e.kind <= static_cast<std::uint32_t>(SectionKind::Tasks)) {
+            if (!section_entry_sane_for(image, static_cast<SectionKind>(e.kind), e))
+                return false;
+        } else if (!section_entry_sane(image, e)) {
+            return false;
+        }
         if (e.kind == static_cast<std::uint32_t>(kind)) {
             *out = e;
             return true;
