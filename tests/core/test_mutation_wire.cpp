@@ -134,6 +134,35 @@ int main() {
                short_v2.parent_mutation_id == 0 && short_v2.composite_transaction_id == 0,
            "short v2 buffer leaves provenance at 0");
 
+    // Issue #5515: a truncated / forged persist record must throw instead of
+    // reading past the backing buffer.
+    {
+        bool threw = false;
+        std::vector<char> cut(v2.begin(), v2.begin() + 5);
+        std::size_t p = 0;
+        try {
+            (void)wire_read_mutation_record(cut, p, kMutationRecordProvenanceWireVersion);
+        } catch (const std::out_of_range&) {
+            threw = true;
+        }
+        expect(threw, "a truncated record throws instead of reading past the buffer");
+    }
+    {
+        // operator_name's u32 length sits after id(8) + timestamp(8) +
+        // target(4). A forged huge length must be caught.
+        std::vector<char> forged = v2;
+        const std::uint32_t huge = 0xFFFFFFF0u;
+        std::memcpy(forged.data() + 20, &huge, sizeof(huge));
+        bool threw = false;
+        std::size_t p = 0;
+        try {
+            (void)wire_read_mutation_record(forged, p, kMutationRecordProvenanceWireVersion);
+        } catch (const std::out_of_range&) {
+            threw = true;
+        }
+        expect(threw, "a forged string length throws instead of reading past the buffer");
+    }
+
     if (g_failed != 0)
         std::println(std::cerr, "{} failed", g_failed);
     return g_failed == 0 ? 0 : 1;

@@ -7959,10 +7959,15 @@ public:
         return s;
     }
 
+    // Issue #5515: counts come from the file; bound them by the bytes left.
     static std::vector<SymId> wire_read_vec_u32(const std::vector<char>& buf, std::size_t& pos) {
+        if (pos > buf.size() || sizeof(std::uint32_t) > buf.size() - pos)
+            throw std::out_of_range("ast wire: vec count past the end");
         std::uint32_t sz = 0;
         std::memcpy(&sz, &buf[pos], 4);
         pos += 4;
+        if (sz > (buf.size() - pos) / sizeof(SymId))
+            throw std::out_of_range("ast wire: vec payload past the end");
         std::vector<SymId> v(sz);
         if (sz > 0) {
             std::memcpy(v.data(), &buf[pos], sz * sizeof(SymId));
@@ -7976,15 +7981,22 @@ public:
         MatchClauseInfo m;
         m.used_constructors = wire_read_vec_u32(buf, pos);
         m.candidate_constructors = wire_read_vec_u32(buf, pos);
+        if (pos >= buf.size())
+            throw std::out_of_range("ast wire: match clause past the end");
         m.has_wildcard = buf[pos++] != 0;
         return m;
     }
 
     static void wire_read_map_u32_u8(const std::vector<char>& buf, std::size_t& pos,
                                      std::pmr::unordered_map<std::uint32_t, std::uint8_t>& m) {
+        if (pos > buf.size() || sizeof(std::uint32_t) > buf.size() - pos)
+            throw std::out_of_range("ast wire: map count past the end");
         std::uint32_t count = 0;
         std::memcpy(&count, &buf[pos], 4);
         pos += 4;
+        // Each entry is 5 bytes; a forged count must not drive a huge map.
+        if (count > (buf.size() - pos) / 5)
+            throw std::out_of_range("ast wire: map payload past the end");
         m.clear();
         for (std::uint32_t i = 0; i < count; ++i) {
             std::uint32_t k = 0;
@@ -8114,7 +8126,15 @@ public:
     // root stay default). v2 includes all five fields.
     static FlatAST deserialize_soa(const std::vector<char>& buf, std::size_t& pos) {
         FlatAST ast;
+        // Issue #5515: the blob is untrusted. need() gates every raw read,
+        // and every count is checked against the bytes that remain.
+        const std::size_t limit = buf.size();
+        const auto need = [&pos, limit](std::size_t n) {
+            if (pos > limit || n > limit - pos)
+                throw std::out_of_range("ast wire: truncated SoA blob");
+        };
         std::uint32_t version = 0;
+        need(4);
         std::memcpy(&version, &buf[pos], 4);
         pos += 4;
         if (version != 1 && version != 2) {
@@ -8123,14 +8143,20 @@ public:
         }
         const bool is_v2 = (version == 2);
         std::uint32_t num_nodes = 0;
+        need(4);
         std::memcpy(&num_nodes, &buf[pos], 4);
         pos += 4;
+        if (num_nodes > limit)
+            throw std::out_of_range("ast wire: node count past the end");
 
-        auto read_column = [&buf, &pos](auto& col) {
+        auto read_column = [&buf, &pos, &need](auto& col) {
             using T = typename std::remove_reference<decltype(col)>::type::value_type;
             std::uint32_t count = 0;
+            need(4);
             std::memcpy(&count, &buf[pos], 4);
             pos += 4;
+            if (count > (buf.size() - pos) / sizeof(T))
+                throw std::out_of_range("ast wire: column past the end");
             col.resize(count);
             if constexpr (requires { col.assign_from_raw(static_cast<const T*>(nullptr), 0); }) {
                 // Issue #5476: the atomic column restores through a
@@ -8174,6 +8200,9 @@ public:
             std::size_t offset = 0;
             for (NodeId i = 0; i < num_nodes; ++i) {
                 auto count = child_counts[i];
+                // Issue #5515: child_counts must fit the flat child column.
+                if (count > flat_children.size() - offset)
+                    throw std::out_of_range("ast wire: child range past the column");
                 // Issue #221: build each per-node PCV from the
                 // flat column via the range constructor.
                 const auto first = flat_children.begin() + static_cast<std::ptrdiff_t>(offset);
@@ -8181,6 +8210,8 @@ public:
                     first, first + static_cast<std::ptrdiff_t>(count));
                 offset += count;
             }
+            if (offset != flat_children.size())
+                throw std::out_of_range("ast wire: unused child records");
         }
         read_column(ast.parent_);
         read_column(ast.param_begin_);
@@ -8201,20 +8232,27 @@ public:
         read_column(ast.value_cache_);
         read_column(ast.node_first_mutation_);
         read_column(ast.node_gen_);
+        need(4);
         std::memcpy(&ast.next_mutation_id_, &buf[pos], 4);
         pos += 4;
         {
             std::uint16_t gen_bits = 0;
+            need(2);
             std::memcpy(&gen_bits, &buf[pos], 2);
             ast.generation_.store(gen_bits, std::memory_order_release);
         }
         pos += 2;
+        need(2);
         pos += 2; // reserved
 
         if (is_v2) {
             std::uint32_t log_count = 0;
+            need(4);
             std::memcpy(&log_count, &buf[pos], 4);
             pos += 4;
+            // A mutation record has fixed scalars alone worth 8 bytes.
+            if (log_count > (buf.size() - pos) / 8)
+                throw std::out_of_range("ast wire: mutation log past the end");
             ast.mutation_log_.clear();
             ast.mutation_log_.reserve(log_count);
             for (std::uint32_t i = 0; i < log_count; ++i)
@@ -8222,14 +8260,18 @@ public:
             ast.rebuild_mutation_log_rollback_index();
 
             std::uint32_t mi_count = 0;
+            need(4);
             std::memcpy(&mi_count, &buf[pos], 4);
             pos += 4;
+            if (mi_count > (buf.size() - pos) / 4)
+                throw std::out_of_range("ast wire: match info past the end");
             ast.match_info_.resize(mi_count);
             for (std::uint32_t i = 0; i < mi_count; ++i)
                 ast.match_info_[i] = wire_read_match_clause_info(buf, pos);
 
             wire_read_map_u32_u8(buf, pos, ast.region_by_sym_.mut());
             wire_read_map_u32_u8(buf, pos, ast.region_by_lambda_id_.mut());
+            need(4);
             std::memcpy(&ast.root, &buf[pos], 4);
             pos += 4;
             // Issue #277: backward-compatible optional PPA dirty column.

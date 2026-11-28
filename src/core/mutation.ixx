@@ -452,8 +452,13 @@ namespace mutation {
             wire_append_bytes(buf, &value, sizeof(T));
         }
 
+        // Issue #5515: these readers consume a user-supplied persist file.
+        // Every read is bounded by the backing vector; a short / forged
+        // length throws instead of reading past the buffer.
         template <class T> inline T wire_read_pod(const std::vector<char>& buf, std::size_t& pos) {
             static_assert(std::is_trivially_copyable_v<T>);
+            if (pos > buf.size() || sizeof(T) > buf.size() - pos)
+                throw std::out_of_range("mutation wire: pod past the section end");
             T value{};
             std::memcpy(&value, buf.data() + pos, sizeof(T));
             pos += sizeof(T);
@@ -468,6 +473,8 @@ namespace mutation {
 
         inline std::string wire_read_string(const std::vector<char>& buf, std::size_t& pos) {
             const auto len = wire_read_pod<std::uint32_t>(buf, pos);
+            if (pos > buf.size() || len > buf.size() - pos)
+                throw std::out_of_range("mutation wire: string past the section end");
             std::string s(buf.data() + pos, buf.data() + pos + len);
             pos += len;
             return s;
@@ -507,6 +514,11 @@ namespace mutation {
     export MutationRecord wire_read_mutation_record(const std::vector<char>& buf, std::size_t& pos,
                                                     std::uint32_t wire_version = 1) {
         MutationRecord r;
+        const auto take_byte = [&buf, &pos]() -> char {
+            if (pos >= buf.size())
+                throw std::out_of_range("mutation wire: record past the section end");
+            return buf[pos++];
+        };
         r.mutation_id = detail::wire_read_pod<std::uint64_t>(buf, pos);
         r.timestamp_ms = detail::wire_read_pod<std::uint64_t>(buf, pos);
         r.target_node = detail::wire_read_pod<NodeId>(buf, pos);
@@ -514,16 +526,16 @@ namespace mutation {
         r.old_type_str = detail::wire_read_string(buf, pos);
         r.new_type_str = detail::wire_read_string(buf, pos);
         r.summary = detail::wire_read_string(buf, pos);
-        r.status = static_cast<MutationStatus>(static_cast<std::uint8_t>(buf[pos++]));
+        r.status = static_cast<MutationStatus>(static_cast<std::uint8_t>(take_byte()));
         r.field_offset = detail::wire_read_pod<std::uint32_t>(buf, pos);
         r.old_value = detail::wire_read_pod<std::uint64_t>(buf, pos);
         r.new_value = detail::wire_read_pod<std::uint64_t>(buf, pos);
-        r.has_rollback_data = buf[pos++] != 0;
+        r.has_rollback_data = take_byte() != 0;
         r.parent_id = detail::wire_read_pod<NodeId>(buf, pos);
         r.child_idx = detail::wire_read_pod<std::uint32_t>(buf, pos);
         r.old_subtree_source = detail::wire_read_string(buf, pos);
-        r.has_subtree_rollback = buf[pos++] != 0;
-        r.invariant_status = static_cast<InvariantStatus>(static_cast<std::uint8_t>(buf[pos++]));
+        r.has_subtree_rollback = take_byte() != 0;
+        r.invariant_status = static_cast<InvariantStatus>(static_cast<std::uint8_t>(take_byte()));
         // Issue #4365: missing tail on a short buffer leaves the defaults (0).
         if (wire_version >= kMutationRecordProvenanceWireVersion && pos + 24 <= buf.size()) {
             r.author_fingerprint = detail::wire_read_pod<std::uint64_t>(buf, pos);
