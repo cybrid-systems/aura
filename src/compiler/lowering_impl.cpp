@@ -1922,15 +1922,23 @@ static std::uint32_t lower_call_with_arena(
     std::uint32_t arena_size = 65536; // default 64KB
     std::uint32_t body_start = 1;
 
-    // Parse optional (size) argument. Issue #5518: only a literal int is a
-    // size spec; a call body (with-arena (cons 7 8)) is the body, not a
-    // size expression (the old shape evaluated nothing and returned void).
+    // Optional size: (with-arena 1024 body...) or (with-arena (1024) body...).
+    // Any other first form is the body. (with-arena (cons 7 8)) must run the
+    // cons, and (with-arena () body...) keeps the default size — a one-child
+    // call is a size only when that child is a positive literal.
     if (v.children.size() >= 2) {
-        auto first_arg = v.child(1);
-        auto first_v = flat.get(first_arg);
+        auto first_v = flat.get(v.child(1));
+        std::uint32_t parsed = 0;
         if (first_v.tag == NodeTag::LiteralInt && first_v.int_value > 0) {
-            arena_size = static_cast<std::uint32_t>(first_v.int_value);
-            body_start = 2; // (with-arena N body...)
+            parsed = static_cast<std::uint32_t>(first_v.int_value);
+        } else if (first_v.tag == NodeTag::Call && first_v.children.size() == 1) {
+            auto inner = flat.get(first_v.child(0));
+            if (inner.tag == NodeTag::LiteralInt && inner.int_value > 0)
+                parsed = static_cast<std::uint32_t>(inner.int_value);
+        }
+        if (parsed != 0) {
+            arena_size = parsed;
+            body_start = 2;
         }
     }
 

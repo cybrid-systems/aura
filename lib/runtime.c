@@ -287,6 +287,18 @@ static uint64_t pair_alloc_slot(void) {
     return id;
 }
 
+// Issue #5518: the JIT emits these at every native entry and return so
+// the in-process sweep can see frame roots. Standalone --emit-binary
+// links this file instead of src/compiler/runtime_ssot.cpp, and a
+// standalone binary has no evaluator sweep, so the stubs are no-ops.
+void aura_jit_frame_enter(void) {}
+void aura_jit_frame_leave(void) {}
+void aura_pair_roots_push(const int64_t* slots, uint32_t count) {
+    (void)slots;
+    (void)count;
+}
+void aura_pair_roots_pop(void) {}
+
 // Pointer Tagging encoding: aura_alloc_pair returns (id << 2) | 1
 // bit 0 = 1 marks non-fixnum; bit 1 = 0 marks pair (low 2 bits = 01).
 // Decode: internal_id = pair_val >> 2

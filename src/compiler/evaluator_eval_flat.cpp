@@ -11773,13 +11773,18 @@ Evaluator::FlatStep Evaluator::eval_flat_on_with_arena(EvalFlatCursor& cur,
     auto& tco = cur.tco;
     if (cname == "with-arena" && v.children.size() >= 1) {
         std::size_t body_start = 1;
-        // Issue #5518: only a literal int is the optional size argument. The
-        // old "any Call node is a size spec" shape swallowed a call body:
-        // (with-arena (cons 7 8)) evaluated nothing and returned void.
+        // Optional size: a positive literal, or (with-arena (1024) body...)
+        // whose one child is a positive literal. Any other first form is the
+        // body. (with-arena (cons 7 8)) must run the cons; (with-arena () ...)
+        // keeps the default size.
         if (v.children.size() >= 2) {
-            auto first_id = v.child(1);
-            auto first_v = f->get(first_id);
-            if (first_v.tag == ast::NodeTag::LiteralInt && first_v.int_value > 0)
+            auto first_v = f->get(v.child(1));
+            bool size_spec = first_v.tag == ast::NodeTag::LiteralInt && first_v.int_value > 0;
+            if (first_v.tag == ast::NodeTag::Call && first_v.children.size() == 1) {
+                auto inner = f->get(first_v.child(0));
+                size_spec = inner.tag == ast::NodeTag::LiteralInt && inner.int_value > 0;
+            }
+            if (size_spec)
                 body_start = 2;
         }
         tl_arena_push(&g_tl_arena);

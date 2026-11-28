@@ -318,7 +318,7 @@ static bool pair_gc_root_mode_5518() {
     static const bool on = [] {
         // Issue #5518: on by default; AURA_PAIR_GC=0 disables root mode.
         const char* v = std::getenv("AURA_PAIR_GC");
-        return !(v && v[0] == '0');
+        return v == nullptr || v[0] != '0';
     }();
     return on;
 }
@@ -1014,6 +1014,11 @@ extern "C" std::uint64_t aura_cell_heap_epoch;
 
 // LLVM IR Builder
 struct LLVMBuilder {
+    // Private root-mirror fields below make this a non-aggregate. The two
+    // call sites still pass the context as LLVMBuilder{ctx}.
+    explicit LLVMBuilder(llvm::LLVMContext& context)
+        : ctx(context) {}
+
     llvm::LLVMContext& ctx;
     llvm::Module* mod = nullptr;
     llvm::Function* func = nullptr;
@@ -1351,15 +1356,30 @@ struct LLVMBuilder {
     std::unordered_set<std::uint32_t> mc_value_slots;
     llvm::Function* fn_top_cell_get = nullptr;
     llvm::Function* fn_alloc_pair = nullptr;
-    // Issue #5518 phase 2: native frame accounting for the JIT-pair sweep.
+    // Issue #5518 phase 2: frame accounting and the root-mode slot mirror.
+    // Private: AuraJIT::Impl reaches them through the accessors below.
+private:
     llvm::Function* fn_jit_frame_enter = nullptr;
     llvm::Function* fn_jit_frame_leave = nullptr;
-    // Issue #5518 phase 2: root-mode slot mirror + the runtime registration.
     llvm::Value* pair_root_arr = nullptr;
     llvm::Type* pair_root_arr_ty = nullptr;
     std::uint32_t pair_root_n = 0;
     llvm::Function* fn_pair_roots_push = nullptr;
     llvm::Function* fn_pair_roots_pop = nullptr;
+
+public:
+    bool has_pair_root() const { return pair_root_arr != nullptr; }
+    llvm::Value* pair_root_value() const { return pair_root_arr; }
+    llvm::Type* pair_root_type() const { return pair_root_arr_ty; }
+    llvm::Function* jit_frame_enter_fn() const { return fn_jit_frame_enter; }
+    llvm::Function* pair_roots_push_fn() const { return fn_pair_roots_push; }
+    void set_pair_root(llvm::Value* const root_slots, llvm::Type* const root_ty,
+                       const std::uint32_t root_count) {
+        pair_root_arr = root_slots;
+        pair_root_arr_ty = root_ty;
+        pair_root_n = root_count;
+    }
+
     llvm::Function* fn_alloc_pair_arena = nullptr;
     llvm::Function* fn_pair_car = nullptr;
     llvm::Function* fn_pair_cdr = nullptr;
@@ -1966,7 +1986,7 @@ struct LLVMBuilder {
         // Issue #5518 phase 2: keep the contiguous root mirror in step. A
         // root-mode frame registers this array for its whole lifetime; every
         // tagged slot write must be visible there.
-        if (pair_root_arr && slot < pair_root_n) {
+        if (pair_root_arr != nullptr && slot < pair_root_n) {
             auto* gep = irb->CreateConstInBoundsGEP2_64(pair_root_arr_ty, pair_root_arr, 0, slot);
             irb->CreateStore(val, gep);
         }
@@ -2027,9 +2047,9 @@ struct LLVMBuilder {
     void emit_ret(llvm::Value* v) {
         if (depth_armed && fn_depth_leave)
             irb->CreateCall(llvm::FunctionCallee(fn_depth_leave), {});
-        if (pair_root_arr && fn_pair_roots_pop)
+        if (pair_root_arr != nullptr && fn_pair_roots_pop != nullptr)
             irb->CreateCall(llvm::FunctionCallee(fn_pair_roots_pop), {});
-        if (fn_jit_frame_leave)
+        if (fn_jit_frame_leave != nullptr)
             irb->CreateCall(llvm::FunctionCallee(fn_jit_frame_leave), {});
         irb->CreateRet(v);
     }
@@ -3791,7 +3811,7 @@ struct LLVMBuilder {
                     // Issue #5518: a promoted cell holds a tagged value; the
                     // root mirror must see it or a pair bound to a let cell
                     // would be invisible to the mark.
-                    if (pair_root_arr && inst.ops[0] < pair_root_n) {
+                    if (pair_root_arr != nullptr && inst.ops[0] < pair_root_n) {
                         auto* gep = irb->CreateConstInBoundsGEP2_64(pair_root_arr_ty, pair_root_arr,
                                                                     0, inst.ops[0]);
                         irb->CreateStore(pv, gep);
@@ -6376,7 +6396,7 @@ struct AuraJIT::Impl {
                                builder.fn_native_self_id && jit_force_guard_deopt() < 2 &&
                                fn.local_count > 0 && fn.env_count <= fn.local_count &&
                                fn.arg_count <= fn.local_count - fn.env_count;
-        if (std::getenv("AURA_JIT_COMPILE_TRACE")) {
+        if (std::getenv("AURA_JIT_COMPILE_TRACE") != nullptr) {
             bool any_cell = false;
             bool any_spair = false;
             for (std::uint32_t i = 0; i < fn.local_count; ++i) {
@@ -6386,9 +6406,9 @@ struct AuraJIT::Impl {
             std::fprintf(stderr,
                          "[jit] fn=%s locals=%u self=%d deopt_ok=%d cells=%d spairs=%d "
                          "root=%d\n",
-                         fn.name ? fn.name : "?", fn.local_count, builder.self_call_ok ? 1 : 0,
-                         builder.frame_deopt_ok ? 1 : 0, any_cell ? 1 : 0, any_spair ? 1 : 0,
-                         builder.pair_root_arr ? 1 : 0);
+                         fn.name != nullptr ? fn.name : "?", fn.local_count,
+                         builder.self_call_ok ? 1 : 0, builder.frame_deopt_ok ? 1 : 0,
+                         any_cell ? 1 : 0, any_spair ? 1 : 0, builder.has_pair_root() ? 1 : 0);
         }
         if (builder.self_call_ok) {
             // Map each env buffer index to the IR slot the entry OpArg
@@ -6562,7 +6582,7 @@ struct AuraJIT::Impl {
         // (executed once per call, dominates every store). The array is
         // intentionally not zeroed: a stale value can only retain, and the
         // mark range-checks every id.
-        if (pair_gc_root_mode_5518() && builder.fn_pair_roots_push) {
+        if (pair_gc_root_mode_5518() && builder.pair_roots_push_fn() != nullptr) {
             // Always push, even for a zero-local function: the frame counter
             // is incremented for every native entry, so the root depth must
             // match it or the sweep gate would never fire.
@@ -6571,19 +6591,18 @@ struct AuraJIT::Impl {
             auto* arr_ty = llvm::ArrayType::get(i64_ty, root_n);
             auto* entry_bb = builder.block_map[fn.entry_block];
             builder.irb->SetInsertPoint(entry_bb, entry_bb->getFirstInsertionPt());
-            builder.pair_root_arr = builder.irb->CreateAlloca(arr_ty, nullptr, "pair_roots");
-            builder.pair_root_arr_ty = arr_ty;
-            builder.pair_root_n = root_n;
-            auto* slots0 =
-                builder.irb->CreateConstInBoundsGEP2_64(arr_ty, builder.pair_root_arr, 0, 0);
+            builder.set_pair_root(builder.irb->CreateAlloca(arr_ty, nullptr, "pair_roots"), arr_ty,
+                                  root_n);
+            auto* slots0 = builder.irb->CreateConstInBoundsGEP2_64(builder.pair_root_type(),
+                                                                   builder.pair_root_value(), 0, 0);
             // Issue #5518: the frame count is incremented here, in the same
             // entry block as the root push, so both run exactly once per
             // call. entry_body_bb is the loop header for a self-tail-call
             // function; emitting the enter there counted every iteration
             // (frames=262147 after one seam) and no sweep could run.
-            if (builder.fn_jit_frame_enter)
-                builder.irb->CreateCall(llvm::FunctionCallee(builder.fn_jit_frame_enter), {});
-            builder.irb->CreateCall(builder.fn_pair_roots_push,
+            if (builder.jit_frame_enter_fn() != nullptr)
+                builder.irb->CreateCall(llvm::FunctionCallee(builder.jit_frame_enter_fn()), {});
+            builder.irb->CreateCall(builder.pair_roots_push_fn(),
                                     {slots0, builder.irb->getInt32(static_cast<int>(root_n))});
         }
 

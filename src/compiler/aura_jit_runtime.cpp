@@ -329,6 +329,8 @@ void tl_arena_push(TLarena* arena) {
         return;
     }
     // Issue #5518: save the scoped-pair watermark next to the bump mark.
+    // mark_depth is bounded by kMaxMarks above; the index is a cursor.
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-constant-array-index)
     arena->pair_rec_marks[arena->mark_depth] = arena->pair_rec_head;
     arena->marks[arena->mark_depth++] = arena->offset;
 }
@@ -348,6 +350,8 @@ void tl_arena_pop(TLarena* arena) {
     const unsigned depth = arena->mark_depth - 1;
     // Issue #5518: the scope is over — every pair id it minted died here.
     // Release before the offset rewind invalidates the rec chain.
+    // depth is mark_depth - 1 after the empty check, so it is < kMaxMarks.
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-constant-array-index)
     aura_pair_scope_release_to(arena, arena->pair_rec_marks[depth]);
     arena->offset = arena->marks[--arena->mark_depth];
 }
@@ -7124,12 +7128,14 @@ namespace {
 } // namespace
 
 extern "C" void aura_pair_slot_free(PairSlot* slot) {
-    if (!slot)
+    if (slot == nullptr)
         return;
     if (t_pair_slot_free_n >= kPairSlotFreeMax) {
         pair_slot_pool_put(t_pair_slot_free, t_pair_slot_free_n);
         t_pair_slot_free_n = 0;
     }
+    // n was just flushed to 0 when it hit kPairSlotFreeMax, so it is in range.
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-constant-array-index)
     t_pair_slot_free[t_pair_slot_free_n++] = slot;
 }
 
@@ -7139,6 +7145,8 @@ extern "C" PairSlot* aura_pair_slot_take() {
         if (t_pair_slot_free_n == 0)
             return nullptr;
     }
+    // n is non-zero here, and the free list never stores past kPairSlotFreeMax.
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-constant-array-index)
     return t_pair_slot_free[--t_pair_slot_free_n];
 }
 
@@ -7146,7 +7154,7 @@ int64_t aura_alloc_pair(int64_t car, int64_t cdr) {
     // Issue #5518 phase 2: amortized collection from the allocation seam. Runs
     // BEFORE the id is claimed, so the pair being born here can never be swept
     // by the collection it triggers.
-    if (aura_pair_gc_armed()) {
+    if (aura_pair_gc_armed() != 0) {
         static thread_local std::uint64_t allocs_5518 = 0;
         if (((++allocs_5518) & 0x3FFFFu) == 0)
             aura_maybe_collect_pairs();
@@ -7158,7 +7166,7 @@ int64_t aura_alloc_pair(int64_t car, int64_t cdr) {
     auto* slot = aura_pair_slot_take();
     if (!slot)
         slot = aura_pair_tls_bump();
-    if (!slot)
+    if (slot == nullptr)
         return aura::compiler::types::kSpecialVoid; // #5518: never fixnum 0
     slot->car = car;
     slot->cdr = cdr;
