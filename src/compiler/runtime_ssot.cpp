@@ -400,9 +400,11 @@ PairTenantTable g_pair_slot_tenants;
 // Issue #5518/#5631: JIT cons ids get their own range, above the evaluator's
 // pairs_ index space. The evaluator sweep only looks at ids below
 // pairs_.size(), so it can never void a JIT pair; the mark can classify an id
-// by range alone. 1<<20 leaves the evaluator over a million pairs of room.
+// by range alone. 1<<24 leaves the evaluator room for a multi-round
+// serve-IR cons churn (#4747 mints ~1.2e6 pairs per round; unscoped ids
+// are not recycled until process reset) without colliding with JIT ids.
 // The base is derived from the configured cap so a small test cap still
-// leaves a usable JIT range: 1<<20 normally, else a quarter of the cap.
+// leaves a usable JIT range: 1<<24 normally, else a quarter of the cap.
 static std::uint64_t pair_jit_base_5518();
 static std::atomic<std::uint64_t> g_pair_jit_water{pair_jit_base_5518()};
 
@@ -467,7 +469,7 @@ static std::uint64_t pair_id_limit_5518() {
 
 static std::uint64_t pair_jit_base_5518() {
     static const std::uint64_t base = [] {
-        const std::uint64_t want = 1ull << 20;
+        const std::uint64_t want = 1ull << 24;
         const std::uint64_t limit = pair_id_limit_5518();
         return (limit > 2 * want) ? want : (limit / 4);
     }();

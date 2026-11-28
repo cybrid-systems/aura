@@ -2893,9 +2893,9 @@ static void ac3210_6_source_cite_no_invent() {
           "AC5: group drain helper");
     CHECK(mut.find("note_temporary_moving_live_canaries_all()") != std::string::npos,
           "AC5: register_known drains temps");
-    CHECK(apply.find("TemporaryMovingLivePtrCanary tmp_flat") != std::string::npos,
+    CHECK(apply.find("TemporaryMovingLivePtrCanary2 tmp_pair_5520") != std::string::npos,
           "AC5: apply_closure notes Closure.flat temp");
-    CHECK(apply.find("TemporaryMovingLivePtrCanary tmp_pool") != std::string::npos,
+    CHECK(apply.find("bind_temporary_moving_live_ptr2(flat_in, pool_in") != std::string::npos,
           "AC5: apply_closure notes Closure.pool temp");
     CHECK(ev.find("TemporaryMovingLivePtrCanary") != std::string::npos,
           "AC5: Evaluator inventory documents #3210 temps");
@@ -3072,8 +3072,8 @@ static void ac3857_5_source_cite_no_invent() {
     CHECK(arena.find("class PostMovingPinRegistry") == std::string::npos &&
               arena.find("g_moving_pin_registry_3857") == std::string::npos,
           "AC5: no second model / no new registry");
-    CHECK(apply.find("TemporaryMovingLivePtrCanary tmp_flat") != std::string::npos &&
-              apply.find("TemporaryMovingLivePtrCanary tmp_pool") != std::string::npos,
+    CHECK(apply.find("TemporaryMovingLivePtrCanary2 tmp_pair_5520") != std::string::npos &&
+              apply.find("bind_temporary_moving_live_ptr2(flat_in, pool_in") != std::string::npos,
           "AC5: apply_closure canaries remain observe-only (#3210 shape)");
     CHECK(dc.find("kMovingTempCanaryEntryGateIssue = 3857") != std::string::npos,
           "AC5: counter stamps at header end");
@@ -5000,9 +5000,11 @@ static void ac4287_blocked_retry_publish_closes_window() {
     aura::compiler::typed_audit::apply_production_audit_defaults();
     aura::ast::set_moving_compact_enabled(1);
     auto& ev = cs.evaluator();
-    aura::ast::g_moving_incomplete_remap_sticky_densify_off.store(1, std::memory_order_release);
+    // note() is a no-op while the sticky gate has Moving closed, so the
+    // canary has to be in the inventory before the trap arms (#4751).
     int sentinel = 0;
     aura::ast::note_temporary_moving_live_ptr(&sentinel);
+    aura::ast::g_moving_incomplete_remap_sticky_densify_off.store(1, std::memory_order_release);
     const auto rec = ev.recover_moving_sticky_densify_off(/*retry_densify=*/true);
     const auto hs = aura::core::moving_densify_health::snapshot();
     CHECK(rec.densify_retried, "4287: retry densify ran");
@@ -6647,7 +6649,7 @@ static void ac4066_soft_and_source() {
     CHECK(arena_src.find("class PostMovingPinRegistry") == std::string::npos,
           "4066: no second registry");
     CHECK(apply.find("bind_temporary_moving_live_ptr") != std::string::npos, "4066: apply binds");
-    CHECK(apply.find("TemporaryMovingLivePtrCanary tmp_flat") != std::string::npos,
+    CHECK(apply.find("TemporaryMovingLivePtrCanary2 tmp_pair_5520") != std::string::npos,
           "4066: apply flat canary name stays");
     CHECK(apply.find("observe-only") != std::string::npos, "4066: observe-only comment stays");
     CHECK(read_file("docs/design/4066-moving-canary.md").empty(), "4066: no docs/design");
@@ -7471,10 +7473,9 @@ static void ac4242_5_soft_off_noop_and_source() {
     CHECK(arena_src.find("g_moving_remap_bind_dead_dest_keep_total") != std::string::npos,
           "4242 AC5: dead-dest counter present");
     const auto apply = read_file("src/compiler/evaluator_eval_flat.cpp");
-    CHECK(apply.find("bind_temporary_moving_live_ptr(cl_copy.flat, &noted)") != std::string::npos,
+    CHECK(apply.find("bind_temporary_moving_live_ptr2(flat_in, pool_in") != std::string::npos,
           "4242 AC5: TW apply binds through the guarded contract");
-    CHECK(apply.find("bind_temporary_moving_live_ptr_any_arena(cl_copy.flat, &noted)") !=
-              std::string::npos,
+    CHECK(apply.find("bind_temporary_moving_live_ptr_any_arena2(") != std::string::npos,
           "4242 AC5: no-owner apply binds through the guarded any-arena walk");
 }
 

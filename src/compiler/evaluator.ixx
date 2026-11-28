@@ -6363,6 +6363,9 @@ public:
     // runtime support pointers the body needs to see, not part
     // of the captured scope itself.
     Env materialize_call_env(const Closure& cl);
+    // Issue #5521: drop this Evaluator's thread-local call-env memo so a
+    // later Evaluator reused at the same address cannot hit it.
+    void drop_call_env_memo_5521() noexcept;
     // Issue #4350: lazily-built shared capture snapshot keyed by capture
     // frame id (linear-clean frames only; see CapSnapshot). The first
     // materialize of a closure builds + caches; later calls reuse.

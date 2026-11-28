@@ -8972,7 +8972,7 @@ Evaluator::FlatStep Evaluator::eval_flat_on_set(EvalFlatCursor& cur, const aura:
             e = e->parent();
         }
     }
-    // Issue #4122: materialize stores the let cell in
+    // Named-let set! (#4122) stores the let cell in
     // bindings_symid_ (string bindings_ often empty).
     // lookup reads that symid entry, including a non-cell
     // copy. set! must write the same entry.
@@ -9001,9 +9001,9 @@ Evaluator::FlatStep Evaluator::eval_flat_on_set(EvalFlatCursor& cur, const aura:
                 return FlatStep::ret(*val);
         }
     }
-    // Same SoA parent chain Env::lookup reads. A behind
-    // named-let capture keeps the cell here after set-car!
-    // bumps defuse. Write that entry, cell or value.
+    // Issue #4122: same SoA parent chain Env::lookup reads.
+    // A behind named-let capture keeps the cell here after
+    // set-car! bumps defuse. write_frame records that entry.
     if (auto* owner = eval_env.owner()) {
         const auto sid = eval_env.pool()
                              ? const_cast<aura::ast::StringPool*>(eval_env.pool())->intern(name)

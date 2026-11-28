@@ -311,9 +311,10 @@ enum Op : uint32_t {
 // static float slots, no fixnum fast path / compare fusion).
 // Issue #5518 phase 2: root mode. Mirrors every tagged slot into one
 // contiguous array and registers it for the life of the native call, so the
-// evaluator mark can see a pair that only a JIT frame holds (#5631). Opt-in
-// (AURA_PAIR_GC=1): one extra store per slot write, and the cell / scalar-pair
-// promotions are disabled because their storage would not be in the array.
+// evaluator mark can see a pair that only a JIT frame holds (#5631). On by
+// default (AURA_PAIR_GC=0 disables): one extra store per slot write.
+// Scalar-replaced pairs stay in allocas until they escape; store() mirrors
+// the escaped heap id into the same array.
 static bool pair_gc_root_mode_5518() {
     static const bool on = [] {
         // Issue #5518: on by default; AURA_PAIR_GC=0 disables root mode.
@@ -517,8 +518,6 @@ static std::vector<std::uint8_t> promotable_cells(const FlatFunction& fn) {
 // Issue #4573: scalar replacement kill switch for A/B and triage —
 // AURA_JIT_SR=0 keeps every MakePair as a runtime allocation.
 static bool jit_sr_enabled() {
-    if (pair_gc_root_mode_5518())
-        return false;
     static const bool on = [] {
         const char* v = ::aura::config::raw(::aura::config::Key::AURA_JIT_SR);
         return !(v && v[0] == '0');

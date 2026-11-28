@@ -280,6 +280,9 @@ void Evaluator::inject_envframe_dual_path_desync_for_test(EnvId id) noexcept {
     // (cap_snap_mtx_ is a leaf, same order as alloc_env_frame).
     std::unique_lock<std::shared_mutex> snap_lock(cap_snap_mtx_);
     cap_snap_cache_.erase(id);
+    // The #5521 memo keys on this epoch. A cache drop that leaves the
+    // epoch unchanged would keep serving the pre-inject snapshot.
+    cap_snap_epoch_5521_.fetch_add(1, std::memory_order_release);
 }
 
 std::uint64_t Evaluator::capture_dual_diverge_checks_for_test() noexcept {
@@ -1884,9 +1887,13 @@ std::shared_ptr<const CapSnapshot> Evaluator::cap_snap_for_frame(EnvId frame_id)
     {
         std::unique_lock<std::shared_mutex> lock(cap_snap_mtx_);
         if (auto it = cap_snap_cache_.find(frame_id);
-            it != cap_snap_cache_.end() && it->second->env_gen != env_generation_)
+            it != cap_snap_cache_.end() && it->second->env_gen != env_generation_) {
             cap_snap_cache_.erase(it);
-        cap_snap_epoch_5521_.fetch_add(1, std::memory_order_release);
+            // Only a dropped stale generation invalidates the #5521 memo.
+            // A cold miss must not bump: the caller records this epoch, and
+            // a bump here makes the next call miss and rebuild.
+            cap_snap_epoch_5521_.fetch_add(1, std::memory_order_release);
+        }
     }
     // Issue #4717: range checks read the PUBLISHED size. env_frames_.size()
     // dereferences the deque's map metadata, which a concurrent
@@ -1947,6 +1954,26 @@ std::shared_ptr<const CapSnapshot> Evaluator::cap_snap_for_frame(EnvId frame_id)
     return snap;
 }
 
+namespace {
+    struct CallEnvMemo5521 {
+        const Evaluator* owner = nullptr;
+        EnvId env_id = NULL_ENV_ID;
+        std::uint64_t defuse = ~0ull;
+        std::uint64_t gen = ~0ull;
+        std::uint64_t snap_epoch = ~0ull;
+        bool len_diverges = false;
+        std::shared_ptr<const CapSnapshot> snap;
+    };
+    thread_local CallEnvMemo5521 tls_call_env_memo_5521;
+} // namespace
+
+void Evaluator::drop_call_env_memo_5521() noexcept {
+    if (tls_call_env_memo_5521.owner == this) {
+        tls_call_env_memo_5521.owner = nullptr;
+        tls_call_env_memo_5521.snap.reset();
+    }
+}
+
 Env Evaluator::materialize_call_env(const Closure& cl) {
     // Issue #417: cross-TU invariant probe on Env materialization.
     ensure_mutation_invariants();
@@ -1976,18 +2003,12 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
     // Issue #5521: the length-divergence probe (a shard shared_lock) and the
     // cap-snapshot lookup (a global mutex + hash) are pure functions of the
     // frame id / environment generation, so memoize them on this thread. The
-    // key matches the issue's contract: (env_id, defuse_version_, env_generation_).
+    // key matches the issue's contract: (evaluator, env_id, defuse_version_,
+    // env_generation_). The evaluator is required: the other fields are
+    // often all zero on the first frame of every test on this thread, and
+    // a hit would return the previous Evaluator's snapshot.
     // closure_is_epoch_or_env_stale (the closure-level gate) still runs on
     // every call.
-    struct CallEnvMemo5521 {
-        EnvId env_id = NULL_ENV_ID;
-        std::uint64_t defuse = ~0ull;
-        std::uint64_t gen = ~0ull;
-        std::uint64_t snap_epoch = ~0ull;
-        bool len_diverges = false;
-        std::shared_ptr<const CapSnapshot> snap;
-    };
-    thread_local CallEnvMemo5521 tls_call_env_memo_5521;
     auto capture_len_diverges = [&](EnvId id) -> bool {
         if (id == NULL_ENV_ID || static_cast<std::size_t>(id) >=
                                      env_frames_published_size_.load(std::memory_order_acquire))
@@ -2010,8 +2031,9 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
     auto& memo = tls_call_env_memo_5521;
     bool len_diverges = false;
     std::shared_ptr<const CapSnapshot> snap;
-    const bool memo_hit = cl.env_id == memo.env_id && memo_defuse == memo.defuse &&
-                          env_generation_ == memo.gen && memo_snap_epoch == memo.snap_epoch;
+    const bool memo_hit = memo.owner == this && cl.env_id == memo.env_id &&
+                          memo_defuse == memo.defuse && env_generation_ == memo.gen &&
+                          memo_snap_epoch == memo.snap_epoch;
     if (memo_hit) {
         len_diverges = memo.len_diverges;
         snap = memo.snap;
@@ -2020,6 +2042,7 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
         if (!len_diverges && cl.env_id != NULL_ENV_ID &&
             cl.env_id < env_frames_published_size_.load(std::memory_order_acquire))
             snap = cap_snap_for_frame(cl.env_id);
+        memo.owner = this;
         memo.env_id = cl.env_id;
         memo.defuse = memo_defuse;
         memo.gen = env_generation_;

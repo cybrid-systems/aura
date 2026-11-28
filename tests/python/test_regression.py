@@ -1639,7 +1639,11 @@ def test_jit_l1_4570():
     # The hot arms are the both-fixnum add and the fused compare; the float
     # promote path stays as the cold generic arm (operands are not proven
     # fixnum: overflow yields RefError).
-    assert "l1_fixnum" in ir and "l1_cmp_fixnum" in ir, "L1 fast-path blocks missing from sumi"
+    # JumpThreading renames the compare block to l1_cmp_join.thread; the
+    # fixnum arm is the icmp, and either label means it survived opts.
+    assert "l1_fixnum" in ir and ("l1_cmp_fixnum" in ir or "l1_cmp_join.thread" in ir), (
+        "L1 fast-path blocks missing from sumi"
+    )
     pools = [int(x) for x in re.findall(r"floatpool=(\d+)", out)]
     assert len(pools) == 2, out[-400:]
     grew = pools[1] - pools[0]

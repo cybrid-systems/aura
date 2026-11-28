@@ -4142,6 +4142,16 @@ static void ac4530_string_gate_siblings() {
 // Issue #5512: synthesize:define reads http-post out of the primitive table
 // and calls it directly, so dispatch never infers Network from the http-*
 // name. The body must gate on Network itself and cap :max-attempts.
+// Issue #5518: a real-slot push_back claims a JIT-range id, not the next
+// low index. Stamp the tenant at that id and pass it to make_pair.
+static std::uint64_t publish_process_pair(PairSlot* slot, std::uint64_t tenant) {
+    const std::int64_t id = g_pair_slots.push_back(slot);
+    if (id >= 0)
+        g_pair_slot_tenants[static_cast<std::size_t>(id)] = tenant;
+    g_owned_pair_slots_.push_back(slot);
+    return id < 0 ? 0 : static_cast<std::uint64_t>(id);
+}
+
 static void issue_5512_synthesize_direct_http_gate() {
     std::println("\n--- #5512: synthesize:define direct http-post gate ---");
     const auto src = read_file("src/compiler/evaluator_primitives_agent.cpp");
@@ -5056,27 +5066,23 @@ int run_test_dispatch_required_effects() {
         auto* legacy = static_cast<PairSlot*>(std::malloc(sizeof(PairSlot)));
         legacy->car = 101;
         legacy->cdr = 102;
-        g_pair_slots.push_back(legacy);
-        g_pair_slot_tenants.push_back(0);
-        g_owned_pair_slots_.push_back(legacy);
+        (void)publish_process_pair(legacy, 0);
         auto* foreign = static_cast<PairSlot*>(std::malloc(sizeof(PairSlot)));
         foreign->car = 11;
         foreign->cdr = 22;
-        g_pair_slots.push_back(foreign);
-        g_pair_slot_tenants.push_back(77);
-        g_owned_pair_slots_.push_back(foreign);
+        const auto foreign_id = publish_process_pair(foreign, 77);
         auto set_car_fn = ev.primitives().lookup("set-car!");
         auto set_cdr_fn = ev.primitives().lookup("set-cdr!");
         CHECK(set_car_fn.has_value() && set_cdr_fn.has_value(), "4057 AC1: pair mutators present");
         const auto iso_epoch = aura::core::current_mutation_epoch();
         const auto fiber_now = static_cast<std::int64_t>(aura_fiber_current_id());
-        auto r1 = (*set_car_fn)({aura::compiler::types::make_pair(1), make_int(9)});
+        auto r1 = (*set_car_fn)({aura::compiler::types::make_pair(foreign_id), make_int(9)});
         CHECK(is_error(r1), "4057 AC1: foreign JIT pair set-car! denied");
         CHECK(foreign->car == 11 && foreign->cdr == 22,
               "4057 AC1: foreign slot car/cdr unchanged (zero write)");
         CHECK(std::string_view(ev.last_mutate_error()).find("set-car") != std::string_view::npos,
               "4057 AC1: deny reason names set-car (isolation, not wildcard)");
-        auto r1b = (*set_cdr_fn)({aura::compiler::types::make_pair(1), make_int(9)});
+        auto r1b = (*set_cdr_fn)({aura::compiler::types::make_pair(foreign_id), make_int(9)});
         CHECK(is_error(r1b), "4057 AC1: foreign JIT pair set-cdr! denied");
         CHECK(foreign->cdr == 22, "4057 AC1: foreign slot cdr still unchanged");
         // The deny rows are IsolationDeny carrying the live fiber id and the
@@ -5116,12 +5122,10 @@ int run_test_dispatch_required_effects() {
         auto* legacy = static_cast<PairSlot*>(std::malloc(sizeof(PairSlot)));
         legacy->car = 101;
         legacy->cdr = 102;
-        g_pair_slots.push_back(legacy);
-        g_pair_slot_tenants.push_back(0); // unstamped — fails closed on MT
-        g_owned_pair_slots_.push_back(legacy);
+        const auto legacy_id = publish_process_pair(legacy, 0); // unstamped — fails closed on MT
         auto sc_fn = ev.primitives().lookup("set-car!");
         CHECK(sc_fn.has_value(), "4057 AC2: set-car! present");
-        auto r = (*sc_fn)({aura::compiler::types::make_pair(0), make_int(9)});
+        auto r = (*sc_fn)({aura::compiler::types::make_pair(legacy_id), make_int(9)});
         CHECK(is_error(r), "4057 AC2: unstamped slot set-car! denied");
         CHECK(legacy->car == 101 && legacy->cdr == 102,
               "4057 AC2: unstamped slot unchanged (zero write)");
@@ -5170,13 +5174,11 @@ int run_test_dispatch_required_effects() {
         auto* foreign = static_cast<PairSlot*>(std::malloc(sizeof(PairSlot)));
         foreign->car = 11;
         foreign->cdr = 22;
-        g_pair_slots.push_back(foreign);
-        g_pair_slot_tenants.push_back(77); // foreign stamp — unread on Soft/Off
-        g_owned_pair_slots_.push_back(foreign);
+        const auto foreign_id = publish_process_pair(foreign, 77); // unread on Soft/Off
         const auto se0 = g_security_event_ring().total.load(std::memory_order_relaxed);
         auto sc_fn = ev.primitives().lookup("set-car!");
         CHECK(sc_fn.has_value(), "4057 AC4: set-car! present");
-        auto r = (*sc_fn)({aura::compiler::types::make_pair(0), make_int(9)});
+        auto r = (*sc_fn)({aura::compiler::types::make_pair(foreign_id), make_int(9)});
         CHECK(!is_error(r), "4057 AC4: Soft write allowed");
         // The slot stores raw EvalValue bits (the prim writes a[1].val), so
         // the landed car is make_int(9).val — compare in the same encoding.
@@ -5208,21 +5210,19 @@ int run_test_dispatch_required_effects() {
         auto* foreign4111 = static_cast<PairSlot*>(std::malloc(sizeof(PairSlot)));
         foreign4111->car = make_int(11).val;
         foreign4111->cdr = make_int(22).val;
-        g_pair_slots.push_back(foreign4111);
-        g_pair_slot_tenants.push_back(77);
-        g_owned_pair_slots_.push_back(foreign4111);
+        const auto foreign_id = publish_process_pair(foreign4111, 77);
         auto car_fn = ev.primitives().lookup("car");
         auto cdr_fn = ev.primitives().lookup("cdr");
         CHECK(car_fn.has_value() && cdr_fn.has_value(), "4111 AC1: pair readers present");
         const auto iso_epoch = aura::core::current_mutation_epoch();
         const auto fiber_now = static_cast<std::int64_t>(aura_fiber_current_id());
-        auto rc = (*car_fn)({aura::compiler::types::make_pair(0)});
+        auto rc = (*car_fn)({aura::compiler::types::make_pair(foreign_id)});
         CHECK(is_error(rc), "4111 AC1: foreign JIT pair car denied");
         CHECK(foreign4111->car == make_int(11).val && foreign4111->cdr == make_int(22).val,
               "4111 AC1: slot never read (deny before any read)");
         CHECK(std::string_view(ev.last_mutate_error()).find("car") != std::string_view::npos,
               "4111 AC1: deny reason names car (isolation, not wildcard)");
-        auto rd = (*cdr_fn)({aura::compiler::types::make_pair(0)});
+        auto rd = (*cdr_fn)({aura::compiler::types::make_pair(foreign_id)});
         CHECK(is_error(rd), "4111 AC1: foreign JIT pair cdr denied");
         CHECK(foreign4111->cdr == make_int(22).val, "4111 AC1: slot cdr still unread");
         const auto seq1 = g_security_event_ring().seq.load(std::memory_order_relaxed);
@@ -5260,12 +5260,11 @@ int run_test_dispatch_required_effects() {
         auto* legacy4111 = static_cast<PairSlot*>(std::malloc(sizeof(PairSlot)));
         legacy4111->car = make_int(101).val;
         legacy4111->cdr = make_int(102).val;
-        g_pair_slots.push_back(legacy4111);
-        g_pair_slot_tenants.push_back(0); // unstamped - fails closed under MT
-        g_owned_pair_slots_.push_back(legacy4111);
+        const auto legacy_id =
+            publish_process_pair(legacy4111, 0); // unstamped - fails closed under MT
         auto car_fn = ev.primitives().lookup("car");
         CHECK(car_fn.has_value(), "4111 AC2: car reader present");
-        auto r = (*car_fn)({aura::compiler::types::make_pair(0)});
+        auto r = (*car_fn)({aura::compiler::types::make_pair(legacy_id)});
         CHECK(is_error(r), "4111 AC2: unstamped slot car denied");
         CHECK(legacy4111->car == make_int(101).val && legacy4111->cdr == make_int(102).val,
               "4111 AC2: unstamped slot never read");
@@ -5287,16 +5286,14 @@ int run_test_dispatch_required_effects() {
         auto* own4111 = static_cast<PairSlot*>(std::malloc(sizeof(PairSlot)));
         own4111->car = make_int(11).val;
         own4111->cdr = make_int(22).val;
-        g_pair_slots.push_back(own4111);
-        g_pair_slot_tenants.push_back(77);
-        g_owned_pair_slots_.push_back(own4111);
+        const auto own_id = publish_process_pair(own4111, 77);
         auto car_fn = ev.primitives().lookup("car");
         auto cdr_fn = ev.primitives().lookup("cdr");
         CHECK(car_fn.has_value() && cdr_fn.has_value(), "4111 AC3: pair readers present");
-        auto rc = (*car_fn)({aura::compiler::types::make_pair(0)});
+        auto rc = (*car_fn)({aura::compiler::types::make_pair(own_id)});
         CHECK(!is_error(rc) && is_int(rc) && as_int(rc) == 11,
               "4111 AC3: owner car reads the stamped slot");
-        auto rd = (*cdr_fn)({aura::compiler::types::make_pair(0)});
+        auto rd = (*cdr_fn)({aura::compiler::types::make_pair(own_id)});
         CHECK(!is_error(rd) && is_int(rd) && as_int(rd) == 22,
               "4111 AC3: owner cdr reads the stamped slot");
         aura::core::provenance::set_multi_tenant_env_active(false);
@@ -5314,17 +5311,15 @@ int run_test_dispatch_required_effects() {
         auto* foreign4111 = static_cast<PairSlot*>(std::malloc(sizeof(PairSlot)));
         foreign4111->car = make_int(11).val;
         foreign4111->cdr = make_int(22).val;
-        g_pair_slots.push_back(foreign4111);
-        g_pair_slot_tenants.push_back(77); // foreign stamp - unread on Soft/Off
-        g_owned_pair_slots_.push_back(foreign4111);
+        const auto soft_id = publish_process_pair(foreign4111, 77); // unread on Soft/Off
         const auto se0 = g_security_event_ring().total.load(std::memory_order_relaxed);
         auto car_fn = ev.primitives().lookup("car");
         auto cdr_fn = ev.primitives().lookup("cdr");
         CHECK(car_fn.has_value() && cdr_fn.has_value(), "4111 AC4: pair readers present");
-        auto rc = (*car_fn)({aura::compiler::types::make_pair(0)});
+        auto rc = (*car_fn)({aura::compiler::types::make_pair(soft_id)});
         CHECK(!is_error(rc) && is_int(rc) && as_int(rc) == 11,
               "4111 AC4: Soft/Off car still returns the value");
-        auto rd = (*cdr_fn)({aura::compiler::types::make_pair(0)});
+        auto rd = (*cdr_fn)({aura::compiler::types::make_pair(soft_id)});
         CHECK(!is_error(rd) && is_int(rd) && as_int(rd) == 22,
               "4111 AC4: Soft/Off cdr still returns the value");
         CHECK(g_security_event_ring().total.load(std::memory_order_relaxed) == se0,

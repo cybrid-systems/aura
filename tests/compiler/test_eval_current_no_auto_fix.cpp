@@ -326,12 +326,11 @@ static void ac4095_status_carries_display() {
 // body also calls set-car!.
 static void ac4122_set_with_pair_mutate() {
     std::println("\n--- #4122: set! stays bound beside set-car! ---");
-    const auto env = read_file("src/compiler/evaluator_env.cpp");
+    const auto env = read_file("src/compiler/evaluator_eval_flat.cpp");
     const auto at = env.find("Issue #4122:");
     CHECK(at != std::string::npos, "4122: cite");
     const auto win = at == std::string::npos ? std::string{} : env.substr(at, 900);
-    CHECK(win.find("refresh_stale_frame_in_walk") != std::string::npos,
-          "4122: still records the behind frame");
+    CHECK(win.find("write_frame") != std::string::npos, "4122: still records the behind frame");
     CHECK(win.find("version_ =") == std::string::npos, "4122: does not stamp version_");
     CompilerService cs;
     auto n = cs.eval(R"(

@@ -343,6 +343,7 @@ void* Evaluator::ensure_type_registry() {
 extern "C" void aura_pair_gc_hook_forget(const Evaluator* ev);
 
 Evaluator::~Evaluator() {
+    drop_call_env_memo_5521();
     aura_pair_gc_hook_forget(this);
     // Issue #4854: no body-exit hook may touch this Evaluator from here on.
     fiber_slab_owner_unregister();

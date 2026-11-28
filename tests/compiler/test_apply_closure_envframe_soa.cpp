@@ -399,7 +399,7 @@ static void ac4169_source_cite() {
     CHECK(flat.find("if (s.apply_epoch != epoch || s.densify_window_seq != dseq)") ==
               std::string::npos,
           "4169: seq mismatch no longer drops the TLS slot");
-    CHECK(flat.find("bind_temporary_moving_live_ptr(cl_copy.flat") != std::string::npos,
+    CHECK(flat.find("bind_temporary_moving_live_ptr2(flat_in, pool_in") != std::string::npos,
           "4169: #4066/#4124 remap bind net retained for densify-old copies");
     CHECK(flat.find("production_apply_closure_densify_hard_refuse") != std::string::npos,
           "4169: #3421 densify refuse consult retained on the copy");
