@@ -98,6 +98,9 @@ import aura.compiler.type_checker;    // Issue #4310: abort CS high-water on the
 
 #include "compiler/cell_heap.hh" // Issue #5476: stable-address atomic cell heap
 
+// Issue #5636: CLI thread-backend bodies do not set a scheduler fiber id.
+extern "C" int aura_fiber_body_active() noexcept;
+
 namespace aura::compiler {
 
 
@@ -3058,6 +3061,10 @@ public:
     // void*). The (query:compiler-cache-stats) primitive
     // uses it to call CompilerService::dirty_block_count().
     [[nodiscard]] void* compiler_service() const noexcept { return compiler_service_; }
+
+    // Issue #5636: print engine:alloc-stats when AURA_ALLOC_TRACE=1.
+    // Called from ~CompilerService while arenas are still alive.
+    void alloc_trace_dump() noexcept;
 
     // Issue #1898: seqlock-style pin for non-owning back-pointers.
     // Detects concurrent set_compiler_service / set_type_registry /
@@ -9732,6 +9739,22 @@ private:
         auto& store = name_res_store();
         return store.by_flat[store.current].entries;
     }
+
+public:
+    // Issue #5636: reserved bytes of every flat's name-resolution memo.
+    // Public so the alloc-stats snapshot (a free function) can read it.
+    [[nodiscard]] std::size_t name_res_account_bytes() {
+        auto& ctx = eval_ctx();
+        if (!ctx.name_res_cache)
+            return 0;
+        auto& store = *static_cast<NameResStore*>(ctx.name_res_cache.get());
+        std::size_t bytes = 0;
+        for (const auto& entry : store.by_flat)
+            bytes += entry.second.entries.capacity() * sizeof(NameResEntry);
+        return bytes;
+    }
+
+private:
     // Bind a new executing flat: its bucket is reused as-is when the pool did
     // not change, and dropped only when this flat was re-keyed.
     void name_res_enter(const aura::ast::FlatAST* flat, const aura::ast::StringPool* pool) {
@@ -12794,6 +12817,11 @@ public:
             if (idx != kNoFiberSlot)
                 return static_cast<std::int32_t>(idx);
         }
+        // Issue #5636: the CLI thread backend keeps aura_fiber_current_id at
+        // 0, so the slab is skipped. The bytes still belong to that body.
+        if (aura_fiber_body_active() != 0)
+            aura::core::alloc_account::fiber_bytes().fetch_add(
+                static_cast<std::uint64_t>(s.size()) + 32);
         return static_cast<std::int32_t>(string_heap_.mint(s));
     }
     std::int32_t push_string_heap(std::string&& s) {
@@ -12804,6 +12832,9 @@ public:
             if (idx != kNoFiberSlot)
                 return static_cast<std::int32_t>(idx);
         }
+        if (aura_fiber_body_active() != 0)
+            aura::core::alloc_account::fiber_bytes().fetch_add(
+                static_cast<std::uint64_t>(s.size()) + 32);
         return static_cast<std::int32_t>(string_heap_.mint(std::move(s)));
     }
 

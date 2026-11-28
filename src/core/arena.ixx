@@ -27,6 +27,8 @@ module;
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 #include "core/ownership.hh" // Issue #4936: NoCopy
 #include "core/runtime_config.hh"
+#include <sys/mman.h>
+#include <unistd.h>
 export module aura.core.arena;
 import std;
 import aura.core.error;
@@ -610,6 +612,11 @@ public:
 
     // Capacity of the small pool
     [[nodiscard]] std::size_t capacity() const { return kSmallPoolSize; }
+
+    // Issue #5636: the slab allocation, including pages shrink did not
+    // return to the OS. size() is the logical window; cap_ is the block.
+    [[nodiscard]] const std::byte* slab_data() const noexcept { return buffer_.data(); }
+    [[nodiscard]] std::size_t slab_bytes() const noexcept { return buffer_.cap_; }
 
     // Issue #685: fraction of small-pool bytes in use [0,1].
     [[nodiscard]] double utilization() const noexcept {
@@ -2621,6 +2628,50 @@ public:
     // Total buffer capacity
     [[nodiscard]] std::size_t capacity() const noexcept {
         return buffer_.size() + small_pool_.capacity();
+    }
+
+    // Issue #5636: bytes of this arena's slabs that are resident. The
+    // logical size() drops to 1024 on an empty compact, and cap_ stays
+    // mapped, but untouched operator-new pages are not RSS. Snapshot
+    // only — not called from allocate_checked.
+    [[nodiscard]] std::size_t resident_bytes() const {
+        const auto pages = [](const void* p, std::size_t n) noexcept -> std::size_t {
+#if defined(__linux__)
+            if (p == nullptr || n == 0)
+                return 0;
+            long psz = ::sysconf(_SC_PAGESIZE);
+            if (psz <= 0)
+                psz = 4096;
+            const auto page = static_cast<std::size_t>(psz);
+            const auto addr = reinterpret_cast<std::uintptr_t>(p);
+            const auto base = addr & ~(static_cast<std::uintptr_t>(page) - 1);
+            const auto end =
+                (addr + static_cast<std::uintptr_t>(n) + static_cast<std::uintptr_t>(page) - 1) &
+                ~(static_cast<std::uintptr_t>(page) - 1);
+            const auto bytes = static_cast<std::size_t>(end - base);
+            const auto np = bytes / page;
+            if (np == 0 || np > (8uz << 20))
+                return 0;
+            std::vector<unsigned char> vec(np);
+            if (::mincore(reinterpret_cast<void*>(base), bytes, vec.data()) != 0)
+                return 0;
+            std::size_t hit = 0;
+            for (unsigned char b : vec)
+                if ((b & 1u) != 0)
+                    ++hit;
+            return hit * page;
+#else
+            (void)p;
+            (void)n;
+            return 0;
+#endif
+        };
+        return pages(buffer_.data(), buffer_.cap_) +
+               pages(small_pool_.slab_data(), small_pool_.slab_bytes());
+    }
+
+    [[nodiscard]] std::size_t virtual_slab_bytes() const noexcept {
+        return buffer_.cap_ + small_pool_.slab_bytes();
     }
 
     // Issue #1621: SmallObjectPool utilization for smart auto-compact policy.
@@ -5297,6 +5348,32 @@ namespace live_arena_remap_detail {
         return false;
     }
 } // namespace live_arena_remap_detail
+
+// Issue #5636: resident bytes of every live ASTArena. Holds the arena
+// list lock across mincore so a destructor cannot free a slab mid-walk.
+export struct LiveArenaAccount {
+    std::uint64_t arenas = 0;
+    std::uint64_t resident = 0;
+    std::uint64_t used = 0;
+    std::uint64_t alloc_calls = 0;
+    std::uint64_t virtual_bytes = 0;
+};
+
+export [[nodiscard]] inline LiveArenaAccount live_arena_account() {
+    LiveArenaAccount out;
+    auto& reg = live_arena_remap_detail::live();
+    std::scoped_lock<std::mutex> lock(reg.mtx);
+    out.arenas = reg.arenas.size();
+    for (ASTArena* arena : reg.arenas) {
+        if (arena == nullptr)
+            continue;
+        out.resident += arena->resident_bytes();
+        out.used += arena->used();
+        out.virtual_bytes += arena->virtual_slab_bytes();
+        out.alloc_calls += arena->stats().allocation_count;
+    }
+    return out;
+}
 
 // Issue #4046: native dispatch (other TU) asks every live arena.
 extern "C" int aura_any_live_arena_resolves_object(void* p) noexcept {

@@ -17,6 +17,11 @@ module;
 #include "compiler/ir_inflight_roots.hh"     // Issue #4816: (gc-heap) sweeps via the IR driver
 #include <limits>
 #include <vector>
+#include <cstdio>
+#include <sys/resource.h>
+
+#include "core/alloc_account.hh"
+#include "serve/metrics.h"
 
 module aura.compiler.evaluator;
 
@@ -27,6 +32,9 @@ import aura.core.type;
 import aura.core.lifetime_pin; // Issue #2363: general-object pin adopt keys on production surface
 import aura.compiler.root_remap_pass; // Issue #2339 / #2267: RootRemap auto-register keys
 import aura.compiler.value;
+import aura.compiler.service;
+
+extern "C" std::uint64_t aura_pair_storage_bytes() noexcept;
 
 namespace aura::compiler::primitives_detail {
 
@@ -1438,6 +1446,133 @@ void RegSplitParts::register_memory_defrag_stats_primitives(
         });
 }
 
+namespace {
+
+    struct OsRss {
+        std::uint64_t rss = 0;
+        std::uint64_t anon = 0;
+        std::uint64_t minflt = 0;
+    };
+
+    [[nodiscard]] OsRss read_os_rss() noexcept {
+        OsRss out;
+        if (FILE* f = std::fopen("/proc/self/smaps_rollup", "r")) {
+            char buf[256];
+            while (std::fgets(buf, sizeof buf, f) != nullptr) {
+                unsigned long kb = 0;
+                if (std::sscanf(buf, "Rss: %lu", &kb) == 1)
+                    out.rss = static_cast<std::uint64_t>(kb) * 1024;
+                else if (std::sscanf(buf, "Anonymous: %lu", &kb) == 1)
+                    out.anon = static_cast<std::uint64_t>(kb) * 1024;
+            }
+            std::fclose(f);
+        }
+        rusage ru{};
+        if (::getrusage(RUSAGE_SELF, &ru) == 0)
+            out.minflt = static_cast<std::uint64_t>(ru.ru_minflt);
+        return out;
+    }
+
+    [[nodiscard]] double waste_ratio(std::uint64_t capacity, std::uint64_t used) noexcept {
+        if (capacity == 0 || used >= capacity)
+            return 0;
+        return static_cast<double>(capacity - used) / static_cast<double>(capacity);
+    }
+
+    void append_sub(std::string& out, const char* name, std::uint64_t capacity, std::uint64_t used,
+                    std::uint64_t upstream, std::uint64_t alloc_calls, std::uint64_t live,
+                    bool first) {
+        if (!first)
+            out.push_back(',');
+        out += std::format("\"{}\":{{\"capacity\":{},\"used\":{},\"upstream_bytes\":{},"
+                           "\"alloc_calls\":{},\"live_objects\":{},\"waste_ratio\":{:.6f}}}",
+                           name, capacity, used, upstream, alloc_calls, live,
+                           waste_ratio(capacity, used));
+    }
+
+    // Issue #5636: one JSON object. capacity_bytes is the sum of the three
+    // rollup buckets (process_image, ast_arena, runtime_heap), which partition
+    // RSS. The other subsystems are the breakdown inside runtime_heap.
+    [[nodiscard]] std::string alloc_stats_json(Evaluator& ev) {
+        const OsRss os = read_os_rss();
+        const auto arenas = aura::ast::live_arena_account();
+        std::uint64_t ast_resident = arenas.resident;
+        const std::uint64_t rss_anon = os.anon;
+        if (ast_resident > rss_anon)
+            ast_resident = rss_anon;
+        const std::uint64_t rss_file = os.rss >= rss_anon ? os.rss - rss_anon : 0;
+        const std::uint64_t runtime_heap = rss_anon - ast_resident;
+
+        std::uint64_t upstream = 0;
+        if (auto* svc = static_cast<CompilerService*>(ev.compiler_service()))
+            upstream = svc->arena_upstream_bytes_total();
+
+        const auto pair_vec = static_cast<std::uint64_t>(ev.pairs().capacity()) * sizeof(Pair);
+        const std::uint64_t pair_bytes = pair_vec + aura_pair_storage_bytes();
+        const std::uint64_t pair_used =
+            static_cast<std::uint64_t>(ev.pairs().size()) * sizeof(Pair);
+
+        const std::uint64_t cell_cap = ev.cells().account_bytes();
+        const std::uint64_t cell_used = static_cast<std::uint64_t>(ev.cells().size()) * 8;
+
+        const std::uint64_t string_bytes = ev.string_heap_mut().account_bytes();
+        const std::uint64_t string_live = static_cast<std::uint64_t>(ev.string_heap_size());
+
+        const auto flat_n = aura::core::alloc_account::flat_nodes().load();
+        const std::uint64_t flat_bytes = flat_n * 128;
+
+        const auto pcv = aura::core::alloc_account::pcv_bytes().load();
+        const auto ir_n = aura::core::alloc_account::ir_insns().load();
+        const std::uint64_t ir_bytes = ir_n * 48;
+
+        const auto fiber_b = aura::core::alloc_account::fiber_bytes().load();
+        const auto fiber_live = static_cast<std::uint64_t>(std::max<std::int64_t>(
+            aura::serve::metrics::per_fiber_stack_pool_stats().live_stacks.load(
+                std::memory_order_relaxed),
+            0));
+
+        const std::uint64_t name_bytes = ev.name_res_account_bytes();
+
+        const std::uint64_t heap_used = pair_used + cell_used + string_bytes + flat_bytes + pcv +
+                                        ir_bytes + fiber_b + name_bytes;
+        const std::uint64_t capacity = rss_file + ast_resident + runtime_heap;
+        const std::uint64_t used = arenas.used + heap_used + rss_file;
+
+        std::string out;
+        out.reserve(1400);
+        out += std::format("{{\"rss_bytes\":{},\"minor_faults\":{},\"capacity_bytes\":{},"
+                           "\"used_bytes\":{},\"waste_ratio\":{:.6f},\"subsystems\":{{",
+                           os.rss, os.minflt, capacity, used, waste_ratio(capacity, used));
+        append_sub(out, "process_image", rss_file, rss_file, 0, 0, 0, true);
+        append_sub(out, "ast_arena", ast_resident, arenas.used, upstream, arenas.alloc_calls,
+                   arenas.arenas, false);
+        append_sub(out, "runtime_heap", runtime_heap, heap_used, 0, 0, 0, false);
+        append_sub(out, "flat_ast_columns", flat_bytes, flat_bytes, 0, flat_n, flat_n, false);
+        append_sub(out, "pcv_heap", pcv, pcv, 0, 0, 0, false);
+        append_sub(out, "ir_soa_slab", ir_bytes, ir_bytes, 0, ir_n, ir_n, false);
+        append_sub(out, "runtime_pairs", pair_bytes, pair_used, 0, 0, ev.pairs().size(), false);
+        append_sub(out, "runtime_cells", cell_cap, cell_used, 0, 0, ev.cells().size(), false);
+        append_sub(out, "string_heap", string_bytes, string_bytes, 0, 0, string_live, false);
+        append_sub(out, "fiber_nursery", fiber_b, fiber_b, 0, 0, fiber_live, false);
+        append_sub(out, "name_res_by_node", name_bytes, name_bytes, 0, 0, 0, false);
+        out += "}}";
+        return out;
+    }
+
+} // namespace
+
+std::string alloc_stats_json_for_trace(Evaluator& ev) {
+    return alloc_stats_json(ev);
+}
+
+void register_alloc_stats_5636(Evaluator& ev) {
+    ObservabilityPrims::register_stats_impl("engine:alloc-stats", [&ev](const auto&) -> EvalValue {
+        const auto out = alloc_stats_json(ev);
+        auto sidx = ev.string_heap_mut().mint(out);
+        return types::make_string(sidx);
+    });
+}
+
 void RegSplitParts::register_memory_string_pool_primitives(
     PrimRegistrar add, Evaluator& ev, std::function<void()> destroy_defuse_index) {
     // (mutate :string-pool-compact) — Issue #187 (P0): rehash the workspace's
@@ -2130,6 +2265,7 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
     RegSplitParts::register_memory_dispatch_stats_primitives(add, ev);
     RegSplitParts::register_memory_arena_policy_primitives(add, ev, destroy_defuse_index);
     RegSplitParts::register_memory_defrag_stats_primitives(add, ev, destroy_defuse_index);
+    register_alloc_stats_5636(ev);
     RegSplitParts::register_memory_string_pool_primitives(add, ev, destroy_defuse_index);
     RegSplitParts::register_memory_dirty_primitives(add, ev, destroy_defuse_index);
     RegSplitParts::register_memory_dirty_summary_primitives(add, ev, destroy_defuse_index);
@@ -2140,3 +2276,15 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
 
 
 } // namespace aura::compiler::primitives_detail
+
+void aura::compiler::Evaluator::alloc_trace_dump() noexcept {
+    try {
+        const char* env = std::getenv("AURA_ALLOC_TRACE");
+        if (env == nullptr || env[0] == '\0' || env[0] == '0')
+            return;
+        const std::string json = primitives_detail::alloc_stats_json_for_trace(*this);
+        std::fwrite(json.data(), 1, json.size(), stderr);
+        std::fputc('\n', stderr);
+    } catch (...) {
+    }
+}

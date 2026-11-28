@@ -26,6 +26,7 @@ module;
 #include <unordered_set>
 #include <utility>
 #include <vector>
+#include "core/alloc_account.hh"
 #include "core/persistent_child_vector.hh"
 #include "core/atomic_column.hh" // Issue #5476: atomically readable node metadata
 #include "core/cow_column.hh"    // Issue #4772: chunk-tracked COW columns
@@ -1840,6 +1841,8 @@ public:
         // NodeId is fully published only on return from this function.
         // Issue #2488: exclusive SoA write (shared readers blocked).
         std::unique_lock<std::shared_mutex> lock(flatast_mutex_.mutable_get());
+        // Issue #5636: one sharded bump per node, not a global atomic.
+        aura::core::alloc_account::flat_nodes().fetch_add(1);
         // Issue #3868: open the SoA seqlock writer section (even→odd) for
         // this whole multi-column append/reset — lock-free get() readers
         // sample the epoch and retry instead of assembling torn columns.

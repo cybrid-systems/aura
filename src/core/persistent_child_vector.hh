@@ -82,6 +82,7 @@
 #ifndef AURA_CORE_PERSISTENT_CHILD_VECTOR_HH
 #define AURA_CORE_PERSISTENT_CHILD_VECTOR_HH
 
+#include "core/alloc_account.hh"
 #include "core/runtime_config.hh"
 #include <algorithm>
 #include <atomic>
@@ -730,7 +731,12 @@ private:
         Storage() noexcept = default;
         Storage(size_type n)
             : data(std::make_unique<T[]>(n))
-            , size(n) {}
+            , size(n) {
+            // Issue #5636: monotonic bytes obtained for this storage.
+            // Not subtracted on free (a cross-thread sub would wrap a shard).
+            aura::core::alloc_account::pcv_bytes().fetch_add(
+                static_cast<std::uint64_t>(n) * sizeof(T) + sizeof(Storage));
+        }
         // Issue #3233: last children_safe pin generation (mutable so a
         // const StoragePtr from share_storage can stamp). 0 = never pinned.
         mutable std::uint64_t last_pin_generation = 0;

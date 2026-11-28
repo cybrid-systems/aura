@@ -101,6 +101,15 @@ public:
     }
     void shrink_to_fit() noexcept {}
 
+    // Issue #5636: each live block is value-initialized, so it is resident.
+    [[nodiscard]] std::size_t account_bytes() const noexcept {
+        std::size_t n = 0;
+        for (const auto& p : blocks_)
+            if (p.load(std::memory_order_acquire) != nullptr)
+                n += sizeof(Block);
+        return n;
+    }
+
 private:
     [[nodiscard]] Block* block_at(std::size_t i) const noexcept {
         const std::size_t b = i >> kBlockShift;

@@ -9,6 +9,7 @@ module;
 #include <utility>
 #include <vector>
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
+#include "core/alloc_account.hh" // Issue #5636: count instructions on the emit path
 
 export module aura.compiler.lowering;
 import std;
@@ -295,6 +296,9 @@ export struct LoweringState {
             return;
         auto& blk = cur_func->blocks[cur_block];
         blk.instructions.push_back({op, {op0, op1, op2, op3}});
+        // Issue #5636: production lowering is SoA-only and does not call
+        // IRModuleV2::add_instruction. This push is the allocation.
+        aura::core::alloc_account::ir_insns().fetch_add(1);
         // Propagate type_id / marker / provenance from source AST (#455 / #1610).
         if (current_flat && current_source_id != ast::NULL_NODE &&
             current_source_id < current_flat->size()) {

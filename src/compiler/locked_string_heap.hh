@@ -233,6 +233,30 @@ public:
     void reserve(size_type) noexcept {}
     [[nodiscard]] std::pmr::memory_resource* resource() const noexcept { return res_; }
 
+    // Issue #5636: resident-side bytes of pages, blocks, and string buffers.
+    // Snapshot only. SSO strings contribute their small capacity.
+    [[nodiscard]] std::size_t account_bytes() const noexcept {
+        std::size_t bytes = 0;
+        const size_type n = size();
+        for (size_type p = 0; p < kRootPages; ++p) {
+            Page* page = root_[p].load(std::memory_order_acquire);
+            if (page == nullptr)
+                continue;
+            bytes += sizeof(Page);
+            for (size_type k = 0; k < kPageBlocks; ++k) {
+                Block* b = page->blocks[k].load(std::memory_order_acquire);
+                if (b == nullptr)
+                    continue;
+                bytes += sizeof(Block);
+            }
+        }
+        for (size_type i = 0; i < n; ++i) {
+            if (const std::string* s = slot_ptr(i); s != nullptr)
+                bytes += s->capacity();
+        }
+        return bytes;
+    }
+
 private:
     static const std::string& empty_slot() noexcept {
         static const std::string kEmpty;
@@ -675,6 +699,15 @@ public:
     // ── reads (vector surface) ─────────────────────────────────────
     [[nodiscard]] size_type size() const noexcept { return v_.size(); }
     [[nodiscard]] bool empty() const noexcept { return v_.empty(); }
+
+    // Issue #5636: bytes held by the slot store. Takes the heap lock when
+    // one is bound so a concurrent mint cannot tear the walk.
+    [[nodiscard]] std::size_t account_bytes() const {
+        if (mu_ == nullptr)
+            return v_.account_bytes();
+        std::scoped_lock<std::recursive_mutex> lock(*mu_);
+        return v_.account_bytes();
+    }
     [[nodiscard]] size_type capacity() const noexcept { return v_.capacity(); }
     reference operator[](size_type i) noexcept { return v_[i]; }
     const_reference operator[](size_type i) const noexcept { return v_[i]; }

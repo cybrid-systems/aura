@@ -133,6 +133,23 @@ extern "C" void* aura_pair_seg_dir_base() {
     return static_cast<void*>(pair_seg_dir());
 }
 
+// Issue #5636: bytes obtained for pair segments, cons slabs, and owned
+// slots. The directory walk is a snapshot; cons itself is unchanged.
+extern "C" std::uint64_t aura_pair_storage_bytes() noexcept {
+    std::uint64_t bytes = 0;
+    std::atomic<PairSegment*>* dir = pair_seg_dir();
+    for (std::size_t i = 0; i < kPairMaxSegs; ++i) {
+        if (dir[i].load(std::memory_order_relaxed) != nullptr)
+            bytes += sizeof(PairSegment);
+    }
+    for (PairSlab* s = g_pair_slabs.load(std::memory_order_acquire); s != nullptr; s = s->next)
+        bytes += sizeof(PairSlab);
+    std::scoped_lock<std::mutex> lock(g_owned_pair_slots_mtx);
+    bytes += static_cast<std::uint64_t>(g_owned_pair_slots_.capacity()) * sizeof(PairSlot*);
+    bytes += static_cast<std::uint64_t>(g_owned_pair_slots_.size()) * sizeof(PairSlot);
+    return bytes;
+}
+
 // IR MakePair mirror still records one malloc per interpreter cons.
 // Arena slots and JIT slabs are not listed here.
 //

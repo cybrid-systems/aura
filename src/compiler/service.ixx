@@ -10613,6 +10613,9 @@ public:
     CompilerService(CompilerService&&) = delete;
     CompilerService& operator=(CompilerService&&) = delete;
     ~CompilerService() {
+        // Issue #5636: arenas are still constructed here. No-op unless
+        // AURA_ALLOC_TRACE=1.
+        evaluator_.alloc_trace_dump();
         evaluator_.set_tw_tier_hook_4682(nullptr, nullptr);
         evaluator_.set_exit_quiesce_hook(nullptr, nullptr);
         if (tier_worker_4682_)
@@ -13853,6 +13856,11 @@ public:
     // CountingMR (used by tests).
     [[nodiscard]] const CountingMR& arena_upstream_for_test() const noexcept {
         return arena_upstream_mr_;
+    }
+
+    // Issue #5636: monotonic upstream bytes past the arena's first slab.
+    [[nodiscard]] std::uint64_t arena_upstream_bytes_total() const noexcept {
+        return arena_upstream_mr_.bytes_allocated.load(std::memory_order_relaxed);
     }
 };
 

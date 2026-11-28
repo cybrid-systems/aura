@@ -1507,6 +1507,8 @@ export struct IRModuleV2 {
                                   std::uint32_t narrow_evidence = 0, std::uint8_t coercion_tag = 0,
                                   std::uint8_t source_marker = 0) {
         auto& func = functions[func_idx];
+        // Issue #5636: do not bump ir_insns here. Production emit() already
+        // counted the instruction, and dual-emit calls both.
         auto idx = static_cast<std::uint32_t>(func.size());
         func.bind_column_arena(); // Issue #3833
         func.opcodes_.push_back(opcode);

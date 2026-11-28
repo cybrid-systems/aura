@@ -72,6 +72,8 @@
 // are, and no value ever names a slot that is not in the shared heap.
 #pragma once
 
+#include "core/alloc_account.hh"
+
 #include <algorithm>
 #include <atomic>
 #include <cstddef>
@@ -177,6 +179,8 @@ public:
 
     // Fast path: no lock, fiber-local growth. Returns the local slot.
     std::uint64_t mint(std::string s) {
+        aura::core::alloc_account::fiber_bytes().fetch_add(static_cast<std::uint64_t>(s.size()) +
+                                                           32);
         const auto idx = heap_.mint(std::move(s));
         fiber_arena_stats::fast_path_mints().fetch_add(1, std::memory_order_relaxed);
         return idx;
@@ -373,10 +377,13 @@ public:
         if (next_ >= slots_.size()) [[unlikely]]
             return std::nullopt;
         const auto idx = slots_[next_];
+        // write_claimed_slot swaps s away, so the size is captured first.
+        const auto nbytes = static_cast<std::uint64_t>(s.size()) + 32;
         if (!heap_->write_claimed_slot(idx, s)) [[unlikely]]
             return std::nullopt;
         ++next_;
         ++minted_;
+        aura::core::alloc_account::fiber_bytes().fetch_add(nbytes);
         fiber_arena_stats::slab_mints().fetch_add(1, std::memory_order_relaxed);
         return idx;
     }
