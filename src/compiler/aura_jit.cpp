@@ -27,10 +27,10 @@ namespace types = aura::compiler::types;
 // Issue #4462: keep in lockstep with types::fits_fixnum. This TU does not
 // import the value module. -2^62 is not a fixnum (tag is INT64_MIN).
 namespace {
-constexpr bool jit_fits_fixnum(std::int64_t v) noexcept {
+constexpr bool jit_fits_fixnum(std::int64_t value) noexcept {
     constexpr std::int64_t kMin = INT64_MIN >> 1;
     constexpr std::int64_t kMax = INT64_MAX >> 1;
-    if (v < kMin || v > kMax)
+    if (value < kMin || value > kMax)
         return false;
     return true; // Issue #4482: all even tagged values are fixnums
 }
@@ -316,30 +316,30 @@ enum Op : uint32_t {
 // Scalar-replaced pairs stay in allocas until they escape; store() mirrors
 // the escaped heap id into the same array.
 static bool pair_gc_root_mode_5518() {
-    static const bool on = [] {
+    static const bool enabled = [] {
         // Issue #5518: on by default; AURA_PAIR_GC=0 disables root mode.
-        const char* v = std::getenv("AURA_PAIR_GC");
-        return v == nullptr || v[0] != '0';
+        const char* env = std::getenv("AURA_PAIR_GC");
+        return env == nullptr || *env != '0';
     }();
-    return on;
+    return enabled;
 }
 
 static bool jit_l1_enabled() {
-    static const bool on = [] {
-        const char* v = ::aura::config::raw(::aura::config::Key::AURA_JIT_L1);
-        return !(v && v[0] == '0');
+    static const bool enabled = [] {
+        const char* env = ::aura::config::raw(::aura::config::Key::AURA_JIT_L1);
+        return env == nullptr || *env != '0';
     }();
-    return on;
+    return enabled;
 }
 
 // Issue #4571 (L2): inline car/cdr through the non-moving pair segment
 // directory (#898). AURA_JIT_L2=0 restores the call-per-access lowering.
 static bool jit_l2_enabled() {
-    static const bool on = [] {
-        const char* v = ::aura::config::raw(::aura::config::Key::AURA_JIT_L2);
-        return !(v && v[0] == '0');
+    static const bool enabled = [] {
+        const char* env = ::aura::config::raw(::aura::config::Key::AURA_JIT_L2);
+        return env == nullptr || *env != '0';
     }();
-    return on;
+    return enabled;
 }
 
 // Issue #4600 §7: the Apply prologue gates the dual-epoch C calls behind
@@ -418,7 +418,7 @@ constexpr std::uint64_t kL2PairMaxSegs = 1u << 16;
 static std::vector<std::uint8_t> promotable_cells(const FlatFunction& fn) {
     const uint32_t n = fn.local_count;
     std::vector<std::uint8_t> ok(n, 0);
-    if (n == 0 || fn.linear_ownership_state != 0 || !fn.blocks)
+    if (n == 0 || fn.linear_ownership_state != 0 || fn.blocks == nullptr)
         return ok;
     std::vector<std::uint8_t> bad(n, 0);
     auto use = [&](uint32_t slot) {
@@ -511,18 +511,18 @@ static std::vector<std::uint8_t> promotable_cells(const FlatFunction& fn) {
         }
     }
     for (uint32_t i = 0; i < n; ++i)
-        ok[i] = ok[i] && !bad[i];
+        ok[i] = static_cast<std::uint8_t>(ok[i] != 0 && bad[i] == 0);
     return ok;
 }
 
 // Issue #4573: scalar replacement kill switch for A/B and triage —
 // AURA_JIT_SR=0 keeps every MakePair as a runtime allocation.
 static bool jit_sr_enabled() {
-    static const bool on = [] {
-        const char* v = ::aura::config::raw(::aura::config::Key::AURA_JIT_SR);
-        return !(v && v[0] == '0');
+    static const bool enabled = [] {
+        const char* env = ::aura::config::raw(::aura::config::Key::AURA_JIT_SR);
+        return env == nullptr || *env != '0';
     }();
-    return on;
+    return enabled;
 }
 
 // Issue #4573: which pair slots of fn can be scalar-replaced.
