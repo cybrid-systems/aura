@@ -323,6 +323,11 @@ static bool pair_gc_root_mode_5518() {
 }
 
 static bool jit_l1_enabled() {
+    // Issue #5518: L1 cell promotion is OFF in root mode. Turning it on
+    // restores arithmetic speed but disables the self-tail-call loop shape,
+    // so a long named-let loop recurses per iteration and exhausts the
+    // stack (1M cons crashed). Correctness first until the promotion and
+    // the root mirror are unified.
     if (pair_gc_root_mode_5518())
         return false;
     static const bool on = [] {
@@ -6526,29 +6531,29 @@ struct AuraJIT::Impl {
         // (executed once per call, dominates every store). The array is
         // intentionally not zeroed: a stale value can only retain, and the
         // mark range-checks every id.
-        if (pair_gc_root_mode_5518() && builder.fn_pair_roots_push && fn.local_count > 0) {
+        if (pair_gc_root_mode_5518() && builder.fn_pair_roots_push) {
+            // Always push, even for a zero-local function: the frame counter
+            // is incremented for every native entry, so the root depth must
+            // match it or the sweep gate would never fire.
+            const std::uint32_t root_n = fn.local_count > 0 ? fn.local_count : 1;
             auto* i64_ty = llvm::Type::getInt64Ty(ctx);
-            auto* arr_ty = llvm::ArrayType::get(i64_ty, fn.local_count);
+            auto* arr_ty = llvm::ArrayType::get(i64_ty, root_n);
             auto* entry_bb = builder.block_map[fn.entry_block];
             builder.irb->SetInsertPoint(entry_bb, entry_bb->getFirstInsertionPt());
             builder.pair_root_arr = builder.irb->CreateAlloca(arr_ty, nullptr, "pair_roots");
             builder.pair_root_arr_ty = arr_ty;
-            builder.pair_root_n = fn.local_count;
+            builder.pair_root_n = root_n;
             auto* slots0 =
                 builder.irb->CreateConstInBoundsGEP2_64(arr_ty, builder.pair_root_arr, 0, 0);
-            builder.irb->CreateCall(
-                builder.fn_pair_roots_push,
-                {slots0, builder.irb->getInt32(static_cast<int>(fn.local_count))});
-        }
-
-        // Issue #5518 phase 2: account this native frame after the prologue's
-        // early-exit guards (the depth-over return never enters the body), so
-        // the leave emitted by emit_ret always has a matching enter.
-        if (builder.fn_jit_frame_enter) {
-            auto* enter_bb =
-                builder.entry_body_bb ? builder.entry_body_bb : builder.block_map[fn.entry_block];
-            builder.irb->SetInsertPoint(enter_bb, enter_bb->getFirstInsertionPt());
-            builder.irb->CreateCall(llvm::FunctionCallee(builder.fn_jit_frame_enter), {});
+            // Issue #5518: the frame count is incremented here, in the same
+            // entry block as the root push, so both run exactly once per
+            // call. entry_body_bb is the loop header for a self-tail-call
+            // function; emitting the enter there counted every iteration
+            // (frames=262147 after one seam) and no sweep could run.
+            if (builder.fn_jit_frame_enter)
+                builder.irb->CreateCall(llvm::FunctionCallee(builder.fn_jit_frame_enter), {});
+            builder.irb->CreateCall(builder.fn_pair_roots_push,
+                                    {slots0, builder.irb->getInt32(static_cast<int>(root_n))});
         }
 
         // Lower each block

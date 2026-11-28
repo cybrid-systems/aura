@@ -537,6 +537,11 @@ extern "C" void aura_maybe_collect_pairs() {
     auto* fn = g_pair_gc_hook.load(std::memory_order_acquire);
     if (!fn)
         return;
+    if (std::getenv("AURA_PAIR_GC_TRACE")) {
+        std::fprintf(stderr, "[5518] collect seam frames=%llu roots=%u\n",
+                     static_cast<unsigned long long>(aura_jit_frames_active()),
+                     aura_pair_roots_depth());
+    }
     std::uint32_t expected = 0;
     if (!g_pair_gc_running.compare_exchange_strong(expected, 1, std::memory_order_acq_rel))
         return;
