@@ -2286,5 +2286,7 @@ void aura::compiler::Evaluator::alloc_trace_dump() noexcept {
         std::fwrite(json.data(), 1, json.size(), stderr);
         std::fputc('\n', stderr);
     } catch (...) {
+        // [SILENCE-PRIM-#5636] ~CompilerService calls this. A stats failure
+        // must not escape the destructor.
     }
 }
