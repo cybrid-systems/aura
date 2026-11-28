@@ -300,6 +300,14 @@ public:
         cell_heap_[id] = value;
         return true;
     }
+    // Issue #5643: a mid-body JIT frame-deopt spill of a promoted cell
+    // carries the cell CONTENT. Materialize a real interpreter cell so the
+    // resumed frame's CellGet sees the same contents the native alloca had.
+    [[nodiscard]] EvalValue make_cell_value(EvalValue content) {
+        const auto id = alloc_cell();
+        cell_heap_[id] = content;
+        return types::make_cell(id);
+    }
 
     // Get/set evaluation strategy
     const EvalStrategy& strategy() const { return strategy_; }

@@ -1334,6 +1334,41 @@ def test_jit_osr_handoff_cells_5640():
     print("  ✅ jit-osr-handoff-cells-5640 (tagged cells/IR closures bridge; pair+gc loop stays byte-identical)")
 
 
+def test_jit_pcell_frame_deopt_5643():
+    """Issue #5643: a mid-body frame-deopt spill of a promoted cell.
+
+    #5518 let integer promoted cells into `frame_deopt_ok`, but the spill
+    stores the cell CONTENT in the slot while the interpreter's CellGet
+    expects a cell reference. The frame-deopt host now materializes a real
+    interpreter cell for every slot in the published pcell mask. Without
+    that, FORCE_GUARD_DEOPT=1 resumes with the pair id as a cell id and
+    `car/cdr` reports "not a pair".
+    """
+    prog = (
+        "(define (mk a b) (cons a b)) "
+        "(define (hold n) (let ((p (mk n (+ n 1)))) (+ (car p) (cdr p)))) "
+        "(display (hold 1))"
+    )
+
+    def run(extra):
+        env = os.environ.copy()
+        env["AURA_SANDBOX"] = "off"
+        env["AURA_PIPELINE_STRICT"] = "0"
+        env.update(extra)
+        return subprocess.run([AURA, "--jit"], input=prog, capture_output=True, text=True, timeout=120, env=env)
+
+    for name, extra in [
+        ("default", {}),
+        ("force1", {"AURA_JIT_FORCE_GUARD_DEOPT": "1"}),
+        ("force2", {"AURA_JIT_FORCE_GUARD_DEOPT": "2"}),
+        ("frame-deopt-off", {"AURA_JIT_FRAME_DEOPT": "0"}),
+    ]:
+        r = run(extra)
+        assert r.returncode == 0, f"5643 {name}: rc={r.returncode} err={r.stderr[-400:]!r}"
+        assert (r.stdout or "").strip() == "3", f"5643 {name}: {r.stdout!r} err={r.stderr[-400:]!r}"
+    print("  ✅ jit-pcell-frame-deopt-5643 (materialized cells; FORCE=1/2 and deopt-off byte-identical)")
+
+
 def test_jit_invalidation_walltime_4600():
     """Issue #4600 §8: invalidation wall-clock bench with realistic bodies.
 
@@ -6066,6 +6101,7 @@ for tf in [
     test_jit_prologue_word_and_storm_4600,
     test_jit_osr_tail_4600,
     test_jit_osr_handoff_cells_5640,
+    test_jit_pcell_frame_deopt_5643,
     test_jit_invalidation_walltime_4600,
     test_jit_reuse_lowering_4600,
     test_jit_l1_4570,

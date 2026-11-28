@@ -93,6 +93,20 @@ namespace {
             owned = std::make_unique<aura::compiler::IRInterpreter>(*st.mod, ctx);
             interp = owned.get();
         }
+        // Issue #5643: an integer promoted cell spills its CONTENT, not a
+        // cell reference. Materialize a cell in the resume interpreter for
+        // each masked slot before entry resumes skip this (the body re-runs
+        // NewCell/Arg).
+        if (!(block == fn->entry_block && instr == 0) && st.jit != nullptr) {
+            const auto pcell_mask = st.jit->deopt_pcell_mask(fn_name);
+            if (!pcell_mask.empty()) {
+                const std::size_t n = std::min<std::size_t>(pcell_mask.size(), locals.size());
+                for (std::size_t i = 0; i < n; ++i) {
+                    if (pcell_mask[i])
+                        locals[i] = interp->make_cell_value(locals[i]);
+                }
+            }
+        }
         auto res = interp->resume_deopt_frame(*fn, block, instr, std::move(locals), args);
         if (!res)
             return degrade();

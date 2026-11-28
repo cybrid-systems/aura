@@ -5676,6 +5676,11 @@ struct AuraJIT::Impl {
     std::shared_mutex fn_compile_mtx_;
     std::unordered_map<std::string, ScalarFn, aura::core::TransparentStringHash, std::equal_to<>>
         compile_fns_{};
+    // Issue #5643: fn name -> integer-pcell mask for the frame-deopt host.
+    // Guarded by compile_mtx_ (compile writes; host reads).
+    std::unordered_map<std::string, std::vector<std::uint8_t>, aura::core::TransparentStringHash,
+                       std::equal_to<>>
+        deopt_pcell_masks_{};
     // Issue #1522: tracker entry carries compile epoch + soft deopt flag.
     // deopt_pending: bridge epoch bumped for this name; refuse cache hits
     // until next recompile clears the flag.
@@ -6161,10 +6166,11 @@ struct AuraJIT::Impl {
         // Issue #4600 §1/§2 (phase 2): arm guard exits to the shared
         // frame-deopt stub. Named fns only (the stub resolves the resume
         // IRFunction by module-unique name); no AOT (host resume is
-        // in-process only); no promoted cells / scalar-replaced pairs —
-        // their content lives in allocas the interpreter cannot see, and
-        // materializing it back to heap form is follow-up scope. Float
-        // shadows are fine: load() reboxes them into the spill.
+        // in-process only); no scalar-replaced pairs. Integer promoted
+        // cells ARE allowed since Issue #5643: the spill carries their
+        // content and the host materializes a real interpreter cell (the
+        // mask below). Float cells stay excluded (content is a raw double
+        // in a separate shadow, not a tagged slot).
         builder.frame_deopt_ok = false;
         {
             std::uint32_t entry_idx_scan = 0;
@@ -6187,6 +6193,31 @@ struct AuraJIT::Impl {
                     1, std::memory_order_relaxed);
                 builder.spill_buf = builder.irb->CreateAlloca(
                     llvm::ArrayType::get(llvm::Type::getInt64Ty(ctx), fn.local_count));
+            }
+        }
+        // Issue #5643: publish the integer-pcell mask. The mid-body spill
+        // stores the pcell CONTENT in the slot; the frame-deopt host must
+        // materialize a real interpreter cell for every marked slot before
+        // resume (a bare content word is not a cell reference).
+        {
+            std::vector<std::uint8_t> pcell_mask;
+            if (builder.frame_deopt_ok) {
+                pcell_mask.assign(fn.local_count, 0);
+                bool any = false;
+                for (std::uint32_t i = 0; i < fn.local_count; ++i) {
+                    if (builder.is_pcell(i) && builder.pcell_f[i] == 0) {
+                        pcell_mask[i] = 1;
+                        any = true;
+                    }
+                }
+                if (!any)
+                    pcell_mask.clear();
+            }
+            if (fn.name && fn.name[0]) {
+                if (pcell_mask.empty())
+                    deopt_pcell_masks_.erase(fn.name);
+                else
+                    deopt_pcell_masks_[std::string(fn.name)] = std::move(pcell_mask);
             }
         }
         // Issue #4572: the captured version is only read by the kJitShapePair
@@ -6774,6 +6805,14 @@ struct AuraJIT::Impl {
         return fn_ptr;
     }
 
+    std::vector<std::uint8_t> deopt_pcell_mask(const char* name) {
+        if (!name || !name[0])
+            return {};
+        std::scoped_lock<std::mutex> lock(compile_mtx_);
+        auto it = deopt_pcell_masks_.find(name);
+        return it == deopt_pcell_masks_.end() ? std::vector<std::uint8_t>{} : it->second;
+    }
+
     void* get_function_ptr(const char* name, Metrics* metrics = nullptr) {
         if (!init() || !name)
             return nullptr;
@@ -6989,6 +7028,10 @@ std::uint64_t AuraJIT::critical_opcode_coverage_pct() const noexcept {
 }
 void* AuraJIT::get_function_ptr(const char* name) {
     return impl_->get_function_ptr(name, &metrics_);
+}
+
+std::vector<std::uint8_t> AuraJIT::deopt_pcell_mask(const char* name) {
+    return impl_->deopt_pcell_mask(name);
 }
 
 // Issue #170 Phase 1: AOT entry points. The compile() function
@@ -7679,6 +7722,9 @@ ScalarFn AuraJIT::compile(const FlatFunction&) {
 }
 void* AuraJIT::get_function_ptr(const char*) {
     return nullptr;
+}
+std::vector<std::uint8_t> AuraJIT::deopt_pcell_mask(const char*) {
+    return {};
 }
 std::string AuraJIT::compile_to_llvm_ir() {
     return {};

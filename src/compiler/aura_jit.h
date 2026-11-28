@@ -144,6 +144,10 @@ public:
     bool available() const;
     ScalarFn compile(const FlatFunction& fn);
     void* get_function_ptr(const char* name);
+    // Issue #5643: per-function byte mask of integer promoted cells (1 =
+    // pcell). The frame-deopt host materializes a real interpreter cell for
+    // each marked spill slot. Empty when the function has none.
+    std::vector<std::uint8_t> deopt_pcell_mask(const char* name);
 
     // Issue #170 Phase 1: AOT (ahead-of-time) compilation
     // entry points. These let external tools (benchmark
