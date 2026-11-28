@@ -924,9 +924,7 @@ public:
     // scheduler's run loop (Scheduler::take_expired_park_deadlines). A fiber
     // with no owner scheduler (thread backend) has no deadline consumer, so
     // parking it would strand the fiber forever.
-    [[nodiscard]] bool deadline_park_supported() const noexcept {
-        return owner_sched_ != nullptr;
-    }
+    [[nodiscard]] bool deadline_park_supported() const noexcept { return owner_sched_ != nullptr; }
     // Issue #2554 / #4506: a timed park records the wall-clock deadline at
     // which the scheduler must re-queue this fiber. A fiber parked as
     // Waiting has no attacher to write its eventfd, so without this the

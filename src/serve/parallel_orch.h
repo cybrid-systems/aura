@@ -596,10 +596,9 @@ inline void snapshot_global_ext(std::uint64_t& batches, std::uint64_t& spawned,
                             if (g_current_fiber && g_current_fiber->is_cancel_requested())
                                 break;
                             // Issue #5528: park for the remaining backoff.
-                            const auto left =
-                                std::chrono::duration_cast<std::chrono::milliseconds>(
-                                    deadline - std::chrono::steady_clock::now())
-                                    .count();
+                            const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                                  deadline - std::chrono::steady_clock::now())
+                                                  .count();
                             gate_park_ms(static_cast<std::uint32_t>(std::max<long long>(left, 1)));
                         }
                     } else {

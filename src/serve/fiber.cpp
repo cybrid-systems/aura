@@ -2721,10 +2721,9 @@ JoinResult Fiber::join(Fiber* target, std::optional<std::uint64_t> timeout_ms) {
             // no held mirror. Elsewhere keep the Explicit hand-off so the
             // loop cannot arm a deadline the gate would reject.
             const auto join_snap = self->mutation_safety_snapshot();
-            const bool can_park_join =
-                has_deadline && self->deadline_park_supported() &&
-                !self->orch_agent_boundary_active() && !join_snap.held &&
-                join_snap.depth == 0 && join_snap.real_depth == 0;
+            const bool can_park_join = has_deadline && self->deadline_park_supported() &&
+                                       !self->orch_agent_boundary_active() && !join_snap.held &&
+                                       join_snap.depth == 0 && join_snap.real_depth == 0;
             if (can_park_join) {
                 // Issue #5528: park on the scheduler deadline instead of
                 // Explicit-yield spinning. on_fiber_done writes the joiner's
