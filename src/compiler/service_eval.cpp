@@ -1113,6 +1113,14 @@ namespace {
                     }
                 }
             }
+            // Issue #5499: the closure belongs to THIS interpreter but has no
+            // tree-walker bridge data - a cached define inlined into the
+            // module is IR-only. Run it through the owning interpreter
+            // instead of denying the primitive's call. Reentrant call_closure
+            // keeps the caller's frames (#272).
+            auto ir_call = ir_interp.call_closure(cid, args);
+            if (ir_call)
+                return *ir_call;
             return std::nullopt;
         });
 

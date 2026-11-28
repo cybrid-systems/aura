@@ -279,8 +279,19 @@ namespace aura::compiler {
          &ir_mod](aura::compiler::ClosureId cid,
                   std::span<const types::EvalValue> args) -> std::optional<types::EvalValue> {
             auto snap = ir_interp.inspect_closure(cid);
-            if (!snap)
+            if (!snap) {
+                // Issue #5499: a define's publication (or its retired
+                // generation) is owned by ANOTHER binding / the persistent
+                // define registry, not by this module's interpreter, so a
+                // local inspect miss used to deny the call outright. That is
+                // the same cross-binding fallback the sibling bridge in
+                // service_eval.cpp already takes (#4715); without it a
+                // top-level (map f ...) over an imported define returned ()
+                // for every element.
+                if (auto ir_define = dispatch_ir_define_closure(cid, args))
+                    return ir_define;
                 return std::nullopt;
+            }
             // Bridge Env must inherit `owner_` from top_env so primitive
             // dispatch (which calls eval_env.owner()->bump_primitive_call_count)
             // can find the CompilerMetrics via the SoA walk. Default-constructing
@@ -340,6 +351,16 @@ namespace aura::compiler {
                     }
                 }
             }
+            // Issue #5499: a closure this module minted for a cached define
+            // has no tree-walker bridge data (the body was lowered to IR, the
+            // FlatAST was never attached), so eval_flat above is not an
+            // option. Run it through the interpreter that owns it instead of
+            // denying the call - a primitive HOF (map / filter / foldl)
+            // passing an imported define back out is exactly this shape.
+            // Reentrant: call_closure keeps the caller's frames (#272).
+            auto ir_call = ir_interp.call_closure(cid, args);
+            if (ir_call)
+                return *ir_call;
             return std::nullopt;
         });
 

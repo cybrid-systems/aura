@@ -1,0 +1,10 @@
+;; Issue #5499: a define imported from another module, used as a top-level
+;; HOF callback, must run. The module define is inlined into the file's IR
+;; module without tree-walker bridge data, so map/filter must reach it
+;; through the interpreter that owns it instead of denying the call.
+;; expect: (2 4 6)
+(require "tests/fixtures/hof_module_callback_mod.aura" all:)
+(display (map doubled (list 1 2 3)))
+(newline)
+(display (filter over-two? (list 1 2 3 4)))
+(newline)

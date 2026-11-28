@@ -1,0 +1,3 @@
+(export doubled over-two?)
+(define (doubled x) (* x 2))
+(define (over-two? x) (> x 2))
