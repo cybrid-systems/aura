@@ -36,6 +36,8 @@ import aura.core.lifetime_pin;
 extern "C" void aura_pair_roots_scan(void (*cb)(std::int64_t, void*), void* ud);
 extern "C" std::uint32_t aura_pair_gc_armed();
 extern "C" std::uint32_t aura_pair_roots_depth();
+extern "C" std::uint64_t aura_pair_jit_base();
+extern "C" std::uint64_t aura_pair_jit_high_water();
 
 namespace aura::compiler {
 
@@ -1680,19 +1682,22 @@ static void file_reclaim_mark_value(const EvalValue v, FileModeMarkContext& ctx)
     }
     if (is_pair(v)) {
         const auto id = as_pair_idx(v);
-        if (id < seen_pair.size()) {
-            if (!seen_pair[id]) {
+        // Issue #5631: the two id spaces are disjoint now. Below the JIT base
+        // is the evaluator's pairs_ index; at or above it is a JIT cons.
+        const std::uint64_t jit_base = aura_pair_jit_base();
+        if (id < jit_base) {
+            if (id < seen_pair.size() && !seen_pair[id]) {
                 seen_pair[id] = 1;
                 file_reclaim_mark_child(pairs[id].car, ctx);
                 file_reclaim_mark_child(pairs[id].cdr, ctx);
             }
             return;
         }
-        // Issue #5518 phase 2: a JIT cons id lives in the shared table.
-        if (id < seen_jit_pair.size() && !seen_jit_pair[id]) {
+        const std::size_t jx = static_cast<std::size_t>(id - jit_base);
+        if (jx < seen_jit_pair.size() && !seen_jit_pair[jx]) {
             PairSlot* slot = g_pair_slots[id];
             if (slot) {
-                seen_jit_pair[id] = 1;
+                seen_jit_pair[jx] = 1;
                 file_reclaim_mark_child(types::EvalValue{slot->car}, ctx);
                 file_reclaim_mark_child(types::EvalValue{slot->cdr}, ctx);
             }
@@ -2058,7 +2063,8 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
     std::vector<std::uint8_t> seen_pair(n_pairs, 0);
     // Issue #5518: JIT pair ids in the shared table (sized to the table, not
     // to pairs_ — a JIT id is above the evaluator's index space).
-    std::vector<std::uint8_t> seen_jit_pair(g_pair_slots.size(), 0);
+    std::vector<std::uint8_t> seen_jit_pair(
+        static_cast<std::size_t>(aura_pair_jit_high_water() - aura_pair_jit_base()), 0);
     std::vector<std::uint8_t> seen_vec(n_vecs, 0);
     std::vector<std::uint8_t> seen_hash;
     std::vector<std::uint8_t> seen_ev_cell(cells_.size(), 0);
@@ -2314,11 +2320,14 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
         // hand the slot to the thread free list, recycle the id.
         if (aura_pair_gc_armed() &&
             aura_jit_frames_active() == static_cast<std::uint64_t>(aura_pair_roots_depth())) {
-            const std::size_t jit_n =
-                std::min<std::size_t>(g_pair_slots.size(), seen_jit_pair.size());
-            for (std::size_t id = std::min<std::size_t>(pairs_.size(), jit_n); id < jit_n; ++id) {
-                if (seen_jit_pair[id])
+            const std::uint64_t jit_base = aura_pair_jit_base();
+            const std::size_t jit_n = std::min<std::size_t>(
+                static_cast<std::size_t>(aura_pair_jit_high_water() - jit_base),
+                seen_jit_pair.size());
+            for (std::size_t jx = 0; jx < jit_n; ++jx) {
+                if (seen_jit_pair[jx])
                     continue;
+                const std::size_t id = static_cast<std::size_t>(jit_base) + jx;
                 PairSlot* jit_slot = g_pair_slots[id];
                 if (!jit_slot)
                     continue;
@@ -2327,7 +2336,9 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
                 if (g_pair_slots.release(id, jit_slot)) {
                     static const bool trace5518 = std::getenv("AURA_PAIR_GC_TRACE") != nullptr;
                     if (trace5518)
-                        std::fprintf(stderr, "[5518] jit-sweep free id=%zu\n", id);
+                        std::fprintf(stderr, "[5518] jit-sweep free id=%zu frames=%llu roots=%u\n",
+                                     id, static_cast<unsigned long long>(aura_jit_frames_active()),
+                                     aura_pair_roots_depth());
                     aura_pair_slot_free(jit_slot);
                     aura_pair_id_recycle(id);
                 }
@@ -2663,7 +2674,8 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
         }
     }
     seen_pair.assign(n_pairs, 0);
-    seen_jit_pair.assign(g_pair_slots.size(), 0);
+    seen_jit_pair.assign(
+        static_cast<std::size_t>(aura_pair_jit_high_water() - aura_pair_jit_base()), 0);
     seen_vec.assign(n_vecs, 0);
     seen_string.assign(n_strings, 0);
     seen_float.assign(n_floats, 0);
@@ -2972,11 +2984,14 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
         // hand the slot to the thread free list, recycle the id.
         if (aura_pair_gc_armed() &&
             aura_jit_frames_active() == static_cast<std::uint64_t>(aura_pair_roots_depth())) {
-            const std::size_t jit_n =
-                std::min<std::size_t>(g_pair_slots.size(), seen_jit_pair.size());
-            for (std::size_t id = std::min<std::size_t>(pairs_.size(), jit_n); id < jit_n; ++id) {
-                if (seen_jit_pair[id])
+            const std::uint64_t jit_base = aura_pair_jit_base();
+            const std::size_t jit_n = std::min<std::size_t>(
+                static_cast<std::size_t>(aura_pair_jit_high_water() - jit_base),
+                seen_jit_pair.size());
+            for (std::size_t jx = 0; jx < jit_n; ++jx) {
+                if (seen_jit_pair[jx])
                     continue;
+                const std::size_t id = static_cast<std::size_t>(jit_base) + jx;
                 PairSlot* jit_slot = g_pair_slots[id];
                 if (!jit_slot)
                     continue;
@@ -2985,7 +3000,9 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
                 if (g_pair_slots.release(id, jit_slot)) {
                     static const bool trace5518 = std::getenv("AURA_PAIR_GC_TRACE") != nullptr;
                     if (trace5518)
-                        std::fprintf(stderr, "[5518] jit-sweep free id=%zu\n", id);
+                        std::fprintf(stderr, "[5518] jit-sweep free id=%zu frames=%llu roots=%u\n",
+                                     id, static_cast<unsigned long long>(aura_jit_frames_active()),
+                                     aura_pair_roots_depth());
                     aura_pair_slot_free(jit_slot);
                     aura_pair_id_recycle(id);
                 }

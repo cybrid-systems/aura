@@ -397,8 +397,36 @@ extern "C" void aura_gc_sweep_wait_parked_walker() noexcept {
 // g_pair_slots undefined-symbol load-order failure this TU exists for).
 PairTenantTable g_pair_slot_tenants;
 
+// Issue #5518/#5631: JIT cons ids get their own range, above the evaluator's
+// pairs_ index space. The evaluator sweep only looks at ids below
+// pairs_.size(), so it can never void a JIT pair; the mark can classify an id
+// by range alone. 1<<20 leaves the evaluator over a million pairs of room.
+// The base is derived from the configured cap so a small test cap still
+// leaves a usable JIT range: 1<<20 normally, else a quarter of the cap.
+static std::uint64_t pair_jit_base_5518();
+static std::atomic<std::uint64_t> g_pair_jit_water{pair_jit_base_5518()};
+
+extern "C" std::uint64_t aura_pair_jit_base() {
+    return pair_jit_base_5518();
+}
+
+extern "C" std::uint64_t aura_pair_jit_high_water() {
+    return g_pair_jit_water.load(std::memory_order_acquire);
+}
+
+namespace {
+struct JitPairClaim {
+    std::uint64_t next = 0;
+    std::uint64_t end = 0;
+    std::uint64_t epoch = 0;
+};
+thread_local JitPairClaim tls_jit_pair_ids;
+} // namespace
+
 PairSlot* PairSlotTable::operator[](std::size_t id) {
-    if (id >= high_water_.load(std::memory_order_acquire))
+    const std::uint64_t low = high_water_.load(std::memory_order_acquire);
+    const std::uint64_t jw = g_pair_jit_water.load(std::memory_order_acquire);
+    if (id >= pair_jit_base_5518() ? id >= jw : id >= low)
         return nullptr;
     PairSegment* seg = pair_segment(id, /*create=*/true);
     if (!seg)
@@ -427,6 +455,15 @@ static std::uint64_t pair_id_limit_5518() {
         return cap;
     }();
     return limit;
+}
+
+static std::uint64_t pair_jit_base_5518() {
+    static const std::uint64_t base = [] {
+        const std::uint64_t want = 1ull << 20;
+        const std::uint64_t limit = pair_id_limit_5518();
+        return (limit > 2 * want) ? want : (limit / 4);
+    }();
+    return base;
 }
 
 static void note_pair_capacity_exhausted_5518() noexcept {
@@ -634,33 +671,62 @@ std::int64_t PairSlotTable::push_back(PairSlot* slot) {
             }
         }
         const std::uint64_t ep = g_pair_claim_epoch.load(std::memory_order_acquire);
-        if (tls_pair_ids.epoch != ep) {
-            tls_pair_ids.next = 0;
-            tls_pair_ids.end = 0;
-            tls_pair_ids.epoch = ep;
-        }
-        if (tls_pair_ids.next >= tls_pair_ids.end) {
-            const std::uint64_t hw = high_water_.load(std::memory_order_relaxed);
-            if (hw >= limit) {
+        std::uint64_t id = 0;
+        if (slot != nullptr) {
+            // JIT range: a separate cursor, so the evaluator's pairs_ indexes
+            // and JIT ids never share an index (#5631).
+            if (tls_jit_pair_ids.epoch != ep) {
+                tls_jit_pair_ids.next = 0;
+                tls_jit_pair_ids.end = 0;
+                tls_jit_pair_ids.epoch = ep;
+            }
+            if (tls_jit_pair_ids.next >= tls_jit_pair_ids.end) {
+                const std::uint64_t base =
+                    g_pair_jit_water.fetch_add(kPairIdBatch, std::memory_order_acq_rel);
+                if (base >= limit) {
+                    note_pair_capacity_exhausted_5518();
+                    return -1;
+                }
+                tls_jit_pair_ids.next = base;
+                tls_jit_pair_ids.end = (base + kPairIdBatch > limit) ? limit : base + kPairIdBatch;
+                tls_jit_pair_ids.epoch = ep;
+            }
+            id = tls_jit_pair_ids.next++;
+            if (id >= limit) {
                 note_pair_capacity_exhausted_5518();
                 return -1;
             }
-            const std::uint64_t base =
-                high_water_.fetch_add(kPairIdBatch, std::memory_order_acq_rel);
-            if (base >= limit) {
-                note_pair_capacity_exhausted_5518();
-                return -1;
+        } else {
+            if (tls_pair_ids.epoch != ep) {
+                tls_pair_ids.next = 0;
+                tls_pair_ids.end = 0;
+                tls_pair_ids.epoch = ep;
             }
-            std::uint64_t end = base + kPairIdBatch;
-            if (end > limit)
-                end = limit;
-            tls_pair_ids.next = base;
-            tls_pair_ids.end = end;
-            tls_pair_ids.epoch = ep;
+            if (tls_pair_ids.next >= tls_pair_ids.end) {
+                const std::uint64_t hw = high_water_.load(std::memory_order_relaxed);
+                if (hw >= limit || hw >= pair_jit_base_5518()) {
+                    note_pair_capacity_exhausted_5518();
+                    return -1;
+                }
+                const std::uint64_t base =
+                    high_water_.fetch_add(kPairIdBatch, std::memory_order_acq_rel);
+                if (base >= limit || base >= pair_jit_base_5518()) {
+                    note_pair_capacity_exhausted_5518();
+                    return -1;
+                }
+                std::uint64_t end = base + kPairIdBatch;
+                if (end > limit)
+                    end = limit;
+                if (end > pair_jit_base_5518())
+                    end = pair_jit_base_5518();
+                tls_pair_ids.next = base;
+                tls_pair_ids.end = end;
+                tls_pair_ids.epoch = ep;
+            }
+            id = tls_pair_ids.next++;
+            if (id >= limit || id >= pair_jit_base_5518())
+                return -1;
         }
-        const std::uint64_t id = tls_pair_ids.next++;
-        if (id >= limit)
-            return -1;
         PairSegment* seg = pair_segment(static_cast<std::size_t>(id), /*create=*/true);
         if (!seg)
             return -1;
@@ -683,7 +749,9 @@ std::int64_t PairSlotTable::push_back(PairSlot* slot) {
 }
 
 bool PairSlotTable::release(std::size_t id, PairSlot* expect) {
-    if (id >= high_water_.load(std::memory_order_acquire))
+    const std::uint64_t low = high_water_.load(std::memory_order_acquire);
+    const std::uint64_t jw = g_pair_jit_water.load(std::memory_order_acquire);
+    if (id >= pair_jit_base_5518() ? id >= jw : id >= low)
         return false;
     PairSegment* seg = pair_segment(id, /*create=*/false);
     if (!seg)
@@ -711,11 +779,13 @@ void PairSlotTable::store(std::size_t id, PairSlot* slot) {
 
 void PairSlotTable::clear() {
     const std::uint64_t n = high_water_.exchange(0, std::memory_order_acq_rel);
+    const std::uint64_t jw =
+        g_pair_jit_water.exchange(pair_jit_base_5518(), std::memory_order_acq_rel);
     g_pair_claim_epoch.fetch_add(1, std::memory_order_release);
     // Quiescent reset (aura_reset_runtime). Zero the cells the next claim
     // will reuse so publish can CAS from nullptr, and drop any stamp that
     // would otherwise reattach to the recycled index (#4057).
-    if (n == 0)
+    if (n == 0 && jw <= pair_jit_base_5518())
         return;
     const auto limit = static_cast<std::uint64_t>(kPairMaxSegs) * kPairSegSlots;
     const std::uint64_t upto = n < limit ? n : limit;
@@ -733,6 +803,23 @@ void PairSlotTable::clear() {
             seg->tenants[off].store(0, std::memory_order_relaxed);
         }
     }
+    // Issue #5631: the JIT range reset too, so a recycled process cannot see
+    // a stale published cell above the base.
+    if (jw > pair_jit_base_5518()) {
+        const std::uint64_t jsegs = (jw - pair_jit_base_5518() + kPairSegSlots - 1) / kPairSegSlots;
+        for (std::uint64_t s = 0; s < jsegs; ++s) {
+            const std::uint64_t begin = pair_jit_base_5518() + s * kPairSegSlots;
+            PairSegment* seg = dir[begin / kPairSegSlots].load(std::memory_order_acquire);
+            if (!seg)
+                continue;
+            const std::uint64_t end = std::min<std::uint64_t>(begin + kPairSegSlots, jw);
+            for (std::uint64_t id = begin; id < end; ++id) {
+                const std::size_t off = static_cast<std::size_t>(id % kPairSegSlots);
+                seg->slots[off].store(nullptr, std::memory_order_relaxed);
+                seg->tenants[off].store(0, std::memory_order_relaxed);
+            }
+        }
+    }
 }
 
 void PairSlotTable::stamp_tenant(std::size_t id, std::uint64_t tenant) {
@@ -743,7 +830,9 @@ void PairSlotTable::stamp_tenant(std::size_t id, std::uint64_t tenant) {
 }
 
 std::uint64_t PairSlotTable::load_tenant(std::size_t id) const {
-    if (id >= high_water_.load(std::memory_order_acquire))
+    const std::uint64_t low = high_water_.load(std::memory_order_acquire);
+    const std::uint64_t jw = g_pair_jit_water.load(std::memory_order_acquire);
+    if (id >= pair_jit_base_5518() ? id >= jw : id >= low)
         return 0;
     PairSegment* seg = pair_segment(id, /*create=*/false);
     if (!seg)
