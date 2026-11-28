@@ -3748,8 +3748,8 @@ int osr_enabled_env() noexcept {
         // (repro: a JIT pair held across (gc-heap) is lost). Root mode keeps
         // OSR off until the OSR bridge registers its own roots.
         const char* r = std::getenv("AURA_PAIR_GC");
-        if (r && r[0] == '1')
-            return 0;
+        if (!(r && r[0] == '0'))
+            return 0; // root mode is on by default; OSR stays off with it
         const char* v = ::aura::config::raw(::aura::config::Key::AURA_JIT_OSR);
         return (v && v[0] == '0') ? 0 : 1;
     }();

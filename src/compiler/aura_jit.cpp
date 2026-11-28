@@ -316,8 +316,9 @@ enum Op : uint32_t {
 // promotions are disabled because their storage would not be in the array.
 static bool pair_gc_root_mode_5518() {
     static const bool on = [] {
+        // Issue #5518: on by default; AURA_PAIR_GC=0 disables root mode.
         const char* v = std::getenv("AURA_PAIR_GC");
-        return v && v[0] == '1';
+        return !(v && v[0] == '0');
     }();
     return on;
 }

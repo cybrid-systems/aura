@@ -654,8 +654,11 @@ extern "C" void aura_maybe_collect_pairs() {
 
 extern "C" std::uint32_t aura_pair_gc_armed() {
     static const bool on = [] {
+        // Issue #5518: root-mode reclamation is on by default now that the
+        // frame roots, per-fiber contexts and the id ranges are in place.
+        // AURA_PAIR_GC=0 is the kill switch.
         const char* v = std::getenv("AURA_PAIR_GC");
-        return v && v[0] == '1';
+        return !(v && v[0] == '0');
     }();
     return on && aura_pair_roots_overflowed() == 0 ? 1u : 0u;
 }
