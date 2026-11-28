@@ -683,6 +683,8 @@ int main() {
                     AuditWire row{};
                     std::memcpy(&row, body.data() + sizeof(head) + i * sizeof(row), sizeof(row));
                     check(row.seq == first_seq + i, "an audit row carries the next sequence");
+                    // Issue #5505: the reply names the event, never the bearer.
+                    check(row.token == 0, "an audit row does not echo a token");
                 }
                 return head;
             };

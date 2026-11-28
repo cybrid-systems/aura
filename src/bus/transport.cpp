@@ -736,10 +736,14 @@ bool Server::handshake(int conn_fd, const HelloBody& hello, const BuildFn& build
     requested.max_loans = hello.max_loans;
     requested.workspace = workspace_id_;
     bool policy_denied = false;
+    // Issue #5505: a hello that asks for nothing is not a session; it used to
+    // be accepted and given a root token anyway.
+    if (hello.caps == 0)
+        return reject(RejectReason::Permission, "zero-capability hello refused", EACCES);
     Capability granted =
         constraints_.policy().resolve(hello.role, requested, workspace_id_, &policy_denied);
     granted = clamp_preset(granted, preset_);
-    if (hello.caps != 0 && granted.bits == 0) {
+    if (granted.bits == 0) {
         record_audit(AuditKind::Denied, 0, 0, hello.role);
         return reject(RejectReason::Permission, "no capability allowed for this role", EACCES);
     }
@@ -2654,7 +2658,10 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
                 AuditWire wire{};
                 const AuditEvent& e = *page[i].second;
                 wire.kind = static_cast<std::uint64_t>(e.kind);
-                wire.token = e.token;
+                // Issue #5505: the audit trail names what happened, not the
+                // bearer token. Echoing it let any auditor collect every
+                // session's root token and activate/revoke it.
+                wire.token = 0;
                 wire.worldline = e.worldline;
                 wire.result = e.result;
                 wire.version = e.constraint_version;
@@ -2839,6 +2846,27 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
                     const TrialRecord* t = worldlines_.find(loan.worldline);
                     if (t == nullptr || !t->pending) {
                         deny(EPERM, "patch worldline is not a pending trial");
+                        break;
+                    }
+                }
+                // Issue #5504: everything below reads loan.offset/length,
+                // which the peer controls. Reject a slice that is not the
+                // committed tail (or that overflows the section) BEFORE the
+                // patch walk below: a forged offset walked outside the
+                // mapping and a 2^64 length looped the single serve thread
+                // for ~2^58 iterations.
+                {
+                    const std::span<const std::byte> image{image_base_, image_size_};
+                    SectionEntry entry{};
+                    ChannelView expect{};
+                    if (!find_section(image, section_for(channel), &entry) ||
+                        !channel_view(image, channel, &expect) || loan.length == 0 ||
+                        expect.element_size == 0 ||
+                        loan.length % expect.element_size != 0 ||
+                        expect.length > entry.capacity ||
+                        loan.length > entry.capacity - expect.length ||
+                        loan.offset != expect.offset + expect.length) {
+                        deny(EINVAL, "publish slice is not the channel's committed tail");
                         break;
                     }
                 }
@@ -3583,7 +3611,9 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
                 request.caps.workspace = workspace_id_;
             const std::uint64_t parent = request.parent == 0 ? root_token : request.parent;
             std::string why;
-            const auto token = caps_table_.derive(parent, request.caps, &why);
+            // Issue #5505: record which session the grant is for, so another
+            // session cannot activate a token it was never handed.
+            const auto token = caps_table_.derive(parent, request.caps, &why, session);
             if (!token) {
                 // #5396: a refused grant is audited on its own, so the
                 // abuse pattern is visible.
@@ -3611,6 +3641,13 @@ bool Server::dispatch_frame(int conn_fd, std::uint64_t session, std::uint64_t ro
             // the token). The session's root grant stays; the active caps
             // become the intersection, scoped to the token's worldline.
             const LoanBody loan = loan_from();
+            // Issue #5505: a grant is bound to the session that requested
+            // it. AuditQuery no longer leaks tokens, and this stops a session
+            // that did obtain one from activating it against its owner.
+            if (!caps_table_.owned_by(loan.channel, session)) {
+                deny(EPERM, "grant token belongs to another session");
+                break;
+            }
             Capability effective{};
             if (!caps_table_.effective(loan.channel, &effective)) {
                 deny(EPERM, "grant token is missing or revoked");
@@ -4265,6 +4302,8 @@ void Server::finish_session(PeerSession& peer) {
         round_roll(peer.session == round_.owner_session() ? "proposer gone" : "judge gone");
     }
     record_audit(AuditKind::Disconnect, peer.root_token);
+    // Issue #5505: the session's grant tree dies with the session.
+    caps_table_.revoke(peer.root_token);
     peer.loans.reclaim();
     for (auto& ledger : peer.channel_loans)
         ledger.reclaim();

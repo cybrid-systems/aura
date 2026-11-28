@@ -7,6 +7,8 @@
 #include <chrono>
 #include <random>
 
+#include <sys/random.h> // Issue #5505: unpredictable grant tokens
+
 namespace aura::bus {
 namespace {
 
@@ -126,16 +128,42 @@ bool allows(const Capability& caps, std::uint64_t bit, std::uint64_t channel,
     return true;
 }
 
-CapabilityTable::CapabilityTable() {
+CapabilityTable::CapabilityTable() = default;
+
+std::uint64_t CapabilityTable::mint_token_() {
+    // Issue #5505: the tokens used to be (counter * K) ^ secret. Two tokens
+    // then reveal the key and every other token in the table, so a session
+    // could derive another session's root token. Draw from getrandom
+    // instead and reject a collision.
+    for (int attempt = 0; attempt < 16; ++attempt) {
+        std::uint64_t candidate = 0;
+        if (::getrandom(&candidate, sizeof(candidate), 0) !=
+            static_cast<ssize_t>(sizeof(candidate)))
+            candidate = 0;
+        if (candidate == 0) {
+            std::random_device rd;
+            candidate = (static_cast<std::uint64_t>(rd()) << 32) ^ rd();
+        }
+        if (candidate == 0)
+            continue;
+        const bool used = std::any_of(records_.begin(), records_.end(),
+                                      [candidate](const GrantRecord& r) {
+                                          return r.token == candidate;
+                                      });
+        if (!used)
+            return candidate;
+    }
+    // Practically unreachable: stay non-zero and unique enough.
     std::random_device rd;
-    secret_ = (static_cast<std::uint64_t>(rd()) << 32) ^ rd();
+    std::uint64_t fallback =
+        ((static_cast<std::uint64_t>(rd()) << 32) ^ rd()) ^
+        ((records_.size() + 1) * 0x9e3779b97f4a7c15ull);
+    return fallback == 0 ? 1 : fallback;
 }
 
 std::uint64_t CapabilityTable::issue_root(const Capability& caps) {
     GrantRecord rec{};
-    rec.token = (next_token_++ * 0x9e3779b97f4a7c15ull ^ secret_) & ((1ull << 48) - 1);
-    if (rec.token == 0)
-        rec.token = 1;
+    rec.token = mint_token_();
     rec.caps = caps;
     records_.push_back(rec);
     return rec.token;
@@ -200,7 +228,8 @@ std::size_t CapabilityTable::session_grants(std::uint64_t root) const {
 }
 
 std::optional<std::uint64_t> CapabilityTable::derive(std::uint64_t parent, const Capability& child,
-                                                     std::string* why) {
+                                                     std::string* why,
+                                                     std::uint64_t owner_session) {
     Capability parent_caps{};
     if (!effective(parent, &parent_caps)) {
         if (why)
@@ -248,11 +277,10 @@ std::optional<std::uint64_t> CapabilityTable::derive(std::uint64_t parent, const
         return std::nullopt;
     }
     GrantRecord rec{};
-    rec.token = (next_token_++ * 0x9e3779b97f4a7c15ull ^ secret_) & ((1ull << 48) - 1);
-    if (rec.token == 0)
-        rec.token = 1;
+    rec.token = mint_token_();
     rec.parent = parent;
     rec.caps = child;
+    rec.owner_session = owner_session;
     records_.push_back(rec);
     return rec.token;
 }
@@ -306,6 +334,18 @@ bool CapabilityTable::effective(std::uint64_t token, Capability* out) const {
     if (out)
         *out = rec->caps;
     return true;
+}
+
+bool CapabilityTable::owned_by(std::uint64_t token, std::uint64_t session) const {
+    for (const auto& candidate : records_) {
+        if (candidate.token != token)
+            continue;
+        // Issue #5505: 0 = a coordinator root any session may activate (the
+        // host hands those out of band); a derived grant belongs to the
+        // session that asked for it.
+        return candidate.owner_session == 0 || candidate.owner_session == session;
+    }
+    return false;
 }
 
 bool CapabilityTable::revoked(std::uint64_t token) const {

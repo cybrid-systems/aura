@@ -67,6 +67,10 @@ struct GrantRecord {
     std::uint64_t parent = 0; // 0 = root issued by the coordinator
     Capability caps{};
     bool revoked = false;
+    // Issue #5505: the session a derived grant was issued to (0 = a host
+    // root, which any session may activate). A session may not activate
+    // another session's grant.
+    std::uint64_t owner_session = 0;
 };
 
 // #5396: the grant tree's limits. A grant may only attenuate, so a
@@ -87,11 +91,13 @@ public:
     // Derive a child. Fails when the parent is missing/revoked/lacks
     // grant, the child is not a subset, or the workspace differs.
     std::optional<std::uint64_t> derive(std::uint64_t parent, const Capability& child,
-                                        std::string* why);
+                                        std::string* why, std::uint64_t owner_session = 0);
     // Revoke token and every descendant; returns the number revoked.
     std::size_t revoke(std::uint64_t token);
     bool effective(std::uint64_t token, Capability* out) const;
     bool revoked(std::uint64_t token) const;
+    // Issue #5505: the token was issued to this session (or is a host root).
+    bool owned_by(std::uint64_t token, std::uint64_t session) const;
     std::size_t record_count() const { return records_.size(); }
     // #5396: the grants a session holds (the subtree under its root
     // token).
@@ -102,9 +108,10 @@ public:
     std::size_t fanout_of(std::uint64_t token) const;
 
 private:
+    // Issue #5505: a random token, never a counter under a fixed secret.
+    std::uint64_t mint_token_();
+
     std::vector<GrantRecord> records_;
-    std::uint64_t next_token_ = 1;
-    std::uint64_t secret_ = 0;
 };
 
 struct TrialRecord {

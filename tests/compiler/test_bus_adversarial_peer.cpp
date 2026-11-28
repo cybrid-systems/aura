@@ -462,6 +462,45 @@ int main() {
         check(honest.alive(&e), "the honest peer survives the staging hog");
     }
 
+    // ── 5d. #5505: a grant belongs to the session that asked ────
+    {
+        Client granter, thief;
+        Attach g{}, t{};
+        check(granter.connect_to(path, kWorkspace, 0, kCapGrant | kCapRead, &g, &err),
+              "the granter attaches");
+        check(thief.connect_to(path, kWorkspace, 0, kCapGrant | kCapRead, &t, &err),
+              "the thief attaches");
+        GrantBody request{};
+        request.caps.workspace = kWorkspace;
+        request.caps.bits = kCapRead;
+        check(send_frame(g.sock, FrameType::Grant, g.session,
+                         {reinterpret_cast<const std::byte*>(&request), sizeof(request)}),
+              "the granter asks for a scoped grant");
+        FrameHeader hdr{};
+        std::vector<std::byte> reply;
+        check(read_frame(g.sock, &hdr, &reply, &err),
+              "the granter receives an answer");
+        check(hdr.type == static_cast<std::uint16_t>(FrameType::Credit) &&
+                  reply.size() >= sizeof(GrantReply),
+              "the granter receives a token");
+        GrantReply granted{};
+        if (reply.size() >= sizeof(GrantReply))
+            std::memcpy(&granted, reply.data(), sizeof(granted));
+        check(granted.token != 0, "the granted token is non-zero");
+        LoanBody loan{};
+        loan.channel = granted.token;
+        check(send_frame(t.sock, FrameType::GrantActivate, t.session,
+                         {reinterpret_cast<const std::byte*>(&loan), sizeof(loan)}),
+              "the thief tries to activate it");
+        FrameHeader thdr{};
+        std::vector<std::byte> treply;
+        check(read_frame(t.sock, &thdr, &treply, &err), "the thief is answered");
+        check(thdr.type == static_cast<std::uint16_t>(FrameType::Error),
+              "a grant cannot be activated by another session");
+        ::close(g.sock);
+        ::close(t.sock);
+    }
+
     // ── 6. Malformed frames ─────────────────────────────────────
     {
         // A frame with an absurd length.
@@ -525,6 +564,37 @@ int main() {
             check(hdr.type == static_cast<std::uint16_t>(FrameType::Error),
                   "the illegal channel is an error");
             ::close(att.sock);
+        }
+        // Issue #5504: a Patches publish carries the record slice in the
+        // frame. Pre-fix the coordinator walked image_base_ + offset BEFORE
+        // channel_commit validated it, so a forged offset read outside the
+        // mapping (or a ~2^64 length spun the single serve thread).
+        {
+            Client mal;
+            Attach att{};
+            check(mal.connect_to(path, kWorkspace, 0, kCapRead | kCapPublish, &att, &err),
+                  "the patch attacker attaches");
+            LoanBody body{};
+            body.channel = 3; // Channel::Patches
+            body.offset = 1ull << 40;
+            body.length = ~0ull - 63;
+            check(send_frame(att.sock, FrameType::Publish, att.session,
+                             {reinterpret_cast<const std::byte*>(&body), sizeof(body)}),
+                  "the patch attacker publishes a forged slice");
+            FrameHeader hdr{};
+            std::vector<std::byte> reply;
+            check(read_frame(att.sock, &hdr, &reply, &err),
+                  "the forged patch slice is answered");
+            check(hdr.type == static_cast<std::uint16_t>(FrameType::Error),
+                  "the forged patch slice is an error, not a crash");
+            ::close(att.sock);
+        }
+        // Issue #5505: a hello that asks for no capability is refused.
+        {
+            Client zero;
+            Attach att{};
+            check(!zero.connect_to(path, kWorkspace, 0, 0, &att, &err),
+                  "a zero-capability hello is refused");
         }
         TransportError e{};
         check(honest.alive(&e), "the honest peer survives the malformed frames");

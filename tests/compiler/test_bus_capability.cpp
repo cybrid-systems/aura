@@ -304,6 +304,38 @@ int main() {
         check(ledger.size() == 0, "the compacted ledger is empty");
     }
 
+    // ── #5505: tokens are random, and a grant belongs to its session ──
+    {
+        CapabilityTable table;
+        Capability caps{};
+        caps.workspace = 1;
+        // derive() requires the parent to hold kCapGrant.
+        caps.bits = kCapRead | kCapGrant;
+        bool wide = false;
+        std::uint64_t last = 0;
+        for (int i = 0; i < 64; ++i) {
+            last = table.issue_root(caps);
+            check(last != 0, "a root token is non-zero");
+            wide = wide || ((last >> 48) != 0);
+        }
+        // The old counter*K^secret shape masked to 48 bits, so every token
+        // had the top 16 bits clear and any two revealed the key.
+        check(wide, "tokens use the full 64-bit space, not the 48-bit linear shape");
+
+        const std::uint64_t root = table.issue_root(caps);
+        Capability scoped{};
+        scoped.workspace = 1;
+        scoped.bits = kCapRead;
+        std::string why;
+        const auto granted = table.derive(root, scoped, &why, 7);
+        check(granted.has_value(), "a session can derive a scoped grant");
+        check(table.owned_by(*granted, 7), "the grant belongs to the session that asked");
+        check(!table.owned_by(*granted, 8), "another session cannot activate it");
+        check(table.owned_by(root, 8), "a coordinator root is available to any session");
+        check(table.revoke(root) >= 2, "revoking the root takes the derived grant with it");
+        check(!table.effective(*granted, nullptr), "the revoked grant is not effective");
+    }
+
     // ── #5459: the in-process audit log is a bounded window ─────
     {
         AuditLog log;
