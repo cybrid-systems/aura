@@ -320,6 +320,17 @@ inline void record_edsl_apply_soa_path() noexcept {
     g_edsl_apply_soa_hits.fetch_add(1, std::memory_order_relaxed);
 }
 
+// Issue #5520: the apply hot path called the single-shot form above once
+// per callback, i.e. three process-wide RMWs that every worker bounced.
+// The caller batches on a TLS counter and publishes in one shot.
+inline void record_edsl_apply_soa_path_batch(std::uint32_t n) noexcept {
+    if (n == 0)
+        return;
+    g_soa_view_hits.fetch_add(n, std::memory_order_relaxed);
+    g_edsl_soa_migration_progress.fetch_add(n, std::memory_order_relaxed);
+    g_edsl_apply_soa_hits.fetch_add(n, std::memory_order_relaxed);
+}
+
 // Issue #1918: Guard / mutate:rebind structural mutation SoA path.
 inline void record_edsl_mutate_soa_path() noexcept {
     record_soa_view_hit();

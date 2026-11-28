@@ -888,6 +888,45 @@ static std::uint64_t densify_window_seq_relaxed() noexcept {
 // apply amplification). Flush TLS only: re-stamp the surviving slot to the
 // published seq ("seq-stable hits survive"); no new scheduler, no second
 // densify model.
+// Issue #5520: apply_closure used to bump three SoA counters and one TLS-hit
+// counter per callback. All four are process-wide RMWs, so every worker
+// bounced the same cache lines. Batch them on this thread and publish in
+// one shot (threshold below + the #5066 flush at the outermost eval exit).
+namespace {
+    struct ApplyMeter5520 {
+        Evaluator* ev = nullptr;
+        std::uint32_t soa = 0;
+        std::uint32_t hits = 0;
+    };
+    thread_local ApplyMeter5520 tls_apply_meter_5520;
+
+    void flush_apply_meter_5520() noexcept {
+        auto& t = tls_apply_meter_5520;
+        if (t.hits != 0 && t.ev != nullptr)
+            t.ev->note_apply_closure_tls_hit_n(t.hits);
+        if (t.soa != 0)
+            soa_view::record_edsl_apply_soa_path_batch(t.soa);
+        t.hits = 0;
+        t.soa = 0;
+    }
+
+    void note_apply_hit_5520(Evaluator& ev) noexcept {
+        auto& t = tls_apply_meter_5520;
+        t.ev = &ev;
+        ++t.hits;
+        if (t.hits + t.soa >= 256)
+            flush_apply_meter_5520();
+    }
+
+    void note_soa_apply_5520(Evaluator& ev) noexcept {
+        auto& t = tls_apply_meter_5520;
+        t.ev = &ev;
+        ++t.soa;
+        if (t.hits + t.soa >= 256)
+            flush_apply_meter_5520();
+    }
+} // namespace
+
 static bool try_apply_closure_tls_lookup(Evaluator& ev, ClosureId cid, Closure& cl_out,
                                          bool& tombstoned_out) {
     tombstoned_out = false;
@@ -922,7 +961,7 @@ static bool try_apply_closure_tls_lookup(Evaluator& ev, ClosureId cid, Closure& 
             return false;
         }
         cl_out = s.cl;
-        ev.note_apply_closure_tls_hit();
+        note_apply_hit_5520(ev);
         return true;
     }
     return false;
@@ -1309,6 +1348,7 @@ namespace {
     thread_local TwMeter5066 tls_tw_meter_5066;
 
     void flush_tw_meter_5066() noexcept {
+        flush_apply_meter_5520();
         auto& t = tls_tw_meter_5066;
         if (t.m != nullptr) {
             if (t.calls != 0)
@@ -2120,7 +2160,7 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
     // tag tests on args use pure is_* helpers — never classify_eval_value_tag (atomics).
     AURA_HOT_RECORD();
     types::note_value_tag_hot_path();
-    soa_view::record_edsl_apply_soa_path();
+    note_soa_apply_5520(*this);
     // Issue #3688: do not eval_flat a half-green body when IR/JIT would
     // refuse typed-entry at this depth. Soft/Off: one hard-face load.
     if (production_eval_flat_commit_readiness_refuse(
@@ -2334,37 +2374,28 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
     // bind below (the race-window revalidate compares against them).
     const aura::ast::FlatAST* const snap_flat_4765 = cl_copy.flat;
     const aura::ast::StringPool* const snap_pool_4765 = cl_copy.pool;
-    aura::ast::TemporaryMovingLivePtrCanary tmp_flat;
-    aura::ast::TemporaryMovingLivePtrCanary tmp_pool;
+    // Issue #5520: bind flat + pool under ONE inventory lock and unnote both
+    // in one dtor lock (the single-pointer forms took the process-wide
+    // mutex four times with two O(n) finds per callback).
+    aura::ast::TemporaryMovingLivePtrCanary2 tmp_pair_5520;
     aura::ast::ASTArena* live_arena = cl_copy.owner_arena != nullptr ? cl_copy.owner_arena : arena_;
-    if (live_arena != nullptr) {
-        bool noted = false;
-        void* flat = live_arena->bind_temporary_moving_live_ptr(cl_copy.flat, &noted);
-        cl_copy.flat = static_cast<aura::ast::FlatAST*>(flat);
-        if (noted)
-            tmp_flat.own_noted(flat);
-        noted = false;
-        void* pool = live_arena->bind_temporary_moving_live_ptr(cl_copy.pool, &noted);
-        cl_copy.pool = static_cast<aura::ast::StringPool*>(pool);
-        if (noted)
-            tmp_pool.own_noted(pool);
-    } else {
-        // Issue #4124: no owning arena — bind through every live arena's
-        // last_object_remap_ (the same #4066 mutex+remap+note contract)
-        // instead of an unresolved arm_observe note, so a Moving densify
-        // that already relocated cannot leave a densify-old address on the
-        // stack / in the canary inventory (the late drain does not
-        // re-resolve). arm_observe is Soft-only as of #4124.
-        bool noted = false;
-        void* flat = aura::ast::bind_temporary_moving_live_ptr_any_arena(cl_copy.flat, &noted);
-        cl_copy.flat = static_cast<aura::ast::FlatAST*>(flat);
-        if (noted)
-            tmp_flat.own_noted(flat);
-        noted = false;
-        void* pool = aura::ast::bind_temporary_moving_live_ptr_any_arena(cl_copy.pool, &noted);
-        cl_copy.pool = static_cast<aura::ast::StringPool*>(pool);
-        if (noted)
-            tmp_pool.own_noted(pool);
+    {
+        void* flat_in = cl_copy.flat;
+        void* pool_in = cl_copy.pool;
+        void* flat_out = flat_in;
+        void* pool_out = pool_in;
+        bool flat_noted = false;
+        bool pool_noted = false;
+        if (live_arena != nullptr)
+            live_arena->bind_temporary_moving_live_ptr2(flat_in, pool_in, &flat_out, &flat_noted,
+                                                        &pool_out, &pool_noted);
+        else
+            aura::ast::bind_temporary_moving_live_ptr_any_arena2(
+                flat_in, pool_in, &flat_out, &flat_noted, &pool_out, &pool_noted);
+        cl_copy.flat = static_cast<aura::ast::FlatAST*>(flat_out);
+        cl_copy.pool = static_cast<aura::ast::StringPool*>(pool_out);
+        tmp_pair_5520.own_noted_pair(flat_noted ? flat_out : nullptr,
+                                     pool_noted ? pool_out : nullptr);
     }
     CompilerMetrics* metrics =
         compiler_metrics_ ? static_cast<CompilerMetrics*>(compiler_metrics_) : nullptr;
@@ -9854,7 +9885,7 @@ Evaluator::FlatStep Evaluator::eval_flat_on_ifexpr_lambda(EvalFlatCursor& cur,
             // top_ consult, so the drop would unbind them out
             // from under the returned closure.
             cfr.live_safe_top_ = true;
-            std::scoped_lock<std::mutex> snap_lock(cap_snap_mtx_);
+            std::unique_lock<std::shared_mutex> snap_lock(cap_snap_mtx_);
             cap_snap_cache_.erase(cap_id);
         }
     }

@@ -278,7 +278,7 @@ void Evaluator::inject_envframe_dual_path_desync_for_test(EnvId id) noexcept {
     // Issue #4464: a snapshot of the pre-inject frame would hide this
     // desync on the #4350 fast path. Drop it under the shard lock
     // (cap_snap_mtx_ is a leaf, same order as alloc_env_frame).
-    std::scoped_lock<std::mutex> snap_lock(cap_snap_mtx_);
+    std::unique_lock<std::shared_mutex> snap_lock(cap_snap_mtx_);
     cap_snap_cache_.erase(id);
 }
 
@@ -1672,8 +1672,9 @@ aura::compiler::EnvId Evaluator::alloc_env_frame(EnvId parent_id, const Primitiv
         {
             // Issue #4448: drop the previous occupant's snapshot (and any
             // empty one built in the window before this fill).
-            std::scoped_lock<std::mutex> snap_lock(cap_snap_mtx_);
+            std::unique_lock<std::shared_mutex> snap_lock(cap_snap_mtx_);
             cap_snap_cache_.erase(id);
+            cap_snap_epoch_5521_.fetch_add(1, std::memory_order_release);
         }
         env_frame_reuse_hits_.fetch_add(1, std::memory_order_relaxed); // Issue #5057 AC4
         return id;
@@ -1812,8 +1813,9 @@ aura::compiler::EnvId Evaluator::alloc_env_frame_from_env(const Env& e, EnvId pa
     // Drop it while the shard lock is held so the next materialize
     // rebuilds from these bindings. Fresh ids have no entry.
     {
-        std::scoped_lock<std::mutex> snap_lock(cap_snap_mtx_);
+        std::unique_lock<std::shared_mutex> snap_lock(cap_snap_mtx_);
         cap_snap_cache_.erase(id);
+        cap_snap_epoch_5521_.fetch_add(1, std::memory_order_release);
     }
     return id;
 }
@@ -1860,7 +1862,9 @@ bool Evaluator::ensure_envframe_dual_path_consistency(const EnvFrame& fr) const 
 // are immutable after alloc, so the frozen view never goes stale.
 std::shared_ptr<const CapSnapshot> Evaluator::cap_snap_for_frame(EnvId frame_id) {
     {
-        std::scoped_lock<std::mutex> lock(cap_snap_mtx_);
+        // Issue #5521: the hot path is a pure read of the cache; only a
+        // stale-generation entry needs the exclusive lock below.
+        std::shared_lock<std::shared_mutex> lock(cap_snap_mtx_);
         if (auto it = cap_snap_cache_.find(frame_id); it != cap_snap_cache_.end()) {
             // Issue #4448: EnvIds are not immutable identity — compact
             // renumbers frames and truncate reuses their ids, so a cached
@@ -1869,8 +1873,14 @@ std::shared_ptr<const CapSnapshot> Evaluator::cap_snap_for_frame(EnvId frame_id)
             // stale entry is dropped and rebuilt from the live frame.
             if (it->second->env_gen == env_generation_)
                 return it->second;
-            cap_snap_cache_.erase(it);
         }
+    }
+    {
+        std::unique_lock<std::shared_mutex> lock(cap_snap_mtx_);
+        if (auto it = cap_snap_cache_.find(frame_id);
+            it != cap_snap_cache_.end() && it->second->env_gen != env_generation_)
+            cap_snap_cache_.erase(it);
+        cap_snap_epoch_5521_.fetch_add(1, std::memory_order_release);
     }
     // Issue #4717: range checks read the PUBLISHED size. env_frames_.size()
     // dereferences the deque's map metadata, which a concurrent
@@ -1925,7 +1935,7 @@ std::shared_ptr<const CapSnapshot> Evaluator::cap_snap_for_frame(EnvId frame_id)
         }
     }
     if (snap) {
-        std::scoped_lock<std::mutex> lock(cap_snap_mtx_);
+        std::unique_lock<std::shared_mutex> lock(cap_snap_mtx_);
         cap_snap_cache_[frame_id] = snap;
     }
     return snap;
@@ -1957,6 +1967,21 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
     // lengths — O(1), so a top-level call does not walk every define.
     // A later length drift (rebind, inject) must not reuse the snapshot;
     // the legacy gate below still bumps hard_fail or soft++.
+    // Issue #5521: the length-divergence probe (a shard shared_lock) and the
+    // cap-snapshot lookup (a global mutex + hash) are pure functions of the
+    // frame id / environment generation, so memoize them on this thread. The
+    // key matches the issue's contract: (env_id, defuse_version_, env_generation_).
+    // closure_is_epoch_or_env_stale (the closure-level gate) still runs on
+    // every call.
+    struct CallEnvMemo5521 {
+        EnvId env_id = NULL_ENV_ID;
+        std::uint64_t defuse = ~0ull;
+        std::uint64_t gen = ~0ull;
+        std::uint64_t snap_epoch = ~0ull;
+        bool len_diverges = false;
+        std::shared_ptr<const CapSnapshot> snap;
+    };
+    thread_local CallEnvMemo5521 tls_call_env_memo_5521;
     auto capture_len_diverges = [&](EnvId id) -> bool {
         if (id == NULL_ENV_ID || static_cast<std::size_t>(id) >=
                                      env_frames_published_size_.load(std::memory_order_acquire))
@@ -1971,11 +1996,31 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
         return fr.bindings_.size() != fr.bindings_symid_.size() ||
                fr.bindings_linear_ownership_state_.size() != fr.bindings_symid_.size();
     };
-    const bool len_diverges = capture_len_diverges(cl.env_id);
+    const std::uint64_t memo_defuse = defuse_version_.load(std::memory_order_acquire);
+    // Issue #5521: a released frame's EnvId is reused WITHOUT bumping
+    // env_generation_ (#4459), so the memo also keys on the snapshot cache
+    // epoch that every release/reuse/truncate bumps.
+    const std::uint64_t memo_snap_epoch = cap_snap_epoch_5521_.load(std::memory_order_acquire);
+    auto& memo = tls_call_env_memo_5521;
+    bool len_diverges = false;
     std::shared_ptr<const CapSnapshot> snap;
-    if (!len_diverges && cl.env_id != NULL_ENV_ID &&
-        cl.env_id < env_frames_published_size_.load(std::memory_order_acquire))
-        snap = cap_snap_for_frame(cl.env_id);
+    const bool memo_hit = cl.env_id == memo.env_id && memo_defuse == memo.defuse &&
+                          env_generation_ == memo.gen && memo_snap_epoch == memo.snap_epoch;
+    if (memo_hit) {
+        len_diverges = memo.len_diverges;
+        snap = memo.snap;
+    } else {
+        len_diverges = capture_len_diverges(cl.env_id);
+        if (!len_diverges && cl.env_id != NULL_ENV_ID &&
+            cl.env_id < env_frames_published_size_.load(std::memory_order_acquire))
+            snap = cap_snap_for_frame(cl.env_id);
+        memo.env_id = cl.env_id;
+        memo.defuse = memo_defuse;
+        memo.gen = env_generation_;
+        memo.snap_epoch = memo_snap_epoch;
+        memo.len_diverges = len_diverges;
+        memo.snap = snap;
+    }
     if (snap && !epoch_or_env_stale) {
         Env ne;
         ne.set_owner(this);
@@ -3506,8 +3551,9 @@ std::size_t Evaluator::truncate_env_frames_to_checkpoint() {
     // the fast path returns before it). Clear in the same critical
     // section as the generation bump; cap_snap_mtx_ is a leaf lock.
     {
-        std::scoped_lock<std::mutex> lock(cap_snap_mtx_);
+        std::unique_lock<std::shared_mutex> lock(cap_snap_mtx_);
         cap_snap_cache_.clear();
+        cap_snap_epoch_5521_.fetch_add(1, std::memory_order_release);
     }
     // Issue #4109: restamp survivor env_gen_stamp_ in the same critical
     // section as the env_generation_ bump — the materialize env_gen fence
@@ -3877,8 +3923,9 @@ std::size_t Evaluator::compact_env_frames() {
         // can be valid; drop any residue so later frame growth starts
         // from a clean cache (idempotent with the gen-validated hits).
         {
-            std::scoped_lock<std::mutex> lock(cap_snap_mtx_);
+            std::unique_lock<std::shared_mutex> lock(cap_snap_mtx_);
             cap_snap_cache_.clear();
+            cap_snap_epoch_5521_.fetch_add(1, std::memory_order_release);
         }
         env_frame_reuse_.clear();
         env_frame_on_freelist_.clear();
@@ -4049,8 +4096,9 @@ std::size_t Evaluator::compact_env_frames() {
     // (no path takes env locks under it), so clearing under
     // env_frames_mtx_ cannot invert.
     {
-        std::scoped_lock<std::mutex> lock(cap_snap_mtx_);
+        std::unique_lock<std::shared_mutex> lock(cap_snap_mtx_);
         cap_snap_cache_.clear();
+        cap_snap_epoch_5521_.fetch_add(1, std::memory_order_release);
     }
     // Issue #4109: restamp survivor env_gen_stamp_ in the same critical
     // section as the env_generation_ bump. The materialize env_gen fence

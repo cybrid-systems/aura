@@ -8013,7 +8013,14 @@ public:
     // so pure pair/string growth is not serialized with hash probes.
     mutable std::mutex hash_tables_mtx_;
     // Issue #4350: per-capture-frame shared snapshots (see cap_snap_for_frame).
-    mutable std::mutex cap_snap_mtx_;
+    // Issue #5521: reads dominate (every call materializes); writers are
+    // the lazy build / generation clear. shared_mutex lifts the global
+    // serialization of the hot call path.
+    // Issue #5521: bumped whenever a cap snapshot is erased / the cache is
+    // cleared (frame release, reuse, truncate, compact). The TLS call-env
+    // memo keys on it so a reused EnvId cannot alias the old captures.
+    mutable std::atomic<std::uint64_t> cap_snap_epoch_5521_{0};
+    mutable std::shared_mutex cap_snap_mtx_;
     std::unordered_map<EnvId, std::shared_ptr<const CapSnapshot>> cap_snap_cache_;
     // Issue #1401: serializes load_module_file ↔ compact_env_frames().
     // compact_env_frames (Issue #1386) re-packs env_frames_ and
@@ -12627,6 +12634,11 @@ public:
     void bump_closures_apply_epoch_for_test() noexcept { bump_closures_apply_epoch(); }
     void note_apply_closure_tls_hit() noexcept {
         apply_closure_tls_hit_total_.fetch_add(1, std::memory_order_relaxed);
+    }
+    // Issue #5520: TLS-batched form (the apply hot path publishes in bursts).
+    void note_apply_closure_tls_hit_n(std::uint64_t n) noexcept {
+        if (n != 0)
+            apply_closure_tls_hit_total_.fetch_add(n, std::memory_order_relaxed);
     }
     void note_apply_closure_mtx_lookup() noexcept {
         apply_closure_mtx_lookup_total_.fetch_add(1, std::memory_order_relaxed);

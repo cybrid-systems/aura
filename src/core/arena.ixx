@@ -1011,6 +1011,28 @@ export inline void unnote_temporary_moving_live_ptr(void* p) noexcept {
     inv.live.store(static_cast<std::uint32_t>(inv.ptrs.size()), std::memory_order_release);
 }
 
+// Issue #5520: apply_closure binds a closure's flat + pool and unnotes both
+// on return. The single-pointer forms take the process-wide inventory mutex
+// four times with two O(n) finds; the pair form does both under one lock.
+export inline void unnote_temporary_moving_live_ptr2(void* a, void* b) noexcept {
+    if (a == nullptr && b == nullptr)
+        return;
+    auto& inv = moving_temp_canary_detail::g_inventory;
+    if (inv.live.load(std::memory_order_acquire) == 0)
+        return;
+    std::scoped_lock<std::mutex> lock(inv.mtx);
+    for (void* p : {a, b}) {
+        if (p == nullptr)
+            continue;
+        auto it = std::find(inv.ptrs.begin(), inv.ptrs.end(), p);
+        if (it != inv.ptrs.end()) {
+            *it = inv.ptrs.back();
+            inv.ptrs.pop_back();
+        }
+    }
+    inv.live.store(static_cast<std::uint32_t>(inv.ptrs.size()), std::memory_order_release);
+}
+
 export inline std::size_t snapshot_temporary_moving_live_ptrs(std::vector<void*>& out) noexcept {
     auto& inv = moving_temp_canary_detail::g_inventory;
     if (inv.live.load(std::memory_order_acquire) == 0) {
@@ -1221,6 +1243,26 @@ export struct TemporaryMovingLivePtrCanary {
     TemporaryMovingLivePtrCanary& operator=(const TemporaryMovingLivePtrCanary&) = delete;
     TemporaryMovingLivePtrCanary(TemporaryMovingLivePtrCanary&&) = delete;
     TemporaryMovingLivePtrCanary& operator=(TemporaryMovingLivePtrCanary&&) = delete;
+};
+
+// Issue #5520: pair form of TemporaryMovingLivePtrCanary (flat + pool under
+// one inventory lock on both bind and unnote).
+export struct TemporaryMovingLivePtrCanary2 {
+    void* a_ = nullptr;
+    void* b_ = nullptr;
+    TemporaryMovingLivePtrCanary2() noexcept = default;
+    ~TemporaryMovingLivePtrCanary2() noexcept {
+        if (a_ != nullptr || b_ != nullptr)
+            unnote_temporary_moving_live_ptr2(a_, b_);
+    }
+    void own_noted_pair(void* a, void* b) noexcept {
+        a_ = a;
+        b_ = b;
+    }
+    TemporaryMovingLivePtrCanary2(const TemporaryMovingLivePtrCanary2&) = delete;
+    TemporaryMovingLivePtrCanary2& operator=(const TemporaryMovingLivePtrCanary2&) = delete;
+    TemporaryMovingLivePtrCanary2(TemporaryMovingLivePtrCanary2&&) = delete;
+    TemporaryMovingLivePtrCanary2& operator=(TemporaryMovingLivePtrCanary2&&) = delete;
 };
 
 // Issue #3274: densify-tracked FFI opaque / native alias create must join
@@ -2238,6 +2280,54 @@ public:
         if (noted)
             *noted = true;
         return p;
+    }
+
+    // Issue #5520: one inventory lock for a closure's flat + pool. Same
+    // #4066 resolve+note contract as the single-pointer form.
+    void bind_temporary_moving_live_ptr2(void* a, void* b, void** out_a, bool* noted_a,
+                                         void** out_b, bool* noted_b) noexcept {
+        if (out_a)
+            *out_a = a;
+        if (out_b)
+            *out_b = b;
+        if (noted_a)
+            *noted_a = false;
+        if (noted_b)
+            *noted_b = false;
+        if ((!a && !b) || !moving_compact_enabled())
+            return;
+        auto& inv = moving_temp_canary_detail::g_inventory;
+        const bool watch =
+            g_moving_canary_before_recycle_hook.load(std::memory_order_relaxed) != nullptr;
+        if (watch)
+            g_moving_canary_lock_waiters.fetch_add(1, std::memory_order_acq_rel);
+        std::scoped_lock<std::mutex> lock(inv.mtx);
+        if (watch)
+            g_moving_canary_lock_waiters.fetch_sub(1, std::memory_order_acq_rel);
+        std::uint32_t noted = 0;
+        if (a != nullptr) {
+            if (void* neu = resolve_object_remap_for_bind(a))
+                a = neu;
+            inv.ptrs.push_back(a);
+            ++noted;
+            if (noted_a)
+                *noted_a = true;
+            if (out_a)
+                *out_a = a;
+        }
+        if (b != nullptr) {
+            if (void* neu = resolve_object_remap_for_bind(b))
+                b = neu;
+            inv.ptrs.push_back(b);
+            ++noted;
+            if (noted_b)
+                *noted_b = true;
+            if (out_b)
+                *out_b = b;
+        }
+        inv.live.store(static_cast<std::uint32_t>(inv.ptrs.size()), std::memory_order_release);
+        aura::core::densify_consistency::g_moving_temporary_canary_noted_total.fetch_add(
+            noted, std::memory_order_relaxed);
     }
 
     // Issue #1546 / #1481: optional resource-quota owner for allocate_raw.
@@ -5133,6 +5223,54 @@ export inline void* bind_temporary_moving_live_ptr_any_arena(void* p, bool* note
     if (noted)
         *noted = true;
     return p;
+}
+
+// Issue #5520: pair form of the any-arena bind (one inventory lock).
+export inline void bind_temporary_moving_live_ptr_any_arena2(void* a, void* b, void** out_a,
+                                                             bool* noted_a, void** out_b,
+                                                             bool* noted_b) noexcept {
+    if (out_a)
+        *out_a = a;
+    if (out_b)
+        *out_b = b;
+    if (noted_a)
+        *noted_a = false;
+    if (noted_b)
+        *noted_b = false;
+    if ((!a && !b) || !moving_compact_enabled())
+        return;
+    auto& inv = moving_temp_canary_detail::g_inventory;
+    const bool watch =
+        g_moving_canary_before_recycle_hook.load(std::memory_order_relaxed) != nullptr;
+    if (watch)
+        g_moving_canary_lock_waiters.fetch_add(1, std::memory_order_acq_rel);
+    std::scoped_lock<std::mutex> lock(inv.mtx);
+    if (watch)
+        g_moving_canary_lock_waiters.fetch_sub(1, std::memory_order_acq_rel);
+    std::uint32_t noted = 0;
+    if (a != nullptr) {
+        if (void* neu = live_arena_remap_detail::resolve_ptr_for_chase(a))
+            a = neu;
+        inv.ptrs.push_back(a);
+        ++noted;
+        if (noted_a)
+            *noted_a = true;
+        if (out_a)
+            *out_a = a;
+    }
+    if (b != nullptr) {
+        if (void* neu = live_arena_remap_detail::resolve_ptr_for_chase(b))
+            b = neu;
+        inv.ptrs.push_back(b);
+        ++noted;
+        if (noted_b)
+            *noted_b = true;
+        if (out_b)
+            *out_b = b;
+    }
+    inv.live.store(static_cast<std::uint32_t>(inv.ptrs.size()), std::memory_order_release);
+    aura::core::densify_consistency::g_moving_temporary_canary_noted_total.fetch_add(
+        noted, std::memory_order_relaxed);
 }
 
 // Issue #4124: C bridge for the JIT TU (never imports the arena module).

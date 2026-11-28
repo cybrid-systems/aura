@@ -2213,7 +2213,7 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
         env_frame_reuse_ = std::move(rebuilt);
     }
     {
-        std::scoped_lock<std::mutex> snap_lock(cap_snap_mtx_);
+        std::unique_lock<std::shared_mutex> snap_lock(cap_snap_mtx_);
         for (const EnvId id : dead_snaps)
             cap_snap_cache_.erase(id);
     }
@@ -2814,7 +2814,7 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
         env_frame_reuse_ = std::move(rebuilt);
     }
     {
-        std::scoped_lock<std::mutex> snap_lock(cap_snap_mtx_);
+        std::unique_lock<std::shared_mutex> snap_lock(cap_snap_mtx_);
         for (const EnvId id : dead_snaps)
             cap_snap_cache_.erase(id);
     }
