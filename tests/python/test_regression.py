@@ -152,6 +152,13 @@ def test_aot():
         ("pair", "(display (car (cons 10 20)))", "10"),
         ("nested", "(display (+ 1 (* 2 3)))", "7"),
         ("closure", "(display ((lambda (x) (+ x 1)) 41))", "42"),
+        # Issue #5517: apply copied at most 8 of the 256 collected arguments
+        # into the callee; 20 args must still arrive intact.
+        (
+            "apply_many",
+            "(display (apply + (list 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20)))",
+            "210",
+        ),
     ]
     for name, code, expected in cases:
         out_path = f"/tmp/aura-aot-{name}"

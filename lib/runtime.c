@@ -708,8 +708,11 @@ int64_t aura_closure_call(int64_t closure_id, int64_t* args, int64_t argc) {
 
     int64_t stack_buf[64];
     int64_t* locals = stack_buf;
-    if (nlocals > 64)
+    if (nlocals > 64) {
         locals = (int64_t*)malloc((size_t)nlocals * sizeof(int64_t));
+        if (locals == NULL)
+            return 11; // void: OOM must not dereference a null locals
+    }
     for (uint32_t i = 0; i < nlocals; ++i)
         locals[i] = 0;
 
@@ -1512,12 +1515,10 @@ int64_t aura_prim_call(int64_t prim_id, int64_t* args, int64_t argc) {
                 buf[count++] = aura_pair_car(lst);
                 lst = aura_pair_cdr(lst);
             }
-            // Call the function with the collected arguments
-            int64_t args_array[8] = {0};
-            int i;
-            for (i = 0; i < count && i < 8; i++)
-                args_array[i] = buf[i];
-            return aura_closure_call(f, args_array, count);
+            // Issue #5517: pass the real 256-slot buffer. The old 8-element
+            // copy left aura_closure_call reading args[8..count-1] past the
+            // array, exposing stack words as Aura values.
+            return aura_closure_call(f, buf, count);
         }
         case 24:
         case 25:
