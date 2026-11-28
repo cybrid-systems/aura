@@ -6,7 +6,7 @@
 Both registration channels are covered (Issue #5008): `register_prim` / `add(...)` in `src/**/*.cpp` **and** the evaluator ctor hot table in `src/compiler/evaluator_primitives_builtins.cpp` (`+ - * / = < > <= >= not and or eq?` live only there).
 Runtime canonical list: `(query :api-reference)` (includes `*deprecated*` section).
 Tiers (Issue #5008): one list, `docs/stdlib/primitive-tiers.json`; criterion + gate in [primitive-authoring-contract.md](../stdlib/primitive-authoring-contract.md).
-**kernel** 423 · **stdlib-candidate** 0 · **delete** 1 · **unclassified** 2
+**kernel** 425 · **stdlib-candidate** 0 · **delete** 1
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
 **Authoring (Issue #2915)**: prefer `register_prim` in `src/compiler/prim_registrar_scaffold.hh`; full contract [primitive-authoring-contract.md](../stdlib/primitive-authoring-contract.md) + [contributing.md](../contributing.md).
@@ -357,8 +357,8 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `typed-mutate-atomic` *[core]* `kernel` — `src/compiler/evaluator_primitives_mutate.cpp`
 - `unpin-stable-refs` *[core]* `kernel` — `src/compiler/evaluator_primitives_mutate.cpp`
 - `use` *[core]* `kernel` — `src/compiler/evaluator_primitives_module.cpp`
-- `uuid-v4` *[core]* `unclassified` — `src/compiler/evaluator_primitives_misc.cpp`
-- `uuid-v4-compact` *[core]* `unclassified` — `src/compiler/evaluator_primitives_misc.cpp`
+- `uuid-v4` *[core]* `kernel` — `src/compiler/evaluator_primitives_misc.cpp`
+- `uuid-v4-compact` *[core]* `kernel` — `src/compiler/evaluator_primitives_misc.cpp`
 - `vector` *[core]* `kernel` — `src/compiler/evaluator_primitives_vector.cpp`
 - `vector->list` *[core]* `kernel` — `src/compiler/evaluator_primitives_vector.cpp`
 - `vector-copy` *[core]* `kernel` — `src/compiler/evaluator_primitives_vector.cpp`
@@ -925,8 +925,8 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `typed-mutate-atomic` `kernel` — `src/compiler/evaluator_primitives_mutate.cpp`
 - `unpin-stable-refs` `kernel` — `src/compiler/evaluator_primitives_mutate.cpp`
 - `use` `kernel` — `src/compiler/evaluator_primitives_module.cpp`
-- `uuid-v4` `unclassified` — `src/compiler/evaluator_primitives_misc.cpp`
-- `uuid-v4-compact` `unclassified` — `src/compiler/evaluator_primitives_misc.cpp`
+- `uuid-v4` `kernel` — `src/compiler/evaluator_primitives_misc.cpp`
+- `uuid-v4-compact` `kernel` — `src/compiler/evaluator_primitives_misc.cpp`
 - `vector` `kernel` — `src/compiler/evaluator_primitives_vector.cpp`
 - `vector->list` `kernel` — `src/compiler/evaluator_primitives_vector.cpp`
 - `vector-copy` `kernel` — `src/compiler/evaluator_primitives_vector.cpp`
@@ -959,7 +959,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 
 Criterion: a name stays **kernel** only when Aura code cannot implement it without losing atomicity or a host effect. **stdlib-candidate** names are pure value->value functions Aura can host; **delete** names duplicate another registered name. See [primitive-authoring-contract.md](../stdlib/primitive-authoring-contract.md).
 
-### kernel (423)
+### kernel (425)
 
 - `%base64-decode` *[K-HOSTLIB]* — `src/compiler/evaluator_primitives_char.cpp`
 - `%base64-encode` *[K-HOSTLIB]* — `src/compiler/evaluator_primitives_char.cpp`
@@ -1360,6 +1360,8 @@ Criterion: a name stays **kernel** only when Aura code cannot implement it witho
 - `typed-mutate-atomic` *[K-WS]* — `src/compiler/evaluator_primitives_mutate.cpp`
 - `unpin-stable-refs` *[K-WS]* — `src/compiler/evaluator_primitives_mutate.cpp`
 - `use` *[K-ENGINE]* — `src/compiler/evaluator_primitives_module.cpp`
+- `uuid-v4` *[K-EXC-5498]* — `src/compiler/evaluator_primitives_misc.cpp`
+- `uuid-v4-compact` *[K-EXC-5498]* — `src/compiler/evaluator_primitives_misc.cpp`
 - `vector` *[K-VAL]* — `src/compiler/evaluator_primitives_vector.cpp`
 - `vector->list` *[K-PAIR-TABLE]* — `src/compiler/evaluator_primitives_vector.cpp`
 - `vector-copy` *[K-PAIR-TABLE]* — `src/compiler/evaluator_primitives_vector.cpp`
@@ -1388,8 +1390,3 @@ Criterion: a name stays **kernel** only when Aura code cannot implement it witho
 ### delete (1)
 
 - `primitives:contract-probe` *[D-ALIAS]* — `src/compiler/evaluator_primitives_test.cpp`
-
-### unclassified (2)
-
-- `uuid-v4` *[]* — `src/compiler/evaluator_primitives_misc.cpp`
-- `uuid-v4-compact` *[]* — `src/compiler/evaluator_primitives_misc.cpp`

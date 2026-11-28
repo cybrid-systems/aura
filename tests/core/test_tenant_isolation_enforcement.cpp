@@ -6803,9 +6803,10 @@ int main() {
         const auto prim = read_file("src/compiler/evaluator_primitives_security.cpp");
         CHECK(mandate.find("EXEMPT_2ARG_OPS") != std::string::npos,
               "AC3: mandate inventory present");
-        CHECK(ixx.find("kResidualNodeIdExemptOpsCount = 7") != std::string::npos,
-              "AC3: kResidualNodeIdExemptOpsCount = 7 (#3836 shell/command-output)");
-        CHECK(ixx.find("kNodeIdMandateExemptOpsCount = 7") != std::string::npos,
+        CHECK(ixx.find("kResidualNodeIdExemptOpsCount = 8") != std::string::npos,
+              "AC3: kResidualNodeIdExemptOpsCount = 8 (#3836 shell/command-output + #5512 "
+              "synthesize:define)");
+        CHECK(ixx.find("kNodeIdMandateExemptOpsCount = 8") != std::string::npos,
               "AC3: kNodeIdMandateExemptOpsCount = 7");
         CHECK(fiber.find("expected 7") != std::string::npos ||
                   fiber.find("!= 7") != std::string::npos,

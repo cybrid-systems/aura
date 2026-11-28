@@ -33,7 +33,7 @@
     "S-PURE": "pure value->value function; #1440 kept json-*/string-* core for speed, not for semantics",
     "D-ALIAS": "redundant registration: the same behaviour is already reachable through another name",
     "K-EXC-5003": "Kernel exceptions added with the SRFI-151 baseline: bitwise/bit-count/arithmetic-shift cannot be expressed in Aura before any bit primitive exists (#5003).",
-    "D-PREFIX-5009": "retired duplicate prefix (#5009): the same behaviour is the op of one (query …) / (mutate …) verb; kept registered and flagged deprecated for one release cycle",
+    "D-PREFIX-5009": "retired duplicate prefix (#5009): the same behaviour is the op of one (query \u2026) / (mutate \u2026) verb; kept registered and flagged deprecated for one release cycle",
     "K-ORCH-VERB-5006": "orchestration verb: scheduler/mailbox host state; Aura cannot implement it without the fiber scheduler",
     "D-SINGLE-5006": "single-use prefix (#5006): the engine name stays for one release cycle as a deprecated alias; the operation is a query/mutate op or a std library function",
     "K-EXC-5006": "Kernel exceptions added with the five orchestration verbs (#5006): they replace 24 prefixed orch: names, the deprecated aliases retire next cycle, and no removable name was left in the same change.",
@@ -59,7 +59,8 @@
     "K-EXC-5369": "Native ASCII case conversion and the word scan behind std/string (#5369). The interpreted bodies paid a closure call (or a loop step plus two comparisons) per character: 24 tags x 100 docs cost ~40-53 ms, and a 300x880-char word split 1947 ms, while the native walk is 12-13 ms and 7 ms. Both need the string-heap read gate (K-STR-HEAP); no removable registration was available in the same change.",
     "K-EXC-5127": "bus-call is the single kernel bridge for std/bus (#5127): attach/map the shared image, cross-process capability checks and the atomic publish generation cannot be expressed in Aura. std/bus builds the public records and status helpers on top of it.",
     "K-EXC-5313": "R7RS four-deep cxr (#5313). The cxr table already lists them as kernel primitives, and each step must run inrange_slot_tenant_allows (#4505) the way cadr/caddr do. The shorthand family does not fall through to the shared pair-slot face (#4111), so an Aura composition of car/cdr is a different reader. No registration was removable in the same change.",
-    "K-EXC-5448": "string-byte-length returns the stored UTF-8 byte count in O(1); string-length counts code points and cannot answer Content-Length. The webhook module called an interpreted per-code-point loop (about 2.3 us/char) on every body and header, and the request path re-counted the whole accumulated body; no removable registration was available in the same change."
+    "K-EXC-5448": "string-byte-length returns the stored UTF-8 byte count in O(1); string-length counts code points and cannot answer Content-Length. The webhook module called an interpreted per-code-point loop (about 2.3 us/char) on every body and header, and the request path re-counted the whole accumulated body; no removable registration was available in the same change.",
+    "K-EXC-5498": "Kernel exceptions for std/uuid host entropy (#5498): uuid-v4 and uuid-v4-compact need getrandom(2); Aura has no expression for an OS entropy source, and the previous std/uuid body was a fixed-seed LCG that repeated across processes. No removable registration existed in the same change."
   },
   "kernel_exceptions": [
     "arithmetic-shift",
@@ -121,14 +122,16 @@
     "orch:send",
     "orch:spawn",
     "orch:supervise-batch",
+    "string-byte-length",
     "string-downcase",
     "string-fnv1-32",
     "string-split-words",
     "string-upcase",
-    "string-byte-length"
+    "uuid-v4",
+    "uuid-v4-compact"
   ],
   "counts": {
-    "kernel": 423,
+    "kernel": 425,
     "stdlib-candidate": 0,
     "delete": 1
   },
@@ -1579,6 +1582,10 @@
       "tier": "kernel",
       "rule": "K-VAL"
     },
+    "string-byte-length": {
+      "tier": "kernel",
+      "rule": "K-EXC-5448"
+    },
     "string-copy": {
       "tier": "kernel",
       "rule": "K-STR-HEAP"
@@ -1743,6 +1750,14 @@
       "tier": "kernel",
       "rule": "K-ENGINE"
     },
+    "uuid-v4": {
+      "tier": "kernel",
+      "rule": "K-EXC-5498"
+    },
+    "uuid-v4-compact": {
+      "tier": "kernel",
+      "rule": "K-EXC-5498"
+    },
     "vector": {
       "tier": "kernel",
       "rule": "K-VAL"
@@ -1838,10 +1853,6 @@
     "write-file": {
       "tier": "kernel",
       "rule": "K-IO"
-    },
-    "string-byte-length": {
-      "tier": "kernel",
-      "rule": "K-EXC-5448"
     }
   },
   "retired_prefixes_5009": {

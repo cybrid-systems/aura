@@ -166,7 +166,7 @@ def main() -> int:
         m_start != -1 and "shell" in inv[m_start:] and '"command-output"' in inv[m_start:],
         "AC6: shell/command-output stay EXEMPT (no NodeId target)",
     )
-    must("len(EXEMPT_2ARG_OPS) != 7" in inv, "AC6: frozen exempt-count guard intact")
+    must("len(EXEMPT_2ARG_OPS) != 8" in inv, "AC6: frozen exempt-count guard intact")
 
     # ── AC7: wiring + runtime AC host file + no invent ──
     must("check_tenant_exec_jail_4233" in wired_text, "AC7: run_checks.py wires the #4233 linter")

@@ -71,11 +71,11 @@ def main() -> int:
     must("Soft/Off", "AC2 Soft test", test)
 
     # ── AC3 inventory: #3802 did not redesign NodeId; #3836 grew exempt to 7 ──
-    must("kResidualNodeIdExemptOpsCount = 7", "AC3 exempt count ixx", ixx)
-    must("kNodeIdMandateExemptOpsCount = 7", "AC3 mandate count ixx", ixx)
+    must("kResidualNodeIdExemptOpsCount = 8", "AC3 exempt count ixx", ixx)
+    must("kNodeIdMandateExemptOpsCount = 8", "AC3 mandate count ixx", ixx)
     # EXEMPT_2ARG size 7 in mandate linter (5 pre-#3836 + shell/command-output)
-    if "len(EXEMPT_2ARG_OPS) != 7" not in mandate and "expected 7" not in mandate:
-        fails.append("AC3: mandate linter no longer pins EXEMPT_2ARG size 7")
+    if "len(EXEMPT_2ARG_OPS) != 8" not in mandate and "expected 7" not in mandate:
+        fails.append("AC3: mandate linter no longer pins EXEMPT_2ARG size 8")
     must("write-file", "AC3 write-file still exempt", mandate)
     must_not("schema-3802", "AC3 no schema key", prim)
     must_not("issue-3802", "AC3 no issue key", prim)

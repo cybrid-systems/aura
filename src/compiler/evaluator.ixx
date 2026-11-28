@@ -520,9 +520,9 @@ export constexpr std::uint64_t INVALID_VERSION = std::numeric_limits<std::uint64
 //                                     query_workspace + diagnostic +
 //                                     memory + module + obs_jit + json)
 //   kResidualNodeIdInventoryCount   = exempt + scope = full inventory
-export inline constexpr std::int64_t kResidualNodeIdExemptOpsCount = 7;
+export inline constexpr std::int64_t kResidualNodeIdExemptOpsCount = 8;
 export inline constexpr std::int64_t kResidualNodeIdScopeFilesCount = 17;
-export inline constexpr std::int64_t kResidualNodeIdInventoryCount = 24;
+export inline constexpr std::int64_t kResidualNodeIdInventoryCount = 25;
 
 // Issue #2942: late-isolation NodeId mandate — every workspace-mutating
 // prim with a concrete NodeId goes through require_effect_for_node_id
@@ -534,7 +534,7 @@ export inline constexpr std::int64_t kResidualNodeIdInventoryCount = 24;
 // Issue #3526: same linter AC7 reverse-scans 3-arg require_effect
 // (and 4-arg literal ref_tenant=0) so new NodeId prims cannot silently
 // take the default. No new query key.
-export inline constexpr std::int64_t kNodeIdMandateExemptOpsCount = 7;
+export inline constexpr std::int64_t kNodeIdMandateExemptOpsCount = 8;
 export inline constexpr std::int64_t kNodeIdMandateWired = 1;
 
 // Issue #3040: residual compile:/verify:/syntax: NodeId writers gate

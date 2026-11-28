@@ -798,12 +798,12 @@ static void ac2881_3_inventory_constants_wired() {
         const auto p = ixx.find("kResidualNodeIdInventoryCount = ");
         return p == std::string::npos ? std::string{} : ixx.substr(p, 60);
     }();
-    CHECK(m_exempt.find("= 7") != std::string::npos,
-          "2881 AC3: kResidualNodeIdExemptOpsCount = 7 (3 #2839 + 2 #2881 + 2 #3836)");
+    CHECK(m_exempt.find("= 8") != std::string::npos,
+          "2881 AC3: kResidualNodeIdExemptOpsCount = 8 (3 #2839 + 2 #2881 + 2 #3836 + 1 #5512)");
     CHECK(m_scope.find("= 17") != std::string::npos,
           "2881 AC3: kResidualNodeIdScopeFilesCount = 17 (11 #2839 + 6 #2881)");
-    CHECK(m_inv.find("= 24") != std::string::npos,
-          "2881 AC3: kResidualNodeIdInventoryCount = 24 (7 exempt + 17 scope)");
+    CHECK(m_inv.find("= 25") != std::string::npos,
+          "2881 AC3: kResidualNodeIdInventoryCount = 25 (8 exempt + 17 scope)");
     // Schema-2881 exposed in posture prim (query:security-posture / side-effect-stats).
     CHECK(posture.find("schema-2881") != std::string::npos,
           "2881 AC3: schema-2881 field in posture prim");
@@ -930,9 +930,9 @@ static void ac3836_4_exempt_inventory_and_no_invent() {
     CHECK(mandate.find("\"shell\"") != std::string::npos, "3836 AC4: mandate EXEMPT lists shell");
     CHECK(mandate.find("\"command-output\"") != std::string::npos,
           "3836 AC4: mandate EXEMPT lists command-output");
-    CHECK(ixx.find("kResidualNodeIdExemptOpsCount = 7") != std::string::npos,
+    CHECK(ixx.find("kResidualNodeIdExemptOpsCount = 8") != std::string::npos,
           "3836 AC4: exempt count = 7");
-    CHECK(ixx.find("kNodeIdMandateExemptOpsCount = 7") != std::string::npos,
+    CHECK(ixx.find("kNodeIdMandateExemptOpsCount = 8") != std::string::npos,
           "3836 AC4: mandate exempt count = 7");
     CHECK(build.find("check_shell_require_effect_3836") != std::string::npos,
           "3836 AC4: build.py wires #3836 linter");

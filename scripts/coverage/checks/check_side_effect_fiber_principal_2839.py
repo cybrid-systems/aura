@@ -68,6 +68,9 @@ EXEMPT_2ARG_OPS = {
     # #3836 residual (2): shell/command-output require_effect(Exec)
     "shell",  # exec fork+execl (Issue #3836) — no NodeId target
     "command-output",  # exec popen (Issue #3836) — no NodeId target
+    # Issue #5512: synthesize:define gates the Network host effect itself;
+    # the op has no workspace NodeId target.
+    "synthesize:define",
 }
 
 
@@ -215,10 +218,10 @@ def main() -> int:
     must('require_effect(kEffectExec, "command-output")', "AC8", file_cpp)
     # Total EXEMPT_2ARG_OPS count matches kResidualNodeIdExemptOpsCount
     # (7: 3 from #2839 + 2 from #2881 + 2 from #3836).
-    if len(EXEMPT_2ARG_OPS) != 7:
+    if len(EXEMPT_2ARG_OPS) != 8:
         fails.append(
             f"AC8: EXEMPT_2ARG_OPS count = {len(EXEMPT_2ARG_OPS)}, "
-            f"expected 7 (3 #2839 + 2 #2881 + 2 #3836) per kResidualNodeIdExemptOpsCount"
+            f"expected 8 (3 #2839 + 2 #2881 + 2 #3836 + 1 #5512) per kResidualNodeIdExemptOpsCount"
         )
 
     # ── #2881 AC9 — residual inventory constants wired + match ──

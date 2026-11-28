@@ -70,6 +70,9 @@ EXEMPT_2ARG_OPS: dict[str, str] = {
     "deny_sys": "syscall wrapper (Issue #1329) — cap is string, no NodeId (#2881)",
     "shell": "exec fork+execl (Issue #3836) — no NodeId target",
     "command-output": "exec popen (Issue #3836) — no NodeId target",
+    # Issue #5512: synthesize:define calls http-post from C++ and gates the
+    # Network host effect itself; the op has no workspace NodeId target.
+    "synthesize:define": "network (LLM host POST); no NodeId target (#5512)",
 }
 
 # Ops that may appear as 2-arg require_effect when target_node == 0 inside
@@ -247,10 +250,10 @@ def main() -> int:
     must('require_effect(kEffectExec, "shell")', "AC2", file_cpp)
     must('require_effect(kEffectExec, "command-output")', "AC2", file_cpp)
     must("deny_sys", "AC2", io_cpp)
-    if len(EXEMPT_2ARG_OPS) != 7:
+    if len(EXEMPT_2ARG_OPS) != 8:
         fails.append(
             f"AC2: EXEMPT_2ARG_OPS count={len(EXEMPT_2ARG_OPS)} expected 7 "
-            "(3 #2839 + 2 #2881 + 2 #3836; lockstep kNodeIdMandateExemptOpsCount)"
+            "(3 #2839 + 2 #2881 + 2 #3836 + 1 #5512; lockstep kNodeIdMandateExemptOpsCount)"
         )
     # Constants match.
     m_ex = re.search(r"kNodeIdMandateExemptOpsCount\s*=\s*(\d+)", evaluator_ixx)

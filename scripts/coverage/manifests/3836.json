@@ -30,8 +30,8 @@
       "ac": "AC3-exempt",
       "path": "src/compiler/evaluator.ixx",
       "contains": [
-        "kResidualNodeIdExemptOpsCount = 7",
-        "kNodeIdMandateExemptOpsCount = 7"
+        "kResidualNodeIdExemptOpsCount = 8",
+        "kNodeIdMandateExemptOpsCount = 8"
       ]
     },
     {

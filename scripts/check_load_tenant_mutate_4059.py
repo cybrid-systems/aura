@@ -117,7 +117,7 @@ def main() -> int:
         m = re.search(r"EXEMPT_2ARG_OPS[^=]*=\s*\{(.*?)\n\}", text, re.S)
         must(m is not None and '"load"' not in m.group(1), f"AC5: load not in EXEMPT_2ARG_OPS ({Path(lint).name})")
     must(
-        "len(EXEMPT_2ARG_OPS) != 7" in read("scripts/coverage/checks/check_side_effect_fiber_principal_2839.py"),
+        "len(EXEMPT_2ARG_OPS) != 8" in read("scripts/coverage/checks/check_side_effect_fiber_principal_2839.py"),
         "AC5: frozen exempt-count guard intact",
     )
 
