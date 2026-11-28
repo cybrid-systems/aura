@@ -76,8 +76,10 @@ def main() -> int:
     # #4636's native-dispatch cycle guard (the refuse for a callee that
     # re-enters the innermost native activation, also ahead of the consume
     # block) moved it further — same rule, window follows the function.
+    # #5640's RefPrimitive gc-dispatch arm (ahead of the consume block too)
+    # grew it again; same rule.
     call = rt.find("int64_t aura_closure_dispatch_native_checked(")
-    body = rt[call : call + 12500] if call >= 0 else ""
+    body = rt[call : call + 14500] if call >= 0 else ""
     must("g_closure_must_deopt[cid] = 0", "AC2 call still clears", body)
     must("g_closure_bridge_epochs[cid] = 0", "AC2 poison epoch", body)
     must("Issue #2472", "AC2 identity recheck", body)

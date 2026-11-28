@@ -87,7 +87,10 @@ def main() -> int:
 
     # ── AC1: the refuse arm inside the blessed entry ───────────────
     must("Issue #4606" in rt, "AC1: runtime TU cites #4606")
-    at, body = window(rt, "int64_t aura_closure_dispatch_native_checked(", 3200)
+    # Issue #5640: the RefPrimitive dispatch arm grew the entry body
+    # (primitive-by-slot call + unlock); grow the cite window, the
+    # assertions are unchanged.
+    at, body = window(rt, "int64_t aura_closure_dispatch_native_checked(", 6000)
     must(at >= 0, "AC1: blessed dispatch entry present")
     if at >= 0:
         arm = body.find("Issue #4606")
