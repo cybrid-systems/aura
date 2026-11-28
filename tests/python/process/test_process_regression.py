@@ -312,6 +312,11 @@ CASES = (
         "module_cache_tier.ModuleCacheTier.test_cold_and_warm_reach_the_native_tier",
     ),
     (
+        5488,
+        "test_named_let_and_unsafe_set_with_module_env_binding",
+        "module_cache_tier.ModuleCacheTier.test_named_let_and_unsafe_set_with_module_env_binding",
+    ),
+    (
         5463,
         "test_six_stuck_bodies_share_one_drain_budget",
         "reg_fiber_exit.StuckBodyExit.test_six_stuck_bodies_share_one_drain_budget",

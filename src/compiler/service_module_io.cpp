@@ -87,6 +87,52 @@ void CompilerService::cache_module(const std::string& content, const std::string
     // (was the inline DefineFinder struct in cache_define).
     auto finder = aura::compiler::find_top_level_defines(flat, pool, expanded);
 
+    // Issue #5488: the module-env binding must not publish a body that the
+    // IR lowering cannot represent. #4618: a non-local set! has no store in
+    // IR Set. #4372: a lambda-form while applies closures from the
+    // primitive, so the call returns the pre-loop value. Refuse the same
+    // shapes specialize_one_lambda_via_ir refuses; the tree-walker closure
+    // eval_flat installed stays authoritative.
+    auto body_ir_safe = [&](aura::ast::NodeId def_id, const std::string& name) {
+        if (define_body_sets_nonlocal_4618(flat, pool, def_id, name))
+            return false;
+        struct LambdaWhile {
+            const aura::ast::FlatAST& f;
+            const aura::ast::StringPool& p;
+            bool hit = false;
+            void walk(aura::ast::NodeId id) {
+                if (hit || id == aura::ast::NULL_NODE || id >= f.size() || f.is_free_slot(id))
+                    return;
+                auto nv = f.get(id);
+                if (nv.tag == aura::ast::NodeTag::Quote)
+                    return;
+                if (nv.tag == aura::ast::NodeTag::Call && nv.children.size() >= 3) {
+                    auto callee_id = nv.child(0);
+                    if (callee_id < f.size()) {
+                        auto cal = f.get(callee_id);
+                        if (cal.tag == aura::ast::NodeTag::Variable &&
+                            p.resolve(cal.sym_id) == "while") {
+                            const bool arm1 = nv.child(1) < f.size() &&
+                                              f.get(nv.child(1)).tag ==
+                                                  aura::ast::NodeTag::Lambda;
+                            const bool arm2 = nv.child(2) < f.size() &&
+                                              f.get(nv.child(2)).tag ==
+                                                  aura::ast::NodeTag::Lambda;
+                            if (arm1 || arm2)
+                                hit = true;
+                        }
+                    }
+                }
+                if (hit)
+                    return;
+                for (auto c : nv.children)
+                    walk(c);
+            }
+        } lambda_while{flat, pool};
+        lambda_while.walk(def_id);
+        return !lambda_while.hit;
+    };
+
     // Issue #5281: export filtering removes an unexported define from
     // the importer's env, so the tree walker still sees the primitive.
     // The global IR cache is keyed by bare name and does not. std/hash
@@ -120,14 +166,34 @@ void CompilerService::cache_module(const std::string& content, const std::string
         }
     }
 
+    // Issue #5488: module-env binding is for the library/exported face.
+    // A project-private src/ module keeps the tree-walker closure, so a
+    // type error in its body reports at the define instead of the call
+    // site. lib/ modules keep the binding even without an export form
+    // (lib/phys.aura is the motivating 156-define case).
+    Env* binding_env = nullptr;
+    if (module_env != nullptr &&
+        (module_has_export || path.find("/lib/") != std::string::npos))
+        binding_env = module_env;
+
     // Cache each define (IR only — tree-walker already evaluated the module)
     for (auto& [name, node_id] : finder) {
         if (ir_cache_.count(name)) {
             // Issue #5420: a disk-cache hit already has the IR bundle; the
             // module env still holds the tree-walker closure from eval_flat.
             // Publish the cached closure into that env before returning.
-            if (module_env != nullptr && disk_lowered.count(name) != 0)
-                (void)bind_define_env_only_to_env(flat, pool, node_id, name, *module_env);
+            if (binding_env != nullptr && disk_lowered.count(name) != 0) {
+                if (body_ir_safe(node_id, name)) {
+                    (void)bind_define_env_only_to_env(flat, pool, node_id, name, *binding_env);
+                } else {
+                    // Issue #5488: a bundle written by a build without the
+                    // body gate must not replace the tree-walker closure.
+                    ir_cache_.erase(name);
+                    ir_cache_strings_.erase(name);
+                    ir_cache_bridge_.erase(name);
+                    disk_lowered.erase(name);
+                }
+            }
             // Issue #5464: the hit path must restore the same per-name
             // bookkeeping the lowering path below publishes. Without
             // function_sources_ the TW native tier has no source to
@@ -181,40 +247,117 @@ void CompilerService::cache_module(const std::string& content, const std::string
                 const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>,
                                          aura::core::TransparentStringHash, std::equal_to<>>&
                     ir_cache;
+                const Env* module_env;
                 bool skip = false;
-                std::unordered_set<std::string> let_bound;
+                std::vector<std::unordered_set<std::string>> scopes;
+
+                [[nodiscard]] bool local_bound(const std::string& nm) const {
+                    for (auto it = scopes.rbegin(); it != scopes.rend(); ++it)
+                        if (it->count(nm) != 0)
+                            return true;
+                    return false;
+                }
+                [[nodiscard]] bool resolvable(const std::string& nm) const {
+                    if (nm.empty() || nm[0] == ':')
+                        return true;
+                    if (local_bound(nm) || params.count(nm) != 0 || nm == self_name)
+                        return true;
+                    if (eval.primitives().slot_for_name(nm) <
+                        eval.primitives().slot_count())
+                        return true;
+                    if (ir_cache.count(nm) != 0)
+                        return true;
+                    // Issue #5488: value defines are not in ir_cache_, but
+                    // eval_flat bound every top-level define in the module env.
+                    // Lowering resolves an unknown name with a late-bound
+                    // top-ref, so a module-level value is safe to accept.
+                    if (module_env != nullptr && module_env->lookup_local_binding(nm).has_value())
+                        return true;
+                    return false;
+                }
                 void walk(aura::ast::NodeId id) {
-                    if (skip || id >= f.size())
+                    if (skip || id == aura::ast::NULL_NODE || id >= f.size() ||
+                        f.is_free_slot(id))
                         return;
                     auto nv = f.get(id);
-                    if (nv.tag == aura::ast::NodeTag::Let || nv.tag == aura::ast::NodeTag::LetRec) {
-                        auto nm = std::string(p.resolve(nv.sym_id));
+                    if (nv.tag == aura::ast::NodeTag::Quote)
+                        return;
+                    if (nv.tag == aura::ast::NodeTag::Lambda) {
+                        scopes.push_back({});
+                        for (auto pid : nv.params) {
+                            auto pn = std::string(p.resolve(pid));
+                            if (!pn.empty())
+                                scopes.back().insert(std::move(pn));
+                        }
+                        for (auto c : nv.children)
+                            walk(c);
+                        scopes.pop_back();
+                        return;
+                    }
+                    if (nv.tag == aura::ast::NodeTag::Let ||
+                        nv.tag == aura::ast::NodeTag::LetRec) {
+                        const bool rec = nv.tag == aura::ast::NodeTag::LetRec;
+                        std::string nm;
+                        if (nv.sym_id != aura::ast::INVALID_SYM)
+                            nm = std::string(p.resolve(nv.sym_id));
+                        const bool named = !nm.empty();
+                        if (rec && named) {
+                            scopes.push_back({});
+                            scopes.back().insert(nm);
+                        }
                         if (!nv.children.empty())
                             walk(nv.child(0));
-                        let_bound.insert(nm);
-                        if (nv.children.size() >= 2)
-                            walk(nv.child(1));
-                        let_bound.erase(nm);
+                        if (!rec && named) {
+                            scopes.push_back({});
+                            scopes.back().insert(std::move(nm));
+                        }
+                        for (std::size_t i = 1; i < nv.children.size(); ++i)
+                            walk(nv.child(i));
+                        if (named)
+                            scopes.pop_back();
+                        return;
+                    }
+                    if (nv.tag == aura::ast::NodeTag::Begin) {
+                        scopes.push_back({});
+                        for (auto c : nv.children) {
+                            if (c >= f.size() || f.is_free_slot(c))
+                                continue;
+                            auto cv = f.get(c);
+                            if (cv.tag != aura::ast::NodeTag::Define ||
+                                cv.sym_id == aura::ast::INVALID_SYM)
+                                continue;
+                            auto dn = std::string(p.resolve(cv.sym_id));
+                            if (!dn.empty())
+                                scopes.back().insert(std::move(dn));
+                        }
+                        for (auto c : nv.children)
+                            walk(c);
+                        scopes.pop_back();
+                        return;
+                    }
+                    if (nv.tag == aura::ast::NodeTag::Define) {
+                        if (nv.sym_id != aura::ast::INVALID_SYM) {
+                            if (scopes.empty())
+                                scopes.push_back({});
+                            auto dn = std::string(p.resolve(nv.sym_id));
+                            if (!dn.empty())
+                                scopes.back().insert(std::move(dn));
+                        }
+                        for (auto c : nv.children)
+                            walk(c);
                         return;
                     }
                     if (nv.tag == aura::ast::NodeTag::Variable) {
                         auto var_name = std::string(p.resolve(nv.sym_id));
-                        if (params.count(var_name) || let_bound.count(var_name))
-                            return;
-                        if (var_name == self_name)
-                            return;
-                        if (eval.primitives().slot_for_name(var_name) <
-                            eval.primitives().slot_count())
-                            return;
-                        if (ir_cache.count(var_name))
-                            return;
-                        skip = true;
+                        if (!resolvable(var_name))
+                            skip = true;
+                        return;
                     }
                     for (auto c : nv.children)
                         walk(c);
                 }
             };
-            FnCheck fc{flat, pool, param_names, name, evaluator_, ir_cache_};
+            FnCheck fc{flat, pool, param_names, name, evaluator_, ir_cache_, binding_env};
             if (!body_node.children.empty())
                 fc.walk(body_node.child(0));
             skip_ir_cache_fn = fc.skip;
@@ -222,6 +365,12 @@ void CompilerService::cache_module(const std::string& content, const std::string
         if (skip_ir_cache_fn) {
             continue;
         }
+
+        // Issue #5488: the FnCheck only sees names; the body gate sees the
+        // #4618 non-local set! and #4372 lambda-while shapes that lowering
+        // cannot represent. Keep the tree-walker closure for those.
+        if (!body_ir_safe(node_id, name))
+            continue;
 
         // Skip functions with internal (define ...) — their cell setup is
         // in __top__ which isn't cached; the cached lambda can't create cells.
@@ -307,8 +456,8 @@ void CompilerService::cache_module(const std::string& content, const std::string
         // Issue #5420: eval_flat installed a tree-walker closure in the
         // module env. Publish the IR closure now so calling the export from
         // the entry program hits ir-calls instead of the walker.
-        if (module_env != nullptr)
-            (void)bind_define_env_only_to_env(flat, pool, node_id, name, *module_env);
+        if (binding_env != nullptr)
+            (void)bind_define_env_only_to_env(flat, pool, node_id, name, *binding_env);
         // Issue #2572: persist the module's ConstString pool with the
         // cached IR. Without this, call-site lower_to_ir_with_cache
         // copies the function but cannot remap ConstString indices

@@ -13,6 +13,7 @@ module;
 #include "core/workspace_epoch.hh"                    // current_mutation_epoch
 #include "lock_order_audit.h"                         // lock_order
 #include "runtime_shared.h"                           // aura_set_aot_metrics
+#include <cstdlib>
 
 module aura.compiler.service;
 
@@ -709,13 +710,13 @@ CompilerService::CompilerService()
     evaluator_.set_module_loaded_callback([this](const std::string& content,
                                                  const std::string& path,
                                                  aura::compiler::Env* module_env) {
-        // Issue #5420 follow-up: module env IR binding must not replace
-        // the tree-walker closures when the lowered bundle can point at
-        // a sibling function. cache_module still writes/reads the IR
-        // disk cache; env binding stays on the tree walker until the
-        // per-define identity check is exact.
-        (void)module_env;
-        cache_module(content, path, nullptr);
+        // Issue #5488: the three prerequisites (named-let/value-define
+        // FnCheck scopes, and the #4618/#4372 body gate on the lowering and
+        // disk-hit paths) are fixed. Default remains the tree-walker face
+        // until the performance issue decides whether module IR should be
+        // default; AURA_MODULE_IR_BIND=1 exercises the binding.
+        const bool bind_module_env = std::getenv("AURA_MODULE_IR_BIND") != nullptr;
+        cache_module(content, path, bind_module_env ? module_env : nullptr);
     });
 
     // Issue #97 Action 1: hot-swap callback. Allows (mutate :hot-swap-fn "name" "new-src")

@@ -62,6 +62,72 @@ class ModuleCacheTier(unittest.TestCase):
         perf.unlink(missing_ok=True)
         return int(took.group(1)), int(tw.group(1)), perf_text
 
+    def run_program(self, workdir: Path, cache: Path, main: str = "main.aura") -> str:
+        env = dict(os.environ)
+        env["AURA_SANDBOX"] = "off"
+        env["XDG_CACHE_HOME"] = str(cache)
+        env["AURA_MODULE_IR_BIND"] = "1"
+        env.pop("AURA_PIPELINE_STRICT", None)
+        proc = subprocess.run(
+            [str(AURA_BIN), main],
+            cwd=workdir,
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=60,
+        )
+        text = (proc.stdout or "") + (proc.stderr or "")
+        self.assertEqual(proc.returncode, 0, text[-1200:])
+        return text
+
+    def test_named_let_and_unsafe_set_with_module_env_binding(self) -> None:
+        if not AURA_BIN.exists():
+            self.skipTest(f"{AURA_BIN} not built")
+        with tempfile.TemporaryDirectory(prefix="aura-modbind-5488-") as td:
+            workdir = Path(td)
+            cache = workdir / "cache"
+            cache.mkdir()
+            lib = workdir / "lib"
+            lib.mkdir()
+
+            (lib / "mod.aura").write_text(
+                "(export modloop modval)\n"
+                "(define modval 7)\n"
+                "(define (modloop n acc)\n"
+                "  (let loop ((i n) (a acc))\n"
+                "    (if (= i 0) (+ a modval) (loop (- i 1) (+ a 1)))))\n"
+            )
+            (workdir / "main.aura").write_text(
+                '(require "./lib/mod.aura")\n'
+                "(display (modloop 10 0)) (newline)\n"
+                '(let ((cs (stats:get "closure:stats")))\n'
+                '  (display "ir-calls=") (display (hash-ref cs "ir-calls")) (newline))\n'
+            )
+            out = self.run_program(workdir, cache)
+            self.assertIn("17", out)
+            ir = re.search(r"ir-calls=(\d+)", out)
+            self.assertIsNotNone(ir, out[-1200:])
+            self.assertGreater(int(ir.group(1)), 0, out[-1200:])
+
+            (lib / "recordq.aura").write_text(
+                "(export record-hold record-hold! record-count)\n"
+                "(define record-hold #f)\n"
+                "(define record-count 0)\n"
+                "(define (record-hold! v)\n"
+                "  (set! record-hold v)\n"
+                "  (set! record-count (+ record-count 1))\n"
+                "  v)\n"
+            )
+            (workdir / "main.aura").write_text(
+                '(require "./lib/recordq.aura")\n'
+                "(record-hold! #t)\n"
+                '(display "hold=") (display record-hold) (newline)\n'
+                '(display "count=") (display record-count) (newline)\n'
+            )
+            out = self.run_program(workdir, cache)
+            self.assertIn("hold=#t", out)
+            self.assertIn("count=1", out)
+
     def test_cold_and_warm_reach_the_native_tier(self) -> None:
         if not AURA_BIN.exists():
             self.skipTest(f"{AURA_BIN} not built")
