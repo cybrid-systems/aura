@@ -93,8 +93,12 @@ jobs:
     - name: Install Python CI deps
       run: pip install --break-system-packages -r requirements-dev.txt
 
-    - name: Build
-      run: python3 build.py build
+    # Configure only: the gate below builds test_chaos_steal_mutation_gc
+    # itself (it pulls in libaura_test_objects). A bare `build.py build`
+    # compiled the whole issue matrix first — 71.7 min on run 46139267882
+    # (#5646).
+    - name: Configure
+      run: python3 build.py configure
 
     # Builds + runs test_chaos_steal_mutation_gc under the env matrix below
     # (see build.py cmd_chaos_steal_gc_nightly_2931). Soft steal forbidden.
@@ -124,8 +128,12 @@ jobs:
     - name: Install Python CI deps
       run: pip install --break-system-packages -r requirements-dev.txt
 
-    - name: Build
-      run: python3 build.py build
+    # Configure only: the gate below builds test_chaos_mutate_steal_gc_mailbox
+    # itself (it pulls in libaura_test_objects). A bare `build.py build`
+    # compiled the whole issue matrix first — 58.6 min on run 46139267882
+    # (#5646).
+    - name: Configure
+      run: python3 build.py configure
 
     - name: production-concurrency gate (#2380 / #2513)
       env:
@@ -153,7 +161,13 @@ jobs:
     - name: Install Python CI deps
       run: pip install --break-system-packages -r requirements-dev.txt
 
-    - name: Build
+    # The fuzzers only drive build/aura (tests/fuzz/common.py AURA_BIN). A
+    # bare `build.py build` compiled the whole issue matrix first — 70.5 min
+    # on run 46139267882 (#5646).
+    - name: Build aura
+      env:
+        AURA_BUILD_TARGETS: aura
+        AURA_ISSUE_BUILD: none
       run: python3 build.py build
 
     - name: List fuzzers
@@ -227,7 +241,13 @@ jobs:
     - name: Install Python CI deps
       run: pip install --break-system-packages -r requirements-dev.txt
 
+    # test_offload_soak.py only drives build/aura. A bare `build.py build`
+    # compiled the whole issue matrix first — 49.2 min on run 46139267882
+    # (#5646).
     - name: Build aura
+      env:
+        AURA_BUILD_TARGETS: aura
+        AURA_ISSUE_BUILD: none
       run: python3 build.py build
 
     - name: Offload submit/await soak

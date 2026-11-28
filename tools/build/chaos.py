@@ -188,6 +188,9 @@ def cmd_chaos_steal_gc_nightly_2931():
             )
             return 0
         info("building test_chaos_steal_mutation_gc…")
+        # Full job pool: with `build.py configure` in front (nightly, #5646)
+        # this is the job's only compile, and the issue-farm shards build
+        # the same libaura_test_objects at -j nproc.
         nproc = os.cpu_count() or 4
         r = subprocess.run(
             [
@@ -195,7 +198,7 @@ def cmd_chaos_steal_gc_nightly_2931():
                 "-C",
                 str(BUILD),
                 "-j",
-                str(max(1, nproc // 2)),
+                str(nproc),
                 "test_chaos_steal_mutation_gc",
             ],
             cwd=ROOT,
