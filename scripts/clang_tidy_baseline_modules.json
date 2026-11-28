@@ -1,5 +1,5 @@
 {
-  "generated_with": "clang-tidy 23.1.5",
+  "generated_with": "clang-tidy 23.1.6",
   "scopes": [
     "src/core",
     "src/parser",
@@ -8,7 +8,7 @@
     "src/exec",
     "src/compiler"
   ],
-  "total": 42988,
+  "total": 43032,
   "counts": {
     "/usr/include/c++/16/bits/stl_algobase.h|misc-no-recursion": 1,
     "/usr/include/c++/16/bits/stl_construct.h|misc-no-recursion": 1,
@@ -182,7 +182,7 @@
     "src/compiler/ir_executor.ixx|misc-explicit-constructor": 1,
     "src/compiler/ir_executor.ixx|misc-include-cleaner": 20,
     "src/compiler/ir_executor.ixx|misc-non-private-member-variables-in-classes": 6,
-    "src/compiler/ir_executor.ixx|readability-identifier-length": 13,
+    "src/compiler/ir_executor.ixx|readability-identifier-length": 15,
     "src/compiler/ir_soa.ixx|bugprone-easily-swappable-parameters": 4,
     "src/compiler/ir_soa.ixx|bugprone-signed-bitwise": 8,
     "src/compiler/ir_soa.ixx|bugprone-sizeof-expression": 1,
@@ -488,7 +488,7 @@
     "src/core/arena.ixx|cppcoreguidelines-pro-bounds-pointer-arithmetic": 15,
     "src/core/arena.ixx|cppcoreguidelines-pro-type-vararg": 1,
     "src/core/arena.ixx|cppcoreguidelines-special-member-functions": 3,
-    "src/core/arena.ixx|misc-const-correctness": 136,
+    "src/core/arena.ixx|misc-const-correctness": 142,
     "src/core/arena.ixx|misc-include-cleaner": 38,
     "src/core/arena.ixx|misc-non-private-member-variables-in-classes": 127,
     "src/core/arena.ixx|modernize-loop-convert": 2,
@@ -498,8 +498,8 @@
     "src/core/arena.ixx|performance-faster-string-find,performance-prefer-single-char-overloads": 1,
     "src/core/arena.ixx|performance-inefficient-vector-operation": 2,
     "src/core/arena.ixx|performance-no-int-to-ptr": 1,
-    "src/core/arena.ixx|readability-identifier-length": 134,
-    "src/core/arena.ixx|readability-implicit-bool-conversion": 99,
+    "src/core/arena.ixx|readability-identifier-length": 146,
+    "src/core/arena.ixx|readability-implicit-bool-conversion": 121,
     "src/core/arena_auto_policy_stats.h|bugprone-easily-swappable-parameters": 6,
     "src/core/arena_auto_policy_stats.h|readability-identifier-length": 18,
     "src/core/ast.ixx|bugprone-branch-clone": 1,

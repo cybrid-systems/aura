@@ -294,19 +294,19 @@ public:
     }
     // Issue #5640: a native frame in an OSR-handoff chain writes a
     // captured cell through the runtime cell_set bridge.
-    [[nodiscard]] bool store_cell(std::uint64_t id, EvalValue value) {
-        if (id >= cell_heap_.size())
+    [[nodiscard]] bool store_cell(std::uint64_t cell_id, EvalValue value) {
+        if (cell_id >= cell_heap_.size())
             return false;
-        cell_heap_[id] = value;
+        cell_heap_[cell_id] = value;
         return true;
     }
     // Issue #5643: a mid-body JIT frame-deopt spill of a promoted cell
     // carries the cell CONTENT. Materialize a real interpreter cell so the
     // resumed frame's CellGet sees the same contents the native alloca had.
     [[nodiscard]] EvalValue make_cell_value(EvalValue content) {
-        const auto id = alloc_cell();
-        cell_heap_[id] = content;
-        return types::make_cell(id);
+        const auto cell_id = alloc_cell();
+        cell_heap_[cell_id] = content;
+        return types::make_cell(cell_id);
     }
 
     // Get/set evaluation strategy
