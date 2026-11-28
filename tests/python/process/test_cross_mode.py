@@ -104,14 +104,19 @@ CASES = (
         "xmode_force_soa_split.TestForceSoaSplit4869.test_no_extra_last_value",
     ),
     (
-        4908,
-        "test_toml_next_to_entry",
-        "xmode_load_preset.LoadPreset.test_toml_next_to_entry",
+        5501,
+        "test_toml_next_to_entry_is_ignored",
+        "xmode_load_preset.LoadPreset.test_toml_next_to_entry_is_ignored",
     ),
     (
-        4908,
-        "test_toml_next_to_entry_force_soa",
-        "xmode_load_preset.LoadPreset.test_toml_next_to_entry_force_soa",
+        5501,
+        "test_toml_next_to_entry_is_ignored_force_soa",
+        "xmode_load_preset.LoadPreset.test_toml_next_to_entry_is_ignored_force_soa",
+    ),
+    (
+        5501,
+        "test_project_run_trusts_toml",
+        "xmode_load_preset.LoadPreset.test_project_run_trusts_toml",
     ),
     (
         4908,

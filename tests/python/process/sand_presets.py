@@ -76,10 +76,14 @@ class Presets(unittest.TestCase):
     def test_env_and_toml(self) -> None:
         r = self.run_aura(AURA_PRESET="dev")
         self.assertEqual(r.returncode, 0, r.stderr)
+        # Issue #5501: an aura.toml sitting next to the file is NOT a
+        # capability grant. Only the trusted project face (aura run) reads
+        # its preset; a single-file run stays on the Restricted default.
         (self.cwd / "aura.toml").write_text('preset = "dev"\n')
         r = self.run_aura()
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("preset=dev", r.stderr)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("mutate not granted", r.stderr)
+        self.assertNotIn("preset=dev", r.stderr)
 
     def test_grant_and_deny(self) -> None:
         r = self.run_aura("--grant", "mutate")

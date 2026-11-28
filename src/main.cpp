@@ -854,12 +854,20 @@ static std::string positioned_form_4908(std::uint32_t line, std::uint32_t column
     return out;
 }
 
-// Issue #4912: `preset = "dev"` from ./aura.toml, else from the aura.toml next
-// to the entry file. Only that one key is read; anything else is ignored.
-static std::string read_toml_preset_4912(const std::string& entry_path) {
-    std::vector<std::filesystem::path> candidates{std::filesystem::path("aura.toml")};
-    if (!entry_path.empty())
-        candidates.push_back(std::filesystem::path(entry_path).parent_path() / "aura.toml");
+// Issue #5501: a project's aura.toml may raise capabilities only when the
+// user asked for the project face - `aura run` chdirs to the project root
+// and sets this. A plain `aura file.aura` / `aura --load f` must never let
+// the working directory (or the file's own directory) choose its sandbox.
+static bool g_trust_project_5501 = false;
+
+// Issue #4912: `preset = "dev"` from ./aura.toml, and only on the trusted
+// project face. Issue #5501: the entry file's own aura.toml is never read -
+// running someone's file must not import their capability choice. Only that
+// one key is read; anything else is ignored.
+static std::string read_toml_preset_4912([[maybe_unused]] const std::string& entry_path) {
+    if (!g_trust_project_5501)
+        return {};
+    const std::vector<std::filesystem::path> candidates{std::filesystem::path("aura.toml")};
     for (const auto& c : candidates) {
         std::ifstream in(c);
         if (!in)
@@ -884,6 +892,19 @@ static std::string read_toml_preset_4912(const std::string& entry_path) {
         }
     }
     return {};
+}
+
+// Issue #5501: the ci preset's write root must stay inside the project.
+// An absolute path or a ".." component would turn ci into unscoped write.
+static bool trusted_out_dir_5501(std::string_view out) {
+    const std::filesystem::path p{std::string(out)};
+    if (p.is_absolute())
+        return false;
+    for (const auto& part : p) {
+        if (part == "..")
+            return false;
+    }
+    return true;
 }
 
 // Issue #4913: one flat `key = "value"` from an aura.toml.
@@ -1568,6 +1589,10 @@ static std::optional<int> front_door_4913(int& argc, char**& argv) {
             std::println(std::cerr, "error: cannot enter {}: {}", root->string(), ec.message());
             return 1;
         }
+        // Issue #5501: the project face is the one place aura.toml may pick
+        // the preset (the user pointed at this project). A single-file run
+        // stays on the Restricted default.
+        g_trust_project_5501 = true;
         // Module paths are project-root relative: (require "lib/x").
         std::string ap = root->string();
         if (const char* old = ::aura::config::raw(::aura::config::Key::AURA_PATH); old && *old)
@@ -3768,12 +3793,11 @@ static int fold_oneshot_capabilities(
         out.status = 1;
         return 1;
     }
-    // Issue #4912: resolve the preset (flag > AURA_PRESET > ./aura.toml or
-    // the entry file's aura.toml) and fold it into the soft session.
-    // Issue #4911: `aura repl FILE` reads FILE's aura.toml preset; the REPL is
-    // a development face, so it defaults to dev (:reload needs mutate).
-    if (g_repl_4911 && entry_path_4912.empty())
-        entry_path_4912 = g_repl_file_4911;
+    // Issue #4912: resolve the preset (flag > AURA_PRESET > ./aura.toml on
+    // the trusted project face) and fold it into the soft session.
+    // Issue #4911: the REPL is a development face, so it defaults to dev
+    // (:reload needs mutate). Issue #5501: it no longer imports the preset
+    // of a FILE argument's directory.
     if (preset_4912.empty()) {
         if (const char* ev = ::aura::config::raw(::aura::config::Key::AURA_PRESET); ev && *ev)
             preset_4912 = ev;
@@ -3806,8 +3830,19 @@ static int fold_oneshot_capabilities(
     // out directory (aura.toml `out`, default out/; `aura run` runs from the
     // project root). dev / a bare `--grant write` keep Write on every path.
     if (preset_4912 == "ci") {
-        auto out = read_toml_key_4913("aura.toml", "out");
-        write_dirs_4912.push_back(out.empty() ? std::string("out") : out);
+        // Issue #5501: `out` comes from the same trusted aura.toml that
+        // supplied the preset (aura run), and must stay under the project.
+        auto out_dir = g_trust_project_5501 ? read_toml_key_4913("aura.toml", "out")
+                                            : std::string{};
+        if (!out_dir.empty() && !trusted_out_dir_5501(out_dir)) {
+            std::println(std::cerr,
+                         "error: aura.toml out = \"{}\" must be a relative path inside the "
+                         "project (no absolute path, no '..')",
+                         out_dir);
+            out.status = 1;
+            return 1;
+        }
+        write_dirs_4912.push_back(out_dir.empty() ? std::string("out") : out_dir);
     }
     if (preset_4912 == "dev")
         write_unscoped_4912 = true;

@@ -58,13 +58,33 @@ class LoadPreset(unittest.TestCase):
         self.assertIn("(v 2)", load.stdout)
         self.assertNotIn("mutate not granted", load.stderr)
 
-    def test_toml_next_to_entry(self) -> None:
-        (self.cwd / "kit" / "aura.toml").write_text('preset = "dev"\n')
-        self.check_both_faces_agree()
+    def check_both_faces_denied(self, **extra: str) -> None:
+        # Issue #5501: aura.toml next to the file is untrusted. Neither the
+        # file face nor --load may import its preset.
+        for proc in (
+            self.run_aura("kit/p.aura", **extra),
+            self.run_aura("--load", "kit/p.aura", **extra),
+        ):
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertIn("mutate not granted", proc.stderr)
+            self.assertNotIn("(v 2)", proc.stdout)
 
-    def test_toml_next_to_entry_force_soa(self) -> None:
+    def test_toml_next_to_entry_is_ignored(self) -> None:
         (self.cwd / "kit" / "aura.toml").write_text('preset = "dev"\n')
-        self.check_both_faces_agree(AURA_PIPELINE_STRICT="force-soa")
+        self.check_both_faces_denied()
+
+    def test_toml_next_to_entry_is_ignored_force_soa(self) -> None:
+        (self.cwd / "kit" / "aura.toml").write_text('preset = "dev"\n')
+        self.check_both_faces_denied(AURA_PIPELINE_STRICT="force-soa")
+
+    def test_project_run_trusts_toml(self) -> None:
+        # The user asked for the project face, so its aura.toml preset runs.
+        (self.cwd / "kit" / "aura.toml").write_text(
+            'preset = "dev"\nentry = "p.aura"\n'
+        )
+        r = self.run_aura("run", "kit/p.aura")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("(v 2)", r.stdout)
 
     def test_env_preset(self) -> None:
         self.check_both_faces_agree(AURA_PRESET="dev")
