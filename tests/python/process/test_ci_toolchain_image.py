@@ -24,8 +24,8 @@ PINNED = {
     # emacs-ert (#5266) also compiles aura inside the toolchain image.
     ".github/workflows/ci.yml": 10,
     ".github/workflows/dist.yml": 1,
-    # 8 with the spec-JIT/hotpath arm64 job (#5429/#5430).
-    ".github/workflows/nightly.yml": 8,
+    # 9 with the spec-JIT/hotpath arm64 job (#5429/#5430) and alloc-bench (#5637).
+    ".github/workflows/nightly.yml": 9,
     ".github/workflows/release.yml": 1,
 }
 # Compile jobs also install libkrb5-dev. deployment-health only runs a
@@ -35,7 +35,7 @@ KRB5_USES = {
     # 9 with emacs-ert (#5266); deployment-health still runs a binary only.
     ".github/workflows/ci.yml": 9,
     ".github/workflows/dist.yml": 1,
-    ".github/workflows/nightly.yml": 8,
+    ".github/workflows/nightly.yml": 9,
     ".github/workflows/release.yml": 1,
 }
 

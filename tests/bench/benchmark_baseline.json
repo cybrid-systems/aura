@@ -1,5 +1,64 @@
 {
   "schema": 2,
+  "alloc": {
+    "schema": 1,
+    "issue": 5637,
+    "note": "Empty platform object means not measured. Do not fill estimates.",
+    "platforms": {
+      "linux-aarch64": {
+        "git_sha": "375bffb26a7d475a21842909d944a28bb0a164a0",
+        "runs": 20,
+        "ranges": {
+          "s2.peak_rss_bytes": 0.073546,
+          "s2.rss_bytes": 0.073385,
+          "s2.minor_faults": 0.118592,
+          "s1.rss_bytes_per_define": 0.054858,
+          "s1.peak_rss_bytes_per_define": 0.048358,
+          "s1.minor_faults_per_define": 0.798485,
+          "s1.alloc_calls_per_define": 0.0,
+          "s3.wall_ratio": 0.12787,
+          "s4.speedup_8": 0.272263
+        },
+        "s2": {
+          "peak_rss_bytes_gate": true,
+          "peak_rss_bytes_median": 347637760,
+          "rss_bytes_gate": true,
+          "rss_bytes_median": 347115520,
+          "minor_faults_gate": true,
+          "minor_faults_median": 4730,
+          "gate": true,
+          "peak_rss_bytes_max": 805306368,
+          "rss_bytes_max": 805306368,
+          "minor_faults_max": 20000,
+          "ceiling": "coarse: 20-run range was above 2% (rss ~7-10%, minflt ~12%), so this is not a 2% band. 768 MiB and 20000 faults still sit under the value-init regression measured on this host (rss 1.63 GB, minflt 33301) and above the measured median."
+        },
+        "s1": {
+          "rss_bytes_per_define_gate": false,
+          "rss_bytes_per_define_median": 14290.898488888888,
+          "peak_rss_bytes_per_define_gate": false,
+          "peak_rss_bytes_per_define_median": 16213.651911111112,
+          "minor_faults_per_define_gate": false,
+          "minor_faults_per_define_median": 0.014666666666666668,
+          "alloc_calls_per_define_gate": true,
+          "alloc_calls_per_define_max": 28.560000000000002,
+          "alloc_calls_per_define_median": 28.0,
+          "gate": true
+        },
+        "s3": {
+          "gate": true,
+          "wall_ratio_gate": true,
+          "wall_ratio_max": 3.184311,
+          "wall_ratio_median": 2.578513
+        },
+        "s4": {
+          "gate": false,
+          "speedup_8_gate": false,
+          "speedup_8_median": 1.467751
+        }
+      },
+      "linux-x86_64": {}
+    }
+  },
   "platforms": {
     "linux-aarch64": {
       "timestamp": "2026-11-11T19:19:41.112130+08:00",

@@ -31,6 +31,7 @@ Usage:
 ## Language / pipeline benches (Python harness)
 
 - `benchmark.py` + `benchmark_cases.py` + fixtures under `tests/fixtures/benchmark/`
+- `alloc_bench.py` — Issue #5637: S2 RSS/minflt, S1 define slope, S3 binarytrees wall ratio, S4 fiber speedup (`python3 tests/bench/alloc_bench.py --check`; nightly, not the PR gate).
 - Shootout-style `.aura` ports: `binarytrees_{cons,while,array}.aura`, `fasta.aura`, `fannkuchredux.aura`, `nbody.aura`, `pidigits.aura`, `regexredux.aura`, `revcomp.aura`
   - Three `binarytrees` variants are intentional (cons vs while vs array memory/stack ceilings), not duplicates.
 

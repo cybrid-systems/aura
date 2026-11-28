@@ -76,6 +76,32 @@ jobs:
         ./build/ast_hotpath_bench
         ./build/test_spec_jit
 
+  # Issue #5637: alloc RSS / minor-fault / slope / ratio gate.
+  # linux-x86_64 has no measured baseline yet, so this job is arm64 only.
+  # An empty platform object is record-only; this one checks.
+  alloc-bench-arm64:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    container:
+      image: ghcr.io/cybrid-systems/aura-ci:latest
+    steps:
+    - uses: actions/checkout@v7
+
+    - uses: ./.github/actions/ci-krb5
+
+    - name: Install Python CI deps
+      run: pip install --break-system-packages -r requirements-dev.txt
+
+    - name: Alloc bench gate (#5637)
+      env:
+        AURA_DEBUG_LEVEL: "1"
+      run: |
+        cmake -S . -B build -G Ninja -Wno-author \
+          -Werror=experimental -Wpolicy -Wdeprecated -Wstrict -Wnon-target-directive \
+          -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+        ninja -C build -j 4 aura
+        python3 tests/bench/alloc_bench.py --check
+
   # Issue #2931: steal×mutate×GC×mailbox chaos soak as nightly hard gate.
   # Fail-closed: residual_defer_after_exit without matching clears,
   # resume_fence_fail / ticket-mismatch hard surplus, residual_defer_steal
