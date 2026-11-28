@@ -410,8 +410,36 @@ std::size_t PairSlotTable::size() const {
     return static_cast<std::size_t>(high_water_.load(std::memory_order_acquire));
 }
 
+std::atomic<std::uint64_t> g_pair_capacity_exhausted_5518{0};
+
+// Issue #5518: the pair id space is a fixed 2^26 directory and nothing frees
+// an id, so a long-running JIT/AOT process eventually hits the cap. The old
+// path returned fixnum 0 from cons (a silent data corruption). Fail loudly
+// instead, and let AURA_PAIR_MAX_IDS shrink the cap for tests.
+static std::uint64_t pair_id_limit_5518() {
+    static const std::uint64_t limit = [] {
+        std::uint64_t cap = static_cast<std::uint64_t>(kPairMaxSegs) * kPairSegSlots;
+        if (const char* e = std::getenv("AURA_PAIR_MAX_IDS")) {
+            const unsigned long long n = std::strtoull(e, nullptr, 10);
+            if (n > 0 && n < cap)
+                cap = n;
+        }
+        return cap;
+    }();
+    return limit;
+}
+
+static void note_pair_capacity_exhausted_5518() noexcept {
+    const std::uint64_t n =
+        g_pair_capacity_exhausted_5518.fetch_add(1, std::memory_order_relaxed) + 1;
+    if (n == 1) {
+        std::fprintf(stderr, "aura: pair heap capacity exhausted (pair ids are not yet recycled); "
+                             "cons now yields void instead of fixnum 0 (#5518)\n");
+    }
+}
+
 std::int64_t PairSlotTable::push_back(PairSlot* slot) {
-    const auto limit = static_cast<std::uint64_t>(kPairMaxSegs) * kPairSegSlots;
+    const auto limit = pair_id_limit_5518();
     for (;;) {
         const std::uint64_t ep = g_pair_claim_epoch.load(std::memory_order_acquire);
         if (tls_pair_ids.epoch != ep) {
@@ -421,12 +449,16 @@ std::int64_t PairSlotTable::push_back(PairSlot* slot) {
         }
         if (tls_pair_ids.next >= tls_pair_ids.end) {
             const std::uint64_t hw = high_water_.load(std::memory_order_relaxed);
-            if (hw >= limit)
+            if (hw >= limit) {
+                note_pair_capacity_exhausted_5518();
                 return -1;
+            }
             const std::uint64_t base =
                 high_water_.fetch_add(kPairIdBatch, std::memory_order_acq_rel);
-            if (base >= limit)
+            if (base >= limit) {
+                note_pair_capacity_exhausted_5518();
                 return -1;
+            }
             std::uint64_t end = base + kPairIdBatch;
             if (end > limit)
                 end = limit;
@@ -725,6 +757,43 @@ FlatHashTable* FlatHashTable::create(uint64_t cap) {
 void FlatHashTable::destroy(FlatHashTable* ht) {
     if (ht)
         ::aura::core::c_free(ht);
+}
+
+// Issue #5519: a published hash table cannot be freed at the grow point -
+// a reader may still hold the old FlatHashTable* after dropping its read
+// lock (OpHashRef / hash-ref drop it around aura_hash_key_eq). Retire the
+// block instead and free it at the next stop-the-world safepoint (the GC
+// collector's ScopedSafepoint) or at runtime reset, when no mutator runs.
+namespace {
+std::mutex g_retired_hash_mtx;
+std::vector<FlatHashTable*> g_retired_hash_blocks;
+} // namespace
+
+extern "C" void aura_retire_hash_table(FlatHashTable* table) {
+    if (table == nullptr)
+        return;
+    std::scoped_lock<std::mutex> lock(g_retired_hash_mtx);
+    g_retired_hash_blocks.push_back(table);
+}
+
+extern "C" std::size_t aura_drain_retired_hash_tables() {
+    std::vector<FlatHashTable*> retired;
+    {
+        std::scoped_lock<std::mutex> lock(g_retired_hash_mtx);
+        retired.swap(g_retired_hash_blocks);
+    }
+    for (FlatHashTable* table : retired)
+        FlatHashTable::destroy(table);
+    return retired.size();
+}
+
+extern "C" std::size_t aura_retired_hash_table_count() {
+    std::scoped_lock<std::mutex> lock(g_retired_hash_mtx);
+    return g_retired_hash_blocks.size();
+}
+
+extern "C" std::uint64_t aura_pair_capacity_exhausted_total() {
+    return g_pair_capacity_exhausted_5518.load(std::memory_order_relaxed);
 }
 
 // ── Live AOT env / linear / table-epoch C ABI ──
@@ -1055,6 +1124,7 @@ struct PairSlotCleanup : ::aura::core::NoCopy {
         g_owned_pair_slots_.clear();
         // Issue #898: JIT cons slabs are not on g_owned_pair_slots_.
         free_pair_slabs();
+        (void)aura_drain_retired_hash_tables(); // Issue #5519
     }
 };
 [[maybe_unused]] PairSlotCleanup g_pair_slot_cleanup;

@@ -5,6 +5,8 @@
 #include "observability/aura_probes.hh" // Issue #5409: USDT gc probes
 
 import std;
+extern "C" std::size_t aura_drain_retired_hash_tables();
+
 namespace aura::serve {
 
 // ── Constructor ─────────────────────────────────────────
@@ -176,6 +178,11 @@ bool GCCollector::collect() {
     // Scope covers mark+sweep until resume_from_gc below.
     {
         aura::gc_hooks::ScopedSafepoint safepoint_active_guard;
+        // Issue #5519: the old blocks of a grown hash table are retired, not
+        // freed, because a reader may still hold the pointer outside its
+        // read lock. Every fiber is stopped here, so the retired list can be
+        // drained safely.
+        (void)aura_drain_retired_hash_tables();
 
         // ── Phase 2: Collect roots from all registered sources ──
         auto roots_start = std::chrono::steady_clock::now();

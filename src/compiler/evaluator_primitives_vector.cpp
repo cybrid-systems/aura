@@ -163,6 +163,8 @@ namespace {
         }
         if (destroy_old)
             FlatHashTable::destroy(ht);
+        else
+            aura_retire_hash_table(ht); // Issue #5519: free at a safepoint
         htp = new_ht;
         return true;
     }

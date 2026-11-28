@@ -289,6 +289,13 @@ struct FlatHashTable {
     FlatHashTable* rebuild(uint64_t new_cap) const; // aura_jit_runtime.cpp
 };
 
+// Issue #5519: defer frees of a superseded hash block to a safepoint.
+// Issue #5518: incremented whenever a pair allocation hits the id cap.
+extern "C" std::uint64_t aura_pair_capacity_exhausted_total();
+extern "C" void aura_retire_hash_table(FlatHashTable* table);
+extern "C" std::size_t aura_drain_retired_hash_tables();
+extern "C" std::size_t aura_retired_hash_table_count();
+
 extern std::vector<FlatHashTable*> g_hash_tables;
 
 // AOT table epoch SSOT (runtime_ssot.cpp). aura_jit_bridge.cpp fetch_adds

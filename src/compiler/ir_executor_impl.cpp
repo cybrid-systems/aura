@@ -2168,9 +2168,17 @@ namespace {
                     // Only push to g_pair_slots if this is a new pair ID
                     // (cons already created it in pairs_). Ensure g_pair_slots
                     // has enough space.
-                    while (idx >= static_cast<int64_t>(g_pair_slots.size()))
-                        g_pair_slots.push_back(nullptr);
-                    if (!g_pair_slots[idx]) {
+                    // Issue #5518: push_back(nullptr) returns -1 when the
+                    // process-wide pair id space is exhausted; the old loop
+                    // ignored it and spun forever (size never grew).
+                    bool slot_room = true;
+                    while (idx >= static_cast<int64_t>(g_pair_slots.size())) {
+                        if (g_pair_slots.push_back(nullptr) < 0) {
+                            slot_room = false;
+                            break;
+                        }
+                    }
+                    if (slot_room && !g_pair_slots[idx]) {
                         if (use_arena) {
                             auto* slot = (PairSlot*)tl_arena_alloc(&g_tl_arena, sizeof(PairSlot),
                                                                    alignof(PairSlot));

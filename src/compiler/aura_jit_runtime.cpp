@@ -6968,8 +6968,13 @@ extern "C" int64_t aura_pack_rest(int64_t* locals, int64_t start, int64_t count)
     int64_t list = aura::compiler::types::kSpecialVoid;
     if (count < 0)
         count = 0;
-    for (int64_t i = count - 1; i >= 0; --i)
+    for (int64_t i = count - 1; i >= 0; --i) {
         list = aura_alloc_pair(locals[start + i], list);
+        // #5518: the allocator signals exhaustion with void; do not build a
+        // list whose spine is a non-pair.
+        if (list == aura::compiler::types::kSpecialVoid)
+            return list;
+    }
     return list;
 }
 
@@ -6980,12 +6985,12 @@ int64_t aura_alloc_pair(int64_t car, int64_t cdr) {
     // free; it is not pushed onto g_owned_pair_slots_.
     auto* slot = aura_pair_tls_bump();
     if (!slot)
-        return 0;
+        return aura::compiler::types::kSpecialVoid; // #5518: never fixnum 0
     slot->car = car;
     slot->cdr = cdr;
     const int64_t id = g_pair_slots.push_back(slot);
     if (id < 0)
-        return 0;
+        return aura::compiler::types::kSpecialVoid; // #5518: cap exhausted
     // Issue #4057: stamp the owning principal parallel to the slot — the same
     // owner hook the closure table stamps (#4036). set-car!/set-cdr! compare
     // this stamp against the caller principal under the production face
@@ -7022,12 +7027,12 @@ int64_t aura_alloc_pair_arena(int64_t car, int64_t cdr) {
     // Publish is the same lock-free segment store as aura_alloc_pair.
     auto* slot = (PairSlot*)tl_arena_alloc(&g_tl_arena, sizeof(PairSlot), alignof(PairSlot));
     if (!slot)
-        return 0;
+        return aura::compiler::types::kSpecialVoid; // #5518: never fixnum 0
     slot->car = car;
     slot->cdr = cdr;
     const int64_t id = g_pair_slots.push_back(slot);
     if (id < 0)
-        return 0;
+        return aura::compiler::types::kSpecialVoid; // #5518: cap exhausted
     // Issue #4057: same owner-principal stamp as aura_alloc_pair — the arena
     // path publishes into the same process-shared index space.
     if (g_pair_slot_tenants.size() < g_pair_slots.size())
@@ -7046,12 +7051,12 @@ extern "C" int64_t aura_alloc_pair_tenant(int64_t car, int64_t cdr, int64_t owne
     // owner replaces the hook stamp; this is not a second capability model.
     auto* slot = aura_pair_tls_bump();
     if (!slot)
-        return 0;
+        return aura::compiler::types::kSpecialVoid; // #5518: never fixnum 0
     slot->car = car;
     slot->cdr = cdr;
     const int64_t id = g_pair_slots.push_back(slot);
     if (id < 0)
-        return 0;
+        return aura::compiler::types::kSpecialVoid; // #5518: cap exhausted
     if (g_pair_slot_tenants.size() < g_pair_slots.size())
         g_pair_slot_tenants.resize(g_pair_slots.size(), 0);
     g_pair_slot_tenants[static_cast<std::size_t>(id)] = static_cast<std::uint64_t>(owner_tenant);
@@ -7404,6 +7409,9 @@ extern "C" int64_t aura_hash_set_checked(int64_t hash_val, int64_t pair_val,
                 // (destroy_old_on_grow=false): OpHashRef drops the read
                 // lock around aura_hash_key_eq while holding the pointer.
                 if (auto* grown = ht->rebuild(new_cap)) {
+                    // Issue #5519: retire, do not leak; a reader may still
+                    // hold the old block outside the read lock.
+                    aura_retire_hash_table(ht);
                     g_hash_tables[hidx] = grown;
                     ht = grown;
                 }
