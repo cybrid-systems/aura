@@ -128,10 +128,9 @@ namespace {
         for (auto& v : osr_slots) {
             if (aura::compiler::types::is_ref(v) &&
                 aura::compiler::types::ref_type(v) == aura::compiler::types::RefCell)
-                v = aura::compiler::types::make_ref(
-                    aura::compiler::types::RefCell,
-                    aura::compiler::types::kClosureIdHighBit |
-                        aura::compiler::types::ref_index(v));
+                v = aura::compiler::types::make_ref(aura::compiler::types::RefCell,
+                                                    aura::compiler::types::kClosureIdHighBit |
+                                                        aura::compiler::types::ref_index(v));
         }
         struct OsrBusyGuard : ::aura::core::NoCopy {
             int& flag;

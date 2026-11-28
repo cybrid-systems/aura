@@ -20,8 +20,8 @@ module;
 #include "compiler/cct_probe.hh" // Issue #5122: live calling-context samples
 #include "runtime_shared.h"
 #include "compiler/value_tags.h" // Issue #5640: bridged cell index mask
-#include "core/diag_print.hh" // #4936 eprintln_nothrow
-#include "aura_jit_bridge.h"  // #2129: aura_get_aot_live_linear_state_fingerprint
+#include "core/diag_print.hh"    // #4936 eprintln_nothrow
+#include "aura_jit_bridge.h"     // #2129: aura_get_aot_live_linear_state_fingerprint
 #include "observability_logger.h"
 #include "shape_jit_pass_closedloop_stats.h"
 #include "core/provenance_tracker.hh"      // Issue #2026: validate_linear_provenance

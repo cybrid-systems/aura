@@ -33,8 +33,7 @@ extern "C" int aura_ir_bridge_call_closure(std::uint64_t id, const std::int64_t*
     __attribute__((weak));
 
 namespace {
-constexpr std::uint64_t kIrBridgeIndexMask =
-    aura::compiler::types::kClosureIdHighBit - 1;
+constexpr std::uint64_t kIrBridgeIndexMask = aura::compiler::types::kClosureIdHighBit - 1;
 inline bool is_ir_bridge_cell(std::int64_t v) noexcept {
     return aura::compiler::types::is_ref(v) &&
            aura::compiler::types::ref_type(v) == aura::compiler::types::RefCell &&
@@ -53,17 +52,18 @@ inline std::int64_t rebase_ir_cell_out(std::int64_t v) noexcept {
         return v;
     if (aura::compiler::types::is_ref(v) &&
         aura::compiler::types::ref_type(v) == aura::compiler::types::RefCell)
-        return aura::compiler::types::make_ref(
-            aura::compiler::types::RefCell,
-            aura::compiler::types::kClosureIdHighBit | aura::compiler::types::ref_index(v));
+        return aura::compiler::types::make_ref(aura::compiler::types::RefCell,
+                                               aura::compiler::types::kClosureIdHighBit |
+                                                   aura::compiler::types::ref_index(v));
     return v;
 }
 // A value native code hands back to the interpreter: strip the bridge bit
 // so the interpreter's cell_heap_ index is valid again.
 inline std::int64_t unbase_ir_cell_in(std::int64_t v) noexcept {
     if (is_ir_bridge_cell(v))
-        return aura::compiler::types::make_ref(
-            aura::compiler::types::RefCell, aura::compiler::types::ref_index(v) & kIrBridgeIndexMask);
+        return aura::compiler::types::make_ref(aura::compiler::types::RefCell,
+                                               aura::compiler::types::ref_index(v) &
+                                                   kIrBridgeIndexMask);
     return v;
 }
 } // namespace
@@ -5951,9 +5951,9 @@ extern "C" int64_t aura_closure_dispatch_native_checked(int64_t closure_id, int6
         }
         std::int64_t out = 0;
         if (aura_ir_bridge_call_closure &&
-            aura_ir_bridge_call_closure(
-                aura::compiler::types::ref_index(closure_id) & kIrBridgeIndexMask, argv, uargc,
-                &out))
+            aura_ir_bridge_call_closure(aura::compiler::types::ref_index(closure_id) &
+                                            kIrBridgeIndexMask,
+                                        argv, uargc, &out))
             return rebase_ir_cell_out(out);
         return closure_dispatch_leave_native();
     }
