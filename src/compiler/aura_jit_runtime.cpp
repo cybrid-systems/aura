@@ -350,9 +350,7 @@ void tl_arena_pop(TLarena* arena) {
         return; // Soft: unmatched pop is a no-op (do not scramble offset)
     }
     const unsigned depth = arena->mark_depth - 1;
-    // Issue #5518: the scope is over — every pair id it minted died here.
-    // Release before the offset rewind invalidates the rec chain.
-    // depth is mark_depth - 1 after the empty check, so it is < kMaxMarks.
+    // Issue #5518: release scoped pair ids before the offset rewind.
     // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-constant-array-index)
     aura_pair_scope_release_to(arena, arena->pair_rec_marks[depth]);
     arena->offset = arena->marks[--arena->mark_depth];
