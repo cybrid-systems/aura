@@ -10,13 +10,18 @@ module;
 #include "prim_registrar_scaffold.hh"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <chrono>
 #include <ctime>
+#include <cerrno>
 #include <memory>
 #include <mutex>
+#include <random>
 #include <unordered_map>
 #include <vector>
+
+#include <sys/random.h>
 
 #include "bus/transport.hh"
 #include "bus/host.hh"
@@ -557,6 +562,52 @@ EvalValue bus_publish_record(Evaluator& ev, BusSessionState& state, int channel,
 void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
     using aura::compiler::pure_general;
     using aura::compiler::register_prim;
+
+    // Issue #5498: std/uuid needs process entropy. getrandom(2) is the
+    // primary source; random_device is only a fallback for a blocked or
+    // unavailable syscall.
+    auto uuid_text = [](bool compact) {
+        std::array<unsigned char, 16> bytes{};
+        std::size_t off = 0;
+        while (off < bytes.size()) {
+            const auto n = ::getrandom(bytes.data() + off, bytes.size() - off, 0);
+            if (n < 0) {
+                if (errno == EINTR)
+                    continue;
+                break;
+            }
+            off += static_cast<std::size_t>(n);
+        }
+        if (off != bytes.size()) {
+            std::random_device rd;
+            for (auto& b : bytes)
+                b = static_cast<unsigned char>(rd());
+        }
+        bytes[6] = static_cast<unsigned char>((bytes[6] & 0x0F) | 0x40);
+        bytes[8] = static_cast<unsigned char>((bytes[8] & 0x3F) | 0x80);
+        static constexpr char kHex[] = "0123456789abcdef";
+        std::string out;
+        out.reserve(compact ? 32 : 36);
+        for (std::size_t i = 0; i < bytes.size(); ++i) {
+            if (!compact && (i == 4 || i == 6 || i == 8 || i == 10))
+                out.push_back('-');
+            out.push_back(kHex[bytes[i] >> 4]);
+            out.push_back(kHex[bytes[i] & 0x0F]);
+        }
+        return out;
+    };
+    register_prim(
+        add, ev, "uuid-v4",
+        [&ev, uuid_text](const auto&) -> EvalValue {
+            return make_string(static_cast<std::uint64_t>(ev.string_heap_.mint(uuid_text(false))));
+        },
+        pure_general(0, "() -> string", "Version-4 UUID from getrandom(2)."));
+    register_prim(
+        add, ev, "uuid-v4-compact",
+        [&ev, uuid_text](const auto&) -> EvalValue {
+            return make_string(static_cast<std::uint64_t>(ev.string_heap_.mint(uuid_text(true))));
+        },
+        pure_general(0, "() -> string", "Compact version-4 UUID from getrandom(2)."));
 
     // Wall-clock seconds since Unix epoch (legacy; coarse for denseness).
     register_prim(
