@@ -486,7 +486,13 @@ void RegSplitParts::register_memory_heap_reset_primitives(
                 return gc_heap_reset_impl();
         }
         if (aura::messaging::g_gc_collect) {
-            std::scoped_lock<std::mutex> lock(ev.heap_mutex());
+            // Issue #5510: do NOT hold heap_mutex() across the collect.
+            // The collector's root phase takes it itself (flush_gc_roots
+            // walks string_heap_/pairs_ under it), so a non-recursive lock
+            // here deadlocked the calling fiber as soon as the safepoint
+            // started succeeding: collect_roots waited on a mutex this same
+            // thread held. The safepoint stops every fiber; non-fiber
+            // mutators are serialized by flush_gc_roots / compact_sweep.
             return types::make_bool(aura::messaging::g_gc_collect());
         }
         g_gc_heap_requests_4816.fetch_add(1, std::memory_order_relaxed);

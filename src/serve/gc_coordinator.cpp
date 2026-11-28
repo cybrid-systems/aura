@@ -119,6 +119,28 @@ bool GCCollector::collect() {
     // ── Phase 1a: Broadcast safepoint ─────────────────
     scheduler_->request_gc_safepoint();
 
+    // Issue #5510: (gc-heap) is called from a fiber, i.e. from one of the
+    // workers this safepoint waits for. That fiber never reaches its own
+    // check_gc_safepoint (it is blocked here), so all_quiescent() always
+    // failed and every serve-mode collect returned #f after ~100 ms. Record
+    // the caller as arrived for the duration of the collect.
+    const int caller_wid_5510 = scheduler_->caller_worker_index();
+    struct CallerArrival5510 {
+        Scheduler* sched = nullptr;
+        int wid = -1;
+        bool on = false;
+        ~CallerArrival5510() {
+            if (!on || sched == nullptr)
+                return;
+            if (auto* w = sched->worker(wid))
+                w->gc_state().fibers_at_safepoint.fetch_sub(1, std::memory_order_acq_rel);
+        }
+    } caller_arrival_5510{scheduler_, caller_wid_5510, caller_wid_5510 >= 0};
+    if (caller_arrival_5510.on) {
+        if (auto* w = scheduler_->worker(caller_wid_5510))
+            w->gc_state().fibers_at_safepoint.fetch_add(1, std::memory_order_acq_rel);
+    }
+
     // ── Phase 1b: Wait for all workers to arrive ──────
     auto safepoint_start = std::chrono::steady_clock::now();
     bool all_stopped = scheduler_->wait_for_safepoint(100);
@@ -284,22 +306,20 @@ void GCCollector::mark_from_roots(const GCRootSet& roots, size_t string_heap_siz
                                             std::memory_order_relaxed);
     }
 
-    // If no sizes given, compute from roots (pre-#2084 fallback)
-    if (s_size == 0) {
-        for (auto idx : roots.string_roots)
-            if (static_cast<size_t>(idx) >= s_size)
-                s_size = static_cast<size_t>(idx) + 1;
-    }
-    if (p_size == 0) {
-        for (auto idx : roots.pair_roots)
-            if (static_cast<size_t>(idx) >= p_size)
-                p_size = static_cast<size_t>(idx) + 1;
-    }
-    if (c_size == 0) {
-        for (auto idx : roots.closure_roots)
-            if (static_cast<size_t>(idx) >= c_size)
-                c_size = static_cast<size_t>(idx) + 1;
-    }
+    // If no sizes given, compute from roots (pre-#2084 fallback).
+    // Issue #5509: ALWAYS grow to a root's index. Closure ids are monotonic
+    // and never reused, so the live count (the #2084 size) can be smaller
+    // than a live root's id; set() would silently drop that root and the
+    // sweep then deleted the closure.
+    for (auto idx : roots.string_roots)
+        if (static_cast<size_t>(idx) >= s_size)
+            s_size = static_cast<size_t>(idx) + 1;
+    for (auto idx : roots.pair_roots)
+        if (static_cast<size_t>(idx) >= p_size)
+            p_size = static_cast<size_t>(idx) + 1;
+    for (auto idx : roots.closure_roots)
+        if (static_cast<size_t>(idx) >= c_size)
+            c_size = static_cast<size_t>(idx) + 1;
 
     // Initialize mark vectors
     if (s_size > 0) {

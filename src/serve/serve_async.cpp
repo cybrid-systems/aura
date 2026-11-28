@@ -1017,7 +1017,13 @@ namespace {
                 if (!svc)
                     return {0, 0, 0};
                 const auto& ev = svc->evaluator();
-                return {ev.string_heap_size(), ev.pairs_size(), ev.closures_size()};
+                // Issue #5509: closure mark bits are indexed by the monotonic
+                // ClosureId, not by a slot in [0, count). Size the bitmap to
+                // the allocator watermark so a live root's set() lands.
+                const std::size_t closures =
+                    std::max<std::size_t>(ev.closures_size(),
+                                          static_cast<std::size_t>(ev.closure_id_watermark()));
+                return {ev.string_heap_size(), ev.pairs_size(), closures};
             });
     }
 

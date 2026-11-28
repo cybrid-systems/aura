@@ -107,13 +107,22 @@ inline std::atomic<bool> g_arena_safepoint_active{false};
     return g_arena_safepoint_active.load(std::memory_order_acquire);
 }
 
+// Issue #5510: the THREAD running the stop-the-world phase owns the
+// safepoint. Its mark/sweep path can allocate, and an allocation edge calls
+// Fiber::check_gc_safepoint() — without this flag the collector parked in
+// its own safepoint and spun forever.
+inline thread_local bool t_gc_safepoint_owner = false;
+
 // RAII: nestable set of g_arena_safepoint_active for the pause window.
 class ScopedSafepoint {
 public:
     ScopedSafepoint() noexcept {
         prev_ = g_arena_safepoint_active.exchange(true, std::memory_order_acq_rel);
+        prev_owner_ = t_gc_safepoint_owner;
+        t_gc_safepoint_owner = true;
     }
     ~ScopedSafepoint() noexcept {
+        t_gc_safepoint_owner = prev_owner_;
         g_arena_safepoint_active.store(prev_, std::memory_order_release);
     }
     ScopedSafepoint(const ScopedSafepoint&) = delete;
@@ -123,6 +132,7 @@ public:
 
 private:
     bool prev_ = false;
+    bool prev_owner_ = false;
 };
 
 // Process-wide: fiber waited at safepoint while holding a mutation boundary.

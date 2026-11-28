@@ -1139,6 +1139,10 @@ Scheduler* g_scheduler = nullptr;
 // ── GC safepoint check ────────────────────────────────
 
 void Fiber::check_gc_safepoint() {
+    // Issue #5510: the collector thread itself must never park in the pause
+    // it owns (mark/sweep allocates; that edge spins in wait_for_resume).
+    if (aura::gc_hooks::t_gc_safepoint_owner)
+        return;
     // Issue #2533: residual hard-reclaim poll at cooperative edges.
     // mark_reclaimed already set cancel + force_safepoint. Do NOT call
     // yield() from here (yield → check_gc_safepoint would recurse). Yield

@@ -396,6 +396,19 @@ bool test_work_stealing() {
     CHECK(completed.load() == NUM_FIBERS, "all " + std::to_string(NUM_FIBERS) +
                                               " fibers completed via work-stealing (got " +
                                               std::to_string(completed.load()) + ")");
+    // Issue #5511: a steal moves the fiber's pending_ credit from the victim
+    // to the thief. An idle worker must read 0 afterwards; the pre-fix steal
+    // left the victim >= 1 forever and the thief at SIZE_MAX.
+    bool balanced = true;
+    for (int i = 0; i < sched.num_workers(); ++i) {
+        auto* w = sched.worker(i);
+        const auto pending = w != nullptr ? w->pending_count() : 0;
+        if (pending != 0) {
+            balanced = false;
+            std::println("  worker {} pending_count={} after the run", i, pending);
+        }
+    }
+    CHECK(balanced, "every worker's pending count is back to zero after steals");
     return true;
 }
 
@@ -2406,6 +2419,8 @@ bool test_gc_root_multiple_sources();
 bool test_gc_safepoint_all_stop();
 bool test_gc_safepoint_no_fiber();
 bool test_gc_coordinator_basic();
+bool test_issue_5509_closure_mark_extent();
+bool test_issue_5510_collect_from_fiber();
 bool test_gc_multiple_cycles();
 bool test_gc_safepoint_stress();
 bool test_gc_metrics_sanity();
@@ -3410,6 +3425,8 @@ int main() {
     run_test("test_gc_safepoint_all_stop", test_gc_safepoint_all_stop);
     run_test("test_gc_safepoint_no_fiber", test_gc_safepoint_no_fiber);
     run_test("test_gc_coordinator_basic", test_gc_coordinator_basic);
+    run_test("test_issue_5509_closure_mark_extent", test_issue_5509_closure_mark_extent);
+    run_test("test_issue_5510_collect_from_fiber", test_issue_5510_collect_from_fiber);
     run_test("test_gc_multiple_cycles", test_gc_multiple_cycles);
     run_test("test_gc_safepoint_stress", test_gc_safepoint_stress);
     run_test("test_gc_metrics_sanity", test_gc_metrics_sanity);
@@ -3691,6 +3708,50 @@ bool test_gc_safepoint_no_fiber() {
 
 // ── Test: GC coordinator basic — request + collect (P2 Phase 1) ──
 // Tests the GCCollector request/collect lifecycle.
+
+// ── Test: #5509 closure mark bits cover monotonic ids ────
+// Closure ids are allocated monotonically and never reused, so the live
+// count can be smaller than a live root's id. Sizing the bitmap from the
+// count dropped every root past it and the sweep deleted those closures.
+bool test_issue_5509_closure_mark_extent() {
+    std::println("\n--- Test: #5509 closure mark extent ---");
+    aura::serve::Scheduler sched(1);
+    auto* gc = sched.gc_collector();
+    CHECK(gc != nullptr, "GC collector exists");
+    aura::serve::GCRootSet roots;
+    roots.closure_roots = {1, 4, 9};
+    // Live count 3, largest live id 9: the old code sized to 3.
+    gc->mark_from_roots(roots, 0, 0, 3);
+    CHECK(gc->closure_marks_size() >= 10, "the bitmap covers the largest root id");
+    CHECK(gc->closure_mark(4), "a root past the live count is marked");
+    CHECK(gc->closure_mark(9), "the largest root id is marked");
+    return true;
+}
+
+// ── Test: #5510 collect() from a fiber reaches its own safepoint ──
+// (gc-heap) runs on a worker's fiber; that fiber never executes
+// check_gc_safepoint while it waits, so the collector must count it as
+// arrived. Pre-fix every serve-mode collect timed out (~100 ms) and
+// returned #f.
+bool test_issue_5510_collect_from_fiber() {
+    std::println("\n--- Test: #5510 collect from a fiber ---");
+    aura::serve::Scheduler sched(2);
+    auto* gc = sched.gc_collector();
+    CHECK(gc != nullptr, "GC collector exists");
+    gc->set_alloc_threshold(1);
+    gc->reset_alloc_counter();
+    gc->record_alloc();
+    CHECK(gc->request(), "the cycle is armed");
+    std::atomic<int> code{-1};
+    sched.spawn([&gc, &code]() { code.store(gc->collect() ? 1 : 0); });
+    std::thread t([&sched]() { sched.run(); });
+    for (int i = 0; i < 500 && code.load() < 0; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    sched.stop();
+    t.join();
+    CHECK(code.load() == 1, "collect() from a fiber reaches the safepoint and runs");
+    return true;
+}
 
 bool test_gc_coordinator_basic() {
     std::println("\n--- Test: GC coordinator — basic lifecycle ---");

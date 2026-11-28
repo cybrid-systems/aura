@@ -1283,6 +1283,15 @@ Evaluator::CompactSweepResult Evaluator::compact_sweep(void* sweep_buffers) {
             for (auto& cl_sh : closures_shards_)
                 for (auto it = cl_sh.map.begin(); it != cl_sh.map.end();) {
                     int64_t id = static_cast<int64_t>(it->first);
+                    // Issue #5509: the mark bitmap may be sized from a stale
+                    // live count. An id at or past its end was never
+                    // representable, so treat it as live instead of sweeping
+                    // a closure nobody could have marked.
+                    if (id >= 0 &&
+                        static_cast<std::size_t>(id) >= marks->closure_marks->size()) {
+                        ++it;
+                        continue;
+                    }
                     if (!marks->closure_marks->test(id)) {
                         // Issue #1888: tombstone before erase so ClosureView
                         // lifetime revalidation fails on moved-from / freed sources.

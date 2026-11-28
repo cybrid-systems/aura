@@ -427,6 +427,14 @@ bool WorkerThread::try_steal_from(WorkerThread* victim) {
         Fiber* stolen = victim->try_steal();
         if (!stolen)
             break;
+        // Issue #5511: try_steal() pops the deque entry but, unlike
+        // enqueue(), never moved the pending_ credit. The count would stay
+        // on the victim forever while the thief's completion fetch_sub
+        // underflowed to SIZE_MAX, and every put-back below re-credited the
+        // victim (+1 per rejected attempt). Move the credit with the fiber:
+        // drop it here, re-add on put-back, add locally on a successful
+        // hand-off.
+        victim->pending_.fetch_sub(1, std::memory_order_acq_rel);
 
         // Skip fibers pinned to another worker (affinity)
         if (stolen->affinity() >= 0 && stolen->affinity() != id()) {
@@ -586,6 +594,8 @@ bool WorkerThread::try_steal_from(WorkerThread* victim) {
             // enqueue / post-yield requeue use a non-steal binding
             // (fiber). victim->enqueue(stolen) returns the candidate
             // to the victim — not a thief Ready enqueue.
+            // Issue #5511: this worker will fetch_sub on completion / park.
+            pending_.fetch_add(1, std::memory_order_acq_rel);
             local_queue_.push(stolen); // #2844 sole stolen-fiber enqueue (#3072 scans all TUs)
             return true;
         }
