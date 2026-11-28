@@ -7283,6 +7283,17 @@ extern "C" int64_t aura_alloc_pair_tenant(int64_t car, int64_t cdr, int64_t owne
     return (id << 6) | 1; // #4567: evaluator pair tag
 }
 
+// Issue #5531: hot metric RMW. The production pack compiles it out.
+// RelWithDebInfo defines AURA_PRODUCTION_PACK and not NDEBUG, so this
+// gate does not also require NDEBUG (unlike AURA_PCV_NOTE).
+// AURA_JIT_HOT_METRICS restores the bump. The pair load and the tenant
+// gate stay. aura_test_objects is not the pack, so unit tests still bump.
+#if defined(AURA_PRODUCTION_PACK) && !defined(AURA_JIT_HOT_METRICS)
+#define AURA_JIT_HOT_ADD(atom) ((void)0)
+#else
+#define AURA_JIT_HOT_ADD(atom) (atom).fetch_add(1, std::memory_order_relaxed)
+#endif
+
 // L2 specialization: "unchecked" pair access (shape already verified).
 //
 // Issue #1710 (P0): a raw index into a reallocating vector was a silent
@@ -7299,7 +7310,9 @@ static int64_t pair_field_locked(int64_t pair_val, bool want_car, const char* op
                                  std::uint64_t caller_tenant, int sandbox_mode) {
     const uint64_t id = static_cast<uint64_t>(pair_val >> 6); // #4567
     if (id >= g_pair_slots.size() || g_pair_slots[id] == nullptr) {
-        g_unchecked_pair_fallback_total.fetch_add(1, std::memory_order_relaxed);
+        // OOB / null is the cold miss. Issue #5531 still keeps it off the
+        // production shared line; the returned 0 is unchanged.
+        AURA_JIT_HOT_ADD(g_unchecked_pair_fallback_total);
         return 0;
     }
     // Issue #4093: the JIT field read consults the same g_pair_slot_tenants
@@ -7348,26 +7361,26 @@ extern "C" int64_t aura_pair_cdr_checked(int64_t pair_val, std::uint64_t caller_
 // — light-link binaries shadow the owner hooks; tests pass caller/face).
 extern "C" int64_t aura_pair_car_unchecked_checked(int64_t pair_val, std::uint64_t caller_tenant,
                                                    int sandbox_mode) {
-    g_workspace_unchecked_fastpath_count.fetch_add(1, std::memory_order_relaxed);
+    AURA_JIT_HOT_ADD(g_workspace_unchecked_fastpath_count);
     // Issue #1710: if L2 stamped a defuse version and it drifted, count
     // fallback (still take lock+bounds — no nested re-entry to car).
     if (g_tls_pair_l2_defuse_stamp != UINT64_MAX) {
         const auto cur = aura_get_defuse_version();
         if (cur != g_tls_pair_l2_defuse_stamp)
-            g_unchecked_pair_fallback_total.fetch_add(1, std::memory_order_relaxed);
+            AURA_JIT_HOT_ADD(g_unchecked_pair_fallback_total);
     }
     // Issue #898: segment cell is an acquire load; no workspace read lock.
     return pair_field_locked(pair_val, /*want_car=*/true, "pair-car", caller_tenant, sandbox_mode);
 }
 
 int64_t aura_pair_car_unchecked(int64_t pair_val) {
-    g_workspace_unchecked_fastpath_count.fetch_add(1, std::memory_order_relaxed);
+    AURA_JIT_HOT_ADD(g_workspace_unchecked_fastpath_count);
     // Issue #1710: if L2 stamped a defuse version and it drifted, count
     // fallback (still take lock+bounds — no nested re-entry to car).
     if (g_tls_pair_l2_defuse_stamp != UINT64_MAX) {
         const auto cur = aura_get_defuse_version();
         if (cur != g_tls_pair_l2_defuse_stamp)
-            g_unchecked_pair_fallback_total.fetch_add(1, std::memory_order_relaxed);
+            AURA_JIT_HOT_ADD(g_unchecked_pair_fallback_total);
     }
     // Issue #898: segment cell is an acquire load; no workspace read lock.
     return pair_field_locked(pair_val, /*want_car=*/true, "pair-car",
@@ -7375,11 +7388,11 @@ int64_t aura_pair_car_unchecked(int64_t pair_val) {
 }
 
 int64_t aura_pair_cdr_unchecked(int64_t pair_val) {
-    g_workspace_unchecked_fastpath_count.fetch_add(1, std::memory_order_relaxed);
+    AURA_JIT_HOT_ADD(g_workspace_unchecked_fastpath_count);
     if (g_tls_pair_l2_defuse_stamp != UINT64_MAX) {
         const auto cur = aura_get_defuse_version();
         if (cur != g_tls_pair_l2_defuse_stamp)
-            g_unchecked_pair_fallback_total.fetch_add(1, std::memory_order_relaxed);
+            AURA_JIT_HOT_ADD(g_unchecked_pair_fallback_total);
     }
     // Issue #898: segment cell is an acquire load; no workspace read lock.
     return pair_field_locked(pair_val, /*want_car=*/false, "pair-cdr",
@@ -7434,8 +7447,15 @@ int64_t aura_prim_call(int64_t slot, int64_t* args, int64_t count) {
     // the FFI boundary the JIT crosses for primitives that don't
     // have a specialized inlined fast path. The two atomic stores
     // are independent so we use relaxed ordering.
+    // Issue #5531: sample 1/64 on this thread. The flushed sample is
+    // scaled by the stride so prim_calls / prim_avg_ns stay a rate.
+    // The read lock stays (Issue #157): it protects g_prim_dispatcher.
     aura_lock_workspace_read();
-    auto t0 = std::chrono::steady_clock::now();
+    static thread_local std::uint32_t prim_call_sample_n = 0;
+    constexpr std::uint32_t kPrimCallSampleStride = 64;
+    const bool prim_sample = (++prim_call_sample_n & (kPrimCallSampleStride - 1u)) == 0u;
+    const auto t0 =
+        prim_sample ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     int64_t result = 0;
     if (g_prim_dispatcher) {
         int32_t safe_count = static_cast<int32_t>(count);
@@ -7450,10 +7470,13 @@ int64_t aura_prim_call(int64_t slot, int64_t* args, int64_t count) {
             safe_count = 0;
         result = g_prim_dispatcher(slot, pass, safe_count);
     }
-    auto t1 = std::chrono::steady_clock::now();
-    auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
-    g_prim_call_count.fetch_add(1, std::memory_order_relaxed);
-    g_prim_call_total_ns.fetch_add(static_cast<uint64_t>(ns), std::memory_order_relaxed);
+    if (prim_sample) {
+        const auto t1 = std::chrono::steady_clock::now();
+        const auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+        g_prim_call_count.fetch_add(kPrimCallSampleStride, std::memory_order_relaxed);
+        g_prim_call_total_ns.fetch_add(static_cast<uint64_t>(ns) * kPrimCallSampleStride,
+                                       std::memory_order_relaxed);
+    }
     aura_unlock_workspace_read();
     return result;
 }

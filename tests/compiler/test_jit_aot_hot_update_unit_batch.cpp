@@ -1938,6 +1938,118 @@ int run_hot_update_closure_edge_cap_4924() {
 } // namespace aura_jit_run_hot_update_closure_edge_cap_4924
 // ─── end issue #4924 closure-creator edge cap ───
 
+// Issue #5531: OpApply steady path is one DefineVersion word load.
+// The four shared epoch-counter RMWs (three inside
+// aura_jit_is_fn_epoch_stale, one inside aura_jit_epoch_acquire_fence)
+// and the unchecked car/cdr counters go through AURA_JIT_HOT_ADD, which
+// the production pack compiles out. aura_prim_call samples 1/64.
+namespace aura_jit_apply_epoch_word_5531 {
+
+namespace {
+
+    std::string read_src(const char* path) {
+        for (const char* prefix : {"", "../", "../../"}) {
+            std::ifstream in(std::string(prefix) + path);
+            if (!in)
+                continue;
+            return std::string((std::istreambuf_iterator<char>(in)),
+                               std::istreambuf_iterator<char>());
+        }
+        return {};
+    }
+
+    std::string slice_between(std::string_view src, std::string_view begin, std::string_view end) {
+        const auto b = src.find(begin);
+        if (b == std::string_view::npos)
+            return {};
+        const auto e = src.find(end, b + begin.size());
+        if (e == std::string_view::npos)
+            return {};
+        return std::string(src.substr(b, e - b));
+    }
+
+    int count_of(std::string_view hay, std::string_view needle) {
+        int n = 0;
+        for (std::size_t at = 0; (at = hay.find(needle, at)) != std::string_view::npos;
+             at += needle.size())
+            ++n;
+        return n;
+    }
+
+} // namespace
+
+int run_apply_epoch_word_5531() {
+    std::println("\n=== Issue #5531: OpApply word gate, hot counters off the pack ===");
+    const auto jit = read_src("src/compiler/aura_jit.cpp");
+    const auto bridge = read_src("src/compiler/aura_jit_bridge.cpp");
+    const auto runtime = read_src("src/compiler/aura_jit_runtime.cpp");
+    CHECK(!jit.empty() && !bridge.empty() && !runtime.empty(), "5531: read jit sources");
+
+    const auto apply = slice_between(jit, "case OpApply:", "case OpCall:");
+    CHECK(!apply.empty(), "5531: OpApply case slice");
+    CHECK(apply.find("Issue #5531") != std::string::npos, "5531: cite on the apply probe");
+    CHECK(apply.find("apply_epoch_chk") != std::string::npos, "5531: cold epoch block");
+    CHECK(apply.find("apply_epoch_stale") != std::string::npos, "5531: stale block kept");
+    CHECK(apply.find("apply_fn_name") != std::string::npos, "5531: apply name global kept");
+    CHECK(apply.find("apply_site_epoch_probe_total") != std::string::npos,
+          "5531: compile-time probe metric kept");
+    CHECK(apply.find("jit_prologue_word_enabled()") != std::string::npos,
+          "5531: same prologue-word switch");
+    CHECK(apply.find("global_epoch_mode()") != std::string::npos,
+          "5531: global-epoch mode keeps the calls");
+    CHECK(apply.find("DefineVersions::instance().word") != std::string::npos,
+          "5531: DefineVersion word load");
+    CHECK(apply.find("AURA_JIT_PROLOGUE_WORD=0") != std::string::npos,
+          "5531: word=0 restores the unconditional probe");
+    CHECK(apply.find("fn_epoch_acquire_fence") != std::string::npos, "5531: fence stays on cold");
+    CHECK(apply.find("fn_is_fn_epoch_stale") != std::string::npos, "5531: stale helper stays");
+    CHECK(apply.find("fn_get_current_bridge_epoch") != std::string::npos,
+          "5531: epoch helper stays");
+    CHECK(apply.find("begin_linear_epoch_fence()") != std::string::npos,
+          "5531: linear fence still wraps Apply");
+    CHECK(apply.find("emit_self_call(") != std::string::npos,
+          "5531: probe still precedes both self-call arms");
+    // The hot branch is the likely edge to apply_epoch_ok; the helpers
+    // run only from emit_probe, which the word-moved block calls.
+    CHECK(apply.find("br_likely") != std::string::npos, "5531: unchanged word is the hot edge");
+    CHECK(apply.find("apply_epoch_ok") != std::string::npos, "5531: steady path joins the call");
+
+    const auto stale_fn = slice_between(bridge, "aura_jit_is_fn_epoch_stale",
+                                        "aura_jit_take_prologue_deopt_sentinel");
+    CHECK(count_of(stale_fn, "AURA_JIT_HOT_ADD(") == 3,
+          "5531: three epoch-counter RMWs go through the pack gate");
+    const auto fence_fn =
+        slice_between(bridge, "void aura_jit_epoch_acquire_fence", "void aura_arena_pop");
+    CHECK(fence_fn.find("thread_fence") != std::string::npos, "5531: acquire fence stays");
+    CHECK(count_of(fence_fn, "AURA_JIT_HOT_ADD(") == 1,
+          "5531: fence counter RMW goes through the pack gate");
+    CHECK(bridge.find("#if defined(AURA_PRODUCTION_PACK) && !defined(AURA_JIT_HOT_METRICS)") !=
+              std::string::npos,
+          "5531: pack gate does not require NDEBUG");
+    CHECK(bridge.find("#define AURA_JIT_HOT_ADD(atom) ((void)0)") != std::string::npos,
+          "5531: production pack no-ops the hot add");
+
+    CHECK(count_of(runtime, "AURA_JIT_HOT_ADD(g_workspace_unchecked_fastpath_count)") == 3,
+          "5531: three unchecked fast-path counters are gated");
+    CHECK(runtime.find("g_workspace_unchecked_fastpath_count.fetch_add") == std::string::npos,
+          "5531: unchecked counter has no raw shared RMW");
+    CHECK(runtime.find("kPrimCallSampleStride = 64") != std::string::npos,
+          "5531: prim_call samples one in 64");
+    CHECK(runtime.find("aura_lock_workspace_read()") != std::string::npos,
+          "5531: prim_call keeps the dispatcher read lock");
+    const auto prim =
+        slice_between(runtime, "int64_t aura_prim_call(", "uint64_t aura_prim_call_count");
+    CHECK(prim.find("kPrimCallSampleStride") != std::string::npos,
+          "5531: sample lives in prim_call");
+    CHECK(count_of(prim, ".fetch_add(") == 2, "5531: prim_call flushes two counters per sample");
+
+    std::println("\n=== Results: {} passed, {} failed ===", ::aura::test::g_passed,
+                 ::aura::test::g_failed);
+    return ::aura::test::g_failed == 0 ? 0 : 1;
+}
+
+} // namespace aura_jit_apply_epoch_word_5531
+
 int main() {
     std::println("\n######## run_aot_hot_update_inc_1640 ########");
     if (int rc = aura_jit_run_aot_hot_update_inc_1640::run_aot_hot_update_inc_1640(); rc != 0) {
@@ -1977,6 +2089,11 @@ int main() {
             aura_jit_run_hot_update_closure_edge_cap_4924::run_hot_update_closure_edge_cap_4924();
         rc != 0) {
         std::println("run_hot_update_closure_edge_cap_4924 FAILED rc={}", rc);
+        return rc;
+    }
+    std::println("\n######## run_apply_epoch_word_5531 ########");
+    if (int rc = aura_jit_apply_epoch_word_5531::run_apply_epoch_word_5531(); rc != 0) {
+        std::println("run_apply_epoch_word_5531 FAILED rc={}", rc);
         return rc;
     }
     if (::aura::test::g_failed)

@@ -3608,17 +3608,31 @@ extern "C" std::uint64_t aura_jit_get_current_bridge_epoch(void) {
     return aura_aot_func_table_epoch();
 }
 
+// Issue #5531: hot metric RMW. The production pack compiles it out.
+// RelWithDebInfo defines AURA_PRODUCTION_PACK and not NDEBUG, so this
+// gate does not also require NDEBUG (unlike AURA_PCV_NOTE).
+// AURA_JIT_HOT_METRICS restores the bump. The acquire fence and the
+// stale/fresh answer stay. aura_test_objects is not the pack, so unit
+// tests still bump.
+#if defined(AURA_PRODUCTION_PACK) && !defined(AURA_JIT_HOT_METRICS)
+#define AURA_JIT_HOT_ADD(atom) ((void)0)
+#else
+#define AURA_JIT_HOT_ADD(atom) (atom).fetch_add(1, std::memory_order_relaxed)
+#endif
+
 extern "C" int aura_jit_is_fn_epoch_stale(const char* name, std::uint64_t current_bridge_epoch) {
-    // AC4: one bump per Apply prologue probe (fresh or stale).
+    // AC4: one bump per Apply prologue probe (fresh or stale), except the
+    // production pack (Issue #5531) where these three RMWs are compiled out.
+    // The metrics fetch goes with them: it existed only to feed the adds.
+#if !defined(AURA_PRODUCTION_PACK) || defined(AURA_JIT_HOT_METRICS)
     if (g_batch_deopt_jit) {
-        g_batch_deopt_jit->mutable_metrics().jit_epoch_stale_check_total.fetch_add(
-            1, std::memory_order_relaxed);
-        g_batch_deopt_jit->mutable_metrics().prologue_epoch_check_total.fetch_add(
-            1, std::memory_order_relaxed);
+        AURA_JIT_HOT_ADD(g_batch_deopt_jit->mutable_metrics().jit_epoch_stale_check_total);
+        AURA_JIT_HOT_ADD(g_batch_deopt_jit->mutable_metrics().prologue_epoch_check_total);
     }
     if (aot_metrics()) {
-        aot_metrics()->jit_epoch_stale_check_total.fetch_add(1, std::memory_order_relaxed);
+        AURA_JIT_HOT_ADD(aot_metrics()->jit_epoch_stale_check_total);
     }
+#endif
     if (!g_batch_deopt_jit || !name || !name[0])
         return 0;
     return g_batch_deopt_jit->is_fn_epoch_stale(name, current_bridge_epoch) ? 1 : 0;
@@ -3856,9 +3870,14 @@ extern "C" void aura_aot_record_deopt_on_steal() {
 }
 
 extern "C" void aura_jit_epoch_acquire_fence(void) {
+    // The fence stays on every caller (OpApply cold path, closure dispatch,
+    // GuardShape). Issue #5531: the shared counter RMW, and the metrics
+    // fetch that existed only to feed it, are compiled out of the pack.
     aura::util::thread_fence(std::memory_order_acquire);
+#if !defined(AURA_PRODUCTION_PACK) || defined(AURA_JIT_HOT_METRICS)
     if (aot_metrics())
-        aot_metrics()->closure_epoch_fence_enforced_total.fetch_add(1, std::memory_order_relaxed);
+        AURA_JIT_HOT_ADD(aot_metrics()->closure_epoch_fence_enforced_total);
+#endif
 }
 
 extern "C" void aura_arena_pop(void);

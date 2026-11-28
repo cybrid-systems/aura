@@ -3656,6 +3656,17 @@ public:
                 // Dual-epoch site check when helpers are wired (same runtime as
                 // GuardShape / prologue). Stale → deopt_inc + still call through
                 // aura_closure_call which re-checks; metrics track probe volume.
+                // Issue #5531: the steady path is one acquire load of this
+                // function's DefineVersion word, the same word the prologue
+                // gates on. Unchanged word ⇒ not stale, so skip the fence,
+                // get_current_bridge_epoch, and is_fn_epoch_stale (the 3
+                // helpers and their 4 shared RMWs). A moved word runs that
+                // sequence, including the acquire fence, then the stale
+                // branch. AURA_JIT_PROLOGUE_WORD=0 and global-epoch mode
+                // keep the unconditional calls. The probe stays above both
+                // #4601 arms. jit_force_guard_deopt does not skip a moved
+                // word: level 2 already refuses at the prologue, and the
+                // cold block still calls the helpers.
                 if (fn_get_current_bridge_epoch && fn_is_fn_epoch_stale && fn.name &&
                     fn.name[0] != '\0') {
                     const char* fn_name = fn.name;
@@ -3664,18 +3675,40 @@ public:
                     auto* name_ptr = llvm::ConstantExpr::getInBoundsGetElementPtr(
                         name_gv->getValueType(), name_gv,
                         llvm::ArrayRef<llvm::Constant*>{zero32, zero32});
-                    irb->CreateCall(llvm::FunctionCallee(fn_epoch_acquire_fence));
-                    auto* cur_epoch =
-                        irb->CreateCall(llvm::FunctionCallee(fn_get_current_bridge_epoch), {});
-                    auto* stale_i =
-                        irb->CreateCall(llvm::FunctionCallee(fn_is_fn_epoch_stale),
-                                        llvm::ArrayRef<llvm::Value*>{name_ptr, cur_epoch});
-                    auto* is_stale = irb->CreateICmpNE(stale_i, zero32);
                     auto* parent_func = irb->GetInsertBlock()->getParent();
                     auto* bb_stale =
                         llvm::BasicBlock::Create(ctx, "apply_epoch_stale", parent_func);
                     auto* bb_ok = llvm::BasicBlock::Create(ctx, "apply_epoch_ok", parent_func);
-                    irb->CreateCondBr(is_stale, bb_stale, bb_ok);
+                    const bool word_gate = jit_prologue_word_enabled() &&
+                                           !aura::compiler::jit_assume::global_epoch_mode();
+                    auto emit_probe = [&]() {
+                        irb->CreateCall(llvm::FunctionCallee(fn_epoch_acquire_fence));
+                        auto* cur_epoch =
+                            irb->CreateCall(llvm::FunctionCallee(fn_get_current_bridge_epoch), {});
+                        auto* stale_i =
+                            irb->CreateCall(llvm::FunctionCallee(fn_is_fn_epoch_stale),
+                                            llvm::ArrayRef<llvm::Value*>{name_ptr, cur_epoch});
+                        irb->CreateCondBr(irb->CreateICmpNE(stale_i, zero32), bb_stale, bb_ok);
+                    };
+                    if (word_gate) {
+                        auto* word =
+                            aura::compiler::jit_assume::DefineVersions::instance().word(fn.name);
+                        const auto expected = word->v.load(std::memory_order_acquire);
+                        auto* wptr =
+                            irb->CreateIntToPtr(c64u(aura::compiler::bits_from_ptr(&word->v)),
+                                                llvm::PointerType::getUnqual(ctx));
+                        auto* wv = irb->CreateLoad(llvm::Type::getInt64Ty(ctx), wptr);
+                        wv->setAtomic(llvm::AtomicOrdering::Acquire);
+                        wv->setAlignment(llvm::Align(8));
+                        auto* moved = irb->CreateICmpNE(wv, c64u(expected));
+                        auto* bb_epoch_chk =
+                            llvm::BasicBlock::Create(ctx, "apply_epoch_chk", parent_func);
+                        br_likely(irb->CreateNot(moved), bb_ok, bb_epoch_chk);
+                        irb->SetInsertPoint(bb_epoch_chk);
+                        emit_probe();
+                    } else {
+                        emit_probe();
+                    }
                     irb->SetInsertPoint(bb_stale);
                     if (fn_deopt_inc)
                         irb->CreateCall(llvm::FunctionCallee(fn_deopt_inc));
