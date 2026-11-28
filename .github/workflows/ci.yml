@@ -55,6 +55,9 @@
 #     repo/org variable is a real larger-runner label. Unset stays
 #     ubuntu-latest. A label that was never created queues forever.
 #     Sanitizer link pool stays 1 (#2636 deadlock, not a RAM cap).
+#   - (2026-11, #5645) ubsan-smoke builds only test_ir + test_concurrent.
+#     The UBSAN aura was compiled but never run: 1365s of the job's 2662s
+#     build on run 45932827662.
 #
 # Branch protection: require both `gate` and `build-test` (not only one).
 #
@@ -1149,11 +1152,14 @@ jobs:
     - name: Install Python CI deps
       run: pip install --break-system-packages -r requirements-dev.txt
 
-    # Slim matrix: aura + test_ir + test_concurrent; skip the issue farm.
+    # Only the two binaries the steps below run: test unit (test_ir) and
+    # test concurrent (test_concurrent). The UBSAN aura was compiled here
+    # but never executed (#5645): 1365s of the 2662s build on run
+    # 45932827662. Issue farm stays skipped.
     - name: Build with UBSAN
       env:
         AURA_ISSUE_BUILD: none
-        AURA_BUILD_TARGETS: aura,test_ir,test_concurrent
+        AURA_BUILD_TARGETS: test_ir,test_concurrent
         AURA_LINK_JOBS: "1"  # #2636: serialize link to avoid arena.ixx.o
                                # rebuild deadlock (mirrors asan-build fix).
       run: python3 build.py --sanitizer=ubsan build
