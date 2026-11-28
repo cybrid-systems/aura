@@ -11,6 +11,7 @@ import json
 import os
 import signal
 import subprocess
+import time
 import unittest
 from pathlib import Path
 
@@ -130,6 +131,30 @@ class LspDepth5155(unittest.TestCase):
         self.assertIn("signal 11", text)
 
 
+class LspFraming5495(unittest.TestCase):
+    def test_negative_content_length_exits(self) -> None:
+        started = time.monotonic()
+        r = subprocess.run(
+            [str(AURA), "lsp"],
+            input=b"Content-Length: -23\r\n\r\n",
+            capture_output=True,
+            env=env(),
+            timeout=10,
+        )
+        self.assertNotEqual(r.returncode, 0)
+        self.assertLess(time.monotonic() - started, 2.0)
+
+    def test_oversized_content_length_exits(self) -> None:
+        r = subprocess.run(
+            [str(AURA), "lsp"],
+            input=b"Content-Length: 999999999\r\n\r\n",
+            capture_output=True,
+            env=env(),
+            timeout=10,
+        )
+        self.assertNotEqual(r.returncode, 0)
+
+
 PROCESS_THEME = "lsp"
 PROCESS_TIER = "fast"
 # 180s was enough for the protocol/format/symbol/semantic themes; the
@@ -151,6 +176,16 @@ PARTS = (
     "lsp_diagnostics",
 )
 CASES = (
+    (
+        5495,
+        "test_negative_content_length_exits",
+        "LspFraming5495.test_negative_content_length_exits",
+    ),
+    (
+        5495,
+        "test_oversized_content_length_exits",
+        "LspFraming5495.test_oversized_content_length_exits",
+    ),
     (
         5155,
         "test_deep_message_is_an_error_and_the_server_continues",

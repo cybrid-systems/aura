@@ -5,6 +5,9 @@
 #ifndef AURA_LSP_JSON_RPC_INC
 #define AURA_LSP_JSON_RPC_INC
 
+#include <charconv>
+#include <cctype>
+
 namespace lsp_4911 {
 
 struct Json {
@@ -232,28 +235,79 @@ struct Transport {
         return true;
     }
 
-    // Bytes already buffered that form one complete frame. One read() can
-    // deliver several frames; the extras must not wait for the pipe.
-    bool has_framed_message() const {
-        const auto head_end = in_buf.find("\r\n\r\n");
-        if (head_end == std::string::npos)
-            return false;
+    // Issue #5495: the framing parser accepts only a bounded, non-negative
+    // decimal Content-Length. The old strtoull path wrapped -23 to
+    // 2^64-23, made erase consume zero bytes, and spun the poll loop.
+    static constexpr std::size_t kMaxHeaderBytes = 8192;
+    static constexpr std::size_t kMaxBodyBytes = 64 * 1024 * 1024;
+
+    struct HeadParse {
+        bool complete = false;
+        bool valid = false;
+        std::size_t head_end = 0;
         std::size_t len = 0;
+    };
+
+    static bool header_line_is_length(std::string_view line) {
+        constexpr std::string_view kKey = "content-length:";
+        if (line.size() < kKey.size())
+            return false;
+        for (std::size_t i = 0; i < kKey.size(); ++i) {
+            if (std::tolower(static_cast<unsigned char>(line[i])) != kKey[i])
+                return false;
+        }
+        return true;
+    }
+
+    [[nodiscard]] HeadParse parse_head() const {
+        HeadParse out{};
+        out.head_end = in_buf.find("\r\n\r\n");
+        if (out.head_end == std::string::npos)
+            return out;
+        out.complete = true;
+        if (out.head_end > kMaxHeaderBytes)
+            return out;
         bool have_len = false;
-        std::string_view head(in_buf.data(), head_end);
+        std::string_view head(in_buf.data(), out.head_end);
         while (!head.empty()) {
             const auto eol = head.find("\r\n");
             const auto line = head.substr(0, eol);
-            if (line.size() > 15 && line.substr(0, 15) == "Content-Length:") {
-                len = static_cast<std::size_t>(
-                    std::strtoull(std::string(line.substr(15)).c_str(), nullptr, 10));
+            if (header_line_is_length(line)) {
+                auto value = line.substr(15);
+                while (!value.empty() && (value.front() == ' ' || value.front() == '\t'))
+                    value.remove_prefix(1);
+                while (!value.empty() && (value.back() == ' ' || value.back() == '\t'))
+                    value.remove_suffix(1);
+                std::size_t parsed = 0;
+                const auto [ptr, ec] =
+                    std::from_chars(value.data(), value.data() + value.size(), parsed);
+                if (ec != std::errc{} || ptr != value.data() + value.size() || parsed == 0 ||
+                    parsed > kMaxBodyBytes)
+                    return out;
+                if (have_len && parsed != out.len)
+                    return out;
+                out.len = parsed;
                 have_len = true;
             }
             if (eol == std::string_view::npos)
                 break;
             head.remove_prefix(eol + 2);
         }
-        return have_len && in_buf.size() >= head_end + 4 + len;
+        out.valid = have_len;
+        return out;
+    }
+
+    // Bytes already buffered that form one complete frame. One read() can
+    // deliver several frames; the extras must not wait for the pipe. A
+    // complete but invalid header returns true so read_message reports it
+    // instead of leaving poll to wait forever.
+    bool has_framed_message() const {
+        const auto head = parse_head();
+        if (!head.complete)
+            return false;
+        if (!head.valid)
+            return true;
+        return in_buf.size() >= head.head_end + 4 + head.len;
     }
 
     // Wait up to `timeout_ms` (-1 = forever) for one message. Returns false
@@ -276,33 +330,18 @@ struct Transport {
     std::optional<std::string> read_message() {
         std::size_t head_end;
         while ((head_end = in_buf.find("\r\n\r\n")) == std::string::npos) {
+            if (in_buf.size() > kMaxHeaderBytes)
+                return std::nullopt;
             if (!fill(in_buf.size() + 1))
                 return std::nullopt;
         }
-        std::size_t len = 0;
-        bool have_len = false;
-        std::string_view head(in_buf.data(), head_end);
-        while (!head.empty()) {
-            const auto eol = head.find("\r\n");
-            const auto line = head.substr(0, eol);
-            if (line.size() > 15 && (line.substr(0, 15) == "Content-Length:" ||
-                                     line.substr(0, 15) == "content-length:")) {
-                len = static_cast<std::size_t>(std::strtoull(std::string(line.substr(15)).c_str(), nullptr, 10));
-                have_len = true;
-            }
-            if (eol == std::string_view::npos)
-                break;
-            head.remove_prefix(eol + 2);
-        }
-        if (!have_len) {
-            // A bodyless header block is not a frame; drop it and try again.
-            in_buf.erase(0, head_end + 4);
-            return std::string{};
-        }
-        if (!fill(head_end + 4 + len))
+        const auto head = parse_head();
+        if (!head.complete || !head.valid)
             return std::nullopt;
-        std::string body = in_buf.substr(head_end + 4, len);
-        in_buf.erase(0, head_end + 4 + len);
+        if (!fill(head.head_end + 4 + head.len))
+            return std::nullopt;
+        std::string body = in_buf.substr(head.head_end + 4, head.len);
+        in_buf.erase(0, head.head_end + 4 + head.len);
         return body;
     }
 
