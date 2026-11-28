@@ -97,8 +97,7 @@ def main() -> int:
         and not (ROOT / "docs" / "design" / "3857-0.md").exists()
     )
     good = (
-        "TemporaryMovingLivePtrCanary tmp_flat" in apply_src
-        and "TemporaryMovingLivePtrCanary tmp_pool" in apply_src
+        "TemporaryMovingLivePtrCanary2 tmp_pair_5520" in apply_src
         and "observe-only" in apply_src
         and no_second_model
         and no_stray

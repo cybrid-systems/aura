@@ -78,8 +78,11 @@ def main() -> int:
     must("ac3210_5_soft_zero_extra", "AC3 Soft test", test)
 
     # ── AC4: apply_closure + no extra pin model ──
-    must("TemporaryMovingLivePtrCanary tmp_flat", "AC4 apply flat", apply)
-    must("TemporaryMovingLivePtrCanary tmp_pool", "AC4 apply pool", apply)
+    # Issue #5520: the apply path binds flat+pool under ONE inventory lock;
+    # the pair RAII keeps the same observe-only contract.
+    must("TemporaryMovingLivePtrCanary2", "AC1 RAII pair", arena)
+    must("TemporaryMovingLivePtrCanary2 tmp_pair_5520", "AC4 apply pair canary", apply)
+    must("own_noted_pair(", "AC4 apply pair own_noted", apply)
     must("Issue #3210", "AC4 apply cite", apply)
     if "class PostMovingPinRegistry" in arena or "g_moving_pin_registry_3210" in arena:
         fails.append("AC4: extra pin registry introduced")

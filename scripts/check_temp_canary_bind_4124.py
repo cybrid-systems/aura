@@ -112,18 +112,15 @@ def _rows(jit: str, arena: str, apply: str, test: str, build: str, allow: str) -
     must_not("class PostMovingCanaryRegistry", "AC3 no second registry", arena)
 
     # AC4 — TW apply fallback binds; no raw arm_observe note in the path.
+    # Issue #5520: apply binds flat+pool through the pair form, one inventory
+    # lock, same #4066 remap/note contract.
     must(
-        "aura::ast::bind_temporary_moving_live_ptr_any_arena(cl_copy.flat, &noted)",
-        "AC4 apply binds flat via any-arena",
+        "aura::ast::bind_temporary_moving_live_ptr_any_arena2(",
+        "AC4 apply binds flat+pool via any-arena pair",
         apply,
     )
-    must(
-        "aura::ast::bind_temporary_moving_live_ptr_any_arena(cl_copy.pool, &noted)",
-        "AC4 apply binds pool via any-arena",
-        apply,
-    )
-    must("tmp_flat.own_noted(flat)", "AC4 #4066 own_noted contract intact", apply)
-    must_not("tmp_flat.arm_observe(cl_copy.flat)", "AC4 no raw fallback note", apply)
+    must("tmp_pair_5520.own_noted_pair(", "AC4 #4066 own_noted contract intact", apply)
+    must_not("arm_observe(cl_copy.flat)", "AC4 no raw fallback note", apply)
 
     # AC5 — test wiring after the #4066 block + adversarial window test.
     must("ac4124_bind_any_blocks_then_remapped();", "AC5 runner wired", test)

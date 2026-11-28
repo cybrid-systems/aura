@@ -95,9 +95,7 @@ def main() -> int:
     # ── AC1: seq-survive stamp + re-stamp; old drop condition gone ──────
     must("kApplyClosureTlsSeqSurviveIssue = 4169", "AC1 stamp constant", flat)
     must("Issue #4169", "AC1 issue cite", flat)
-    lookup = window(
-        flat, "static bool try_apply_closure_tls_lookup", "ev.note_apply_closure_tls_hit()", "AC1 lookup body"
-    )
+    lookup = window(flat, "static bool try_apply_closure_tls_lookup", "note_apply_hit_5520(ev)", "AC1 lookup body")
     must("s.densify_window_seq = dseq;", "AC1 resident slot re-stamped", lookup)
     must("if (s.apply_epoch != epoch)", "AC1 epoch-owned drop", lookup)
     absent(
@@ -120,7 +118,11 @@ def main() -> int:
     absent("densify also keys TLS\n", "AC2 ix comment re-anchored", ixx)
 
     # ── AC3: densify-old-copy correctness nets retained ─────────────────
-    must("bind_temporary_moving_live_ptr(cl_copy.flat", "AC3 remap bind net", flat)
+    # Issue #5520: flat+pool bind through the pair form; the stack copy is
+    # still rewritten from the bound return (the #4066 remap net).
+    must("bind_temporary_moving_live_ptr2(", "AC3 remap bind net", flat)
+    must("cl_copy.flat = static_cast<aura::ast::FlatAST*>(flat_out)", "AC3 bind rewrites flat", flat)
+    must("cl_copy.pool = static_cast<aura::ast::StringPool*>(pool_out)", "AC3 bind rewrites pool", flat)
     must("production_apply_closure_densify_hard_refuse", "AC3 #3421 refuse consult", flat)
     must("densify_refuse_seq_skip", "AC3 #4006 seq-skip arm", flat)
     must("g_apply_densify_window_consult_total", "AC3 consult counter", flat)
