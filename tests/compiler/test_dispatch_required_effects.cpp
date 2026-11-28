@@ -4139,10 +4139,25 @@ static void ac4530_string_gate_siblings() {
     set_mode(SandboxMode::Off);
 }
 
+// Issue #5512: synthesize:define reads http-post out of the primitive table
+// and calls it directly, so dispatch never infers Network from the http-*
+// name. The body must gate on Network itself and cap :max-attempts.
+static void issue_5512_synthesize_direct_http_gate() {
+    std::println("\n--- #5512: synthesize:define direct http-post gate ---");
+    const auto src = read_file("src/compiler/evaluator_primitives_agent.cpp");
+    CHECK(!src.empty(), "#5512: read the agent primitives TU");
+    CHECK(src.find("kEffectNetwork, \"synthesize:define\"") != std::string::npos,
+          "#5512: the direct http-post call requires Network");
+    CHECK(src.find("std::clamp(max_attempts, 1, 16)") != std::string::npos,
+          "#5512: :max-attempts is clamped");
+}
+
 int run_test_dispatch_required_effects() {
     std::println("=== Issue #2152: dispatch non-bypassable required_effects ===");
     CHECK(kDispatchRequiredEffectsIssue == 2152, "issue stamp");
     CHECK(kSideEffectInheritIssue == 2057, "inherits #2057 stamp");
+
+    issue_5512_synthesize_direct_http_gate();
 
     // ── AC1: required_effects without body check → deny under Restricted ──
     {

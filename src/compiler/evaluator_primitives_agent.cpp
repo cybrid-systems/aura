@@ -1298,6 +1298,19 @@ void RegSplitParts::register_synthesize_define_primitives(Evaluator& ev, AddFn& 
                 max_attempts = static_cast<int>(as_int(a[i + 1]));
             }
         }
+        // Issue #5512: an unbounded :max-attempts loops synchronous POSTs
+        // through every endpoint outage; cap the retry budget.
+        max_attempts = std::clamp(max_attempts, 1, 16);
+
+        // Issue #5512: the http-post primitive is read out of the primitive
+        // table and called directly below, so dispatch never infers the
+        // Network effect from the http-* name. Gate the outbound call here,
+        // before the API key is read or any text leaves the heap.
+        if (!ev.require_effect(aura::compiler::security::kEffectNetwork, "synthesize:define")) {
+            return ev.make_refusal_error(aura::compiler::security::format_deny_reason(
+                aura::compiler::security::kEffectNetwork, ev.capability_tenant_id(),
+                "synthesize:define"));
+        }
 
         // Build prompt: construct a simple instruction string
         std::string instruction =
