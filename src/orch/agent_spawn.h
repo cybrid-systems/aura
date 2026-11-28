@@ -3361,8 +3361,8 @@ inline std::string spawn_tenant_spoof_error(std::uint64_t requested, std::uint64
                 // worker instead of round-robining a deadline requeue onto a
                 // busy body's worker.
                 const bool park_ok = interval_ms >= 100;
-                auto next_emit = std::chrono::steady_clock::now() +
-                                 std::chrono::milliseconds(interval_ms);
+                auto next_emit =
+                    std::chrono::steady_clock::now() + std::chrono::milliseconds(interval_ms);
                 bool exited_on_reclaim = false;
                 while (!live_keep->body_done.load(std::memory_order_acquire)) {
                     if (serve::g_current_fiber && serve::g_current_fiber->is_cancel_requested())
@@ -3386,8 +3386,7 @@ inline std::string spawn_tenant_spoof_error(std::uint64_t requested, std::uint64
                                           .count();
                         }
                         wait_ms = std::clamp<long long>(wait_ms, 1, 100);
-                        serve::g_current_fiber->set_park_deadline_ms(
-                            static_cast<int>(wait_ms));
+                        serve::g_current_fiber->set_park_deadline_ms(static_cast<int>(wait_ms));
                         serve::Fiber::yield(serve::YieldReason::BlockingIO);
                         serve::g_current_fiber->clear_park_deadline();
                     } else {
