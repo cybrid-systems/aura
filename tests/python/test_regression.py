@@ -1294,6 +1294,46 @@ def test_jit_osr_tail_4600():
     print("  ✅ jit-osr-tail-4600 (named-let OSR byte-identical; fires on cell-free, declines on the #4084 sentinel)")
 
 
+def test_jit_osr_handoff_cells_5640():
+    """Issue #5640: an OSR handoff from an interpreted named-let chain.
+
+    Trigger: a primitive loaded from a define cell (gc-heap) refuses native
+    dispatch, so exec_jit falls back to eval_ir; the interpreted tail chain
+    then OSRs into the compiled loop. The handoff slots are the interpreter's
+    per-instance cell refs / IR closure ids, not the runtime's plain ids.
+    Before the bridge, the compiled CellGet read the runtime heap at the
+    tagged index (0) and dispatched closure 0 (mk) with a missing arg, so
+    the result was "type error: runtime error". The bridge routes bridged
+    cells and IR closures to the active interpreter; hold's pair is allocated
+    and (gc-heap) collected inside the interpreted callee every iteration.
+    """
+    prog = (
+        "(define (mk a b) (cons a b)) "
+        "(define (hold n) (let ((p (mk n (+ n 1)))) (gc-heap) (+ (car p) (cdr p)))) "
+        "(define (loop k acc) (if (< k 2000) (loop (+ k 1) (+ acc (hold k))) acc)) "
+        "(display (loop 0 0))"
+    )
+    expect = "4000000"
+
+    def run(osr: str, n: str = "1") -> subprocess.CompletedProcess:
+        env = os.environ.copy()
+        env["AURA_SANDBOX"] = "off"
+        env["AURA_PIPELINE_STRICT"] = "0"
+        env["AURA_JIT_OSR"] = osr
+        env["AURA_JIT_OSR_N"] = n
+        return subprocess.run([AURA, "--jit"], input=prog, capture_output=True, text=True, timeout=120, env=env)
+
+    r = run("1")
+    assert r.returncode == 0, f"5640 osr-on: rc={r.returncode} err={r.stderr[-400:]!r}"
+    assert (r.stdout or "").strip() == expect, f"5640 osr-on: {r.stdout!r} err={r.stderr[-400:]!r}"
+    # threshold 1 (same path) and the default threshold must be byte-identical.
+    r = run("1", "64")
+    assert r.returncode == 0 and (r.stdout or "").strip() == expect, (r.stdout, r.stderr[-400:])
+    r = run("0")
+    assert r.returncode == 0 and (r.stdout or "").strip() == expect, (r.stdout, r.stderr[-400:])
+    print("  ✅ jit-osr-handoff-cells-5640 (tagged cells/IR closures bridge; pair+gc loop stays byte-identical)")
+
+
 def test_jit_invalidation_walltime_4600():
     """Issue #4600 §8: invalidation wall-clock bench with realistic bodies.
 
@@ -6021,6 +6061,7 @@ for tf in [
     test_jit_assumption_invalidation_4569,
     test_jit_prologue_word_and_storm_4600,
     test_jit_osr_tail_4600,
+    test_jit_osr_handoff_cells_5640,
     test_jit_invalidation_walltime_4600,
     test_jit_reuse_lowering_4600,
     test_jit_l1_4570,

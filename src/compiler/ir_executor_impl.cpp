@@ -19,6 +19,7 @@ module;
 #include "core/fiber_context.hh" // Issue #4716: fiber-local execution context
 #include "compiler/cct_probe.hh" // Issue #5122: live calling-context samples
 #include "runtime_shared.h"
+#include "compiler/value_tags.h" // Issue #5640: bridged cell index mask
 #include "core/diag_print.hh" // #4936 eprintln_nothrow
 #include "aura_jit_bridge.h"  // #2129: aura_get_aot_live_linear_state_fingerprint
 #include "observability_logger.h"
@@ -3483,7 +3484,10 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                 case IROpcode::CellSet: {
                     auto& cell_id_val = locals[ops[0]];
                     if (is_cell(cell_id_val)) {
-                        auto cell_id = as_cell_id(cell_id_val);
+                        // Issue #5640: a bridged OSR-handoff ref carries the
+                        // high namespace bit; the interpreter index is the low part.
+                        auto cell_id = as_cell_id(cell_id_val) &
+                                       (aura::compiler::types::kClosureIdHighBit - 1);
                         if (cell_heap_.size() <= cell_id)
                             cell_heap_.resize(cell_id + 1, make_void());
                         cell_heap_[cell_id] = locals[ops[1]];
@@ -3494,7 +3498,10 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                 case IROpcode::CellGet: {
                     auto& cell_id_val = locals[ops[1]];
                     if (is_cell(cell_id_val)) {
-                        auto cell_id = as_cell_id(cell_id_val);
+                        // Issue #5640: deopt spill / OSR handoff carry the
+                        // bridged high bit; mask it back to the cell_heap_ index.
+                        auto cell_id = as_cell_id(cell_id_val) &
+                                       (aura::compiler::types::kClosureIdHighBit - 1);
                         locals[ops[0]] =
                             (cell_id < cell_heap_.size()) ? cell_heap_[cell_id] : make_void();
                     } else {
@@ -3993,3 +4000,46 @@ bool IRInterpreter::reclaim_unreachable_now() {
 }
 
 } // namespace aura::compiler
+
+// Issue #5640: OSR handoff bridge. service_exec_jit re-bases the
+// interpreter's cell refs into the kClosureIdHighBit namespace and the JIT
+// runtime routes those values (and IR closure ids) here. Everything runs on
+// the active interpreter instance — cell_heap_ / runtime_closures_ are
+// per-instance, so a different instance would resolve every capture to void.
+extern "C" int aura_ir_bridge_cell_get(std::uint64_t idx, std::int64_t* out) noexcept {
+    if (!out)
+        return 0;
+    auto* ip = aura::compiler::IRInterpreter::active_instance();
+    if (!ip)
+        return 0;
+    if (auto value = ip->inspect_cell(idx)) {
+        *out = value->val;
+        return 1;
+    }
+    return 0;
+}
+
+extern "C" int aura_ir_bridge_cell_set(std::uint64_t idx, std::int64_t val) noexcept {
+    auto* ip = aura::compiler::IRInterpreter::active_instance();
+    if (!ip)
+        return 0;
+    return ip->store_cell(idx, aura::compiler::types::EvalValue(val)) ? 1 : 0;
+}
+
+extern "C" int aura_ir_bridge_call_closure(std::uint64_t id, const std::int64_t* args,
+                                           std::uint32_t argc, std::int64_t* out) noexcept {
+    if (!out || (argc != 0 && !args))
+        return 0;
+    auto* ip = aura::compiler::IRInterpreter::active_instance();
+    if (!ip)
+        return 0;
+    std::vector<aura::compiler::types::EvalValue> vargs;
+    vargs.reserve(argc);
+    for (std::uint32_t i = 0; i < argc; ++i)
+        vargs.emplace_back(args[i]);
+    auto res = ip->call_closure(id, vargs);
+    if (!res)
+        return 0;
+    *out = res->val;
+    return 1;
+}

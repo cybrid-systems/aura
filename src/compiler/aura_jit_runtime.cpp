@@ -6,6 +6,7 @@
 #include <atomic> // std::memory_order_relaxed — lifetime_pin.hh uses std::atomic but doesn't include <atomic> itself (relies on transitive include from consumer TUs like render_primitives.cpp; we explicitly include it here since aura_jit_runtime.cpp doesn't pull it transitively).
 #include "core/atomic_fence_port.h"
 
+#include "compiler/value_tags.h"       // Issue #5640: OSR cell/closure bridge tags
 #include "compiler/float_repr.hh"      // Issue #4468: display/write float spelling
 #include "compiler/lock_order_audit.h" // #4083: skip workspace re-lock under the guard
 #include "compiler/typed_mutation_audit.h" // #2666 production_defaults_active for residual remount default
@@ -16,6 +17,56 @@
 #include "core/workspace_epoch.hh"    // Issue #4388: cache-hit republish re-samples mutation epoch
 #include "observability_metrics.h"    // CompilerMetrics full def (aura_get_aot_metrics returns it)
 #include "jit_assumptions.hh"         // Issue #4600: DeoptStorms + stats for guard-deopt notes
+
+// Issue #5640: IR-interpreter bridge. An OSR handoff from an interpreted
+// tail chain carries the interpreter's per-instance cell refs (re-based
+// into kClosureIdHighBit by service_exec_jit) and IR closure ids (already
+// in that namespace). The native cell get/set and closure dispatch route
+// those values to the active interpreter instead of the runtime heaps.
+// Weak: test/tool links without the IR executor keep the old behaviour.
+extern "C" int aura_ir_bridge_cell_get(std::uint64_t idx, std::int64_t* out) noexcept
+    __attribute__((weak));
+extern "C" int aura_ir_bridge_cell_set(std::uint64_t idx, std::int64_t val) noexcept
+    __attribute__((weak));
+extern "C" int aura_ir_bridge_call_closure(std::uint64_t id, const std::int64_t* args,
+                                           std::uint32_t argc, std::int64_t* out) noexcept
+    __attribute__((weak));
+
+namespace {
+constexpr std::uint64_t kIrBridgeIndexMask =
+    aura::compiler::types::kClosureIdHighBit - 1;
+inline bool is_ir_bridge_cell(std::int64_t v) noexcept {
+    return aura::compiler::types::is_ref(v) &&
+           aura::compiler::types::ref_type(v) == aura::compiler::types::RefCell &&
+           (aura::compiler::types::ref_index(v) & aura::compiler::types::kClosureIdHighBit) != 0;
+}
+inline bool is_ir_bridge_closure(std::int64_t v) noexcept {
+    return aura::compiler::types::is_ref(v) &&
+           aura::compiler::types::ref_type(v) == aura::compiler::types::RefClosure &&
+           (aura::compiler::types::ref_index(v) & aura::compiler::types::kClosureIdHighBit) != 0;
+}
+// A value the interpreter hands to native code: cells keep the bridge bit
+// so a later native CellGet routes back to the interpreter; everything else
+// (pairs, closures, strings, …) is already in a shared namespace.
+inline std::int64_t rebase_ir_cell_out(std::int64_t v) noexcept {
+    if (is_ir_bridge_cell(v))
+        return v;
+    if (aura::compiler::types::is_ref(v) &&
+        aura::compiler::types::ref_type(v) == aura::compiler::types::RefCell)
+        return aura::compiler::types::make_ref(
+            aura::compiler::types::RefCell,
+            aura::compiler::types::kClosureIdHighBit | aura::compiler::types::ref_index(v));
+    return v;
+}
+// A value native code hands back to the interpreter: strip the bridge bit
+// so the interpreter's cell_heap_ index is valid again.
+inline std::int64_t unbase_ir_cell_in(std::int64_t v) noexcept {
+    if (is_ir_bridge_cell(v))
+        return aura::compiler::types::make_ref(
+            aura::compiler::types::RefCell, aura::compiler::types::ref_index(v) & kIrBridgeIndexMask);
+    return v;
+}
+} // namespace
 
 // Forward decls for symbols defined in aura_jit_bridge.cpp (extern "C").
 // Issue #2637 anon / residual sync remount counters.
@@ -5886,6 +5937,26 @@ extern "C" int64_t aura_closure_dispatch_native_checked(int64_t closure_id, int6
                                                         int64_t argc) {
     // Issue #4451: a prior direct refuse must not poison the next call.
     aura_jit_clear_prologue_deopt_sentinel();
+    // Issue #5640: an IR closure riding an OSR handoff has no row in the
+    // native closure table; run it on the interpreter that minted it.
+    if (is_ir_bridge_closure(closure_id)) {
+        std::vector<std::int64_t> bridged;
+        const std::int64_t* argv = args;
+        const auto uargc = argc > 0 ? static_cast<std::uint32_t>(argc) : 0u;
+        if (uargc != 0 && args) {
+            bridged.resize(uargc);
+            for (std::uint32_t i = 0; i < uargc; ++i)
+                bridged[i] = unbase_ir_cell_in(args[i]);
+            argv = bridged.data();
+        }
+        std::int64_t out = 0;
+        if (aura_ir_bridge_call_closure &&
+            aura_ir_bridge_call_closure(
+                aura::compiler::types::ref_index(closure_id) & kIrBridgeIndexMask, argv, uargc,
+                &out))
+            return rebase_ir_cell_out(out);
+        return closure_dispatch_leave_native();
+    }
     // Issue #157 Phase 2 + #1361: shared table lock (always) + workspace read.
     std::shared_lock<std::shared_mutex> tlock(g_closure_table_mtx);
     aura_lock_workspace_read();
@@ -6878,6 +6949,15 @@ extern "C" int64_t aura_new_cell_tenant(int64_t owner_tenant) {
 // second model).
 extern "C" int64_t aura_cell_get_checked(int64_t cell_id, std::uint64_t caller_tenant,
                                          int sandbox_mode) {
+    // Issue #5640: an interpreter cell handed across the OSR boundary.
+    if (is_ir_bridge_cell(cell_id)) {
+        std::int64_t out = 0;
+        if (aura_ir_bridge_cell_get &&
+            aura_ir_bridge_cell_get(aura::compiler::types::ref_index(cell_id) & kIrBridgeIndexMask,
+                                    &out))
+            return rebase_ir_cell_out(out);
+        return 0;
+    }
     // Issue #157 Phase 2: read lock — read g_cell_heap[id]. A
     // concurrent aura_cell_set / aura_new_cell would race without
     // the lock (vector resize, slot mutation).
@@ -6919,6 +6999,14 @@ extern "C" int aura_jit_owner_require_effect(std::uint16_t bits, const char* op)
 // isolates the owner-compare semantics for light-link tests.
 extern "C" void aura_cell_set_checked(int64_t cell_id, int64_t val, std::uint64_t caller_tenant,
                                       int sandbox_mode) {
+    // Issue #5640: write through to the interpreter cell (OSR handoff).
+    if (is_ir_bridge_cell(cell_id)) {
+        if (aura_ir_bridge_cell_set &&
+            aura_ir_bridge_cell_set(aura::compiler::types::ref_index(cell_id) & kIrBridgeIndexMask,
+                                    unbase_ir_cell_in(val)))
+            note_cell_heap_write_(); // keep native cell-read caches coherent
+        return;
+    }
     // Issue #157 Phase 2: write lock — write g_cell_heap[id].
     aura_lock_workspace_write();
     if (cell_id >= 0 && static_cast<size_t>(cell_id) < g_cell_heap.size()) {

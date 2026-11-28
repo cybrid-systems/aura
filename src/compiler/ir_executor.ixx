@@ -292,6 +292,14 @@ public:
             return cell_heap_[id];
         return std::nullopt;
     }
+    // Issue #5640: a native frame in an OSR-handoff chain writes a
+    // captured cell through the runtime cell_set bridge.
+    [[nodiscard]] bool store_cell(std::uint64_t id, EvalValue value) {
+        if (id >= cell_heap_.size())
+            return false;
+        cell_heap_[id] = value;
+        return true;
+    }
 
     // Get/set evaluation strategy
     const EvalStrategy& strategy() const { return strategy_; }

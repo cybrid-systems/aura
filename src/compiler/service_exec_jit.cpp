@@ -120,6 +120,19 @@ namespace {
             std::fprintf(stderr, "[osr] enter fn=%s nslots=%u argc=%u\n", fn_name, nslots, argc);
         }
         std::vector<std::int64_t> osr_slots(slots, slots + nslots);
+        // Issue #5640: the interpreter's tagged cell refs index its own
+        // per-instance cell_heap_, while the compiled body reads cells through
+        // the runtime heap (plain ids). Re-base every RefCell slot into the
+        // reserved high index bit so the runtime can tell an interpreter cell
+        // from a native id unambiguously (the same bit IR closure ids use).
+        for (auto& v : osr_slots) {
+            if (aura::compiler::types::is_ref(v) &&
+                aura::compiler::types::ref_type(v) == aura::compiler::types::RefCell)
+                v = aura::compiler::types::make_ref(
+                    aura::compiler::types::RefCell,
+                    aura::compiler::types::kClosureIdHighBit |
+                        aura::compiler::types::ref_index(v));
+        }
         struct OsrBusyGuard : ::aura::core::NoCopy {
             int& flag;
             ~OsrBusyGuard() { flag = 0; }
