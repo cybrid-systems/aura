@@ -309,7 +309,22 @@ enum Op : uint32_t {
 // Issue #4570: L1 lowering kill switch for A/B and triage —
 // AURA_JIT_L1=0 restores the pre-#4570 lowering (no cell promotion, no
 // static float slots, no fixnum fast path / compare fusion).
+// Issue #5518 phase 2: root mode. Mirrors every tagged slot into one
+// contiguous array and registers it for the life of the native call, so the
+// evaluator mark can see a pair that only a JIT frame holds (#5631). Opt-in
+// (AURA_PAIR_GC=1): one extra store per slot write, and the cell / scalar-pair
+// promotions are disabled because their storage would not be in the array.
+static bool pair_gc_root_mode_5518() {
+    static const bool on = [] {
+        const char* v = std::getenv("AURA_PAIR_GC");
+        return v && v[0] == '1';
+    }();
+    return on;
+}
+
 static bool jit_l1_enabled() {
+    if (pair_gc_root_mode_5518())
+        return false;
     static const bool on = [] {
         const char* v = ::aura::config::raw(::aura::config::Key::AURA_JIT_L1);
         return !(v && v[0] == '0');
@@ -503,6 +518,8 @@ static std::vector<std::uint8_t> promotable_cells(const FlatFunction& fn) {
 // Issue #4573: scalar replacement kill switch for A/B and triage —
 // AURA_JIT_SR=0 keeps every MakePair as a runtime allocation.
 static bool jit_sr_enabled() {
+    if (pair_gc_root_mode_5518())
+        return false;
     static const bool on = [] {
         const char* v = ::aura::config::raw(::aura::config::Key::AURA_JIT_SR);
         return !(v && v[0] == '0');
@@ -1338,6 +1355,12 @@ struct LLVMBuilder {
     // Issue #5518 phase 2: native frame accounting for the JIT-pair sweep.
     llvm::Function* fn_jit_frame_enter = nullptr;
     llvm::Function* fn_jit_frame_leave = nullptr;
+    // Issue #5518 phase 2: root-mode slot mirror + the runtime registration.
+    llvm::Value* pair_root_arr = nullptr;
+    llvm::Type* pair_root_arr_ty = nullptr;
+    std::uint32_t pair_root_n = 0;
+    llvm::Function* fn_pair_roots_push = nullptr;
+    llvm::Function* fn_pair_roots_pop = nullptr;
     llvm::Function* fn_alloc_pair_arena = nullptr;
     llvm::Function* fn_pair_car = nullptr;
     llvm::Function* fn_pair_cdr = nullptr;
@@ -1551,6 +1574,13 @@ struct LLVMBuilder {
         fn_jit_frame_leave =
             llvm::Function::Create(llvm::FunctionType::get(void_ty, {}, false),
                                    llvm::Function::ExternalLinkage, "aura_jit_frame_leave", mod);
+        // Issue #5518 phase 2: push/pop the frame's slot mirror as a GC root.
+        fn_pair_roots_push =
+            llvm::Function::Create(llvm::FunctionType::get(void_ty, {ptr_i64, i32_ty}, false),
+                                   llvm::Function::ExternalLinkage, "aura_pair_roots_push", mod);
+        fn_pair_roots_pop =
+            llvm::Function::Create(llvm::FunctionType::get(void_ty, {}, false),
+                                   llvm::Function::ExternalLinkage, "aura_pair_roots_pop", mod);
 
         fn_pair_car = llvm::Function::Create(llvm::FunctionType::get(i64, {i64}, false),
                                              llvm::Function::ExternalLinkage, "aura_pair_car", mod);
@@ -1934,6 +1964,13 @@ struct LLVMBuilder {
             return;
         }
         irb->CreateStore(val, llvm_locals[slot]);
+        // Issue #5518 phase 2: keep the contiguous root mirror in step. A
+        // root-mode frame registers this array for its whole lifetime; every
+        // tagged slot write must be visible there.
+        if (pair_root_arr && slot < pair_root_n) {
+            auto* gep = irb->CreateConstInBoundsGEP2_64(pair_root_arr_ty, pair_root_arr, 0, slot);
+            irb->CreateStore(val, gep);
+        }
     }
     // Issue #4600 §1/§2 (phase 2): emit a guard exit — one shared stub
     // call. Terminates the cold block with `ret stub(...)`; the caller
@@ -1984,6 +2021,8 @@ struct LLVMBuilder {
     void emit_ret(llvm::Value* v) {
         if (depth_armed && fn_depth_leave)
             irb->CreateCall(llvm::FunctionCallee(fn_depth_leave), {});
+        if (pair_root_arr && fn_pair_roots_pop)
+            irb->CreateCall(llvm::FunctionCallee(fn_pair_roots_pop), {});
         if (fn_jit_frame_leave)
             irb->CreateCall(llvm::FunctionCallee(fn_jit_frame_leave), {});
         irb->CreateRet(v);
@@ -6467,8 +6506,9 @@ struct AuraJIT::Impl {
             auto* bb_ok = llvm::BasicBlock::Create(ctx, "jit_depth_ok", builder.func);
             builder.irb->CreateCondBr(over, bb_over, bb_ok);
             builder.irb->SetInsertPoint(bb_over);
-            // Did not increment. depth_armed stays false, so no leave.
-            builder.irb->CreateRet(builder.c64(0));
+            // Did not increment. depth_armed stays false, so no leave; the
+            // root frame (pushed at entry) is popped by emit_ret.
+            builder.emit_ret(builder.c64(0));
             builder.irb->SetInsertPoint(bb_ok);
             builder.depth_armed = true;
             if (builder.self_call_ok) {
@@ -6479,6 +6519,26 @@ struct AuraJIT::Impl {
             } else {
                 builder.entry_body_bb = bb_ok;
             }
+        }
+
+        // Issue #5518 phase 2: root mode. One contiguous mirror of the tagged
+        // slots, alloca'd and registered at the very start of the entry block
+        // (executed once per call, dominates every store). The array is
+        // intentionally not zeroed: a stale value can only retain, and the
+        // mark range-checks every id.
+        if (pair_gc_root_mode_5518() && builder.fn_pair_roots_push && fn.local_count > 0) {
+            auto* i64_ty = llvm::Type::getInt64Ty(ctx);
+            auto* arr_ty = llvm::ArrayType::get(i64_ty, fn.local_count);
+            auto* entry_bb = builder.block_map[fn.entry_block];
+            builder.irb->SetInsertPoint(entry_bb, entry_bb->getFirstInsertionPt());
+            builder.pair_root_arr = builder.irb->CreateAlloca(arr_ty, nullptr, "pair_roots");
+            builder.pair_root_arr_ty = arr_ty;
+            builder.pair_root_n = fn.local_count;
+            auto* slots0 =
+                builder.irb->CreateConstInBoundsGEP2_64(arr_ty, builder.pair_root_arr, 0, 0);
+            builder.irb->CreateCall(
+                builder.fn_pair_roots_push,
+                {slots0, builder.irb->getInt32(static_cast<int>(fn.local_count))});
         }
 
         // Issue #5518 phase 2: account this native frame after the prologue's

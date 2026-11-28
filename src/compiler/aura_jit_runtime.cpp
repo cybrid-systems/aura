@@ -6991,6 +6991,11 @@ extern "C" int64_t aura_pack_rest(int64_t* locals, int64_t start, int64_t count)
     return list;
 }
 
+// Issue #5518 phase 2: root-mode collection seam (defined in runtime_ssot.cpp,
+// the runtime SSOT library shared with the evaluator).
+extern "C" std::uint32_t aura_pair_gc_armed();
+extern "C" void aura_maybe_collect_pairs();
+
 // Issue #5518 phase 2: reclaimed heap slots. The sweep frees the slot after
 // clearing its table cell; the same thread's next cons reuses it instead of
 // bumping a fresh slab slot, so a reclaimed loop keeps its slab footprint
@@ -7015,6 +7020,14 @@ extern "C" PairSlot* aura_pair_slot_take() {
 }
 
 int64_t aura_alloc_pair(int64_t car, int64_t cdr) {
+    // Issue #5518 phase 2: amortized collection from the allocation seam. Runs
+    // BEFORE the id is claimed, so the pair being born here can never be swept
+    // by the collection it triggers.
+    if (aura_pair_gc_armed()) {
+        static thread_local std::uint64_t allocs_5518 = 0;
+        if (((++allocs_5518) & 0x3FFFFu) == 0)
+            aura_maybe_collect_pairs();
+    }
     // Issue #898: thread-local slab (one malloc per 64 pairs) and a
     // release publish into the non-moving segment table. No workspace
     // write lock on this path. The slab is linked once for process-exit

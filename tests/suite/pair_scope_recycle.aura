@@ -44,3 +44,19 @@
   (check (pair? escaped))
   (check (= 7 (car escaped)))
   (check (= 8 (cdr escaped))))
+
+(test-case "pair-scope:gc-heap-keeps-live-lists" (hash "issue" 5518)
+  (define ks (list 1 2 3 4 5))
+  (gc-heap)
+  (check (= 5 (length ks)))
+  (check (= 1 (car ks))))
+
+(define (hold-local n)
+  (let ((p (cons n (+ n 1))))
+    (gc-heap)
+    (+ (car p) (cdr p))))
+
+(test-case "pair-scope:gc-heap-inside-frame-keeps-local-pair" (hash "issue" 5518)
+  ; The #5631 shape: a frame-held pair must survive a collection.
+  (check (= 43 (hold-local 21))))
+

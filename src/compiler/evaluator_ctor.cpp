@@ -84,7 +84,34 @@ void Evaluator::build_primitive_slots() {
     // No longer needed — Primitives manages ordering internally
 }
 
+// Issue #5518 phase 2: the JIT allocation seam calls back into the live
+// evaluator's sweep (opt-in root mode). The pointer is cleared in the
+// destructor below, so a dangling hook can never run a collection.
+extern "C" void aura_set_pair_gc_hook(void (*fn)());
+
+namespace {
+    Evaluator* g_pair_gc_evaluator_5518 = nullptr;
+
+    void pair_gc_hook_5518() {
+        if (g_pair_gc_evaluator_5518)
+            (void)g_pair_gc_evaluator_5518->reclaim_tw_unreachable_now();
+    }
+} // namespace
+
+// Issue #5518 phase 2: called from ~Evaluator so the runtime hook never
+// outlives the evaluator it points at.
+extern "C" void aura_pair_gc_hook_forget(const Evaluator* ev) {
+    if (g_pair_gc_evaluator_5518 == ev) {
+        g_pair_gc_evaluator_5518 = nullptr;
+        aura_set_pair_gc_hook(nullptr);
+    }
+}
+
 Evaluator::Evaluator() {
+    // Issue #5518 phase 2: publish this evaluator to the allocation-time
+    // collection hook (a no-op unless AURA_PAIR_GC arms root mode).
+    g_pair_gc_evaluator_5518 = this;
+    aura_set_pair_gc_hook(&pair_gc_hook_5518);
     // Issue #4854: live for the per-fiber slab body-exit release.
     fiber_slab_owner_register();
     // Issue #3554: self-upgrade lock_order mode + hold-budget reject
@@ -311,7 +338,12 @@ void* Evaluator::ensure_type_registry() {
     return type_registry_;
 }
 
+// Issue #5518 phase 2: clear the JIT allocation-time collection hook when it
+// points at this evaluator (no collection may run on a destroyed one).
+extern "C" void aura_pair_gc_hook_forget(const Evaluator* ev);
+
 Evaluator::~Evaluator() {
+    aura_pair_gc_hook_forget(this);
     // Issue #4854: no body-exit hook may touch this Evaluator from here on.
     fiber_slab_owner_unregister();
     // Issue #4859: the (eval ...) programs are owned by the closures /

@@ -30,6 +30,13 @@ import aura.compiler.value;
 import aura.core.envframe_lifetime;
 import aura.core.lifetime_pin;
 
+// Issue #5518 phase 2: native-frame slot roots (root mode) and the opt-in
+// reclamation arming flag. Declared at module purview (the global module
+// fragment only takes preprocessor inclusion).
+extern "C" void aura_pair_roots_scan(void (*cb)(std::int64_t, void*), void* ud);
+extern "C" std::uint32_t aura_pair_gc_armed();
+extern "C" std::uint32_t aura_pair_roots_depth();
+
 namespace aura::compiler {
 
 // Issue #4768: the closure-id cursor as it stood at the SWEEP'S STAND-DOWN
@@ -2131,6 +2138,14 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
                                  live_tw,     view,          pairs_,          vector_heap_,
                                  cells_,      error_values_, seen_opaque,     opaque_gen,
                                  seen_string, seen_float,    live_channel_ids};
+    // Issue #5518 phase 2: a native frame in root mode mirrors its slots;
+    // fold them into the same mark so a pair only that frame holds survives
+    // (#5631). Captureless lambda -> the C callback the runtime expects.
+    aura_pair_roots_scan(
+        [](std::int64_t raw, void* ud) {
+            file_reclaim_mark_child(types::EvalValue{raw}, *static_cast<FileModeMarkContext*>(ud));
+        },
+        &mark_ctx);
     {
         std::size_t traced = 0;
         for (int guard = 0; guard < 1000000; ++guard) {
@@ -2280,12 +2295,43 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
                 pairs_[i].car = voidv;
                 pairs_[i].cdr = voidv;
                 if (i < g_pair_slots.size() && g_pair_slots[i]) {
+                    static const bool trace_void_5518 =
+                        std::getenv("AURA_PAIR_GC_TRACE") != nullptr;
+                    if (trace_void_5518)
+                        std::fprintf(stderr, "[5518] pairs-void id=%zu\n", i);
                     g_pair_slots[i]->car = voidv.val;
                     g_pair_slots[i]->cdr = voidv.val;
                 }
             }
             pair_on_freelist_[i] = 1;
             pair_reuse_freelist_.push_back(i);
+        }
+        // Issue #5518 phase 2: reclaim JIT heap pairs. Armed only in root
+        // mode, and only when every active native frame is rooted in THIS
+        // thread (global count == this thread's root depth); another
+        // thread's frame would have roots this mark cannot see. Unmarked
+        // ids above the evaluator index space are dead: clear the cell,
+        // hand the slot to the thread free list, recycle the id.
+        if (aura_pair_gc_armed() &&
+            aura_jit_frames_active() == static_cast<std::uint64_t>(aura_pair_roots_depth())) {
+            const std::size_t jit_n =
+                std::min<std::size_t>(g_pair_slots.size(), seen_jit_pair.size());
+            for (std::size_t id = std::min<std::size_t>(pairs_.size(), jit_n); id < jit_n; ++id) {
+                if (seen_jit_pair[id])
+                    continue;
+                PairSlot* jit_slot = g_pair_slots[id];
+                if (!jit_slot)
+                    continue;
+                if (g_pair_slots.load_tenant(id) != capability_tenant_id_)
+                    continue;
+                if (g_pair_slots.release(id, jit_slot)) {
+                    static const bool trace5518 = std::getenv("AURA_PAIR_GC_TRACE") != nullptr;
+                    if (trace5518)
+                        std::fprintf(stderr, "[5518] jit-sweep free id=%zu\n", id);
+                    aura_pair_slot_free(jit_slot);
+                    aura_pair_id_recycle(id);
+                }
+            }
         }
         if (vector_on_freelist_.size() < n_vecs)
             vector_on_freelist_.resize(n_vecs, 0);
@@ -2726,6 +2772,14 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
                                  live_tw,     view,          pairs_,          vector_heap_,
                                  cells_,      error_values_, seen_opaque,     opaque_gen,
                                  seen_string, seen_float,    live_channel_ids};
+    // Issue #5518 phase 2: a native frame in root mode mirrors its slots;
+    // fold them into the same mark so a pair only that frame holds survives
+    // (#5631). Captureless lambda -> the C callback the runtime expects.
+    aura_pair_roots_scan(
+        [](std::int64_t raw, void* ud) {
+            file_reclaim_mark_child(types::EvalValue{raw}, *static_cast<FileModeMarkContext*>(ud));
+        },
+        &mark_ctx);
     std::unordered_set<std::uint64_t> expanded;
     std::size_t traced = 0;
     // Issue #4613: the hash-table slot snapshot (the table pointer per
@@ -2899,12 +2953,43 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
                 pairs_[i].car = voidv;
                 pairs_[i].cdr = voidv;
                 if (i < g_pair_slots.size() && g_pair_slots[i]) {
+                    static const bool trace_void_5518 =
+                        std::getenv("AURA_PAIR_GC_TRACE") != nullptr;
+                    if (trace_void_5518)
+                        std::fprintf(stderr, "[5518] pairs-void id=%zu\n", i);
                     g_pair_slots[i]->car = voidv.val;
                     g_pair_slots[i]->cdr = voidv.val;
                 }
             }
             pair_on_freelist_[i] = 1;
             pair_reuse_freelist_.push_back(i);
+        }
+        // Issue #5518 phase 2: reclaim JIT heap pairs. Armed only in root
+        // mode, and only when every active native frame is rooted in THIS
+        // thread (global count == this thread's root depth); another
+        // thread's frame would have roots this mark cannot see. Unmarked
+        // ids above the evaluator index space are dead: clear the cell,
+        // hand the slot to the thread free list, recycle the id.
+        if (aura_pair_gc_armed() &&
+            aura_jit_frames_active() == static_cast<std::uint64_t>(aura_pair_roots_depth())) {
+            const std::size_t jit_n =
+                std::min<std::size_t>(g_pair_slots.size(), seen_jit_pair.size());
+            for (std::size_t id = std::min<std::size_t>(pairs_.size(), jit_n); id < jit_n; ++id) {
+                if (seen_jit_pair[id])
+                    continue;
+                PairSlot* jit_slot = g_pair_slots[id];
+                if (!jit_slot)
+                    continue;
+                if (g_pair_slots.load_tenant(id) != capability_tenant_id_)
+                    continue;
+                if (g_pair_slots.release(id, jit_slot)) {
+                    static const bool trace5518 = std::getenv("AURA_PAIR_GC_TRACE") != nullptr;
+                    if (trace5518)
+                        std::fprintf(stderr, "[5518] jit-sweep free id=%zu\n", id);
+                    aura_pair_slot_free(jit_slot);
+                    aura_pair_id_recycle(id);
+                }
+            }
         }
         if (vector_on_freelist_.size() < n_vecs)
             vector_on_freelist_.resize(n_vecs, 0);

@@ -438,6 +438,83 @@ static void note_pair_capacity_exhausted_5518() noexcept {
     }
 }
 
+// ── Issue #5518 phase 2: JIT slot roots ───────────────────────────────
+// A root-mode JIT frame mirrors every tagged slot value into one contiguous
+// array and pushes it here for the life of the call. The evaluator mark
+// scans the chain, so a pair held only by a native frame survives a
+// collection (#5631). Overflows disable reclamation (never the scan of the
+// frames that did register).
+namespace {
+constexpr std::uint32_t kPairRootMax = 256;
+struct PairRootRec {
+    const std::int64_t* slots;
+    std::uint32_t count;
+};
+thread_local PairRootRec t_pair_roots[kPairRootMax];
+thread_local std::uint32_t t_pair_root_depth = 0;
+thread_local std::uint32_t t_pair_root_overflow = 0;
+std::atomic<void (*)()> g_pair_gc_hook{nullptr};
+std::atomic<std::uint32_t> g_pair_gc_running{0};
+} // namespace
+
+extern "C" void aura_pair_roots_push(const std::int64_t* slots, std::uint32_t count) {
+    if (!slots || count == 0)
+        return;
+    if (t_pair_root_depth >= kPairRootMax) {
+        t_pair_root_overflow = 1;
+        return;
+    }
+    t_pair_roots[t_pair_root_depth++] = PairRootRec{slots, count};
+}
+
+extern "C" void aura_pair_roots_pop() {
+    if (t_pair_root_depth != 0)
+        --t_pair_root_depth;
+}
+
+extern "C" void aura_pair_roots_scan(void (*cb)(std::int64_t, void*), void* ud) {
+    if (!cb)
+        return;
+    for (std::uint32_t i = 0; i < t_pair_root_depth; ++i) {
+        const PairRootRec& rec = t_pair_roots[i];
+        for (std::uint32_t j = 0; j < rec.count; ++j)
+            cb(rec.slots[j], ud);
+    }
+}
+
+extern "C" std::uint32_t aura_pair_roots_depth() {
+    return t_pair_root_depth;
+}
+
+extern "C" std::uint32_t aura_pair_roots_overflowed() {
+    return t_pair_root_overflow;
+}
+
+extern "C" void aura_set_pair_gc_hook(void (*fn)()) {
+    g_pair_gc_hook.store(fn, std::memory_order_release);
+}
+
+// Run the evaluator collection from an allocation point. Re-entrant calls are
+// ignored; the callback itself is only wired when an Evaluator exists.
+extern "C" void aura_maybe_collect_pairs() {
+    auto* fn = g_pair_gc_hook.load(std::memory_order_acquire);
+    if (!fn)
+        return;
+    std::uint32_t expected = 0;
+    if (!g_pair_gc_running.compare_exchange_strong(expected, 1, std::memory_order_acq_rel))
+        return;
+    fn();
+    g_pair_gc_running.store(0, std::memory_order_release);
+}
+
+extern "C" std::uint32_t aura_pair_gc_armed() {
+    static const bool on = [] {
+        const char* v = std::getenv("AURA_PAIR_GC");
+        return v && v[0] == '1';
+    }();
+    return on && t_pair_root_overflow == 0 ? 1u : 0u;
+}
+
 // ── Issue #5518 phase 2: JIT frame accounting ─────────────────────────
 // The sweep may only free JIT pairs when no native frame can still hold one
 // in its slot allocas. The JIT emits enter at the body entry and leave in
