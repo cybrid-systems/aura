@@ -28,43 +28,45 @@ extern "C" int aura_ir_bridge_cell_get(std::uint64_t idx, std::int64_t* out) noe
     __attribute__((weak));
 extern "C" int aura_ir_bridge_cell_set(std::uint64_t idx, std::int64_t val) noexcept
     __attribute__((weak));
-extern "C" int aura_ir_bridge_call_closure(std::uint64_t id, const std::int64_t* args,
+extern "C" int aura_ir_bridge_call_closure(std::uint64_t closure_id, const std::int64_t* args,
                                            std::uint32_t argc, std::int64_t* out) noexcept
     __attribute__((weak));
 
 namespace {
 constexpr std::uint64_t kIrBridgeIndexMask = aura::compiler::types::kClosureIdHighBit - 1;
-inline bool is_ir_bridge_cell(std::int64_t v) noexcept {
-    return aura::compiler::types::is_ref(v) &&
-           aura::compiler::types::ref_type(v) == aura::compiler::types::RefCell &&
-           (aura::compiler::types::ref_index(v) & aura::compiler::types::kClosureIdHighBit) != 0;
+inline bool is_ir_bridge_cell(std::int64_t value) noexcept {
+    return aura::compiler::types::is_ref(value) &&
+           aura::compiler::types::ref_type(value) == aura::compiler::types::RefCell &&
+           (aura::compiler::types::ref_index(value) & aura::compiler::types::kClosureIdHighBit) !=
+               0;
 }
-inline bool is_ir_bridge_closure(std::int64_t v) noexcept {
-    return aura::compiler::types::is_ref(v) &&
-           aura::compiler::types::ref_type(v) == aura::compiler::types::RefClosure &&
-           (aura::compiler::types::ref_index(v) & aura::compiler::types::kClosureIdHighBit) != 0;
+inline bool is_ir_bridge_closure(std::int64_t value) noexcept {
+    return aura::compiler::types::is_ref(value) &&
+           aura::compiler::types::ref_type(value) == aura::compiler::types::RefClosure &&
+           (aura::compiler::types::ref_index(value) & aura::compiler::types::kClosureIdHighBit) !=
+               0;
 }
 // A value the interpreter hands to native code: cells keep the bridge bit
 // so a later native CellGet routes back to the interpreter; everything else
 // (pairs, closures, strings, …) is already in a shared namespace.
-inline std::int64_t rebase_ir_cell_out(std::int64_t v) noexcept {
-    if (is_ir_bridge_cell(v))
-        return v;
-    if (aura::compiler::types::is_ref(v) &&
-        aura::compiler::types::ref_type(v) == aura::compiler::types::RefCell)
+inline std::int64_t rebase_ir_cell_out(std::int64_t value) noexcept {
+    if (is_ir_bridge_cell(value))
+        return value;
+    if (aura::compiler::types::is_ref(value) &&
+        aura::compiler::types::ref_type(value) == aura::compiler::types::RefCell)
         return aura::compiler::types::make_ref(aura::compiler::types::RefCell,
                                                aura::compiler::types::kClosureIdHighBit |
-                                                   aura::compiler::types::ref_index(v));
-    return v;
+                                                   aura::compiler::types::ref_index(value));
+    return value;
 }
 // A value native code hands back to the interpreter: strip the bridge bit
 // so the interpreter's cell_heap_ index is valid again.
-inline std::int64_t unbase_ir_cell_in(std::int64_t v) noexcept {
-    if (is_ir_bridge_cell(v))
+inline std::int64_t unbase_ir_cell_in(std::int64_t value) noexcept {
+    if (is_ir_bridge_cell(value))
         return aura::compiler::types::make_ref(aura::compiler::types::RefCell,
-                                               aura::compiler::types::ref_index(v) &
+                                               aura::compiler::types::ref_index(value) &
                                                    kIrBridgeIndexMask);
-    return v;
+    return value;
 }
 } // namespace
 
@@ -5947,17 +5949,20 @@ extern "C" int64_t aura_closure_dispatch_native_checked(int64_t closure_id, int6
         std::vector<std::int64_t> bridged;
         const std::int64_t* argv = args;
         const auto uargc = argc > 0 ? static_cast<std::uint32_t>(argc) : 0u;
-        if (uargc != 0 && args) {
+        if (uargc != 0 && args != nullptr) {
             bridged.resize(uargc);
-            for (std::uint32_t i = 0; i < uargc; ++i)
+            for (std::uint32_t i = 0; i < uargc; ++i) {
+                // args is a pointer of length uargc, not a compile-time array.
+                // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-pointer-arithmetic)
                 bridged[i] = unbase_ir_cell_in(args[i]);
+            }
             argv = bridged.data();
         }
         std::int64_t out = 0;
-        if (aura_ir_bridge_call_closure &&
+        if (aura_ir_bridge_call_closure != nullptr &&
             aura_ir_bridge_call_closure(aura::compiler::types::ref_index(closure_id) &
                                             kIrBridgeIndexMask,
-                                        argv, uargc, &out))
+                                        argv, uargc, &out) != 0)
             return rebase_ir_cell_out(out);
         return closure_dispatch_leave_native();
     }
@@ -6956,9 +6961,9 @@ extern "C" int64_t aura_cell_get_checked(int64_t cell_id, std::uint64_t caller_t
     // Issue #5640: an interpreter cell handed across the OSR boundary.
     if (is_ir_bridge_cell(cell_id)) {
         std::int64_t out = 0;
-        if (aura_ir_bridge_cell_get &&
+        if (aura_ir_bridge_cell_get != nullptr &&
             aura_ir_bridge_cell_get(aura::compiler::types::ref_index(cell_id) & kIrBridgeIndexMask,
-                                    &out))
+                                    &out) != 0)
             return rebase_ir_cell_out(out);
         return 0;
     }
@@ -7005,9 +7010,9 @@ extern "C" void aura_cell_set_checked(int64_t cell_id, int64_t val, std::uint64_
                                       int sandbox_mode) {
     // Issue #5640: write through to the interpreter cell (OSR handoff).
     if (is_ir_bridge_cell(cell_id)) {
-        if (aura_ir_bridge_cell_set &&
+        if (aura_ir_bridge_cell_set != nullptr &&
             aura_ir_bridge_cell_set(aura::compiler::types::ref_index(cell_id) & kIrBridgeIndexMask,
-                                    unbase_ir_cell_in(val)))
+                                    unbase_ir_cell_in(val)) != 0)
             note_cell_heap_write_(); // keep native cell-read caches coherent
         return;
     }
