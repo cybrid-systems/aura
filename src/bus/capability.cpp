@@ -144,6 +144,11 @@ std::uint64_t CapabilityTable::mint_token_() {
             std::random_device rd;
             candidate = (static_cast<std::uint64_t>(rd()) << 32) ^ rd();
         }
+        // Issue #5505: a token travels through Aura as a fixnum, so it must
+        // fit make_int's 62-bit domain. 62 random bits are still far beyond
+        // guessing and, unlike the old counter*K^secret shape, reveal
+        // nothing about any other token.
+        candidate &= (1ull << 62) - 1;
         if (candidate == 0)
             continue;
         const bool used = std::any_of(records_.begin(), records_.end(),
@@ -156,8 +161,9 @@ std::uint64_t CapabilityTable::mint_token_() {
     // Practically unreachable: stay non-zero and unique enough.
     std::random_device rd;
     std::uint64_t fallback =
-        ((static_cast<std::uint64_t>(rd()) << 32) ^ rd()) ^
-        ((records_.size() + 1) * 0x9e3779b97f4a7c15ull);
+        (((static_cast<std::uint64_t>(rd()) << 32) ^ rd()) ^
+         ((records_.size() + 1) * 0x9e3779b97f4a7c15ull)) &
+        ((1ull << 62) - 1);
     return fallback == 0 ? 1 : fallback;
 }
 
