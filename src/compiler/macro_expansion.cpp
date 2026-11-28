@@ -3265,9 +3265,15 @@ static aura::ast::NodeId clone_walk(CloneWalkCtx& ctx, aura::ast::NodeId body_id
     if (!local_in_quote && v.tag == NodeTag::Call && !v.children.empty()) {
         auto callee_n = source.get(v.children[0]);
         if (callee_n.tag == NodeTag::Variable) {
-            auto cname = std::string(source_pool.resolve(callee_n.sym_id));
-            if (cname == "quasiquote" || cname == "unquote" || cname == "unquote-splicing")
+            // Issue #5532: compare the view first. Own the name only when
+            // this call is a quasiquote head — #4420 still requires the
+            // owned string before a later intern can move the pool buffer.
+            auto cname_sv = source_pool.resolve(callee_n.sym_id);
+            if (cname_sv == "quasiquote" || cname_sv == "unquote" ||
+                cname_sv == "unquote-splicing") {
+                auto cname = std::string(cname_sv);
                 qq_head_name = std::move(cname);
+            }
         }
     }
     const aura::ast::NodeId qq_arg_id =
@@ -3293,7 +3299,9 @@ static aura::ast::NodeId clone_walk(CloneWalkCtx& ctx, aura::ast::NodeId body_id
     // substituted — even if a quoted Variable matches a macro-param name,
     // it stays as the verbatim literal symbol.
     if (!local_in_quote && subst && v.tag == NodeTag::Variable && v.sym_id != INVALID_SYM) {
-        auto name = std::string(source_pool.resolve(v.sym_id));
+        // Issue #5532: both maps accept string_view. The view is consumed
+        // by find() before any intern on this pool.
+        auto name = source_pool.resolve(v.sym_id);
         bool shadowed_by_rest_gensym = false;
         if (name_map) {
             auto mit = name_map->find(name);

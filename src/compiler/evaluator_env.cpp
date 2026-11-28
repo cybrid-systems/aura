@@ -960,6 +960,13 @@ void Env::set_pool(const aura::ast::StringPool* p) {
     pool_.store(p, std::memory_order_release);
 }
 
+void Env::reserve_bindings(std::size_t n) {
+    auto bind_guard = lock_bindings_exclusive();
+    bindings_symid_.reserve(n);
+    bindings_.reserve(n);
+    bindings_linear_ownership_state_.reserve(n);
+}
+
 void Env::bind_symid(aura::ast::SymId s, types::EvalValue v) {
     bind_symid_with_linear_state(s, std::move(v), linear_rt::Untracked);
 }
@@ -997,15 +1004,17 @@ void Env::bind_symid_with_linear_state(aura::ast::SymId s, types::EvalValue v, s
     if (pool_) {
         const auto name = pool_.load(std::memory_order_acquire)->resolve(s);
         if (!name.empty()) {
+            // Issue #5532: construct the mirror string in the slot. The
+            // old temporary was a second string for every parameter.
             const auto& val = bindings_symid_.back().second;
-            const std::string key(name);
-            bindings_.emplace_back(key, val);
+            bindings_.emplace_back(std::piecewise_construct, std::forward_as_tuple(name),
+                                   std::forward_as_tuple(val));
             if (!binding_index_.empty() || bindings_.size() > 8) {
                 if (binding_index_.empty()) {
                     for (std::size_t i = 0; i < bindings_.size(); ++i)
                         binding_index_[bindings_[i].first] = i;
                 } else {
-                    binding_index_[key] = bindings_.size() - 1;
+                    binding_index_.emplace(bindings_.back().first, bindings_.size() - 1);
                 }
             }
         }
@@ -2843,8 +2852,8 @@ ClosureId Evaluator::register_active_closure(Closure cl) {
         cl.flat = static_cast<decltype(cl.flat)>(densify_rewrite_lookup_locked_(cl.flat));
         cl.pool = static_cast<decltype(cl.pool)>(densify_rewrite_lookup_locked_(cl.pool));
     }
-    bump_closures_apply_epoch(); // Issue #3832
-    closures_shards_[closures_shard_index(id)].map[id] = std::move(cl);
+    // Issue #5532: next_id() is a fresh cid. publish bumps only on replace.
+    publish_closure_locked(id, std::move(cl));
     return id;
 }
 

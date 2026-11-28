@@ -777,20 +777,24 @@ lower_flat_let(LoweringState& state, const FlatAST& flat, StringPool& pool, Node
 namespace {
 
     // Names a lambda body reads or writes that are not its parameters.
+    // Issue #5532: the set is SymId. A string is built once per free name
+    // after the walk, not once per Variable. A nested lambda binds its
+    // own parameters for the body scan so those uses are not inserted;
+    // the body is still scanned, because this function's scope stack is
+    // replaced while the body is lowered and a name used only inside the
+    // nested lambda still has to be captured here.
     struct FreeVarWalker {
         const FlatAST& flat;
-        StringPool& pool;
-        std::unordered_set<std::string>& free;
-        std::unordered_set<std::string>& bound;
+        std::unordered_set<SymId>& free;
+        std::unordered_set<SymId>& bound;
         void walk(NodeId nid) {
             if (nid == NULL_NODE || nid >= flat.size())
                 return;
             auto nv = flat.get(nid);
             switch (nv.tag) {
                 case NodeTag::Variable: {
-                    auto name = pool.resolve(nv.sym_id);
-                    if (bound.find(std::string(name)) == bound.end())
-                        free.insert(std::string(name));
+                    if (nv.sym_id != INVALID_SYM && !bound.contains(nv.sym_id))
+                        free.insert(nv.sym_id);
                     break;
                 }
                 case NodeTag::Set: {
@@ -799,11 +803,19 @@ namespace {
                     // write-only top-level cells, so the body
                     // Set missed scopes and was a no-op while
                     // later < / = / - const-folded the init.
-                    auto name = std::string(pool.resolve(nv.sym_id));
-                    if (bound.find(name) == bound.end())
-                        free.insert(name);
+                    if (nv.sym_id != INVALID_SYM && !bound.contains(nv.sym_id))
+                        free.insert(nv.sym_id);
                     for (auto c : nv.children)
                         walk(c);
+                    break;
+                }
+                case NodeTag::Lambda: {
+                    std::unordered_set<SymId> nested = bound;
+                    for (auto p : nv.params)
+                        nested.insert(p);
+                    FreeVarWalker inner{flat, free, nested};
+                    for (auto c : nv.children)
+                        inner.walk(c);
                     break;
                 }
                 case NodeTag::LiteralInt:
@@ -832,11 +844,18 @@ static std::uint32_t lower_flat_lambda(
     for (auto pid : param_span)
         param_names.push_back(std::string(pool.resolve(pid)));
 
-    // Collect free variables: vars in body not in param list
+    // Collect free variables: vars in body not in param list.
+    // Issue #5532: walk by SymId, then resolve each free id once.
+    std::unordered_set<SymId> free_ids;
+    std::unordered_set<SymId> bound_ids(param_span.begin(), param_span.end());
+    FreeVarWalker{flat, free_ids, bound_ids}.walk(v.child(0));
     std::unordered_set<std::string> free_set;
-    std::unordered_set<std::string> bound(param_names.begin(), param_names.end());
-    // Walk body to find free vars
-    FreeVarWalker{flat, pool, free_set, bound}.walk(v.child(0));
+    free_set.reserve(free_ids.size());
+    for (auto sid : free_ids) {
+        auto name = pool.resolve(sid);
+        if (!name.empty())
+            free_set.emplace(name);
+    }
 
     // Filter to only vars actually in scope.
     // Issue #2292: exclude self_name — self-recursion uses

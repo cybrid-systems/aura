@@ -178,6 +178,7 @@ Evaluator::Evaluator() {
 
     top_.set_primitives(&primitives_);
     top_.set_owner(this);
+    top_.mark_workspace_root(); // Issue #5532
     top_.set_parent_id(alloc_env_frame(NULL_ENV_ID /* no parent */, &primitives_));
     // Issue #4543 / #4428: every mint stamps the tenant record under
     // alloc_storage_lock_ (LockedStringHeap::mint runs the hook in its

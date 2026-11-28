@@ -374,12 +374,15 @@ static void ac4420_same_pool_qq_head_survives_realloc() {
         StringPool pool{std::pmr::polymorphic_allocator<std::byte>{&track}};
         FlatAST src;
         auto root = build(src, pool);
-        // intern appends s.size()+1 (trailing NUL). slack >= 2 fits in
-        // the current block; slack == 1 cannot (min append is 2), so grow
-        // and remeasure. Stop at slack 0 before clone — a marker intern
-        // here would grow again and hide the gensym realloc.
+        // Issue #5195: intern appends a 4-byte length, the bytes, and a
+        // trailing NUL. A fresh unique entry is at least 6 bytes (the empty
+        // string is the sentinel and does not grow buf_). slack <= 5 cannot
+        // land on 0, so grow and remeasure. A fill of (slack - 5) bytes
+        // appends exactly `slack`. Stop at slack 0 before clone — a marker
+        // intern here would grow again and hide the gensym realloc.
         bool exact = false;
-        for (int i = 0; i < 8 && !exact; ++i) {
+        constexpr std::size_t kEntryOverhead = 5;
+        for (int i = 0; i < 12 && !exact; ++i) {
             const auto q = pool.intern("quasiquote");
             const auto cap = track.cap_holding(pool.resolve(q).data());
             const auto sz = pool.data_size();
@@ -390,17 +393,20 @@ static void ac4420_same_pool_qq_head_survives_realloc() {
                 exact = true;
                 break;
             }
-            if (slack == 1) {
+            if (slack <= kEntryOverhead) {
                 pool.intern(std::string("4420grow-") + label + "-" + std::to_string(i));
                 continue;
             }
-            std::string fill(slack - 1, 'q');
+            std::string fill(slack - kEntryOverhead, 'q');
             const auto tag = std::to_string(i);
             if (fill.size() >= tag.size())
                 fill.replace(0, tag.size(), tag);
             else
                 fill.back() = static_cast<char>('A' + (i % 26));
+            const auto sz_before = pool.data_size();
             pool.intern(fill);
+            if (pool.data_size() == sz_before)
+                pool.intern(std::string("4420dup-") + label + "-" + std::to_string(i));
         }
         const auto anchor = pool.intern("quasiquote");
         const auto before = reinterpret_cast<std::uintptr_t>(pool.resolve(anchor).data());

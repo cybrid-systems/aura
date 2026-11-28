@@ -3683,17 +3683,10 @@ bool Evaluator::restamp_read_ref(ast::FlatAST::StableNodeRef& ref, std::string_v
 }
 
 bool Evaluator::env_is_workspace_root(const Env* e) const noexcept {
-    if (e == nullptr)
-        return false;
-    if (e == &top_)
-        return true;
-    if (require_inject_env_ != nullptr && e == require_inject_env_)
-        return true;
-    for (const Env* m : modules_) {
-        if (m == e)
-            return true;
-    }
-    return false;
+    // Issue #5532: the bit is set when the env is registered (top_, a
+    // loaded module, a require-inject target). A call frame is not, so
+    // a param bind does not walk modules_.
+    return e != nullptr && e->workspace_root();
 }
 
 void Evaluator::mark_workspace_cell(std::size_t ci) {

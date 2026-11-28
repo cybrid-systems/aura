@@ -5450,6 +5450,63 @@ public:
         };
     }
 
+    // Issue #5532: tag / int / float / sym / children / params / marker.
+    // line, col, name_line, name_col and type_id stay on get() and on
+    // line()/col() — diagnostics read those, the bench raw path does not.
+    // Same seqlock window as get(). Placed after assemble_nodeview so the
+    // #3868 reader slice (get() through assemble_nodeview) is unchanged.
+    NodeView assemble_nodeview_core(NodeId id) const {
+        if (id >= tag_.size() || id >= int_val_.size() || id >= float_val_.size() ||
+            id >= sym_id_.size() || id >= children_.size() || id >= param_begin_.size() ||
+            id >= param_count_.size()) {
+            return NodeView{
+                .id = id,
+                .tag = static_cast<NodeTag>(0),
+                .int_value = 0,
+                .float_value = 0.0,
+                .sym_id = INVALID_SYM,
+                .line = 0,
+                .col = 0,
+                .type_id = 0u,
+                .children = {},
+                .params = {},
+                .param_annotations = {},
+                .marker = SyntaxMarker::User,
+            };
+        }
+        return NodeView{
+            .id = id,
+            .tag = tag_[id],
+            .int_value = int_val_[id],
+            .float_value = float_val_[id],
+            .sym_id = sym_id_[id],
+            .line = 0,
+            .col = 0,
+            .type_id = 0u,
+            .children = std::span<const NodeId>(children_[id].data(), children_[id].size()),
+            .params = std::span(param_data_.data() + param_begin_[id], param_count_[id]),
+            .param_annotations =
+                std::span(param_annot_data_.data() + param_begin_[id], param_count_[id]),
+            .marker = id < marker_.size() ? marker_[id] : SyntaxMarker::User,
+        };
+    }
+
+    [[nodiscard]] NodeView get_core(NodeId id) const {
+        for (int attempt = 0; attempt < 3; ++attempt) {
+            const auto e0 = soa_write_epoch_.load(std::memory_order_acquire);
+            if ((e0 & 1u) != 0u) {
+                soa_get_torn_retry_total_.fetch_add(1, std::memory_order_relaxed);
+                continue;
+            }
+            NodeView v = assemble_nodeview_core(id);
+            const auto e1 = soa_write_epoch_.load(std::memory_order_acquire);
+            if (e0 == e1)
+                return v;
+            soa_get_torn_retry_total_.fetch_add(1, std::memory_order_relaxed);
+        }
+        return get_soa_safe(id);
+    }
+
     // ── Location ──────────────────────────────────────────────
     void set_loc(NodeId id, std::uint32_t line, std::uint32_t col) pre(id < line_.size())
         pre(id < col_.size()) {

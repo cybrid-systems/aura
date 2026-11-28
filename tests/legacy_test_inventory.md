@@ -1,7 +1,7 @@
 # Legacy test inventory
 
 **Issue:** [#1957](https://github.com/cybrid-systems/aura/issues/1957)
-**Generated:** 2026-11-27 by `scripts/tools/inventory_legacy_tests.py`
+**Generated:** 2026-11-29 by `scripts/tools/inventory_legacy_tests.py`
 **Status:** generated inventory, not the how-to-add-a-test policy. Policy is tests/HOMES.md. Re-run this script after consolidations.
 
 ## Purpose
@@ -1930,7 +1930,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 #### domain/ (56)
 
 - `tests/compiler/test_alloc_block_seal_last.cpp` (—) [domain_suite, theme_compiler] — AC1: finalize_last_blocks / finalize_soa_module / #2820 cites
-- `tests/compiler/test_apply_closure_envframe_soa.cpp` (—) [domain_suite, theme_compiler] — Issue #1365/#1475/#1511/#1626/#1632/#1660 (#1978 renamed): issue# moved from filename to header.
+- `tests/compiler/test_apply_closure_envframe_soa.cpp` (—) [large, domain_suite, theme_compiler] — Issue #1365/#1475/#1511/#1626/#1632/#1660 (#1978 renamed): issue# moved from filename to header.
 - `tests/core/test_ast_concurrency.cpp` (—) [domain_suite, theme_core] — Issue #2444 — region_by_sym_dense_ concurrent set_function_region +
 - `tests/compiler/test_ast_unparse.cpp` (—) [domain_suite, theme_compiler] — AC1: unparse callable via aura.core.ast_unparse (no Evaluator import)
 - `tests/core/test_binding_gens_atomic.cpp` (—) [domain_suite, theme_core] — AC1: atomic shared_ptr snapshot for readers

@@ -1371,13 +1371,94 @@ namespace {
             flush_tw_meter_5066();
     }
 
-    struct TwMetaCache5066 {
+    // Issue #5532: one slot misses on every alternating pair (f, map, f, map).
+    // Eight slots, same shape as the #3832 apply cache. A fresh closure
+    // insert does not bump closures_apply_epoch_, so these slots stay valid
+    // until an erase or a unique write of a cid they hold.
+    inline constexpr std::size_t kTwMetaCacheSlots5066 = 8;
+
+    struct TwMetaSlot5066 {
+        std::uint64_t instance_id = 0;
         std::uint64_t cid = 0;
         std::uint64_t epoch = 0;
         bool ok = false;
         TwCallMeta cl;
     };
+
+    struct TwMetaCache5066 {
+        TwMetaSlot5066 slots[kTwMetaCacheSlots5066]{};
+        std::uint32_t clock = 0;
+        std::uint32_t hits = 0;
+        std::uint32_t lookups = 0;
+    };
     thread_local TwMetaCache5066 tls_tw_meta_5066;
+
+    TwMetaSlot5066* tw_meta_lookup_5066(std::uint64_t instance, std::uint64_t cid,
+                                        std::uint64_t epoch) noexcept {
+        for (auto& s : tls_tw_meta_5066.slots) {
+            if (!s.ok || s.instance_id != instance || s.cid != cid)
+                continue;
+            if (s.epoch != epoch) {
+                s.ok = false;
+                continue;
+            }
+            return &s;
+        }
+        return nullptr;
+    }
+
+    void tw_meta_drop_cid_5066(std::uint64_t instance, std::uint64_t cid) noexcept {
+        for (auto& s : tls_tw_meta_5066.slots) {
+            if (s.instance_id == instance && s.cid == cid)
+                s.ok = false;
+        }
+    }
+
+    void tw_meta_store_5066(std::uint64_t instance, std::uint64_t cid, std::uint64_t epoch,
+                            const Closure& src) {
+        auto& cache = tls_tw_meta_5066;
+        for (auto& s : cache.slots) {
+            if (s.ok && s.instance_id == instance && s.cid == cid) {
+                s.cl.assign(src);
+                s.epoch = epoch;
+                return;
+            }
+        }
+        TwMetaSlot5066* slot = nullptr;
+        for (auto& s : cache.slots) {
+            if (!s.ok) {
+                slot = &s;
+                break;
+            }
+        }
+        if (slot == nullptr) {
+            slot = &cache.slots[cache.clock % kTwMetaCacheSlots5066];
+            ++cache.clock;
+        }
+        slot->cl.assign(src);
+        slot->instance_id = instance;
+        slot->cid = cid;
+        slot->epoch = epoch;
+        slot->ok = true;
+    }
+
+    // Publish the thread-local burst. The probe flushes at 256 so a long
+    // run does not sit on a uint32. The depth-0 cache clear does not call
+    // this: the measured eval's counts have to survive until the caller
+    // flushes after the eval returns.
+    void note_tw_meta_probe_5066(Evaluator& ev, bool hit) noexcept {
+        auto& c = tls_tw_meta_5066;
+        ++c.lookups;
+        if (hit)
+            ++c.hits;
+        if (c.lookups < 256)
+            return;
+        if (c.hits != 0)
+            ev.note_tw_meta_5066_hit_n(c.hits);
+        ev.note_tw_meta_5066_lookup_n(c.lookups);
+        c.hits = 0;
+        c.lookups = 0;
+    }
 
     // The cache owns its param span. A nested call on this thread assigns
     // into the same slot, so the caller must take a stack copy (span
@@ -1408,6 +1489,16 @@ namespace {
     }
 
 } // namespace
+
+void Evaluator::flush_tw_meta_5066_counts() noexcept {
+    auto& c = tls_tw_meta_5066;
+    if (c.hits != 0)
+        note_tw_meta_5066_hit_n(c.hits);
+    if (c.lookups != 0)
+        note_tw_meta_5066_lookup_n(c.lookups);
+    c.hits = 0;
+    c.lookups = 0;
+}
 
 // Issue #4480: public root for primitive-local EvalValue vectors (map's
 // accumulator). Erases the matching entry so an unbalanced pop cannot
@@ -2752,6 +2843,8 @@ Evaluator::apply_closure_eval_body(ClosureId cid, std::span<const EvalValue> arg
             user_arity_message(cl_copy.name, cl_copy.params.size(), cl_copy.dotted, args.size()));
         return std::nullopt;
     }
+    // Issue #5532: the three binding arrays grow once per parameter.
+    ne.reserve_bindings(cl_copy.params.size());
     if (cl_copy.dotted) {
         // Dotted rest param: bind named params, collect rest into list
         std::size_t named_count = cl_copy.params.size() - 1;
@@ -3608,6 +3701,7 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                     user_arity_message(cl.name, cl.params.size(), cl.dotted, cargs.size()),
                     aura::diag::SourceLocation{1, 1, 0}});
             }
+            tail_env.reserve_bindings(std::min(cargs.size(), cl.params.size())); // Issue #5532
             for (std::size_t i = 0; i < cargs.size() && i < cl.params.size(); ++i)
                 tail_env.bind_symid(cl.params[i], std::move(cargs[i]));
             if (cl.body_id != aura::ast::NULL_NODE && cl.flat)
@@ -8576,7 +8670,10 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
         tls_fast_i_clear_5066();
         // Closure ids and the apply epoch restart per CompilerService. A
         // thread-local meta hit would run another service's body.
-        tls_tw_meta_5066.ok = false;
+        // Issue #5532: clear every slot. The hit/lookup burst stays — the
+        // caller flushes it after this eval returns.
+        for (auto& s : tls_tw_meta_5066.slots)
+            s.ok = false;
     }
     // Issue #4745 follow-up: the #4599 per-node memo is keyed by NodeId and
     // scoped to one flat. A workspace/rebuilt flat can keep the same address
@@ -9987,12 +10084,12 @@ Evaluator::FlatStep Evaluator::eval_flat_on_ifexpr_lambda(EvalFlatCursor& cur,
     auto eval_program_owner = eval_program_for_pool(p);
     {
         std::unique_lock<std::shared_mutex> wlock(closures_shards_[closures_shard_index(cid)].mu);
-        bump_closures_apply_epoch(); // Issue #3832
         Closure cl{"", std::move(params), f, p, body_id, cap_id, dotted, target};
         cl.program = eval_program_owner;
         // Issue #1365: stamp bridge_epoch at construction
         stamp_closure_bridge_epoch(cl);
-        closures_shards_[closures_shard_index(cid)].map[cid] = std::move(cl);
+        // Issue #5532: a fresh cid is not in any TLS cache.
+        publish_closure_locked(cid, std::move(cl));
     }
     note_tw_closure_alloc();
     // Issue #2676: shared_lock to serialize with closures_ write
@@ -10742,10 +10839,12 @@ Evaluator::FlatStep Evaluator::eval_flat_on_closure(EvalFlatCursor& cur,
         TwCallMeta cl;
         bool tw_closure = false;
         const auto closure_epoch = closures_apply_epoch();
-        if (tls_tw_meta_5066.ok && tls_tw_meta_5066.cid == cid &&
-            tls_tw_meta_5066.epoch == closure_epoch) {
-            copy_tw_meta_5066(cl, tls_tw_meta_5066.cl);
+        const auto tw_instance = instance_id();
+        bool tw_cache_hit = false;
+        if (auto* slot = tw_meta_lookup_5066(tw_instance, cid, closure_epoch)) {
+            copy_tw_meta_5066(cl, slot->cl);
             tw_closure = true;
+            tw_cache_hit = true;
         } else {
             std::shared_lock<std::shared_mutex> rlock(
                 closures_shards_[closures_shard_index(cid)].mu);
@@ -10756,20 +10855,20 @@ Evaluator::FlatStep Evaluator::eval_flat_on_closure(EvalFlatCursor& cur,
                 // semantics). Stale-but-live still
                 // inlines; force-drop uses apply_closure.
                 if (!closure_apply_use_site_ok(it->second)) {
-                    tls_tw_meta_5066.ok = false;
+                    tw_meta_drop_cid_5066(tw_instance, cid);
+                    note_tw_meta_probe_5066(*this, false);
                     return FlatStep::ret(std::unexpected(Diagnostic{
                         ErrorKind::InvalidClosure, "eval_flat: freed/tombstoned closure"}));
                 }
-                tls_tw_meta_5066.cl.assign(it->second);
-                tls_tw_meta_5066.cid = cid;
-                tls_tw_meta_5066.epoch = closure_epoch;
-                tls_tw_meta_5066.ok = true;
-                copy_tw_meta_5066(cl, tls_tw_meta_5066.cl);
+                tw_meta_store_5066(tw_instance, cid, closure_epoch, it->second);
+                if (auto* stored = tw_meta_lookup_5066(tw_instance, cid, closure_epoch))
+                    copy_tw_meta_5066(cl, stored->cl);
                 tw_closure = true;
             } else {
-                tls_tw_meta_5066.ok = false;
+                tw_meta_drop_cid_5066(tw_instance, cid);
             }
         }
+        note_tw_meta_probe_5066(*this, tw_cache_hit);
         if (!tw_closure) {
             // IR-produced closure (e.g. lambda arg to cached define).
             std::vector<EvalValue> cargs;
@@ -12122,25 +12221,71 @@ Evaluator::eval_flat_on_macro_hygienic(EvalFlatCursor& cur, const aura::ast::Nod
         // clone + full-flat restamp is reused.
         constexpr bool memo_ok_4894 = true;
         const auto memo_epoch_4894 = macros_epoch_4894_.load(std::memory_order_acquire);
+        // Issue #5532: the steady hit used to take the process-wide memo
+        // mutex on every call. One thread-local slot answers the same
+        // site, epoch, body and children without the lock. A miss, a
+        // stale entry, or a different site still takes the mutex.
+        struct HygMemoTls5532 {
+            const aura::ast::FlatAST* flat = nullptr;
+            aura::ast::NodeId site = aura::ast::NULL_NODE;
+            std::uint64_t epoch = 0;
+            const void* md_flat = nullptr;
+            aura::ast::NodeId body_id = aura::ast::NULL_NODE;
+            aura::ast::NodeId expanded = aura::ast::NULL_NODE;
+            std::size_t flat_size = 0;
+            std::vector<aura::ast::NodeId> children;
+            bool ok = false;
+        };
+        thread_local HygMemoTls5532 tls_hyg_memo_5532;
+        auto remember_hyg_tls_5532 = [&](aura::ast::NodeId expanded, std::size_t flat_size) {
+            auto& t = tls_hyg_memo_5532;
+            t.flat = f;
+            t.site = current_id;
+            t.epoch = memo_epoch_4894;
+            t.md_flat = md.flat;
+            t.body_id = md.body_id;
+            t.expanded = expanded;
+            t.flat_size = flat_size;
+            t.children.assign(v.children.begin(), v.children.end());
+            t.ok = true;
+        };
         if (memo_ok_4894) {
             aura::ast::NodeId memo_hit = aura::ast::NULL_NODE;
-            {
-                std::scoped_lock memo_lk(hyg_call_memo_mtx_4894_);
-                auto fit = hyg_call_memo_4894_.find(f);
-                if (fit != hyg_call_memo_4894_.end()) {
-                    auto cit = fit->second.find(current_id);
-                    if (cit != fit->second.end()) {
-                        const auto& m = cit->second;
-                        if (m.epoch == memo_epoch_4894 && m.md_flat == md.flat &&
-                            m.body_id == md.body_id && f->size() >= m.flat_size &&
-                            f->is_live_node(m.expanded) && f->is_macro_introduced(m.expanded) &&
-                            std::equal(m.children.begin(), m.children.end(), v.children.begin(),
-                                       v.children.end()))
-                            memo_hit = m.expanded;
-                        else
-                            fit->second.erase(cit);
+            auto& tls = tls_hyg_memo_5532;
+            const bool tls_hit =
+                tls.ok && tls.flat == f && tls.site == current_id && tls.epoch == memo_epoch_4894 &&
+                tls.md_flat == md.flat && tls.body_id == md.body_id && f->size() >= tls.flat_size &&
+                f->is_live_node(tls.expanded) && f->is_macro_introduced(tls.expanded) &&
+                std::equal(tls.children.begin(), tls.children.end(), v.children.begin(),
+                           v.children.end());
+            if (tls_hit) {
+                memo_hit = tls.expanded;
+            } else {
+                std::size_t hit_flat_size = 0;
+                {
+                    std::scoped_lock memo_lk(hyg_call_memo_mtx_4894_);
+                    auto fit = hyg_call_memo_4894_.find(f);
+                    if (fit != hyg_call_memo_4894_.end()) {
+                        auto cit = fit->second.find(current_id);
+                        if (cit != fit->second.end()) {
+                            const auto& m = cit->second;
+                            if (m.epoch == memo_epoch_4894 && m.md_flat == md.flat &&
+                                m.body_id == md.body_id && f->size() >= m.flat_size &&
+                                f->is_live_node(m.expanded) && f->is_macro_introduced(m.expanded) &&
+                                std::equal(m.children.begin(), m.children.end(), v.children.begin(),
+                                           v.children.end())) {
+                                memo_hit = m.expanded;
+                                hit_flat_size = m.flat_size;
+                            } else {
+                                fit->second.erase(cit);
+                            }
+                        }
                     }
                 }
+                if (memo_hit != aura::ast::NULL_NODE)
+                    remember_hyg_tls_5532(memo_hit, hit_flat_size);
+                else if (tls.flat == f && tls.site == current_id)
+                    tls.ok = false;
             }
             if (memo_hit != aura::ast::NULL_NODE) {
                 // Issue #4902: clone_macro_body's
@@ -12322,6 +12467,7 @@ Evaluator::eval_flat_on_macro_hygienic(EvalFlatCursor& cur, const aura::ast::Nod
                 HygienicCallMemo4894{
                     memo_epoch_4894, md.flat, md.body_id, expanded, f->size(),
                     std::vector<aura::ast::NodeId>(v.children.begin(), v.children.end())});
+            remember_hyg_tls_5532(expanded, f->size());
         }
         // Evaluate the cloned + inner-expanded
         // body. eval_flat returns a runtime
@@ -13379,6 +13525,9 @@ std::optional<EvalResult> Evaluator::eval_flat_prepare_visit(EvalFlatCursor& cur
     // Park, and reclaim if this thread owes a sweep, before any fast return.
     // Integer calls then skip the intern-pool generation and current-flat
     // publish loads. The if / self-call still run the full prologue.
+    // Issue #4713: this visit-entry pair is the walker back-edge. One
+    // safepoint per node is the park; the second pair used to repeat the
+    // same two loads on the miss path (Issue #5532).
     tw_stw_safepoint();
     if (tw_reclaim_due())
         maybe_reclaim_tw_unreachable();
@@ -13395,16 +13544,6 @@ std::optional<EvalResult> Evaluator::eval_flat_prepare_visit(EvalFlatCursor& cur
             break;
         }
     }
-    // Issue #4459: between opcodes, after the poll. Nested bodies
-    // see outer envs via g_tw_frames, so the go loop under display
-    // reclaims the previous iteration's closure.
-    // Issue #4713: safepoint before the reclaim consult. A collector
-    // on another thread parks this body here (one atomic load when no
-    // epoch is in flight); this back-edge is what lets the reclaim run
-    // with several fibers running at once.
-    tw_stw_safepoint();
-    if (tw_reclaim_due())
-        maybe_reclaim_tw_unreachable();
     // Issue #4717 (P5): read-mostly publish. This pair is the
     // per-eval "current source" hint; a store per node visit made all
     // bodies write one shared cache line on every node, so every
@@ -13509,17 +13648,8 @@ std::optional<EvalResult> Evaluator::eval_flat_prepare_visit(EvalFlatCursor& cur
     }
     auto v = f->get(current_id);
 
-    // Incremental eval: if node is clean and has a cached result, reuse it.
-    // Skip leaf literals (LiteralInt, LiteralFloat, LiteralString) because
-    // they're always fast and the cache lookup overhead is not worth it.
-    if (v.tag != aura::ast::NodeTag::LiteralInt && v.tag != aura::ast::NodeTag::LiteralFloat &&
-        v.tag != aura::ast::NodeTag::LiteralString && v.tag != aura::ast::NodeTag::Variable &&
-        !f->is_dirty(current_id)) {
-        auto cached = f->get_cached_value(current_id);
-        if (cached != aura::ast::FlatAST::kNotCached) {
-            return EvalResult(EvalValue(cached));
-        }
-    }
+    // Issue #5532: the clean-cache test above already returned. Repeating
+    // it on v.tag walked the same columns get() just assembled.
 
     // Issue #5477: own the borrowed SoA spans before dispatch. A sibling
     // workspace mutation can append/reallocate children_/params_ while
@@ -14287,14 +14417,14 @@ Evaluator::eval_data_forms_control(const types::EvalValue& data, const Env& env,
             {
                 std::unique_lock<std::shared_mutex> wlock(
                     closures_shards_[closures_shard_index(cid)].mu);
-                bump_closures_apply_epoch(); // Issue #3832
                 Closure cl{"", {}, cl_flat, cl_pool, cloned_body, cap_id, false, target_arena};
                 // Issue #1365: stamp bridge_epoch at construction
                 stamp_closure_bridge_epoch(cl);
                 // Store param SymIds directly (Issue #145: SoA migration).
                 for (auto ps : param_syms)
                     cl.params.push_back(ps);
-                closures_shards_[closures_shard_index(cid)].map[cid] = std::move(cl);
+                // Issue #5532: a fresh cid is not in any TLS cache.
+                publish_closure_locked(cid, std::move(cl));
             }
             note_tw_closure_alloc();
             // Issue #2676: extend closures_mtx_ critical section to cover
@@ -14448,8 +14578,8 @@ Evaluator::eval_data_forms_bind(const types::EvalValue& data, const Env& env, as
                     {
                         std::unique_lock<std::shared_mutex> wlock(
                             closures_shards_[closures_shard_index(cid)].mu);
-                        bump_closures_apply_epoch(); // Issue #3832
-                        closures_shards_[closures_shard_index(cid)].map[cid] = std::move(cl);
+                        // Issue #5532: a fresh cid is not in any TLS cache.
+                        publish_closure_locked(cid, std::move(cl));
                     }
                     note_tw_closure_alloc();
 
@@ -14740,6 +14870,8 @@ Evaluator::FlatStep Evaluator::eval_flat_publish_functor_instance(const std::str
             std::scoped_lock<std::mutex> rewrite_lock(densify_rewrite_mu_);
             created = densify_rewrite_lookup_locked_(created);
             mod_idx = modules_.size();
+            if (created != nullptr)
+                static_cast<Env*>(created)->mark_workspace_root(); // Issue #5532
             modules_.push_back(static_cast<Env*>(created));
             module_cache_[cache_key] = mod_idx;
             module_arena_ptrs_[cache_key] = &inst_arena;
@@ -14758,6 +14890,7 @@ Evaluator::FlatStep Evaluator::eval_flat_publish_functor_instance(const std::str
     void** env_slot = aura::core::moving_pointer_slot(modules_.back());
     auto* cached_env = inst_arena.create_with_cover<Env>(env_slot, nullptr, mod_env);
     if (cached_env) {
+        cached_env->mark_workspace_root(); // Issue #5532
         inst_arena.note_intermediate_create_with_cover_(cached_env, env_slot, nullptr);
     }
     module_cache_[cache_key] = mod_idx;

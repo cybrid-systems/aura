@@ -447,6 +447,56 @@ static void ac4328_dispatch_bind_rewrite() {
           "4328: #4124 guarded-chase bind retained in note_bound_");
 }
 
+// Issue #5532: one TW meta slot misses every other call when two closures
+// alternate. Eight slots stay hot after the first pair. One eval keeps
+// the cache across the calls (a fresh cs.eval clears it at depth 0).
+// The lambdas are evaluated by the tree walker, so their ids live in the
+// closure-shard map the cache reads. An IR define's id is not in that
+// map; those calls miss forever and would hide the hit rate. `anchor`
+// is only there so this form is tree-walked (env closure call).
+static void ac5532_alternating_tw_meta() {
+    std::println("\n--- #5532: alternating two closures, N-way TW meta ---");
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    CHECK(cs.eval("(define (anchor) 0)").has_value(), "5532: define anchor");
+
+    constexpr int kPairs = 200;
+    std::string body = "(let ((f (lambda (x) (+ x 1))) (g (lambda (x) (+ x 2)))) (begin (anchor)";
+    body.reserve(body.size() + static_cast<std::size_t>(kPairs) * 16 + 8);
+    for (int i = 0; i < kPairs; ++i)
+        body += " (f 1) (g 1)";
+    body += "))";
+
+    ev.flush_tw_meta_5066_counts();
+    const auto hits0 = ev.tw_meta_5066_hit_total();
+    const auto look0 = ev.tw_meta_5066_lookup_total();
+    auto got = cs.eval(body);
+    ev.flush_tw_meta_5066_counts();
+    const auto hits = ev.tw_meta_5066_hit_total() - hits0;
+    const auto lookups = ev.tw_meta_5066_lookup_total() - look0;
+    std::println("5532 tw meta: lookups={} hits={}", lookups, hits);
+    CHECK(got && is_int(*got) && as_int(*got) == 3, "5532: last call is (g 1) => 3");
+    CHECK(lookups > 100, "5532: the alternating eval probed the TW cache");
+    CHECK(hits * 100 > lookups * 95, "5532: TLS hit rate > 95%");
+
+    const auto flat = [&] {
+        for (const char* p :
+             {"src/compiler/evaluator_eval_flat.cpp", "../src/compiler/evaluator_eval_flat.cpp",
+              "../../src/compiler/evaluator_eval_flat.cpp"}) {
+            std::ifstream in(p);
+            if (!in)
+                continue;
+            return std::string((std::istreambuf_iterator<char>(in)),
+                               std::istreambuf_iterator<char>());
+        }
+        return std::string{};
+    }();
+    CHECK(flat.find("kTwMetaCacheSlots5066 = 8") != std::string::npos,
+          "5532: eight-slot TW meta cache");
+    CHECK(flat.find("publish_closure_locked") != std::string::npos,
+          "5532: fresh insert does not bump unconditionally");
+}
+
 } // namespace
 
 // ── #3867: closures 16-shard conversion (TLS-miss lock amplification) ──
@@ -491,6 +541,7 @@ int run_test_apply_closure_envframe_soa() {
     ac6_materialize_stress();
     ac7_lineage();
     ac3832_tls_cache_happy_path();
+    ac5532_alternating_tw_meta();
     ac3867_shard_source_cite();
     ac3832_tombstone_and_source();
     ac4169_seq_stable_survive();

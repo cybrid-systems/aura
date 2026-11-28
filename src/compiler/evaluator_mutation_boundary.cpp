@@ -9659,6 +9659,8 @@ void Evaluator::push_module_env_for_test(void* p) {
         rewrite.lock();
         p = densify_rewrite_lookup_locked_(p);
     }
+    if (p != nullptr)
+        static_cast<Env*>(p)->mark_workspace_root(); // Issue #5532
     modules_.push_back(static_cast<Env*>(p));
 }
 

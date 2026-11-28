@@ -594,6 +594,7 @@ public:
         , rekey_memo_next_4682_(o.rekey_memo_next_4682_)
         , bindings_linear_ownership_state_(o.bindings_linear_ownership_state_)
         , owner_(o.owner_)
+        , workspace_root_(o.workspace_root_)
         , parent_id_(o.parent_id_)
         , env_version_(o.env_version_)
         , bindings_legacy_uses_(o.bindings_legacy_uses_.load(std::memory_order_relaxed)) {}
@@ -614,6 +615,7 @@ public:
         rekey_memo_next_4682_ = o.rekey_memo_next_4682_;
         bindings_linear_ownership_state_ = o.bindings_linear_ownership_state_;
         owner_ = o.owner_;
+        workspace_root_ = o.workspace_root_;
         parent_id_ = o.parent_id_;
         env_version_ = o.env_version_;
         bindings_legacy_uses_.store(o.bindings_legacy_uses_.load(std::memory_order_relaxed),
@@ -639,6 +641,7 @@ public:
         , rekey_memo_next_4682_(other.rekey_memo_next_4682_)
         , bindings_linear_ownership_state_(std::move(other.bindings_linear_ownership_state_))
         , owner_(other.owner_)
+        , workspace_root_(other.workspace_root_)
         , parent_id_(other.parent_id_)
         , env_version_(other.env_version_)
         , bindings_legacy_uses_(other.bindings_legacy_uses_.load(std::memory_order_relaxed)) {}
@@ -660,6 +663,7 @@ public:
         rekey_memo_next_4682_ = other.rekey_memo_next_4682_;
         bindings_linear_ownership_state_ = std::move(other.bindings_linear_ownership_state_);
         owner_ = other.owner_;
+        workspace_root_ = other.workspace_root_;
         parent_id_ = other.parent_id_;
         env_version_ = other.env_version_;
         bindings_legacy_uses_.store(other.bindings_legacy_uses_.load(std::memory_order_relaxed),
@@ -691,6 +695,14 @@ public:
     // 2.6 — the rename).
     void set_owner(Evaluator* e) { owner_ = e; }
     [[nodiscard]] Evaluator* owner() const { return owner_; }
+    // Issue #5532: workspace roots (top_, a loaded module, a require-inject
+    // target) are marked when they are registered. Call frames stay clear,
+    // so a param bind does not scan modules_.
+    void mark_workspace_root() noexcept { workspace_root_ = true; }
+    [[nodiscard]] bool workspace_root() const noexcept { return workspace_root_; }
+    // Issue #5532: one reserve for the three binding arrays a call frame
+    // grows once per parameter.
+    void reserve_bindings(std::size_t n);
     void set_parent_id(EnvId id) { parent_id_ = id; }
     [[nodiscard]] EnvId parent_id() const { return parent_id_; }
     // Issue #207 / #1482 restore: route through bind_with_linear_state so
@@ -995,6 +1007,8 @@ private:
     // no parent or legacy pointer walk). Set when the Env is
     // registered with an Evaluator (top_, modules_).
     Evaluator* owner_ = nullptr;
+    // Issue #5532: identity bit, set only by mark_workspace_root().
+    bool workspace_root_ = false;
     EnvId parent_id_ = NULL_ENV_ID;
     // Issue #286: snapshot of `owner_->defuse_version_` at the
     // time this Env was materialized (for envs created via
@@ -7823,8 +7837,26 @@ private:
     mutable std::atomic<std::uint64_t> closures_apply_epoch_{1};
     mutable std::atomic<std::uint64_t> apply_closure_tls_hit_total_{0};
     mutable std::atomic<std::uint64_t> apply_closure_mtx_lookup_total_{0};
+    // Issue #5532: tree-walker closure-meta cache (N-way). Batched on the
+    // calling thread; flush_tw_meta_5066_counts publishes the burst.
+    mutable std::atomic<std::uint64_t> tw_meta_5066_hit_total_{0};
+    mutable std::atomic<std::uint64_t> tw_meta_5066_lookup_total_{0};
     void bump_closures_apply_epoch() noexcept {
         closures_apply_epoch_.fetch_add(1, std::memory_order_acq_rel);
+    }
+    // Issue #5532: caller holds this cid's shard unique lock. A cid that
+    // is not in the map is not in any TLS cache, so the insert does not
+    // bump. Replacing a live cid is the #3832 unique-write and still bumps.
+    // Erase bumps on its own, before the cid can be reused.
+    void publish_closure_locked(ClosureId id, Closure cl) {
+        auto& map = closures_shards_[closures_shard_index(id)].map;
+        auto it = map.find(id);
+        if (it == map.end()) {
+            map.emplace(id, std::move(cl));
+            return;
+        }
+        bump_closures_apply_epoch(); // Issue #3832
+        it->second = std::move(cl);
     }
     // Issue #4459: drop this evaluator's apply_closure TLS copies.
     // Epoch bump already misses them; clearing the slot means the
@@ -9751,6 +9783,10 @@ private:
         };
         std::unordered_map<const aura::ast::FlatAST*, Bucket> by_flat;
         const aura::ast::FlatAST* current = nullptr;
+        // Issue #5532: the host thread re-reads one flat's bucket on every
+        // slow Call. The pointer is refreshed whenever by_flat may rehash
+        // (enter / clear). A bare lookup no longer hashes the flat address.
+        Bucket* current_bucket = nullptr;
     };
     NameResStore& name_res_store() {
         auto& c = eval_ctx();
@@ -9760,7 +9796,13 @@ private:
     }
     std::vector<NameResEntry>& name_res_by_node() {
         auto& store = name_res_store();
-        return store.by_flat[store.current].entries;
+        // Issue #5532: hit the bucket cached at enter. operator[] is the
+        // miss path (it may rehash); the pointer is taken after that.
+        if (store.current_bucket != nullptr)
+            return store.current_bucket->entries;
+        auto& bucket = store.by_flat[store.current];
+        store.current_bucket = &bucket;
+        return bucket.entries;
     }
 
 public:
@@ -9786,14 +9828,20 @@ private:
         auto& store = name_res_store();
         store.current = flat;
         auto& bucket = store.by_flat[flat];
+        // Issue #5532: address after the insert, which may have rehashed.
+        store.current_bucket = &bucket;
         if (bucket.pool != pool) {
             bucket.entries.clear();
             bucket.pool = pool;
         }
     }
     void name_res_restore(const aura::ast::FlatAST* flat) {
-        if (flat != nullptr)
-            name_res_store().current = flat;
+        if (flat == nullptr)
+            return;
+        auto& store = name_res_store();
+        store.current = flat;
+        auto it = store.by_flat.find(flat);
+        store.current_bucket = it == store.by_flat.end() ? nullptr : &it->second;
     }
     [[nodiscard]] const aura::ast::FlatAST* name_res_flat() {
         auto& ctx = eval_ctx();
@@ -9815,8 +9863,10 @@ private:
     // Issue #4717 step 2: shared top-env binding publication lock.
     mutable std::shared_mutex top_env_bindings_mu_;
     void clear_name_res_cache() noexcept {
-        name_res_store().by_flat.clear();
-        name_res_store().current = nullptr;
+        auto& store = name_res_store();
+        store.current_bucket = nullptr;
+        store.by_flat.clear();
+        store.current = nullptr;
         let_bind_kind().clear();
     }
     [[nodiscard]] std::optional<EvalResult> try_eval_flat_hot(aura::ast::FlatAST& flat,
@@ -12693,6 +12743,23 @@ public:
     void note_apply_closure_mtx_lookup() noexcept {
         apply_closure_mtx_lookup_total_.fetch_add(1, std::memory_order_relaxed);
     }
+    // Issue #5532: alternating two tree-walker closures. The counters are
+    // the hits and the probes of the N-way meta cache, after a flush.
+    [[nodiscard]] std::uint64_t tw_meta_5066_hit_total() const noexcept {
+        return tw_meta_5066_hit_total_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t tw_meta_5066_lookup_total() const noexcept {
+        return tw_meta_5066_lookup_total_.load(std::memory_order_relaxed);
+    }
+    void note_tw_meta_5066_hit_n(std::uint64_t n) noexcept {
+        if (n != 0)
+            tw_meta_5066_hit_total_.fetch_add(n, std::memory_order_relaxed);
+    }
+    void note_tw_meta_5066_lookup_n(std::uint64_t n) noexcept {
+        if (n != 0)
+            tw_meta_5066_lookup_total_.fetch_add(n, std::memory_order_relaxed);
+    }
+    void flush_tw_meta_5066_counts() noexcept;
     // ── Issue #4714: the string index-space decision (ONE place) ───
     // Every "payload -> string bytes" read in the engine goes through
     // string_at() / string_at_or(); no other member indexes a string heap

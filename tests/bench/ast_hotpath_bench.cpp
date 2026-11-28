@@ -123,7 +123,9 @@ PathResult run_raw_path(aura::ast::FlatAST& flat,
     r.wall_us = time_us([&] {
         for (const auto& ids : value_ids) {
             for (auto vid : ids) {
-                (void)flat.get(vid).tag;
+                // Issue #5532: core columns only. assemble_nodeview (line /
+                // col / name / type_id size checks) is not on this path.
+                (void)flat.get_core(vid).tag;
                 ++r.re_queries;
             }
         }

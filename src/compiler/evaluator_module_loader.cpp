@@ -809,6 +809,11 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
             : ev(e)
             , prev(e.require_inject_env_) {
             e.require_inject_env_ = target;
+            // Issue #5532: binds during the module body run before the env
+            // is published into modules_. The root bit covers that window
+            // and stays set — the env is a module for the rest of its life.
+            if (target != nullptr)
+                target->mark_workspace_root();
         }
         ~RequireInjectGuard() noexcept { ev.require_inject_env_ = prev; }
         RequireInjectGuard(const RequireInjectGuard&) = delete;
@@ -929,6 +934,8 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
             mod_env = static_cast<Env*>(densify_rewrite_lookup_locked_(mod_env));
         }
         mod_idx = modules_.size();
+        if (mod_env != nullptr)
+            mod_env->mark_workspace_root(); // Issue #5532
         modules_.push_back(mod_env);
         module_cache_[resolved] = mod_idx;
         module_arena_ptrs_[resolved] = &mod_arena;
