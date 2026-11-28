@@ -50,6 +50,7 @@ class AgentScope;
 
 #include <atomic>
 #include <optional>
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -3353,8 +3354,15 @@ inline std::string spawn_tenant_spoof_error(std::uint64_t requested, std::uint64
                 // under multi-worker steal races mailbox attachers on the body).
                 // Issue #2783: body is_reclaimed() is a hard exit — body will
                 // never write again / never set body_done from the body path.
+                const auto interval_ms = std::max<std::uint32_t>(1, interval);
+                // Issue #5526: the deadline park is a win for long intervals.
+                // Short intervals (tests / 10 ms-class heartbeats) keep the
+                // legacy 1 ms yield sleep so the helper stays on its spawning
+                // worker instead of round-robining a deadline requeue onto a
+                // busy body's worker.
+                const bool park_ok = interval_ms >= 100;
                 auto next_emit = std::chrono::steady_clock::now() +
-                                 std::chrono::milliseconds(std::max<std::uint32_t>(1, interval));
+                                 std::chrono::milliseconds(interval_ms);
                 bool exited_on_reclaim = false;
                 while (!live_keep->body_done.load(std::memory_order_acquire)) {
                     if (serve::g_current_fiber && serve::g_current_fiber->is_cancel_requested())
@@ -3364,7 +3372,27 @@ inline std::string spawn_tenant_spoof_error(std::uint64_t requested, std::uint64
                         exited_on_reclaim = true;
                         break;
                     }
-                    fiber_sleep_ms(1);
+                    // Issue #5526: park on the scheduler deadline instead of
+                    // fiber_sleep_ms(1) yield-spinning. The helper has no
+                    // eventfd waker; a bounded slice keeps body_done /
+                    // helper_stop / reclaim observation within 100 ms while
+                    // cutting the switch rate from ~1 kHz to <=10 Hz.
+                    if (serve::g_current_fiber && park_ok) {
+                        const auto now_park = std::chrono::steady_clock::now();
+                        long long wait_ms = 100;
+                        if (now_park < next_emit) {
+                            wait_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                          next_emit - now_park)
+                                          .count();
+                        }
+                        wait_ms = std::clamp<long long>(wait_ms, 1, 100);
+                        serve::g_current_fiber->set_park_deadline_ms(
+                            static_cast<int>(wait_ms));
+                        serve::Fiber::yield(serve::YieldReason::BlockingIO);
+                        serve::g_current_fiber->clear_park_deadline();
+                    } else {
+                        fiber_sleep_ms(1);
+                    }
                     if (live_keep->body_done.load(std::memory_order_acquire))
                         break;
                     if (serve::g_current_fiber && serve::g_current_fiber->is_cancel_requested())
@@ -3382,8 +3410,7 @@ inline std::string spawn_tenant_spoof_error(std::uint64_t requested, std::uint64
                     if (now < next_emit)
                         continue;
                     (void)emit_keepalive(*mb_keep, agent_id, live_keep.get(), ka_bp_scope);
-                    next_emit =
-                        now + std::chrono::milliseconds(std::max<std::uint32_t>(1, interval));
+                    next_emit = now + std::chrono::milliseconds(interval_ms);
                 }
                 if (exited_on_reclaim) {
                     g_orch_module_stats.keepalive_helper_reclaim_exit_total.fetch_add(
