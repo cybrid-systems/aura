@@ -67,6 +67,10 @@ namespace detail {
         aura::ast::StringPool& pool;
         Lexer lex;             // constructed once in parse()
         std::size_t depth = 0; // recursion depth (matches old parse_depth_)
+        // Issue #5496: any recursive reader that exceeds the cap sets this so
+        // the top-level parse stops with a depth diagnostic instead of
+        // retrying an unconsumed token.
+        bool depth_exceeded = false;
         // Issue #4129: first malformed character literal seen (bare #\ at
         // EOF, unknown #\name). Flushed by parse() into FlatParseResult so
         // a malformed literal fails the form instead of being silently

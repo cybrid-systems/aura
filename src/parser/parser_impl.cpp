@@ -182,6 +182,10 @@ FlatParseResult parse(ParserState& s, std::string_view src,
 
         r.root = parse_expr(s);
         if (r.root == NULL_NODE) {
+            if (s.depth_exceeded) {
+                record_error("depth exceeded", s.lex.peek());
+                return r;
+            }
             // Issue #4736 (reopened): flush the deferred diagnostic FIRST.
             // It is the specific cause (unclosed list / lambda / bad literal)
             // and it carries a location; record_error() below only fills
@@ -247,6 +251,10 @@ FlatParseResult parse(ParserState& s, std::string_view src,
         do {
             auto e = parse_expr(s);
             if (e == NULL_NODE) {
+                if (s.depth_exceeded) {
+                    record_error("depth exceeded", s.lex.peek());
+                    return r;
+                }
                 auto tok = s.lex.peek();
                 if (tok.kind == TokenKind::RParen) {
                     // Issue #4272: do not skip-and-recover past top-level ')'
@@ -299,13 +307,29 @@ FlatParseResult parse(ParserState& s, std::string_view src,
 static NodeId read_quasiquote_4760(ParserState& s);
 static NodeId read_unquote_operand_4760(ParserState& s);
 
-NodeId parse_expr(ParserState& s) {
-    // Recursion depth guard: prevent stack overflow on deeply nested expressions
-    static constexpr std::size_t MAX_PARSE_DEPTH = 500;
-    if (++s.depth > MAX_PARSE_DEPTH) {
+static constexpr std::size_t kMaxParseDepth5496 = 500;
+
+// Issue #5496: one guard shared by every recursive reader, not only
+// parse_expr. match/case patterns reach parse_val -> parse_list without
+// passing through parse_expr.
+static bool enter_parse_depth(ParserState& s) {
+    if (++s.depth > kMaxParseDepth5496) {
         --s.depth;
-        return NULL_NODE;
+        s.depth_exceeded = true;
+        return false;
     }
+    return true;
+}
+
+struct ParseDepthScope5496 : ::aura::core::NoCopy {
+    std::size_t& d;
+    explicit ParseDepthScope5496(std::size_t& depth) : d(depth) {}
+    ~ParseDepthScope5496() { --d; }
+};
+
+NodeId parse_expr(ParserState& s) {
+    if (!enter_parse_depth(s))
+        return NULL_NODE;
     // RAII depth decrement on any exit path
     struct DepthGuard : ::aura::core::NoCopy {
         std::size_t& d;
@@ -594,6 +618,9 @@ NodeId parse_let_values(ParserState& s, bool sequential);
 NodeId parse_parameterize(ParserState& s); // Issue #5005
 
 NodeId parse_list(ParserState& s) {
+    if (!enter_parse_depth(s))
+        return NULL_NODE;
+    ParseDepthScope5496 _depth{s.depth};
     auto tok = s.lex.peek(); // '(' or first token
     // () → null sentinel (0), marked so eval/lowering can still tell the
     // empty list from the number 0 (issue #4635 follow-up).
@@ -886,7 +913,9 @@ NodeId parse_lambda(ParserState& s) {
                 // the malformed token — consume it so the loop terminates.
                 if (consume_malformed_token(s))
                     break;
-                continue; // a skipped form: keep the historical behaviour
+                // Issue #5497: if the malformed token was not consumed the
+                // loop would retry the same token forever. Fail the form.
+                break;
             }
             body_exprs.push_back(be);
             if (s.lex.peek().kind == TokenKind::RParen)
@@ -998,7 +1027,8 @@ NodeId parse_lambda(ParserState& s) {
             // body form leaves the reader on the malformed token.
             if (consume_malformed_token(s))
                 break;
-            continue; // a skipped form: keep the historical behaviour
+            // Issue #5497: never re-enter parse_expr on an unconsumed token.
+            break;
         }
         body_exprs.push_back(be);
         if (s.lex.peek().kind == TokenKind::RParen)
@@ -1301,8 +1331,11 @@ NodeId parse_define_module(ParserState& s) {
     // Parse body expressions
     while (s.lex.peek().kind != TokenKind::RParen && !s.lex.eof()) {
         auto body_expr = parse_expr(s);
-        if (body_expr != NULL_NODE)
-            s.flat.insert_child(id, 1000000, body_expr);
+        // Issue #5497: parse_expr can return NULL_NODE without consuming
+        // (lexer Error / depth cap). Break instead of retrying forever.
+        if (body_expr == NULL_NODE)
+            break;
+        s.flat.insert_child(id, 1000000, body_expr);
     }
     s.lex.consume(); // ')' after body
     s.flat.set_loc(id, tok.line, tok.column);
@@ -1502,6 +1535,9 @@ NodeId parse_let_star(ParserState& s) {
 }
 
 NodeId parse_val(ParserState& s) {
+    if (!enter_parse_depth(s))
+        return NULL_NODE;
+    ParseDepthScope5496 _depth{s.depth};
     auto tok = s.lex.peek();
     switch (tok.kind) {
         case TokenKind::Integer:
@@ -1748,6 +1784,9 @@ NodeId parse_defmacro(ParserState& s, bool hygienic, bool preserve_dotted) {
 
 // ── Match / pattern matching ─────────────────────────────────
 NodeId parse_match(ParserState& s) {
+    if (!enter_parse_depth(s))
+        return NULL_NODE;
+    ParseDepthScope5496 _depth{s.depth};
     auto tok = s.lex.consume(); // 'match'
 
     // Parse subject expression
@@ -2725,6 +2764,9 @@ namespace {
 //   → (let ((tmp key)) (if (member tmp '(d1 d2 ...)) (begin e ...) ...))
 // Datums compare with equal? (symbols are interned strings in Aura).
 NodeId parse_case(ParserState& s) {
+    if (!enter_parse_depth(s))
+        return NULL_NODE;
+    ParseDepthScope5496 _depth{s.depth};
     s.lex.consume(); // 'case'
     auto key = parse_expr(s);
     if (key == NULL_NODE) {
