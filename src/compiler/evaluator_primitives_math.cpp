@@ -154,7 +154,49 @@ namespace {
         return v;
     }
 
-    enum class RegexRunStatus : std::uint8_t { Ok = 0, SyntaxError = 1, Timeout = 2 };
+    enum class RegexRunStatus : std::uint8_t {
+        Ok = 0,
+        SyntaxError = 1,
+        Timeout = 2,
+        Exhausted = 3, // Issue #5500: a timed-out worker is still running
+    };
+
+    // Issue #5500: std::regex has no cancellation. A timed-out match keeps
+    // burning CPU on its worker thread, so bound how many such orphans may
+    // exist at once: while one is still running, regex-* fails fast instead
+    // of parking another worker next to it. The cap is one by default (main
+    // + the orphaned worker is the acceptance shape); AURA_REGEX_MAX_ORPHANS
+    // raises it for hosts that can spare the cores.
+    constexpr int kRegexOrphanCap5500 = 1;
+    std::atomic<int>& regex_orphans_5500() {
+        static std::atomic<int> count{0};
+        return count;
+    }
+    int regex_max_orphans_cfg_5500() noexcept {
+        static const int v = [] {
+            if (const char* e = std::getenv("AURA_REGEX_MAX_ORPHANS")) {
+                const int n = std::atoi(e);
+                if (n > 0)
+                    return n;
+            }
+            return kRegexOrphanCap5500;
+        }();
+        return v;
+    }
+    void regex_orphan_begin_5500() {
+        const int n = regex_orphans_5500().fetch_add(1, std::memory_order_acq_rel) + 1;
+        static std::once_flag once;
+        std::call_once(once, [n] {
+            std::println(std::cerr,
+                         "aura: regex worker timed out and is still running; regex-* now "
+                         "fails with 'regex workers exhausted' until it returns (#5500, "
+                         "orphans={})",
+                         n);
+        });
+    }
+    void regex_orphan_end_5500() noexcept {
+        regex_orphans_5500().fetch_sub(1, std::memory_order_acq_rel);
+    }
 
     // #5322: one parked worker runs the regex work off the interpreter
     // thread. Spawning a thread per call cost ~30 us of the ~50 us budget;
@@ -255,14 +297,27 @@ namespace {
     // one, and the length caps still bound the orphan.
     template <typename R, typename Fn>
     [[nodiscard]] std::pair<RegexRunStatus, R> run_regex_timed(Fn fn, int timeout_ms) {
+        // Issue #5500: do not spawn another worker while the previous
+        // timed-out one is still spinning in a backtracking regex.
+        if (regex_orphans_5500().load(std::memory_order_acquire) >= regex_max_orphans_cfg_5500())
+            return {RegexRunStatus::Exhausted, R{}};
+        auto orphan = std::make_shared<std::atomic<bool>>(false);
         auto task = std::make_shared<std::packaged_task<R()>>(std::move(fn));
         auto done = task->get_future();
-        auto parked = regex_submit([task] { (*task)(); });
+        auto parked = regex_submit([task, orphan] {
+            (*task)();
+            if (orphan->exchange(false, std::memory_order_acq_rel))
+                regex_orphan_end_5500();
+        });
 
         const auto deadline =
             std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
         if (done.wait_until(deadline) != std::future_status::ready) {
             regex_retire(parked);
+            // The job may still finish between the timeout and this store;
+            // exchange keeps the count exact in either order.
+            if (!orphan->exchange(true, std::memory_order_acq_rel))
+                regex_orphan_begin_5500();
             return {RegexRunStatus::Timeout, R{}};
         }
         try {
@@ -364,6 +419,9 @@ void RegSplitParts::register_math_regex_primitives(
             ev.bump_regex_timeout_total();
             return bump_regex_error(prim, "regex execution exceeded timeout");
         }
+        if (st == RegexRunStatus::Exhausted)
+            return bump_regex_error(
+                prim, "regex workers exhausted: a timed-out match is still running");
         if (st == RegexRunStatus::SyntaxError)
             return bump_regex_error(prim, "invalid regular expression");
         return make_void(); // Ok — caller ignores

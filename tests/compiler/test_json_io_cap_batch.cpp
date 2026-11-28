@@ -115,19 +115,6 @@ int main() {
         ++members_passed;
         std::println("OK member test_write_string_escape ({} checks)", g_passed);
     }
-    // #5322: the parked worker removed the 1 ms per-call floor; AC6 bounds
-    // the short-call latency.
-    reset_member_face();
-    std::println("\n──── test_regex_redos_timeout ────");
-    g_passed = 0;
-    g_failed = 0;
-    if (run_test_regex_redos_timeout() != 0 || g_failed != 0) {
-        ++members_failed;
-        std::println("FAIL member test_regex_redos_timeout ({}/{})", g_passed, g_failed);
-    } else {
-        ++members_passed;
-        std::println("OK member test_regex_redos_timeout ({} checks)", g_passed);
-    }
 
 
     reset_member_face();
@@ -176,6 +163,23 @@ int main() {
     } else {
         ++members_passed;
         std::println("OK member test_tcp_listen_accept ({} checks)", g_passed);
+    }
+
+    // Issue #5500: the regex member runs last. A timed-out match cannot be
+    // cancelled, so its worker keeps one core busy until the process exits;
+    // no later member should inherit that.
+    // #5322: the parked worker removed the 1 ms per-call floor; AC6 bounds
+    // the short-call latency.
+    reset_member_face();
+    std::println("\n──── test_regex_redos_timeout ────");
+    g_passed = 0;
+    g_failed = 0;
+    if (run_test_regex_redos_timeout() != 0 || g_failed != 0) {
+        ++members_failed;
+        std::println("FAIL member test_regex_redos_timeout ({}/{})", g_passed, g_failed);
+    } else {
+        ++members_passed;
+        std::println("OK member test_regex_redos_timeout ({} checks)", g_passed);
     }
 
     std::println("\n=== {} members: {} ok, {} failed ===", members_passed + members_failed,

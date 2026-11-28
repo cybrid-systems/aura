@@ -149,6 +149,43 @@ static void ac6_call_latency() {
     CHECK(ms < 50, "AC6: 200 short regex calls under 50 ms");
 }
 
+// ── AC7 (#5500): a timed-out worker caps further calls ──
+// std::regex cannot be cancelled, so a timed-out match keeps a worker
+// spinning. The pool must fail the NEXT call fast instead of parking a
+// second worker next to it: no thread pile-up, no second full core.
+static void ac7_worker_cap() {
+    std::println("\n--- #5500 AC7: a timed-out worker caps regex calls ---");
+    ::aura::config::test_setenv("AURA_REGEX_TIMEOUT_MS", "50", 1);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    const auto t0 = std::chrono::steady_clock::now();
+    // The subject is a literal: this service has no std/string required, and
+    // 400 'a' with no trailing 'b' is exponential for the nested quantifier.
+    const std::string subject(400, 'a');
+    const std::string call = R"((regex-match? "(a+)+b" ")" + subject + R"("))";
+    auto first = cs.eval(call);
+    CHECK(first.has_value() && is_error(*first), "AC7: the catastrophic match is an error");
+    const std::string msg1 = (first && is_error(*first)) ? ev.soft_error_message(*first) : "";
+    CHECK(msg1.find("regex execution exceeded timeout") != std::string::npos ||
+              msg1.find("regex workers exhausted") != std::string::npos,
+          "AC7: timeout (or an earlier orphan) is reported");
+    const auto t1 = std::chrono::steady_clock::now();
+    auto second = cs.eval(call);
+    const auto t2 = std::chrono::steady_clock::now();
+    CHECK(second.has_value() && is_error(*second),
+          "AC7: the next call fails while the orphan still runs");
+    const std::string msg2 = (second && is_error(*second)) ? ev.soft_error_message(*second) : "";
+    CHECK(msg2.find("regex workers exhausted") != std::string::npos,
+          "AC7: exhausted, not another timeout");
+    const auto refused_ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count();
+    const auto first_ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
+    std::println("  first_ms={} refused_ms={}", first_ms, refused_ms);
+    CHECK(refused_ms < 50, "AC7: the refused call does not pay another budget");
+    ::aura::config::test_unsetenv("AURA_REGEX_TIMEOUT_MS");
+}
+
 // ── AC4: source ──
 static void ac4_source() {
     std::println("\n--- #2479 AC4: source ReDoS guards ---");
@@ -197,6 +234,7 @@ int run_test_regex_redos_timeout() {
     ac4_source();
     ac5_gate();
     ac6_call_latency();
+    ac7_worker_cap();
     std::println("\n=== #2479 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
