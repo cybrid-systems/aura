@@ -1763,9 +1763,15 @@ aura::compiler::EnvId Evaluator::alloc_env_frame_from_env(const Env& e, EnvId pa
     // Hold the publication lock shared for the whole copy; empty guard for
     // private envs.
     auto src_guard = e.lock_bindings_shared();
+    // Issue #5524: a freshly appended id cannot have a cap-snapshot entry;
+    // only a REUSED id may carry the previous occupant's. Remember the size
+    // before the alloc so the erase below can skip the global cap_snap lock
+    // on the common (append) path.
+    const std::size_t frames_before = env_frames_size();
     EnvId id = alloc_env_frame(pid);
     if (id == NULL_ENV_ID)
         return NULL_ENV_ID;
+    const bool fresh_id = static_cast<std::size_t>(id) >= frames_before;
     // Issue #145 P0 follow-up: hold a shared lock while
     // mutating the freshly-allocated frame. A concurrent
     // alloc_env_frame on another thread (e.g. a fiber)
@@ -1812,7 +1818,7 @@ aura::compiler::EnvId Evaluator::alloc_env_frame_from_env(const Env& e, EnvId pa
     // snapshot (or an empty one built in the window before this fill).
     // Drop it while the shard lock is held so the next materialize
     // rebuilds from these bindings. Fresh ids have no entry.
-    {
+    if (!fresh_id) {
         std::unique_lock<std::shared_mutex> snap_lock(cap_snap_mtx_);
         cap_snap_cache_.erase(id);
         cap_snap_epoch_5521_.fetch_add(1, std::memory_order_release);
